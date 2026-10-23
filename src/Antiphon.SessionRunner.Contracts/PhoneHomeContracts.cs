@@ -142,7 +142,23 @@ public sealed record PhoneHomeTerminalSeatReleaseRequest(Guid SessionId, Termina
 
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
 public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);
-public sealed record PhoneHomeCapacityHeartbeat(int Capacity, RunnerCodexCliVersionDto? CodexCli = null);
+public sealed record PhoneHomeCapacityHeartbeat(int Capacity, RunnerCodexCliVersionDto? CodexCli = null,
+    PhoneHomeProducerPressure? EventPressure = null);
+
+public sealed record PhoneHomeProducerPressure(bool WaitingForCredit, int PendingEvents, int PendingBytes);
+
+public sealed record PhoneHomeEventWindowOptions(int Version, int MaxPendingEvents, int MaxPayloadUtf8Bytes)
+{
+    public const string Capability = "phoneHomeEventWindowV1";
+    public void Validate()
+    {
+        if (Version != 1 || MaxPendingEvents <= 0 || MaxPayloadUtf8Bytes <= 0)
+            throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventWindowInvalid,
+                "Unsupported event-window version or nonpositive bounds.");
+    }
+}
+
+public sealed record PhoneHomeEventWindowUpdate(long ReleasedEvents, long ReleasedPayloadBytes);
 
 public sealed record RunnerRetireRequest(bool Force, string Reason);
 
@@ -463,6 +479,7 @@ public enum PhoneHomeFrameKind
     Error = 3,
     Event = 4,
     Heartbeat = 5,
+    EventWindow = 6,
 }
 
 public static class PhoneHomeProblemTypes
@@ -485,6 +502,8 @@ public static class PhoneHomeProblemTypes
     public const string MessageTooLarge = "phone_home_message_too_large";
     public const string RequestLimit = "phone_home_request_limit";
     public const string EventOverflow = "phone_home_event_overflow";
+    public const string EventWindowInvalid = "phone_home_event_window_invalid";
+    public const string EventWindowTooSmall = "phone_home_event_window_too_small";
     public const string StaleEpoch = "phone_home_stale_epoch";
     public const string RequestTimeout = "phone_home_request_timeout";
 
@@ -590,7 +609,8 @@ public sealed record PhoneHomeRegistrationResponse(
     DateTimeOffset ExpiresAtUtc,
     Guid RunnerStoreId,
     Guid ProcessBootId,
-    long Epoch);
+    long Epoch,
+    PhoneHomeEventWindowOptions? EventWindow = null);
 
 public sealed record PhoneHomeFrame(
     PhoneHomeFrameKind Kind,

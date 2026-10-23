@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -328,10 +328,14 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             // A runner that numbers its own connections desynchronises the moment either process
             // restarts alone, and both receive loops then drop every frame in silence.
             var epoch = ++slot.Epoch;
+            var limits = _settings.Limits;
+            var window = request.Capabilities?.Features?.Contains(PhoneHomeEventWindowOptions.Capability, StringComparer.Ordinal) == true
+                ? new PhoneHomeEventWindowOptions(1, limits.MaxPendingEvents, limits.MaxPendingEventBytes) : null;
+            window?.Validate();
             _tickets[ticket] = new Ticket(
                 ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
                 now.AddSeconds(_settings.TicketTtlSeconds),
-                request.Capacity, platform, request.Capabilities, epoch);
+                request.Capacity, platform, request.Capabilities, epoch, limits, window);
             slot.StoreId = request.RunnerStoreId;
             slot.BootId = request.ProcessBootId;
             slot.StoreReplacementAuthorized = false;
@@ -344,7 +348,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
                     caps.CodexCliVersionError, caps.CodexCliLauncherFingerprint) : null;
             slot.RegisteredCapacity = request.Capacity;
             return new PhoneHomeRegistrationResponse(
-                ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch);
+                ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch, window);
         }
     }
 
@@ -380,9 +384,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             // The ticket already carries the epoch the runner was told at registration.
             var epoch = ticket.Epoch;
             connection = new PhoneHomeLiveConnection(
-                runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
+                runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, ticket.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity,
-                RecordHeartbeatCapacityChangeAsync, ObserveCodexCli);
+                RecordHeartbeatCapacityChangeAsync, ObserveCodexCli, ticket.EventWindow);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
@@ -1007,5 +1011,5 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         int Capacity,
         string? Platform,
         RunnerCapabilitiesDto? Capabilities,
-        long Epoch);
+        long Epoch, PhoneHomeLimits Limits, PhoneHomeEventWindowOptions? EventWindow);
 }

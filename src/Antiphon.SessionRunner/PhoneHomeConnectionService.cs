@@ -51,6 +51,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     internal IReadOnlyList<PhoneHomeFrame> SentMutations => _sentMutations;
     public long Epoch => Interlocked.Read(ref _epoch);
     public int InFlight => Volatile.Read(ref _inFlight);
+    private PhoneHomeEventWindow? _eventWindow;
+    private ISessionRunnerEventLease? _subscription;
+    public bool WaitingForEventCredit => _eventWindow?.Waiting == true;
+    public PhoneHomeProducerPressure EventPressure => new(WaitingForEventCredit,
+        _subscription?.PendingEvents ?? 0, _subscription?.PendingBytes ?? 0);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -121,6 +126,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         var ticket = await registered.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json, ct)
             ?? throw new InvalidOperationException("Empty registration response.");
 
+        ticket.EventWindow?.Validate();
         var ws = new ClientWebSocket();
         try
         {
@@ -141,7 +147,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         // response. Numbering our own connections here desynchronised the two counters the moment
         // either process restarted alone, and both receive loops silently dropped every frame that
         // did not match - the socket stayed open while heartbeats, requests and replies vanished.
-        await RunConnectedAsync(ws, ticket.Epoch, ct);
+        await RunConnectedAsync(ws, ticket.Epoch, ticket.EventWindow, ct);
     }
 
     /// <summary>
@@ -149,8 +155,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     /// heartbeat and event loops ends. Split from <see cref="RunConnectionAsync"/> so a scripted
     /// socket can drive a connection's end without a registration round trip.
     /// </summary>
-    internal async Task RunConnectedAsync(WebSocket ws, long epoch, CancellationToken ct)
+    internal Task RunConnectedAsync(WebSocket ws, long epoch, CancellationToken ct) => RunConnectedAsync(ws, epoch, null, ct);
+
+    internal async Task RunConnectedAsync(WebSocket ws, long epoch, PhoneHomeEventWindowOptions? options, CancellationToken ct)
     {
+        var window = options is null ? null : new PhoneHomeEventWindow(options);
+        _eventWindow = window;
         Interlocked.Exchange(ref _epoch, epoch);
         var connectedAt = _clock.GetTimestamp();
         _logger.LogInformation("Phone-home connection epoch={Epoch} connected (capacity {Capacity})", epoch, _capacity.Capacity);
@@ -166,10 +176,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             },
             connectionCts.Token);
 
+        _subscription = reader as ISessionRunnerEventLease;
+        var requests = new ConcurrentDictionary<Guid, Task>();
         var writer = new PhoneHomeConnectionWriter(ws, _settings.Limits.MaxMessageUtf8Bytes);
-        var receive = ReceiveLoopAsync(writer, epoch, connectionCts.Token);
+        var receive = ReceiveLoopAsync(writer, epoch, window, requests, connectionCts.Token);
         var heartbeat = HeartbeatLoopAsync(writer, epoch, connectionCts.Token);
-        var events = EventLoopAsync(writer, epoch, reader, connectionCts.Token);
+        var events = EventLoopAsync(writer, epoch, reader, window, connectionCts.Token);
         Task? ended = null;
         var pendingEvents = 0;
         var pendingBytes = 0;
@@ -199,6 +211,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         {
             connectionCts.Cancel();
             CancelWaiters(epoch);
+            // Cancellation releases a credit waiter before any socket disposal. The receive loop
+            // stops adding request tasks before the request join is taken.
+            try { await Task.WhenAll(receive, heartbeat, events); } catch { /* classified below */ }
+            try { await Task.WhenAll(requests.Values); } catch { /* each dispatch logs its own fault */ }
             // CARD-0631 D-4: the close handshake goes through the writer's gate, so it never
             // overlaps a reply or heartbeat that is still being written.
             try { await writer.CloseAsync(WebSocketCloseStatus.NormalClosure,
@@ -206,6 +222,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                 : overflow ? PhoneHomeProblemTypes.EventOverflow : "disconnect"); }
             catch { /* closing a dropped socket */ }
             ws.Dispose();
+            _eventWindow = null;
+            _subscription = null;
         }
 
         // CARD-0679 D-4: one line per connection end, naming the loop that ended it. An overflow
@@ -236,6 +254,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                 (long)_clock.GetElapsedTime(connectedAt).TotalMilliseconds, close, described.WsError, described.SocketError);
         }
 
+        if (ended?.Exception?.GetBaseException() is PhoneHomeTransportException protocolFault) throw protocolFault;
         if (overflow)
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Event hub overflow.");
     }
@@ -244,7 +263,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     /// CARD-0631: the receive pump for one connection. Reads frames from the writer's socket and
     /// hands each accepted request to <see cref="DispatchAndReplyAsync"/> off the read loop.
     /// </summary>
-    internal async Task ReceiveLoopAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct)
+    internal Task ReceiveLoopAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct) =>
+        ReceiveLoopAsync(writer, epoch, null, new ConcurrentDictionary<Guid, Task>(), ct);
+
+    private async Task ReceiveLoopAsync(PhoneHomeConnectionWriter writer, long epoch,
+        PhoneHomeEventWindow? window, ConcurrentDictionary<Guid, Task> requests, CancellationToken ct)
     {
         var ws = writer.Socket;
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
@@ -254,6 +277,21 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                 break;
             if (frame.Epoch != epoch)
                 continue;
+            if (frame.Kind == PhoneHomeFrameKind.EventWindow)
+            {
+                // An unsolicited kind never negotiates a window for a legacy connection.
+                if (window is not null)
+                {
+                    if (frame.Payload is not { ValueKind: JsonValueKind.Object } payload
+                        || !payload.TryGetProperty("releasedEvents", out var eventsValue)
+                        || eventsValue.ValueKind != JsonValueKind.Number || !eventsValue.TryGetInt64(out var releasedEvents)
+                        || !payload.TryGetProperty("releasedPayloadBytes", out var bytesValue)
+                        || bytesValue.ValueKind != JsonValueKind.Number || !bytesValue.TryGetInt64(out var releasedBytes))
+                        throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventWindowInvalid, "Malformed event-window update.");
+                    window.Update(new(releasedEvents, releasedBytes));
+                }
+                continue;
+            }
             if (frame.Kind is PhoneHomeFrameKind.Result or PhoneHomeFrameKind.Error)
             {
                 if (_waiters.TryRemove(frame.RequestId, out var waiter))
@@ -277,7 +315,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             Interlocked.Increment(ref _inFlight);
             // CARD-0631 D-3: no scheduling token. A task cancelled before it starts would never
             // run its finally, and the increment above would leak for the life of the process.
-            _ = Task.Run(async () =>
+            var task = Task.Run(async () =>
             {
                 try
                 {
@@ -292,6 +330,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                     Interlocked.Decrement(ref _inFlight);
                 }
             }, CancellationToken.None);
+            requests[frame.RequestId] = task;
+            // Register removal after insertion, including synchronously completed work.
+            _ = task.ContinueWith(_ => requests.TryRemove(frame.RequestId, out var removed),
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
     }
 
@@ -354,11 +396,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     internal Task SendHeartbeatAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct) =>
         writer.SendAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, epoch, Guid.NewGuid(),
             Payload: JsonSerializer.SerializeToElement(
-                new PhoneHomeCapacityHeartbeat(_capacity.Capacity, _runtime.CodexCliProbe?.Snapshot), PhoneHomeFraming.Json)), ct);
+                new PhoneHomeCapacityHeartbeat(_capacity.Capacity, _runtime.CodexCliProbe?.Snapshot, EventPressure), PhoneHomeFraming.Json)), ct);
 
     internal Task SendEventAsync(PhoneHomeConnectionWriter writer, long epoch, RunnerServerSentEvent evt, CancellationToken ct)
     {
-        var payload = JsonSerializer.Deserialize<JsonElement>(evt.Json, PhoneHomeFraming.Json);
+        var payload = PhoneHomeEventPayload.Prepare(evt.Json);
         return writer.SendAsync(new PhoneHomeFrame(
             PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: evt.EventName, Payload: payload), ct);
     }
@@ -373,8 +415,13 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         }
     }
 
-    internal async Task EventLoopAsync(
-        PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct)
+    internal Task EventLoopAsync(
+        PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader, CancellationToken ct) =>
+        EventLoopAsync(writer, epoch, reader, null, ct);
+
+    private async Task EventLoopAsync(
+        PhoneHomeConnectionWriter writer, long epoch, System.Threading.Channels.ChannelReader<RunnerServerSentEvent> reader,
+        PhoneHomeEventWindow? window, CancellationToken ct)
     {
         try
         {
@@ -382,7 +429,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             {
                 try
                 {
-                    await SendEventAsync(writer, epoch, evt, ct);
+                    var payload = PhoneHomeEventPayload.Prepare(evt.Json);
+                    if (window is not null) await window.ReserveAsync(PhoneHomeEventPayload.Measure(payload), ct);
+                    await writer.SendAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Event, epoch, Guid.Empty,
+                        EventName: evt.EventName, Payload: payload), ct);
                 }
                 finally
                 {

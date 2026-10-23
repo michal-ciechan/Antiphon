@@ -33,6 +33,16 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private bool _warnedHalf;
     private bool _warnedHigh;
     private string? _closedReason;
+    private readonly CancellationTokenSource _creditStop = new();
+    private readonly CancellationTokenSource _closed = new();
+    private readonly Channel<bool> _creditSignal = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+        { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
+    private Task? _creditWriter;
+    private int _disposing;
+    private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public PhoneHomeEventWindowOptions? EventWindow { get; }
+    public PhoneHomeProducerPressure? ProducerPressure { get; private set; }
+    internal CancellationToken Closed => _closed.Token;
 
     /// <summary>CARD-0716 repair: 1 while <see cref="ReceiveLoopAsync"/> has not returned.</summary>
     private int _receiveLoopRunning;
@@ -57,8 +67,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         RunnerCapabilitiesDto? capabilities = null,
         int maxCapacity = int.MaxValue,
         Func<string, int, int, CancellationToken, Task>? capacityReconciled = null,
-        Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? codexCliObserved = null)
+        Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? codexCliObserved = null,
+        PhoneHomeEventWindowOptions? eventWindow = null)
     {
+        eventWindow?.Validate();
+        EventWindow = eventWindow;
         RunnerId = runnerId;
         RunnerStoreId = runnerStoreId;
         ProcessBootId = processBootId;
@@ -412,12 +425,35 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public async Task ReceiveLoopAsync(CancellationToken ct, ILogger? logger = null)
     {
         Interlocked.Exchange(ref _receiveLoopRunning, 1);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _creditStop.Token);
+        Task? receiving = null;
         try
         {
-            await ReceiveLoopCoreAsync(ct, logger);
+            if (EventWindow is null)
+            {
+                await ReceiveLoopCoreAsync(ct, logger);
+                return;
+            }
+            _creditWriter = Task.Run(() => CreditWriterAsync(stop.Token), CancellationToken.None);
+            receiving = ReceiveLoopCoreAsync(ct, logger);
+            if (await Task.WhenAny(receiving, _creditWriter) == _creditWriter)
+            {
+                _socket.Abort();
+                await _creditWriter;
+            }
+            await receiving;
         }
         finally
         {
+            stop.Cancel();
+            if (_creditWriter is not null)
+                try { await _creditWriter; } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+                catch { /* the owning receive path classifies the writer fault */ }
+            if (receiving is { IsCompleted: false })
+            {
+                _socket.Abort();
+                try { await receiving; } catch { /* the writer failure owns the verdict */ }
+            }
             Interlocked.Exchange(ref _receiveLoopRunning, 0);
         }
     }
@@ -439,6 +475,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 if (frame.Payload is { } payload)
                 {
                     var reported = payload.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json);
+                    ProducerPressure = reported?.EventPressure;
                     if (reported?.CodexCli is { } cli) _codexCliObserved?.Invoke(this, cli);
                     if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity
                         && reported.Capacity != Capacity)
@@ -598,7 +635,27 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         }
     }
 
-    private void OnEventReleased(bool observed) { }
+    private void OnEventReleased(bool observed)
+    {
+        if (observed && EventWindow is not null && !_creditStop.IsCancellationRequested)
+            _creditSignal.Writer.TryWrite(true);
+    }
+
+    private async Task CreditWriterAsync(CancellationToken ct)
+    {
+        await foreach (var signal in _creditSignal.Reader.ReadAllAsync(ct))
+        {
+            while (_creditSignal.Reader.TryRead(out _)) { }
+            var snapshot = AccountingSnapshot();
+            var frame = new PhoneHomeFrame(PhoneHomeFrameKind.EventWindow, Epoch, Guid.Empty,
+                Payload: JsonSerializer.SerializeToElement(new PhoneHomeEventWindowUpdate(
+                    snapshot.ReleasedEvents, snapshot.ReleasedPayloadBytes), PhoneHomeFraming.Json));
+            await _send.WaitAsync(ct);
+            try { await PhoneHomeFraming.WriteFrameAsync(_socket, frame, _limits.MaxMessageUtf8Bytes, ct); }
+            finally { _send.Release(); }
+            // A release during this send leaves a signal in the single pending slot.
+        }
+    }
 
     public ValueTask DisposeAsync() => DisposeAsync("dispose");
 
@@ -613,9 +670,16 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// </summary>
     public async ValueTask DisposeAsync(string reason)
     {
+        if (Interlocked.Exchange(ref _disposing, 1) != 0) { await _disposed.Task; return; }
+        try
+        {
         Interlocked.CompareExchange(ref _closedReason, reason, null);
+        _closed.Cancel();
+        _creditStop.Cancel();
+        if (_creditWriter is not null) try { await _creditWriter; } catch { /* receive owns its failure */ }
         var closedReason = Volatile.Read(ref _closedReason) ?? reason;
         _events.Writer.TryComplete();
+        while (_events.Reader.TryRead(out var unread)) unread.Abandon();
         foreach (var (id, waiter) in _waiters)
         {
             if (_waiters.TryRemove(id, out _))
@@ -672,7 +736,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         }
         catch { /* already closed */ }
         _socket.Dispose();
-        _send.Dispose();
+        // A failed request continuation may still release its semaphore; no WaitHandle was allocated.
+        }
+        finally { _disposed.TrySetResult(); }
     }
 
     private PhoneHomeTransportException ClosedBeforeSend(PhoneHomeOperation operation, string reason) =>

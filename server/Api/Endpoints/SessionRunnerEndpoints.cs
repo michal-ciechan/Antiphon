@@ -351,11 +351,13 @@ public static class SessionRunnerEndpoints
         var waiters = connection.PendingWaiters;
         var diagnostics = JsonSerializer.Serialize(connection.Diagnostics.Snapshot(), PhoneHomeFraming.Json);
         var overflow = JsonSerializer.Serialize(connection.OverflowAt, PhoneHomeFraming.Json);
+        var mode = connection.EventWindow is null ? "legacy" : "window-v1";
+        var pressure = JsonSerializer.Serialize(connection.ProducerPressure, PhoneHomeFraming.Json);
         var message =
             $"Phone-home connection {connection.RunnerId} epoch {connection.Epoch} ended: {reason} after {lifetimeSeconds:0.0}s; "
             + $"socket {socketState}; pending {snapshot.PendingEvents} events / {snapshot.PendingEventBytes} bytes; "
             + $"received total {snapshot.ReceivedEvents} events / {snapshot.ReceivedPayloadBytes} payload UTF-8 bytes; in flight {inFlight}; failing {waiters} waiters; "
-            + $"oldestMs {snapshot.OldestPendingMs}; overflowAt {overflow}; diagnostics {diagnostics}; connection {connectionId}";
+            + $"mode {mode}; producerPressure {pressure}; oldestMs {snapshot.OldestPendingMs}; overflowAt {overflow}; diagnostics {diagnostics}; connection {connectionId}";
         if (wsError is not null)
             message += $" wsError {wsError} socketError {socketError}";
 
@@ -373,6 +375,8 @@ public static class SessionRunnerEndpoints
             new("OldestPendingMs", snapshot.OldestPendingMs),
             new("OverflowAt", overflow),
             new("Diagnostics", diagnostics),
+            new("EventMode", mode),
+            new("ProducerPressure", pressure),
             new("InFlight", inFlight),
             new("Waiters", waiters),
             new("ConnectionId", connectionId),
