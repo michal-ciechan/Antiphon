@@ -47,8 +47,15 @@ PC-4 remove sink containment/history bound. Mutation owns red/restore/green.
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Observability.Tests -> bin-c1564-contract/` | live-timing-core | `/*/*/LiveTimingTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 3 |
 | CP-2 | S1-S2 | CP-1 | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
+| CP-3 | S1-S2 | CP-1 | external-boundaries | `/*/*/ExternalBoundaryTests/*` | V-7,V-8 | all listed, 0 failed | 2 | 1 |
 
 V-5: actual server VersionEndpoints extension serves the injected live recorder over TestServer.
 V-6: real delegating handler creates failed span, preserving exception; synthetic secret in
 URI/header/content/exception never enters its tags/logs. Both use in-memory transport.
 PC-5 pending Mutation: remove diagnostics route. PC-6: leak request URI into HTTP span.
+
+V-7 exercises ten real EF interceptor callbacks with synthetic durations (no DB startup),
+checking unchanged return values and safe success/failure/cancellation logs.
+V-8 exercises real directory services and a failing git child in an owned empty
+directory, under the assembly process limiter. No repository checkout is used.
+PC-7 pending Mutation: skip async DB failures; PC-8: omit git or filesystem scope.
