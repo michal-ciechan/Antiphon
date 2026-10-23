@@ -16,6 +16,19 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskScopedListEndpointTests
 {
     [Test]
+    public async Task C1562_Read_only_consumers_share_host_and_seed()
+    {
+        await using var first = await BootSeededAsync();
+        await using var second = await BootSeededAsync();
+        first.Factory.ShouldBeSameAs(second.Factory,
+            "read-only consumers must reuse the session-owned host and seeded database");
+        using var firstRows = await GetAsync(first.Client, "/api/agent-tasks");
+        using var secondRows = await GetAsync(second.Client, "/api/agent-tasks");
+        Ids(firstRows).ShouldBe(ScopedAgentTaskListFixture.FleetOrder);
+        Ids(secondRows).ShouldBe(ScopedAgentTaskListFixture.FleetOrder);
+    }
+
+    [Test]
     public async Task Land_pending_filter_selects_pending_rows()
     {
         await using var host = await BootSeededAsync();
@@ -381,6 +394,7 @@ public class AgentTaskScopedListEndpointTests
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            using var seed = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
             await ScopedAgentTaskListFixture.SeedFleetAsync(db, includeY2Twin);
         }
 
