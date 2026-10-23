@@ -860,10 +860,9 @@ public class OrchestratorInstructionsRefreshTests
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings();
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var options = new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
-            ClaudeDialogObservation = true,
             ConnectionString = schema.ConnectionString,
             Delegation = settings,
             ConfigureDbContext = options =>
@@ -891,7 +890,11 @@ public class OrchestratorInstructionsRefreshTests
                     sp.GetRequiredService<TimeProvider>()));
                 services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
             },
-        });
+        };
+        // The rc fixture predates the supported-dialog option and its production input gate.
+        // Set the option on the real options type when available; both versions keep all assertions.
+        typeof(BridgeQueueHarness.HarnessOptions).GetProperty("ClaudeDialogObservation")?.SetValue(options, true);
+        var harness = await BridgeQueueHarness.CreateAsync(options);
         settings.OrchestratorInstructions.Path = Path.Combine(harness.TempRoot, "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md");
         harness.AfterDispose = schema;
         return harness;
