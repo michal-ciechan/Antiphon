@@ -134,8 +134,9 @@ public partial class PermissionWaitTests
         await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.LastDeliveryGeneration, f.Generation), ct);
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "QueuedUserPrompt is not receipt");
+        var headerOnly = note.Body.Split('\n')[0];
         await db.TranscriptEntries.Where(t => t.AgentSessionId == f.ParentSessionId && t.Kind == TranscriptKinds.QueuedUserPrompt)
-            .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.UserPrompt).SetProperty(t => t.Text, note.Body.Split('\n')[0]), ct);
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.UserPrompt).SetProperty(t => t.Text, headerOnly), ct);
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "head-only is not receipt");
         await db.TranscriptEntries.Where(t => t.AgentSessionId == f.ParentSessionId && t.Kind == TranscriptKinds.UserPrompt)
