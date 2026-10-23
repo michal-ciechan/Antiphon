@@ -159,7 +159,7 @@ public sealed class FileUseCaptureTests
         var values = new[] { "{{key:fixture}}", "sk-abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345", "github_pat_1234567890123456789012345", "Bearer fixture-bearer", "12345678:12345678901234567890123456789012345", "Password=fixture-password", "clientApiKey=fixture-api", "--token fixture-switch", "postgres://user:fixture-url@db/path?fixture-query#fixture-fragment", "-EncodedCommand fixture-payload", "opaque-positional-value", secret };
         var raw = "opaque-argv-zero\0" + string.Join('\0', values);
         var owner = Owner(42) with { Name = "fixture " + secret, CommandLine = raw, Ancestors = [new(1, "1", secret, raw)] };
-        var snapshot = await new FileUseCapture(new Provider((_, _) => new(FileUseStatus.Observed, FileUseCoverage.Complete, [owner], []))).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(string.Join(' ', values)), scratch.Evidence) { SecretValues = [secret] });
+        var snapshot = await new FileUseCapture(new Provider((_, _) => new(FileUseStatus.Observed, FileUseCoverage.Complete, [owner], []) { Backend = secret })).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(string.Join(' ', values)), scratch.Evidence) { SecretValues = [secret] });
         var json = await File.ReadAllTextAsync(snapshot.EvidencePath!);
         foreach (var marker in new[] { secret, "fixture-bearer", "fixture-password", "fixture-api", "fixture-switch", "fixture-url", "fixture-query", "fixture-fragment", "fixture-payload", "opaque-positional-value", "opaque-argv-zero", "abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345" })
         { snapshot.Summary.ShouldNotContain(marker); json.ShouldNotContain(marker); }
