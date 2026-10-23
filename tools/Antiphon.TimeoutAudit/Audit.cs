@@ -21,5 +21,5 @@ public sealed class AuditReport
 }
 public static class Audit
 {
-    public static AuditReport Run(AuditOptions options) => new();
+    public static AuditReport Run(AuditOptions options) => BudgetPolicy.Run(options);
 }

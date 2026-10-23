@@ -16,7 +16,7 @@ statistics and the policy check using temporary files, without expensive infrast
 Six tests should take under 5 seconds; build estimate 30 seconds; both are provisional
 CARD-1563 values until observed. Each test has a 30-second initial ceiling. Row and build
 execution are explicitly bounded to 3 minutes for this first observation; admission wait
-is separate and bounded to 5 minutes. Record fresh TRX, checkpoint source receipts,
+is separate: launcher wait is 5 minutes; checkpoint admission retains its 45-minute default. Record fresh TRX, checkpoint source receipts,
 slot wait, build and execution phases under .antiphon/checkpoints; missing phases remain
 unknown. No full-assembly Antiphon.Tests run; no shared runtime invariant changes.
 No repeats; one initial red selection, then one green selection. No AppHost impact.
