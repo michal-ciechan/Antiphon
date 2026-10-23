@@ -2,8 +2,13 @@ param([string]$Repository,[string]$ToolDll,[string]$Mode,[string]$Fixture,[switc
     [ValidateRange(0,10000)][int]$PreReadDelayMs=0,[string]$TimingNonce)
 $ErrorActionPreference='Stop'
 if($PSBoundParameters.ContainsKey('PreReadDelayMs') -and $Mode -cne 'project'){throw 'pre-read delay requires project mode'}
-if ($ToolDll) { [void][Reflection.Assembly]::LoadFrom($ToolDll) }
+if ($ToolDll) {
+    # Reuse the staged process boundary; compiling it per probe spends the reader's watchdog on setup.
+    [void][Reflection.Assembly]::LoadFrom((Join-Path (Split-Path -Parent $ToolDll) 'Antiphon.HostCleanup.dll'))
+    [void][Reflection.Assembly]::LoadFrom($ToolDll)
+}
 . "$Repository/scripts/lib/checkpoint-file-reader.ps1"
+. "$Repository/scripts/lib/build-driver-environment.ps1"
 if (Test-Path "$Repository/scripts/lib/checkpoint-process-runner.ps1") { . "$Repository/scripts/lib/checkpoint-process-runner.ps1" }
 function Import-Function([string]$Name) {
     $tokens=$null; $errors=$null
