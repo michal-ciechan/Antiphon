@@ -46,6 +46,10 @@ public sealed class FileUseCaptureTests
         fixture.Child.HasExited.ShouldBeFalse();
         if (mode == "mapped-file") { File.Delete(fixture.Path); File.Exists(fixture.Path).ShouldBeFalse(); }
         await fixture.Release();
+        fixture.Child.HasExited.ShouldBeTrue();
+        using var durable = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(snapshot.EvidencePath));
+        durable.RootElement.GetProperty("CaptureId").GetString().ShouldBe(snapshot.CaptureId);
+        durable.RootElement.GetProperty("Owners").EnumerateArray().Any(row => row.GetProperty("Pid").GetInt32() == fixture.Child.Id).ShouldBeTrue();
     }
 
     [Test]
@@ -87,22 +91,25 @@ public sealed class FileUseCaptureTests
     [Test]
     public async Task C1539_budget_and_caps()
     {
+        using var scratch = new Scratch();
         var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
         using var started = new ManualResetEventSlim(); using var release = new ManualResetEventSlim(); using var done = new ManualResetEventSlim();
         var provider = new Provider((_, _) => { started.Set(); release.Wait(); done.Set(); return Empty(); });
         var capture = new FileUseCapture(provider, timeProvider: time);
-        var request = new FileUseRequest("/held", new UnauthorizedAccessException(), "/missing") { Budget = TimeSpan.FromSeconds(5) };
+        var request = new FileUseRequest(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { Budget = TimeSpan.FromSeconds(5) };
+        FileUseSnapshot? timedOut = null;
         var pending = capture.TryCaptureAsync(request); started.Wait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
         time.Advance(TimeSpan.FromSeconds(5));
         try
         {
-            (await pending.WaitAsync(TimeSpan.FromSeconds(2))).Status.ShouldBe(FileUseStatus.TimedOut);
+            timedOut = await pending.WaitAsync(TimeSpan.FromSeconds(2)); timedOut.Status.ShouldBe(FileUseStatus.TimedOut);
             (await capture.TryCaptureAsync(request with { Operation = new() })).Status.ShouldBe(FileUseStatus.Busy);
             provider.Calls.ShouldBe(1);
         }
         finally { release.Set(); done.Wait(TimeSpan.FromSeconds(2)).ShouldBeTrue(); await capture.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2)); }
+        (await capture.TryCaptureAsync(request)).CaptureId.ShouldBe(timedOut!.CaptureId); provider.Calls.ShouldBe(1);
         var many = Enumerable.Range(1, 40).Select(i => Owner(i) with { Name = new string('n', 900), CommandLine = "dotnet\0" + new string('v', 6000), Ancestors = Enumerable.Range(1, 12).Select(n => new FileUseAncestor(n, "1", new string('a', 300), "opaque")).ToArray() }).ToArray();
-        using var scratch = new Scratch();
+
         var bounded = await new FileUseCapture(new Provider((_, _) => new(FileUseStatus.Observed, FileUseCoverage.Complete, many, []))).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence));
         bounded.Owners.Count.ShouldBeLessThanOrEqualTo(32); bounded.Omitted.ShouldBeGreaterThan(0);
         bounded.Owners.ShouldAllBe(o => o.Name.Length <= 256 && o.Ancestors.Count <= 8 && (o.CommandLine == null || o.CommandLine.Length <= 4096));
