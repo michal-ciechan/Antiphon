@@ -189,6 +189,11 @@ public sealed class VerificationRoundDeliveryTests
             var adapter = new FakeAgentProtocolAdapter();
             await using var _ = adapter;
             var connection = world.Schema.ConnectionString;
+            await using (var generation = world.CreateContext())
+                adapter.AcceptedStartedAt = await generation.AgentSessions.Where(s => s.Id == session)
+                    .Select(s => s.StartedAt).SingleAsync();
+            adapter.DialogGuardEnabled = true;
+            adapter.ClaudeComposerChrome = true;
             Task InsertAsync(Guid id, string kind, string? text = null, string? stopReason = null,
                 DateTime? timestamp = null, string? connectionString = null) =>
                 StoreAwareTranscript.WriteAsync(world.Services, id, () => BridgeQueueHarness.InsertEntryAsync(

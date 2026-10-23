@@ -277,6 +277,9 @@ public sealed class RefocusBriefIdentityTests
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
             h.Runtime.SetTestAcceptedStartedAt(h.SessionId, session.StartedAt);
+            adapter.DialogGuardEnabled = true;
+            adapter.AcceptedStartedAt = session.StartedAt;
+            adapter.ClaudeComposerChrome = true;
             var f = new Fixture { Harness = h, Task = task, Started = session.StartedAt, Cut = fault };
             h.Adapter.OnSubmitted = body => StoreAwareTranscript.WriteAsync(h.Provider, h.SessionId, async () =>
             {
