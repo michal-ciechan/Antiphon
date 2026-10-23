@@ -67,6 +67,7 @@ internal static class TaskDeadlinePolicy
         /// (<see cref="BootStallPolicy"/>), never a failure, stop or retry.
         /// </summary>
         BootModelWait = 3,
+        ProviderInputWait = 4,
     }
 
     /// <summary>
@@ -127,7 +128,7 @@ internal static class TaskDeadlinePolicy
     /// applies, or the task is nowhere near one yet.
     /// </summary>
     internal static async Task<Verdict?> EvaluateAsync(
-        AppDbContext db, AgentTask task, DateTime now, DelegationSettings settings, CancellationToken ct)
+        AppDbContext db, AgentTask task, DateTime now, DelegationSettings settings, CancellationToken ct, TaskProviderWaitFacts? providerWait = null)
     {
         if (task.AgentSessionId is not Guid sessionId || task.DispatchedAt is not DateTime dispatched)
             return null;
@@ -192,6 +193,8 @@ internal static class TaskDeadlinePolicy
             && await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
         {
             var (phaseKind, phaseLimit) = ClassifyPhase(last.Kind, modelWait, localExecution);
+            if (phaseKind == DeadlineKind.LocalExecution && providerWait is { IsWait: true })
+                phaseKind = DeadlineKind.ProviderInputWait;
 
             // The BOOT arm (CARD-0353 S1). Asked only where the general model-wait arm already
             // applies, so it can only ever TIGHTEN the notice: a session that has produced nothing
@@ -225,6 +228,8 @@ internal static class TaskDeadlinePolicy
                         ? " No qualifying boot-model reply since its own prompt"
                           + " (the check ignores Grok rules-turn responses) — this is a boot turn."
                         : string.Empty));
+                if (phaseKind == DeadlineKind.ProviderInputWait)
+                    candidate = candidate with { Summary = $"Mid-turn with a current Claude {providerWait!.DialogLabel}. The local-tool clock is {Duration(phaseElapsed)}, against its {(int)phaseLimit.TotalMinutes}-minute budget. Tool execution is not confirmed. {DescribeLast(last, lastAge)}" };
                 if (best is null || candidate.Fraction > best.Fraction)
                     best = candidate;
             }
@@ -238,6 +243,8 @@ internal static class TaskDeadlinePolicy
         // arm did not already answer, so it costs nothing on the ordinary preview path.
         if (!bootRead && last is not null)
             await ReadBootAsync();
+        if (providerWait is { IsWait: true } && best.Kind != DeadlineKind.ProviderInputWait)
+            best = best with { Summary = best.Summary + " " + providerWait.Diagnosis };
         return best with { Boot = bootFacts };
     }
 
