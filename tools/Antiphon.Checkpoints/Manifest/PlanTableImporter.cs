@@ -164,6 +164,8 @@ public static class PlanTableImporter
                 return Fail($"{id}: Filter has trailing text; put NAME=value in Environment and keep the exact filter");
             if (payload.StartsWith('/'))
             {
+                if (OrFilterError(id, payload) is string filterError)
+                    return Fail(filterError);
                 row.Filter = payload;
                 row.Expect = RosterTokens(payload).ToList();
                 if (row.Expect.Count(name => name.Contains("Land", StringComparison.Ordinal)) > 4)
@@ -268,6 +270,47 @@ public static class PlanTableImporter
 
     private static bool TryPositiveEstimate(string cell, out int estimate) =>
         int.TryParse(cell, out estimate) && estimate > 0 && 3L * estimate <= int.MaxValue;
+
+    // Check only the repository's canonical path OR form, not TUnit property expressions.
+    // Preserve accepted filters verbatim: adding a wildcard can change the selected roster.
+    internal static string? OrFilterError(string id, string filter)
+    {
+        if (!filter.Contains('|'))
+            return null;
+        var shapeError = $"refused: checkpoint-filter-or-shape: {id}: use parenthesized alternatives within one class or method segment";
+        var path = new StringBuilder();
+        var depth = 0;
+        foreach (var character in filter)
+        {
+            if (character == '[') { depth++; continue; }
+            if (character == ']')
+            {
+                if (--depth < 0) return shapeError;
+                continue;
+            }
+            if (depth == 0) path.Append(character);
+        }
+        if (depth != 0) return shapeError;
+        var pathText = path.ToString();
+        if (!pathText.Contains('|')) return null;
+        var segments = pathText.Split('/');
+        if (segments.Length != 5 || segments[0].Length != 0 || segments.Skip(1).Any(string.IsNullOrWhiteSpace))
+            return shapeError;
+        for (var index = 1; index < segments.Length; index++)
+        {
+            var segment = segments[index];
+            if (!segment.Contains('|')) continue;
+            if (index < 3 || !Regex.IsMatch(segment, @"^\([^()|]+\)(?:\|\([^()|]+\))+$", RegexOptions.CultureInvariant))
+                return shapeError;
+            var operands = segment.Split('|');
+            for (var operand = 0; operand < operands.Length; operand++)
+            {
+                if (!operands[operand].EndsWith("*)", StringComparison.Ordinal))
+                    return $"refused: checkpoint-filter-or-wildcard: {id}: {(index == 3 ? "class" : "method")} operand {operand + 1} requires a trailing '*'; use (NameA*)|(NameB*) or separate exact-method rows sharing one build";
+            }
+        }
+        return null;
+    }
 
     public static bool TryParseMin(string cell, bool isWindows, out int? min, out string? error)
     {

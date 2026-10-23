@@ -217,6 +217,42 @@ Review and publishes via the authorized target-tip Merge workflow. Do not merge
 all master or move tags. This Plan artifact remains master documentation; neither
 its push nor a tooling run earns full RC qualification or activates server guidance.
 
+## Code reconciliation (4963339c)
+
+The Code brief explicitly also requires the manifest validator. Extend D-1 to
+direct YAML manifests using the same helper; direct `row` behavior is unchanged.
+V-8 (`C0931_manifest_validator_rejects_unsafe_or`, two arguments) bypasses import
+by changing an otherwise valid manifest's filter before calling the validator.
+PC-5 remains pending for SourceLanding Mutation: remove only the validator call
+and run that exact method; both missing-exception assertions must fail, then
+restore and run the same method green. The importer cannot mask this control.
+
+CP-1/CP-2 now select 31 executions: 18 defect assertions and 13 controls.
+The original proposal below remains historical. The first 29-case run exposed
+two incorrect control state labels and an ineffective import witness caused by
+a relative output path. The corrected committed run selected 31, with exactly
+18 intended assertion failures and 13 controls passing. This justified one
+additional red build; no production change or timeout relaxation preceded it.
+The new tests remain in their own file and shared fixtures are unchanged.
+R-4's census is still 45 methods (26 importer, 13 row runner, 6 rerun policy).
+
+## Performance budget
+
+Keep the checkpoint estimates and existing deadlines unchanged. The first red
+sample recorded 203.3 seconds of build/settlement and 4.55 seconds of test-host
+wall time; the corrected red compiler reported 9m18s under contention. These two
+samples do not establish p95; CARD-1404 owns measured cost policy. Preserve raw
+TRX durations and checkpoint phase/slot timings under `.antiphon/checkpoints/`;
+unmeasured nested external-call spans remain unknown, not zero.
+
+The Unit witnesses use fake drivers/slots and per-test owned temporary files.
+No database, broker, web host or real nested compiler is started by a witness;
+there is no expensive shared fixture to duplicate. Bootstrap builds are separately
+gated. CP-2..CP-4 share one real test-project build. Compatibility-only scratch
+tool compilation on current master and rc is separately reported and carries
+no rc test-qualification claim. All calls are bounded by the existing checkpoint
+deadlines and the task's 60-minute budget; no full assembly is selected.
+
 ## Verification design
 
 TestDesign freezes the proposed names/counts and the neighboring API adaptations
