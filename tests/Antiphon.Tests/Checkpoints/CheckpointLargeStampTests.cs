@@ -155,7 +155,7 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
         f.Io.Events.Clear();
         Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, path)).Message.ShouldContain("selected file exceeds size limit");
         f.Io.Count("stream").ShouldBe(0);
-        f.Io.Events.ShouldNotContain(e => e.Operation is "write" or "unlink" or "rmdir");
+        f.Io.Events.ShouldNotContain(e => e.Operation == "write" || e.Operation == "unlink" || e.Operation == "rmdir");
     }
 
     [Test]
@@ -213,7 +213,7 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
             f.Io.Count("open-read").ShouldBe(mode == "cancel-before" ? 0 : 1);
             f.Io.Count("close-read").ShouldBe(mode == "cancel-before" ? 0 : 1);
             f.Io.Count("inspect").ShouldBe(mode == "cancel-before" ? 0 : mode is "eof" or "grow" or "shrink" or "inspect" ? 2 : 1);
-            f.Io.Events.ShouldNotContain(e => e.Operation is "write" or "unlink" or "rmdir");
+            f.Io.Events.ShouldNotContain(e => e.Operation == "write" || e.Operation == "unlink" || e.Operation == "rmdir");
             node.Bytes.ShouldBe(bytes);
         }
     }
