@@ -406,6 +406,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     {
         var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             ConnectionString = connection,
             PreserveDatabaseOnDispose = true,
             ConfigureDbContext = interceptor is null ? null : options => options.AddInterceptors(interceptor),
@@ -415,6 +416,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 services.AddSingleton<ISessionRunnerClient>(runner);
             },
         });
+        await adapter.EnableClaudeDialogObservationAsync(connection, runner.SessionId);
         adapter.RegisterOnStart = harness.Runtime;
         return new RecoveryWorld(harness);
     }
@@ -452,6 +454,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
     private sealed class RecoveryRunner(Guid sessionId) : ISessionRunnerClient
     {
+        public Guid SessionId => sessionId;
         public DateTime? AcceptedStartedAt { get; set; }
         public string? Pending { get; set; }
         public bool ThrowOnGet { get; set; }

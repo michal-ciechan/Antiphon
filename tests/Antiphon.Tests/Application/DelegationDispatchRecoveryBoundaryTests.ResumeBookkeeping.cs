@@ -240,6 +240,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 stopReason: "end_turn", connectionString: connection);
         }
 
+        await adapter.EnableClaudeDialogObservationAsync(connection, sessionId);
         adapter.RegisterOnStart = harness.Runtime;
         adapter.OnSubmitted = async body =>
         {

@@ -1064,6 +1064,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     private static Task<BridgeQueueHarness> OpenQueueAsync(string connection, CurrentBrief? attached = null) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             ConnectionString = connection,
             PreserveDatabaseOnDispose = true,
             AttachSessionId = attached?.SessionId,

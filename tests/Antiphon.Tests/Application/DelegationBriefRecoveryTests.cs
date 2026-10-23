@@ -124,6 +124,7 @@ public class DelegationBriefRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var fixture = await BriefFixture.CreateAsync(schema.ConnectionString, dispatched: true);
+        await fixture.Adapter.EnableClaudeDialogObservationAsync(schema.ConnectionString, fixture.SessionId);
         if (observation == "absent")
             fixture.Adapter.DialogGuardEnabled = false;
         else
@@ -132,7 +133,7 @@ public class DelegationBriefRecoveryTests
             fixture.Adapter.RenderedScreenOverride = "unrecognized terminal frame";
         }
 
-        await fixture.ResumeAsync();
+        await fixture.ResumeAsync(configureDialog: false);
 
         fixture.Adapter.Inputs.ShouldBeEmpty(observation + ": no body, Enter or recovery key");
         fixture.Adapter.SubmittedBodies.ShouldBeEmpty(observation);
@@ -233,8 +234,10 @@ public class DelegationBriefRecoveryTests
             return await db.TranscriptEntries.Where(e => e.AgentSessionId == SessionId).MaxAsync(e => (long?)e.Sequence) ?? 0;
         }
 
-        public async Task ResumeAsync()
+        public async Task ResumeAsync(bool configureDialog = true)
         {
+            if (configureDialog)
+                await Adapter.EnableClaudeDialogObservationAsync(Harness.ConnectionString, SessionId);
             await using var scope = Harness.Provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AgentSessionService>()
                 .ResumeInterruptedLaunchAsync(SessionId, Task.AgentId!.Value, CancellationToken.None);

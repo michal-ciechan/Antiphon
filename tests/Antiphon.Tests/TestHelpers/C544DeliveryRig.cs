@@ -54,7 +54,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
             d.OutputDistillerWaitSeconds = 120;
             d.ShrinkPolledCompletionNotes = true;
         });
-        rig.AttachCaller();
+        await rig.AttachCallerAsync();
         await rig.SeedCallerHistoryAsync();
         return rig;
     }
@@ -71,30 +71,37 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         services.AddSingleton(DistillQueue);
     }
 
-    private void AttachCaller()
+    private async Task AttachCallerAsync()
     {
         var connection = World.Schema.ConnectionString;
+        await Caller.EnableClaudeDialogObservationAsync(connection, World.CallerSessionId);
         Caller.OnSubmitted = async submitted =>
         {
             var recorded = SubmitTransform?.Invoke(submitted) ?? submitted;
             if (recorded.Length > 0)
-                await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.UserPrompt, recorded,
+                await InsertCallerEntryAsync(TranscriptKinds.UserPrompt, recorded,
                     timestamp: DateTime.UtcNow, connectionString: connection);
-            await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.TurnEnd,
+            await InsertCallerEntryAsync(TranscriptKinds.TurnEnd,
                 stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: connection);
         };
         World.Services.GetRequiredService<AgentSessionRuntime>().Register(World.CallerSessionId, Caller);
     }
 
+    private Task InsertCallerEntryAsync(string kind, string? text = null, string? stopReason = null,
+        DateTime? timestamp = null, string? connectionString = null) =>
+        StoreAwareTranscript.WriteAsync(World.Services, World.CallerSessionId, () =>
+            BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, kind, text, stopReason, timestamp,
+                connectionString: connectionString ?? World.Schema.ConnectionString));
+
     private async Task SeedCallerHistoryAsync()
     {
         var connection = World.Schema.ConnectionString;
-        await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.UserPrompt, "dispatch the review", connectionString: connection);
-        await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.AssistantText, "Dispatched.", connectionString: connection);
-        await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.TurnEnd,
+        await InsertCallerEntryAsync(TranscriptKinds.UserPrompt, "dispatch the review", connectionString: connection);
+        await InsertCallerEntryAsync(TranscriptKinds.AssistantText, "Dispatched.", connectionString: connection);
+        await InsertCallerEntryAsync(TranscriptKinds.TurnEnd,
             stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: connection);
         if (Busy)
-            await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.AssistantText, "caller is mid-turn",
+            await InsertCallerEntryAsync(TranscriptKinds.AssistantText, "caller is mid-turn",
                 connectionString: connection);
     }
 
@@ -105,7 +112,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     {
         DistillQueue = new OutputDistillationQueue(); // in-memory distiller admissions do not survive a restart
         await World.RestartAsync(keepInterceptor: true);
-        AttachCaller();
+        await AttachCallerAsync();
     }
 
     /// <summary>A settled profile-v1 Review whose completion obligation targets the caller.</summary>
@@ -205,7 +212,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     /// <summary>A busy caller finishes its turn; the queue's turn-end flush runs.</summary>
     public async Task EndCallerTurnAsync()
     {
-        await BridgeQueueHarness.InsertEntryAsync(World.CallerSessionId, TranscriptKinds.TurnEnd,
+        await InsertCallerEntryAsync(TranscriptKinds.TurnEnd,
             stopReason: TranscriptKinds.StopReasons.EndTurn, connectionString: World.Schema.ConnectionString);
         await Queue.OnTurnEndAsync(World.CallerSessionId, CancellationToken.None);
         Busy = false;
