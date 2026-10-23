@@ -264,16 +264,19 @@ The union witness uses two coincident seven-minute waits (14 summed waiter
 minutes, seven queue-only minutes), and baseline uses the actual comparer with
 a synthetic red-row input, avoiding a real baseline checkout.
 
+The first repaired-source run at cc0fb061cdd38278f502db2ddbb9e62e5500c07d
+retains CP-1 9/9, CP-2 3/3, CP-5 1/1 and CP-6 1/1. CP-4 failed the
+old whole-Markdown line count after additive timing lines. CP-3/7/8 executed
+zero tests because their proposed OR operands lacked pinned-runner wildcards;
+zero is not coverage. This failure-driven repair keeps the same exact methods,
+adds the existing compiler-failure exit control, and runs the 25-case roster in
+one host/lease to eliminate seven redundant admission/startup phases. Every
+intended class/method must be checked in fresh TRX; no full assembly is selected.
+CheckpointSlotExecutorTests.cs is in scope for its additive-output assertion.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S3 | `tests/Antiphon.Tests -> bin-c1531-green/` | admission-green | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 passed, 0 failed/skipped | 9 | 5 |
-| CP-2 | S3 | CP-1 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 passed, 0 failed/skipped | 3 | 1 |
-| CP-3 | S3 | CP-1 | scheduler-regression | `/*/*/RunSchedulerTests/(builds_never_overlap_even_with_free_slots_and_width_two)\|(rows_of_a_finished_build_run_while_the_next_build_is_in_flight)\|(an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it)\|(build_timer_uses_selected_row_deadlines_and_override)` | R-1 | all 5 passed, 0 failed/skipped | 5 | 1 |
-| CP-4 | S3 | CP-1 | slot-regression | `/*/*/CheckpointSlotExecutorTests/executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-5 | S3 | CP-1 | owner-regression | `/*/*/CheckpointTaskOwnershipTests/settlement_cancels_two_drivers_and_skips_later_rows` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-6 | S3 | CP-1 | caller-regression | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-7 | S3 | CP-1 | evidence-regression | `/*/*/(CheckpointLineTests)\|(ReportMergerTests)/(tunit_line_matches_the_pinned_regex_with_slot_suffix)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-8 | S3 | CP-1 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests)\|(BaselineComparerTests)/(windows_estimate_selects_row_and_total_deadlines)\|(baseline_stops_when_the_timeout_is_already_spent)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-9 | S3 | `tests/Antiphon.Tests -> bin-c1531-final/` | admission-final | `/*/*/(CheckpointAdmissionBudgetTests*)\|(CheckpointAdmissionContractTests*)\|(RunSchedulerTests*)\|(CheckpointSlotExecutorTests*)\|(CheckpointTaskOwnershipTests*)\|(C1307CliCancellationTests*)\|(CheckpointLineTests*)\|(ReportMergerTests*)\|(BaselineComparerTests*)/(C1531_*)\|(builds_never_overlap_even_with_free_slots_and_width_two*)\|(rows_of_a_finished_build_run_while_the_next_build_is_in_flight*)\|(an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes*)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it*)\|(build_timer_uses_selected_row_deadlines_and_override*)\|(failed_build_fails_only_its_rows*)\|(executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge*)\|(settlement_cancels_two_drivers_and_skips_later_rows*)\|(Executor_cancel_persists_130*)\|(tunit_line_matches_the_pinned_regex_with_slot_suffix*)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns*)\|(windows_estimate_selects_row_and_total_deadlines*)\|(baseline_stops_when_the_timeout_is_already_spent*)` | V-1..V-12, R-1..R-4 | all 25 passed, 0 failed/skipped; exact roster | 25 | 10 |
 
 ## Performance budget
 

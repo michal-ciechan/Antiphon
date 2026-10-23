@@ -67,6 +67,30 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             handler.Exited.ShouldBeTrue();
         }
         finally { watchdog.Cancel(); await acquire; }
+
+        var appClock = new ControlledTimeProvider();
+        var appSlots = new HeldSlots();
+        var appDriver = new FakeDriver();
+        var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), TimeProvider = appClock,
+            Slots = appSlots, Driver = appDriver, Output = TextWriter.Null };
+        var appRun = CheckpointApp.CreateRun(selection.Manifest, roundTrip, root, runtime);
+        using var appStop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var execution = CheckpointApp.ExecuteAsync(appRun, appStop.Token, runtime);
+        try
+        {
+            await appSlots.Entered.Task.WaitAsync(appStop.Token);
+            await CheckpointFixtures.WaitUntil(() => appClock.Events.LastOrDefault(e => e.Action == "change")?.DueTime == Timeout.InfiniteTimeSpan);
+            appClock.Advance(TimeSpan.FromMinutes(2));
+            (await execution).ShouldBe(4);
+            var state = new RunStateStore().TryRead(Path.Combine(appRun, "state.json"))!;
+            state.Budget!.HardWallLimitSeconds.ShouldBe(1800, "the serialized CLI wall override must reach Execute");
+            state.Budget.ExecutionLimitSeconds.ShouldBe(600);
+            state.Budget.AdmissionLimitSeconds.ShouldBe(120);
+            state.Rows.Single().WaitedSeconds.ShouldBe(120);
+            appDriver.Starts.ShouldBeEmpty();
+        }
+        finally { appStop.Cancel(); await execution; }
     }
 
     [Test]

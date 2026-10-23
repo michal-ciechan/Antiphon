@@ -383,6 +383,7 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
         }
 
+        var finalizationStarted = (runtime.TimeProvider ?? TimeProvider.System).GetTimestamp();
         state.Budget = model.Budget = budget.Snapshot(admissionLimit);
         model.Evidence = Path.Combine(runDirectory, "report.md");
         var gitAppend = write.Append(Path.Combine(runDirectory, "git.txt"),
@@ -506,6 +507,16 @@ public static class CheckpointApp
             model.Verdict = "RED";
             model.Reason = owner.Reason;
             ReportWriter.WriteFiles(context, runDirectory, model);
+        }
+        state.Budget = model.Budget = budget.Snapshot(admissionLimit);
+        model.Budget.FinalizationSeconds = (runtime.TimeProvider ?? TimeProvider.System).GetElapsedTime(finalizationStarted).TotalSeconds;
+        model.EndedAt = context.Time.GetUtcNow();
+        model.WallSeconds = (model.EndedAt - model.StartedAt).TotalSeconds;
+        if (budget.Reason is not null && model.ExitCode == ExitCodes.Green)
+        {
+            model.ExitCode = ExitCodes.Timeout;
+            model.Verdict = "RED";
+            model.Reason = budget.Reason;
         }
         ReportWriter.WriteFiles(context, runDirectory, model);
         watchCancel.Cancel();
@@ -783,10 +794,10 @@ public static class CheckpointApp
                 Source = row.Source,
                 Build = row.State == "build-failed" ? "failed" : "n/a",
                 Filter = row.Filter ?? row.Command ?? "",
-                Executed = row.State == "slot-refused" ? "0" : "n/a",
-                Passed = row.State == "slot-refused" ? "0" : "n/a",
-                Failed = row.State == "slot-refused" ? "0" : "n/a",
-                Skipped = row.State == "slot-refused" ? "0" : "n/a",
+                Executed = row.State is "slot-refused" or "slot-timeout" ? "0" : "n/a",
+                Passed = row.State is "slot-refused" or "slot-timeout" ? "0" : "n/a",
+                Failed = row.State is "slot-refused" or "slot-timeout" ? "0" : "n/a",
+                Skipped = row.State is "slot-refused" or "slot-timeout" ? "0" : "n/a",
                 Trx = "n/a",
                 Slot = row.Slot ?? "skipped",
                 SlotReason = row.SlotReason,
@@ -863,10 +874,10 @@ public static class CheckpointApp
             Slot = row.Slot.Length == 0 ? null : row.Slot,
             SlotReason = row.SlotReason,
             WaitedSeconds = row.WaitedSeconds,
-            Executed = row.Trx?.Executed ?? (row.State == "slot-refused" ? 0 : null),
-            Passed = row.Trx?.Passed ?? (row.State == "slot-refused" ? 0 : null),
-            Failed = row.Trx?.Failed ?? (row.State == "slot-refused" ? 0 : null),
-            Skipped = row.Trx?.Skipped ?? (row.State == "slot-refused" ? 0 : null),
+            Executed = row.Trx?.Executed ?? (row.State is "slot-refused" or "slot-timeout" ? 0 : null),
+            Passed = row.Trx?.Passed ?? (row.State is "slot-refused" or "slot-timeout" ? 0 : null),
+            Failed = row.Trx?.Failed ?? (row.State is "slot-refused" or "slot-timeout" ? 0 : null),
+            Skipped = row.Trx?.Skipped ?? (row.State is "slot-refused" or "slot-timeout" ? 0 : null),
             Reruns = row.Reruns,
             Repeat = row.Repeat,
             Timings = row.Timings,
