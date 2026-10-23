@@ -1,6 +1,12 @@
 using System.Text;
 using System.Text.RegularExpressions;
+#if HOSTCLEANUP_DIAGNOSTICS
+namespace Antiphon.HostCleanup.DiagnosticText;
+#elif CHECKPOINTS_DIAGNOSTICS
+namespace Antiphon.Checkpoints.DiagnosticText;
+#else
 namespace Antiphon.DiagnosticText;
+#endif
 internal static partial class DiagnosticCredentialRedactor
 {
     private const int MaximumSecretValues = 256;

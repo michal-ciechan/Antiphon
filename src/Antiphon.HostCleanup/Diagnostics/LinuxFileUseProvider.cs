@@ -19,9 +19,16 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (bytes >= 8 * 1024 * 1024) throw new FileUseInputLimitException();
-            var value = source.Read(path, Math.Min(cap, 8 * 1024 * 1024 - bytes));
-            bytes += Encoding.UTF8.GetByteCount(value);
-            return value;
+            var allowance = Math.Min(cap, 8 * 1024 * 1024 - bytes);
+            try
+            {
+                var value = source.Read(path, allowance);
+                var consumed = Encoding.UTF8.GetByteCount(value);
+                if (consumed > allowance) throw new FileUseInputLimitException();
+                bytes += consumed;
+                return value;
+            }
+            catch (FileUseInputLimitException) { bytes += allowance; throw; }
         }
         ProcIdentity Identity(int pid) => ParseIdentity(pid, Read($"/proc/{pid}/stat", 8192));
         var requested = new[] { request.Path }.Concat(request.AdditionalPaths).Take(128).ToArray();
@@ -36,9 +43,16 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
                 cancellationToken.ThrowIfCancellationRequested();
                 if (scanned++ >= 4096) { reasons.Add(FileUseReason.ProcessLimit); omitted++; break; }
                 if (owners.Count >= 32) { reasons.Add(FileUseReason.OwnerLimit); omitted++; break; }
+                ProcIdentity? initial = null; string? matchPath = null, matchKind = null;
+                void RetainIdentity(FileUseOwnerState state)
+                {
+                    if (initial is not null && matchPath is not null)
+                        owners.Add(new(pid, "[unavailable]", initial.Start, null, null, initial.ParentPid, [], null,
+                            state.ToString(), matchKind!, matchPath) { State = state });
+                }
                 try
                 {
-                    var initial = Identity(pid); string? matchPath = null, matchKind = null;
+                    initial = Identity(pid);
                     try
                     {
                         var count = 0;
@@ -102,7 +116,10 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
                     }
                     if (matchPath is null) continue;
                     var name = Read($"/proc/{pid}/comm", 1024).TrimEnd('\r', '\n');
-                    var argv = Read($"/proc/{pid}/cmdline", 65536);
+                    string? argv;
+                    try { argv = Read($"/proc/{pid}/cmdline", 65536); }
+                    catch (FileUseInputLimitException) { argv = null; reasons.Add(FileUseReason.RedactionUnavailable); omitted++; }
+                    var executable = source.Link($"/proc/{pid}/exe");
                     var ancestors = new List<FileUseAncestor>(); var chain = new List<ProcIdentity>(); var parent = initial.ParentPid;
                     var visited = new HashSet<int> { pid };
                     while (parent > 0 && visited.Add(parent))
@@ -118,7 +135,7 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
                         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
                         { reasons.Add(error is UnauthorizedAccessException ? FileUseReason.AccessDenied : FileUseReason.ExitedDuringCapture); break; }
                     }
-                    if (Identity(pid).Start != initial.Start) { reasons.Add(FileUseReason.IdentityChanged); continue; }
+                    if (Identity(pid).Start != initial.Start) { reasons.Add(FileUseReason.IdentityChanged); RetainIdentity(FileUseOwnerState.IdentityChanged); continue; }
                     bool? owned = null; var attribution = "NoVerifiedOwnedGeneration";
                     if (request.OwnedGenerations.Any(g => g.Pid == pid && g.NativeStart == initial.Start) || chain.Any(a => request.OwnedGenerations.Any(g => g.Pid == a.Pid && g.NativeStart == a.Start)))
                     { owned = true; attribution = "VerifiedOwnedGeneration"; }
@@ -127,13 +144,13 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
                     try { using var process = Process.GetProcessById(pid); started = process.StartTime.ToUniversalTime(); }
                     catch (Exception error) when (error is ArgumentException or InvalidOperationException or Win32Exception) { reasons.Add(FileUseReason.ExitedDuringCapture); }
                     // Recheck after every source of PID-based enrichment, including StartTime.
-                    if (Identity(pid).Start != initial.Start) { reasons.Add(FileUseReason.IdentityChanged); continue; }
-                    owners.Add(new(pid, name, initial.Start, started, argv, initial.ParentPid, ancestors, owned, attribution, matchKind!, matchPath) { ProvenModules = modules.ToArray() });
+                    if (Identity(pid).Start != initial.Start) { reasons.Add(FileUseReason.IdentityChanged); RetainIdentity(FileUseOwnerState.IdentityChanged); continue; }
+                    owners.Add(new(pid, name, initial.Start, started, argv, initial.ParentPid, ancestors, owned, attribution, matchKind!, matchPath) { ProvenModules = modules.ToArray(), ProvenExecutable = executable });
                 }
-                catch (UnauthorizedAccessException) { reasons.Add(FileUseReason.AccessDenied); }
+                catch (UnauthorizedAccessException) { reasons.Add(FileUseReason.AccessDenied); RetainIdentity(FileUseOwnerState.MetadataUnavailable); }
                 catch (FileUseInputLimitException) { reasons.Add(FileUseReason.InputLimit); omitted++; }
                 catch (Exception error) when (error is IOException or ArgumentException or InvalidOperationException)
-                { reasons.Add(FileUseReason.ExitedDuringCapture); }
+                { reasons.Add(FileUseReason.ExitedDuringCapture); RetainIdentity(FileUseOwnerState.ExitedDuringCapture); }
                 if (bytes >= 8 * 1024 * 1024) { reasons.Add(FileUseReason.InputLimit); omitted++; break; }
             }
         }
@@ -141,7 +158,8 @@ public sealed class LinuxFileUseProvider(LinuxFileUseSource? source = null) : IF
         if (source.GetType() == typeof(LinuxFileUseSource)) reasons.Add(FileUseReason.NamespaceLimited);
         var partial = reasons.Count > 0;
         return new(partial ? FileUseStatus.Partial : owners.Count > 0 ? FileUseStatus.Observed : FileUseStatus.NoOwnersObserved,
-            partial ? FileUseCoverage.Partial : FileUseCoverage.Complete, owners, reasons.ToArray(), omitted);
+            partial ? FileUseCoverage.Partial : FileUseCoverage.Complete, owners, reasons.ToArray(), omitted)
+        { PathKind = resources[0].Identity.Kind, ResourceIdentity = $"{resources[0].Identity.Device:x}:{resources[0].Identity.Inode:x}" };
     }
 
     private static string Canonical(string path)
@@ -170,9 +188,10 @@ public class LinuxFileUseSource
     public virtual string Read(string path, int maximumBytes)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var bytes = new byte[maximumBytes + 1]; var count = 0;
+        var bytes = new byte[maximumBytes]; var count = 0;
         while (count < bytes.Length) { var got = stream.Read(bytes, count, bytes.Length - count); if (got == 0) break; count += got; }
-        if (count > maximumBytes) throw new FileUseInputLimitException();
+        // A read exactly at the bound is conservatively partial; no lookahead exceeds the input budget.
+        if (count >= maximumBytes) throw new FileUseInputLimitException();
         return Encoding.UTF8.GetString(bytes, 0, count);
     }
 }

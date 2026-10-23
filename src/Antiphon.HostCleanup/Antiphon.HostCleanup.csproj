@@ -12,4 +12,5 @@
     <Compile Include="../../scripts/lib/DiagnosticCredentialRedactor.cs" Link="Diagnostics/DiagnosticCredentialRedactor.cs" />
     <Compile Include="../../scripts/lib/DiagnosticUrlRedactor.cs" Link="Diagnostics/DiagnosticUrlRedactor.cs" />
   </ItemGroup>
+  <PropertyGroup><DefineConstants>$(DefineConstants);HOSTCLEANUP_DIAGNOSTICS</DefineConstants></PropertyGroup>
 </Project>

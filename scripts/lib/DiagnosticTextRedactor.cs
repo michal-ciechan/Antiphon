@@ -1,7 +1,13 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
+#if HOSTCLEANUP_DIAGNOSTICS
+namespace Antiphon.HostCleanup.DiagnosticText;
+#elif CHECKPOINTS_DIAGNOSTICS
+namespace Antiphon.Checkpoints.DiagnosticText;
+#else
 namespace Antiphon.DiagnosticText;
+#endif
 
 /// <summary>
 /// Best-effort pattern redaction over diagnostics-bundle text (CARD-0179 R1).

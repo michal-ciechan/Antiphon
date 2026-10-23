@@ -24,4 +24,5 @@
   </ItemGroup>
 
   <ItemGroup><Compile Include="../../scripts/lib/DiagnosticUrlRedactor.cs" Link="DiagnosticUrlRedactor.cs" /></ItemGroup>
+  <PropertyGroup><DefineConstants>$(DefineConstants);CHECKPOINTS_DIAGNOSTICS</DefineConstants></PropertyGroup>
 </Project>

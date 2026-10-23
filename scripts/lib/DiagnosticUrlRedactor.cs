@@ -1,5 +1,11 @@
 using System.Text.RegularExpressions;
+#if HOSTCLEANUP_DIAGNOSTICS
+namespace Antiphon.HostCleanup.DiagnosticText;
+#elif CHECKPOINTS_DIAGNOSTICS
+namespace Antiphon.Checkpoints.DiagnosticText;
+#else
 namespace Antiphon.DiagnosticText;
+#endif
 internal static class DiagnosticUrlRedactor
 {
     // Existing slot diagnostics keep their HTTP-only policy; the collector uses all schemes.

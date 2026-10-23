@@ -3,7 +3,7 @@ using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using Antiphon.DiagnosticText;
+using Antiphon.HostCleanup.DiagnosticText;
 
 namespace Antiphon.HostCleanup.Diagnostics;
 
@@ -30,8 +30,25 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
 
     public async Task<FileUseSnapshot> TryCaptureAsync(FileUseRequest request, CancellationToken cancellationToken = default)
     {
+        FileUseSnapshot result;
+        try { result = await CaptureAsync(request, cancellationToken); }
+        catch
+        {
+            result = new(Guid.NewGuid().ToString("N"), FileUseStatus.Unavailable, FileUseCoverage.None,
+                "[unavailable]", "[unavailable]", 0, "[unavailable]", time.GetUtcNow(), time.GetUtcNow(), [], [FileUseReason.ProviderFailure]);
+        }
+        if (result.Status != FileUseStatus.NotTriggered)
+        {
+            try { request.Error.Data["fileUseCaptureId"] = result.CaptureId; request.Error.Data["fileUseCaptureSummary"] = result.Summary; }
+            catch { /* Read-only or hostile exception Data never changes the failure path. */ }
+        }
+        return result;
+    }
+
+    private async Task<FileUseSnapshot> CaptureAsync(FileUseRequest request, CancellationToken cancellationToken)
+    {
         FileUseSnapshot snapshot = Envelope(request);
-        if (!IsEligible(request.Error)) return snapshot with { Status = FileUseStatus.NotTriggered };
+        if (!IsEligible(request.Error, request.FailedCommandText)) return snapshot with { Status = FileUseStatus.NotTriggered };
         var key = request.Path + "\0" + snapshot.NativeCode;
         lock (request.Operation.Captures)
         {
@@ -56,32 +73,38 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
             try { observation = await observing; }
             catch (UnauthorizedAccessException) { observation = new(FileUseStatus.Unavailable, FileUseCoverage.None, [], [FileUseReason.AccessDenied]); }
             catch { observation = new(FileUseStatus.Unavailable, FileUseCoverage.None, [], [FileUseReason.ProviderFailure]); }
-            snapshot = Sanitize(snapshot, observation, request) with
-            {
-                Backend = OperatingSystem.IsLinux() ? "proc" : "unavailable",
-                DurationMilliseconds = time.GetElapsedTime(clockStart).TotalMilliseconds
-            };
+            var envelope = snapshot;
             var writing = Task.Run(() =>
             {
                 cancellation.Token.ThrowIfCancellationRequested();
-                // No evidence may be created under the operation's target tree.
-                var root = Path.GetFullPath(request.EvidenceRoot);
-                var target = Path.GetFullPath(request.Path).TrimEnd(Path.DirectorySeparatorChar);
-                if (root == target || root.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.Ordinal)) throw new IOException("invalid destination");
-                return writer.Write(snapshot with { Persistence = "Persisted" }, root, cancellation.Token);
+                // Redaction/serialization share the remaining deadline and the one worker seat.
+                var safe = Sanitize(envelope, observation, request) with
+                {
+                    Backend = OperatingSystem.IsLinux() ? "proc" : "unavailable",
+                    DurationMilliseconds = time.GetElapsedTime(clockStart).TotalMilliseconds,
+                    ObservationEndUtc = time.GetUtcNow()
+                };
+                try
+                {
+                    var root = Path.GetFullPath(request.EvidenceRoot);
+                    var target = Path.GetFullPath(request.Path).TrimEnd(Path.DirectorySeparatorChar);
+                    if (root == target || root.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.Ordinal)) throw new IOException("invalid destination");
+                    var path = writer.Write(safe with { Persistence = "Persisted" }, root, cancellation.Token);
+                    return path is null ? safe with { Reasons = [.. safe.Reasons, FileUseReason.EvidenceUnavailable] }
+                        : safe with { EvidencePath = path, Persistence = "Persisted" };
+                }
+                catch { return safe with { Reasons = [.. safe.Reasons, FileUseReason.EvidenceUnavailable] }; }
             });
             current = writing; Volatile.Write(ref worker, writing);
             if (await Task.WhenAny(writing, totalDeadline) != writing)
-                snapshot = snapshot with { Persistence = "Unavailable", Reasons = [.. snapshot.Reasons, FileUseReason.EvidenceUnavailable] };
+                snapshot = snapshot with { Status = FileUseStatus.TimedOut, Persistence = "Unavailable", Reasons = [.. snapshot.Reasons, FileUseReason.Budget, FileUseReason.EvidenceUnavailable] };
             else
             {
                 try
                 {
-                    var path = await writing;
-                    snapshot = path is null ? snapshot with { Reasons = [.. snapshot.Reasons, FileUseReason.EvidenceUnavailable] }
-                        : snapshot with { EvidencePath = path, Persistence = "Persisted" };
+                    snapshot = await writing;
                 }
-                catch { snapshot = snapshot with { Reasons = [.. snapshot.Reasons, FileUseReason.EvidenceUnavailable] }; }
+                catch { snapshot = snapshot with { Reasons = [.. snapshot.Reasons, FileUseReason.RedactionUnavailable, FileUseReason.EvidenceUnavailable] }; }
             }
             lock (request.Operation.Captures) { if (request.Operation.Captures.Count < 8) request.Operation.Captures.TryAdd(key, snapshot); }
             return snapshot;
@@ -108,6 +131,7 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
             var safe = new FileUseText(request);
             return snapshot with { Path = safe.Text(request.Path, 1024), FailureText = safe.Text(request.Error.Message, 2048),
                 OperationId = safe.Text(request.OperationId, 128), TaskId = safe.Optional(request.TaskId, 128), SourceSha = safe.Optional(request.SourceSha, 64),
+                RunId = safe.Optional(request.RunId, 128), SessionId = safe.Optional(request.SessionId, 128),
                 PathIdentity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.Path))) };
         }
         catch { return snapshot with { Reasons = [FileUseReason.RedactionUnavailable] }; }
@@ -123,15 +147,21 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
         {
             if (owner.Ancestors.Count > 8) { reasons.Add(FileUseReason.AncestorLimit); omitted += owner.Ancestors.Count - 8; }
             if (owner.Name.Length > 256 || owner.Resource.Length > 1024) { reasons.Add(FileUseReason.TextLimit); omitted++; }
-            var command = safe.Command(owner.CommandLine, owner.ProvenModules);
+            var command = safe.Command(owner.CommandLine, owner.ProvenModules, owner.ProvenExecutable);
             if (command is null && owner.CommandLine is not null) { reasons.Add(FileUseReason.RedactionUnavailable); omitted++; }
             owners.Add(owner with { Name = safe.Text(owner.Name, 256), NativeStart = safe.Text(owner.NativeStart, 128),
                 CommandLine = command, Resource = safe.Text(owner.Resource, 1024), Attribution = safe.Text(owner.Attribution, 128),
-                MatchKind = safe.Text(owner.MatchKind, 64), ProvenModules = [],
+                MatchKind = safe.Text(owner.MatchKind, 64), ProvenModules = [], ProvenExecutable = null,
+                Role = Path.GetFileNameWithoutExtension(owner.Name).ToLowerInvariant() switch
+                {
+                    "dotnet" => "dotnet", "msbuild" => "MSBuild", "vbcscompiler" => "VBCSCompiler",
+                    "openconsole" => "OpenConsole", "git" => "git", "testhost" => "testhost",
+                    "antiphon.sessionrunner" => "runner", "antiphon.apphost" => "AppHost", _ => null
+                },
                 Ancestors = owner.Ancestors.Take(8).Select(a => a with { Name = safe.Text(a.Name, 256), NativeStart = safe.Text(a.NativeStart, 128), CommandLine = safe.Command(a.CommandLine, []) }).ToArray() });
         }
         return FileUseEvidenceWriter.Bound(envelope with { Status = raw.Status, Coverage = raw.Coverage, Owners = owners,
-            Reasons = reasons.Distinct().ToArray(), Omitted = omitted });
+            Reasons = reasons.Distinct().ToArray(), Omitted = omitted, PathKind = safe.Optional(raw.PathKind, 32), ResourceIdentity = safe.Optional(raw.ResourceIdentity, 64) });
     }
 }
 
@@ -156,13 +186,13 @@ internal sealed class FileUseText
         safe = Regex.Replace(safe, @"(?i)(?:^|\s)-(?:EncodedCommand|Command|c)\s+.*", " [redacted script]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
         return safe.Length <= limit ? safe : safe[..Math.Max(0, limit - 15)] + "...[truncated]";
     }
-    internal string? Command(string? raw, IReadOnlyList<string> modules)
+    internal string? Command(string? raw, IReadOnlyList<string> modules, string? executable = null)
     {
         if (raw is null || raw.Length > 65536) return null;
         // Linux cmdline is already an argv vector. Unknown shell quoting is never reconstructed.
         var args = raw.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         if (args.Length == 0 || args.Length > 256 || args.Any(a => a.Length > 8192)) return null;
-        var output = new List<string> { Text(Path.GetFileName(args[0]), 256) };
+        var output = new List<string> { executable is null ? "[executable unavailable]" : Text(Path.GetFileName(executable), 256) };
         foreach (var arg in args.Skip(1))
         {
             if (modules.Contains(arg, StringComparer.Ordinal)) output.Add(Text(Path.GetFileName(arg), 256));

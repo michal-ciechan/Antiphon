@@ -47,7 +47,7 @@ public sealed record SlotDiagnostic(
             value = value.Replace(token, "[redacted]", StringComparison.Ordinal);
         if (!string.IsNullOrEmpty(sensitiveToken))
             value = value.Replace(sensitiveToken, "[redacted]", StringComparison.Ordinal);
-        value = Antiphon.DiagnosticText.DiagnosticUrlRedactor.Redact(value);
+        value = Antiphon.Checkpoints.DiagnosticText.DiagnosticUrlRedactor.Redact(value);
         var text = JsonSerializer.Serialize(value);
         if (text.Length <= 2048)
             return text;

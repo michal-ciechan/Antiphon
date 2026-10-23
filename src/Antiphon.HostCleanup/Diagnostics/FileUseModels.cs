@@ -15,6 +15,7 @@ public sealed record FileUseOwner(int Pid, string Name, string NativeStart, Date
     [System.Text.Json.Serialization.JsonIgnore]
     public string? ProvenExecutable { get; init; }
     public FileUseOwnerState State { get; init; } = FileUseOwnerState.Observed;
+    public string? Role { get; init; }
 }
 public sealed record FileUseObservation(FileUseStatus Status, FileUseCoverage Coverage,
     IReadOnlyList<FileUseOwner> Owners, IReadOnlyList<FileUseReason> Reasons, int Omitted = 0)
