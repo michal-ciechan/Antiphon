@@ -34,7 +34,15 @@ function ConvertTo-UtcStamp {
       as ~1 min old. DateTimeOffset keeps the offset; offset-less text is UTC
       by the lock format, never local.
     #>
-    param([string]$Text)
+    param($Text)
+    # ConvertFrom-Json on newer PowerShell returns typed dates. Casting these
+    # through a display string drops fractional seconds and can advance a timer.
+    if ($Text -is [datetime]) {
+        if ($Text.Kind -eq [datetimekind]::Unspecified) { return [datetime]::SpecifyKind($Text, [datetimekind]::Utc) }
+        return $Text.ToUniversalTime()
+    }
+    if ($Text -is [datetimeoffset]) { return $Text.UtcDateTime }
+    $Text = [string]$Text
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
     try {
         $invariant = [cultureinfo]::InvariantCulture

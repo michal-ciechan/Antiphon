@@ -49,6 +49,14 @@ variable not being consumed. Report:
 .antiphon/checkpoints/20261023-020124-04c0/report.md (1m39s wall;
 slot=granted, waited=75s/90s/0s for CP-7/CP-8/CP-9).
 
+The first nine-row refinement run on d40ae704187fdce00b47927f5b90678325b65d81
+passed eight rows. CP-8 failed exact marker timestamp equality: the shared UTC
+parser cast PowerShell JSON DateTime values through a display string and lost
+fractional seconds. The unchanged assertion exposed this defect. The repair
+preserves typed DateTime/DateTimeOffset instants and adds a persisted 179.5-second
+outage check to prevent an early threshold. No assertion or timeout was loosened.
+Report: .antiphon/checkpoints/20261023-020700-93da/report.md (1m23s wall).
+
 ## Final qualification and limits
 
 This tracked report is frozen before the final source run. Final actual tested SHA,
