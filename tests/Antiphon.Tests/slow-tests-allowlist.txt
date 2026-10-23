@@ -124,6 +124,7 @@ Antiphon.Tests.Application.AgentTaskLandConcurrencyTests
 Antiphon.Tests.Application.AgentTaskLandVerifierTests
 # CARD-0475: retained real checkpoint recovery matrix.
 Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
+# CARD-1514 S3: real child-process death, isolated PostgreSQL and Git worktree-registration recovery.
 Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests
 # CARD-0475: retained real cleanup safety matrix.
 Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
