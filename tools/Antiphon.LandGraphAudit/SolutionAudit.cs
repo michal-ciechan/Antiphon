@@ -18,6 +18,16 @@ internal static class SolutionAudit
 
     public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
     {
+        // Locator has registered the SDK before this method is entered. Inspect every
+        // repository evaluation expression, including inactive branches and metadata.
+        var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
+        EvaluationExpressionPolicy.Check(repo, expressionRefusals);
+        if (expressionRefusals.Count > 0)
+        {
+            foreach (var refusal in expressionRefusals) output.WriteLine(refusal);
+            return Program.Refused;
+        }
+
         var tracked = BuildInputPolicy.TrackedFiles(repo);
         var artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
         var baseline = new EvaluationSnapshot(repo, repo);

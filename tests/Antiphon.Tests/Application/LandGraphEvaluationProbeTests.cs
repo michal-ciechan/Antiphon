@@ -56,17 +56,17 @@ public sealed partial class LandGraphEvaluationTests
         });
         var run = await repo.RunToolAsync();
         run.ExitCode.ShouldBe(1, run.Text);
-        run.Text.ShouldContain("differential", Case.Sensitive, run.Text);
+        run.Text.ShouldContain("filesystem-function", Case.Sensitive, run.Text);
         run.Lines.ShouldNotContain("approved", run.Text);
         repo.AssertUntouched();
 
-        // Matched allowance: non-skippable reads and lexical HasTrailingSlash remain legal.
+        // Matched allowance: recorded non-skippable Exists and lexical functions remain legal.
         await using var safe = await AuditRepo.CreateAsync(new()
         {
             ["App/value.txt"] = "safe/",
             ["App/App.csproj"] = SdkProject("""
                 <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)value.txt') And HasTrailingSlash('docs/')">
-                  <ProbeValue>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)value.txt'))</ProbeValue>
+                  <ProbeValue>$([System.IO.Path]::GetFileName('safe/value.txt'))</ProbeValue>
                 </PropertyGroup>
                 """),
         });
