@@ -954,7 +954,7 @@ public sealed class AgentTaskLandService
             return (attributes & FileAttributes.Directory) != 0 && (attributes & FileAttributes.ReparsePoint) == 0
                 && GitIndexLock.PathsEqual(await _landingGit.CanonicalDirectoryAsync(task.WorktreePath, ct), operation.WorktreePath);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or TimeoutException)
         {
             return false;
         }
