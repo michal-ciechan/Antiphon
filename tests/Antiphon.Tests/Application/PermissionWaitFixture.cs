@@ -1,4 +1,6 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Tests.Agents;
+using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -62,6 +64,7 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
         var stopper = new RecordingSessionStopper();
         var git = new RecordingGitWorkspaceService { OverrideRun = _ => (0, "", "") };
         var launches = new RecordingLaunchFactory();
+        var boundary = new FaultBoundary();
         var settings = new DelegationSettings
         {
             Enabled = true,
@@ -99,6 +102,10 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
                     services.AddSingleton<IAgentProtocolAdapterFactory>(launches);
                     services.AddSingleton<ProviderDialogObservationService>();
                     services.AddSingleton<TaskProviderWaitReader>();
+                    services.AddSingleton<ProviderWaitWarningWriter>();
+                    services.AddSingleton<LandDeliveryBoundary>(boundary);
+                    services.AddSingleton<CompletionNoteFlushQueue>();
+                    services.AddScoped<AgentTaskLandNotificationService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddScoped<AgentTaskService>();
                     services.AddSingleton<AgentTaskReplyService>();
@@ -107,6 +114,7 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
                 },
             });
             var fixture = new PermissionWaitFixture(schema, harness, clock, stopper, git, launches);
+            fixture.Boundary = boundary;
             await fixture.SeedAsync(ct);
             return fixture;
         }
@@ -119,6 +127,36 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
     }
 
     internal TaskProviderWaitReader Reader => Harness.Provider.GetRequiredService<TaskProviderWaitReader>();
+
+    internal FaultBoundary Boundary { get; private set; } = null!;
+    internal FakeAgentProtocolAdapter Caller { get; } = new();
+    internal ProviderWaitWarningWriter Writer => Harness.Provider.GetRequiredService<ProviderWaitWarningWriter>();
+    internal ProviderWaitWarningWriter NewWriter() => new(Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Reader, Harness.EventBus, Clock, Options.Create(Harness.Delegation), Boundary);
+    internal async Task<int> ScanAsync(CancellationToken ct)
+    {
+        await using var scope = Harness.Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().DetectProviderWaitsAsync(ct);
+    }
+    internal async Task ReconcileAsync(Guid id, CancellationToken ct)
+    {
+        await using var scope = Harness.Provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(id, ct);
+    }
+    internal async Task<AgentTaskLandNotification> NoteAsync(CancellationToken ct)
+    {
+        await using var db = Db();
+        return await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == TaskId, ct);
+    }
+    internal Task<long> InsertParentAsync(string kind, string? text, CancellationToken ct) =>
+        BridgeQueueHarness.InsertEntryAsync(ParentSessionId, kind, text, timestamp: Clock.GetUtcNow().UtcDateTime,
+            connectionString: Harness.ConnectionString, createdAtUtc: Clock.GetUtcNow().UtcDateTime);
+    internal Task<long> CallerIdleAsync(CancellationToken ct) => InsertParentAsync(TranscriptKinds.TurnEnd, null, ct);
+    internal sealed class FaultBoundary : LandDeliveryBoundary
+    {
+        internal string? FailAt { get; set; }
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
+            boundary == FailAt ? Task.FromException(new IOException("injected " + boundary)) : Task.CompletedTask;
+    }
 
     internal AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
 
@@ -169,6 +207,12 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
             ToolName = "Read", Timestamp = DispatchedAt, CreatedAt = DispatchedAt,
         });
         await db.SaveChangesAsync(ct);
+        Caller.OnSubmitted = async body =>
+        {
+            await InsertParentAsync(TranscriptKinds.UserPrompt, body, CancellationToken.None);
+            await CallerIdleAsync(CancellationToken.None);
+        };
+        Harness.Runtime.Register(ParentSessionId, Caller);
         Harness.Adapter.DialogGuardEnabled = true;
         Harness.Adapter.AcceptedStartedAt = Generation;
         Harness.Adapter.RenderedScreenOverride = CapturedFrame;
