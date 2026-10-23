@@ -4,11 +4,17 @@ namespace Antiphon.LandGraphAudit;
 internal sealed class CanaryRepository : IDisposable
 {
     private const string Canary = "antiphon-c1483-canary";
-    public string Root { get; } = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-canary-" + Guid.NewGuid().ToString("N"));
+    // Preserve ancestor configuration discovery (.editorconfig/.globalconfig, SDK searches).
+    // A temporary directory under a different parent changes more than documentation.
+    private CanaryRepository(string repo) => Root = Path.Combine(
+        Path.GetDirectoryName(repo) ?? throw new IOException("repository has no parent for canary evaluation"),
+        "antiphon-landgraph-canary-" + Guid.NewGuid().ToString("N"));
+
+    public string Root { get; }
 
     public static CanaryRepository Create(string repo)
     {
-        var copy = new CanaryRepository();
+        var copy = new CanaryRepository(repo);
         try
         {
             Directory.CreateDirectory(copy.Root);

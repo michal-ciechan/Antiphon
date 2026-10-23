@@ -69,3 +69,21 @@ with the caller's reviewed bundle recipe.
 
 All PCs remain pending in docs/superpowers/mutations/2026-10-23-card-1483-s4-candidates.md,
 including every inherited S1, S2 and S3 variant. Ordinary green is not Mutation proof.
+
+## First implementation qualification and repair
+
+CHECKPOINT CP-4 commit=7cd0ff56f846d79a7f8c5837cfc6c3592bf577b8 build=ok filter=/*/*/LandGraphEvaluationTests/(C1483_*) executed=30 passed=27 failed=3 skipped=0 trx=/work/worktrees/task-6e80fc7e/.antiphon/checkpoints/20261023-003253-9879/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=7cd0ff56f846d79a7f8c5837cfc6c3592bf577b8 sourceState=clean buildSource=verified
+
+Fresh TRX: 30 executions, 27 passed, three failed, none skipped. All nine V-11/V-12
+negative variants passed, including their safe-file/literal-HasTrailingSlash controls.
+Introduced failures were V-1a duplicate diagnostics, V-5 the inherited safe JSON glob,
+and V-13 ancestor .globalconfig candidate paths differing for /work versus /tmp.
+Build 353.5s, tests 99.1s, wall 8m00s; build and row slots granted, waited 0s.
+These reds are retained, not attributed to the base and not relabelled green.
+
+The repair preserves exact assertions and timeouts. Existing denial diagnostics take
+precedence; glob traversal is delegated only with verified FileMatcher provenance to
+D-4, with explicit Condition frames excluded; V-11 combines a JSON glob with each
+unsafe explicit Exists call as a negative for that allowance. The canary copy now
+shares the source parent's ancestors. No snapshot category is ignored. Full CP-4
+reruns on the repaired committed report/source tip. No repeat-proof run is requested.

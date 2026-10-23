@@ -114,7 +114,7 @@ internal static class SolutionAudit
                 .Select(p => p.Key.ToUpperInvariant() + "=" + p.Value));
             if (!evaluations.Add(key)) return 0;
             evaluatedProjects.Add(projectPath);
-            Project project;
+            Project? project;
             fileSystem.Owner = Display(repo, projectPath);
             try
             {
@@ -180,7 +180,10 @@ internal static class SolutionAudit
         if (evaluated == 0)
             return Program.Fail($"{solution} names no MSBuild project");
 
-        foreach (var refusal in fileSystem.Refusals) refusals.Add(refusal);
+        // Keep established item/import/glob diagnostics stable when those checks already deny.
+        // The recording verdict remains independently decisive for otherwise-approved graphs.
+        if (refusals.Count == 0)
+            foreach (var refusal in fileSystem.Refusals) refusals.Add(refusal);
 
         foreach (var path in inputs.TrackedProjects.Where(path => !evaluatedProjects.Contains(path)).Order(StringComparer.Ordinal))
             output.WriteLine($"not-built: {Display(repo, path)}");
