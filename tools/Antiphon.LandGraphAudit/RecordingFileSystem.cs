@@ -33,9 +33,11 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
 
     private static bool IsMsBuildGlobTraversal(out string origin)
     {
-        var types = new StackTrace().GetFrames().Select(f => f.GetMethod()?.DeclaringType)
+        var frames = new StackTrace().GetFrames();
+        var types = frames.Select(f => f.GetMethod()?.DeclaringType)
             .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
-        origin = " (probe-origin: " + string.Join(", ", types.Select(t => t!.FullName).Distinct().Take(8)) + ")";
+        origin = " (probe-origin: " + string.Join(", ", frames.Select(f =>
+            f.GetMethod()?.DeclaringType?.FullName ?? f.GetMethod()?.Name).Distinct().Take(12)) + ")";
         var includeOperation = types.Any(t => t!.FullName is { } name
             && name.StartsWith("Microsoft.Build.Evaluation.LazyItemEvaluator`", StringComparison.Ordinal)
             && name.EndsWith("+IncludeOperation", StringComparison.Ordinal));
