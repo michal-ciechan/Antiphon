@@ -1761,6 +1761,16 @@ deletes an `index.lock`, including after a timeout kill of a GitWorkspaceService
 next land. `update-ref` advances are not blocked by a lock in a checkout
 that does not have the target branch.
 
+CARD-1536: a source `index_lock_path_error` may reach published cleanup only when the
+active operation has a valid publication receipt and matching task, repository,
+source/target refs and common directory, and the source is a canonical ordinary
+directory with a positively absent `.git` entry and no matching live registration.
+Failed observations and aliases retain the hold. This exception still probes the
+dedicated land and main target checkouts. It grants no deletion authority: guarded
+cleanup rechecks receipt, pins and remote containment, preserves the replacement,
+and records `CleanupRetry` / `Refused` / `unregistered_directory` on the same operation
+with a completed request and a `LandingCleanup` event, without another publication.
+
 An explicit retry of an eligible terminal `Refused` operation creates a fresh operation,
 even when the source is unchanged. It repeats validation and verification as required,
 retains the previous operation and recovery pins, and may refuse again if the target or
