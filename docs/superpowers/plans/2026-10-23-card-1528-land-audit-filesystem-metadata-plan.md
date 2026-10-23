@@ -214,12 +214,52 @@ Counts are TUnit results; internal matrices do not increase Min.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1528/` | filesystem | `/*/*/LandGraphEvaluationTests/(C1528_StaticExistsRefuses)\|(C1528_ProjectedExistsRefuses)\|(C1528_MetadataReadRefuses)\|(C1528_EqualResultReadRefuses)` | V-1..V-4 | exactly 9 passed, 0 failed/skipped | 9 | 10 |
-| CP-2 | S1-S3 | CP-1 | syntax-controls | `/*/*/LandGraphEvaluationTests/(C1528_FunctionSyntaxAndAbsence)\|(C1528_PureMetadataAndFunctionsApprove)` | V-5 V-6 | exactly 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-3 | S1-S3 | CP-1 | recorded-probes | `/*/*/LandGraphEvaluationTests/(C1483_S4_ExistsProbeOfDocsRefuses)\|(C1483_S4_FileReadingPropertyFunctionRefuses)` | R-1 R-2 | exactly 9 passed, 0 failed/skipped | 9 | 1 |
-| CP-4 | S1-S3 | CP-1 | real-approval | `/*/*/LandGraphEvaluationTests/(C1483_S1_HarmlessFixtureApproves)\|(C1483_S4_RealRepositoryApproves)` | R-3 | exactly 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-5 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1528_UpdateRefusalPreservesRecords)\|(C1483_S5_EvaluationFailurePreservesRecords)\|(C1483_S5_CheckRequiresEvaluationRecord)` | V-7 R-4 | exactly 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1528/` | filesystem | `/*/*/LandGraphEvaluationTests/(C1528_StaticExistsRefuses*)\|(C1528_ProjectedExistsRefuses*)\|(C1528_MetadataReadRefuses*)\|(C1528_EqualResultReadRefuses*)` | V-1..V-4 | exactly 9 passed, 0 failed/skipped | 9 | 10 |
+| CP-2 | S1-S3 | CP-1 | syntax-controls | `/*/*/LandGraphEvaluationTests/(C1528_FunctionSyntaxAndAbsence*)\|(C1528_PureMetadataAndFunctionsApprove*)` | V-5 V-6 | exactly 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-3 | S1-S3 | CP-1 | recorded-probes | `/*/*/LandGraphEvaluationTests/(C1483_S4_ExistsProbeOfDocsRefuses*)\|(C1483_S4_FileReadingPropertyFunctionRefuses*)` | R-1 R-2 | exactly 9 passed, 0 failed/skipped | 9 | 1 |
+| CP-4 | S1-S3 | CP-1 | real-approval | `/*/*/LandGraphEvaluationTests/(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S4_RealRepositoryApproves*)` | R-3 | exactly 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-5 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1528_UpdateRefusalPreservesRecords*)\|(C1483_S5_EvaluationFailurePreservesRecords*)\|(C1483_S5_CheckRequiresEvaluationRecord*)` | V-7 R-4 | exactly 3 passed, 0 failed/skipped | 3 | 1 |
 | CP-6 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipTests/C1385_RegistryMatchesNarrowGraph` | R-4 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
+
+## Code verification design (task 2d02464e)
+
+TestDesign was folded into Code by the commissioning brief. The shared durable
+input is `tests/Antiphon.Tests/Application/Fixtures/land-graph-c1528.json`;
+`scripts/test-land-graph-c1528-fixtures.ps1` consumes exactly that input under
+StrictMode Latest, using the source-verified base tool without compiling tests.
+The compiled partial uses the same input and its existing AuditRepo/staged tool.
+V-1..V-4 have nine fresh base approvals (nine failed refusal assertions).
+V-5 has 33 named internal cases; V-6 has six. The 26-result TUnit floor is unchanged.
+The CP-1..CP-5 method OR operands now carry the trailing wildcard required by
+`docs/testing-and-build.md` CARD-0403/CARD-0931, before the single build.
+No selector is broadened beyond the named method prefixes.
+
+The exact static-member allowance is Path.Combine/GetDirectoryName/GetFileName/
+GetExtension/ChangeExtension; String.Copy/IsNullOrEmpty; MSBuild.NormalizePath/
+NormalizeDirectory/EnsureTrailingSlash/Subtract (System.IO and System prefixes
+as appropriate). Every member has a positive lexical fixture and a negative
+nested filesystem fixture. The tracked-definition census found all existing
+property functions inside exactly pinned Targets; no evaluation-time function
+was needed to preserve the current repository. No instance call or chain is
+implicitly allowed. Text and CDATA are concatenated before inspection.
+
+V-7 uses present/projected/metadata fixtures, with the pre-check's established
+None/PackagePath names, each with both records absent and with two valid prior
+records. It independently requires successful pre-check, then exit 1 with
+filesystem-function from the real evaluator, and checks each record separately.
+The wrapper regression harness also invokes PowerShell with StrictMode Latest.
+
+PC-1 has five static Exists variants. PC-2 has custom/default metadata variants.
+PC-3 uses false-absent with the docs directory absent. PC-4's independent
+witnesses are nested (String.Copy of a metadata-only ReadAllText), unknown-type
+(Environment), unknown-member (String.Concat), chain (Copy.Trim), and instance
+(PackageTags.Trim). Each approved on the base tool. The original nested Boolean
+argument caused an evaluation error and was replaced, not counted as valid red.
+Malformed/percent-type/whitespace/FileInfo/DirectoryInfo/dynamic forms remain
+named early-refusal safety tests, not independent mutation witnesses.
+PC-5 has six publication variants (three inputs times absent/prior records),
+with separate manifest/evaluation assertions. All PCs remain pending for
+method-scoped SourceLanding Mutation. No deliberate mutation runs in Code.
 
 ## Rollout and activation
 
