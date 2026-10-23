@@ -23,13 +23,15 @@ public static class ReportValidator
 
     public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1)
     {
-        if (report.CleanupRefusals.Count > 0)
+        if (report.CleanupRefusals.Count > 0 || report.Attempts.Any(attempt => attempt.CleanupRefusals.Count > 0))
             return "cleanup_refused";
         if (new[] { report.BudgetWallSeconds, report.AdmissionOnlySeconds, report.ExecutionSeconds, report.ExecutionLimitSeconds, report.HardWallLimitSeconds, report.RemainingExecutionSeconds }
             .Concat(report.Rows.SelectMany(row => new[] { row.ExecutedSeconds, row.WallSeconds }))
             .Concat(report.Builds.SelectMany(build => new[] { build.ExecutedSeconds, build.WallSeconds }))
             .Any(value => value is double seconds && (!double.IsFinite(seconds) || seconds < 0)))
             return "invalid_timing";
+        if (report.Attempts.Any(attempt => attempt.ExitCode != ExitCodes.Green || attempt.Verdict != "GREEN"))
+            return "historical_attempt_failed";
         if (report.ExitCode != ExitCodes.Green || report.Verdict != "GREEN")
             return "report_failed";
         if (expectedRepeat < 1 || report.SchemaVersion is not (2 or 3)

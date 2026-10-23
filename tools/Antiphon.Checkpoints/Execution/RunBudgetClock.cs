@@ -118,9 +118,10 @@ internal static class BudgetAdmission
         activity?.Admission(true);
         try
         {
-            var lease=await slots.AcquireAsync(session,label,linked.Token).ConfigureAwait(false);
+            var acquireToken = slots is BuildSlotClient ? cancellationToken : linked.Token;
+            var lease=await slots.AcquireAsync(session,label,acquireToken).ConfigureAwait(false);
             observedWait?.Invoke(Math.Max(lease.WaitedSeconds,(int)time.GetElapsedTime(started).TotalSeconds));
-            if(linked.IsCancellationRequested)
+            if(acquireToken.IsCancellationRequested)
             {
                 await lease.DisposeAsync().ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();

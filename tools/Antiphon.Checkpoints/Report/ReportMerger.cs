@@ -81,7 +81,7 @@ public static class ReportMerger
             Slot = row.Slot,
             SlotReason = row.SlotReason,
             WaitedSeconds = row.WaitedSeconds,
-            ExecutedSeconds = row.ExecutedSeconds, WallSeconds = row.WallSeconds, TerminalReason = row.TerminalReason,
+            ExecutedSeconds = row.ExecutedSeconds, WallSeconds = row.WallSeconds, TerminalReason = row.TerminalReason, BrokerReason = row.BrokerReason,
             Executed = row.Executed,
             Passed = row.Passed,
             Failed = row.Failed,

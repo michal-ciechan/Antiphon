@@ -184,8 +184,10 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         report.Rows.ShouldAllBe(row => row.Line!.Contains("waited=7s", StringComparison.Ordinal),
             "busy-rejection-dependent-line-wait");
         var markdown = File.ReadAllText(Path.Combine(run, "report.md"));
-        markdown.Split("\n").Count(line => line.Contains("waited=7s", StringComparison.Ordinal)).ShouldBe(2,
+        markdown.Split("\n").Count(line => line.StartsWith("CHECKPOINT ", StringComparison.Ordinal) && line.Contains("waited=7s", StringComparison.Ordinal)).ShouldBe(2,
             "busy-rejection-report-markdown-wait");
+        markdown.Split("\n").Count(line => line.StartsWith("CHECKPOINT-TIMING ", StringComparison.Ordinal) && line.Contains("waited=7s", StringComparison.Ordinal)).ShouldBe(2,
+            "busy-rejection-timing-markdown-wait");
         Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]),
             "unbuilt-row-source-cannot-be-merged-as-qualified");
         report.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-report-wait");

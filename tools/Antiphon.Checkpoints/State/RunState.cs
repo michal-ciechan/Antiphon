@@ -85,6 +85,7 @@ public sealed class BuildProgress
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    public string? BrokerReason { get; set; }
     public string? TerminalReason { get; set; }
     public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }
@@ -107,6 +108,7 @@ public sealed class RowProgress
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    public string? BrokerReason { get; set; }
     public string? TerminalReason { get; set; }
     public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }

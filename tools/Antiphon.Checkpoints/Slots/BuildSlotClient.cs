@@ -205,7 +205,19 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         sessionId = Environment.GetEnvironmentVariable("ANTIPHON_SESSION_ID"),
                         taskId = Environment.GetEnvironmentVariable("ANTIPHON_TASK_ID"),
                     }, Json), Encoding.UTF8, "application/json");
-                    using var response = await _http.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
+                    using var message = new HttpRequestMessage(HttpMethod.Post, _endpoint) { Content = content };
+                    using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.OK && cancellationToken.IsCancellationRequested)
+                    {
+                        // Headers won the grant race. Identify/release its lease during bounded custody
+                        // teardown; no driver can launch under this independently bounded read.
+                        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10), _timeProvider);
+                        var grantedBody = await response.Content.ReadAsStringAsync(cleanup.Token).ConfigureAwait(false);
+                        var orphan = ReadString(grantedBody, "leaseId");
+                        if (!string.IsNullOrWhiteSpace(orphan) && !_held.ContainsKey(orphan))
+                            await ReleaseAsync(orphan, label, CancellationToken.None).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
                     var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                     var elapsed = Seconds(started);
                     if (response.StatusCode == HttpStatusCode.OK)

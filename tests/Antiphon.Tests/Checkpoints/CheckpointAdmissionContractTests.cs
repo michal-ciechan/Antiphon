@@ -17,7 +17,7 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         var manifest=ManifestLoader.LoadYaml("build:\n  slotWaitMinutes: 2\ntimeouts:\n  hardWallMinutes: 17",root,false);
         manifest.Build.SlotWaitMinutes.ShouldBe(2);
         ManifestLoader.ToYaml(manifest).ShouldContain("hardWallMinutes: 17");
-        var cliManifest = new CheckpointManifest { Checkpoints = [new CheckpointSpec { Id="CP-1",Command="fake",EstimatedMinutes=1 }] };
+        var cliManifest = new CheckpointManifest { Checkpoints = [new CheckpointSpec { Id="CP-1",After=["S1"],Command="fake",EstimatedMinutes=1 }] };
         var manifestFile=Path.Combine(root,"input.yaml"); File.WriteAllText(manifestFile,ManifestLoader.ToYaml(cliManifest));
         var tool=TempDir(); File.WriteAllText(Path.Combine(tool,"Antiphon.Checkpoints.dll"),"fixture");
         var runtime=new CheckpointApp.Runtime { RepoRoot=root,EnvironmentLookup=_=>null,SourceCapture=_=>CheckpointFixtures.CleanSource(),
@@ -71,6 +71,22 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             roundtrip.Rows.Single().ExitCode.ShouldBe(5);
             roundtrip.Rows.Single().ExecutedSeconds.ShouldBeNull();
             roundtrip.CleanupRefusals.ShouldContain("still-present");
+            var observation=CheckpointFixtures.CleanSource();
+            var source=new SourceEvidence { Start=observation,End=observation,State="clean",BuildSource="verified" };
+            roundtrip.Source=source; roundtrip.Commit=observation.Commit!; roundtrip.ExitCode=5; roundtrip.Verdict="RED";
+            roundtrip.Rows.Single().Source=source;
+            roundtrip.Rows.Single().Build="bin-a";
+            var next=JsonSerializer.Deserialize<ReportModel>(ReportWriter.JsonText(roundtrip),ReportWriter.Json)!;
+            next.EndedAt=DateTimeOffset.UtcNow.AddSeconds(1); next.ExitCode=0;next.Verdict="GREEN";next.CleanupRefusals=[];
+            next.Rows.Single().ExitCode=0;next.Rows.Single().State="green";next.Rows.Single().ExecutedSeconds=12;
+            var merged=ReportMerger.Merge([roundtrip,next]);
+            merged.Attempts.Count.ShouldBe(2);
+            merged.Attempts[0].ExitCode.ShouldBe(5);
+            merged.Attempts[0].Rows.Single().ExecutedSeconds.ShouldBeNull();
+            merged.Rows.Single().ExecutedSeconds.ShouldBe(12);
+            ReportValidator.Validate(merged,observation.Commit!).ShouldBe("cleanup_refused");
+            roundtrip.CleanupRefusals=[];
+            ReportValidator.Validate(ReportMerger.Merge([roundtrip,next]),observation.Commit!).ShouldBe("historical_attempt_failed");
         }
     }
 }

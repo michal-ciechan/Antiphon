@@ -59,6 +59,7 @@ public sealed class ReportBuild
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    public string? BrokerReason { get; set; }
     public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     // CARD-1356: the deadline the build ran under, in minutes.
@@ -79,6 +80,7 @@ public sealed class ReportRow
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    public string? BrokerReason { get; set; }
     public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     public int? Executed { get; set; }

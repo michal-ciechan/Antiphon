@@ -43,6 +43,8 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         var h = Fixture(twoBuilds: true);
         var releaseBuild = Signal(); var releaseRow = Signal(); var both = Signal();
         var waiting = 0;
+        var settled = Signal();
+        h.Slots.IdleObserved = () => { if (h.Driver.Count(CheckpointFixtures.IsRun) == 1 && h.Driver.InFlight == 0) settled.TrySetResult(); };
         h.Slots.OnAcquire = async (label, ct) =>
         {
             if (label is "build:bin-b" || label.StartsWith("CP-1@"))
@@ -60,7 +62,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             releaseBuild.TrySetResult();
             await CheckpointFixtures.WaitUntil(() => h.Driver.Count(CheckpointFixtures.IsBuild) == 2);
             // The second build and its row finish immediately; only the first row is still waiting.
-            await CheckpointFixtures.WaitUntil(() => h.Driver.Count(CheckpointFixtures.IsRun) == 1);
+            await settled.Task.WaitAsync(h.Watchdog.Token);
             h.Clock.Advance(TimeSpan.FromMinutes(2));
             releaseRow.TrySetResult();
             var result = await run;
@@ -116,6 +118,29 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             h.Driver.Calls.ShouldBeEmpty();
         }
         finally { h.Watchdog.Cancel(); await run; }
+        foreach (var grantAtBoundary in new[] { false, true })
+        {
+            var clock = new ControlledTimeProvider();
+            var enteredHttp = Signal();
+            var holders = new Holders();
+            var handler = new AdmissionHttp(clock, enteredHttp, grantAtBoundary);
+            var client = new BuildSlotClient(handler, "http://slots.invalid/build-slots", wait: TimeSpan.FromMinutes(2),
+                clock: clock.GetUtcNow, holders: holders, timeProvider: clock);
+            using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var acquire = client.AcquireAsync(new SlotSession("enabled", 4), "bounded-http", watchdog.Token);
+            try
+            {
+                await enteredHttp.Task.WaitAsync(watchdog.Token);
+                if (!grantAtBoundary) clock.Advance(TimeSpan.FromMinutes(2));
+                var lease = await acquire.WaitAsync(watchdog.Token);
+                lease.ExitCode.ShouldBe(4); lease.SlotReason.ShouldBe("slot-admission-deadline-exceeded");
+                lease.WaitedSeconds.ShouldBe(120);
+                await lease.DisposeAsync();
+                holders.Disposed.ShouldBe(1);
+                handler.Deletes.ShouldBe(grantAtBoundary ? 1 : 0);
+            }
+            finally { watchdog.Cancel(); try { await acquire; } catch (OperationCanceledException) { } }
+        }
     }
 
     [Test]
@@ -208,6 +233,32 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         h.Driver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
         h.Driver.Count(r => r.FileName == "git").ShouldBe(1, "baseline fetch uses the remaining five execution minutes; no new rev-parse/cleanup allowance");
         h.Driver.InFlight.ShouldBe(0);
+
+        var wall = Fixture();
+        var wallRun = CheckpointApp.CreateRun(wall.Manifest, new RunRequest { TotalTimeoutMinutes=10, HardWallTimeoutMinutes=17, Baseline="origin/master",KeepOutputs=true },wall.Root,
+            new CheckpointApp.Runtime { SourceCapture=_=>CheckpointFixtures.CleanSource() });
+        wall.Slots.OnAcquire=(label,ct)=>
+        {
+            if(label.StartsWith("build:")) wall.Clock.Advance(TimeSpan.FromMinutes(9));
+            if(label.StartsWith("tool-run:")) wall.Clock.Advance(TimeSpan.FromMinutes(4));
+            ct.ThrowIfCancellationRequested();return Task.CompletedTask;
+        };
+        wall.Driver.When(CheckpointFixtures.IsBuild,(r,ct)=>wall.Finish(r,ct,4));
+        wall.Driver.When(CheckpointFixtures.IsRun,(r,ct)=>
+        {
+            wall.Clock.Advance(TimeSpan.FromMinutes(1));
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(r),("ExampleSurfaceTests.bad","Failed"));
+            return Task.FromResult(new DriverResult(1,"","assertion"));
+        });
+        (await CheckpointApp.ExecuteAsync(wallRun,wall.Watchdog.Token,new CheckpointApp.Runtime
+        {
+            Driver=wall.Driver, Slots=wall.Slots,TimeProvider=wall.Clock,SchedulerSuspended=wall.Slots.Pump,
+            Platform=new FakePlatform(),EnvironmentLookup=_=>null,SourceCapture=_=>CheckpointFixtures.CleanSource(),
+        })).ShouldBe(1, "baseline exhaustion must preserve the primary test failure");
+        wall.Driver.Count(r=>r.FileName=="git").ShouldBe(0,"no baseline driver or cleanup launches after W expires in acquisition");
+        var state=new RunStateStore().TryRead(Path.Combine(wallRun,"state.json"))!;
+        state.Reason.ShouldBe("hard-wall-deadline-exceeded");
+        wall.Driver.InFlight.ShouldBe(0);
     }
 
     private Harness Fixture(bool twoBuilds = false, bool commands = false) => new(TempDir(), twoBuilds, commands);
@@ -255,12 +306,41 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             },linked.Token);
         }
     }
+    private sealed class Holders : ILeaseHolderSource
+    {
+        public int Disposed;
+        public ILeaseHolder Open() => new Holder(this);
+        private sealed class Holder(Holders owner) : ILeaseHolder
+        {
+            public int Pid => 123;
+            public string ProcessStartUtc => "2026-09-25T00:00:00Z";
+            public ValueTask DisposeAsync() { Interlocked.Increment(ref owner.Disposed); return ValueTask.CompletedTask; }
+        }
+    }
+    private sealed class AdmissionHttp(ControlledTimeProvider clock, TaskCompletionSource entered, bool grantAtBoundary) : HttpMessageHandler
+    {
+        public int Deletes;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Method == HttpMethod.Delete)
+            {
+                Interlocked.Increment(ref Deletes);
+                return new HttpResponseMessage(System.Net.HttpStatusCode.NoContent);
+            }
+            entered.TrySetResult();
+            if (!grantAtBoundary) await Task.Delay(Timeout.Infinite, ct);
+            else clock.Advance(TimeSpan.FromMinutes(2));
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            { Content = new StringContent("{\"leaseId\":\"boundary\",\"maxCpuCount\":4}") };
+        }
+    }
     internal sealed class AdmissionSlots : IBuildSlotClient
     {
         public Func<string,CancellationToken,Task>? OnAcquire { get; set; }
         public int Released;
         private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource> _pending = new();
-        public void Pump() { while(_pending.TryDequeue(out var signal)) signal.TrySetResult(); }
+        public Action? IdleObserved { get; set; }
+        public void Pump() { while(_pending.TryDequeue(out var signal)) signal.TrySetResult(); IdleObserved?.Invoke(); }
         public Task<SlotSession> ProbeAsync(CancellationToken ct) => Task.FromResult(new SlotSession("enabled",4));
         public async Task<SlotLease> AcquireAsync(SlotSession session,string label,CancellationToken ct)
         {
