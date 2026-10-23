@@ -331,8 +331,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         await using var world = await OpenDispatchAsync(connection, seeded, adapter, runner, counter);
         WireDispatchPrompt(adapter, world, seeded.SessionId);
         await RetireHarnessSessionAsync(world, seeded.SessionId);
+        var activityFloor = Pg(DateTime.UtcNow);
         counter.Reset();
         await DiscoverCountedAsync(world, counter);
+        await AwaitBudgetBackgroundCompletionAsync(world, seeded.SessionId, activityFloor);
         var roster = counter.Roster();
         adapter.KillCount.ShouldBe(0, roster);
         runner.Kills.ShouldBe(0, roster);
@@ -394,13 +396,38 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         await RetireHarnessSessionAsync(world, seeded.SessionId);
         await using var scope = world.Harness.Provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        var activityFloor = Pg(DateTime.UtcNow);
         counter.Reset();
         (await dispatcher.FailNeverStartedAsync(CancellationToken.None)).ShouldBe(0, counter.Roster());
+        await AwaitBudgetBackgroundCompletionAsync(world, seeded.SessionId, activityFloor);
         var roster = counter.Roster();
         adapter.KillCount.ShouldBe(0, roster);
         runner.Kills.ShouldBe(0, roster);
         world.Stopper.Killed.ShouldBeEmpty(roster);
         return (counter.Total, roster);
+    }
+
+    private static async Task AwaitBudgetBackgroundCompletionAsync(
+        DispatchWorld world, Guid sessionId, DateTime activityFloor)
+    {
+        // Fake text deltas launch the real activity writer without awaiting it. Manual-turn
+        // tracking is also detached. Join both before closing an exact SQL measurement window;
+        // otherwise the saved LastSeenAt UPDATE can arrive after Total but before the full roster.
+        // These observer reads deliberately use the existing uncounted verification context.
+        var field = typeof(AgentSessionRuntime).GetField("_manualTurns",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Manual-turn fixture join must follow the runtime owner.");
+        var turns = (System.Collections.Concurrent.ConcurrentDictionary<Guid, byte>)field.GetValue(world.Harness.Runtime)!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            await using var db = world.Read();
+            var seen = await db.AgentSessions.Where(s => s.Id == sessionId)
+                .Select(s => s.LastSeenAt).SingleAsync(deadline.Token);
+            if (seen >= activityFloor && !turns.ContainsKey(sessionId))
+                return;
+            await Task.Delay(10, deadline.Token);
+        }
     }
 
     private static async Task<(int Total, string Roster)> MeasureHealthyScansAsync(
