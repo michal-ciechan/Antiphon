@@ -340,8 +340,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);
                     if (note.Kind == LandNotificationKind.ProviderInputWait)
                     {
-                        var current = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
-                        if (row.LastDeliveryGeneration is not DateTime attempted || current is not DateTime generation
+                        var receiptGeneration = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+                        if (row.LastDeliveryGeneration is not DateTime attempted || receiptGeneration is not DateTime generation
                             || !SessionGeneration.Equal(attempted, generation)) return;
                     }
                     note.ConfirmedAt = now;

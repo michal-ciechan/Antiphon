@@ -13,7 +13,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>One transaction owns the episode transition and its immutable caller obligation.</summary>
 public sealed class ProviderWaitWarningWriter(IServiceScopeFactory scopes, TaskProviderWaitReader reader,
-    IEventBus events, TimeProvider clock, IOptions<DelegationSettings> settings, LandDeliveryBoundary? boundary = null)
+    IEventBus events, TimeProvider clock, IOptions<DelegationSettings> settings, LandDeliveryBoundary? boundary = null, IOptions<SupervisionSettings>? supervision = null)
 {
     private sealed record Episode(int Version, long Revision, Guid Id, string State,
         TaskProviderWaitBinding Binding, Guid Epoch, long? Prompt, string Call, string Dialog,
@@ -87,7 +87,8 @@ public sealed class ProviderWaitWarningWriter(IServiceScopeFactory scopes, TaskP
             foreach (var message in messages)
             {
                 var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), sessionId, false,
-                    LandNotificationKind.ProviderInputWait, message.LastDeliveryBaselineSequence, message.LastDeliveryStartedAt, 30);
+                    LandNotificationKind.ProviderInputWait, message.LastDeliveryBaselineSequence, message.LastDeliveryStartedAt,
+                    (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
                 if (message.Status != QueuedMessageStatus.Sent || message.DeliveryAttempts <= 0
                     || message.LastDeliveryGeneration is not DateTime delivered || !SessionGeneration.Equal(delivered, session.StartedAt)
                     || prompts is null || await LandNoteReceipt.FirstReceiptAsync(prompts, message.Body, ct) is null)
