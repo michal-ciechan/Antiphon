@@ -49,9 +49,8 @@ No desktop, live qualification, deployment or restart work is authorized.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1492-final/` | fixture-delivery | `/*/*/(TurnEndGapRestartDeliveryTests*)\|(TestClassificationPolicyTests*)/(C1205_*)\|(C487_G059*)` | V-1, R-1, R-2 | 32 passed, 0 failed/skipped: 31 delivery cases and one registry guard | 32 | 8 | true |
-| CP-2 | S1 | CP-1 | watchdog-action-loop | `/*/*/TurnEndGapRestartDeliveryTests/C1205_Watchdog_delivers_while_event_stream_remains_healthy*` | V-1 watchdog repair | 1 passed, 0 failed/skipped | 1 | 1 | true |
 
-Run once at committed HEAD with `--expected-source-sha <HEAD> --total-timeout 25m
+Run once at committed HEAD with `--expected-source-sha <HEAD> --total-timeout 45m
 --row-timeout 15m`; wait until exit is not 75. One build, one exact row, no repeats
 required after green. Validate final report.json with validate-checkpoint-receipt.ps1.
 Delete only inventoried task-owned bin-c1492-* outputs after their owners exit.
@@ -153,3 +152,55 @@ exact watchdog must fail five submissions versus one. The rc pick list is now
 229ffecbf1598cfe9ec67ccee9b1fc8cca04385a followed by this final watchdog repair
 commit (no dialog API dependency in that repair). Its source delta must apply to rc;
 the initial rc fixture compile remains historical, not a new final-pick compile.
+
+## Continuation Code 9e7c7dd0 (Final, focused brief)
+
+Original Code / landing owner remains d923b640; continuation branch is
+feat/card-task-9e7c7dd0, worktree /work/worktrees/task-9e7c7dd0. Start ref is
+ e39114498ae4952779875f1a49ef297d60054689 (no history rewrite).
+The explicit continuation brief overrides the default Final scope: one CP-1
+shared build and all 32 original cases; no Unit, assembly, desktop, Windows
+qualification, restart or repeated green proof. CP-2 above was a historical
+repair selection; the current closed table intentionally contains CP-1 only.
+
+Inherited red witness, no confirming repetition needed:
+
+```text
+CHECKPOINT CP-2 commit=e39114498ae4952779875f1a49ef297d60054689 build=ok filter=/*/*/TurnEndGapRestartDeliveryTests/C1205_Watchdog_delivers_while_event_stream_remains_healthy* executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-d923b640/.antiphon/checkpoints/20261023-112035-729b/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=e39114498ae4952779875f1a49ef297d60054689 sourceState=clean buildSource=verified
+```
+
+That fresh historical TRX reports ends=2, sqlWorking=False, submissions=1;
+UserPrompt and TurnEnd 3/4 were persisted and the first delivery was confirmed.
+Source diagnosis: SessionRuntimeActionCoordinator.ExecuteAsync retains Deferred
+queue phases with DueAt=RetryAt(attempts), releases its volatile owner, and its
+DiscoverAsync waits on a one-second clock timer. The fixture's quiescence only
+checked volatile owners/hints, and JoinDeliveryAsync drove only 20/50 ms timers.
+It could therefore return with durable deferred queue work still awaiting the
+frozen clock. This is fixture scheduling, not evidence for a product repair.
+
+The fixture join now observes the discovery timer registration as well as owners
+and hints, reads the recipient's durable action DueAt when idle, and advances to
+the later of that due time and the existing discovery timer. The real coordinator
+and queue execute the boundary. Working recipients retain their obligations.
+No manual queue flush, re-arming of product state, new input retry, changed
+assertion, classification, deadline or product source is introduced.
+
+V-1, R-1 and R-2 are pending the final CP-1 at the committed continuation tip;
+its fresh TRX must contain watchdog, both restart cache arguments, busy-tail,
+27 adjacent delivery cases and C487_G059, 32/32 green with clean build provenance.
+The final external report supplies actual outcomes and unedited CHECKPOINT lines;
+this narrative is committed before that run so the final pushed tip is tested.
+The run uses --total-timeout 45m --row-timeout 15m and no repetition. All task-owned
+bin-c1492-* outputs must be absent before launch and removed after owner death.
+
+M-1: prior rc applicability/compile evidence for fixture diffs 229ffecbf1598cfe9ec67ccee9b1fc8cca04385a
+and e39114498ae4952779875f1a49ef297d60054689 remains historical. The continuation
+fixture diff must also apply to rc; runtime execution on rc remains unclaimed
+until a fresh rc receipt exists. Do not pick master's dialog API changes
+ d2e472d817a5e5ff0bc75a1b8676558d7ed66e10 or
+506892ab146fc3519df580bac71a81157442d188 to rc, which lacks that API.
+
+PC-1492-5 pending SourceLanding Mutation: omit the durable idle-action join and
+discovery-clock schedule; exact watchdog must fail five submissions versus one.
+PC-1492-1..4 and PC-84..100, every variant, remain pending as before. Mutation owns
+deliberate mutants, red/restore/green and missing-control discovery.

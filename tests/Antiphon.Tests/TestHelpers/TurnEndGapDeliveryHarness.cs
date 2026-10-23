@@ -248,7 +248,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                     noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
                         && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
                         && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
-                var actionsQuiet = _gapActionsLoop is null || (owners.IsEmpty && hints.Reader.Count == 0);
+                var discovery = Clock.Events.LastOrDefault(e => e.Action == "create" && e.DueTime == TimeSpan.FromSeconds(1));
+                var actionsQuiet = _gapActionsLoop is null || (owners.IsEmpty && hints.Reader.Count == 0
+                    && discovery is not null && Clock.TimerStates[discovery.TimerId] == "create");
                 return pending.Count == 0 && noHints && actionsQuiet && recoveryWaiting
                     && (_pump is null || _handler.Stream?.Quiescent == true);
             }
@@ -259,7 +261,27 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                 // Observe between owned continuations, never inside Complete's
                 // synchronous remove/re-enqueue publication. No delay is an oracle.
                 var observation = await _continuations.ObserveAsync(Quiet);
-                if (observation.Quiet) return;
+                if (observation.Quiet)
+                {
+                    // Releasing the volatile owner does not discharge durable deferred
+                    // queue work. Let the real discovery loop reach its next due pass
+                    // while idle; busy-tail obligations must remain held.
+                    if (_gapActionsLoop is not null && !await WorkingAsync())
+                    {
+                        await using var db = World.CreateContext();
+                        var due = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == Id)
+                            .MinAsync(a => (DateTime?)a.DueAt, Token);
+                        if (due is not null)
+                        {
+                            var discovery = Clock.Events.Last(e => e.Action == "create" && e.DueTime == TimeSpan.FromSeconds(1));
+                            var deadline = new DateTimeOffset(due.Value, TimeSpan.Zero);
+                            if (deadline < discovery.Deadline) deadline = discovery.Deadline;
+                            if (deadline > Clock.GetUtcNow()) Clock.AdvanceTo(deadline);
+                            continue;
+                        }
+                    }
+                    return;
+                }
                 await _continuations.WaitForProgressAsync(observation.Sequence, Token);
             }
         }
