@@ -410,7 +410,7 @@ public static class DelegationReportFormatter
     /// counts: an acknowledgement or the bare token is not a report and cannot replace the one
     /// the harness retained. "Accepted, stop" is still a model turn, not a server-side acceptance.
     /// </summary>
-    public static string BlockedReplyContract(Guid taskId) =>
+    public static string BlockedReplyContract(Guid taskId, OrchestrationStage? stage) =>
         $"""
         --- how to report back ---
         This reply reopens task {Short(taskId)}. When this turn completes, send your COMPLETE final report
@@ -418,7 +418,7 @@ public static class DelegationReportFormatter
         original contract asked, even if you are only acknowledging or nothing changed. An acknowledgement,
         a summary of the earlier report, or the closing line alone is not a report: the harness keeps the
         report it already has and cannot settle this task on a bare token.
-        End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
+        {(stage is { } s ? FindingContract(taskId, s) + "\n" : string.Empty)}End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
         is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
         `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it.
         """.ReplaceLineEndings("\n");
