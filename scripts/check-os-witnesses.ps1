@@ -38,17 +38,68 @@ function Blob([string]$Sha, [string]$Path) {
     $script:blobs[$key]=$value
     return $value
 }
-function Test-Lexemes([string]$Text) {
-    # Keep quoted key/assertion arguments, but remove comments before any matching.
-    # The second view also masks strings, so a quoted example is not executable code.
-    $pattern = '(?<literal>@?"(?:""|\\.|`.|[^"\\])*"|''(?:''''|\\.|[^''\\])*'')|(?<comment>//[^\r\n]*|/\*[\s\S]*?\*/|<#[\s\S]*?#>|#[^\r\n]*)'
-    $code = [regex]::Replace($Text, $pattern, {
-        param($match)
-        if ($match.Groups['comment'].Success) { return [regex]::Replace($match.Value, '[^\r\n]', ' ') }
-        return $match.Value
-    })
-    $tokens = [regex]::Replace($code, $pattern, { param($match) [regex]::Replace($match.Value, '[^\r\n]', ' ') })
-    return @{ Code=$code; Tokens=$tokens }
+function Test-Lexemes([string]$Text, [string]$Path) {
+    # Preserve offsets and quoted arguments in Code; Tokens also masks literals.
+    # A partial/ambiguous lexical view must never be used to accept a witness.
+    $powershell = [IO.Path]::GetExtension($Path) -in @('.ps1','.psm1','.psd1')
+    $code = $Text.ToCharArray(); $tokens = $Text.ToCharArray()
+    $i = 0
+    while ($i -lt $Text.Length) {
+        $start = $i; $literal = $false
+        $ch = $Text[$i]
+        $pair = if ($i + 1 -lt $Text.Length) { $Text.Substring($i, 2) } else { '' }
+        if ($pair -eq '/*' -or $pair -eq '<#') {
+            $kind = $pair; $depth = 1; $i += 2
+            while ($i -lt $Text.Length -and $depth -gt 0) {
+                $pair = if ($i + 1 -lt $Text.Length) { $Text.Substring($i, 2) } else { '' }
+                if ($kind -eq '<#' -and $pair -eq '<#') { $depth++; $i += 2 }
+                elseif (($kind -eq '<#' -and $pair -eq '#>') -or ($kind -eq '/*' -and $pair -eq '*/')) { $depth--; $i += 2 }
+                else { $i++ }
+            }
+            if ($depth -ne 0) { throw "unterminated $kind block comment in test source" }
+        } elseif ($pair -eq '//' -or $ch -eq '#') {
+            while ($i -lt $Text.Length -and $Text[$i] -ne "`r" -and $Text[$i] -ne "`n") { $i++ }
+        } else {
+            if ((-not $powershell -and $pair -in @('$"','$@','@$')) -or
+                ($powershell -and $pair -in @('@"',"@'"))) {
+                throw 'ambiguous string literal: interpolated C# and PowerShell here-strings are unsupported'
+            }
+            $verbatim = -not $powershell -and $pair -eq '@"'
+            if ($verbatim) { $i++; $ch = $Text[$i] }
+            if ($ch -ne '"' -and $ch -ne "'") { $i++; continue }
+            if ($ch -eq '"' -and $i + 2 -lt $Text.Length -and $Text.Substring($i, 3) -eq '"""') {
+                throw 'ambiguous string literal: C# raw strings are unsupported'
+            }
+            $literal = $true; $quote = $ch; $closed = $false; $i++
+            while ($i -lt $Text.Length) {
+                $ch = $Text[$i]
+                if ($ch -eq $quote) {
+                    if (($verbatim -or ($powershell -and $quote -eq "'")) -and
+                        $i + 1 -lt $Text.Length -and $Text[$i + 1] -eq $quote) { $i += 2; continue }
+                    $i++; $closed = $true; break
+                }
+                if ((-not $powershell -and -not $verbatim -and $ch -eq '\') -or
+                    ($powershell -and $quote -eq '"' -and $ch -eq '`')) {
+                    if ($i + 1 -ge $Text.Length) { break }
+                    $i += 2; continue
+                }
+                if ($powershell -and $quote -eq '"' -and $ch -eq '$' -and
+                    $i + 1 -lt $Text.Length -and $Text[$i + 1] -eq '(') {
+                    throw 'ambiguous string literal: PowerShell subexpressions are unsupported'
+                }
+                if (-not $powershell -and -not $verbatim -and $ch -in @("`r","`n")) { break }
+                $i++
+            }
+            if (-not $closed) { throw 'unterminated string literal in test source' }
+        }
+        for ($j = $start; $j -lt $i; $j++) {
+            if ($Text[$j] -ne "`r" -and $Text[$j] -ne "`n") {
+                $tokens[$j] = ' '
+                if (-not $literal) { $code[$j] = ' ' }
+            }
+        }
+    }
+    return @{ Code=(-join $code); Tokens=(-join $tokens) }
 }
 function Code-Fragment($Lexemes, [string]$Fragment) {
     if ([string]::IsNullOrWhiteSpace($Fragment)) { return $false }
@@ -153,7 +204,7 @@ try {
         if ($w.targetOS -notin @('Windows','Linux','macOS','FreeBSD','Android','iOS','Browser','Other')) { Fail "$($w.id) invalid targetOS" }
         if (-not $inventory.ContainsKey([string]$w.sourcePath) -or $inventory[$w.sourcePath].disposition -ne 'os-gated') { Fail "$($w.id) witness requires os-gated inventory" }
         $source=Blob $script:head $w.sourcePath
-        $test=Test-Lexemes (Blob $script:head $w.testPath)
+        $test=Test-Lexemes (Blob $script:head $w.testPath) $w.testPath
         if (-not (Test-Declaration $test $w.testCase)) { Fail "$($w.id) testCase declaration missing: $($w.testCase)" }
         foreach ($field in @('productionType','factory')) {
             if (-not (Code-Fragment $test $w[$field])) { Fail "$($w.id) $field missing from test code" }
@@ -173,12 +224,13 @@ try {
                 if ($case -isnot [Collections.IDictionary]) { throw 'invalid input case' }
                 Need $case @('state','setupAssertion') "$($w.id) input"
                 if (-not (Code-Fragment $test $case.setupAssertion)) { Fail "$($w.id) $($case.state) setupAssertion missing from test code" }
-                if (-not $seen.Add("$($case.state):$($case.value)")) { Fail "$($w.id) duplicate input case" }
+                $caseValue = if ($case.ContainsKey('value')) { $case['value'] } else { $null }
+                if (-not $seen.Add("$($case.state):$caseValue")) { Fail "$($w.id) duplicate input case" }
                 if ($case.keyPresent -isnot [bool]) { Fail "$($w.id) keyPresent must be boolean" }
                 switch ($case.state) {
                     'absent' { if ($case.keyPresent -ne $false -or $case.ContainsKey('value')) { Fail "$($w.id) absent requires removal and no value" } }
-                    'empty' { if ($case.keyPresent -ne $true -or $case.value -isnot [string] -or $case.value -cne '') { Fail "$($w.id) empty requires present empty value" } }
-                    'value' { if ($case.keyPresent -ne $true -or $case.value -isnot [string] -or $case.value.Length -eq 0) { Fail "$($w.id) value requires present nonempty value" } }
+                    'empty' { if ($case.keyPresent -ne $true -or $caseValue -isnot [string] -or $caseValue -cne '') { Fail "$($w.id) empty requires present empty value" } }
+                    'value' { if ($case.keyPresent -ne $true -or $caseValue -isnot [string] -or $caseValue.Length -eq 0) { Fail "$($w.id) value requires present nonempty value" } }
                     default { Fail "$($w.id) invalid input state" }
                 }
             }

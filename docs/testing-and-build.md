@@ -594,8 +594,18 @@ case, the production type and factory in code, and each optional-input
 `setupAssertion` as code (including the absent-key assertion). The bounded
 declaration matcher recognizes attributed C# test methods and PowerShell
 functions / `It`, `Run-Case`, or `Test-Case` declarations. It strips `//`, `/* */`,
-`#` and PowerShell block comments, preserving quoted assertion arguments;
-quoted examples cannot supply executable tokens. This is lexical consistency,
+`#` and PowerShell block comments with a deterministic scanner. C# `/* */`
+blocks do not nest; PowerShell `<# #>` blocks do. Unterminated blocks refuse
+with exit 2 naming the comment kind, including after otherwise valid code.
+Quoted assertion arguments are preserved in the comment-free view and masked
+in the executable-token view; `/*` or `<#` inside a closed string is literal
+text, never a comment opener. C# ordinary/character literals use backslash
+escapes, verbatim literals use doubled quotes; PowerShell single quotes double
+and double quotes use backtick escapes, selected by the test path extension.
+Unterminated literals and unsupported ambiguous forms (C# raw/interpolated
+strings, PowerShell here-strings or quoted subexpressions) refuse with exit 2
+and a reason. This bounded scanner does not guess where such strings end.
+Quoted examples cannot supply executable tokens. This is lexical consistency,
 not dataflow proof that the asserted setup reaches production. Review still
 checks removal or never-assigned absence before the call and the actual outcome.
 
