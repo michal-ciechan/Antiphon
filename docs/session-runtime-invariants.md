@@ -1495,3 +1495,25 @@ Herdr lacks complete input custody and reports Unknown for this guard. Native
 permission/question nudge witnesses remain qualification gates per backend;
 CARD-1517/1518 alone owns subsequent intervention policy. No release deadline,
 automatic key, deployment, or parking setting is introduced here.
+
+## Provider input diagnostics (CARD-1518)
+
+The dispatcher reads current Claude dialog observations at a 60-second cadence,
+with at most four reads in flight and the existing two-second read bound. Task
+attempt, dispatch, session generation and runner binding fence the read; missing
+identity/history or a failed refresh is Unknown. Display facts expire after 90
+seconds from completion. Attention reads the store; Check shares the read cadence.
+Warnings are historical episodes, never evidence that a dialog is current.
+
+An opening Warning and ProviderInputWait caller note commit together under the
+task lock. The existing WhenIdle outbox delivers to the captured caller; only a
+complete UserPrompt above the recorded floor in the recorded current generation
+confirms it. It is not a completion note. Unknown does not resolve an episode.
+Verified Clear or a changed turn, call or binding resolves it. Output animation
+does not create a new episode.
+
+The deadline still runs from its original clock. A current dialog changes the
+diagnosis, and a ToolCall retains the local-execution budget. Every actual failure
+uses a new bounded read after transcript catch-up. No diagnostic sends approval,
+cancellation, restart, stop or retry. Failed remains Failed; its session, seat,
+source and pending queue can remain. Preserve them before explicit recovery.

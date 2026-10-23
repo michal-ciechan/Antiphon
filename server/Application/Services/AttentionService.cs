@@ -158,6 +158,7 @@ public sealed partial class AttentionService
     private readonly RunnerAlarmState? _alarms;
     private readonly SeatOccupancyState? _seats;
     private readonly AttentionSettings _attention;
+    private readonly TaskProviderWaitReader? _providerWait;
 
     public AttentionService(
         AppDbContext db,
@@ -176,8 +177,9 @@ public sealed partial class AttentionService
         ISessionRunnerDirectory? runnerDirectory = null,
         RunnerAlarmState? alarms = null,
         SeatOccupancyState? seats = null,
-        IOptions<AttentionSettings>? attention = null)
+        IOptions<AttentionSettings>? attention = null, TaskProviderWaitReader? providerWait = null)
     {
+        _providerWait = providerWait;
         _db = db;
         _runnerClient = runnerClient;
         _supervision = supervision.Value;
@@ -1211,10 +1213,27 @@ public sealed partial class AttentionService
             // the CURRENT boot facts, never from a persisted Warning event, so a model reply
             // resolves it however many historical warnings remain. The generic Overdue arm below
             // reuses this verdict, so the policy is still evaluated at most once per task.
-            var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+            var providerWait = _providerWait is null ? null : await _providerWait.CachedAsync(task.Id, ct);
+            var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct, providerWait);
             if (deadline?.Boot is { } boot)
             {
                 items.Add(BootStallItem(task, boot, now, digest, cost));
+                continue;
+            }
+
+            if (providerWait is { IsWait: true })
+            {
+                var last = await TaskDeadlinePolicy.LoadLastEntryAsync(_db, task.AgentSessionId!.Value, ct);
+                var phase = last?.Kind == TranscriptKinds.ToolCall ? _delegation.LocalExecutionDeadlineMinutes : _delegation.ModelWaitDeadlineMinutes;
+                var ceiling = TaskDeadlinePolicy.CeilingMinutes(_delegation, task.Role);
+                var limit = ceiling > 0 && (phase <= 0 || ceiling < phase) ? ceiling : phase;
+                items.Add(new AttentionItemDto(AttentionKind.ProviderInputWait, AlertSeverity.Warning,
+                    task.Id, task.AgentSessionId, task.AgentId, null, task.Title,
+                    "Decision needed: " + providerWait.Diagnosis,
+                    $"Observed at {providerWait.CompletedAt:O}. The existing {limit}-minute deadline remains in force. Inspect the current session and choose an authorized answer or cancellation. Antiphon has sent no approval or cancellation key.",
+                    providerWait.CompletedAt, cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.OpenAgent, AttentionAction.OpenCard],
+                    ConditionKey: $"provider-wait:{task.Id:N}"));
                 continue;
             }
 

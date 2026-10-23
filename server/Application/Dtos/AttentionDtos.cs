@@ -380,6 +380,7 @@ public enum AttentionKind
     /// out of scope (D-4, D-6). Detection only.
     /// </summary>
     SlotOrphan = 59,
+    ProviderInputWait = 60,
 }
 
 /// <summary>

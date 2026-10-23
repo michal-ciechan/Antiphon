@@ -198,6 +198,7 @@ export type AttentionKind =
    * CARD-1079: an occupying slot is an orphan. Warning immediately. Detection only.
    */
   | 'SlotOrphan'
+  | 'ProviderInputWait'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

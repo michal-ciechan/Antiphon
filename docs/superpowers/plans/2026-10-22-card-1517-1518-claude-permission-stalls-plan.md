@@ -445,3 +445,7 @@ profile to a suite. Its next stage can be Code only after the verification secti
 is complete and the CARD-0680 dependency/qualification gates are explicit.
 Land this plan through its own task owner; its docs publication does not activate
 any feature or release the incident seat.
+
+CARD-1518 diagnosis is implemented under the narrower
+[permission-wait classification plan](2026-10-23-card-1518-permission-wait-classification-plan.md).
+CARD-1517 intervention and native qualification remain separate.
