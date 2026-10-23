@@ -31,6 +31,7 @@ public sealed class SlotLease : IAsyncDisposable
 public sealed class BuildSlotClient : IBuildSlotClient
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private readonly TimeProvider _timeProvider;
     private readonly HttpClient _http;
     private readonly string _endpoint;
     private readonly TimeSpan _grace;
@@ -49,8 +50,9 @@ public sealed class BuildSlotClient : IBuildSlotClient
         TimeSpan? wait = null, Func<DateTimeOffset>? clock = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
         int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null,
-        string? sensitiveToken = null, Func<TimeSpan, CancellationToken, Task>? renewalDelay = null)
+        string? sensitiveToken = null, Func<TimeSpan, CancellationToken, Task>? renewalDelay = null, TimeProvider? timeProvider = null)
     {
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
         _grace = grace ?? TimeSpan.FromSeconds(60);
@@ -127,6 +129,33 @@ public sealed class BuildSlotClient : IBuildSlotClient
     }
 
     public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
+    {
+        RunBudgetClock.Validate(_wait, "slotWaitMinutes");
+        using var deadline = new CancellationTokenSource(_wait, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var started = _clock();
+        SlotDiagnostic? last = null;
+        try
+        {
+            var lease = await AcquireCoreAsync(session, label, diagnostic => last = diagnostic, linked.Token).ConfigureAwait(false);
+            if (linked.IsCancellationRequested)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return Expired();
+            }
+            return lease;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        { return Expired(); }
+        SlotLease Expired() => new()
+        {
+            State = "timeout", ExitCode = ExitCodes.SlotTimeout, WaitedSeconds = Seconds(started), MaxCpuCount = 0,
+            SlotReason = "slot-admission-deadline-exceeded", Diagnostic = last,
+        };
+    }
+
+    private async Task<SlotLease> AcquireCoreAsync(SlotSession session, string label, Action<SlotDiagnostic> observed, CancellationToken cancellationToken)
     {
         if (session.ExitCode != 0 || session.Mode == "refused")
             return RefusedLease(session.Diagnostic ?? new SlotDiagnostic("probe", null,
@@ -254,6 +283,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     }
                     var reason = SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode);
                     last = Observe("acquire", (int)response.StatusCode, reason, body, elapsed, label);
+                    observed(last);
                     if (response.StatusCode == HttpStatusCode.Conflict && reason is ("build_slot_busy" or "build_slot_memory_floor"))
                     {
                         // A busy reply is a live broker answer. Transport grace starts afresh
@@ -264,7 +294,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         {
                             _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} after {(int)_wait.TotalSeconds}s reason={reason}");
                             return new SlotLease { State = "timeout", ExitCode = ExitCodes.SlotTimeout,
-                                WaitedSeconds = elapsed, MaxCpuCount = 0, SlotReason = reason, Diagnostic = last };
+                                WaitedSeconds = elapsed, MaxCpuCount = 0, SlotReason = "slot-admission-deadline-exceeded", Diagnostic = last };
                         }
                         if (_clock() - lastPrinted >= TimeSpan.FromMinutes(1))
                         {
@@ -272,7 +302,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                             lastPrinted = _clock();
                         }
                         var retryMs = ReadInt(body, "retryAfterMs", 5000);
-                        await _delay(TimeSpan.FromMilliseconds(Math.Clamp(retryMs, 1, 60_000)), cancellationToken).ConfigureAwait(false);
+                        await _delay(TimeSpan.FromMilliseconds(Math.Min(Math.Clamp(retryMs, 1, 60_000), Math.Max(1, (_wait - SecondsSince(started)).TotalMilliseconds))), cancellationToken).ConfigureAwait(false);
                         continue;
                     }
                     if ((int)response.StatusCode < 500)

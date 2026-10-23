@@ -55,6 +55,9 @@ public sealed class RowRunResult
     public string State { get; init; } = "";
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     public double Seconds { get; set; }
     public RepeatEvidence? Repeat { get; set; }

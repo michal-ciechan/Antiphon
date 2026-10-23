@@ -12,13 +12,21 @@ public sealed class BaselineComparer
     private readonly IDriver _driver;
     private readonly IBuildSlotClient _slots;
     private readonly TimeSpan _timeout;
+    private readonly RunBudgetClock? _budget;
+    private readonly TimeSpan _slotWait;
+    private RunBudgetClock? _activeBudget;
     private readonly Func<CancellationToken, Task>? _beforeLaunch;
 
     public List<string> ToolRuns { get; } = [];
 
     public BaselineComparer(IDriver driver, IBuildSlotClient? slots = null, TimeSpan? timeout = null,
-        Func<CancellationToken, Task>? beforeLaunch = null)
+        Func<CancellationToken, Task>? beforeLaunch = null) : this(driver, slots, timeout, beforeLaunch, null, TimeSpan.FromMinutes(45)) { }
+
+    internal BaselineComparer(IDriver driver, IBuildSlotClient? slots, TimeSpan? timeout,
+        Func<CancellationToken, Task>? beforeLaunch, RunBudgetClock? budget, TimeSpan slotWait)
     {
+        _budget = budget;
+        _slotWait = slotWait;
         _driver = driver;
         _slots = slots ?? new FixedSlotClient("off");
         _timeout = timeout ?? TimeSpan.FromMinutes(15);
@@ -37,7 +45,13 @@ public sealed class BaselineComparer
         if (redRows.Count == 0 || string.IsNullOrWhiteSpace(baselineRef))
             return results;
 
-        var deadline = DateTimeOffset.UtcNow + _timeout;
+        if (_timeout <= TimeSpan.Zero) return results;
+        using var ownedBudget = _budget is null ? new RunBudgetClock(TimeProvider.System, _timeout, _timeout + _slotWait) : null;
+        _activeBudget = _budget ?? ownedBudget;
+        if (_activeBudget!.Token.IsCancellationRequested) return results;
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _activeBudget.Token);
+        cancellationToken = work.Token;
+        var deadline = _activeBudget.HardWallTimeoutAt;
         var session = await _slots.ProbeAsync(cancellationToken).ConfigureAwait(false);
         var fetch = await RunLeased(
             session,
@@ -148,14 +162,14 @@ public sealed class BaselineComparer
             }
             finally
             {
-                if (!cancellationToken.IsCancellationRequested && createdByUs)
+                if (!cancellationToken.IsCancellationRequested && _activeBudget!.RemainingExecution > TimeSpan.Zero && _activeBudget.RemainingWall > TimeSpan.Zero && createdByUs)
                 {
                     await RunLeased(
                         session,
                         "tool-run: baseline git worktree remove " + build.Id,
                         new DriverRequest("git", ["worktree", "remove", "--force", checkout], worktree),
-                        DateTimeOffset.UtcNow.AddMinutes(1),
-                        CancellationToken.None).ConfigureAwait(false);
+                        deadline,
+                        cancellationToken).ConfigureAwait(false);
                     try
                     {
                         if (Directory.Exists(checkout) && CanRemoveBaselineCheckout(worktree, checkout))
@@ -165,7 +179,7 @@ public sealed class BaselineComparer
                     {
                     }
                 }
-                else if (cancellationToken.IsCancellationRequested && (added || Directory.Exists(checkout)))
+                else if (createdByUs || cancellationToken.IsCancellationRequested && (added || Directory.Exists(checkout)))
                     ToolRuns.Add("tool-run: baseline retained canceled workspace " + checkout);
             }
         }
@@ -240,10 +254,17 @@ public sealed class BaselineComparer
         CancellationToken cancellationToken)
     {
         ToolRuns.Add(label);
-        var remaining = deadline - DateTimeOffset.UtcNow;
+        var remaining = _activeBudget?.RemainingExecution ?? deadline - DateTimeOffset.UtcNow;
         if (remaining <= TimeSpan.Zero)
             return new DriverResult(ExitCodes.Timeout, "", "baseline timeout", TimedOut: true);
-        await using var lease = await _slots.AcquireAsync(session, label, cancellationToken).ConfigureAwait(false);
+        using var activity = _activeBudget?.EnterActivity();
+        SlotLease lease;
+        _activeBudget?.SchedulerIdle(true);
+        try { lease = await BudgetAdmission.AcquireAsync(_slots, session, label, _activeBudget, activity,
+            _activeBudget?.Time ?? TimeProvider.System, _slotWait, null, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return new DriverResult(ExitCodes.Timeout, "", "baseline budget exhausted", TimedOut: true); }
+        finally { _activeBudget?.SchedulerIdle(false); }
+        await using var ownedLease = lease;
         if (lease.ExitCode != 0)
         {
             ToolRuns.Add(label + " slot=" + lease.State + " slot-reason=" + (lease.SlotReason ?? "unknown")
@@ -252,9 +273,13 @@ public sealed class BaselineComparer
             return new DriverResult(lease.ExitCode, "", "slot " + lease.State + ": " + lease.SlotReason,
                 TimedOut: lease.ExitCode == ExitCodes.SlotTimeout);
         }
+        remaining = _activeBudget?.RemainingExecution ?? deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero || cancellationToken.IsCancellationRequested)
+            return new DriverResult(ExitCodes.Timeout, "", "baseline budget exhausted", TimedOut: true);
         if (_beforeLaunch is not null)
             await _beforeLaunch(cancellationToken).ConfigureAwait(false);
-        return await RowTimeout.RunWithDeadlineAsync(_driver, request, remaining, cancellationToken).ConfigureAwait(false);
+        try { return await RowTimeout.RunWithDeadlineAsync(_driver, request, remaining, _activeBudget?.Time ?? TimeProvider.System, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return new DriverResult(ExitCodes.Timeout, "", "baseline budget exhausted", TimedOut: true); }
     }
 
     private static string ClassKey(string filter)
