@@ -237,10 +237,10 @@ public class PhoneHomeStrandedQueueTests
         var start = host.Directory.Resolve(host.AllowedRunnerId)
             .StartAsync(launched, RawSpec(generation), CancellationToken.None);
         await peer.WaitForAsync(PhoneHomeOperation.Launch);
-        var received = live.LiveBufferEvents;
+        var received = live.ReceivedEvents;
         await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionExited,
             new RunnerSessionExitedEvent(launched, 1, nameof(AgentExitReason.Unknown), 0, generation)));
-        await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+        await WaitUntilAsync(() => live.ReceivedEvents == received + 1 && live.PendingEvents == 0);
         peer.ReleaseHeld();
         var started = await start;
 
@@ -298,10 +298,10 @@ public class PhoneHomeStrandedQueueTests
             if (failed >= 2)
             {
                 // Output is the runner vouching for the session between Lists.
-                var received = live.LiveBufferEvents;
+                var received = live.ReceivedEvents;
                 await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionOutput,
                     new RunnerOutputEvent(talking, failed, "still here")));
-                await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+                await WaitUntilAsync(() => live.ReceivedEvents == received + 1 && live.PendingEvents == 0);
             }
 
             (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
@@ -609,10 +609,10 @@ public class PhoneHomeStrandedQueueTests
 
         // The Launch (and a List) went out, then the runner wrote the session's exit.
         var sent = live.BeginInventoryRead();
-        var received = live.LiveBufferEvents;
+        var received = live.ReceivedEvents;
         await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionExited,
             new RunnerSessionExitedEvent(launched, 1, nameof(AgentExitReason.Unknown), 0, generation)));
-        await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+        await WaitUntilAsync(() => live.ReceivedEvents == received + 1 && live.PendingEvents == 0);
 
         // An hour on, with the connection kept up and its inventory refreshed in between.
         clock.Advance(TimeSpan.FromHours(1));

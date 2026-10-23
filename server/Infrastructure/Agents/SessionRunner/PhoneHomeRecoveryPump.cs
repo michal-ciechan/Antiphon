@@ -358,9 +358,9 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
 
     internal async Task PumpEventsAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
-        await foreach (var frame in live.Events.ReadAllAsync(ct))
+        await foreach (var item in live.Events.ReadAllAsync(ct))
         {
-            var size = frame.Payload?.GetRawText().Length ?? 0;
+            var frame = item.Frame;
             Guid? sessionId = null;
             try
             {
@@ -420,7 +420,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             }
             finally
             {
-                live.ReleaseEvent(size);
+                item.Release();
             }
         }
     }

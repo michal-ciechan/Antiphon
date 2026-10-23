@@ -118,7 +118,11 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    public async Task ObserveOutputAsync(Guid sessionId, long sequence, string text, CancellationToken ct)
+    public Task ObserveOutputAsync(Guid sessionId, long sequence, string text, CancellationToken ct) =>
+        ObserveOutputAsync(sessionId, sequence, text, null, ct);
+
+    public async Task ObserveOutputAsync(Guid sessionId, long sequence, string text,
+        Action<SessionObservationPhase>? phase, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(text))
             return;
@@ -132,6 +136,7 @@ public sealed class AgentSessionRuntime
             var chunk = text.Substring(offset, Math.Min(maxChunkChars, text.Length - offset));
             try
             {
+                phase?.Invoke(SessionObservationPhase.OutputMention);
                 _mentionRouter?.ObserveDelta(sessionId, chunk);
             }
             catch (Exception ex)
@@ -139,6 +144,7 @@ public sealed class AgentSessionRuntime
                 _logger.LogWarning(ex, "Failed to observe mention delta for session {SessionId}", sessionId);
             }
 
+            phase?.Invoke(SessionObservationPhase.OutputPublish);
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(sessionId),
                 "AgentTextDelta",
@@ -146,6 +152,7 @@ public sealed class AgentSessionRuntime
                 ct);
         }
 
+        phase?.Invoke(SessionObservationPhase.OutputActivity);
         await RecordActivityAsync(sessionId);
     }
 

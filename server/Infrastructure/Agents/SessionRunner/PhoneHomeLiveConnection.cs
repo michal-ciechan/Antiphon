@@ -15,12 +15,18 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private readonly Func<string, int, int, CancellationToken, Task>? _capacityReconciled;
     private readonly SemaphoreSlim _send = new(1, 1);
     private readonly ConcurrentDictionary<Guid, Waiter> _waiters = new();
-    private readonly Channel<PhoneHomeFrame> _events = Channel.CreateUnbounded<PhoneHomeFrame>();
+    private readonly Channel<PhoneHomeQueuedEvent> _events = Channel.CreateUnbounded<PhoneHomeQueuedEvent>();
     private int _inFlight;
     private int _pendingEvents;
     private int _pendingEventBytes;
-    private int _liveBufferEvents;
-    private int _liveBufferBytes;
+    private long _receivedEvents;
+    private long _receivedPayloadBytes;
+    private long _releasedEvents;
+    private long _releasedPayloadBytes;
+    private readonly object _accountGate = new();
+    private readonly LinkedList<PhoneHomeQueuedEvent> _pending = new();
+    public PhoneHomeOverflowSnapshot? OverflowAt { get; private set; }
+    public PhoneHomeEventDiagnostics Diagnostics { get; }
     private string? _disconnectReason;
     private DateTimeOffset? _disconnectAtUtc;
     private readonly object _disconnectGate = new();
@@ -62,6 +68,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _maxCapacity = maxCapacity;
         _capacityReconciled = capacityReconciled;
         Clock = clock;
+        Diagnostics = new PhoneHomeEventDiagnostics(clock);
         _capacity = capacity;
         Platform = platform;
         Capabilities = capabilities;
@@ -101,12 +108,12 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             !string.Equals(session.Status, "Exited", StringComparison.OrdinalIgnoreCase));
     public bool SocketOpen => _socket.State == WebSocketState.Open;
     internal WebSocketState SocketState => _socket.State;
-    public ChannelReader<PhoneHomeFrame> Events => _events.Reader;
+    public ChannelReader<PhoneHomeQueuedEvent> Events => _events.Reader;
     public int InFlight => Volatile.Read(ref _inFlight);
     public int PendingEvents => Volatile.Read(ref _pendingEvents);
     public int PendingEventBytes => Volatile.Read(ref _pendingEventBytes);
-    internal int LiveBufferEvents => Volatile.Read(ref _liveBufferEvents);
-    internal int LiveBufferBytes => Volatile.Read(ref _liveBufferBytes);
+    internal long ReceivedEvents => Interlocked.Read(ref _receivedEvents);
+    internal long ReceivedPayloadBytes => Interlocked.Read(ref _receivedPayloadBytes);
 
     /// <summary>Requests still waiting for a reply; a dispose fails each of them.</summary>
     internal int PendingWaiters => _waiters.Count;
@@ -455,17 +462,27 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
             if (frame.Kind == PhoneHomeFrameKind.Event)
             {
-                var size = frame.Payload?.GetRawText().Length ?? 0;
-                if (Volatile.Read(ref _pendingEvents) + 1 > _limits.MaxPendingEvents
-                    || Volatile.Read(ref _pendingEventBytes) + size > _limits.MaxPendingEventBytes)
-                    throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Pending live events overflowed.");
-                Interlocked.Increment(ref _pendingEvents);
-                Interlocked.Add(ref _pendingEventBytes, size);
-                Interlocked.Increment(ref _liveBufferEvents);
-                Interlocked.Add(ref _liveBufferBytes, size);
-                if (logger is not null)
-                    WarnHighWater(logger);
-                await _events.Writer.WriteAsync(frame, ct);
+                var size = PhoneHomeEventPayload.Measure(frame.Payload);
+                PhoneHomeQueuedEvent item;
+                lock (_accountGate)
+                {
+                    var countFull = _pendingEvents >= _limits.MaxPendingEvents;
+                    var bytesFull = (long)_pendingEventBytes + size > _limits.MaxPendingEventBytes;
+                    if (countFull || bytesFull)
+                    {
+                        OverflowAt = new(SnapshotUnderLock(), size, countFull && bytesFull ? "count+bytes" : countFull ? "count" : "bytes");
+                        throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Pending live events overflowed.");
+                    }
+                    _pendingEvents++;
+                    _pendingEventBytes += size;
+                    _receivedEvents = checked(_receivedEvents + 1);
+                    _receivedPayloadBytes = checked(_receivedPayloadBytes + size);
+                    item = new(frame, size, Clock.GetTimestamp(), ReleaseEvent);
+                    item.Node = _pending.AddLast(item);
+                    Diagnostics.Admitted(frame.EventName, size);
+                }
+                if (logger is not null) WarnHighWater(logger);
+                if (!_events.Writer.TryWrite(item)) item.Abandon();
             }
         }
     }
@@ -495,8 +512,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// </summary>
     private void WarnHighWater(ILogger logger)
     {
-        var events = Volatile.Read(ref _pendingEvents);
-        var bytes = Volatile.Read(ref _pendingEventBytes);
+        var snapshot = AccountingSnapshot();
+        var events = snapshot.PendingEvents;
+        var bytes = snapshot.PendingEventBytes;
         var fill = Math.Max(
             (double)events / _limits.MaxPendingEvents,
             (double)bytes / _limits.MaxPendingEventBytes);
@@ -519,9 +537,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         logger.LogWarning(
             "Phone-home connection {RunnerId} epoch {Epoch} pending live events passed {Percent}% of the cap: "
             + "{PendingEvents}/{MaxPendingEvents} events, {PendingEventBytes}/{MaxPendingEventBytes} bytes; "
-            + "pump released {EventsPerSecond:0.0} events/s over the last 10s",
+            + "pump released {EventsPerSecond:0.0} events/s over the last 10s; oldestMs={OldestPendingMs} diagnostics={Diagnostics}",
             RunnerId, Epoch, percent, events, _limits.MaxPendingEvents, bytes, _limits.MaxPendingEventBytes,
-            ReleasedEventsPerSecond());
+            ReleasedEventsPerSecond(), snapshot.OldestPendingMs, JsonSerializer.Serialize(Diagnostics.Snapshot(), PhoneHomeFraming.Json));
     }
 
     /// <summary>CARD-0679 D-1: the pump's release rate over the last ten seconds.</summary>
@@ -541,10 +559,31 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         return total / (double)RateWindowSeconds;
     }
 
-    public void ReleaseEvent(int bytes)
+    public PhoneHomeAccountingSnapshot AccountingSnapshot()
     {
-        Interlocked.Decrement(ref _pendingEvents);
-        Interlocked.Add(ref _pendingEventBytes, -bytes);
+        lock (_accountGate) return SnapshotUnderLock();
+    }
+
+    private PhoneHomeAccountingSnapshot SnapshotUnderLock() => new(
+        _pendingEvents, _pendingEventBytes, _receivedEvents, _receivedPayloadBytes,
+        _releasedEvents, _releasedPayloadBytes,
+        _pending.First is { } oldest ? Clock.GetElapsedTime(oldest.Value.EnqueuedAt).TotalMilliseconds : 0);
+
+    private void ReleaseEvent(PhoneHomeQueuedEvent item, bool observed)
+    {
+        lock (_accountGate)
+        {
+            _pending.Remove(item.Node!);
+            _pendingEvents--;
+            _pendingEventBytes -= item.PayloadBytes;
+            if (observed)
+            {
+                _releasedEvents = checked(_releasedEvents + 1);
+                _releasedPayloadBytes = checked(_releasedPayloadBytes + item.PayloadBytes);
+            }
+            Diagnostics.Released(item.Frame.EventName, item.PayloadBytes);
+        }
+        OnEventReleased(observed);
         var second = Clock.GetUtcNow().ToUnixTimeSeconds();
         var slot = (int)(second % RateWindowSeconds);
         lock (_rateGate)
@@ -558,6 +597,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             _releaseCount[slot]++;
         }
     }
+
+    private void OnEventReleased(bool observed) { }
 
     public ValueTask DisposeAsync() => DisposeAsync("dispose");
 

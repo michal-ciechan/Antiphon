@@ -118,7 +118,7 @@ public class PhoneHomeBackpressureTests
             var frame = await live.Events.ReadAsync();
             // Before the queued lease exists the base has a bare frame; inspect it as data so
             // the witness builds before production changes.
-            Release(live, frame);
+            frame.Release();
             live.PendingEvents.ShouldBe(0);
             live.PendingEventBytes.ShouldBe(0);
         }
@@ -176,9 +176,4 @@ public class PhoneHomeBackpressureTests
     private static bool WaitingForCredit(PhoneHomeHostedRunner h) =>
         h.Service.GetType().GetProperty("WaitingForEventCredit")?.GetValue(h.Service) is true;
 
-    private static void Release(PhoneHomeLiveConnection live, object item)
-    {
-        if (item is PhoneHomeFrame frame) live.ReleaseEvent(frame.Payload?.GetRawText().Length ?? 0);
-        else item.GetType().GetMethod("Release")!.Invoke(item, null);
-    }
 }
