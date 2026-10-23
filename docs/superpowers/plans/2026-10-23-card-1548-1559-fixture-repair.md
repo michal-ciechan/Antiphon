@@ -33,10 +33,10 @@ separately commissioned desktop lane; this task must not use that lane.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | baseline | `tests/Antiphon.Tests -> bin-3fa-red/` | inherited-red | `/*/*/AgentTaskLandReceiptWatermarkTests/C1121_AnyCommittedChangeReopensFullScan*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnchangedTranscriptSkipsOnlyReceiptSelect*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnknownEvidenceUsesExistingScan*\|/*/*/SessionStateWarmupTests/Retention_*\|/*/*/ChannelInboundRecoveryTests/C768_BrokerReplayAfterPayloadPurgeKeepsNativeIdentity*` | V-1,V-2,V-3 | diagnostic: inherited red required | 29 | 5 | true |
-| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 1 | 5 | true |
-| CP-3 | repair | CP-2 | warmup | `/*/*/SessionStateWarmupTests/*` | V-1,R-2 | all listed, 0 failed | 1 | 2 | true |
-| CP-4 | repair | CP-2 | inbound-recovery | `/*/*/ChannelInboundRecoveryTests/*` | V-1,R-2 | all listed, 0 failed | 1 | 5 | true |
-| CP-5 | repair | CP-2 | card-correction | `/*/*/CardCorrectionIntegrationTests/*` | V-4,R-3 | all listed, 0 failed | 1 | 3 | true |
+| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 36 | 5 | true |
+| CP-3 | repair | CP-2 | warmup | `/*/*/SessionStateWarmupTests/*` | V-1,R-2 | all listed, 0 failed | 16 | 2 | true |
+| CP-4 | repair | CP-2 | inbound-recovery | `/*/*/ChannelInboundRecoveryTests/*` | V-1,R-2 | all listed, 0 failed | 27 | 5 | true |
+| CP-5 | repair | CP-2 | card-correction | `/*/*/CardCorrectionIntegrationTests/*` | V-4,R-3 | all listed, 0 failed | 43 | 3 | true |
 
 ### Cost
 
@@ -51,3 +51,12 @@ both use the host build-slot gate. No repetitions after green.
 No new product behavior or deliberate mutants. No new PC IDs. All existing C1121
 PCs remain pending for SourceLanding Mutation; ordinary green does not discharge
 them. Mutation also owns missing-control discovery for these fixture repairs.
+
+## Baseline correction
+
+CP-1 completed with 36 watermark cases only: 32 passed, 4 inherited failures.
+Its historical filter used unsupported full-path OR syntax; it did not select
+warmup/inbound. Use retained diagnosis for those base witnesses (cost exception
+in the brief). No baseline pass is claimed for those classes. Final rows select
+one class each and inspect every fresh TRX identity. Evidence and exact RC picks:
+`docs/investigations/2026-10-23-card-1548-1559-fixture-repair.md`.
