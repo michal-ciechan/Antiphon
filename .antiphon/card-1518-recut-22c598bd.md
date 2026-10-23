@@ -67,8 +67,7 @@ output was deleted after the terminal red run to avoid pre-existing-stamp refusa
 
 Restart: server. RC prerequisites: CARD-0680 pick 89c1cdaa4 first, then the
 original chain commits below in order (the rc takes original commits, not this
-re-cut). The fixture-only repair may follow as a separate test-only pick if desired.
-Activation requires a server restart on the approved rc and a matching client
+re-cut). Activation requires a server restart on the approved rc and a matching client
 bundle. Compatible active CARD-0680 runners and applicable qualification remain
 prerequisites; upgrade/restart that dependency if its active runner lacks support.
 The runner catalogue/defaults were read: default server2 revision 2; eligible Linux
@@ -130,3 +129,18 @@ c81c501bd6b1e2fbf78d9f98e354a06e44fc8a7f Fix receipt negative fixture expression
 dfe06b748a30aef71f8e769da10d28355107430c Repair stored-state delivery fixtures and complete ordinary boundary controls
 6dd2ef6d0ea5063260253f75fcf12edac6ed2280 Await terminal guidance visibility within the existing client bound
 66429114dcee2d6e863ba71874fa196d91a81f14 test(card-1518): drive registered delivery timers in permission wait fixtures
+
+## First full admission
+
+Run 20261023-073603-a970 at 6f2e80c808196c46311324ad0a1d0b7b7428f65e
+finished in 3m03s. CP-8 passed typecheck, lint and its one focused test. The
+.NET build was refused before compilation because npm installed two hard-linked
+esbuild executables. CP-2..CP-7 executed zero tests; this is not product/test red.
+All obtained slots were granted with waited=0s. After terminal exit 2, replaced
+only those generated executables with byte-identical regular single-link copies:
+
+client/node_modules/@esbuild/linux-x64/bin/esbuild links=1 sha256=c638273fcf95573ca74af586677800b4dd874c55f8f945adb54316d6902ba14b
+client/node_modules/esbuild/bin/esbuild links=1 sha256=c638273fcf95573ca74af586677800b4dd874c55f8f945adb54316d6902ba14b
+
+The refused output directory was removed. The next run selects CP-2..CP-8 again
+at this report commit, with unchanged deadlines and the same fixture repair.
