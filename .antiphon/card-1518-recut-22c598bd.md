@@ -144,3 +144,22 @@ client/node_modules/esbuild/bin/esbuild links=1 sha256=c638273fcf95573ca74af5866
 
 The refused output directory was removed. The next run selects CP-2..CP-8 again
 at this report commit, with unchanged deadlines and the same fixture repair.
+
+## Immediate deadline notification delivery
+
+Run 20261023-074010-89e1 at bbcfe34eb663b383d14bfd2778ae4bc1d7d7b9cb
+completed in 11m19s with clean source and verified provenance: 21/22 .NET tests
+passed, zero skipped, and CP-8 passed its one focused test plus typecheck/lint.
+V-8 now passed in 10.0800434s, including the false-receipt refusals and recovered
+whole receipt. V-7 passed initial caller delivery but reached the same undriven
+settle timer in its later deadline-failure notification: FailAndNotifyAsync calls
+EnqueueAsync with immediate idle delivery, before the explicit flush. V-7 canceled
+at the unchanged 60-second bound. All obtained slots were granted; waited=0s.
+
+The fixture's DeadlineAsync now joins that operation through the same registered
+delivery timer driver. No product code, assertion, test budget or retry changes.
+The shared build took 323.71347s (MSBuild 4m06s). The owned output was removed after
+terminal exit 1. CP-2..CP-8 will run once more at this committed repair/report tip,
+as required by the brief's all-green final-run condition. This is the third client
+execution in this task and the second full run reaching .NET tests, not a loaded
+repetition or flake campaign. No further repetitions are requested after green.
