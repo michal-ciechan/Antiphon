@@ -5,6 +5,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -79,6 +81,10 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
     /// disabled; this replacement makes a census invocation a loud exception if a test re-arms it.
     /// </summary>
     public RefusingZombieProcessCensus ZombieCensus { get; } = new();
+
+    private readonly string _timingId = "host-" + Guid.NewGuid().ToString("N");
+    private int _startupDepth;
+    private int _shutdownRecorded;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -170,16 +176,55 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
         return Task.CompletedTask;
     }
 
+    protected override IHost CreateHost(IHostBuilder builder) =>
+        MeasureStartup(() => base.CreateHost(builder));
+
+    protected override TestServer CreateServer(IWebHostBuilder builder) =>
+        MeasureStartup(() => base.CreateServer(builder));
+
+    private T MeasureStartup<T>(Func<T> start)
+    {
+        var outer = Interlocked.Increment(ref _startupDepth) == 1;
+        IDisposable? scope = outer
+            ? TestTiming.BeginFixturePhase(_timingId, TestPhaseKind.HostStartup, "start")
+            : null;
+        try
+        {
+            return start();
+        }
+        finally
+        {
+            scope?.Dispose();
+            Interlocked.Decrement(ref _startupDepth);
+        }
+    }
+
     public override async ValueTask DisposeAsync()
     {
-        await base.DisposeAsync();
-        if (_schema.IsValueCreated)
-            await _schema.Value.DisposeAsync();
+        var scope = BeginShutdown();
+        try
+        {
+            await base.DisposeAsync();
+            if (_schema.IsValueCreated)
+                await _schema.Value.DisposeAsync();
+        }
+        finally
+        {
+            scope?.Dispose();
+        }
     }
 
     protected override void Dispose(bool disposing)
     {
-        base.Dispose(disposing);
+        var scope = disposing ? BeginShutdown() : null;
+        try
+        {
+            base.Dispose(disposing);
+        }
+        finally
+        {
+            scope?.Dispose();
+        }
         if (disposing && Directory.Exists(_workspacePath))
         {
             try { Directory.Delete(_workspacePath, recursive: true); }
@@ -187,4 +232,9 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
             catch (UnauthorizedAccessException) { /* best effort */ }
         }
     }
+
+    private IDisposable? BeginShutdown() =>
+        Interlocked.Exchange(ref _shutdownRecorded, 1) == 0
+            ? TestTiming.BeginFixturePhase(_timingId, TestPhaseKind.HostShutdown, "stop")
+            : null;
 }

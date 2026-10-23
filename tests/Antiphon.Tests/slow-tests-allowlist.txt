@@ -348,3 +348,6 @@ Antiphon.Tests.Application.PreDispatchFailureDeliveryTests
 
 # CARD-1519: isolated PostgreSQL, hosted admission and owned shutdown barriers; the first control run measured 17-22s.
 Antiphon.Tests.Application.DispatcherAdmissionSchedulingTests
+
+# CARD-1514: real PostgreSQL clone, web host and scratch Git phase attribution.
+Antiphon.Tests.TestHelpers.TestTimingChokePointTests
