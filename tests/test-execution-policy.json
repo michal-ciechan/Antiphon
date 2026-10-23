@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "b2c197a9d49ac72e1a959a3d83b56ff914d74b19e59cd96edad625c37e412f4e",
+  "policyHash": "38241acdc0996916008ec6ef4d5ac6150bb2aa4d21d6d040968819577193345f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -923,6 +923,14 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj"
+    },
+    {
+      "reason": "Standalone CARD-1563 checkpoint host; the same TimeoutAuditTests source is compiled into primary Antiphon.Tests for ordinary qualification.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.TimeoutAudit.Tests/Antiphon.TimeoutAudit.Tests.csproj"
     }
   ],
   "selectionCatalog": {

@@ -73,3 +73,9 @@ first using loaded-host observations in the same context; unknown load stays pro
 Windows log paths and live Windows timing inputs are not reachable from a Linux runner.
 Copy/export the retained receipts through the ordinary evidence path before making a
 Windows budget claim; do not relabel Linux timings as Windows evidence.
+
+The six audit tests are shared source: their small standalone project is a declared child
+checkpoint host, and Antiphon.Tests compiles the same file and references the audit tool.
+The shipped execution-policy census retains seven primary suites and now declares six
+child hosts. This registration changes the policy hash, without changing any watchdog,
+suite, exclusion or release gate behavior.

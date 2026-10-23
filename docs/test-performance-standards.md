@@ -108,3 +108,10 @@ CARD-1314 (duration buckets), CARD-1313 (change-aware ordinary selection and tim
 (measured cost packing), CARD-1514 (slow fixtures and next-run timing instrumentation), CARD-1531
 (admission versus execution deadlines), CARD-1545 (app batches and downstream scoped rc), and
 CARD-1546 (git csproj). Their presence is not evidence that their implementation has landed.
+
+CARD-1563 supplies an opt-in [timeout audit lint](timeout-audit.md): inventory declarations,
+join retained TRX/checkpoint timings, propose rounded 2x observed p95, and fail `--check`
+for sufficient comparable history exceeding the recommendation without an exact recorded
+exception. Small/unknown-context samples and legacy class totals remain provisional with
+a bounded collection obligation. It does not tighten existing watchdogs or qualify release
+coverage; apply measured proposals through an ordinary reviewed change.
