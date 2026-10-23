@@ -116,7 +116,8 @@ function Test-C1323_PlatformPolicy {
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
     Assert-C1323 ($shipped.SchemaVersion -eq 4 -and $shipRows.Count -eq 3 -and @($shipRows | Where-Object { $_.platform -cne 'linux' -or $_.suite -cne 'e2e' }).Count -eq 0 -and (Same-C1323Set $shipRows.class $scoped.Class)) 'shipped-three-linux-rows'
-    Assert-C1323 (@($shipped.Object.projectDispositions).Count -eq 12 -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved'
+    $shippedCensus = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $shipped.Object
+    Assert-C1323 ($shippedCensus.Ok -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved' $shippedCensus.Message
 
     $root = Join-Path $ResultsDirectory 'git-policy'
     [void](New-Item -ItemType Directory $root)
