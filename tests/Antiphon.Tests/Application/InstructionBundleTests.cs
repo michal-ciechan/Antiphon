@@ -59,7 +59,7 @@ public class InstructionBundleTests
         foreach (var text in new[] { stage, composed })
         {
             text.ShouldContain("Read-only", customMessage: "c1015-review-read-only");
-            text.ShouldContain("Do not fix anything", customMessage: "c1015-review-read-only");
+            text.ShouldContain("Read-only, including PCs; fix nothing.", customMessage: "c1015-review-read-only");
             text.ShouldContain("check-evidence-diff.ps1", customMessage: "c1015-review-range");
             text.ShouldContain("complete candidate base..HEAD", customMessage: "c1015-review-range");
         }
@@ -275,7 +275,7 @@ public class InstructionBundleTests
         string Compose(AgentTaskRole role) => InstructionBundleComposer.Compose(
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, role)).Text;
         var code = Compose(AgentTaskRole.Code);
-        foreach (var text in new[] { "Run each V-n and R-n", "Commit and push", "pending for Mutation", "even with zero PCs", "full commit SHA", "original Code task ID", "Do not settle next: land" })
+        foreach (var text in new[] { "Run required V-n/R-n", "Commit and push", "pending for Mutation", "even with zero PCs", "full commit SHA", "original Code task ID", "Never next: land/deploy" })
             code.ShouldContain(text);
         code.ShouldNotContain("Run each PC-n as red-then-green");
         code.ShouldContain("MUTATION RUNNER ONLY");
@@ -960,7 +960,7 @@ public class InstructionBundleTests
         testDesign.ShouldContain("do not rewrite the fix design");
 
         var code = InstructionBundles.TextOf(InstructionBundles.StageCode);
-        code.ShouldContain("Run each V-n and R-n");
+        code.ShouldContain("Run required V-n/R-n");
         code.ShouldContain("next: review when implementation and ordinary V/R are complete, even with zero PCs");
         code.ShouldNotContain("fast-forward");
         code.ShouldNotContain("deploy-local");
@@ -973,7 +973,7 @@ public class InstructionBundleTests
 
         var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
         review.ShouldContain("Read-only");
-        review.ShouldContain("Do not fix anything");
+        review.ShouldContain("Read-only, including PCs; fix nothing.");
         review.ShouldContain("CP-n lines");
         review.ShouldContain("cannot go red");
         review.ShouldContain("checkpoint-tool run");
@@ -1046,7 +1046,7 @@ public class InstructionBundleTests
         const string planChecklist =
             "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
         const string reviewChecklist =
-            "For changed input waits, ask: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
+            "For changed input waits: what releases the waiting session, after how long? Parking disabled means no automatic release deadline (CARD-1083).";
         var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
         PinSentence(plan, planChecklist, "c1065-release-question");
         var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
@@ -1189,7 +1189,7 @@ public class InstructionBundleTests
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
 
         var review = text.IndexOf("[bundle:stage-review v", StringComparison.Ordinal);
-        var readOnly = text.IndexOf("INVARIANTS: Read-only. Do not fix anything.", StringComparison.Ordinal);
+        var readOnly = text.IndexOf("INVARIANTS: Read-only, including PCs; fix nothing.", StringComparison.Ordinal);
         var basics = text.IndexOf("[bundle:delegate-basics v", StringComparison.Ordinal);
         var common = text.IndexOf(fragment.Render(), StringComparison.Ordinal);
         review.ShouldBe(0, "review-order-stage-first");
@@ -1238,7 +1238,7 @@ public class InstructionBundleTests
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
         const string subject = "Review never checks out, rebases, commits to or pushes its subject branch.";
         PinSentence(review, subject, "stage-exception-review-subject");
-        PinSentence(review, "INVARIANTS: Read-only. Do not fix anything.", "stage-exception-review-read-only");
+        PinSentence(review, "INVARIANTS: Read-only, including PCs; fix nothing.", "stage-exception-review-read-only");
     }
 
     private static string Collapse(string text) =>
