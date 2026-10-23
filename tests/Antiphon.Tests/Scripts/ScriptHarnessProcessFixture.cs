@@ -28,13 +28,16 @@ internal static class ScriptHarnessProcessFixture
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.GetFullPath(Path.Combine(directory, "pwsh.exe"));
-            if (candidate.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ||
+            if (IsWindowsAppExecutionAlias(candidate) ||
                 !File.Exists(candidate) || (File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0)
                 continue;
             return candidate;
         }
         throw new FileNotFoundException("Windows qualification requires a regular installed pwsh.exe on PATH; App Execution Aliases are not supported.");
     }
+
+    internal static bool IsWindowsAppExecutionAlias(string path) =>
+        path.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase);
 
     internal static async Task<ObservedTree> WaitReadyAsync(Func<ScriptProcessRequest?> request, Task invocation)
     {
