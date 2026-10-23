@@ -1,36 +1,55 @@
 # Test-owned console peer. Unicode provider captures are loaded, never retyped here.
+param([switch]$DefinitionsOnly)
 $capture = Get-Content -LiteralPath $env:C449_CAPTURE -Raw | ConvertFrom-Json
-$template = $capture.screen
-$highlight = if ($env:C449_REQUESTED -eq 'high') { 1 } else { 2 }
-$dialog = $true
-$composer = ''
-$applied = $null
-$keys = [System.Collections.Generic.List[string]]::new()
+$script:template = $capture.screen
+$script:highlight = if ($env:C449_REQUESTED -eq 'high') { 1 } else { 2 }
+$script:dialog = $true
+$script:composer = ''
+$script:applied = $null
+$script:keys = [System.Collections.Generic.List[string]]::new()
+$script:sequence = 0
+$script:clearReceived = $null
+$script:clearPainted = $null
 function Paint {
-    if ($dialog) {
-        $screen = $template.Replace('> Keep', '  Keep').Replace('     Switch', '   > Switch')
-        if ($highlight -eq 1) { $screen = $template }
+    if ($script:dialog) {
+        $screen = $script:template.Replace('> Keep', '  Keep').Replace('     Switch', '   > Switch')
+        if ($script:highlight -eq 1) { $screen = $script:template }
     } else {
-        $screen = "Fable 5.1 with $applied effort" + [char]10 + '> ' + $composer + [char]10 + '? for shortcuts'
+        $screen = "Fable 5.1 with $script:applied effort" + [char]10 + '> ' + $script:composer + [char]10 + '? for shortcuts'
     }
     [Console]::Write(([char]27 + '[2J' + [char]27 + '[H') + $screen)
+    if ($script:PaintSink) { & $script:PaintSink $screen }
 }
-Paint
-while ($true) {
-    $key = [Console]::ReadKey($true)
+function Publish-Trace([string]$phase) {
+    $script:sequence++
+    @{ applied = $script:applied; highlight = $script:highlight; keys = $script:keys.ToArray(); composer = $script:composer; pid = $PID;
+       sequence = $script:sequence; phase = $phase; clearReceived = $script:clearReceived; clearPainted = $script:clearPainted } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C449_TRACE
+    if ($script:PublishSink) { & $script:PublishSink $phase }
+}
+function Invoke-FixtureKey([ConsoleKeyInfo]$key) {
     $name = [string]$key.KeyChar
     if ($key.Key -eq 'Enter') { $name = 'Enter' }
     if ($key.KeyChar -eq [char]21) { $name = 'Ctrl+U' }
-    $keys.Add($name)
-    if ($dialog) {
-        if ($key.KeyChar -eq 'j' -or $key.Key -eq 'DownArrow' -or $key.KeyChar -eq [char]14) { $highlight = 3 - $highlight }
+    $script:keys.Add($name)
+    if ($script:dialog) {
+        if ($key.KeyChar -eq 'j' -or $key.Key -eq 'DownArrow' -or $key.KeyChar -eq [char]14) { $script:highlight = 3 - $script:highlight }
         if ($key.Key -eq 'Enter' -and $env:C449_STUCK -ne '1') {
-            $applied = if ($highlight -eq 1) { 'xhigh' } else { 'high' }
-            $dialog = $false
+            $script:applied = if ($script:highlight -eq 1) { 'xhigh' } else { 'high' }
+            $script:dialog = $false
         }
-    } elseif ($key.KeyChar -eq [char]21) { $composer = '' }
-    elseif ($key.KeyChar -ne [char]0) { $composer += $key.KeyChar }
-    @{ applied = $applied; highlight = $highlight; keys = $keys.ToArray(); composer = $composer; pid = $PID } |
-        ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C449_TRACE
+    } elseif ($key.KeyChar -eq [char]21) {
+        $script:clearReceived = [DateTime]::UtcNow.ToString('O')
+        if ($env:C1516_CLEAR_DELAY_MS) { Start-Sleep -Milliseconds ([int]$env:C1516_CLEAR_DELAY_MS) }
+        if ($env:C1516_NEVER_CLEAR -ne '1') { $script:composer = '' }
+    }
+    elseif ($key.KeyChar -ne [char]0) { $script:composer += $key.KeyChar }
+    $phase = if ($name -eq 'Ctrl+U') { 'clear' } elseif ($name -eq 'Enter') { 'enter' } else { 'key' }
+    Publish-Trace $phase
     Paint
+    if ($name -eq 'Ctrl+U') { $script:clearPainted = [DateTime]::UtcNow.ToString('O') }
+}
+if (!$DefinitionsOnly) {
+    Paint
+    while ($true) { Invoke-FixtureKey ([Console]::ReadKey($true)) }
 }

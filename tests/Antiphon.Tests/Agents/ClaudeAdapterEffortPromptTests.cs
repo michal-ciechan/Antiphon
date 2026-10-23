@@ -59,11 +59,34 @@ public class ClaudeAdapterEffortPromptTests
     [Test]
     public Task Local_adapter_names_an_uncleared_effort_dialog() => RunAsync(true);
 
-    private static async Task RunAsync(bool stuck, string requested = "xhigh")
+    [Test]
+    public async Task Local_clear_failure_retains_evidence_before_scratch_cleanup()
+    {
+        var observation = new FailureObservation();
+        await Should.ThrowAsync<ShouldAssertException>(() => RunAsync(false, "xhigh", true, observation));
+        Directory.Exists(observation.Scratch).ShouldBeFalse();
+        observation.Artifact.ShouldNotBeNull("readiness failure must retain evidence before scratch cleanup");
+        var evidence = await File.ReadAllTextAsync(observation.Artifact);
+        evidence.ShouldContain(observation.Token!);
+        evidence.ShouldContain("NeverCleared");
+        evidence.ShouldContain("xhigh");
+        evidence.ShouldContain("ShouldAssertException");
+        evidence.ShouldContain("cleanup: complete");
+    }
+
+    private sealed class FailureObservation
+    {
+        internal string Scratch = "";
+        internal string? Token;
+        internal string? Artifact;
+    }
+
+    private static async Task RunAsync(bool stuck, string requested = "xhigh", bool neverClear = false, FailureObservation? observation = null)
     {
         var prior = Environment.GetEnvironmentVariable("ANTIPHON_PTY_BACKEND");
         var scratch = Path.Combine(Path.GetTempPath(), "c449-local-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
+        if (observation is not null) observation.Scratch = scratch;
         var capture = Path.Combine(scratch, "capture.json");
         var trace = Path.Combine(scratch, "trace.json");
         await File.WriteAllTextAsync(capture, JsonSerializer.Serialize(new { screen = EffortTestScreen.Capture(0) }));
@@ -75,8 +98,10 @@ public class ClaudeAdapterEffortPromptTests
             {
                 Exe = "pwsh.exe", Cwd = scratch,
                 Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
-                Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested }
+                Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested,
+                    ["C1516_CLEAR_DELAY_MS"] = Environment.GetEnvironmentVariable("C1516_CLEAR_DELAY_MS") ?? "0", ["C1516_NEVER_CLEAR"] = neverClear ? "1" : "0" }
             };
+            if (observation is not null) observation.Token = ComposerInputProbe.TokenFor(spec.SessionId!.Value);
             await adapter.StartAsync(spec, CancellationToken.None);
             using var cts = new CancellationTokenSource();
             var task = adapter.WaitForReadyAsync(cts.Token);

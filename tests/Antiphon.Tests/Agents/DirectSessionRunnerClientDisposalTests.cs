@@ -105,7 +105,7 @@ public class DirectSessionRunnerClientDisposalTests
         }
         finally { adopter.KillOnDispose = true; await adopter.DisposeAsync(); }
         fixture.Witness.AssertExited();
-        fixture.DeleteRoot();
+        await fixture.DeleteRootAsync();
     }
 
     [Test]
@@ -120,8 +120,8 @@ public class DirectSessionRunnerClientDisposalTests
         await OwnedPtyFixture.AssertPromptAsync(b.Client, b.SessionId, deadline.Token);
         await b.Client.DisposeAsync();
         b.Witness.AssertExited();
-        a.DeleteRoot();
-        b.DeleteRoot();
+        await a.DeleteRootAsync();
+        await b.DeleteRootAsync();
     }
 
     [Test]
@@ -138,7 +138,17 @@ public class DirectSessionRunnerClientDisposalTests
         ReferenceEquals(first, second).ShouldBeTrue("second call shares completion");
         failure.ShouldBeNull();
         fixture.Witness.AssertExited();
-        fixture.DeleteRoot();
+        await using var holder = Environment.GetEnvironmentVariable("C1515_HOLD_SHADOW_IMAGE") == "until-denial"
+            ? await WorktreeLockChild.StartAsync("file", fixture.ConsoleImages.Single().Path) : null;
+        if (holder is not null)
+            fixture.Cleanup.DenialObserved = async () =>
+            {
+                fixture.Cleanup.Diagnostic.ShouldContain($"pid={holder.ProcessId}");
+                fixture.Cleanup.Diagnostic.ShouldContain($"start={holder.StartTicks}");
+                holder.Exited.ShouldBeFalse();
+                await holder.ReleaseAsync();
+            };
+        await fixture.DeleteRootAsync();
     }
 
     [Test]
@@ -154,7 +164,7 @@ public class DirectSessionRunnerClientDisposalTests
         catch (Exception ex) { caught = ex; }
         ReferenceEquals(caught, sentinel).ShouldBeTrue("identical body sentinel");
         fixture.Witness.AssertExited();
-        fixture.DeleteRoot();
+        await fixture.DeleteRootAsync();
     }
     [Test]
     public async Task Dispose_awaits_exit_of_its_running_host_and_descendants()
@@ -164,7 +174,7 @@ public class DirectSessionRunnerClientDisposalTests
         await fixture.Client.DisposeAsync();
         fixture.Witness.AssertExited();
         elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "cleanup-before-ttl");
-        fixture.DeleteRoot();
+        await fixture.DeleteRootAsync();
     }
 }
 
@@ -311,6 +321,8 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
     public DirectSessionRunnerClient Client { get; private set; } = null!;
     public RunnerGrokAdapter Adapter { get; private set; } = null!;
     public OwnedPtyWitness Witness { get; private set; } = null!;
+    internal OwnedPtyFixtureCleanup.Image[] ConsoleImages { get; private set; } = [];
+    internal OwnedPtyFixtureCleanup Cleanup { get; private set; } = null!;
 
     public static async Task<OwnedPtyFixture> StartAsync()
     {
@@ -331,6 +343,10 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
                     ["ANTIPHON_FAKE_LF_ENTER"] = OperatingSystem.IsWindows() ? "0" : "1",
                 }, Path.Combine(fixture.Root, "cwd"), 120, 30, SessionId: fixture.SessionId), deadline.Token);
             fixture.Witness = OwnedPtyWitness.Capture(fixture.Client.PtyHostManifestDir, fixture.SessionId);
+            fixture.ConsoleImages = fixture.Witness.Entries.Where(x => x.Role == "console")
+                .Select(x => new OwnedPtyFixtureCleanup.Image(x.Image, File.GetAttributes(x.Image))).ToArray();
+            fixture.Cleanup = new(fixture.Root, fixture.ConsoleImages,
+                string.Join("; ", fixture.Witness.Entries.Select(x => $"session={fixture.SessionId} pid={x.Process.Id} start={x.Start.Ticks} image={x.Image} role={x.Role}")));
             (await fixture.Adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
             return fixture;
         }
@@ -360,11 +376,10 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
         prompts.ShouldHaveSingleItem();
         prompts[0].Text.ShouldBe(body, "complete unique UserPrompt after baseline");
     }
-    public void DeleteRoot()
+    public Task DeleteRootAsync()
     {
         Witness.Release();
-        Directory.Delete(Root, true);
-        Directory.Exists(Root).ShouldBeFalse("private-tree-deletable");
+        return Cleanup.DeleteAsync();
     }
 
     public async ValueTask DisposeAsync()
