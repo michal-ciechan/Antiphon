@@ -153,7 +153,8 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
     internal Task<long> InsertParentAsync(string kind, string? text, CancellationToken ct) =>
         BridgeQueueHarness.InsertEntryAsync(ParentSessionId, kind, text, timestamp: Clock.GetUtcNow().UtcDateTime,
             connectionString: Harness.ConnectionString, createdAtUtc: Clock.GetUtcNow().UtcDateTime);
-    internal Task<long> CallerIdleAsync(CancellationToken ct) => InsertParentAsync(TranscriptKinds.TurnEnd, null, ct);
+    internal Task CallerIdleAsync(CancellationToken ct) => StoreAwareTranscript.WriteAsync(Harness.Provider, ParentSessionId,
+        async () => { await InsertParentAsync(TranscriptKinds.TurnEnd, null, ct); });
     internal sealed class FaultBoundary : LandDeliveryBoundary
     {
         internal string? FailAt { get; set; }

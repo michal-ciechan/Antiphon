@@ -40,6 +40,9 @@ public partial class PermissionWaitTests
         f.Boundary.FailAt = null;
         await f.Writer.RecordAsync(f.TaskId, facts, ct);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId, ct)).ShouldBe(2);
+        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Attempt, 2), ct);
+        (await f.Writer.RecordAsync(f.TaskId, facts, ct)).ShouldBeFalse("binding changed before locked persistence");
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId, ct)).ShouldBe(2);
     }
 
     [Test]
@@ -92,6 +95,15 @@ public partial class PermissionWaitTests
         (await f.DeadlineAsync(ct)).ShouldBe(1);
         await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
         f.Caller.SubmittedBodies.ShouldContain(body => body.Contains("Failed"), "a delivered diagnostic cannot suppress later failure delivery");
+        await using var idle = await PermissionWaitFixture.CreateAsync(ct);
+        await idle.CallerIdleAsync(ct);
+        await idle.ScanAsync(ct);
+        var idleNote = await idle.NoteAsync(ct);
+        await idle.ReconcileAsync(idleNote.Id, ct);
+        await idle.Harness.Queue.FlushSessionAsync(idle.ParentSessionId, ct);
+        await idle.ReconcileAsync(idleNote.Id, ct);
+        (await idle.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);
+        idle.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(idleNote.Body);
     }
 
     [Test]
