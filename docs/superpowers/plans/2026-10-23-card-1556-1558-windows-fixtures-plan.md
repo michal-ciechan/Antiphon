@@ -68,3 +68,30 @@ Final `validate-checkpoint-receipt.ps1` must pass for both green rows at final t
 | CP-2 | S1 | CP-1 | wire-red | `/*/*/DelegateBranchDeliveryTests/C1558_*` | V-3,R-1 red/control | 4 executed; windows wire fails HTTP 409; native/linux and mismatch control pass | 4 | 1 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1556-final/` | instructions-final | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 | all 8 passed, 0 failed/skipped | 8 | 4 |
 | CP-4 | S2 | CP-3 | delivery-final | `/*/*/DelegateBranchDeliveryTests/*` | V-3,R-1,R-2 | all 7 passed, 0 failed/skipped | 7 | 4 |
+
+## Red-run precondition correction
+
+Run 20261023-120851-cccf at b3ca71b74aacf1d243abab118709ed9884d97263
+proved the CRLF 161-byte failure and windows registration 409, but all four notice
+cases stopped at zero submissions before their clipping assertions. Current master
+has CARD-0680's guarded Claude writes; these fixtures never enabled the existing
+ClaudeDialogFixture. S1c enables it only in CreateReadFailureHarnessAsync, preserving
+the guard. CP-5 reruns the original four notices at exact base 877b9ce1; CP-6 runs
+the eight portable witnesses with that setup repaired, before the budget repair.
+These additional builds are necessary to attribute the precondition failure and
+reach the required clipping red. Each uses its own shared build, eight-minute
+driver deadline and explicit 16m total budget; run/wait as above.
+
+S1c is master-only: rc 5a126f6fc predates the guarded-write feature and lacks the
+ClaudeDialogFixture helper. Omit S1c from the ordered rc picks. The main fixture
+repair deliberately has no dependency on S1c; verify its picks and compile on rc.
+CP-5 runs from a detached exact-base worktree, reading this committed plan by its
+absolute path. CP-6 runs in the assigned worktree. Both use independent owned
+outputs and isolated test databases, and every build/test driver is slot-gated.
+
+### Checkpoints (additional precondition attribution)
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-5 | S1c | `tests/Antiphon.Tests -> bin-c1557-base/` | notice-base | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read_notice*` | V-2 precondition attribution | 4 executed at original base; record actual outcome, no inherited claim without execution | 4 | 7 |
+| CP-6 | S1c | `tests/Antiphon.Tests -> bin-c1557-eligible-red/` | notice-eligible-red | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 reachable red | 8 executed; 161-byte all-tier red and clipped notice transition red, 0 skipped | 8 | 7 |
