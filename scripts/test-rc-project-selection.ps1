@@ -85,7 +85,11 @@ switch ($Case) {
         Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Runner/Runner.csproj" /><Content Include="../Server/Fixtures/*.json" /></ItemGroup></Project>'
         Put 'tests/Server/Fixtures/example.json' '{}'; $cb=Commit
         Put 'tests/Server/Fixtures/example.json' '{"changed":true}'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
-        Check (($s.mode -ceq 'Scoped') -and (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj'))) 'glob-consumer'
+        $wildcardOk=($s.mode -ceq 'Scoped') -and (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj'))
+        Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Runner/Runner.csproj" /><Content Include="../Server/[sample].json" /></ItemGroup></Project>'
+        Put 'tests/Server/[sample].json' '{}'; $cb=Commit
+        Put 'tests/Server/[sample].json' '{"changed":true}'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
+        Check ($wildcardOk -and ($s.mode -ceq 'Scoped') -and (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj'))) 'glob-consumer'
         Put 'src/Server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk"><Import Project="Dependencies.props" /></Project>'
         Put 'src/Server/Dependencies.props' '<Project><ItemGroup><ProjectReference Include="../Messaging/Messaging.csproj" /></ItemGroup></Project>'
         $cb=Commit; Put 'src/Messaging/Message.cs' 'imported consumer change'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
