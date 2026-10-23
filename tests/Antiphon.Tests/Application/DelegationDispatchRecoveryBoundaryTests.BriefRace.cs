@@ -212,9 +212,12 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             CancellationToken cancellationToken = default)
         {
             var text = command.CommandText;
-            if (!Armed.Value || !text.Contains("EXISTS", StringComparison.Ordinal))
+            if (!Armed.Value)
                 return result;
-            if (text.Contains("\"SessionQueuedMessages\"", StringComparison.Ordinal)
+            // CARD-1529 loads the candidate rows to classify durable refocus identity.
+            // Arm on that completed ownership read as well as the former EXISTS query;
+            // the following received-prompt check remains the actual pause boundary.
+            if (text.Contains("FROM \"SessionQueuedMessages\"", StringComparison.Ordinal)
                 && text.Contains("\"ExecutionTaskId\"", StringComparison.Ordinal)
                 && text.Contains("\"SourceTaskId\"", StringComparison.Ordinal))
             {
@@ -223,6 +226,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             }
 
             if (Volatile.Read(ref _sawRowCheck) == 1
+                && text.Contains("EXISTS", StringComparison.Ordinal)
                 && text.Contains("\"TranscriptEntries\"", StringComparison.Ordinal)
                 && text.Contains("COALESCE", StringComparison.Ordinal)
                 && Interlocked.Exchange(ref _fired, 1) == 0)
