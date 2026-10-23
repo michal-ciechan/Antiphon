@@ -45,28 +45,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // Historical 16 + CARD-0097's routing sweep SELECT = exactly 17.
     // The blocked task is not a delivery suspect; there is no repeated recovery transition.
     [Arguments("repeated-blocked-tick", 17)]
-    // regression budget: redundant probes tracked by CARD-1543.
-    // Six reads: four repeated kind probes (roster 39,40,42,44) from canceled-typing,
-    // late-confirm, held-back typing and RecoverPointerAsync (CARD-1522/e75d5460d):
-    // SELECT a."AgentKind" FROM "AgentSessions" AS a WHERE a."Id" = @__sessionId_0 LIMIT 1.
-    // Plus CARD-0680's required AgentSession kind/generation reads in SendInputAsync
-    // before body and Enter (roster 54,56). Those two fresh write guards stay required.
-    // Historical exact 65 + 6 = 71; reuses the pending row (no second insert).
-    [Arguments("running-recovery-existing-brief", 71)]
-    // regression budget: redundant probes tracked by CARD-1543.
-    // Same four kind probes (38,39,41,43) and CARD-0680 body/Enter reads (53,55).
-    // Historical 60 + CARD-0266 canceled-typing composer-safety SELECT + 6 = exactly 67.
-    [Arguments("running-recovery-missing-brief", 67)]
+    // CARD-1543: share four kind-only probes within the attempt; retain both fresh body/Enter guards (71 - 4).
+    [Arguments("running-recovery-existing-brief", 67)]
+    // CARD-1543: the same four metadata reads disappear; fresh write fencing is unchanged (67 - 4).
+    [Arguments("running-recovery-missing-brief", 63)]
     // Measured 6. The delivered session drops out of pass 1c: selects only, no write.
     [Arguments("repeated-discovery-after-delivery", 6)]
     // Measured 12. One Blocked event; under the design ceiling of 65.
     [Arguments("running-recovery-readiness-hold", 12)]
-    // regression budget: redundant probes tracked by CARD-1543.
-    // Same four kind probes (38,39,41,43) and CARD-0680 body/Enter reads (53,55).
-    // The watchdog kind SELECT at 3 and older delivery/verification reads at 49,51
-    // are outside those six. Share metadata, never remove fresh dialog/write fencing.
-    // Historical 60 + CARD-0266 composer-safety SELECT + 6 = exactly 67.
-    [Arguments("watchdog-first-recovery", 67)]
+    // CARD-1543: eliminate four queue metadata reads; retain independent watchdog and fresh write reads (67 - 4).
+    [Arguments("watchdog-first-recovery", 63)]
     // Two scans are equal. Measured 5 on the second scan. Delta 0.
     [Arguments("empty-healthy-scan", 5)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
