@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "3e92cc0dd327013297fb6e02283f48c684abdfb55295e95c3f48ea3a5dd6e355",
+  "policyHash": "19b8901f38309deb9a40af10077e85d8944c87176c39081c200120e85b90be1f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -850,7 +850,7 @@
     "scripts": 1200000,
     "e2e": 7200000,
     "markdown-pdf": 1200000,
-    "observability": 1200000
+    "observability": 180000
   },
   "reducedDispatchPolicy": "inactive",
   "projectDispositions": [
@@ -956,7 +956,7 @@
       "role": "primary",
       "consumers": [],
       "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
-      "reason": "Standalone CARD-1564 test assembly owns live startup and external-call observability qualification; required by nightly and rc profiles."
+      "reason": "Standalone CARD-1564 test assembly owns live startup and external-call observability qualification; required by nightly and rc profiles. The 180-second watchdog is provisional from the CARD-1564 Linux startup sample (66.992 seconds, n=1, not p95); collect Windows suite timings in the next qualification and replace with measured CARD-1404 costs."
     }
   ],
   "selectionCatalog": {
