@@ -56,7 +56,7 @@ public sealed class TaskProviderWaitReader(IServiceScopeFactory scopes, AgentSes
             || task.AgentSessionId is not Guid id || id == Guid.Empty
             || task.DispatchedAt is not DateTime dispatch || dispatch == default) return null;
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == id, ct);
-        if (session is null || session.Status != SessionStatus.Running || session.StartedAt == default) return null;
+        if (session is null || session.AgentKind != AgentKind.ClaudeCode || session.Status != SessionStatus.Running || session.StartedAt == default) return null;
         var runner = TaskProviderWaitBinding.NormalizeRunner(session.RunnerId);
         if (runner.Length != 0 && (session.RunnerStoreId is null || session.RunnerStoreId == Guid.Empty)) return null;
         return new(task.Id, task.Attempt, id, dispatch, session.StartedAt, runner, session.RunnerStoreId);
