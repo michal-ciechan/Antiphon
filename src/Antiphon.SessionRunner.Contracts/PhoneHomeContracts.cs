@@ -23,6 +23,16 @@ public static class PhoneHomeProtocol
     public const int CloseHandshakeSeconds = 3;
 }
 
+/// <summary>UTF-8 bytes of payload JSON, excluding the frame envelope. Prepare the sender's
+/// element once so JSON escaping during framing cannot change its measured size.</summary>
+public static class PhoneHomeEventPayload
+{
+    public static JsonElement Prepare(string json) =>
+        JsonSerializer.SerializeToElement(JsonSerializer.Deserialize<JsonElement>(json), PhoneHomeFraming.Json);
+    public static int Measure(JsonElement? payload) =>
+        payload is { } value ? Encoding.UTF8.GetByteCount(value.GetRawText()) : 0;
+}
+
 /// <summary>CARD-0716 D-1: close-frame descriptions the runner can tell apart without parsing prose.</summary>
 public static class PhoneHomeCloseReasons
 {

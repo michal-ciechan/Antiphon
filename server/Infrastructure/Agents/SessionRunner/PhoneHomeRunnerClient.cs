@@ -555,13 +555,16 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
-        await foreach (var frame in _connection.Events.ReadAllAsync(ct))
+        await foreach (var item in _connection.Events.ReadAllAsync(ct))
         {
-            if (frame.EventName is null || frame.Payload is null)
-                continue;
-            var parsed = RunnerContractMapper.ParseEvent(frame.EventName, frame.Payload.Value.GetRawText());
-            if (parsed is not null)
-                yield return parsed;
+            try
+            {
+                var frame = item.Frame;
+                if (frame.EventName is null || frame.Payload is null) continue;
+                var parsed = RunnerContractMapper.ParseEvent(frame.EventName, frame.Payload.Value.GetRawText());
+                if (parsed is not null) yield return parsed;
+            }
+            finally { item.Release(); }
         }
     }
 

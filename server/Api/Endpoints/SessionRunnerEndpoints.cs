@@ -345,11 +345,17 @@ public static class SessionRunnerEndpoints
         string? wsError,
         string? socketError)
     {
+        var snapshot = connection.AccountingSnapshot();
+        var socketState = connection.SocketState;
+        var inFlight = connection.InFlight;
+        var waiters = connection.PendingWaiters;
+        var diagnostics = JsonSerializer.Serialize(connection.Diagnostics.Snapshot(), PhoneHomeFraming.Json);
+        var overflow = JsonSerializer.Serialize(connection.OverflowAt, PhoneHomeFraming.Json);
         var message =
             $"Phone-home connection {connection.RunnerId} epoch {connection.Epoch} ended: {reason} after {lifetimeSeconds:0.0}s; "
-            + $"socket {connection.SocketState}; pending {connection.PendingEvents} events / {connection.PendingEventBytes} bytes; "
-            + $"live buffer {connection.LiveBufferEvents} events; in flight {connection.InFlight}; failing {connection.PendingWaiters} waiters; "
-            + $"connection {connectionId}";
+            + $"socket {socketState}; pending {snapshot.PendingEvents} events / {snapshot.PendingEventBytes} bytes; "
+            + $"received total {snapshot.ReceivedEvents} events / {snapshot.ReceivedPayloadBytes} payload UTF-8 bytes; in flight {inFlight}; failing {waiters} waiters; "
+            + $"oldestMs {snapshot.OldestPendingMs}; overflowAt {overflow}; diagnostics {diagnostics}; connection {connectionId}";
         if (wsError is not null)
             message += $" wsError {wsError} socketError {socketError}";
 
@@ -359,12 +365,16 @@ public static class SessionRunnerEndpoints
             new("Epoch", connection.Epoch),
             new("Reason", reason),
             new("LifetimeSeconds", lifetimeSeconds),
-            new("SocketState", connection.SocketState),
-            new("PendingEvents", connection.PendingEvents),
-            new("PendingEventBytes", connection.PendingEventBytes),
-            new("LiveBufferEvents", connection.LiveBufferEvents),
-            new("InFlight", connection.InFlight),
-            new("Waiters", connection.PendingWaiters),
+            new("SocketState", socketState),
+            new("PendingEvents", snapshot.PendingEvents),
+            new("PendingEventBytes", snapshot.PendingEventBytes),
+            new("ReceivedEvents", snapshot.ReceivedEvents),
+            new("ReceivedPayloadBytes", snapshot.ReceivedPayloadBytes),
+            new("OldestPendingMs", snapshot.OldestPendingMs),
+            new("OverflowAt", overflow),
+            new("Diagnostics", diagnostics),
+            new("InFlight", inFlight),
+            new("Waiters", waiters),
             new("ConnectionId", connectionId),
         };
         if (wsError is not null)
