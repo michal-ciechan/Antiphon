@@ -500,7 +500,7 @@ child test. CP-8 uses the **portable client/Vitest lane**. No host is pinned.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1518-red/` | incident-red | `/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall)\|(C1518_NinetyMinuteBoundaryKeepsCustody)` | V-1, V-4 | 2 reached assertion failures, 0 skipped | 2 | 9 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1518-red/` | incident-red | `/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall*)\|(C1518_NinetyMinuteBoundaryKeepsCustody*)` | V-1, V-4 | 2 reached assertion failures, 0 skipped | 2 | 9 |
 | CP-2 | S2-S4 | `tests/Antiphon.Tests -> bin-c1518-green/` | observation-deadline | `/*/*/PermissionWaitTests/(C1518_OptionalObservationInputs)\|(C1518_ObservationBindingRacesAndExpiry)\|(C1518_NinetyMinuteBoundaryKeepsCustody)\|(C1518_RealChildAndOtherClocksRemainBounded)` | V-2..V-5 | 4 passed, 0 failed/skipped | 4 | 9 |
 | CP-3 | S2-S4 | CP-2 | episode-delivery | `/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall)\|(C1518_EpisodeAndNoteCommitOnce)\|(C1518_DecisionReachesBusyAndIdleCaller)\|(C1518_NoteRecoveryRetainsOneQueueRow)` | V-1, V-6..V-8 | 4 passed, 0 failed/skipped | 4 | 2 |
 | CP-4 | S2-S4 | CP-2 | surfaces-recovery | `/*/*/PermissionWaitTests/(C1518_CheckAttentionAndStallAgree)\|(C1518_FailedSeatRecoveryDoesNotResurrect)\|(C1518_CadenceAndReadFailuresAreBounded)\|(C1518_DetectionHasNoTerminalSideEffects)` | V-9..V-12 | 4 passed, 0 failed/skipped | 4 | 1 |
