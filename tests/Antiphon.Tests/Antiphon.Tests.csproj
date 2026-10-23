@@ -51,6 +51,9 @@
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestHelpers\ReadOnlyDirectory.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\TestHelpers\PhoneHomeTestWebSocket.cs"
              Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
+    <Compile Include="..\Shared\TestTiming.cs" Link="TestHelpers\TestTiming.cs" />
+    <Compile Include="..\Shared\TestTimingAttribute.cs" Link="TestHelpers\TestTimingAttribute.cs" />
+    <Compile Include="..\Shared\TestTimingRegistration.cs" Link="TestHelpers\TestTimingRegistration.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs" Link="TestHelpers\CompletedCardRunnerFixture.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\LocalHttpRunner.cs"
              Link="TestHelpers\LocalHttpRunner.cs" />
@@ -75,6 +78,7 @@
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
     <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" ReferenceOutputAssembly="false" Private="false"
                       SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net10.0" />
@@ -100,6 +104,7 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" Folder="timing-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" Folder="fakeclaude" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Folder="fakegrok" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" HelperTargetFramework="net10.0" />

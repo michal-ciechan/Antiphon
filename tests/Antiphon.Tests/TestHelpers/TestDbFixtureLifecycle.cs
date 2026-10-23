@@ -39,6 +39,7 @@ internal class TestDbOperations
 
     public virtual async Task StartAsync(OwnedTestDbContainer container)
     {
+        using var phase = TestTiming.BeginFixturePhase("db-assembly", TestPhaseKind.DbCreate, "start");
         if (container.Real is null)
             throw new InvalidOperationException("Owned container has no Testcontainers handle.");
         await container.Real.StartAsync().ConfigureAwait(false);
@@ -50,6 +51,7 @@ internal class TestDbOperations
 
     public virtual async Task MigrateAsync(string connectionString)
     {
+        using var phase = TestTiming.BeginFixturePhase("db-assembly", TestPhaseKind.DbMigrate, "migrate");
         var options = TestDbFixtureLifecycle.BuildOptions(connectionString);
         await using var context = new AppDbContext(options);
         await context.Database.MigrateAsync().ConfigureAwait(false);
@@ -94,9 +96,11 @@ internal class TestDbOperations
     public virtual async Task CloneAsync(TestDbReadyState ready, string databaseName, SemaphoreSlim cloneLock)
     {
         TestDbFixtureLifecycle.ValidateDatabaseName(databaseName);
-        await cloneLock.WaitAsync().ConfigureAwait(false);
+        using (TestTiming.BeginPhase(TestPhaseKind.DbCreate, "queue"))
+            await cloneLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            using var clone = TestTiming.BeginPhase(TestPhaseKind.DbCreate, "clone");
             const int maxAttempts = 5;
             for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
@@ -131,6 +135,7 @@ internal class TestDbOperations
 
     public virtual async Task DropAsync(TestDbReadyState ready, string databaseName)
     {
+        using var drop = TestTiming.BeginPhase(TestPhaseKind.DbCleanup, "drop");
         TestDbFixtureLifecycle.ValidateDatabaseName(databaseName);
         var clonedConnectionString = new NpgsqlConnectionStringBuilder(ready.SharedConnectionString)
         {
