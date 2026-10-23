@@ -41,6 +41,7 @@ public partial class PermissionWaitTests
             ("empty kind", valid with { Kind = "", CanCancel = false }, true),
             ("unknown kind", valid with { Kind = "secret command", CanCancel = true }, true),
             ("question", valid with { Kind = "Question" }, true),
+            ("proof is metadata", valid with { SubmittedInput = new SubmittedInputProof(Guid.NewGuid(), "binding", 0, 1, "prompt", 1), CanCancel = true }, true),
             ("permission", JsonSerializer.Deserialize<ProviderDialogObservation>(JsonSerializer.Serialize(valid)), true),
         };
         foreach (var row in cases)
@@ -62,6 +63,20 @@ public partial class PermissionWaitTests
         }
         await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.AgentSessionId, f.SessionId).SetProperty(t => t.DispatchedAt, (DateTime?)null), ct);
         (await reader.ReadAsync(f.TaskId, true, ct)).ShouldBeNull("missing dispatch");
+        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.DispatchedAt, f.DispatchedAt), ct);
+        foreach (var runner in new[] { "", "desktop", "fixture-runner" })
+        {
+            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, runner).SetProperty(s => s.RunnerStoreId, (Guid?)null), ct);
+            var value = await reader.ReadAsync(f.TaskId, true, ct);
+            (value?.IsWait == true).ShouldBe(runner != "fixture-runner", "remote store absence is unknown");
+        }
+        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null), ct);
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteDeleteAsync(ct);
+        await db.SessionQueuedMessages.Where(m => m.AgentSessionId == f.SessionId).ExecuteDeleteAsync(ct);
+        await f.Writer.RecordAsync(f.TaskId, await reader.ReadAsync(f.TaskId, true, ct), ct);
+        var note = await f.NoteAsync(ct);
+        note.Body.ShouldContain("Tool execution attribution is unknown.");
+        note.Body.ShouldContain("Pending refinements: 0; receipt: none queued.");
     }
 
     [Test]
@@ -95,6 +110,14 @@ public partial class PermissionWaitTests
         };
         (await reader.ReadAsync(f.TaskId, true, ct)).ShouldBeNull("generation changed across await");
         await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, f.Generation), ct);
+        reader.ObserveOverride = async (_, token) =>
+        {
+            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "fixture-runner").SetProperty(s => s.RunnerStoreId, Guid.NewGuid()), token);
+            return valid;
+        };
+        (await reader.ReadAsync(f.TaskId, true, ct)).ShouldBeNull("runner binding changed across await");
+        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null).SetProperty(s => s.RunnerStoreId, (Guid?)null), ct);
+        facts.Fresh(facts.CompletedAt.AddTicks(-1)).ShouldBeFalse("negative-age evidence is not current");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
