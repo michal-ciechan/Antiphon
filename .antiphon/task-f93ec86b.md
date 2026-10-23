@@ -51,3 +51,23 @@ at 2/8 (no expansion), then use `run <manifest> --expected-source-sha <HEAD>
 until terminal. Validate report.json with scripts/validate-checkpoint-receipt.ps1,
 inspect all fresh class/method identities/counts, and run check-evidence-diff.ps1
 over the full task base..HEAD. Remove owned bin-c1526*/ outputs when finished.
+
+First ordinary run: `20261023-014342-1d38`, exact source
+badbd75a202d6cc9368da238d9186c6ee7133982, clean, buildSource verified.
+CP-1 timed out after its unchanged two-minute command deadline: the fixture
+helper named Git recursively resolved `git` as itself in PowerShell. This is
+introduced harness failure, not product-defect red. Rename it Fixture-Git;
+retain the failed receipt. CP-2 passed all 14 methods, 0 failed/skipped.
+Both rows will run at the repaired report-containing tip to meet the explicit
+final-tested-source requirement. The second CP-2 build/run is for source identity,
+not repeat proof or flake hunting. No timeout or assertion is loosened.
+
+CHECKPOINT CP-1 commit=badbd75a202d6cc9368da238d9186c6ee7133982 build=n/a filter=pwsh -NoProfile -File scripts/test-os-witnesses.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=2m slot=granted waited=135s dirty=0 source=badbd75a202d6cc9368da238d9186c6ee7133982 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-2 commit=badbd75a202d6cc9368da238d9186c6ee7133982 build=ok filter=/*/*/(TaskPlatformGuidanceTests*)|(CheckpointManifestDocumentationTests*)|(CheckpointRepeatDocumentationTests*)/* executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-f93ec86b/.antiphon/checkpoints/20261023-014342-1d38/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=badbd75a202d6cc9368da238d9186c6ee7133982 sourceState=clean buildSource=verified
+
+Manual integration: merge-tree against origin/master is clean. A sequential
+cherry-pick simulation onto rc/2026-10-20 at
+30cc91b1d92aed3cb2313bb5361663d2fd89c1b7 is clean **with prerequisite plan commit
+247e615da70ec1f75a05d5aa56a9c7941ae94911 first**, followed by this task's commits
+in order. The rc does not yet contain that plan. No branch/ref was changed by
+the simulation. Recheck current refs before publication.
