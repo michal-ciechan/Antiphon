@@ -589,6 +589,16 @@ unchanged. Missing required execution remains verification incomplete under
 [D-2](orchestration-loop.md#d-2-advisory-policy-card-1281); standing rule 4 still
 owns `found`. A declaration saying `real-type` alone proves no execution.
 
+The pinned test file must contain the exact declared test method or named script
+case, the production type and factory in code, and each optional-input
+`setupAssertion` as code (including the absent-key assertion). The bounded
+declaration matcher recognizes attributed C# test methods and PowerShell
+functions / `It`, `Run-Case`, or `Test-Case` declarations. It strips `//`, `/* */`,
+`#` and PowerShell block comments, preserving quoted assertion arguments;
+quoted examples cannot supply executable tokens. This is lexical consistency,
+not dataflow proof that the asserted setup reaches production. Review still
+checks removal or never-assigned absence before the call and the actual outcome.
+
 Version 1 fields (names and enum values are case-sensitive by convention):
 
 | Record | Required content |

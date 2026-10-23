@@ -293,12 +293,14 @@ No command in a witness record is executed by the checker.
 | V-8 | `sha-mismatch`, `unresolved-ref`, `missing-path`, `missing-checkpoint`, `duplicate-inventory`, `malformed-record`, `unsafe-path`, `pinned-source`: identity, structure and pinned-object validation | CP-1 |
 | V-9 | `unknown-classification`: unknown non-document paths need classification | CP-1 |
 | V-10 | `documentation-only`: correct not-applicable census passes | CP-1 |
+| V-11 | Repair: `test-seam-only`, `test-always-assigned`, `test-comment-only`, `test-case-missing`, `test-comment-strings`, `test-line-comment-strings`, `test-hash-comment-strings`, `test-factory-missing`, `test-name-call-only`, `test-name-prefix`, `real-absent-test`, `pinned-test-ignores-worktree`, `pinned-test-rejects-worktree-repair`: require pinned test declarations, code tokens and setup assertions | CP-1 |
 | R-1 | `policy-surface`: mandatory owner/bundle pointers, corrected incident, native absent-key recipe, restore and forward recovery (26 assertions) | CP-1 |
 | R-2 | Five TaskPlatformGuidanceTests, eight CheckpointManifestDocumentationTests, one CheckpointRepeatDocumentationTests; existing caps, platform, checkpoint and repeat obligations preserved | CP-2 |
 | R-3 | Manual diff: standing rule 4/D-2 unchanged; no runtime policy repair, desktop/release operations or persistent opt-out change; clean merge-tree and sequential rc cherry-pick simulation | Manual |
 
-CP-1 has 25 named checker cases (50 exit/diagnostic assertions), plus 26 policy
-assertions: 76 total, all required, no skipped group. Each checker process has a
+CP-1 preserves the original 25 named checker cases (50 exit/diagnostic assertions)
+and 26 policy assertions, adding 13 repair cases (26 assertions): 102 total,
+all required, no skipped group. Each checker process has a
 15-second kill/join deadline. The ordinary command row is capped at two minutes;
 CP-2 at eight minutes, with one isolated build. Normal green is run once; only
 failed rows are repaired/rerun. Pre-fix policy red was committed before the fix.
@@ -317,7 +319,7 @@ owned and unbound while its repair is InProgress.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | Lint contract, policy pointers, native recipe/rollback document checks | All 25 checker cases (50 assertions) plus 26 policy assertions pass (76 total); exit 0; no skipped group. | n/a | 2 |
+| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | Lint contract, pinned test code, policy pointers, native recipe/rollback document checks | All 38 checker cases (76 assertions) plus 26 policy assertions pass (102 total); exit 0; no skipped group. | n/a | 2 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1526/` | portable-bundle-contracts | `/*/*/(TaskPlatformGuidanceTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)/*` | Existing bundle caps, preserved instructions, placement, checkpoint and repeat-policy obligations | All 14 existing methods pass, 0 failed/skipped; no sibling `RunnerDefaultGuidanceTests` selected | 14 | 8 |
 
 Both rows name the portable lane and stay unpinned. Execute them in one
