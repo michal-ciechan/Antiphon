@@ -21,7 +21,7 @@ public sealed partial class AgentTaskDispatcher
             {
                 var facts = await _providerWait.ReadAsync(task.Id, false, token);
                 // Runtime owns its own persistence scopes. No shared dispatcher DbContext enters this batch.
-                if (facts is { IsWait: true } && _runtime is not null)
+                if (facts is { IsWait: true } && _runtime is not null && _providerWait.ClaimCatchUp(facts))
                     await _runtime.CatchUpTranscriptAsync(task.AgentSessionId!.Value, token);
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 if (await scope.ServiceProvider.GetRequiredService<ProviderWaitWarningWriter>().RecordAsync(task.Id, facts, token))

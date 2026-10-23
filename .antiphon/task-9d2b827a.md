@@ -114,3 +114,36 @@ CHECKPOINT CP-5 commit=2816290744d02e3303487b12a4682f5cedc7dd9f build=reused fil
 CHECKPOINT CP-6 commit=2816290744d02e3303487b12a4682f5cedc7dd9f build=reused filter=/*/*/AgentTaskOverdueDeadlineTests/(an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives*)|(an_unresolved_api_error_recovery_stands_the_sweep_down*)|(a_working_boot_stall_warns_without_failure_stop_or_retry*)|(the_caller_is_told_rather_than_left_to_discover_it*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-9d2b827a/.antiphon/checkpoints/20261023-060053-0e1e/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=2816290744d02e3303487b12a4682f5cedc7dd9f sourceState=clean buildSource=verified
 CHECKPOINT CP-7 commit=2816290744d02e3303487b12a4682f5cedc7dd9f build=reused filter=/*/*/(ClaudeDialogDeliveryTests*)|(TaskProgressStallSweepTests*)|(RunnerSlotEndpointTests*)/(C680_QueueAndExpectationKeepDialogInputPending*)|(A_stalled_task_is_never_killed_escalated_or_failed_by_the_stall_sweep*)|(Force_release_without_the_operator_token_is_forbidden_even_from_loopback*) executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-9d2b827a/.antiphon/checkpoints/20261023-060053-0e1e/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=2816290744d02e3303487b12a4682f5cedc7dd9f sourceState=clean buildSource=verified
 ```
+
+## Second admission and consumer audit
+
+Run `20261023-062103-8fa7` at `feb1bad5b0a4025eb199314a8a3b5c9815faae63`
+was refused before .NET compilation: npm's two esbuild executable paths were
+hard links, which the confinement ledger refuses. CP-2..CP-7 executed zero tests;
+CP-8 passed its strengthened real-panel test, typecheck and lint (row 30s, run 53s).
+All obtained slots were granted with zero wait. Replaced each generated dependency
+path with identical bytes in a regular single-link file; both SHA-256 values remain
+`c638273fcf95573ca74af586677800b4dd874c55f8f945adb54316d6902ba14b`.
+No dependency version or source changed during that repair.
+
+The audit also found that Check captured its clock before the bounded observation;
+its deadline now evaluates at completed-read time. V-9 advances the fake clock
+inside the read to pin that guard, and checks unavailable-observation wording.
+The shared diagnosis no longer infers mid-turn from a modal alone. Transcript
+catch-up is claimed once per completed observation, not every cached tick.
+
+Evidence guard at `feb1bad5b0a4025eb199314a8a3b5c9815faae63`: 13 commits, one
+Markdown evidence entry, zero violations over assigned base..HEAD. The merge-tree
+with fetched master `6d847b85b4cd4250fe8c5f0b7a4820f7411fa45d` was conflict-free
+and produced tree `ad34c2aa52b6e5d326b5a7be6ce55ee5b2d1a89d`. Final checks are
+recorded again in settlement evidence.
+
+```text
+CHECKPOINT CP-2 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/PermissionWaitTests/(C1518_OptionalObservationInputs*)|(C1518_ObservationBindingRacesAndExpiry*)|(C1518_NinetyMinuteBoundaryKeepsCustody*)|(C1518_RealChildAndOtherClocksRemainBounded*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-3 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall*)|(C1518_EpisodeAndNoteCommitOnce*)|(C1518_DecisionReachesBusyAndIdleCaller*)|(C1518_NoteRecoveryRetainsOneQueueRow*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-4 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/PermissionWaitTests/(C1518_CheckAttentionAndStallAgree*)|(C1518_FailedSeatRecoveryDoesNotResurrect*)|(C1518_CadenceAndReadFailuresAreBounded*)|(C1518_DetectionHasNoTerminalSideEffects*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-5 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/TaskDeadlinePolicyTests/(a_running_local_tool_takes_the_much_longer_local_execution_deadline*)|(a_warm_pool_session_is_never_charged_for_a_stall_it_inherited*)|(a_compaction_continuation_prompt_is_not_a_stalled_model_call*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-6 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/AgentTaskOverdueDeadlineTests/(an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives*)|(an_unresolved_api_error_recovery_stands_the_sweep_down*)|(a_working_boot_stall_warns_without_failure_stop_or_retry*)|(the_caller_is_told_rather_than_left_to_discover_it*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-7 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=failed filter=/*/*/(ClaudeDialogDeliveryTests*)|(TaskProgressStallSweepTests*)|(RunnerSlotEndpointTests*)/(C680_QueueAndExpectationKeepDialogInputPending*)|(A_stalled_task_is_never_killed_escalated_or_failed_by_the_stall_sweep*)|(Force_release_without_the_operator_token_is_forbidden_even_from_loopback*) executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=granted waited=0s slot-reason=refused: unreadable dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+CHECKPOINT CP-8 commit=feb1bad5b0a4025eb199314a8a3b5c9815faae63 build=n/a filter=pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1518-client -- pwsh -NoProfile -File scripts/test-client.ps1 ProviderInputWait.test.tsx -t C1518 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=feb1bad5b0a4025eb199314a8a3b5c9815faae63 sourceState=clean buildSource=notApplicable
+```
