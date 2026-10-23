@@ -94,6 +94,15 @@ reject unknown JSON members, so a stale `priority` write is **400**, not a silen
 (the tri-state for the date; null `dueAt` means unchanged). `GET /api/cards/limits` includes
 `importanceValues` and `urgencyValues` from `Enum.GetNames`.
 
+CARD-0151: card creation and the content PATCH accept `estimateDays`, a single effort estimate
+in days, greater than zero and at most 365, with at most two decimal places. Invalid estimates
+return 422 with `estimateDays` errors before any write. On PATCH, omitted or null means preserve;
+`clearEstimate: true` clears it. Supplying both a value and clear returns 422 with a
+`clearEstimate` error. Content edits snapshot the superseded estimate in the existing revision
+trail, under the existing concurrency-token and bounded-reason rules. Cards and content revisions
+omit `estimateDays` from JSON when null. Existing cards and older revisions remain unestimated;
+there is no backfill.
+
 CARD-0544: the same PATCH takes optional `codeVerificationPolicy` / `reviewVerificationPolicy`
 (`FullOnly` | `AllowInterim`, default `FullOnly`; unknown strings 422). `CardDto` and revisions
 expose both; a revision records the superseded values.
@@ -167,7 +176,7 @@ GET    /api/cards/limits                     title/description/reason/actor leng
 GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
 GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)
 PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)  (?boardId=&cwd=)
-PATCH  /api/cards/{id}/content               title/description edit — revision-logged  (?boardId=&cwd=)
+PATCH  /api/cards/{id}/content               content/estimate edit — revision-logged; estimateDays or clearEstimate (?boardId=&cwd=)
 PATCH  /api/cards/{id}/position              relative placement (before/after/top/bottom); 409 card_order_stale, 422 card_position_unreachable  (?boardId=&cwd=)
 GET    /api/cards/{id}/revisions             every content write, with actor and reason  (?boardId=&cwd=)
 POST   /api/cards/{id}/spawn                 start an agent on this card (409 `remote_control_refused` when `remoteControlName` is set on a kind whose catalog row is not Supported)  (?boardId=&cwd=)
@@ -186,7 +195,7 @@ GET    /api/diagnoses/stats                  kind × outcome counts, p50/p90 wai
 
 GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}
-POST   /api/boards/{id}/cards                create a card on this board (importance/urgency names, optional dueAt; a `priority` field is 400)
+POST   /api/boards/{id}/cards                create a card on this board (importance/urgency names, optional dueAt and estimateDays; a `priority` field is 400)
 POST   /api/boards/{id}/card-order           bulk relative order (listed cards first per rank cell; required reason; skippedHumanRated when Human-rated axes are left alone)
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
 PUT    /api/boards/{id}/pipeline   select a shared pipeline definition; `{ "pipelineDefinitionId": null }` inherits the project default

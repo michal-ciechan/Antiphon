@@ -186,6 +186,7 @@ public sealed class CardService : IScheduledCardActions
                 : CardImportanceProvenance.Human,
             Urgency = request.Urgency,
             DueAt = request.DueAt,
+            EstimateDays = request.EstimateDays,
             UrgentSince = request.Urgency > CardUrgency.Normal ? now : null,
             LabelsJson = BoardService.SerializeLabels(request.Labels),
             Status = column.CardStatus,
@@ -638,6 +639,10 @@ public sealed class CardService : IScheduledCardActions
             card.DueAt = null;
         else if (request.DueAt is { } dueAt)
             card.DueAt = dueAt;
+        if (request.ClearEstimate)
+            card.EstimateDays = null;
+        else if (request.EstimateDays is { } estimateDays)
+            card.EstimateDays = estimateDays;
         if (request.Labels is not null)
             card.LabelsJson = BoardService.SerializeLabels(request.Labels);
         if (request.Alias is not null)
@@ -1979,6 +1984,7 @@ public sealed class CardService : IScheduledCardActions
     private static void ValidateCreateRequest(CreateCardRequest request)
     {
         var errors = new Dictionary<string, string[]>();
+        RequireEstimate(errors, request.EstimateDays);
         RequireWithinLimit(errors, "privateNotes", request.PrivateNotes, MaxPrivateNotesLength);
         if (request.CardFileVisibility is { } visibility && !Enum.IsDefined(visibility))
             errors["cardFileVisibility"] = ["cardFileVisibility must be Inherit, Private or Public."];
@@ -2069,6 +2075,9 @@ public sealed class CardService : IScheduledCardActions
     private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)
     {
         var errors = new Dictionary<string, string[]>();
+        RequireEstimate(errors, request.EstimateDays);
+        if (request.ClearEstimate && request.EstimateDays is not null)
+            errors["clearEstimate"] = ["ClearEstimate cannot be combined with EstimateDays."];
         RequireWithinLimit(errors, "privateNotes", request.PrivateNotes, MaxPrivateNotesLength);
         if (request.CardFileVisibility is { } visibility && !Enum.IsDefined(visibility))
             errors["cardFileVisibility"] = ["cardFileVisibility must be Inherit, Private or Public."];
@@ -2089,6 +2098,8 @@ public sealed class CardService : IScheduledCardActions
             || request.Urgency is not null
             || request.DueAt is not null
             || request.ClearDueAt
+            || request.EstimateDays is not null
+            || request.ClearEstimate
             || request.Labels is not null
             || request.ImportanceProvenance is not null
             || request.Alias is not null
@@ -2098,7 +2109,7 @@ public sealed class CardService : IScheduledCardActions
         if (!hasContent)
         {
             errors[nameof(request.Title)] =
-                ["At least one of Title, Description, Alias, Importance, Urgency, DueAt, ClearDueAt, Labels or ImportanceProvenance must be provided."];
+                ["At least one of Title, Description, Alias, Importance, Urgency, DueAt, ClearDueAt, EstimateDays, ClearEstimate, Labels or ImportanceProvenance must be provided."];
         }
 
         if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
@@ -2113,6 +2124,12 @@ public sealed class CardService : IScheduledCardActions
 
         if (errors.Count > 0)
             throw new ValidationException(errors);
+    }
+
+    private static void RequireEstimate(Dictionary<string, string[]> errors, decimal? value)
+    {
+        if (value is { } estimate && (estimate <= 0 || estimate > 365 || decimal.Round(estimate, 2) != estimate))
+            errors["estimateDays"] = ["EstimateDays must be greater than 0 and at most 365, with at most two decimal places."];
     }
 
     private static void ValidateArchiveRequest(

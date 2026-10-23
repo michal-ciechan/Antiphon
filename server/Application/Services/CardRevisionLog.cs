@@ -74,6 +74,7 @@ internal static class CardRevisionLog
             Importance = card.Importance,
             Urgency = card.Urgency,
             DueAt = card.DueAt,
+            EstimateDays = card.EstimateDays,
             Position = card.Position,
             LabelsJson = card.LabelsJson,
             CodeVerificationPolicy = card.CodeVerificationPolicy,
