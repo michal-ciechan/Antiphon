@@ -74,3 +74,10 @@ CP-2 build; no base build was necessary for the PowerShell policy failure. R-1
 remains failed/inherited; no Unit lane, assembly, policy repair, or timeout change
 is substituted. The caller must commission the policy owner's repair and rerun
 that exact row before Review/land. The final row closes only the planner behaviors.
+
+CP-4 at cdecd8bd3b6e55a4977b4489014061913bc744e3 executed the four
+V-5 assertion rows: imported-reference passed; literal content, wildcard content
+and batch census failed as intended. S4 adds those consumer edges and a TUnit
+census with reasoned harness-only dispositions. Imported item paths resolve
+relative to the consuming project, while explicit MSBuildThisFileDirectory and
+Import paths resolve from their declaring file. No qualification policy changed.

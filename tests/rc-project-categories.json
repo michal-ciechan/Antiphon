@@ -187,5 +187,13 @@
     "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
     "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
     "tests/Antiphon.Tests/Antiphon.Tests.csproj"
-  ]
+  ],
+  "nonQualificationTests": {
+    "scripts/fixtures/nightly/c1375-probe/Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "scripts/fixtures/nightly/c487-probe/Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.Checkpoints.FilterHost/Antiphon.Checkpoints.FilterHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite."
+  }
 }

@@ -689,7 +689,7 @@ acceptance run.
 `scripts/select-rc-project-batches.ps1 -BaselineSha <full sha> -CandidateSha <full sha>`
 reads committed files and `tests/rc-project-categories.json`. Its JSON manifest
 contains both ProjectReference graphs, direct references, transitive downstream
-projects, linked Compile inputs, categories and proposed whole-test-project batches.
+projects, linked Compile/content inputs, categories and proposed whole-test-project batches.
 Use `-OutputPath <new file>` to retain an intent without overwriting an older one.
 The release selection intent records the same data as `projectProposal` when a
 baseline and a non-Full request are present. This adds no test execution.
@@ -698,7 +698,7 @@ The first slice keeps mixed projects whole. Server/git operations and shared
 Claude/Codex/pty projects carry all their categories; no handler extraction or
 per-method discovery is implied. Conditional references are conservatively unioned.
 Literal imports are traversed without executing MSBuild. Unknown categories,
-paths, unresolved imports/references, cycles and shared build/scripts/policy inputs
+paths, missing TUnit batch dispositions, unresolved imports/references, cycles and shared build/scripts/policy inputs
 fall back to Full. Client and script inputs also fall back to Full.
 
 `mode=Scoped` describes a shadow proposal only: `effectiveMode=Full`,
@@ -707,3 +707,9 @@ still executes the existing full nine-suite profile. This manifest is not a
 qualification receipt, unchanged-project proof, or permission to reuse old groups.
 Admission of scoped gate credit and shadow/full comparison qualification remain
 future CARD-1545 slices; the next full RC run is unchanged.
+
+The advisory inventory separately lists harness-only TUnit executables with reasons.
+A TUnit project absent from both the batch list and those dispositions forces Full
+and is retained in the proposed full batch list. Literal and wildcard content,
+resources and additional files participate in consumer ownership, including files
+copied from another project. This inventory does not amend the qualification policy.
