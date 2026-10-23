@@ -68,7 +68,7 @@ internal static class TargetPins
     private static Dictionary<string, string> ReadPins(string repo, IReadOnlySet<string> tracked, ISet<string> refusals)
     {
         var pins = new Dictionary<string, string>(StringComparer.Ordinal);
-        var path = Path.Combine(repo, PinsPath);
+        var path = Path.GetFullPath(Path.Combine(repo, PinsPath));
         if (!File.Exists(path))
         {
             if (tracked.Contains(path)) refusals.Add($"refused: {PinsPath} (missing pins file)");
