@@ -40,6 +40,8 @@ Mutation owns deliberate defects and discovery of missing controls. No mutation 
 | CP-3 | S3 | n/a | census-red | `pwsh -NoProfile -File scripts/test-test-selection.ps1 -Case C1313_ProjectAndCatalogUniverse` | R-3 red | exit 1; C1313 project-universe fails on unclassified audit test project | n/a | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1563-main/ | linked-audit | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | TimeoutAuditTests | 6 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-5 | S4 | CP-4 | census-regression | `/*/*/TestSelectionCatalogTests/*` | R-3 and existing catalog/live/mixed smoke | TestSelectionCatalogTests | 3 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-6 | S5 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-windows-red/ | windows-estimate-red | `/*/*/TimeoutAuditTests/Windows_row_override_is_inventoried_and_only_compared_to_Windows_history` | V-5 red | Windows_row_override_is_inventoried_and_only_compared_to_Windows_history | 1 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-7 | S6 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-windows-green/ | windows-estimate-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,V-5,R-1,R-2 | TimeoutAuditTests | 7 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 
 ## S3-S4 qualification census integration
 
@@ -67,3 +69,13 @@ TestTiming.Probe (unlisted base check required by git-common, under a build slot
 Register both explicit child consumers; seven primary/seven child is the corrected census.
 No fixture source changes. The first S4 run was stopped while queued before any build or
 execution, to avoid paying for the known inherited census red. It carries no test credit.
+
+## S5-S6 Windows estimate variant
+
+V-5 inventories EstimatedMinutesWindows separately and joins only Windows receipt contexts;
+the default estimate must not be compared to Windows history when an override exists.
+CP-6 is one focused new-test red; CP-7 is the complete affected audit class green.
+Use the small host: no checkpoint execution, main census, fixture or public API changes.
+The complete main audit/census classes passed at d01baade84a067bed75c29480a3a5cd0dcf0c0c2;
+R-3 is unchanged and retains those receipts. Bounds remain 3 minutes for this small build/row;
+no repeats or widened timeouts. PC-8 is pending SourceLanding Mutation for this variant.
