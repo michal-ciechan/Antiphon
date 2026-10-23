@@ -1,8 +1,14 @@
+using Antiphon.Observability;
+using Microsoft.Extensions.Hosting;
 using Antiphon.AppHost.Supervisor;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+using var timingLogs = LoggerFactory.Create(logging => logging.AddConsole());
+using var liveTiming = new LiveTiming(timingLogs.CreateLogger<LiveTiming>());
+using var configurationTiming = liveTiming.BeginStartup(StartupOperation.ConfigLoad);
 var builder = DistributedApplication.CreateBuilder(args);
+builder.Services.AddSingleton(liveTiming);
 
 // Repo root: AppHost is at <repo>/Antiphon.AppHost/, binary at bin/Debug/net9.0/
 var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -96,7 +102,15 @@ builder.AddNpmApp("storybook", "../client", "storybook")
     .WithEnvironment("BROWSER", "none")
     .WithHttpEndpoint(port: 17209, isProxied: false);
 
-var app = builder.Build();
+configurationTiming.Complete();
+configurationTiming.Dispose();
+DistributedApplication app;
+using (var buildTiming = liveTiming.BeginStartup(StartupOperation.HostBuild))
+{
+    app = builder.Build();
+    buildTiming.Complete();
+}
+liveTiming.AttachLogger(app.Services.GetRequiredService<ILogger<LiveTiming>>());
 var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Antiphon.AppHost");
 
 // Report which mode client/scripts/serve.mjs will find on its first poll. This is a startup log
@@ -124,4 +138,5 @@ else
         "default (server/appsettings.json)");
 }
 
+using var hostTiming = liveTiming.ObserveHostStartup(app.Services.GetRequiredService<IHostApplicationLifetime>());
 app.Run();

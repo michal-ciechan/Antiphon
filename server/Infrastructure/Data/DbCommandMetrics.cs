@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Diagnostics.Metrics;
@@ -24,7 +25,12 @@ public sealed class DbCommandMetrics : DbCommandInterceptor, IDisposable
     private long _total;
     private long _untagged;
 
-    public DbCommandMetrics() => _commands = _meter.CreateCounter<long>("db.commands");
+    private readonly LiveTiming? _timing;
+    public DbCommandMetrics(LiveTiming? timing = null)
+    {
+        _timing = timing;
+        _commands = _meter.CreateCounter<long>("db.commands");
+    }
 
     /// <summary>The allowlisted leading tag of <paramref name="sql"/>, or null.</summary>
     internal static string? LeadingTag(string sql)
@@ -102,6 +108,27 @@ public sealed class DbCommandMetrics : DbCommandInterceptor, IDisposable
         Record(command);
         return ValueTask.FromResult(result);
     }
+
+    public override DbDataReader ReaderExecuted(DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return result; }
+    public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return ValueTask.FromResult(result); }
+    public override object? ScalarExecuted(DbCommand command, CommandExecutedEventData eventData, object? result)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return result; }
+    public override ValueTask<object?> ScalarExecutedAsync(DbCommand command, CommandExecutedEventData eventData, object? result, CancellationToken cancellationToken = default)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return ValueTask.FromResult(result); }
+    public override int NonQueryExecuted(DbCommand command, CommandExecutedEventData eventData, int result)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return result; }
+    public override ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData, int result, CancellationToken cancellationToken = default)
+    { _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, true); return ValueTask.FromResult(result); }
+    public override void CommandFailed(DbCommand command, CommandErrorEventData eventData) =>
+        _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, false);
+    public override Task CommandFailedAsync(DbCommand command, CommandErrorEventData eventData, CancellationToken cancellationToken = default)
+    { CommandFailed(command, eventData); return Task.CompletedTask; }
+    public override void CommandCanceled(DbCommand command, CommandEndEventData eventData) =>
+        _timing?.RecordExternal(ExternalOperation.Database, eventData.Duration, false);
+    public override Task CommandCanceledAsync(DbCommand command, CommandEndEventData eventData, CancellationToken cancellationToken = default)
+    { CommandCanceled(command, eventData); return Task.CompletedTask; }
 
     public Snapshot Read() => new(Interlocked.Read(ref _total), Interlocked.Read(ref _untagged),
         _tags.ToDictionary(p => p.Key, p => Interlocked.Read(ref p.Value.Value), StringComparer.Ordinal));

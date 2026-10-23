@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -5,7 +6,13 @@ using Microsoft.Extensions.Options;
 using Serilog;
 
 var managedEntryUtc = DateTime.UtcNow;
+using var timingLogs = LoggerFactory.Create(logging => logging.AddConsole());
+using var liveTiming = new LiveTiming(timingLogs.CreateLogger<LiveTiming>());
+using var configurationTiming = liveTiming.BeginStartup(StartupOperation.ConfigLoad);
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton(liveTiming);
+builder.Services.AddTransient<LiveTimingHttpHandler>();
+builder.Services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<LiveTimingHttpHandler>());
 
 // Structured logging with a bounded rolling file: one file per day, capped size, and retention by
 // TIME with the file count kept only as a disk backstop (CARD-0043 — counting files is not counting
@@ -39,7 +46,11 @@ if (builder.Configuration.GetValue<bool>("SessionRunner:BuildSlotsOnly"))
 {
     builder.Services.AddHealthChecks();
     builder.Services.AddBuildSlotBroker(builder.Configuration);
+    configurationTiming.Complete();
+    configurationTiming.Dispose();
     var brokerApp = builder.Build();
+    liveTiming.AttachLogger(brokerApp.Services.GetRequiredService<ILogger<LiveTiming>>());
+    using var brokerTiming = liveTiming.ObserveHostStartup(brokerApp.Lifetime);
     brokerApp.MapHealthChecks("/health");
     brokerApp.MapBuildSlotRoutes();
     brokerApp.Run();
@@ -139,7 +150,15 @@ var effectivePtyRequest = PtyBackendConfiguration.EffectiveRequest(
     builder.Configuration[PtyBackendPolicy.ConfigKey], Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar));
 builder.Services.PostConfigure<SessionRunnerSettings>(settings => settings.PtyBackend = effectivePtyRequest);
 
-var app = builder.Build();
+configurationTiming.Complete();
+configurationTiming.Dispose();
+WebApplication app;
+using (var buildTiming = liveTiming.BeginStartup(StartupOperation.HostBuild))
+{
+    app = builder.Build();
+    buildTiming.Complete();
+}
+liveTiming.AttachLogger(app.Services.GetRequiredService<ILogger<LiveTiming>>());
 var startup = app.Services.GetRequiredService<RunnerStartupDiagnostics>();
 startup.Record("managed-entry", observedUtc: managedEntryUtc);
 app.Lifetime.ApplicationStarted.Register(() => startup.Record("application-started"));
@@ -185,13 +204,16 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
     }
     PtyBackendConfiguration.LogDecision(app.Logger, runtime.BackendDecision);
     var probe = app.Services.GetRequiredService<IProcessLivenessProbe>();
+    using var adoptionTiming = liveTiming.BeginStartup(StartupOperation.Adoption);
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)
         app.Logger.LogInformation("Adopted {Count} surviving pty-host session(s) from a previous runner", adopted);
     await CodexCliVersionRoutes.PrepareAdvertisementAsync(app.Services.GetRequiredService<CodexCliVersionProbe>(),
         app.Services.GetRequiredService<IPhoneHomeAdoptionGate>(), app.Lifetime.ApplicationStopping);
+    adoptionTiming.Complete();
 }
 
+app.MapGet("/diagnostics/startup", () => liveTiming.ReadStartup());
 app.MapHealthChecks("/health");
 app.MapCodexCliVersionRoutes();
 
@@ -424,6 +446,7 @@ app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, 
     }
 });
 
+using var hostTiming = liveTiming.ObserveHostStartup(app.Lifetime);
 app.Run();
 
 // Callable production mappings: isolated wire tests do not boot adoption/watchdog services.

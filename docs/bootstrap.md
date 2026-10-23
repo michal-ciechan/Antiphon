@@ -651,3 +651,38 @@ marker and sends the optional recovery webhook. Each sink is independent; no URL
 means no webhook. See the [dead-launch runbook](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527)
 for retry/deduplication and marker details. Native Windows qualification and
 observer registration remain separate operational work.
+
+## Live startup timing (CARD-1564)
+
+Server, runner and AppHost emit `LIVE_TIMING` completions with fixed phase/operation,
+monotonic elapsed milliseconds, outcome and run identity. `failed-or-canceled`
+means a scope left without completion, including a handled startup failure.
+`GET /api/diagnostics/startup` returns the server's latest 64 startup records and
+build SHA; the runner exposes `/diagnostics/startup`. These are observations,
+not health/readiness authority. `/api/version` remains the build identity endpoint.
+
+`Antiphon.Live` is the instance-owned ActivitySource. Set
+`Observability__ExportEnabled=true` on the server to include it in the existing
+OpenTelemetry console export. Other hosts emit structured logs and support an
+explicit ActivitySource listener; no new exporter is enabled automatically.
+Configuration and host-build records precede the configured provider and remain
+available in bootstrap stdout. Phase spans nest: their totals are not startup wall time.
+
+Phases shared with test timing are `fixture-setup` (config, connect, seed, setup,
+adoption), `db-create`, `db-migrate`, `host-startup`, `process-wait`, `filesystem`
+and `network-loopback` (local health wait). Remote HTTP uses `network`; database
+commands use `db-query`. Fixed operation names distinguish each boundary.
+
+`LIVE_SLOW_CALL` warns above 1000ms at the EF command, IHttpClientFactory send,
+GitService process (including output drain), and directory browse/create boundaries.
+The recorder accepts no SQL, argv, URL, paths, request/response bodies, credentials
+or exception text. External calls have no retained history. Calls outside these
+shared boundaries remain uninstrumented, not zero cost. Existing operation deadlines
+and failure handling still own cancellation; timing never retries or changes them.
+
+The Windows launch/restart scripts use the same fixed fields for Docker readiness,
+network/container setup, restore, dependency installation, build and health wait.
+Their records have per-process run IDs; join each process separately, never sum
+parent/child or nested times into wall time. The timing helpers preserve command
+exit codes, values and exceptions. Native Windows CARD-1526 verification is required
+for launcher changes; PowerShell on Linux cannot discharge it.

@@ -81,4 +81,5 @@
     <ProjectReference Include="..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
   </ItemGroup>
 
+  <ItemGroup><ProjectReference Include="../src/Antiphon.Observability/Antiphon.Observability.csproj" /></ItemGroup>
 </Project>

@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
+using System.Reflection;
 
 namespace Antiphon.Observability;
 
 public enum StartupOperation { ConfigLoad, DatabaseConnect, DatabaseCreate, Migrate, Seed, Setup, HostBuild, HostStart, ListenersReady, RunnerRegistration, Adoption }
 public enum ExternalOperation { Database, Git, Http, Filesystem }
 public sealed record StartupMeasurement(string Phase, string Operation, double ElapsedMs, string Outcome);
-public sealed record StartupSnapshot(string RunId, IReadOnlyList<StartupMeasurement> Phases);
+public sealed record StartupSnapshot(string RunId, IReadOnlyList<StartupMeasurement> Phases, string SourceSha = "unknown");
 
 /// <summary>Instance-owned timing. Labels are closed enums; payloads cannot enter telemetry.</summary>
 public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
@@ -14,6 +16,7 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
     public const string SourceName = "Antiphon.Live";
     private readonly ActivitySource _source = new(SourceName);
     private readonly string _runId = Guid.NewGuid().ToString("N");
+    private readonly string _sourceSha = BuildSha();
     private readonly object _gate = new();
     private readonly Queue<StartupMeasurement> _startup = new();
     private ILogger<LiveTiming> _logger = logger;
@@ -49,7 +52,8 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
     public void RecordExternal(ExternalOperation operation, TimeSpan duration, bool succeeded)
     {
         var (phase, name) = ExternalLabels(operation);
-        Finish(phase, name, duration.TotalMilliseconds, succeeded, false, null);
+        var activity = Start(phase, name, duration);
+        Finish(phase, name, duration.TotalMilliseconds, succeeded, false, activity);
     }
 
     private static (string Phase, string Name) ExternalLabels(ExternalOperation operation) => operation switch
@@ -62,15 +66,17 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
 
     public StartupSnapshot ReadStartup()
     {
-        lock (_gate) return new(_runId, Array.AsReadOnly(_startup.ToArray()));
+        lock (_gate) return new(_runId, Array.AsReadOnly(_startup.ToArray()), _sourceSha);
     }
 
-    private Activity? Start(string phase, string operation)
+    private Activity? Start(string phase, string operation, TimeSpan? observedDuration = null)
     {
         try
         {
+            if (!_source.HasListeners()) return null;
             return _source.StartActivity(operation, ActivityKind.Internal, Activity.Current?.Context ?? default,
-                tags: new ActivityTagsCollection { ["phase"] = phase, ["operation"] = operation, ["run.id"] = _runId });
+                tags: new ActivityTagsCollection { ["phase"] = phase, ["operation"] = operation, ["run.id"] = _runId, ["source.sha"] = _sourceSha },
+                startTime: DateTimeOffset.UtcNow - (observedDuration ?? TimeSpan.Zero));
         }
         catch { return null; } // A listener cannot replace the application result.
     }
@@ -103,6 +109,27 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
                     _runId, phase, operation, elapsedMs, outcome);
         }
         catch { /* Telemetry must not change the measured operation's outcome. */ }
+    }
+
+    private static string BuildSha()
+    {
+        var version = typeof(LiveTiming).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        var sha = version?.Split('+').LastOrDefault();
+        return sha is { Length: 40 or 64 } && sha.All(Uri.IsHexDigit) ? sha.ToLowerInvariant() : "unknown";
+    }
+
+    /// <summary>Ends the startup envelope at ApplicationStarted, including hosted-service startup.</summary>
+    public Phase ObserveHostStartup(IHostApplicationLifetime lifetime)
+    {
+        var phase = BeginStartup(StartupOperation.HostStart);
+        lifetime.ApplicationStarted.Register(() =>
+        {
+            phase.Complete();
+            phase.Dispose();
+            using var ready = BeginStartup(StartupOperation.ListenersReady);
+            ready.Complete();
+        });
+        return phase;
     }
 
     public void Dispose() => _source.Dispose();

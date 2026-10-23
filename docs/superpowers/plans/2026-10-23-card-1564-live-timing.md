@@ -49,7 +49,7 @@ PC-4 remove sink containment/history bound. Mutation owns red/restore/green.
 | CP-2 | S1-S2 | CP-1 | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
 | CP-3 | S1-S2 | CP-1 | external-boundaries | `/*/*/ExternalBoundaryTests/*` | V-7,V-8 | all listed, 0 failed | 2 | 1 |
 | CP-4 | S1-S2 | CP-1 | real-server-startup | `/*/*/LiveStartupIntegrationTests/*` | V-9 | all listed, 0 failed | 1 | 5 |
-| CP-5 | S1-S2 | n/a | script-timing | `pwsh -NoProfile -File scripts/test-live-startup-timing.ps1` | V-10 | 6 assertions, 2 measured phases, 0 failed | n/a | 1 |
+| CP-5 | S1-S2 | CP-1 | script-timing | `/*/*/StartupScriptTests/*` | V-10 | 1 method, 6 script assertions, 0 failed | 1 | 1 |
 
 V-5: actual server VersionEndpoints extension serves the injected live recorder over TestServer.
 V-6: real delegating handler creates failed span, preserving exception; synthetic secret in
@@ -77,3 +77,8 @@ and refusing runtime seams. No assertions or timeout were loosened. No productio
 runner, shared database or provider process is admitted. Initial setup claims about
 the shared factory above are historical; this dedicated startup witness owns its
 fresh container and records readiness/startup wall time explicitly.
+
+V-10 final selection is a method-scoped TUnit wrapper around the proven-red script
+contract, enabling method-scoped SourceLanding controls. Five seconds covers native
+exit and both drains, with separate two-second owned cleanup; the pure PowerShell
+actions spawn no descendants. The assembly strict process limiter serializes it.

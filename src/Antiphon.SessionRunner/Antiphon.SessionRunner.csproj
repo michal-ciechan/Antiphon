@@ -37,4 +37,5 @@
     <ProjectReference Include="..\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj" />
   </ItemGroup>
 
+  <ItemGroup><ProjectReference Include="../Antiphon.Observability/Antiphon.Observability.csproj" /></ItemGroup>
 </Project>

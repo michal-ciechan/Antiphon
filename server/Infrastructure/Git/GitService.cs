@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Server.Application.Interfaces;
@@ -14,6 +15,7 @@ public class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
     private readonly CardFileBoardLookup? _cardFiles;
+    private readonly LiveTiming? _timing;
     private readonly CardFilePreCommitSweep? _preCommit;
 
     /// <summary>
@@ -27,9 +29,10 @@ public class GitService : IGitService
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
     public GitService(ILogger<GitService> logger, CardFileBoardLookup? cardFiles = null,
-        CardFilePreCommitSweep? preCommit = null)
+        CardFilePreCommitSweep? preCommit = null, LiveTiming? timing = null)
     {
         _logger = logger;
+        _timing = timing;
         _cardFiles = cardFiles;
         _preCommit = preCommit;
     }
@@ -333,6 +336,7 @@ public class GitService : IGitService
         CancellationToken ct,
         TimeSpan? timeout = null)
     {
+        using var timing = _timing?.BeginExternal(ExternalOperation.Git);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout ?? GitTimeout);
 
@@ -348,7 +352,7 @@ public class GitService : IGitService
         };
         ServerGitProcess.DisableAutoMaintenance(psi);
 
-        _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
+        _logger.LogDebug("Running git process");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git process.");
@@ -378,12 +382,13 @@ public class GitService : IGitService
 
         if (process.ExitCode != 0)
         {
-            _logger.LogError("git {Arguments} failed (exit {ExitCode}): {StdErr}", arguments, process.ExitCode, stderr);
+            _logger.LogError("git process failed (exit {ExitCode})", process.ExitCode);
             throw new InvalidOperationException(
                 $"git {arguments} failed with exit code {process.ExitCode}: {stderr}");
         }
 
-        _logger.LogDebug("git {Arguments} completed successfully", arguments);
+        timing?.Complete();
+        _logger.LogDebug("git process completed successfully");
         return stdout;
     }
 
@@ -393,6 +398,7 @@ public class GitService : IGitService
         CancellationToken ct,
         TimeSpan? timeout = null)
     {
+        using var timing = _timing?.BeginExternal(ExternalOperation.Git);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout ?? GitTimeout);
 
@@ -408,7 +414,7 @@ public class GitService : IGitService
         };
         ServerGitProcess.DisableAutoMaintenance(psi);
 
-        _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
+        _logger.LogDebug("Running git process");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git process.");
@@ -432,6 +438,7 @@ public class GitService : IGitService
 
         await Task.WhenAll(stdoutTask, stderrTask);
         _cardFiles?.NoteServerGit(workingDirectory, arguments);
+        if (process.ExitCode == 0) timing?.Complete();
         return (process.ExitCode, stdoutBuilder.ToString(), stderrBuilder.ToString());
     }
 
