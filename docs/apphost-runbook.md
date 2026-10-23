@@ -308,7 +308,9 @@ scheduled task's environment. With no configured URL, no HTTP request or pending
 webhook is created. With a URL, it posts one down event and one recovery event,
 with a five-second bound and stable `Idempotency-Key`. Failed delivery stays queued;
 recovery's local signals proceed even while the earlier webhook retries. The
-receiver must deduplicate that key across ambiguous HTTP completions. Prefer HTTPS.
+receiver must deduplicate that key across ambiguous HTTP completions. Only HTTPS
+URLs are accepted; redirects are refused to prevent an HTTP downgrade. Invalid
+configuration leaves webhook intent queued without suppressing the local sinks.
 The URL and response body are never logged. No endpoint is built into source.
 The earlier proposed `ANTIPHON_APPHOST_ALERT_WEBHOOK` name is not consumed.
 
