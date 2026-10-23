@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -19,6 +20,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     private readonly TimeProvider _clock;
     private readonly ILogger<PhoneHomeConnectionService> _logger;
     private readonly Guid _bootId;
+    private readonly LiveTiming? _timing;
     private int _retiring;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PhoneHomeFrame>> _waiters = new();
     private long _epoch;
@@ -34,8 +36,10 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         TimeProvider clock,
         ILogger<PhoneHomeConnectionService> logger,
         PhoneHomeProcessIdentity? identity = null,
-        RunnerCapacityState? capacity = null)
+        RunnerCapacityState? capacity = null,
+        LiveTiming? timing = null)
     {
+        _timing = timing;
         _settings = settings.Value;
         _capacity = capacity ?? new RunnerCapacityState(_settings);
         _adoption = adoption;
@@ -101,6 +105,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
 
     internal async Task RunConnectionAsync(CancellationToken ct)
     {
+        using var registrationTiming = _timing?.BeginStartup(StartupOperation.RunnerRegistration);
         var storeId = PhoneHomeStoreIdentity.LoadOrCreate(_settings.StoreIdPath);
         var secret = await File.ReadAllTextAsync(_settings.SecretPath, ct);
         secret = secret.Trim();
@@ -147,6 +152,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         // response. Numbering our own connections here desynchronised the two counters the moment
         // either process restarted alone, and both receive loops silently dropped every frame that
         // did not match - the socket stayed open while heartbeats, requests and replies vanished.
+        registrationTiming?.Complete();
+        registrationTiming?.Dispose();
         await RunConnectedAsync(ws, ticket.Epoch, ticket.EventWindow, ct);
     }
 

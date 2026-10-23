@@ -84,6 +84,7 @@ if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
 
 $root    = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
 $restartBeganUtc = [datetime]::UtcNow
+. (Join-Path $PSScriptRoot 'lib/live-startup-timing.ps1')
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
 if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
     Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
@@ -287,6 +288,8 @@ try {
     $identityObserved = $null
     $identityReason = 'unavailable'
     $freshHeadNow = $null
+    $healthTiming = Start-LiveStartupPhase -Operation health-wait
+    try {
     while ((Get-Date) -lt $deadline) {
         Wait-AppHostPollInterval -Seconds 3
         if (-not $dashUrl -and (Test-Path $urlFile)) {
@@ -334,6 +337,7 @@ try {
         }
     }
 
+    } finally { Stop-LiveStartupPhase -Phase $healthTiming -Succeeded $identityVerified }
     $launcherFailure = Get-AppHostLauncherFailure -Process $devProcess
     if (-not $backendOk -and $null -ne $launcherFailure) {
         $keepRestartLock = $false

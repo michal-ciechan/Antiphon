@@ -16,6 +16,7 @@ param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree)
 $ErrorActionPreference = 'Stop'
 $root         = $PSScriptRoot
 . (Join-Path $root 'scripts\apphost-common.ps1')
+. (Join-Path $root 'scripts\lib\live-startup-timing.ps1')
 
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
 if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
@@ -41,7 +42,9 @@ if (-not (Test-Path $settingsFile)) {
     Write-Error "server\appsettings.json not found. Copy appsettings.json.example first."
 }
 
-docker info 2>&1 | Out-Null
+$dockerTiming = Start-LiveStartupPhase -Operation docker-info
+try { docker info 2>&1 | Out-Null }
+finally { Stop-LiveStartupPhase -Phase $dockerTiming -Succeeded ($LASTEXITCODE -eq 0) }
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Docker Desktop is not running. Start it, wait for the tray icon, then re-run."
 }
@@ -49,6 +52,8 @@ if ($LASTEXITCODE -ne 0) {
 # -- Pre-flight: test Docker network creation --
 Write-Host "`n> Testing Docker network health..." -ForegroundColor Cyan
 $dockerNetworkHealthy = $false
+$networkTiming = Start-LiveStartupPhase -Operation docker-network
+try {
 $testNetName = "aspire-preflight-$(Get-Random)"
 $netJob = Start-Job { param($n) & docker network create $n 2>&1; $LASTEXITCODE } -ArgumentList $testNetName
 $netCompleted = $netJob | Wait-Job -Timeout 8
@@ -66,12 +71,16 @@ if ($netCompleted -and $netCompleted.State -eq 'Completed') {
     Write-Host ""
 }
 
+} finally { Stop-LiveStartupPhase -Phase $networkTiming -Succeeded $dockerNetworkHealthy }
+
 # -- Pre-flight: ensure the always-on Postgres container is up --
 # Postgres is an EXTERNAL standalone container (docker-compose.dev.yml, restart:
 # unless-stopped) - not Aspire-managed. The AppHost references it via
 # AddConnectionString. Bring it up here in case it isn't already (idempotent).
 Write-Host "`n> Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
-docker compose -f "$root\docker-compose.dev.yml" up -d 2>&1 | Out-Null
+$containerTiming = Start-LiveStartupPhase -Operation container-start
+try { docker compose -f "$root\docker-compose.dev.yml" up -d 2>&1 | Out-Null }
+finally { Stop-LiveStartupPhase -Phase $containerTiming -Succeeded ($LASTEXITCODE -eq 0) }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  WARNING: could not start Postgres via docker compose." -ForegroundColor Yellow
 } else {
@@ -101,12 +110,16 @@ if (-not (Test-Path $worktreeDir)) { New-Item -ItemType Directory -Force $worktr
 
 if (-not $NoBuild) {
     Write-Host "`n> Restoring AppHost dependencies..." -ForegroundColor Cyan
-    & "$root\scripts\build-slot.ps1" -Label apphost-restore -- dotnet restore $appHostDir
+    $restoreTiming = Start-LiveStartupPhase -Operation restore
+    try { & "$root\scripts\build-slot.ps1" -Label apphost-restore -- dotnet restore $appHostDir }
+    finally { Stop-LiveStartupPhase -Phase $restoreTiming -Succeeded ($LASTEXITCODE -eq 0) }
     if ($LASTEXITCODE -ne 0) { Write-Error "dotnet restore failed." }
 
     Write-Host "`n> Installing client npm packages..." -ForegroundColor Cyan
     Push-Location "$root\client"
-    npm install
+    $dependencyTiming = Start-LiveStartupPhase -Operation dependencies
+    try { npm install }
+    finally { Stop-LiveStartupPhase -Phase $dependencyTiming -Succeeded ($LASTEXITCODE -eq 0) }
     if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
     Pop-Location
 }
@@ -124,7 +137,7 @@ Write-Host ""
 
 # Launch AppHost detached in a hidden window so this script can exit cleanly
 $encodedCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-    "Set-Location '$appHostDir'; & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build 2>&1 | Tee-Object -FilePath '$logFile'; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
+    "Set-Location '$appHostDir'; . '$root\scripts\lib\live-startup-timing.ps1'; `$buildTiming = Start-LiveStartupPhase -Operation build; try { & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build 2>&1 | Tee-Object -FilePath '$logFile' } finally { Stop-LiveStartupPhase -Phase `$buildTiming -Succeeded (`$LASTEXITCODE -eq 0) 6>&1 | Tee-Object -FilePath '$logFile' -Append }; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
 ))
 $appHostProc = Start-Process pwsh -ArgumentList @(
     '-NonInteractive', '-NoLogo', '-EncodedCommand', $encodedCmd

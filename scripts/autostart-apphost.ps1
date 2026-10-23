@@ -37,6 +37,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+. (Join-Path $PSScriptRoot 'lib/live-startup-timing.ps1')
 $root      = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
 $logDir    = Join-Path $root 'logs'
 $devScript = Join-Path $root 'dev-aspire.ps1'
@@ -68,11 +69,14 @@ if (Test-PortListening $serverPort) {
 Write-Log "waiting for Docker Desktop (up to ${DockerTimeoutSec}s)..."
 $dockerDeadline = (Get-Date).AddSeconds($DockerTimeoutSec)
 $dockerOk = $false
+$dockerTiming = Start-LiveStartupPhase -Operation docker-info
+try {
 while ((Get-Date) -lt $dockerDeadline) {
     docker info 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { $dockerOk = $true; break }
     Start-Sleep 10
 }
+} finally { Stop-LiveStartupPhase -Phase $dockerTiming -Succeeded $dockerOk }
 if (-not $dockerOk) {
     Write-Log "ERROR: Docker Desktop did not become responsive within ${DockerTimeoutSec}s - aborting."
     Write-Log "Fix: start Docker Desktop, then run dev-aspire.ps1 (or Start-ScheduledTask -TaskName 'Antiphon AppHost')."

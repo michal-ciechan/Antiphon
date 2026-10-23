@@ -1222,6 +1222,7 @@ GET    /api/settings/templates/{id}/stages
 POST   /api/settings/providers/{id}/test
 GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/model-routing/{routingId}
 GET    /health                               liveness + PostgreSQL
+GET    /api/diagnostics/startup              bounded live startup timings, run identity and build SHA (CARD-1564)
 GET    /api/version                          build-time git SHA (CARD-0179) plus `capabilities` (CARD-0495 `land-v2`); /health stays the literal Healthy body
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
 GET    /api/diagnostics/session-state        CARD-0701 process/cache counters, live/unknown counts, sanitized pool flags (no transcript text)

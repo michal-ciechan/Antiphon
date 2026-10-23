@@ -1,3 +1,5 @@
+using Antiphon.Observability;
+using Serilog.Extensions.Logging;
 using System.Text.Json.Serialization;
 using Hangfire;
 using Hangfire.InMemory;
@@ -59,7 +61,13 @@ try
         .CreateBootstrapLogger();
     Log.Logger = ownedLogger;
 
+    using var timingLogs = new SerilogLoggerFactory(ownedLogger, dispose: false);
+    using var liveTiming = new LiveTiming(timingLogs.CreateLogger<LiveTiming>());
+    using var configurationTiming = liveTiming.BeginStartup(StartupOperation.ConfigLoad);
     var builder = WebApplication.CreateBuilder(args);
+    builder.Services.AddSingleton(liveTiming);
+    builder.Services.AddTransient<LiveTimingHttpHandler>();
+    builder.Services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<LiveTimingHttpHandler>());
 
     // Serilog — structured logging with correlation enrichment (NFR19)
     // Serilog reloads this startup's bootstrap logger with the host's sinks and assigns it to
@@ -974,10 +982,20 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
+            // Existing request tracing is unchanged; live phase export is explicitly enabled.
+            .AddSource(builder.Configuration.GetValue<bool>("Observability:ExportEnabled") ? LiveTiming.SourceName : "Antiphon.Live.Disabled")
             .AddConsoleExporter())
         .WithMetrics(metrics => metrics.AddAntiphonResilienceMetrics());
 
-    var app = builder.Build();
+    configurationTiming.Complete();
+    configurationTiming.Dispose();
+    WebApplication app;
+    using (var buildTiming = liveTiming.BeginStartup(StartupOperation.HostBuild))
+    {
+        app = builder.Build();
+        buildTiming.Complete();
+    }
+    liveTiming.AttachLogger(app.Services.GetRequiredService<ILogger<LiveTiming>>());
     // Freeze() replaces the bootstrap wrapper with its configured inner logger. Capture that
     // exact instance so this host can close it without touching a later host's static logger.
     ownedLogger = Log.Logger;
@@ -1023,12 +1041,18 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // may not have access to the postgres admin DB or CREATEDB privilege — that's fine if
     // the database already exists.
     var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+    using var databaseCreateTiming = liveTiming.BeginStartup(StartupOperation.DatabaseCreate);
     try
     {
         var masterConnStr = new NpgsqlConnectionStringBuilder(rawConnectionString) { Database = "postgres" }.ConnectionString;
         var targetDb = new NpgsqlConnectionStringBuilder(rawConnectionString).Database;
         await using var adminConn = new NpgsqlConnection(masterConnStr);
-        await adminConn.OpenAsync();
+        using (var connectTiming = liveTiming.BeginStartup(StartupOperation.DatabaseConnect))
+        {
+            await adminConn.OpenAsync();
+            connectTiming.Complete();
+        }
+        using var databaseCallTiming = liveTiming.BeginExternal(ExternalOperation.Database);
         await using var checkCmd = new NpgsqlCommand(
             $"SELECT 1 FROM pg_database WHERE datname = '{targetDb}'", adminConn);
         var exists = await checkCmd.ExecuteScalarAsync() is not null;
@@ -1038,18 +1062,30 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
             await using var createCmd = new NpgsqlCommand($"CREATE DATABASE \"{targetDb}\"", adminConn);
             await createCmd.ExecuteNonQueryAsync();
         }
+        databaseCallTiming.Complete();
+        databaseCreateTiming.Complete();
     }
     catch (Exception ex)
     {
         Log.Warning(ex, "Could not auto-create database (may already exist or user lacks CREATEDB permission) — continuing");
     }
 
+    databaseCreateTiming.Dispose();
+    using var setupTiming = liveTiming.BeginStartup(StartupOperation.Setup);
     using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
-        dbContext.Database.Migrate();
-        await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+        using (var migrateTiming = liveTiming.BeginStartup(StartupOperation.Migrate))
+        {
+            dbContext.Database.Migrate();
+            migrateTiming.Complete();
+        }
+        using (var seedTiming = liveTiming.BeginStartup(StartupOperation.Seed))
+        {
+            await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+            seedTiming.Complete();
+        }
         // CARD-0664 D-8: one-time backfill of the orphaned workspace-use Launch backlog, repeated
         // harmlessly on every start. Best-effort: a failed reconcile never blocks startup.
         await WorkspaceReservationStartupReconcile.RunAsync(scope.ServiceProvider, app.Logger, CancellationToken.None);
@@ -1126,6 +1162,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         }
     }
 
+    setupTiming.Complete();
+    setupTiming.Dispose();
     app.UseWebSockets();
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
@@ -1215,6 +1253,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     Program.StartupGate.Release();
     startupGateHeld = false;
 
+    using var hostTiming = liveTiming.ObserveHostStartup(app.Lifetime);
     app.Run();
 }
 catch (Exception ex) when (ex is not HostAbortedException)
