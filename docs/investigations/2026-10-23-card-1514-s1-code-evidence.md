@@ -168,3 +168,28 @@ its actual outcomes, source validation, timings, refreshed RC trial, merge-tree
 and evidence-diff to the ignored full task report. Do not relabel earlier tips
 as tested final source. S1 still defines zero PCs; Mutation owns missing controls
 for the selector/multiplicity mapping as well as the extraction.
+
+## Settlement: implementation passes, checkpoint gate incomplete
+
+At 7ae930be3d9adb70252e900995cc1a57ab466e52, all 18 intended tests passed,
+zero failed/skipped. CP-20/21/22/23 counts 1/5/8/2; CP-24 both C1050 tests passed
+but its stale extra Windows class caused roster-miss / exit 3. Full receipt
+validation refused report_failed, correctly. The manifest now removes only that
+unused class operand. This final correction is committed but untested: the
+60-minute budget was exhausted. Verification remains incomplete, next Code,
+not Review or land. Preserve all earlier outcomes and costs.
+
+Same-server2 semantic resume cases remain 16 passed on both sides (old reporting
+node 1, new nodes 16); 32 script calls and every assertion retained. Test-interval
+sum: 383.7210761 s before, 459.3701813 s after. Candidate method wall spans:
+seed 34.6801005 s; partial 188.2823059 s; drift 163.2983626 s; replacement
+73.2404916 s. Four-host total 486.971651 s versus baseline 392.4453407 s.
+Build: 316.5995333 s versus baseline 331.5936244 s. Build-plus-host is slower
+by 79.5322192 s. No speed-up is claimed; S1 retains its independent reporting
+benefit. Raw per-method median/p95 and CHECKPOINT lines are in ignored evidence.
+
+The versioned analysis-only adapter profile-checkpoint-v2.ps1 corrects even-sized
+medians to the arithmetic mean; SHA-256
+8ea91a660001189462d139b5e1e1dfc6cdc5fa28cec33aeb65ff10de3bbabad4.
+The original adapter and hashes remain retained; no test/capture changed. Both
+baseline and candidate were parsed with v2. No new test invocation was hidden.

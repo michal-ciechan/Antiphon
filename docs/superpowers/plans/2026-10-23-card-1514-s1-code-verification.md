@@ -50,7 +50,7 @@ multiline parsing against Persistence 52 passes and Remote 29 passes/censoring.
 | CP-22 | S1 | CP-20 | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
 | CP-23 | S1 | CP-20 | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
 | CP-11 | S1R | `tests/Antiphon.Tests -> bin-c1514-s1-red/` | stale-roster-red | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | introduced stale identity witness | 2 assertion failures; inspect attribution separately | 2 | 3 | true | n/a |
-| CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)` | V-1 adjacent selector/skip multiset and source guards | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
+| CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/C1008PlatformContractTests/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)` | V-1 adjacent selector/skip multiset and source guards | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
 | CP-12 | S0R | `tests/Antiphon.Tests -> bin-c1514-s1-base/` | source-closure-base-attribution | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates` | exact base attribution for C1374 helper gate | 1 assertion failure if inherited; never passed | 1 | 3 | true | n/a |
 
 Run CP-0,CP-10 at the committed manifest SHA, then CP-20..d at the final
@@ -99,3 +99,17 @@ then CP-24 green after exact identity/multiset repair. C1210 red at both
 row, never a green gate. Candidate ordinary scope remains all sixteen resume
 cases and the two direct C1050 guards. Source closure for the four new entries
 is manually audited; the unrelated C1374 helper/closure assertion is unchanged.
+
+## Final gate remains incomplete
+
+Run 20261023-094358-a6c3 at 7ae930be3 executed all 18 intended tests: 18
+passed, zero failed/skipped. CP-20..23 were green (1/5/8/2). CP-24 executed
+both C1050 methods successfully but returned roster-miss (exit 3), because its
+class OR still included WindowsUnitPlatformAdmissionTests after the C1210 method
+was removed. The importer required that unused class as an expected roster token.
+The CP-24 filter above now names only its actual C1008PlatformContractTests class;
+no method, assertion or count is dropped. The full validator correctly refused
+the RED report with report_failed. This manifest correction has NOT been tested.
+The 60-minute budget is exhausted: next Code must run CP-20..24 once at the new
+committed HEAD (one build, --row-timeout 9m --total-timeout 60m), validate fresh
+receipts, then send ordinary Review. Do not claim this corrected tip green.
