@@ -33,7 +33,7 @@ separately commissioned desktop lane; this task must not use that lane.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | baseline | `tests/Antiphon.Tests -> bin-3fa-red/` | inherited-red | `/*/*/AgentTaskLandReceiptWatermarkTests/C1121_AnyCommittedChangeReopensFullScan*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnchangedTranscriptSkipsOnlyReceiptSelect*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnknownEvidenceUsesExistingScan*\|/*/*/SessionStateWarmupTests/Retention_*\|/*/*/ChannelInboundRecoveryTests/C768_BrokerReplayAfterPayloadPurgeKeepsNativeIdentity*` | V-1,V-2,V-3 | diagnostic: inherited red required | 29 | 5 | true |
-| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final2/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 36 | 5 | true |
+| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final3/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 36 | 5 | true |
 | CP-3 | repair | CP-2 | warmup | `/*/*/SessionStateWarmupTests/*` | V-1,R-2 | all listed, 0 failed | 16 | 2 | true |
 | CP-4 | repair | CP-2 | inbound-recovery | `/*/*/ChannelInboundRecoveryTests/*` | V-1,R-2 | all listed, 0 failed | 27 | 5 | true |
 | CP-5 | repair | CP-2 | card-correction | `/*/*/CardCorrectionIntegrationTests/*` | V-4,R-3 | all listed, 0 failed | 43 | 3 | true |
@@ -65,5 +65,11 @@ First final attempt: CP-2 35/36 passed; master-only supported-Claude observation
 was absent from its positive real-delivery fixture. CP-3 was waiting for a slot;
 CP-4/CP-5 had not launched when the run was explicitly stopped before repair.
 Repeat CP-2 and run CP-3..CP-5 together against the final pushed SHA, using fresh
-bin-3fa-final2/ and a 20m total hard cap (row cap remains 15m). Preserve prior
+bin-3fa-final3/ and a 20m total hard cap (row cap remains 15m). Preserve prior
 red/incomplete outcomes; this is failure-driven qualification, not green repetition.
+
+At e3e6298152c1ec8dc9da0f9ab23f3b281728c681 CP-2/CP-3/CP-5 passed in full;
+CP-4 had 21 delivery failures (fresh TRX 41 cases). After the master-only positive
+Claude composition repair, rerun ONLY CP-4 with fresh bin-3fa-final3/ and committed
+expected source SHA. Hard total cap 8m; row cap remains 15m. No timeouts/assertions
+inside any test change. Preserve the other three green rows at their actual SHA.

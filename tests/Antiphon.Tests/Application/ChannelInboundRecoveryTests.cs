@@ -32,6 +32,11 @@ public sealed class ChannelInboundRecoveryTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
 
+    // These fixtures exercise channel gates with a supported, clear Claude recipient.
+    // Keep the default fake unsupported for tests that explicitly exercise absent observations.
+    private static Task<BridgeQueueHarness> CreateHarnessAsync(BridgeQueueHarness.HarnessOptions options) =>
+        BridgeQueueHarness.CreateAsync(options with { ClaudeDialogObservation = true });
+
     [Test]
     [Arguments("continuity", "ChannelContinuityHeld")]
     [Arguments("suspended", "ChannelSuspended")]
@@ -39,7 +44,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C768_AgedHoldRaisesChannelIncidentAtThreshold(string hold, string reason)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
@@ -85,7 +90,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C768_HoldEpisodeDeduplicatesAcrossDrainsAndRestart(string initial)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
@@ -173,7 +178,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var fault = new C768IncidentWriteFault(cut);
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
@@ -248,7 +253,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var fault = new C768UnknownWakeFault();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
@@ -257,7 +262,7 @@ public sealed class ChannelInboundRecoveryTests
         var chat = await h.BindChannelAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var native = Guid.NewGuid().ToString("N");
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         if (caseName == "owned")
         {
             await Bridge(h, clock).HandleInboundAsync(Message(chat, native, "already owned complete tail"), Ct);
@@ -343,7 +348,7 @@ public sealed class ChannelInboundRecoveryTests
         string chat;
         string native;
         string inbox;
-        var original = await BridgeQueueHarness.CreateAsync(new()
+        var original = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
@@ -355,7 +360,7 @@ public sealed class ChannelInboundRecoveryTests
             chat = await original.BindChannelAsync();
             native = Guid.NewGuid().ToString("N");
             inbox = Path.Combine(original.TempRoot, "workspace", ".antiphon", "inbox");
-            InstallTranscriptReceipt(original);
+            await InstallTranscriptReceipt(original);
             var message = Message(chat, native, "original payload with a recognizable tail") with
             {
                 ReplyHandle = "original-reply-handle",
@@ -416,13 +421,13 @@ public sealed class ChannelInboundRecoveryTests
         }
         finally { await original.DisposeAsync(); }
 
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachAgentId = agentId,
             AttachSessionId = sessionId, Bridge = Settings(),
             PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(recovered);
+        await InstallTranscriptReceipt(recovered);
         var newerNative = Guid.NewGuid().ToString("N");
         var replayHost = Bridge(recovered);
         await replayHost.StartAsync(Ct);
@@ -473,13 +478,13 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C768_HoldIncidentsUseExistingAttentionAndPaging()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = true, PreserveDatabaseOnDispose = true,
         });
         var chat = await h.BindChannelAsync();
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
         var reasons = new[] { "continuity", "suspended", "liveness", "continuity" };
         var natives = new List<string>();
@@ -598,12 +603,13 @@ public sealed class ChannelInboundRecoveryTests
         AgentStartTimeoutSeconds = timeout, AgentReadyDelaySeconds = 0,
     };
 
-    private static void InstallTranscriptReceipt(BridgeQueueHarness h) =>
+    private static Task InstallTranscriptReceipt(BridgeQueueHarness h) =>
         InstallTranscriptReceipt(h, h.SessionId, h.Adapter);
 
-    private static void InstallTranscriptReceipt(BridgeQueueHarness h, Guid sessionId,
+    private static async Task InstallTranscriptReceipt(BridgeQueueHarness h, Guid sessionId,
         FakeAgentProtocolAdapter adapter)
     {
+        await adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, sessionId);
         var syncGate = new SemaphoreSlim(1, 1);
         adapter.OnSubmitted = async submitted =>
         {
@@ -640,7 +646,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C767_HealthyAgent_ReceivesBeforeFailedWakeDeadline(int earlierMessages)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 90),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -721,6 +727,7 @@ public sealed class ChannelInboundRecoveryTests
                 && t.Sequence == sequence && t.Kind == TranscriptKinds.UserPrompt && t.Text == submitted))
                 receipt.TrySetResult(submitted);
         };
+        await healthyAdapter.EnableClaudeDialogObservationAsync(h.ConnectionString, healthySession);
         h.Runtime.Register(healthySession, healthyAdapter);
         var clock = new BridgeWakeClock();
         var bridge = Bridge(h, clock);
@@ -849,7 +856,7 @@ public sealed class ChannelInboundRecoveryTests
             await seed.SaveChangesAsync();
         }
         var adapter = new FakeAgentProtocolAdapter();
-        InstallTranscriptReceipt(h, sessionId, adapter);
+        await InstallTranscriptReceipt(h, sessionId, adapter);
         var original = adapter.OnSubmitted!;
         var receipt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         adapter.OnSubmitted = async submitted =>
@@ -882,7 +889,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var refusal = new StartLockRefusal();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -999,13 +1006,13 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var refusal = new StartLockRefusal();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(refusal),
         });
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         var chat = await h.BindChannelAsync();
         var native = Enumerable.Range(0, 70).Select(i => $"ordered-{i:D2}-{Guid.NewGuid():N}").ToArray();
         await using (var seed = Db(schema.ConnectionString))
@@ -1090,12 +1097,12 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C767_ParkedPage_ResumesOldestCompletePromptsBeforeLaterRows(string cause)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 1),
             AlwaysOn = true, PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         var chat = await h.BindChannelAsync();
         var native = await SeedOrderedPageAsync(schema.ConnectionString, h.AgentId, chat, h.Now, cause);
         await using (var park = Db(schema.ConnectionString))
@@ -1149,13 +1156,13 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var gate = new StartLockGate();
-        await using var first = await BridgeQueueHarness.CreateAsync(new()
+        await using var first = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(gate),
         });
-        InstallTranscriptReceipt(first);
+        await InstallTranscriptReceipt(first);
         var chat = await first.BindChannelAsync();
         var native = await SeedOrderedPageAsync(schema.ConnectionString, first.AgentId, chat, first.Now, "claim");
         await using (var stop = Db(schema.ConnectionString))
@@ -1165,14 +1172,14 @@ public sealed class ChannelInboundRecoveryTests
             await stop.Agents.Where(a => a.Id == first.AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
         }
-        await using var second = await BridgeQueueHarness.CreateAsync(new()
+        await using var second = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachAgentId = first.AgentId,
             AttachSessionId = first.SessionId, Bridge = Settings(debounce: 10000, timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(gate),
         });
-        InstallTranscriptReceipt(second);
+        await InstallTranscriptReceipt(second);
         gate.Arm(first.AgentId);
         var winner = Bridge(first).DrainPendingAsync(Ct);
         var competingBridge = Bridge(second);
@@ -1276,12 +1283,12 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C767_AgentHeadPaging_WrapsPastHeldAgents()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         var healthyChat = await h.BindChannelAsync();
         var heldAgents = new List<(Guid AgentId, Guid SessionId, string Native)>();
         await using (var seed = Db(schema.ConnectionString))
@@ -1380,7 +1387,7 @@ public sealed class ChannelInboundRecoveryTests
                         released.SessionId.ToString("D")));
             }
             var adapter = new FakeAgentProtocolAdapter();
-            InstallTranscriptReceipt(h, released.SessionId, adapter);
+            await InstallTranscriptReceipt(h, released.SessionId, adapter);
             h.Runtime.Register(released.SessionId, adapter);
             await bridge.DrainPendingAsync(Ct);
             await using var wrapped = Db(schema.ConnectionString);
@@ -1402,7 +1409,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C767_MalformedDelivery_IsAcknowledgedAndNextMessageArrives()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1473,7 +1480,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var gate = new StartLockGate();
-        await using var first = await BridgeQueueHarness.CreateAsync(new()
+        await using var first = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1500,14 +1507,14 @@ public sealed class ChannelInboundRecoveryTests
             await seed.SaveChangesAsync();
         }
         var healthy = await SeedHealthyRecipientAsync(first, "healthy during claim contention DISTINCT TAIL");
-        await using var second = await BridgeQueueHarness.CreateAsync(new()
+        await using var second = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachAgentId = first.AgentId,
             AttachSessionId = first.SessionId, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(gate),
         });
-        InstallTranscriptReceipt(second);
+        await InstallTranscriptReceipt(second);
         gate.Arm(first.AgentId);
         var firstDrain = Bridge(first).DrainPendingAsync(Ct);
         Task? competingDrain = null;
@@ -1603,7 +1610,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var gate = new StartLockGate { HoldForCancellation = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 90),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1666,13 +1673,13 @@ public sealed class ChannelInboundRecoveryTests
             (await pending.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
         }
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachAgentId = h.AgentId,
             AttachSessionId = h.SessionId, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(recovered);
+        await InstallTranscriptReceipt(recovered);
         await using (var revive = Db(schema.ConnectionString))
         {
             await revive.AgentSessions.Where(s => s.Id == h.SessionId)
@@ -1697,7 +1704,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var gate = new CountingStartGate();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1775,7 +1782,7 @@ public sealed class ChannelInboundRecoveryTests
         foreach (var agent in agents)
         {
             var adapter = new FakeAgentProtocolAdapter();
-            InstallTranscriptReceipt(h, agent.SessionId, adapter);
+            await InstallTranscriptReceipt(h, agent.SessionId, adapter);
             h.Runtime.Register(agent.SessionId, adapter);
         }
         await Bridge(h).DrainPendingAsync(Ct);
@@ -1796,7 +1803,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var gate = new CountingStartGate();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1909,7 +1916,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_WakeTimeout_PreservesEnvelopeAndCriticalIncident()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = 20,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1954,7 +1961,7 @@ public sealed class ChannelInboundRecoveryTests
 
         await using var faultSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var incidentFault = new IncidentCommitFault();
-        await using var faultHarness = await BridgeQueueHarness.CreateAsync(new()
+        await using var faultHarness = await CreateHarnessAsync(new()
         {
             ConnectionString = faultSchema.ConnectionString, ClockSpeed = 20,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -1990,7 +1997,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         Guid agent; Guid session; string chat; string native;
-        await using (var h = await BridgeQueueHarness.CreateAsync(new()
+        await using (var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = 20,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2014,7 +2021,7 @@ public sealed class ChannelInboundRecoveryTests
             await db.AgentSessions.Where(s => s.Id == session)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         Guid replacementAgentId; Guid replacementSessionId;
-        await using (var replacement = await BridgeQueueHarness.CreateAsync(new()
+        await using (var replacement = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
@@ -2026,12 +2033,12 @@ public sealed class ChannelInboundRecoveryTests
         await using (var rebound = Db(schema.ConnectionString))
             await rebound.ChatChannels.Where(c => c.ExternalId == chat)
                 .ExecuteUpdateAsync(u => u.SetProperty(c => c.AgentId, replacementAgentId));
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(recovered);
+        await InstallTranscriptReceipt(recovered);
         var recoveredBridge = Bridge(recovered);
         await recoveredBridge.StartAsync(Ct);
         await WaitForAsync(async () =>
@@ -2083,13 +2090,13 @@ public sealed class ChannelInboundRecoveryTests
     private static async Task RecoveryTriggerAsync(bool signal)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = signal ? null : 5,
             Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
         var chat = await h.BindChannelAsync();
-        InstallTranscriptReceipt(h);
+        await InstallTranscriptReceipt(h);
         await using (var db = Db(schema.ConnectionString))
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
@@ -2119,7 +2126,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         Guid agentId; Guid sessionId; Guid ownerId; string body;
-        await using (var original = await BridgeQueueHarness.CreateAsync(new()
+        await using (var original = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
@@ -2144,13 +2151,13 @@ public sealed class ChannelInboundRecoveryTests
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)).ShouldBe(0);
         }
 
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachAgentId = agentId,
             AttachSessionId = sessionId, Bridge = Settings(), AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(recovered);
+        await InstallTranscriptReceipt(recovered);
         await recovered.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await using (var beforeStartup = Db(schema.ConnectionString))
             (await beforeStartup.ChannelInbounds.CountAsync(i => i.AgentId == agentId
@@ -2183,7 +2190,7 @@ public sealed class ChannelInboundRecoveryTests
         await using (var ackSchema = await TestDbFixture.CreateIsolatedSchemaAsync())
         {
             var gate = new AcceptanceGate();
-            await using var hostedHarness = await BridgeQueueHarness.CreateAsync(new()
+            await using var hostedHarness = await CreateHarnessAsync(new()
             {
                 ConnectionString = ackSchema.ConnectionString, Bridge = Settings(timeout: 5),
                 ClockSpeed = 20, AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2230,7 +2237,7 @@ public sealed class ChannelInboundRecoveryTests
             await replayHost.StartAsync(Ct);
             await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 2));
             await replayHost.StopAsync(Ct);
-            InstallTranscriptReceipt(hostedHarness);
+            await InstallTranscriptReceipt(hostedHarness);
             await using (var running = Db(ackSchema.ConnectionString))
                 await running.AgentSessions.Where(s => s.Id == hostedHarness.SessionId)
                     .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
@@ -2252,7 +2259,7 @@ public sealed class ChannelInboundRecoveryTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var mappingFault = new QueueMappingFault();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2303,7 +2310,7 @@ public sealed class ChannelInboundRecoveryTests
         await using (var batchSchema = await TestDbFixture.CreateIsolatedSchemaAsync())
         {
             var batchFault = new QueueMappingFault();
-            await using var batchHarness = await BridgeQueueHarness.CreateAsync(new()
+            await using var batchHarness = await CreateHarnessAsync(new()
             {
                 ConnectionString = batchSchema.ConnectionString, Bridge = Settings(debounce: 100000),
                 AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2327,7 +2334,7 @@ public sealed class ChannelInboundRecoveryTests
                 (await cut.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId != null
                     && q.AgentSessionId == batchHarness.SessionId)).ShouldBe(0);
             }
-            InstallTranscriptReceipt(batchHarness);
+            await InstallTranscriptReceipt(batchHarness);
             await Bridge(batchHarness).DrainPendingAsync(Ct);
             await batchHarness.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
             await using var recoveredBatch = Db(batchSchema.ConnectionString);
@@ -2428,7 +2435,7 @@ public sealed class ChannelInboundRecoveryTests
         // These are deliberate routing dispositions, so the hosted consumer may ack
         // each one without creating a deliverable journal owner or typing input.
         await using var dispositionSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var dispositions = await BridgeQueueHarness.CreateAsync(new()
+        await using var dispositions = await CreateHarnessAsync(new()
         {
             ConnectionString = dispositionSchema.ConnectionString, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2467,7 +2474,7 @@ public sealed class ChannelInboundRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         Guid agent; Guid session; string chat; string firstId; string secondId;
-        await using (var h = await BridgeQueueHarness.CreateAsync(new()
+        await using (var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2490,12 +2497,12 @@ public sealed class ChannelInboundRecoveryTests
                 .ExecuteUpdateAsync(u => u.SetProperty(i => i.AcceptedAt, tiedAt)
                     .SetProperty(i => i.Id, Guid.Parse("00000000-0000-0000-0000-000000000001")));
         }
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
             Bridge = Settings(debounce: 150), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
-        InstallTranscriptReceipt(recovered);
+        await InstallTranscriptReceipt(recovered);
         await Bridge(recovered).DrainPendingAsync(Ct);
         await WaitForAsync(async () =>
         {
@@ -2552,7 +2559,7 @@ public sealed class ChannelInboundRecoveryTests
 
         // A held first page must not starve the next accepted message forever.
         await using var pageSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var held = await BridgeQueueHarness.CreateAsync(new()
+        await using var held = await CreateHarnessAsync(new()
         {
             ConnectionString = pageSchema.ConnectionString,
             Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2597,7 +2604,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_HoldsAndConflicts_ParkWithoutRerouting()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
@@ -2634,7 +2641,7 @@ public sealed class ChannelInboundRecoveryTests
     private static async Task SupervisionHoldsPreserveEveryEnvelopeAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = true, PreserveDatabaseOnDispose = true,
@@ -2686,7 +2693,7 @@ public sealed class ChannelInboundRecoveryTests
     private static async Task CapacityHoldUsesCapturedReplyHandleAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = 20,
             Bridge = Settings(timeout: 1), AlwaysOn = true, PreserveDatabaseOnDispose = true,
@@ -2760,7 +2767,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_ChannelWake_IsAutomaticWithQuotaOverride()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
@@ -2791,7 +2798,7 @@ public sealed class ChannelInboundRecoveryTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var bridgeSettings = Settings(timeout: 5);
         var launchAdapter = new FakeAgentProtocolAdapter();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = bridgeSettings,
             ClockSpeed = 5, AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2920,7 +2927,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_QueuedLaunch_WaitsOnceAndRecognizesTerminalFailure()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = 20,
             Bridge = Settings(timeout: 5), AlwaysOn = false, PreserveDatabaseOnDispose = true,
@@ -2952,7 +2959,7 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_TransferAndUncertainWrite_RequireCompleteRecipientReceipt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
