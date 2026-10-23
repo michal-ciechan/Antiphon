@@ -328,7 +328,11 @@ public sealed class DelegateBranchDeliveryTests
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => source.GetOwnerAsync(sessionId, ct);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => source.GetBindingAsync(sessionId, ct);
         public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => source.GetInventoryAsync(runnerId, ct);
-        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerDescriptor?>(new(runnerId!, "wire", "linux", null, true, true, false, 2, wire.Surface.Capabilities()));
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+        {
+            var capabilities = wire.Surface.Capabilities();
+            return Task.FromResult<RunnerDescriptor?>(new(runnerId!, "wire", capabilities.Platform, null, true, true, false, 2, capabilities));
+        }
     }
 
     private sealed class Wire : IAsyncDisposable
@@ -396,7 +400,9 @@ public sealed class DelegateBranchDeliveryTests
                 await Task.WhenAll(_children); _children.Clear(); _socket.Dispose(); _stop.Dispose(); _stop = new();
             }
             _ready.Reset();
-            var ticket = await Host.RegisterAsync(storeId: _store, bootId: _boot, capabilities: Surface.Capabilities());
+            var capabilities = Surface.Capabilities();
+            var ticket = await Host.RegisterAsync(storeId: _store, bootId: _boot,
+                platform: capabilities.Platform, capabilities: capabilities);
             _socket = new(); _socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
             await _socket.ConnectAsync(Host.ConnectUri, ct);
             var storePath = Path.Combine(_root, "store-id"); await File.WriteAllTextAsync(storePath, _store.ToString("D"), ct);
