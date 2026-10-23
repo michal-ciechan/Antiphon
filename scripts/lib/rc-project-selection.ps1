@@ -109,8 +109,11 @@ function Read-RcProjectGraph {
                     # not repository files. Package/version inputs are owned separately.
                     if ($include -cmatch '^\$\(Pkg[A-Za-z0-9_]+\)[\\/]') { continue }
                     $target=Resolve-RcProjectInput $input $include $project.path -AllowWildcard
-                    if ($target -match '[*?\[]') {
-                        $pattern=[Management.Automation.WildcardPattern]::new($target,[Management.Automation.WildcardOptions]::CultureInvariant)
+                    if ($target -match '[*?]') {
+                        # MSBuild treats square brackets literally. Match its simple
+                        # globs conservatively across directories, with bounded work.
+                        $expression='^'+[regex]::Escape($target).Replace('\*','.*').Replace('\?','.')+'$'
+                        $pattern=[regex]::new($expression,([Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [Text.RegularExpressions.RegexOptions]::Singleline),[TimeSpan]::FromMilliseconds(100))
                         $inputs+=@($paths | Where-Object { $pattern.IsMatch($_) })
                     } else {
                         if ($node.LocalName -ceq 'Compile' -and -not $paths.Contains($target)) { throw "missing-linked-input:$input" }
