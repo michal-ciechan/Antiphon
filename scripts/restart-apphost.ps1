@@ -156,7 +156,7 @@ if ($launchInFlight) {
     exit 3
 }
 
-$lock = New-AppHostLock -Path $restartLock -MaxAgeMinutes $LockMaxAgeMinutes -Label 'restart lock'
+$lock = New-AppHostRestartLock -Path $restartLock -SourceRoot $root -MaxAgeMinutes $LockMaxAgeMinutes
 if (-not $lock.Acquired) {
     Write-Host "REFUSED: another restart is in flight - $($lock.Reason)" -ForegroundColor Yellow
     Write-Host "  A second teardown over the top of the first is exactly what times out the DCP" -ForegroundColor DarkGray
@@ -273,7 +273,10 @@ try {
     $devArgs = @('-NoLogo', '-File', $devScript)
     if ($NoBuild) { $devArgs += '-NoBuild' }
     if ($AllowWorktree) { $devArgs += '-AllowWorktree' }
-    $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs
+    $launchTag = [guid]::NewGuid().ToString('N')
+    $launcherOut = Join-Path $logDir "apphost-launcher-$launchTag.out"
+    $launcherErr = Join-Path $logDir "apphost-launcher-$launchTag.err"
+    $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs -OutputPath $launcherOut -ErrorPath $launcherErr
     $keepRestartLock = $true
 
     # 6) Wait for the dashboard URL + backend health + intended loaded SHA.
@@ -329,6 +332,14 @@ try {
             $identityReason = $ident.Reason
             $identityObserved = $ident.Sha
         }
+    }
+
+    $launcherFailure = Get-AppHostLauncherFailure -Process $devProcess
+    if (-not $backendOk -and $null -ne $launcherFailure) {
+        $keepRestartLock = $false
+        Write-Host "AppHost launcher exited $launcherFailure before health was confirmed; removing this restart's lock."
+        Write-Host "  launcher output: $launcherOut; stderr: $launcherErr"
+        exit 1
     }
 
     if ($dashUrl -and $backendOk -and $identityVerified) {

@@ -64,7 +64,7 @@ function Assert-Near {
 }
 
 function New-TestDir {
-    $dir = Join-Path $env:TEMP ('apphost-lock-age-' + [guid]::NewGuid().ToString('N'))
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('apphost-lock-age-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     return $dir
 }
