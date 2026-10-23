@@ -43,6 +43,10 @@ These are discovery candidates, not executed mutants or completed controls.
 ### Cost
 
 One shared isolated .NET build plus one combined three-class execution, estimated 20 minutes.
+The execution floor is 5 brief + 381 boundary + 20 delivery results = 406. The inherited
+415-result CP-2 also included 24 RefocusBriefIdentityTests and 7 AgentTaskReuseEnqueueTests;
+those classes are outside this brief. A first attempt with an incorrect 438 floor was stopped
+before any test row started; its partial build and receipts remain incomplete evidence.
 Run total timeout 60m, row timeout 45m. No unchanged-proof repetitions required after green.
 If any class remains red, stop and report exact identities/signatures per the brief.
 
@@ -50,4 +54,4 @@ If any class remains red, stop and report exact identities/signatures per the br
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.Tests -> bin-c1541-1542/ | fixture-classes | `/*/*/(DelegationBriefRecoveryTests*)\|(DelegationDispatchRecoveryBoundaryTests*)\|(VerificationRoundDeliveryTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 438 | 20 |
+| CP-1 | S1-S2 | tests/Antiphon.Tests -> bin-c1541-1542/ | fixture-classes | `/*/*/(DelegationBriefRecoveryTests*)\|(DelegationDispatchRecoveryBoundaryTests*)\|(VerificationRoundDeliveryTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 406 | 20 |
