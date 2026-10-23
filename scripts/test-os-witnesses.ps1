@@ -41,13 +41,21 @@ function Put([string]$Path, [string]$Text) {
     [IO.File]::WriteAllText($full, $Text)
 }
 function Copy-Record($Value) { return ($Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable) }
-function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [string]$Head = $script:head) {
+function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [string]$Head = $script:head, [switch]$Strict) {
     if ($Case -and $Case -ne $Name) { return }
     $path = Join-Path $root 'evidence.json'
     $Evidence | ConvertTo-Json -Depth 30 | Set-Content $path
     $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
     $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-    foreach ($arg in @('-NoProfile','-File',(Join-Path $repo 'scripts/check-os-witnesses.ps1'),'-Repository',$root,'-BaseRef',$script:base,'-HeadRef',$Head,'-EvidencePath',$path,'-Plan','plan.md')) { $psi.ArgumentList.Add($arg) }
+    $checker = Join-Path $repo 'scripts/check-os-witnesses.ps1'
+    if ($Strict) {
+        # Invoke the same checker in a child scope inheriting StrictMode, with literal argv.
+        Put 'strict-checker.ps1' 'Set-StrictMode -Version Latest; & $args[0] @($args | Select-Object -Skip 1); exit $LASTEXITCODE'
+        foreach ($arg in @('-NoProfile','-File',(Join-Path $root 'strict-checker.ps1'),$checker)) { $psi.ArgumentList.Add($arg) }
+    } else {
+        foreach ($arg in @('-NoProfile','-File',$checker)) { $psi.ArgumentList.Add($arg) }
+    }
+    foreach ($arg in @('-Repository',$root,'-BaseRef',$script:base,'-HeadRef',$Head,'-EvidencePath',$path,'-Plan','plan.md')) { $psi.ArgumentList.Add($arg) }
     $p = [Diagnostics.Process]::Start($psi)
     $stdout = $p.StandardOutput.ReadToEndAsync(); $stderr = $p.StandardError.ReadToEndAsync()
     if (-not $p.WaitForExit(15000)) { $p.Kill($true); $p.WaitForExit(); throw "timeout: $Name" }
@@ -61,7 +69,7 @@ try {
     Fixture-Git @('init','-q') | Out-Null
     Fixture-Git @('config','user.email','fixture@example.invalid') | Out-Null
     Fixture-Git @('config','user.name','Fixture') | Out-Null
-    Put '.gitignore' 'evidence.json'
+    Put '.gitignore' "evidence.json`nstrict-checker.ps1"
     Put 'plan.md' "### Checkpoints`n`n| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |`n|---|---|---|---|---|---|---|---|---|`n| CP-1 | all | n/a | fixture | pwsh test.ps1 | V-1 | pass | n/a | 1 |`n"
     Put 'source.cs' "// base`n"
     # These files are lint inputs, not execution receipts. Pin real code shapes in Git.
@@ -95,6 +103,18 @@ class WitnessTests {
     Put 'comment-strings.cs' ("/*`n$realTest`n*/")
     Put 'line-comments.cs' (($realTest -split "`n" | ForEach-Object { '// ' + $_ }) -join "`n")
     Put 'hash-comments.ps1' (($realTest -split "`n" | ForEach-Object { '# ' + $_ }) -join "`n")
+    Put 'unterminated-csharp.cs' ("/*`n$realTest")
+    Put 'unterminated-powershell.ps1' ("<#`n$realTest")
+    Put 'nested-powershell.ps1' ("<# outer`n<# inner #>`n$realTest`n#>")
+    Put 'nested-unclosed-powershell.ps1' ("<# outer`n<# inner #>`n$realTest")
+    Put 'closed-powershell.ps1' ("<#`n$realTest`n#>")
+    Put 'csharp-nonnesting.cs' ("/* nested opener /* is only text */`n$realTest")
+    Put 'string-delimiters.cs' ('class Strings { string slash = "/*"; string hash = "<#"; string verbatim = @"/* <#"; }' + "`n$realTest")
+    Put 'string-delimiters.ps1' ('$slash = ''/*''; $hash = "<#"' + "`nfunction AbsentOptOut {`n" + $realTest + "`n}")
+    Put 'escaped-strings.cs' ('class Strings { string text = "escaped \" /* <#"; string verbatim = @"doubled "" /* <#"; }' + "`n$realTest")
+    Put 'escaped-strings.ps1' ('$single = ''doubled '''' /* <#''; $double = "escaped `" /* <#"' + "`nfunction AbsentOptOut {`n" + $realTest + "`n}")
+    Put 'unterminated-string.cs' ('var text = "/* <#' + "`n$realTest")
+    Put 'unterminated-comment-after-code.cs' ($realTest + "`n/*")
     Put 'factory-missing.cs' ($realTest.Replace('new ProcessStartInfo().EnvironmentVariables','new ProcessStartInfo().Environment'))
     Put 'method-call.cs' ($realTest.Replace('[Test] public void AbsentOptOut() {','[Test] public void AnotherCase() { AbsentOptOut();'))
     Put 'method-prefix.cs' ($realTest.Replace('AbsentOptOut()', 'AbsentOptOutExtra()'))
@@ -124,6 +144,24 @@ class WitnessTests {
     Run-Case 'pinned-source' $valid 0 'CANDIDATE head source.cs:1'
     Put 'source.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
     Run-Case 'real-absent-test' $valid 0 'complete syntax/inventory'
+    Run-Case 'strict-valid-absent' $valid 0 'complete syntax/inventory' -Strict
+    foreach ($row in @(
+        @('test-unterminated-csharp-block','unterminated-csharp.cs',2,'unterminated /* block comment'),
+        @('test-unterminated-powershell-block','unterminated-powershell.ps1',2,'unterminated <# block comment'),
+        @('test-nested-powershell-block','nested-powershell.ps1',1,'testCase declaration missing'),
+        @('test-nested-powershell-inner-close-only','nested-unclosed-powershell.ps1',2,'unterminated <# block comment'),
+        @('test-closed-powershell-block','closed-powershell.ps1',1,'testCase declaration missing'),
+        @('test-csharp-block-does-not-nest','csharp-nonnesting.cs',0,'complete syntax/inventory'),
+        @('test-csharp-string-comment-delimiters','string-delimiters.cs',0,'complete syntax/inventory'),
+        @('test-powershell-string-comment-delimiters','string-delimiters.ps1',0,'complete syntax/inventory'),
+        @('test-csharp-escaped-string-delimiters','escaped-strings.cs',0,'complete syntax/inventory'),
+        @('test-powershell-escaped-string-delimiters','escaped-strings.ps1',0,'complete syntax/inventory'),
+        @('test-unterminated-string','unterminated-string.cs',2,'unterminated string literal'),
+        @('test-unterminated-block-after-code','unterminated-comment-after-code.cs',2,'unterminated /* block comment')
+    )) {
+        $e=Copy-Record $valid; $e.witnesses[0].testPath=$row[1]
+        Run-Case $row[0] $e $row[2] $row[3]
+    }
     foreach ($row in @(
         @('test-seam-only','seam.cs','productionType missing from test code'),
         @('test-always-assigned','assigned.cs','absent setupAssertion missing from test code'),
