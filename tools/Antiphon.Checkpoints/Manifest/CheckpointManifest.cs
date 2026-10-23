@@ -38,6 +38,14 @@ public sealed class TimeoutDefaults
 {
     public int RowMinutes { get; set; } = 15;
     public int TotalMinutes { get; set; } = 90;
+    private int? _hardWallMinutes;
+    [YamlDotNet.Serialization.YamlIgnore, System.Text.Json.Serialization.JsonIgnore]
+    public bool HardWallSpecified { get; private set; }
+    public int? HardWallMinutes
+    {
+        get => _hardWallMinutes;
+        set { HardWallSpecified = true; _hardWallMinutes = value; }
+    }
 }
 
 public sealed class RerunDefaults

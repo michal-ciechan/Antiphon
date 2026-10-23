@@ -15,8 +15,8 @@ public static class RowTimeout
     {
         if (explicitTotal is > 0)
             return explicitTotal.Value;
-        var sum = estimatedMinutes.Sum();
-        return Math.Max(30, 2 * sum + 10);
+        try { return checked((int)Math.Max(30L, checked(2L * estimatedMinutes.Sum(value => (long)value) + 10L))); }
+        catch (OverflowException) { throw new ManifestValidationException("total-timeout", "derived execution budget overflow"); }
     }
 
     public static Task<DriverResult> RunWithDeadlineAsync(

@@ -181,6 +181,7 @@ public static class CheckpointApp
         IBuildSlotClient slots = runtime.Slots ?? (request.Slots == "off"
             ? new FixedSlotClient("off")
             : new BuildSlotClient(runtime.SlotHandler ?? new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()),
+                wait: TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes), timeProvider: runtime.TimeProvider,
                 clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note,
                 holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
                 sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN")));
@@ -190,7 +191,15 @@ public static class CheckpointApp
             width = 1;
         var totalMinutes = request.TotalTimeoutMinutes
             ?? RowTimeout.DeriveTotalMinutes(selected.Select(row => row.EstimatedMinutes ?? 0), null);
+        var executionLimit = TimeSpan.FromMinutes(totalMinutes);
+        RunBudgetClock.Validate(executionLimit, "total-timeout");
+        var admissionLimit = TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes);
+        RunBudgetClock.Validate(admissionLimit, "slotWaitMinutes");
+        var wallLimit = (request.HardWallTimeoutMinutes ?? manifest.Timeouts.HardWallMinutes) is int wallMinutes
+            ? TimeSpan.FromMinutes(wallMinutes) : executionLimit + admissionLimit;
+        RunBudgetClock.Validate(wallLimit, "hard-wall-timeout");
         state.TotalTimeoutAt = state.StartedAt.AddMinutes(totalMinutes);
+        using var budget = new RunBudgetClock(runtime.TimeProvider, executionLimit, wallLimit);
         Note($"execute rows={selected.Count} width={width} total={totalMinutes}m");
         var driver = runtime.Driver ?? new ProcessDriver();
         var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider);
@@ -227,7 +236,9 @@ public static class CheckpointApp
                 Width = width,
                 SerialAll = request.Serial,
                 RowTimeoutOverride = request.RowTimeoutMinutes is int row ? TimeSpan.FromMinutes(row) : null,
-                TotalTimeout = TimeSpan.FromMinutes(totalMinutes),
+                TotalTimeout = executionLimit,
+                HardWallTimeout = wallLimit,
+                Budget = budget,
                 Publish = Publish,
                 Suspended = runtime.SchedulerSuspended,
                 BeforeLaunch = BeforeLaunch,
@@ -341,12 +352,7 @@ public static class CheckpointApp
         { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
-            var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
-                ? deadline - context.Time.GetUtcNow()
-                : TimeSpan.FromMinutes(15);
-            if (remaining < TimeSpan.Zero)
-                remaining = TimeSpan.Zero;
-            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch);
+            var comparer = new BaselineComparer(driver, slots, budget.RemainingExecution, BeforeLaunch, budget, admissionLimit);
             try
             {
                 await comparer.CompareAsync(
@@ -365,6 +371,8 @@ public static class CheckpointApp
             }
         }
 
+        budget.Capture(state);
+        CopyBudget(state, model);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (owner.Ended.IsCancellationRequested)
@@ -375,6 +383,7 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
         }
 
+        var teardownStarted = runtime.TimeProvider.GetTimestamp();
         model.Evidence = Path.Combine(runDirectory, "report.md");
         var gitAppend = write.Append(Path.Combine(runDirectory, "git.txt"),
             $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n",
@@ -472,6 +481,8 @@ public static class CheckpointApp
                 model.Reason = "refused: " + model.CleanupRefusals[0];
             }
         }
+        budget.Capture(state);
+        CopyBudget(state, model);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (!request.KeepOutputs)
@@ -501,6 +512,8 @@ public static class CheckpointApp
         ReportWriter.WriteFiles(context, runDirectory, model);
         watchCancel.Cancel();
         await watcher.ConfigureAwait(false);
+        budget.Capture(state);
+        CopyBudget(state, model);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
@@ -515,6 +528,15 @@ public static class CheckpointApp
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);
+        budget.Capture(state);
+        CopyBudget(state, model);
+        model.TeardownSeconds = runtime.TimeProvider.GetElapsedTime(teardownStarted).TotalSeconds;
+        model.Reason ??= state.Reason;
+        if (budget.Reason is not null && model.ExitCode == ExitCodes.Green)
+        {
+            model.ExitCode = ExitCodes.Timeout; model.Verdict = "RED"; model.Reason = budget.Reason;
+        }
+        ReportWriter.WriteFiles(context, runDirectory, model);
         state.Reason = model.Reason;
         try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context); }
         catch (StatePublicationException ex)
@@ -782,6 +804,9 @@ public static class CheckpointApp
                 Slot = row.Slot ?? "skipped",
                 SlotReason = row.SlotReason,
                 WaitedSeconds = row.WaitedSeconds,
+            ExecutedSeconds = row.ExecutedSeconds,
+            WallSeconds = row.WallSeconds,
+            TerminalReason = row.TerminalReason,
                 Command = row.Command is not null,
                 Timeout = row.State == "timeout" ? "total" : null,
             });
@@ -821,6 +846,9 @@ public static class CheckpointApp
                 Slot = build.Slot,
                 SlotReason = build.SlotReason,
                 WaitedSeconds = build.WaitedSeconds,
+                ExecutedSeconds = build.ExecutedSeconds,
+                WallSeconds = build.WallSeconds,
+                TerminalReason = build.TerminalReason,
                 DeadlineMinutes = build.DeadlineMinutes,
                 Source = build.Source,
             }).ToList(),
@@ -832,9 +860,17 @@ public static class CheckpointApp
             MaxConcurrentRows = state.MaxConcurrentRows,
             MaxConcurrentBuilds = state.MaxConcurrentBuilds,
         };
+        CopyBudget(state, model);
         return model;
     }
 
+    private static void CopyBudget(RunState state, ReportModel model)
+    {
+        model.BudgetWallSeconds = state.BudgetWallSeconds; model.AdmissionOnlySeconds = state.AdmissionOnlySeconds;
+        model.ExecutionSeconds = state.ExecutionSeconds; model.ExecutionLimitSeconds = state.ExecutionLimitSeconds;
+        model.HardWallLimitSeconds = state.HardWallLimitSeconds; model.RemainingExecutionSeconds = state.RemainingExecutionSeconds;
+        model.HardWallTimeoutAt = state.HardWallTimeoutAt;
+    }
     private static ReportRow ToReportRow(RowRunResult row, CheckpointSpec? spec)
     {
         var report = new ReportRow
@@ -850,10 +886,13 @@ public static class CheckpointApp
             Slot = row.Slot.Length == 0 ? null : row.Slot,
             SlotReason = row.SlotReason,
             WaitedSeconds = row.WaitedSeconds,
-            Executed = row.Trx?.Executed ?? (row.State == "slot-refused" ? 0 : null),
-            Passed = row.Trx?.Passed ?? (row.State == "slot-refused" ? 0 : null),
-            Failed = row.Trx?.Failed ?? (row.State == "slot-refused" ? 0 : null),
-            Skipped = row.Trx?.Skipped ?? (row.State == "slot-refused" ? 0 : null),
+            ExecutedSeconds = row.ExecutedSeconds,
+            WallSeconds = row.WallSeconds,
+            TerminalReason = row.TerminalReason,
+            Executed = row.Trx?.Executed ?? (row.ExecutedSeconds == 0 || row.State == "slot-refused" ? 0 : null),
+            Passed = row.Trx?.Passed ?? (row.ExecutedSeconds == 0 || row.State == "slot-refused" ? 0 : null),
+            Failed = row.Trx?.Failed ?? (row.ExecutedSeconds == 0 || row.State == "slot-refused" ? 0 : null),
+            Skipped = row.Trx?.Skipped ?? (row.ExecutedSeconds == 0 || row.State == "slot-refused" ? 0 : null),
             Reruns = row.Reruns,
             Repeat = row.Repeat,
             Timings = row.Timings,

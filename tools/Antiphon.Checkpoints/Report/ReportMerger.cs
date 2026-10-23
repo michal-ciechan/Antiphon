@@ -54,6 +54,12 @@ public static class ReportMerger
             Unlisted = latest.Unlisted,
             Evidence = latest.Evidence,
             Builds = latest.Builds,
+            Attempts = ordered.SelectMany(run => run.Attempts.Count > 0 ? run.Attempts : [run]).ToList(),
+            CleanupRefusals = ordered.SelectMany(run => run.CleanupRefusals).Distinct().ToList(),
+            BudgetWallSeconds = latest.BudgetWallSeconds, AdmissionOnlySeconds = latest.AdmissionOnlySeconds,
+            ExecutionSeconds = latest.ExecutionSeconds, ExecutionLimitSeconds = latest.ExecutionLimitSeconds,
+            HardWallLimitSeconds = latest.HardWallLimitSeconds, RemainingExecutionSeconds = latest.RemainingExecutionSeconds,
+            HardWallTimeoutAt = latest.HardWallTimeoutAt,
             Rows = byId.Values.Select(item => item.Row).ToList(),
         };
         merged.SequentialEquivalentSeconds = merged.Rows.Sum(row => row.Seconds);
@@ -75,6 +81,7 @@ public static class ReportMerger
             Slot = row.Slot,
             SlotReason = row.SlotReason,
             WaitedSeconds = row.WaitedSeconds,
+            ExecutedSeconds = row.ExecutedSeconds, WallSeconds = row.WallSeconds, TerminalReason = row.TerminalReason,
             Executed = row.Executed,
             Passed = row.Passed,
             Failed = row.Failed,

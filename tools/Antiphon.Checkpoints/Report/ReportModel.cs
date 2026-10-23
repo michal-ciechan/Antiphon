@@ -22,12 +22,14 @@ public sealed class ReportModel
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset EndedAt { get; set; }
     public double WallSeconds { get; set; }
+    public double? TeardownSeconds { get; set; }
     public double SequentialEquivalentSeconds { get; set; }
     public int ExitCode { get; set; }
     public string? Reason { get; set; }
     public string Verdict { get; set; } = "GREEN";
     public List<ReportBuild> Builds { get; set; } = [];
     public List<ReportRow> Rows { get; set; } = [];
+    public List<ReportModel> Attempts { get; set; } = [];
     public List<string> Unlisted { get; set; } = [];
     public string? Evidence { get; set; }
     public bool CleanedOutputs { get; set; }

@@ -76,7 +76,7 @@ internal sealed class RunBudgetClock : IDisposable
             state.ExecutionSeconds=(_wall-_admission).TotalSeconds; state.ExecutionLimitSeconds=_executionLimit.TotalSeconds;
             state.HardWallLimitSeconds=_wallLimit.TotalSeconds; state.RemainingExecutionSeconds=Max(_executionLimit-(_wall-_admission)).TotalSeconds;
             state.HardWallTimeoutAt=HardWallTimeoutAt;
-            if(_reason is not null) state.Reason=_reason;
+            if(_reason is not null && (state.Reason is null || state.Reason is "hard-wall-deadline-exceeded" or "execution-budget-exceeded")) state.Reason=_reason;
         }
     }
     public void Dispose() { _wallTimer.Dispose(); _executionTimer.Dispose(); _ended.Dispose(); }

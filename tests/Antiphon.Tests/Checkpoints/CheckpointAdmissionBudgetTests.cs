@@ -264,8 +264,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         public Task<SlotSession> ProbeAsync(CancellationToken ct) => Task.FromResult(new SlotSession("enabled",4));
         public async Task<SlotLease> AcquireAsync(SlotSession session,string label,CancellationToken ct)
         {
-            var signal = Signal(); _pending.Enqueue(signal);
-            await signal.Task.WaitAsync(ct);
+            if (!label.StartsWith("tool-run:")) { var signal = Signal(); _pending.Enqueue(signal); await signal.Task.WaitAsync(ct); }
             if(OnAcquire is not null) await OnAcquire(label,ct);
             return new SlotLease { State="granted",MaxCpuCount=4,ReleaseAsync=_=> { Interlocked.Increment(ref Released); return Task.CompletedTask; } };
         }

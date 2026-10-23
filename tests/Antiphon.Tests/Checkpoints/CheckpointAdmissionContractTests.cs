@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 {
     [Test]
-    public void C1531_inputs_resolve_without_disabling_bounds()
+    public async Task C1531_inputs_resolve_without_disabling_bounds()
     {
         var root=TempDir();
         foreach(var value in new[]{"0","-1","null","\"\"","2147483647"})
@@ -17,6 +17,18 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         var manifest=ManifestLoader.LoadYaml("build:\n  slotWaitMinutes: 2\ntimeouts:\n  hardWallMinutes: 17",root,false);
         manifest.Build.SlotWaitMinutes.ShouldBe(2);
         ManifestLoader.ToYaml(manifest).ShouldContain("hardWallMinutes: 17");
+        var cliManifest = new CheckpointManifest { Checkpoints = [new CheckpointSpec { Id="CP-1",Command="fake",EstimatedMinutes=1 }] };
+        var manifestFile=Path.Combine(root,"input.yaml"); File.WriteAllText(manifestFile,ManifestLoader.ToYaml(cliManifest));
+        var tool=TempDir(); File.WriteAllText(Path.Combine(tool,"Antiphon.Checkpoints.dll"),"fixture");
+        var runtime=new CheckpointApp.Runtime { RepoRoot=root,EnvironmentLookup=_=>null,SourceCapture=_=>CheckpointFixtures.CleanSource(),
+            ToolDirectory=tool,Launch=_=>Environment.ProcessId,Output=TextWriter.Null };
+        foreach(var name in new[]{"total-timeout","hard-wall-timeout"})
+            foreach(var input in new[]{"", " ", "0", "-1m", "junk", "999999999999999d", "NaNm"})
+                await Should.ThrowAsync<ManifestValidationException>(()=>Antiphon.Checkpoints.Program.RunAsync(["start",manifestFile,"--"+name,input],runtime));
+        (await Antiphon.Checkpoints.Program.RunAsync(["start",manifestFile,"--total-timeout","10m","--hard-wall-timeout","25m"],runtime)).ShouldBe(0);
+        var requestFile=Directory.GetFiles(Path.Combine(root,".antiphon","checkpoints"),"request.json",SearchOption.AllDirectories).Single();
+        var request=JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(requestFile),CheckpointApp.Json)!;
+        request.TotalTimeoutMinutes.ShouldBe(10); request.HardWallTimeoutMinutes.ShouldBe(25);
         var absent=ManifestLoader.LoadYaml("schemaVersion: 1",root,false);
         absent.Build.SlotWaitMinutes.ShouldBe(45);
     }

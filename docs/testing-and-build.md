@@ -1511,3 +1511,37 @@ files, a one-byte edit at 69 MiB with restored mtime, independent full hashes,
 separate bounds and custody. The scripts remain ASCII and require PS7 at runtime;
 the parser-only harness requires actual Windows PowerShell 5.1 Desktop unless its
 explicit PS7 test switch is supplied. PS7 parsing is not Windows parser evidence.
+
+### Checkpoint admission and execution budgets (CARD-1531)
+
+`--total-timeout` bounds charged execution time, including source checks,
+preflight, result parsing and settlement. Its default remains
+`max(30, 2 * sum(selected platform estimates) + 10)` minutes;
+`timeouts.totalMinutes` remains a legacy field unused by scheduled execution.
+Only the union of intervals when every runnable activity awaits admission and
+no work is executing is excluded. A queued sibling does not extend a running
+build or row's deadline. Build/row deadline derivation and overrides are unchanged;
+a build deadline expiry now reports exit 5 rather than a compiler failure (2).
+
+Each acquisition is bounded by `build.slotWaitMinutes` (default 45), including
+pending I/O and retry delays. Expiry refuses with exit 4, compatible `slot-timeout`
+state, and `slot-admission-deadline-exceeded`; the last broker answer remains in
+its diagnostic. It never grants unleased fallback on admission expiry. Independent
+`timeouts.hardWallMinutes` or `--hard-wall-timeout` bounds budget wall time; CLI
+wins, and omission derives execution plus one admission allowance. New explicit
+invalid limits refuse. Existing legacy YAML normalization is unchanged.
+
+Receipts add nullable execution/wall durations and run wall, admission-only,
+charged execution and resolved limits. Missing fields in old schema 2/3 receipts
+mean unknown. `CHECKPOINT ... executed=` remains a test count;
+`CHECKPOINT-TIMING` separately reports seconds. `TotalTimeoutAt` remains a legacy
+observation; `HardWallTimeoutAt` and remaining execution are authoritative.
+Baseline work shares the original budget and retains owned residue when cleanup
+cannot safely start within it. Work cancellation joins acquisitions, drivers and
+lease disposal before terminal evidence; bounded kill/drain and custody teardown
+can follow the work deadline. Teardown is reported separately.
+
+A timeout's retained output still causes `cleanup_refused` during qualification.
+That refusal certifies neither a passing test nor permission to delete the output.
+Historical failed/refused attempts remain unchanged and are retained by merge.
+The tool is built from source per invocation: no server or runner restart is needed.

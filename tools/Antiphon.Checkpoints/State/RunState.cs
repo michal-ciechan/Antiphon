@@ -41,7 +41,7 @@ public sealed class RunState
                 var ago = row.LastOutputAt is DateTimeOffset last
                     ? FormatDuration((now - last).TotalSeconds)
                     : "n/a";
-                parts.Add($"{row.Id} running {FormatDuration(seconds)} last-output {ago} ago");
+                parts.Add($"{row.Id} {(row.Phase == "acquiring" ? "acquiring" : "running")} {FormatDuration(seconds)} last-output {ago} ago");
             }
             else if (row.State is "green" or "red")
                 parts.Add($"{row.Id} {row.State} {FormatDuration(row.Seconds)}");
@@ -54,7 +54,7 @@ public sealed class RunState
             var seconds = build.StartedAt is DateTimeOffset started
                 ? (now - started).TotalSeconds
                 : build.Seconds;
-            parts.Add($"{build.Id} building {FormatDuration(seconds)}");
+            parts.Add($"{build.Id} {(build.Phase == "acquiring" ? "acquiring" : "building")} {FormatDuration(seconds)}");
         }
         foreach (var build in Builds.Where(b => b.State == "pending"))
             parts.Add($"{build.Id} queued");
@@ -86,6 +86,7 @@ public sealed class BuildProgress
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
     public string? TerminalReason { get; set; }
+    public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }
     public int AdmissionExitCode { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
@@ -107,6 +108,7 @@ public sealed class RowProgress
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
     public string? TerminalReason { get; set; }
+    public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }

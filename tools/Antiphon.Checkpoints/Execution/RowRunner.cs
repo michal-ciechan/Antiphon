@@ -24,6 +24,7 @@ public sealed class RowRequest
     public string? SlotReason { get; init; }
     public int WaitedSeconds { get; init; }
     public int MaxCpuCount { get; init; } = 4;
+    internal Action<double>? DriverSeconds { get; init; }
     public TimeSpan Deadline { get; init; } = TimeSpan.FromMinutes(15);
     public string? DotnetFileName { get; init; }
     public string? GitExecutable { get; init; }
@@ -81,6 +82,7 @@ public sealed class RowRunner
 
     public async Task<RowRunResult> RunAsync(RowRequest request, TextWriter output, CancellationToken cancellationToken)
     {
+        var measured = new MeasuredDriver(_driver, _timeProvider, request.DriverSeconds);
         TimingRowRecorder? timing = null;
         TimingOutcome? timingOutcome = null;
         try
@@ -156,7 +158,7 @@ public sealed class RowRunner
                 ? new[] { "/d", "/s", "/c", request.Command }
                 : new[] { "-lc", request.Command };
             var ran = await RowTimeout.RunWithDeadlineAsync(
-                _driver,
+                measured,
                 new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                 request.Deadline,
                 _timeProvider,
@@ -214,7 +216,7 @@ public sealed class RowRunner
             var buildWatch = System.Diagnostics.Stopwatch.StartNew();
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(
-                _driver,
+                measured,
                 new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
                 _timeProvider,
@@ -270,7 +272,7 @@ public sealed class RowRunner
         var hostLaunch = DateTimeOffset.UtcNow;
         var hostStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
         var run = await RowTimeout.RunWithDeadlineAsync(
-            _driver,
+            measured,
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
             request.Deadline,
                 _timeProvider,
@@ -331,7 +333,7 @@ public sealed class RowRunner
                     await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) { sourceStable = false; break; }
                 var second = await RowTimeout.RunWithDeadlineAsync(
-                    _driver,
+                    measured,
                     new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                     request.Deadline,
                 _timeProvider,
@@ -613,6 +615,16 @@ public sealed class RowRunner
             Line = line, Output = buffer.ToString(), State = reason, Source = request.Source };
     }
 
+    private sealed class MeasuredDriver(IDriver inner, TimeProvider time, Action<double>? observed) : IDriver
+    {
+        public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
+        {
+            var started = time.GetTimestamp();
+            try { return await inner.RunAsync(request, cancellationToken).ConfigureAwait(false); }
+            finally { observed?.Invoke(time.GetElapsedTime(started).TotalSeconds); }
+        }
+        public void Kill(bool entireProcessTree) => inner.Kill(entireProcessTree);
+    }
     private sealed class TeeWriter : TextWriter
     {
         private readonly TextWriter _a;

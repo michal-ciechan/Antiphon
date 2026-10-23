@@ -52,6 +52,12 @@ public static class ManifestLoader
         if (manifest.Timeouts.TotalMinutes <= 0)
             manifest.Timeouts.TotalMinutes = 90;
 
+        if (manifest.Timeouts.HardWallSpecified)
+        {
+            if (manifest.Timeouts.HardWallMinutes is not > 0)
+                throw new ManifestValidationException("hardWallMinutes", "explicit hard wall must be positive, not null or empty");
+            RunBudgetClock.Validate(TimeSpan.FromMinutes(manifest.Timeouts.HardWallMinutes.Value), "hardWallMinutes");
+        }
         if (validate)
             ManifestValidator.Validate(manifest, worktreeRoot);
         return manifest;
