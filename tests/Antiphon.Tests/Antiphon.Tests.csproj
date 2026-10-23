@@ -75,6 +75,8 @@
     <!-- CARD-0545: the independent nightly watchdog runs in-process against fakes at its four boundaries. -->
     <ProjectReference Include="..\..\src\Antiphon.NightlyWatchdog\Antiphon.NightlyWatchdog.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.Checkpoints\Antiphon.Checkpoints.csproj" />
+    <ProjectReference Include="..\..\tools\Antiphon.TimeoutAudit\Antiphon.TimeoutAudit.csproj" />
+    <Compile Include="..\Antiphon.TimeoutAudit.Tests\TimeoutAuditTests.cs" Link="Scripts\TimeoutAuditTests.cs" />
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />

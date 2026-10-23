@@ -14,11 +14,11 @@ $script:C1313GitFixtures = [Collections.Generic.List[string]]::new()
 function Test-C1313_ProjectAndCatalogUniverse {
     $policy = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $census = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $policy.Object
-    Assert-C487 -Cond ($census.Ok -and $census.Disk.Count -eq 12) -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
+    Assert-C487 -Cond ($census.Ok -and $census.Disk.Count -eq 13) -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
     $roles = $policy.Object.projectDispositions
     $probe = @($roles | Where-Object project -ceq 'scripts/fixtures/nightly/c1375-probe/Probe.csproj')
     $authority=ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
-    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq 7 -and @($roles | Where-Object role -eq child).Count -eq 5 -and $probe.Count -eq 1 -and $probe[0].role -ceq 'child' -and @($probe[0].consumers).Count -eq 1 -and $probe[0].consumers[0] -ceq 'tests/Antiphon.Tests/Antiphon.Tests.csproj' -and $authority.RequiredSuites.Count -eq 9 -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq 7) -Name 'C1313 seven-primary-five-child'
+    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq 7 -and @($roles | Where-Object role -eq child).Count -eq 6 -and $probe.Count -eq 1 -and $probe[0].role -ceq 'child' -and @($probe[0].consumers).Count -eq 1 -and $probe[0].consumers[0] -ceq 'tests/Antiphon.Tests/Antiphon.Tests.csproj' -and $authority.RequiredSuites.Count -eq 9 -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq 7) -Name 'C1313 seven-primary-six-child'
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     Assert-C487 -Cond (@($catalog.sets | Where-Object id -eq core).members.Count -eq 7) -Name 'C1313 seven-method-core'
     $root=Join-Path $ResultsDirectory 'universe';[void](New-Item -ItemType Directory $root)

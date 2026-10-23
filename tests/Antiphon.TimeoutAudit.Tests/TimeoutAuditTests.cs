@@ -24,7 +24,7 @@ public sealed class TimeoutAuditTests
     }
 
     [Test]
-    public void Comparable_samples_use_nearest_rank_p95_and_exclude_duplicates_failures_and_load_mixing()
+    public void Comparable_samples_use_nearest_rank_p95_and_exclude_duplicates_failures_and_load_mixing(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         f.Measure(Enumerable.Range(1, 20).Select(x => (double)x).ToArray());
@@ -77,7 +77,7 @@ public sealed class TimeoutAuditTests
     }
 
     [Test]
-    public void Missing_history_and_cost_model_are_provisional_not_measured_p95()
+    public void Missing_history_and_cost_model_are_provisional_not_measured_p95(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         var r = f.Run();
