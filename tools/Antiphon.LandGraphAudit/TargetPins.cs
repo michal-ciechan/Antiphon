@@ -27,7 +27,11 @@ internal static class TargetPins
             {
                 var target = element.LocalName == "Target";
                 var condition = element.GetAttribute("Condition");
-                if (!target && !OsDependent(condition)) continue;
+                var readsKnob = element.Attributes.Cast<XmlAttribute>().Any(attribute =>
+                    EvaluationExpressionPolicy.ReadsReviewedEnvironment(attribute.Value))
+                    || EvaluationExpressionPolicy.ReadsReviewedEnvironment(string.Concat(element.ChildNodes.OfType<XmlCharacterData>()
+                        .Where(text => text is XmlText or XmlCDataSection).Select(text => text.Value)));
+                if (!target && !OsDependent(condition) && !readsKnob) continue;
                 var selector = target ? element.GetAttribute("Name") : ElementPath(element);
                 var display = relative + " " + (target ? "Target " : "") + selector;
                 if (selector.Length == 0 || selector.IndexOfAny(['\t', '\r', '\n']) >= 0)
@@ -166,6 +170,8 @@ internal static class TargetPins
     private static IEnumerable<XmlElement> Elements(XmlElement element)
     {
         yield return element;
+        // The Target pin owns its complete body, including nested knob reads.
+        if (element.LocalName == "Target") yield break;
         foreach (var child in element.ChildNodes.OfType<XmlElement>())
             foreach (var descendant in Elements(child)) yield return descendant;
     }

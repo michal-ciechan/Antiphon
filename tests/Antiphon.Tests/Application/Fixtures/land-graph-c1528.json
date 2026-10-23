@@ -272,7 +272,7 @@
     "reason": "unsupported-function",
     "owner": "App/App.csproj",
     "files": {
-      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([$(Receiver)]::Exists('x'))</PackageTags></PropertyGroup></Project>",
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([$(MSBuildThisFileDirectory)]::Exists('x'))</PackageTags></PropertyGroup></Project>",
       "Directory.Build.props": "<Project />",
       "Directory.Build.targets": "<Project />",
       "App/sentinel.txt": "safe",
@@ -286,7 +286,7 @@
     "reason": "unsupported-function",
     "owner": "App/App.csproj",
     "files": {
-      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::$(Member)('x'))</PackageTags></PropertyGroup></Project>",
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::$(MSBuildThisFileDirectory)('x'))</PackageTags></PropertyGroup></Project>",
       "Directory.Build.props": "<Project />",
       "Directory.Build.targets": "<Project />",
       "App/sentinel.txt": "safe",
@@ -433,7 +433,7 @@
     "reason": "approved",
     "owner": "App/App.csproj",
     "files": {
-      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><P0>$([System.IO.Path]::Combine('a','b'))</P0></PropertyGroup><PropertyGroup><P1>$([System.IO.Path]::GetDirectoryName('a/b.txt'))</P1></PropertyGroup><PropertyGroup><P2>$([System.IO.Path]::GetFileName('a/b.txt'))</P2></PropertyGroup><PropertyGroup><P3>$([System.IO.Path]::GetExtension('a/b.txt'))</P3></PropertyGroup><PropertyGroup><P4>$([System.IO.Path]::ChangeExtension('a/b.txt','cs'))</P4></PropertyGroup><PropertyGroup><P5>$([System.String]::Copy('safe'))</P5></PropertyGroup><PropertyGroup><P6>$([System.String]::IsNullOrEmpty(''))</P6></PropertyGroup><PropertyGroup><P7>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)','a'))</P7></PropertyGroup><PropertyGroup><P8>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)','a'))</P8></PropertyGroup><PropertyGroup><P9>$([MSBuild]::EnsureTrailingSlash('safe'))</P9></PropertyGroup><PropertyGroup><P10>$([MSBuild]::Subtract(2,1))</P10></PropertyGroup><PropertyGroup><Absent>$([System.String]::IsNullOrEmpty('$(AbsentProperty)'))</Absent><Value>$([System.String]::IsNullOrEmpty('value'))</Value></PropertyGroup></Project>",
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><P0>$([System.IO.Path]::Combine('a','b'))</P0></PropertyGroup><PropertyGroup><P1>$([System.IO.Path]::GetDirectoryName('a/b.txt'))</P1></PropertyGroup><PropertyGroup><P2>$([System.IO.Path]::GetFileName('a/b.txt'))</P2></PropertyGroup><PropertyGroup><P3>$([System.IO.Path]::GetExtension('a/b.txt'))</P3></PropertyGroup><PropertyGroup><P4>$([System.IO.Path]::ChangeExtension('a/b.txt','cs'))</P4></PropertyGroup><PropertyGroup><P5>$([System.String]::Copy('safe'))</P5></PropertyGroup><PropertyGroup><P6>$([System.String]::IsNullOrEmpty(''))</P6></PropertyGroup><PropertyGroup><P7>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)','a'))</P7></PropertyGroup><PropertyGroup><P8>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)','a'))</P8></PropertyGroup><PropertyGroup><P9>$([MSBuild]::EnsureTrailingSlash('safe'))</P9></PropertyGroup><PropertyGroup><P10>$([MSBuild]::Subtract(2,1))</P10></PropertyGroup><PropertyGroup><Absent>$([System.String]::IsNullOrEmpty('$(MSBuildThisFileDirectory)'))</Absent><Value>$([System.String]::IsNullOrEmpty('value'))</Value></PropertyGroup></Project>",
       "Directory.Build.props": "<Project />",
       "Directory.Build.targets": "<Project />",
       "App/sentinel.txt": "safe",

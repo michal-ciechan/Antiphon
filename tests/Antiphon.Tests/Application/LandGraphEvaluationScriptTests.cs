@@ -31,7 +31,7 @@ public sealed partial class LandGraphEvaluationTests
             "task-properties" => """<Target Name="Hidden"><MSBuild Projects="App.csproj" Properties="Configuration=Debug;CustomBeforeMicrosoftCommonTargets=../docs/evil.md" /></Target>""",
             "property-body" => """<Target Name="Hidden"><PropertyGroup><_StagedHelperDest>out;CustomBeforeMicrosoftCommonTargets=../docs/evil.md</_StagedHelperDest></PropertyGroup></Target>""",
             "target-framework" => """<Target Name="Hidden"><PropertyGroup><TargetFramework>net9.0;CustomBeforeMicrosoftCommonTargets=../docs/evil.md</TargetFramework></PropertyGroup></Target>""",
-            "imported-directory" => """<Import Project="../eng/deep/shared.props" /><ItemGroup><None Include="$(PackageTags)" /></ItemGroup>""",
+            "imported-directory" => """<Import Project="../eng/deep/shared.props" /><ItemGroup><None Include="@(ProbeInput)" /></ItemGroup>""",
             "condition-exists" => """<PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)../docs/flag.md')"><PackageTags>yes</PackageTags></PropertyGroup>""",
             "condition-read" => """<PropertyGroup Condition="$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../README.md')) == 'hello'"><PackageTags>yes</PackageTags></PropertyGroup>""",
             "review-r2-thisfile" => """<PropertyGroup><PackageTags>x.json;$(MSBuildThisFileDirectory)../docs/flag.md</PackageTags></PropertyGroup>""",
@@ -47,7 +47,7 @@ public sealed partial class LandGraphEvaluationTests
             ["docs/evil.md"] = "<Project />",
         };
         if (variant == "imported-directory")
-            files["eng/deep/shared.props"] = """<Project><PropertyGroup><PackageTags>$(MSBuildProjectDirectory)/../docs/flag.md</PackageTags></PropertyGroup></Project>""";
+            files["eng/deep/shared.props"] = """<Project><ItemGroup><ProbeInput Include="$(MSBuildProjectDirectory)/../docs/flag.md" /></ItemGroup></Project>""";
         await using var repo = await ScriptRepoAsync(files);
         if (variant == "imported-directory")
         {

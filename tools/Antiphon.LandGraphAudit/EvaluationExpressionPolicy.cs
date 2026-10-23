@@ -21,6 +21,35 @@ internal static class EvaluationExpressionPolicy
         "MSBuild::NormalizePath", "MSBuild::NormalizeDirectory", "MSBuild::EnsureTrailingSlash", "MSBuild::Subtract",
     };
 
+    // Census-minimal trust boundary. A new name needs matched allowance/refusal fixtures.
+    // Knob reads also require an exact XML pin, including inactive branches.
+    private static readonly HashSet<string> ReservedProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "MSBuildThisFileDirectory", "MSBuildProjectDirectory", "OS",
+    };
+    private static readonly HashSet<string> ReviewedEnvironmentProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "UsePublishedPackages", "AntiphonMessagingVersion", "EnablePublicApiAnalyzers", "AntiphonCleanFileMaxBytes",
+        "PkgMicrosoft_Windows_Console_ConPTY", "DefaultItemExcludes", "SourceRevisionId", "WarningsAsErrors",
+    };
+    private static readonly HashSet<string> Timestamps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ModifiedTime", "CreatedTime", "AccessedTime",
+    };
+    private static readonly Regex PropertyRead = new(@"\$\(\s*(?<name>[A-Za-z_][A-Za-z0-9_-]*)\s*\)", RegexOptions.CultureInvariant);
+    private static readonly Regex MetadataName = new(@"\A\s*(?:[A-Za-z_][A-Za-z0-9_-]*\s*\.\s*)?(?<name>[A-Za-z_][A-Za-z0-9_-]*)\s*\z", RegexOptions.CultureInvariant);
+    private static readonly Regex MetadataFunction = new(@"->\s*(?:Metadata|WithMetadataValue|WithoutMetadataValue|HasMetadata|AnyHaveMetadataValue)\s*\(", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex LiteralMetadataArgument = new("\\A\\s*(['\"\x60])(?<name>[A-Za-z_][A-Za-z0-9_-]*)\\1\\s*(?:,|\\))", RegexOptions.CultureInvariant);
+
+    // Called before Locator registration by TargetPins. Keep this method and its static
+    // initialization free of Microsoft.Build dependencies. Decode the same single %xx layer
+    // so an escaped read cannot avoid the pin predicate.
+    internal static bool ReadsReviewedEnvironment(string text) =>
+        PropertyRead.Matches(text).Any(match => ReviewedEnvironmentProperties.Contains(match.Groups["name"].Value))
+        || PropertyRead.Matches(Regex.Replace(text, @"%([0-9a-fA-F]{2})",
+                match => ((char)Convert.ToInt32(match.Groups[1].Value, 16)).ToString()))
+            .Any(match => ReviewedEnvironmentProperties.Contains(match.Groups["name"].Value));
+
     private static readonly Regex PlainProperty = new(@"\A[A-Za-z_][A-Za-z0-9_-]*\z", RegexOptions.CultureInvariant);
     private static readonly Regex StaticHead = new(
         @"\A\s*\[\s*(?<type>[A-Za-z_][A-Za-z0-9_.]*)\s*\]\s*::\s*(?<member>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
@@ -60,6 +89,20 @@ internal static class EvaluationExpressionPolicy
 
     private static void InspectSpelling(string text, string owner, ISet<string> refusals)
     {
+        for (var offset = 0; (offset = text.IndexOf("%(", offset, StringComparison.Ordinal)) >= 0; offset += 2)
+        {
+            var end = ClosingParenthesis(text, offset + 1);
+            var name = end < 0 ? Match.Empty : MetadataName.Match(text[(offset + 2)..end]);
+            if (!name.Success || Timestamps.Contains(name.Groups["name"].Value))
+                refusals.Add($"refused: {owner} timestamp-metadata");
+        }
+        foreach (Match function in MetadataFunction.Matches(text))
+        {
+            var argument = LiteralMetadataArgument.Match(text[function.Index + function.Length..]);
+            if (!argument.Success || Timestamps.Contains(argument.Groups["name"].Value))
+                refusals.Add($"refused: {owner} timestamp-metadata");
+        }
+
         // Advance only past the opening '$(', not past the whole expression: nested calls
         // inside arguments (including quoted arguments) each receive their own decision.
         for (var offset = 0; (offset = text.IndexOf("$(", offset, StringComparison.Ordinal)) >= 0; offset += 2)
@@ -69,7 +112,13 @@ internal static class EvaluationExpressionPolicy
             string? reason = null;
             if (FilesystemType.IsMatch(expression)) reason = "filesystem-function";
             else if (end < 0) reason = "unsupported-function";
-            else if (!PlainProperty.IsMatch(expression.Trim()))
+            else if (PlainProperty.IsMatch(expression.Trim()))
+            {
+                var name = expression.Trim();
+                if (!ReservedProperties.Contains(name) && !ReviewedEnvironmentProperties.Contains(name))
+                    reason = "environment-property";
+            }
+            else
             {
                 var head = StaticHead.Match(expression);
                 if (!head.Success || !PureFunctions.Contains(head.Groups["type"].Value + "::" + head.Groups["member"].Value))
