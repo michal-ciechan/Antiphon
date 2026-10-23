@@ -376,7 +376,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             }
             if (request.Method == HttpMethod.Get)
                 return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-                { Content = new StringContent("{\"enabled\":true,\"maxCpuCount\":4}") };
+                { Content = new StringContent("{\"enabled\":true,\"budget\":4,\"maxCpuCount\":4}") };
             entered.TrySetResult();
             if (!grantAtBoundary) await Task.Delay(Timeout.Infinite, ct);
             else clock.Advance(TimeSpan.FromMinutes(2));
