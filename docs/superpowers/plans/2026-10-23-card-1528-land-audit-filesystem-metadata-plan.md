@@ -229,7 +229,7 @@ input is `tests/Antiphon.Tests/Application/Fixtures/land-graph-c1528.json`;
 StrictMode Latest, using the source-verified base tool without compiling tests.
 The compiled partial uses the same input and its existing AuditRepo/staged tool.
 V-1..V-4 have nine fresh base approvals (nine failed refusal assertions).
-V-5 has 33 named internal cases; V-6 has six. The 26-result TUnit floor is unchanged.
+V-5 has 33 named internal cases; V-6 has nine. The 26-result TUnit floor is unchanged.
 The CP-1..CP-5 method OR operands now carry the trailing wildcard required by
 `docs/testing-and-build.md` CARD-0403/CARD-0931, before the single build.
 No selector is broadened beyond the named method prefixes.
@@ -257,6 +257,11 @@ witnesses are nested (String.Copy of a metadata-only ReadAllText), unknown-type
 argument caused an evaluation error and was replaced, not counted as valid red.
 Malformed/percent-type/whitespace/FileInfo/DirectoryInfo/dynamic forms remain
 named early-refusal safety tests, not independent mutation witnesses.
+PC-6 (added after the first Code checkpoint) bypasses the repository item-removal
+check; V-6 docs-item-removed must fail. The base evaluator approved that exact
+fixture, so this is a newly measured gap in the planned control. Safe literal
+removal remains allowed; dynamic and escaped removal operands refuse because
+final-state expansion cannot reconstruct the evaluation-time item state.
 PC-5 has six publication variants (three inputs times absent/prior records),
 with separate manifest/evaluation assertions. All PCs remain pending for
 method-scoped SourceLanding Mutation. No deliberate mutation runs in Code.
