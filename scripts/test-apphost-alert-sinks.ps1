@@ -22,9 +22,9 @@ function Write-AppHostWindowsEvent {
     return $true
 }
 function Invoke-WebRequest {
-    param($Uri,$Method,[switch]$UseBasicParsing,$TimeoutSec,$ContentType,$Headers,$Body)
+    param($Uri,$Method,[switch]$UseBasicParsing,$TimeoutSec,$ContentType,$Headers,$Body,[int]$MaximumRedirection=-1)
     if ($script:webhookFails) { throw 'delivery failed' }
-    $script:posts+=@([pscustomobject]@{Uri=$Uri;Method=$Method;Timeout=$TimeoutSec;Headers=$Headers;Body=$Body})
+    $script:posts+=@([pscustomobject]@{Uri=$Uri;Method=$Method;Timeout=$TimeoutSec;Headers=$Headers;Body=$Body;MaximumRedirection=$MaximumRedirection})
     return [pscustomobject]@{StatusCode=200}
 }
 $now=[datetime]::UtcNow
@@ -94,6 +94,11 @@ try {
         $count=$script:entries.Count;$script:webhookFails=$false
         $result=Send-AppHostOutageEvent -Event $failed -SourceRoot $root -State $state -NowUtc $now
         Assert-Sink ($result -and $script:entries.Count -eq $count -and $script:posts.Count -eq 3) 'V-6 retry does not repeat independent local event'
+        [Environment]::SetEnvironmentVariable('ANTIPHON_WATCHDOG_ALERT_WEBHOOK','http://alert.invalid/do-not-send')
+        $count=$script:entries.Count
+        $result=Send-AppHostOutageEvent -Event (Event 'down') -SourceRoot $root -State $state -NowUtc $now
+        Assert-Sink (-not $result -and $script:posts.Count -eq 3 -and $script:entries.Count -eq ($count+1) -and (Test-Path $marker)) 'V-6 HTTP is refused while local sinks still run'
+        Assert-Sink ($script:posts[0].MaximumRedirection -eq 0) 'V-6 HTTPS webhook cannot redirect to an insecure endpoint'
     }
     Write-Host "C1527 $Case assertions=$script:passed failed=0"
 } finally {
