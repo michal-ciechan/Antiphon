@@ -45,10 +45,13 @@ public sealed partial class LandGraphEvaluationTests
     {
         var fixture = EnvironmentFixtures().Single(f => f.Id == variant);
         await using var repo = await AuditRepo.CreateAsync(fixture.Files);
-        foreach (var state in new[] { "absent", "empty", "set" })
+        // PATH is also required to launch git. With no executable search path the tool
+        // fails its prerequisite, before graph inspection. Exercise its read with a usable PATH.
+        foreach (var state in variant == "path" ? new[] { "set" } : new[] { "absent", "empty", "set" })
         {
             var environment = fixture.Environment!.ToDictionary(p => p.Key,
-                p => state == "absent" ? null : state == "empty" ? "" : p.Value);
+                p => state == "absent" ? null : state == "empty" ? "" :
+                    p.Key == "PATH" ? Environment.GetEnvironmentVariable("PATH") : p.Value);
             var run = await repo.RunToolWithEnvironmentAsync(environment);
             AssertEnvironmentVerdict(run, 1, fixture.Reason, fixture.Owner);
         }
