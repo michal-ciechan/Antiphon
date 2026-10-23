@@ -95,6 +95,27 @@ public sealed class TestPhaseSummaryTests
     [Timeout(180_000)]
     public async Task C1514T_PS51AndRerun(CancellationToken cancellationToken)
     {
+        var live = C1514Support.FreshRoot();
+        var liveTiming = Path.Combine(live, "timing");
+        Directory.CreateDirectory(liveTiming);
+        await File.WriteAllTextAsync(Path.Combine(liveTiming, "groups-planned.json"),
+            "{\"version\":1,\"runId\":\"run-a\",\"assembly\":\"asm1\"}", cancellationToken);
+        using (var writer = C1514Support.Open(liveTiming))
+        {
+            writer.BeginCase("live-case", "Live", "Read", [], 0);
+            writer.EndCase("live-case", "Passed", C1514Support.Ms(1));
+            var liveRun = await Summarize(live, cancellationToken);
+            liveRun.ExitCode.ShouldBe(0, liveRun.Text);
+            var liveSummary = Path.Combine(liveTiming, "summary.json");
+            File.Exists(liveSummary).ShouldBeTrue("live-writer-summary-readable");
+            using var doc = JsonDocument.Parse(File.ReadAllText(liveSummary));
+            doc.RootElement.GetProperty("tests")[0].GetProperty("phaseOutcome").GetString().ShouldBe("Passed", "live-writer-summary-readable");
+            doc.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse("phase-only-is-not-a-pass");
+            writer.BeginCase("after-read", "Live", "Append", [], C1514Support.Ms(2));
+            writer.EndCase("after-read", "Passed", C1514Support.Ms(3));
+            writer.Enabled.ShouldBeTrue("reader-preserves-writer");
+            C1514Support.Complete(writer.ShardPath!, "after-read").GetProperty("outcome").GetString().ShouldBe("Passed");
+        }
         await C1514NativeProbe.VerifyAsync(cancellationToken);
         foreach (var relative in new[] { "scripts/lib/test-phase-evidence.ps1", "scripts/summarize-test-phases.ps1" })
         {
