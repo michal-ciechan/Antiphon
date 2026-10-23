@@ -12,6 +12,70 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandIndexLockTests
 {
     [Test]
+    [Arguments("source", false)]
+    [Arguments("source", true)]
+    [Arguments("land", false)]
+    [Arguments("land", true)]
+    [Arguments("main", false)]
+    [Arguments("main", true)]
+    public async Task C1536_PublishedRetryPreservesIndexLockHolds(string checkout, bool stale)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var report = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(report)!);
+        await File.WriteAllTextAsync(report, "precious report\n");
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+        var receipt = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(receipt).ShouldBeTrue();
+        File.Delete(report);
+        if (checkout != "source")
+        {
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", h.Fixture.Source);
+            Directory.CreateDirectory(h.Fixture.Source);
+            await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "new.txt"), "new work\n");
+        }
+        var path = await CreateLockAsync(checkout switch
+        {
+            "source" => h.Fixture.Source,
+            "land" => receipt.LandWorktreePath!,
+            _ => h.Fixture.Repository,
+        }, stale ? TimeSpan.FromHours(1) : null);
+        var bytes = await File.ReadAllBytesAsync(path);
+        await h.RepostAsync();
+        Guid requestId;
+        await using (var db = h.CreateContext()) requestId = (await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).CurrentLandRequestId!.Value;
+        var calls = h.Verifier.Calls;
+        h.Fixture.Git.Trace.Clear();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Held);
+        await using (var db = h.CreateContext())
+        {
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
+            request.State.ShouldBe(LandRequestState.Held);
+            request.HoldReasonCode.ShouldBe(stale ? GitIndexLock.StaleCode : GitIndexLock.HeldCode);
+            request.HoldDetail.ShouldContain(path);
+            request.Attempt.ShouldBe(0);
+        }
+        (await File.ReadAllBytesAsync(path)).ShouldBe(bytes);
+        var held = (await h.OperationAsync()).ShouldNotBeNull();
+        held.RemoteConfirmedAt.ShouldBe(receipt.RemoteConfirmedAt);
+        held.Mode.ShouldBe(receipt.Mode);
+        h.Verifier.Calls.ShouldBe(calls);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a.Contains("rebase") || a[0] == "push");
+        File.Delete(path); // Only our fixture lock; run the same held request again.
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+        if (checkout != "source")
+        {
+            var retry = (await h.OperationAsync()).ShouldNotBeNull();
+            retry.Mode.ShouldBe(LandOperationMode.CleanupRetry);
+            retry.LastReason.ShouldBe("unregistered_directory");
+            (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "new.txt"))).ShouldBe("new work\n");
+        }
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     public async Task Stale_lock_holds_before_admission()
     {
         await using var h = new LandingSafetyHarness();
