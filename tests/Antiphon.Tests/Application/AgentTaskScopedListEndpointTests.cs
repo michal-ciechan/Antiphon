@@ -13,8 +13,13 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel]
+[ClassDataSource<ScopedAgentTaskListReadHost>(Shared = SharedType.PerTestSession)]
 public class AgentTaskScopedListEndpointTests
 {
+    private readonly ScopedAgentTaskListReadHost _readHost;
+
+    public AgentTaskScopedListEndpointTests(ScopedAgentTaskListReadHost readHost) => _readHost = readHost;
+
     [Test]
     public async Task C1562_Read_only_consumers_share_host_and_seed()
     {
@@ -23,15 +28,38 @@ public class AgentTaskScopedListEndpointTests
         first.Factory.ShouldBeSameAs(second.Factory,
             "read-only consumers must reuse the session-owned host and seeded database");
         using var firstRows = await GetAsync(first.Client, "/api/agent-tasks");
-        using var secondRows = await GetAsync(second.Client, "/api/agent-tasks");
         Ids(firstRows).ShouldBe(ScopedAgentTaskListFixture.FleetOrder);
+        await first.DisposeAsync();
+        using var secondRows = await GetAsync(second.Client, "/api/agent-tasks");
         Ids(secondRows).ShouldBe(ScopedAgentTaskListFixture.FleetOrder);
+    }
+
+    [Test]
+    public async Task C1562_Mutating_fleet_cannot_change_shared_readers()
+    {
+        await using var reader = await BootSeededAsync();
+        await using var writer = await BootPrivateAsync();
+        var added = Guid.NewGuid();
+        using (var scope = writer.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Add(ScopedAgentTaskListFixture.TaskRow(added,
+                ScopedAgentTaskListFixture.ProjectX, null,
+                ScopedAgentTaskListFixture.XPath, ScopedAgentTaskListFixture.XPath,
+                ScopedAgentTaskListFixture.T.AddSeconds(60), added));
+            await db.SaveChangesAsync();
+        }
+
+        using var privateRows = await GetAsync(writer.Client, "/api/agent-tasks");
+        Ids(privateRows).ShouldContain(added);
+        using var sharedRows = await GetAsync(reader.Client, "/api/agent-tasks");
+        Ids(sharedRows).ShouldBe(ScopedAgentTaskListFixture.FleetOrder);
     }
 
     [Test]
     public async Task Land_pending_filter_selects_pending_rows()
     {
-        await using var host = await BootSeededAsync();
+        await using var host = await BootPrivateAsync();
         var requested = Guid.NewGuid();
         var started = Guid.NewGuid();
         var settled = Guid.NewGuid();
@@ -307,7 +335,7 @@ public class AgentTaskScopedListEndpointTests
     [Test]
     public async Task Exclusions_partition_the_candidate_set()
     {
-        await using var host = await BootSeededAsync(includeY2Twin: true);
+        await using var host = await BootPrivateAsync(includeY2Twin: true);
         using (var scope = host.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -344,7 +372,7 @@ public class AgentTaskScopedListEndpointTests
     [Test]
     public async Task Scoped_summary_matches_full_history_rows()
     {
-        await using var host = await BootSeededAsync();
+        await using var host = await BootPrivateAsync();
         using (var scope = host.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -387,7 +415,13 @@ public class AgentTaskScopedListEndpointTests
         unknown.RootElement.GetProperty("runs").GetInt32().ShouldBe(0);
     }
 
-    private static async Task<Host> BootSeededAsync(bool includeY2Twin = false)
+    private async Task<Host> BootSeededAsync()
+    {
+        var factory = await _readHost.GetFactoryAsync();
+        return new Host(factory, factory.CreateClient(), ownsFactory: false);
+    }
+
+    private static async Task<Host> BootPrivateAsync(bool includeY2Twin = false)
     {
         var factory = new AntiphonWebAppFactory();
         var client = factory.CreateClient();
@@ -462,7 +496,7 @@ public class AgentTaskScopedListEndpointTests
     private static List<Guid> Ids(JsonDocument doc) =>
         doc.RootElement.GetProperty("items").EnumerateArray().Select(e => e.GetProperty("id").GetGuid()).ToList();
 
-    private sealed class Host(AntiphonWebAppFactory factory, HttpClient client) : IAsyncDisposable
+    private sealed class Host(AntiphonWebAppFactory factory, HttpClient client, bool ownsFactory = true) : IAsyncDisposable
     {
         public AntiphonWebAppFactory Factory { get; } = factory;
         public HttpClient Client { get; } = client;
@@ -470,7 +504,8 @@ public class AgentTaskScopedListEndpointTests
         public async ValueTask DisposeAsync()
         {
             Client.Dispose();
-            await Factory.DisposeAsync();
+            if (ownsFactory)
+                await Factory.DisposeAsync();
         }
     }
 }
