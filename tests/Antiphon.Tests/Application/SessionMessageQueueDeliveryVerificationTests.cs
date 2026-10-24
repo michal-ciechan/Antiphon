@@ -81,6 +81,30 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Claude_reactive_recovery_uses_guarded_escape_only_on_a_clear_screen(bool modalBeforeEscape)
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "guarded reactive recovery body";
+        h.Adapter.EchoTypedInputToScreen = false;
+        h.Adapter.BeforeConditionalInput = () =>
+        {
+            if (modalBeforeEscape && h.Adapter.Inputs.Count == 1)
+                h.Adapter.RenderedScreenOverride =
+                    "Which option?\n❯ 1. First\n2. Second\nEnter to select · Esc to cancel";
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        string[] expected = modalBeforeEscape ? [body] : [body, "\u001b", body];
+        h.Adapter.Inputs.ShouldBe(expected);
+        h.Adapter.ConditionalInputs.ShouldBe(expected, "every recovery write stays behind the dialog guard");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty("composer evidence is absent, so Enter stays withheld");
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Wedged_composer_withholds_enter_reverts_message_and_restarts_always_on_agent()
     {
         // A session that has TAKEN A TURN and then wedged — the shape CARD-0055 was designed for and
