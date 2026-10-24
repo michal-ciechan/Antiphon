@@ -2,6 +2,7 @@
 $DefinitionsOnly = $args -contains '-DefinitionsOnly'
 $capture = Get-Content -LiteralPath $env:C449_CAPTURE -Raw | ConvertFrom-Json
 $script:template = $capture.screen
+$script:composerTemplate = $capture.composerTemplate
 $script:highlight = if ($env:C449_REQUESTED -eq 'high') { 1 } else { 2 }
 $script:dialog = $true
 $script:composer = ''
@@ -15,7 +16,7 @@ function Paint {
         $screen = $script:template.Replace('> Keep', '  Keep').Replace('     Switch', '   > Switch')
         if ($script:highlight -eq 1) { $screen = $script:template }
     } else {
-        $screen = "Fable 5.1 with $script:applied effort" + [char]10 + $capture.composer.Replace('{{composer}}', $script:composer)
+        $screen = $script:composerTemplate.Replace('{effort}', [string]$script:applied).Replace('{composer}', $script:composer)
     }
     [Console]::Write(([char]27 + '[2J' + [char]27 + '[H') + $screen)
     if ($script:PaintSink) { & $script:PaintSink $screen }

@@ -32,6 +32,8 @@ public class RunnerClaudeAdapterVerifiedPromptTests
         client.Inputs.Count.ShouldBe(2);
         client.Inputs[0].ShouldBe("\x1b[200~Work on card CARD-0001\nDescription:\ndo it\x1b[201~");
         client.Inputs[1].ShouldBe("\r");
+        client.Operations[0].ShouldBe("clear", "prior-turn output is cleared before the guarded body");
+        client.Operations.Count(operation => operation == "clear").ShouldBe(1);
     }
 
     [Test]
@@ -84,6 +86,7 @@ public class RunnerClaudeAdapterVerifiedPromptTests
         private long _sequence;
 
         public List<string> Inputs { get; } = [];
+        public List<string> Operations { get; } = [];
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
         { _guard.Bind(spec.AcceptedStartedAt); return GetAsync(sessionId, ct); }
@@ -117,13 +120,18 @@ public class RunnerClaudeAdapterVerifiedPromptTests
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
         {
             Inputs.Add(input);
+            Operations.Add(input);
             _sequence++;
             if (input != "\r" && echoToScreen)
                 _screen += input;
             return Task.CompletedTask;
         }
 
-        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
+        {
+            Operations.Add("clear");
+            return Task.CompletedTask;
+        }
 
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
 

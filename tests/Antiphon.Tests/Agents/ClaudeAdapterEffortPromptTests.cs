@@ -18,10 +18,9 @@ public class ClaudeAdapterEffortPromptTests
     {
         var scratch = Directory.CreateTempSubdirectory("c449-deaf-").FullName;
         var script = Path.Combine(scratch, "deaf.ps1");
-        await File.WriteAllTextAsync(script, """
-            [Console]::Write("Claude ready`n> `n? for shortcuts")
-            while ($true) { [void][Console]::ReadKey($true) }
-            """);
+        await File.WriteAllTextAsync(script,
+            "[Console]::Write('" + EffortFixtureComposer.Screen("").Replace("'", "''") + "')\n"
+            + "while ($true) { [void][Console]::ReadKey($true) }\n");
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings(1000);
         settings.ClaudeInputProbeRetypeIntervalMs = 100;
         var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
@@ -97,7 +96,7 @@ public class ClaudeAdapterEffortPromptTests
         await File.WriteAllTextAsync(capture, JsonSerializer.Serialize(new
         {
             screen = EffortTestScreen.Capture(0),
-            composer = ScriptedClaudeInputGuard.Composer("{{composer}}"),
+            composerTemplate = EffortFixtureComposer.Screen("{composer}", "{effort}")
         }));
         Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", "modern");
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings();
