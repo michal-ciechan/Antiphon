@@ -88,6 +88,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly TerminalTranscriptCompletion _completion = new();
     private DateTime? _firstInputObservedUtc;
     private string? _unboundReason;
+    private string? _readinessBindingId;
+    private long _parsedThrough;
+    private int _pendingBytes;
+    private bool _reading = true;
+    private bool _readinessParseFailed;
 
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
@@ -190,8 +195,39 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     {
         lock (_gate)
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
-                _completion.IsComplete && !_claimRevoked);
+                _completion.IsComplete && !_claimRevoked, Readiness: ObserveReadiness());
     }
+
+    // Called under the same boundary as the entry snapshot. This observes live ingestion,
+    // independently of the exit/settle and terminal-seat release protocols.
+    private RunnerTranscriptReadiness ObserveReadiness()
+    {
+        RunnerTranscriptReadiness Result(string status, long length, string reason) =>
+            new(status, _readinessBindingId, _parsedThrough, length, reason);
+        var path = BoundTranscriptPath;
+        if (path is null || _claimRevoked
+            || (_claims is not null && _claims.OwnerOf(path)?.Owner != _sessionId))
+            return Result("Unknown", 0, "unbound_or_revoked");
+        try
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists || !TerminalObservation.IsCurrentFile(path))
+                return Result("Unknown", 0, "file_identity_changed");
+            var length = file.Length;
+            if (length < _parsedThrough) return Result("Unknown", length, "file_shortened");
+            if (_reading) return Result("Behind", length, "read_in_flight");
+            if (length > _parsedThrough) return Result("Behind", length, "unread_suffix");
+            if (_readinessParseFailed) return Result("Unknown", length, "parse_failed");
+            if (_pendingBytes != 0) return Result("Unknown", length, "partial_record");
+            return Result("Ready", length, "complete_current_file");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Result("Unknown", 0, "file_unavailable");
+        }
+    }
+
+    internal Func<CancellationToken, Task>? ReadinessAfterRead { get; set; }
 
     /// <summary>Invoked after a read-to-end and before the binding is accepted. Production leaves it unset.</summary>
     internal Func<CancellationToken, Task>? CompactionObserveAfterRead { get; set; }
@@ -377,6 +413,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     await TerminalObservation.ReadGate.WaitAsync(ct);
                     try
                     {
+                        lock (_gate) _reading = true;
                         _completion.Invalidate();
                         if (_claimRevoked)
                         {
@@ -423,11 +460,18 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
                                 if (read > 0)
                                 {
+                                    if (ReadinessAfterRead is { } afterRead) await afterRead(ct);
                                     offset += read;
                                     TerminalObservation.RecordConsumed(offset);
                                     pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
                                     ProcessPending(pending);
                                 }
+                            }
+                            lock (_gate)
+                            {
+                                _parsedThrough = offset;
+                                _pendingBytes = pending.Count;
+                                _reading = false;
                             }
                             _completion.Observe(path, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
                                 TerminalObservation.IsCurrentFile(path));
@@ -454,15 +498,21 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         {
             _logger.LogWarning(ex, "Transcript tailer failed for session {SessionId}", _sessionId);
         }
+        finally { lock (_gate) _reading = true; }
     }
 
     private void HandleClaimRevoked(string path)
     {
         var newOwner = _claimRevokedBy;
-        _claimRevoked = false;
-        BoundTranscriptPath = null;
-        BindHow = null;
-        _bindGeneration++;
+        lock (_gate)
+        {
+            BoundTranscriptPath = null;
+            BindHow = null;
+            _readinessBindingId = null;
+            _reading = true;
+            _bindGeneration++;
+            _claimRevoked = false;
+        }
         _knownTranscriptPath = null;
         _logger.LogWarning(
             "Session {SessionId}: transcript {Path} was reclaimed by its namesake session {NewOwner}; "
@@ -507,11 +557,22 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private void EmitLine(string line)
     {
         _completion.ObserveLine(line);
+        if (!string.IsNullOrWhiteSpace(line))
+        {
+            try
+            {
+                using var parsed = JsonDocument.Parse(line);
+                if (parsed.RootElement.ValueKind != JsonValueKind.Object)
+                    lock (_gate) _readinessParseFailed = true;
+            }
+            catch (JsonException) { lock (_gate) _readinessParseFailed = true; }
+        }
         IReadOnlyList<TranscriptPart> parts;
         try { parts = TranscriptNormalizer.Normalize(line); }
         catch (Exception ex)
         {
             _completion.ParseFailed();
+            lock (_gate) _readinessParseFailed = true;
             _logger.LogDebug(ex, "Failed to normalize transcript line for session {SessionId}", _sessionId);
             return;
         }
@@ -685,10 +746,18 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             }
         }
 
-        TerminalObservation.Bind(path);
-        BoundTranscriptPath = path;
-        BindHow = how;
-        _bindGeneration++;
+        lock (_gate)
+        {
+            TerminalObservation.Bind(path);
+            BoundTranscriptPath = path;
+            BindHow = how;
+            _bindGeneration++;
+            _readinessBindingId = Guid.NewGuid().ToString("N");
+            _parsedThrough = 0;
+            _pendingBytes = 0;
+            _readinessParseFailed = false;
+            _reading = true;
+        }
         try { _onBound?.Invoke(path, how); }
         catch (Exception ex) { _logger.LogDebug(ex, "Recording the transcript binding for session {SessionId} failed", _sessionId); }
 

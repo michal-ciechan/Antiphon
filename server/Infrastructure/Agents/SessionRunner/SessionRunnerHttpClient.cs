@@ -608,7 +608,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return new SessionRunnerTranscriptDto(
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
-            transcript.LastSequence, transcript.TerminalComplete, transcript.AcceptedStartedAt);
+            transcript.LastSequence, transcript.TerminalComplete, transcript.AcceptedStartedAt,
+            transcript.Readiness is { } readiness
+                ? new SessionRunnerTranscriptReadiness(readiness.Status, readiness.BindingId,
+                    readiness.ParsedThrough, readiness.ObservedLength, readiness.Reason) : null);
     }
 
     // CARD-1153 D-3/D-4: one signed POST, one fresh nonce, a five-second total deadline on the
