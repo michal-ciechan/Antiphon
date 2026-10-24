@@ -2069,7 +2069,7 @@ public sealed class RemoteScriptContractTests
             changed.Removed.ShouldBeEmpty("recycle-reference-refusal: generation changed after the original preflight");
             refused.Exit.ShouldBe(2);
         }
-        foreach (var fault in new[] { "withheld", "unscoped", "malformed-count", "summary", "terminal", "active-land", "bound-task" })
+        foreach (var fault in new[] { "withheld", "unscoped", "malformed-count", "summary", "terminal", "active-land", "bound-land", "bound-task" })
         {
             using var f = new C1008HostFixture();
             var envelope = f.TaskScopes["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"]!;
@@ -2080,18 +2080,34 @@ public sealed class RemoteScriptContractTests
             {
                 var id = "22222222-2222-2222-2222-222222222222";
                 var row = new JsonObject { ["id"] = id, ["status"] = "Blocked",
-                    ["runnerId"] = fault == "bound-task" ? "server2" : "other", ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
+                    ["runnerId"] = fault is "bound-task" or "bound-land" ? "server2" : "other", ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
                     ["landRequestedAt"] = null, ["landStartedAt"] = null };
                 envelope["items"]!.AsArray().Add(row);
                 var detail = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null };
                 if (fault == "summary") detail["summary"]!["runnerId"] = "different";
-                else if (fault is "terminal" or "active-land") detail["landRequest"] = new JsonObject
-                    { ["state"] = fault == "active-land" ? "NeedsResolution" : "Completed", ["terminalEventId"] = "not-a-guid" };
+                else if (fault is "terminal" or "active-land" or "bound-land") detail["landRequest"] = new JsonObject
+                    { ["state"] = fault == "terminal" ? "Completed" : "NeedsResolution", ["terminalEventId"] = "not-a-guid" };
                 f.TaskDetails[id] = detail;
             }
             var refused = await f.Run();
+            if (fault == "active-land")
+            {
+                // CARD-1353 permits a stable pending land on another runner and records its proof.
+                refused.Exit.ShouldBe(0, "recycle-reference-refusal: off-runner land is admitted; " + refused.Output);
+                f.Removed.Length.ShouldBe(3);
+                var receipts = Directory.GetFiles(Path.Combine(f.Root, "evidence"), "census-*-server2.json", SearchOption.AllDirectories);
+                receipts.Length.ShouldBeGreaterThan(0);
+                foreach (var path in receipts)
+                {
+                    var task = JsonNode.Parse(File.ReadAllText(path))!["tasks"]!["22222222-2222-2222-2222-222222222222"]!;
+                    task["runnerId"]!.GetValue<string>().ShouldBe("other");
+                    task["landRequest"]!["state"]!.GetValue<string>().ShouldBe("NeedsResolution");
+                }
+                continue;
+            }
             f.Removed.ShouldBeEmpty("recycle-reference-refusal: real host task census " + fault);
             refused.Exit.ShouldBe(2);
+            if (fault == "bound-land") refused.Output.ShouldContain("RecycleLandInFlight 22222222-2222-2222-2222-222222222222");
         }
     }
 
