@@ -162,7 +162,7 @@ public static class ChannelPreamble
                 + path
                 + ", or GET /api/orchestrator-instructions"
                 + where
-                + ") before your next dispatch; where the new values differ from what you told a delegate, steer it with -Refine. Reply "
+                + ") before dispatch; steer affected delegates with -Refine. Reply "
                 + ChannelContracts.NoReplyToken
                 + " unless you have something for the user.]";
             if (body.Length <= 700 || kept.Length == 0)
