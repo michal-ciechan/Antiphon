@@ -265,18 +265,30 @@ public partial class HerdrAlwaysOnChannelParityTests
     }
 
     [Test]
-    public async Task Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_repeated_resume()
+    public Task Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_repeated_resume() =>
+        NamedAlwaysOnPlacementAsync(AgentKind.ClaudeCode);
+
+    [Test]
+    public Task Named_Grok_AlwaysOn_agent_lands_on_its_labelled_tab_across_repeated_resume() =>
+        NamedAlwaysOnPlacementAsync(AgentKind.Grok);
+
+    private async Task NamedAlwaysOnPlacementAsync(AgentKind kind)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c384-alwayson-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         FakeHerdrServer? fake = null;
         try
         {
-            fake = new FakeHerdrServer { EchoSendTextToScreen = true };
+            fake = new FakeHerdrServer
+            {
+                EchoSendTextToScreen = true,
+                LaunchScriptAgentKind = kind == AgentKind.Grok ? HerdrAgentKinds.Grok : HerdrAgentKinds.Claude,
+                GrokStartupScreen = kind == AgentKind.Grok ? GrokLinuxStartupFixture.Screen("1.0.41") : null,
+            };
             fake.Start();
             await fake.WaitUntilListeningAsync();
 
-            await using var harness = BuildHarness(tempRoot, SessionBackend.Herdr, fake, []);
+            await using var harness = BuildHarness(tempRoot, SessionBackend.Herdr, fake, [], launchKind: kind);
             var workspace = Path.Combine(tempRoot, "workspace");
             Directory.CreateDirectory(workspace);
             var agent = await harness.Agents.CreateAsync(
@@ -291,6 +303,25 @@ public partial class HerdrAlwaysOnChannelParityTests
                 CancellationToken.None);
 
             var logs = Path.Combine(tempRoot, "session-logs");
+            if (kind == AgentKind.Grok)
+                agent = await harness.Agents.UpdateAsync(agent.Id,
+                    new UpdateAgentRequest(agent.Name, agent.WorkingDirectory, agent.Details,
+                        agent.DefaultWorkflowTemplateId, agent.AssignmentPolicy, Kind: kind,
+                        LaunchEnv: new Dictionary<string, string> { ["GROK_HOME"] = Path.Combine(tempRoot, "grok-home") }), CancellationToken.None);
+
+            // Failed startup closes its pane. Capture the real placement before that cleanup;
+            // the Grok control below retains the full successful repeated-resume story.
+            HerdrPaneSidecar? refusedPlacement = null;
+            var refusedTabCount = 0;
+            var refusedPaneCount = 0;
+            fake.BeforeRequest = method =>
+            {
+                if (kind != AgentKind.ClaudeCode || method != "pane.close") return;
+                var id = harness.Runner!.StartRequests.ShouldHaveSingleItem().SessionId;
+                refusedPlacement = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(logs, id));
+                refusedTabCount = fake.Workspaces[0].Tabs.Count(t => t.Label == "Orch");
+                refusedPaneCount = fake.Workspaces[0].Tabs.Single(t => t.Label == "Orch").Panes.Count;
+            };
 
             await harness.Control.StartAsync(
                 agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
@@ -306,6 +337,19 @@ public partial class HerdrAlwaysOnChannelParityTests
                     ex);
             }
 
+            if (kind == AgentKind.ClaudeCode)
+            {
+                var refusedId = await PersistedSessionId(agent.Id);
+                await RequireClaudeHerdrInputRefusedAsync(harness, refusedId);
+                refusedPlacement.ShouldNotBeNull("placement must precede guarded startup and cleanup");
+                refusedPlacement.TabLabel.ShouldBe("Orch");
+                refusedPlacement.WorkspaceLabel.ShouldBe("PredictionMarkets");
+                refusedTabCount.ShouldBe(1);
+                refusedPaneCount.ShouldBe(1);
+                CountAgentPanes(fake).ShouldBe(0, "failed startup cleans up its child");
+                return;
+            }
+
             await using (var db = CreateContext())
             {
                 var rows = await db.AgentSessions.Where(s => s.Cwd.StartsWith(tempRoot)).ToListAsync();
@@ -317,6 +361,9 @@ public partial class HerdrAlwaysOnChannelParityTests
             var firstSessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
             var firstSidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(logs, firstSessionId))
                 ?? throw new InvalidOperationException("named start wrote no sidecar");
+            // FakeHerdr models the screen, not Grok's native store. Resume needs an existing store.
+            Directory.CreateDirectory(Path.Combine(tempRoot, "grok-home", "sessions",
+                Uri.EscapeDataString(Path.GetFullPath(workspace)), firstSessionId.ToString("D")));
             var specialist = fake.SeedTab(firstSidecar.WorkspaceId, "MavRef-DL");
             var specialistCount = specialist.Panes.Count;
             AssertNamedOrch(fake, specialistCount, logs, firstSessionId);
@@ -423,6 +470,12 @@ public partial class HerdrAlwaysOnChannelParityTests
             fake.Start();
             await fake.WaitUntilListeningAsync();
 
+            string? refusedPane = null;
+            fake.BeforeRequest = method =>
+            {
+                if (kind == AgentKind.ClaudeCode && method == "pane.close")
+                    refusedPane = fake.RequireAgentPaneId();
+            };
             await using var harness = BuildHarness(
                 tempRoot, SessionBackend.Herdr, fake, [], launchKind: kind);
 
@@ -459,18 +512,23 @@ public partial class HerdrAlwaysOnChannelParityTests
                 agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
 
-            var firstSessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            var firstSessionId = kind == AgentKind.ClaudeCode
+                ? await PersistedSessionId(agent.Id)
+                : await WaitForPersistentSessionAsync(harness, agent.Id);
             await using (var verify = CreateContext())
             {
                 var row = await verify.AgentSessions.SingleAsync(s => s.Id == firstSessionId);
-                row.Status.ShouldBe(SessionStatus.Running);
+                if (kind == AgentKind.ClaudeCode)
+                    await RequireClaudeHerdrInputRefusedAsync(harness, firstSessionId);
+                else
+                    row.Status.ShouldBe(SessionStatus.Running);
                 row.SessionBackend.ShouldBe(SessionBackend.Herdr);
                 row.AgentKind.ShouldBe(kind);
             }
 
             fake.ShouldNotBeNull();
             harness.Runner.ShouldNotBeNull();
-            var firstPane = fake.RequireAgentPaneId();
+            var firstPane = kind == AgentKind.ClaudeCode ? refusedPane : fake.RequireAgentPaneId();
             firstPane.ShouldNotBeNull();
 
             string? definitionName;
@@ -497,6 +555,12 @@ public partial class HerdrAlwaysOnChannelParityTests
             agentRename.GetProperty("params").GetProperty("name").GetString()
                 .ShouldBe(agent.Slug, "CARD-0211: herdr agent name is the sanitised Agent.Slug");
 
+            if (kind == AgentKind.ClaudeCode)
+            {
+                CountAgentPanes(fake).ShouldBe(0, "refused startup closes its child instead of adopting it");
+                return;
+            }
+
             await harness.Runner.SimulateRunnerRestartAsync();
             var adopted = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
             adopted.Status.ShouldBe("Running", "R1: pane still lists the child");
@@ -522,6 +586,23 @@ public partial class HerdrAlwaysOnChannelParityTests
 
     private static int CountAgentPanes(FakeHerdrServer fake) =>
         fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes)).Count(p => p.Agent is not null);
+
+    private static async Task RequireClaudeHerdrInputRefusedAsync(Harness harness, Guid sessionId)
+    {
+        await using var db = CreateContext();
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        row.Status.ShouldBe(SessionStatus.Failed);
+        row.FailureReason.ShouldBe("Automated Claude input withheld: observation-unknown");
+        row.InteractiveLaunchCompletedAt.ShouldBeNull();
+        row.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        row.SessionBackend.ShouldBe(SessionBackend.Herdr);
+        var agent = await db.Agents.SingleAsync(a => a.Id == row.StandingAgentId);
+        agent.Status.ShouldBe(AgentStatus.Failed);
+        agent.PersistentSessionId.ShouldBe(sessionId.ToString("D"));
+        harness.Runner!.BackendWrites.ShouldBeEmpty("Unknown custody permits no automated provider input");
+        (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.UserPrompt).ToListAsync()).ShouldBeEmpty("refusal is not delivery");
+    }
 
     private static async Task ConfirmHerdrDeliveryAsync(FakeHerdrServer fake, Guid sessionId, string nonce,
         TimeProvider? clock = null)
