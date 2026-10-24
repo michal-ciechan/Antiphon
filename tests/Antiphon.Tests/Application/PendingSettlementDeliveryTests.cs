@@ -81,7 +81,7 @@ public sealed class PendingSettlementDeliveryTests
             queued.Body.ShouldNotContain("desktop-sync=pending");
         }
 
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
@@ -152,7 +152,7 @@ public sealed class PendingSettlementDeliveryTests
         linked.State.ShouldBe(LandNotificationState.AwaitingReceipt);
         (await recovered.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBe(1);
 
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
@@ -174,7 +174,7 @@ public sealed class PendingSettlementDeliveryTests
     {
         await using var world = await SettlePendingAsync(boundary: null);
         var queued = (await world.NoteAsync()).ShouldNotBeNull();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
