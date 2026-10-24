@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -11,6 +10,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -424,7 +424,15 @@ public class PhoneHomeStrandedQueueTests
         await using var peerB = await host.ConnectPeerAsync();
         var liveB = await host.WaitLiveAsync();
         liveB.ShouldNotBeSameAs(liveA);
-        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue("the catch-up List ran on the new connection");
+        // Replacement first joins the old observer group; catch-up is a later cycle.
+        var recovered = false;
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!recovered && DateTime.UtcNow < deadline)
+        {
+            recovered = await pump.RunCycleAsync(stop.Token);
+            if (!recovered) await Task.Delay(20);
+        }
+        recovered.ShouldBeTrue("the catch-up List ran on the new connection");
 
         await ReconcileCardsAsync(h);
 
@@ -518,6 +526,11 @@ public class PhoneHomeStrandedQueueTests
         await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
         var (cardId, _) = await ClaimCardAsync(h, schema.ConnectionString);
         var source = await InsertMentionSourceAsync(schema.ConnectionString, cardId);
+        // This case asserts unavailable transport before any runner has connected. Raw
+        // input reaches that seam without requiring a Claude observation from the absent peer.
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, AgentKind.Raw));
         const string direct = "CARD-0679 channel message across a desktop restart";
         const string mentioned = "CARD-0679 mention across a desktop restart";
         var mention = new AgentMention("fake", mentioned);
@@ -845,48 +858,45 @@ public class PhoneHomeStrandedQueueTests
         PhoneHomeScriptedPeer peer, BridgeQueueHarness h, Guid? sessionId = null)
     {
         var id = sessionId ?? h.SessionId;
-        var composer = new StringBuilder();
-        var sequence = 0L;
-        var generation = DateTime.UtcNow;
+        var adapter = new FakeAgentProtocolAdapter();
+        adapter.EnableClaudeDialogObservation(h.ConnectionString, id);
+        var generation = adapter.AcceptedStartedAt!.Value;
+        adapter.OnSubmitted = prompt => StoreAwareTranscript.WriteAsync(h.Provider, id, async () =>
+        {
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.UserPrompt, prompt, sessionId: id, timestamp: DateTime.UtcNow);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: id);
+        });
         peer.Reply = frame =>
         {
             switch (frame.Operation)
             {
+                case PhoneHomeOperation.Capabilities:
+                    return Result(frame, new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                        Features: [ProviderDialogObservation.Capability]));
                 case PhoneHomeOperation.Input:
-                    sequence++;
-                    var input = ReadInput(frame);
-                    if (!input.EndsWith('\r'))
-                    {
-                        composer.Append(input);
-                        return null;
-                    }
-
-                    composer.Append(input[..^1]);
-                    var prompt = Visible(composer);
-                    composer.Clear();
-                    if (prompt.Length == 0)
-                        return null;
-                    h.InsertTranscriptEntryAsync(
-                            TranscriptKinds.UserPrompt, prompt, sessionId: id, timestamp: DateTime.UtcNow)
-                        .GetAwaiter().GetResult();
-                    h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: id)
-                        .GetAwaiter().GetResult();
+                    adapter.SendInputAsync(ReadInput(frame), CancellationToken.None).GetAwaiter().GetResult();
+                    adapter.SnapshotSequence++;
                     return null;
+                case PhoneHomeOperation.ConditionalInput:
+                    var request = frame.Payload!.Value.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)!;
+                    var written = adapter.SendConditionalInputAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+                    peer.Inputs.Add(frame);
+                    return Result(frame, written with { SessionId = id });
                 case PhoneHomeOperation.Snapshot:
+                    var screen = adapter.SnapshotRenderedScreen();
+                    var dialog = adapter.ObserveDialogAsync(id, CancellationToken.None).GetAwaiter().GetResult();
                     return Result(frame, new RunnerSnapshotDto(
-                        id, Visible(composer), "> " + Visible(composer), sequence, generation));
+                        id, adapter.SnapshotRawOutput(), screen, adapter.SnapshotSequence, generation, generation, dialog));
                 case PhoneHomeOperation.Buffer:
-                    return Result(frame, new RunnerBufferDto(id, Visible(composer), sequence));
+                    return Result(frame, new RunnerBufferDto(id, adapter.SnapshotRawOutput(), adapter.SnapshotSequence));
                 case PhoneHomeOperation.Get:
                     return Result(frame, new RunnerSessionDto(
-                        id, 1, generation, "Running", null, "", sequence, AcceptedStartedAt: generation));
+                        id, 1, generation, "Running", null, "", adapter.SnapshotSequence, AcceptedStartedAt: generation));
                 default:
                     return null;
             }
         };
-
-        static string Visible(StringBuilder typed) =>
-            typed.ToString().Replace("\u001b[200~", "").Replace("\u001b[201~", "");
 
         static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) => new(
             PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
