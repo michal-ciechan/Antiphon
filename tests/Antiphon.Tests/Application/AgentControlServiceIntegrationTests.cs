@@ -238,6 +238,15 @@ public class AgentControlServiceIntegrationTests
             var adapter = new FakeAgentProtocolAdapter { PromptOutput = "/remote-control is active · BOOTED" }
                 .WithClaudeDialogObservation();
             await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
+            // The in-process launch must expose its current dialog to the modal gate,
+            // just as the production runner exposes the process it has already started.
+            adapter.OnPrompt = (_, _) =>
+            {
+                harness.Provider.GetRequiredService<AgentSessionRuntime>()
+                    .Register(adapter.StartedSessionId!.Value, adapter);
+                adapter.OnPrompt = null;
+                return Task.CompletedTask;
+            };
 
             var board = await harness.BoardService.CreateAsync(
                 new CreateBoardRequest(project.Id, "Remote Control Board"), CancellationToken.None);
