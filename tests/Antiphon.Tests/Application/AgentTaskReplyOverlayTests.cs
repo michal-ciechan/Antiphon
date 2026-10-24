@@ -669,7 +669,7 @@ public class AgentTaskReplyOverlayTests
     private static async Task<BridgeQueueHarness> CreateReplyHarnessAsync(
         Action<IServiceCollection>? configure = null)
     {
-        var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = services =>
