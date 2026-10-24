@@ -108,6 +108,23 @@ explicit authorization for the reviewed policy-and-pin repair (the four SDK
 item names and both exact target bodies), with matched policy fixtures. Pins,
 policy and stored records remain untouched.
 
+### Caller-supplied verification provenance
+
+The later refinement supplied the complete predecessor report at
+`/work/worktrees/task-fb7c6043/.antiphon/task-fb7c6043.md` on this host. It was
+read in full and confirms these exact smoke filters:
+
+- `/*/*/(CxSessionTestHomeTests*)|(StdinClipModelTests*)/*` (14 expanded cases).
+- `/*/*/LandDeliveryFixtureProbeTests/*` (1 expanded case).
+
+It also confirms the two default-apphost layout witnesses and failed-output
+recovery requirement above. Its 15 passing smoke results belong to predecessor
+source `7a6a2e82279749250e4afb12a568d67fcda30c8e`, not to this task's source;
+they are not reused as current acceptance. Its Unit lane ended without final
+TRX and remains historical incomplete evidence. No repeat or additional build
+is justified by this roster clarification while the no-pin policy blocker
+persists. No execution or acceptance status in this document changes.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
