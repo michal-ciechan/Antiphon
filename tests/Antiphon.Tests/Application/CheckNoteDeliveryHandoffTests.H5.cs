@@ -21,7 +21,7 @@ public partial class CheckNoteDeliveryHandoffTests
     public async Task Legacy_produced_note_survives_pre_enqueue_worker_death(bool busy)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = schema.ConnectionString,
         });
@@ -157,7 +157,7 @@ public partial class CheckNoteDeliveryHandoffTests
     public async Task Legacy_captured_note_survives_worker_death()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = schema.ConnectionString,
         });
@@ -226,7 +226,7 @@ public partial class CheckNoteDeliveryHandoffTests
     public async Task Legacy_note_recovery_runs_with_checks_disabled()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = schema.ConnectionString,
         });
