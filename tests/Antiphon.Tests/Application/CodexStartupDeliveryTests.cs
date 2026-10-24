@@ -428,6 +428,7 @@ public sealed class CodexStartupDeliveryTests
         IInterceptor? fault = cut == "brief-insert" ? new BriefInsertHang(task.Id) : null;
         await using var producer = CreateFailureProvider(schema.ConnectionString, fault, clock);
         var caller = new FakeAgentProtocolAdapter { ReadyResult = true };
+        await caller.EnableClaudeDialogObservationAsync(schema.ConnectionString, callerId);
         caller.OnSubmitted = async submitted =>
         {
             await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.UserPrompt, submitted,
@@ -764,6 +765,7 @@ public sealed class CodexStartupDeliveryTests
         clock.Advance(TimeSpan.FromMinutes(11));
         await using var recovered = CreateFailureProvider(schema.ConnectionString, null, clock);
         var caller = new FakeAgentProtocolAdapter { ReadyResult = true };
+        await caller.EnableClaudeDialogObservationAsync(schema.ConnectionString, callerId);
         caller.OnSubmitted = async submitted =>
         {
             await BridgeQueueHarness.InsertEntryAsync(callerId, TranscriptKinds.UserPrompt, submitted,
@@ -810,7 +812,7 @@ public sealed class CodexStartupDeliveryTests
         IOptions<AgentRegistrySettings>? ready = null,
         bool dispatchedTask = false)
     {
-        var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConfigureServices = s =>
