@@ -65,6 +65,49 @@ The caller must commission the inherited target-policy/pin repair with its
 required Review, or authorize a separate behavior-preserving removal of those
 targets. The HostCleanup repair is independently pushed for that continuation.
 
+## Authorized no-pin replacement feasibility (second continuation)
+
+The caller authorized replacing both targets only if all build guarantees survive
+without pins or audit-policy changes. Inspection found no safe replacement in
+that admitted surface. This is a structural policy constraint, not a request to
+approve a digest or an author-created pin:
+
+1. `TargetPins.Check` (`tools/Antiphon.LandGraphAudit/TargetPins.cs:28-46`)
+   unconditionally requires a pin for **every** tracked XML `Target`. Using
+   already admitted item/property names does not exempt a replacement target.
+   OS-dependent evaluation elements also require pins. Moving the targets to
+   another definition or editing an existing pinned target cannot avoid this.
+2. In the installed SDK 10.0.402, `Microsoft.NET.Sdk.targets` adds the apphost
+   `None` items inside `_ComputeNETCoreBuildOutputFiles`, at target execution
+   before `AssignTargetPaths`. Declarative item removals/updates run earlier,
+   during project evaluation, and cannot filter those subsequently created items.
+3. `Microsoft.Common.CurrentVersion.targets` excludes reference content when
+   `ProjectReference.Private=false`, but the same metadata also disables managed
+   Copy Local. That loses the required root `fakeclaude.dll`. Disabling producer
+   apphosts loses the required staged native executables. Neither is equivalent.
+4. The old-root-file recovery guarantee requires target-time filesystem cleanup.
+   A declarative item/property replacement cannot perform that deletion. Putting
+   these build side effects in unrelated source/tools would bypass the audit's
+   target trust boundary and is not a safe alternative.
+
+The original qualification manifest is
+`docs/superpowers/plans/2026-10-24-fb7c6043-fake-provider-layout.md`.
+Its smoke roster is exactly 15 expanded cases: `CxSessionTestHomeTests` (1),
+`StdinClipModelTests` (13), `LandDeliveryFixtureProbeTests` (1). The layout
+witness is `scripts/test-fake-provider-layout.ps1 -Phase Green -Project Pty|E2E`
+with a fresh isolated OutputPath for each; it checks two default-apphost builds,
+nested native executable/DLL/deps/runtimeconfig, and root managed fakeclaude.
+Checkpoint-injected `UseAppHost=false` cannot qualify this behavior.
+
+No replacement was applied and no build or test was run in this continuation.
+These 15 cases, both clean/repeated layout witnesses, failed-output recovery,
+Windows layout qualification, CP-1 and its four acceptance cases remain pending.
+The existing source/build outcomes above remain historical. The requested
+pinless replacement is unavailable under the closed policy; continuation needs
+explicit authorization for the reviewed policy-and-pin repair (the four SDK
+item names and both exact target bodies), with matched policy fixtures. Pins,
+policy and stored records remain untouched.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
