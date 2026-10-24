@@ -170,7 +170,7 @@ internal static class CheckCompactionCrashWorker
 
     private static async Task<BridgeQueueHarness> AttachAsync(CrashWorkerRequest request, CheckCompactionBoundary boundary)
     {
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConnectionString = request.ConnectionString,
