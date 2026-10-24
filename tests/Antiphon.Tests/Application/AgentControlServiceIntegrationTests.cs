@@ -235,7 +235,8 @@ public class AgentControlServiceIntegrationTests
             // The fake echoes this after every prompt, so the /remote-control command "arms" the
             // bridge the way the real TUI reports it — the boot sequence waits for this marker
             // before renaming.
-            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "/remote-control is active · BOOTED" };
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "/remote-control is active · BOOTED" }
+                .WithClaudeDialogObservation();
             await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
 
             var board = await harness.BoardService.CreateAsync(
