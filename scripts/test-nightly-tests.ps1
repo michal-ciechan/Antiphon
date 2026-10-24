@@ -1898,6 +1898,92 @@ function Test-C1404_Group10MeasuredBudget {
     Assert-C487 -Cond $ok -Name 'C1404 group 10 uses evidence costs, eight isolated launches and the unchanged watchdog' -Detail $detail
 }
 
+function Test-C1577_Group71MeasuredBudget {
+    # Completed-case sums from Windows a779085c, not p95 or standalone wall times.
+    $ok = $false
+    $detail = ''
+    try {
+        $observations = @{
+            RollingVolumeRecycleScriptTests = @(27, 993.855)
+            RunCheckpointScriptTests = @(26, 811.425)
+            EvidenceDeletionGuardTests = @(6, 344.007)
+            ReleaseGatePublicationAuthorityTests = @(15, 339.016)
+            RunCheckpointSourceScriptTests = @(6, 223.116)
+            RetiredTempContainerScriptTests = @(13, 124.8)
+            EvidenceDiffGuardTests = @(19, 119.9)
+            EvidenceApprovedFixtureGuardTests = @(7, 103.7)
+            BuildSlotScriptTests = @(19, 100.8)
+            EvidenceSupplementalDeletionGuardTests = @(10, 75.9)
+        }
+        $nodes = New-Object System.Collections.Generic.List[object]
+        $bounds = @{}
+        $reasons = New-Object System.Collections.Generic.List[string]
+        $costDoc = [IO.File]::ReadAllText((Join-Path $lib 'nightly-class-costs.json')) | ConvertFrom-Json
+        foreach ($type in @($observations.Keys | Sort-Object)) {
+            $sample = $observations[$type]
+            $bare = 'Antiphon.Tests.Scripts.' + $type
+            $bounds[$bare] = [Math]::Ceiling([double]$sample[1] * 1.75 / 10) * 10
+            # Planner-only nodes, full class counts. Whole-class groups must
+            # select every method, so synthetic method names suffice here.
+            for ($i = 0; $i -lt $sample[0]; $i++) {
+                [void]$nodes.Add([pscustomobject]@{
+                    ClassName = $bare; Type = $type; Method = ('M' + $i); Uid = ($bare + '.' + $i)
+                    Categories = @($(if ($type -like 'Evidence*') { 'Slow' }))
+                })
+            }
+            $row = $costDoc.classes.PSObject.Properties[$bare]
+            if ($null -eq $row -or [int]$row.Value.nodes -ne $sample[0] -or
+                [double]$row.Value.seconds -ne $bounds[$bare] -or
+                [string]$row.Value.basis -cne 'observed-bound' -or
+                [string]$row.Value.source -cnotlike '*a779085c09ec4397a4b49941fd3cad07*') {
+                [void]$reasons.Add('cost-row:' + $type)
+            }
+        }
+        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        if ($exclusions.Count -eq 0) { throw 'missing rc exclusions' }
+        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $covered = @{}
+        $maxSeconds = 0.0
+        $shapes = New-Object System.Collections.Generic.List[string]
+        foreach ($chunk in $chunks) {
+            $argv = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1577.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter ([string]$chunk.exactFilter) -GroupFilter ([string]$chunk.groupFilter) -MethodFilter ([string]$chunk.methodFilter))
+            $filterIndex = [Array]::IndexOf($argv, '--treenode-filter')
+            if ($filterIndex -lt 0) { throw 'missing emitted filter' }
+            $filter = [string]$argv[$filterIndex + 1]
+            $segments = $filter.Split('/')
+            if ($segments.Count -ne 5 -or $segments[1] -cne '*' -or $segments[4] -cne '*') { throw ('unexpected class filter: ' + $filter) }
+            $hits = @($nodes | Where-Object {
+                $match = $false
+                foreach ($operand in $segments[3].Split('|')) {
+                    if ($_.Type -clike $operand.Trim('(', ')')) { $match = $true }
+                }
+                ($_.ClassName.Substring(0, $_.ClassName.LastIndexOf('.')) -clike $segments[2]) -and $match
+            })
+            if ($hits.Count -eq 0) { throw 'empty emitted selection' }
+            $seconds = 0.0
+            foreach ($node in $hits) {
+                $seconds += $bounds[$node.ClassName] / $observations[$node.Type][0]
+                $covered[$node.Uid] = 1 + [int]$covered[$node.Uid]
+            }
+            $types = @($hits | ForEach-Object Type | Sort-Object -Unique)
+            if ($seconds -gt 1800.01 -or ($types.Count -gt 1 -and $seconds -gt 900.01)) { [void]$reasons.Add('over-budget:' + $chunk.id) }
+            if ([Math]::Abs($seconds - [double]$chunk.seconds) -gt 0.11) { [void]$reasons.Add('underpriced:' + $chunk.id) }
+            $maxSeconds = [Math]::Max($maxSeconds, $seconds)
+            [void]$shapes.Add($chunk.id + ':' + $hits.Count + '/' + [Math]::Round($seconds, 1) + 's')
+        }
+        if ($covered.Count -ne $nodes.Count -or @($covered.Values | Where-Object { $_ -ne 1 }).Count -ne 0) { [void]$reasons.Add('census') }
+        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
+        $detail = 'nodes=' + $nodes.Count + ' launches=' + $chunks.Count + ' maxBoundSeconds=' + [Math]::Round($maxSeconds, 1) + ' watchdog=' + $watchdog + ' groups=' + ($shapes -join ',') + ' reasons=' + ($reasons -join ',')
+        Write-Host $detail
+        $ok = ($reasons.Count -eq 0)
+    } catch {
+        $detail = 'setup-error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage
+    }
+    Assert-C487 -Cond $ok -Name 'C1577 group 71 uses observed bounds within half the unchanged watchdog with every node once' -Detail $detail
+}
+
 function Test-C1410_MeasuredCostGroups {
     # CARD-1410 (supersedes the CARD-1404 120-node cap case). The real
     # Antiphon.Tests listing (scripts/fixtures/nightly/c1410-antiphon-listing.txt,
