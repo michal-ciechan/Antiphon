@@ -228,7 +228,10 @@ public partial class HerdrAlwaysOnChannelParityTests
     }
 
     private static Dictionary<string, string> NativeEnvironment(string home, string policy) => new()
-    { ["ANTIPHON_FAKE_NATIVE_HOME"] = home, ["GROK_HOME"] = home, ["C466_POLICY"] = policy };
+    {
+        ["ANTIPHON_FAKE_NATIVE_HOME"] = home, ["GROK_HOME"] = home, ["C466_POLICY"] = policy,
+        ["ANTIPHON_FAKE_CLAUDE_COMPOSER"] = "1",
+    };
 
     private static async Task<AgentDetailDto> CreateNativeAgentAsync(Harness h, string root, string home, AgentKind kind, SessionBackend backend)
     {
