@@ -234,6 +234,7 @@ public class TranscriptHotPathMigrationTests
         await using var f = await TranscriptHotPathFixture.CreateAsync();
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
+        await db.GetService<IMigrator>().MigrateAsync(current);
         await AddIdentityRowsAsync(db, f.SessionIds[0]);
         var before = await FingerprintAsync(f.ConnectionString);
         // The pre-change binary still reads the same idle verdict with the additive indexes.
@@ -333,21 +334,21 @@ public class TranscriptHotPathMigrationTests
 
     private static async Task AddIdentityRowsAsync(AppDbContext db, Guid sessionId)
     {
-        db.TranscriptEntries.AddRange(
-            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 200001,
-                Uuid = "identity-pair", Kind = "AssistantText", Text = "preserve me", CreatedAt = DateTime.UtcNow },
-            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 200002,
-                Uuid = "identity-pair", Kind = "TurnEnd", CreatedAt = DateTime.UtcNow },
-            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 200003,
-                Uuid = null, Kind = "QueueEnqueue", CreatedAt = DateTime.UtcNow });
-        await db.SaveChangesAsync();
+        // The test has rolled back to the historical migration under examination. The current
+        // EF entity also writes columns introduced later, which do not exist in that schema.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "TranscriptEntries" ("Id", "AgentSessionId", "Sequence", "Uuid", "Kind", "Text", "CreatedAt")
+            VALUES (gen_random_uuid(), {sessionId}, 200001, 'identity-pair', 'AssistantText', 'preserve me', now()),
+                   (gen_random_uuid(), {sessionId}, 200002, 'identity-pair', 'TurnEnd', NULL, now()),
+                   (gen_random_uuid(), {sessionId}, 200003, NULL, 'QueueEnqueue', NULL, now())
+            """);
     }
 
     private static async Task AssertIdentityRowsAsync(AppDbContext db, Guid sessionId)
     {
         db.ChangeTracker.Clear();
         var rows = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId && t.Sequence >= 200001)
-            .OrderBy(t => t.Sequence).ToListAsync();
+            .OrderBy(t => t.Sequence).Select(t => new { t.Uuid, t.Kind, t.Text }).ToListAsync();
         rows.Count.ShouldBe(3);
         rows.Select(t => t.Uuid).ShouldBe(["identity-pair", "identity-pair", null]);
         rows.Select(t => t.Kind).ShouldBe(["AssistantText", "TurnEnd", "QueueEnqueue"]);
