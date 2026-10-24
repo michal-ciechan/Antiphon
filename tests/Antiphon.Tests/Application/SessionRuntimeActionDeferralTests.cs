@@ -27,7 +27,7 @@ public class SessionRuntimeActionDeferralTests
     public async Task C1308_new_wakeup_rechecks_review_handoff_before_due(string variant)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString, AlwaysOn = false,
             ConfigureServices = services =>
@@ -84,7 +84,7 @@ public class SessionRuntimeActionDeferralTests
     public async Task C1308_still_blocked_handoff_recheck_yields_and_preserves_debt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services =>
@@ -180,7 +180,7 @@ public class SessionRuntimeActionDeferralTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { ConnectionString = schema.ConnectionString, TimeProvider = clock, AlwaysOn = false });
         var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
         var cap = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification.MaxDeliveryAttempts;
@@ -222,7 +222,7 @@ public class SessionRuntimeActionDeferralTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { ConnectionString = schema.ConnectionString, TimeProvider = clock });
         await h.Runtime.ObserveTranscriptAsync(Entry(h, 1, TranscriptKinds.UserPrompt, "still working"), default);
         var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
@@ -251,7 +251,7 @@ public class SessionRuntimeActionDeferralTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { ConnectionString = schema.ConnectionString, TimeProvider = clock, AlwaysOn = false });
         var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
         var cap = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification.MaxDeliveryAttempts;
