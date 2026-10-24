@@ -74,7 +74,7 @@ public class OutputDistillationDeadlineTests
     {
         var clock = new BriefClock();
         var probe = new ClaimClock(clock);
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { TimeProvider = clock, ConfigureDbContext = o => o.AddInterceptors(probe) });
         var deadline = clock.GetUtcNow().AddSeconds(expiresAt == "already" ? -1 : 45).UtcDateTime;
         var id = Guid.NewGuid();
