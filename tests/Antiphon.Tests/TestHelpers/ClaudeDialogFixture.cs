@@ -7,6 +7,11 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>Explicit supported-Claude fixture setup; the default fake still supplies no observation.</summary>
 internal static class ClaudeDialogFixture
 {
+    /// <summary>Conversation history above a current readable Claude composer.</summary>
+    public static string ComposerScreen(string history = "", string draft = "") =>
+        history + "\n" + FakeAgentProtocolAdapter.ClaudeRule + "\n❯ " + draft
+        + "\n" + FakeAgentProtocolAdapter.ClaudeRule + "\n" + FakeAgentProtocolAdapter.ClaudeHintBar;
+
     /// <summary>Delivery fixtures model a supported Claude session using its persisted generation.</summary>
     public static Task<BridgeQueueHarness> CreateBridgeAsync(BridgeQueueHarness.HarnessOptions? options = null) =>
         BridgeQueueHarness.CreateAsync((options ?? new()) with { ClaudeDialogObservation = true });
