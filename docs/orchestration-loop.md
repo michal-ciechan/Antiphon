@@ -2309,7 +2309,10 @@ operations form a closed table (the CARD-1409 plan's O-table): `Include` and
 `Update` are censused, `Update` metadata included; `Exclude` and `Remove` only
 subtract (metadata on a `Remove` refuses); `KeepMetadata`, `RemoveMetadata`,
 `KeepDuplicates`, `MatchOnMetadata` and an element with no operation refuse by
-name; any other attribute is metadata that must be allow-listed. A path item
+name; any other attribute is metadata that must be allow-listed. ProjectReference
+admits `IsAspireProjectResource` as Aspire resource-registration metadata; it does
+not change the project closure or reference evaluation globals. Unknown metadata
+names still refuse in both attribute and child-element form. A path item
 whose pattern reaches a tracked symbolic link refuses naming the link. Every
 item or import text is read in MSBuild's order by one pipeline (CARD-1409
 repair 6, Review c64987ea): properties and metadata are expanded with their

@@ -197,7 +197,9 @@ foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisi
 # (the LandGraphAudit tool is built for net10.0); any other value, the child-element form or a Remove refuses.
 $ItemMetadata = New-Object 'System.Collections.Generic.Dictionary[string,string[]]' ([System.StringComparer]::OrdinalIgnoreCase)
 $ItemMetadata['PackageReference'] = @('Version', 'GeneratePathProperty', 'ExcludeAssets', 'PrivateAssets', 'IncludeAssets')
-$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private')
+# Aspire uses IsAspireProjectResource only for application-resource registration/validation;
+# it neither changes the referenced project nor supplies global properties to its evaluation.
+$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private', 'IsAspireProjectResource')
 $ItemMetadata['Content'] = @('CopyToOutputDirectory', 'CopyToPublishDirectory', 'Link', 'TargetPath')
 $ItemMetadata['Compile'] = @('Link')
 $ItemMetadata['EmbeddedResource'] = @('LogicalName')
