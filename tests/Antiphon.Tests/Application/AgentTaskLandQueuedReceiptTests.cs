@@ -210,7 +210,7 @@ public sealed class AgentTaskLandQueuedReceiptTests
         public static async Task<ReceiptFixture> OpenAsync(LandNotificationKind kind, bool legacyAfterEnqueue = false)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var harness = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
             var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             try
             {
