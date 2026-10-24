@@ -27,7 +27,7 @@ public class SessionRuntimeActionTemporaryBlockTests
         await using var modal = variant == "modal"
             ? await RemoteControlRecoveryHarness.CreateAsync(isolated: true) : null;
         await using var schema = modal is null ? await TestDbFixture.CreateIsolatedSchemaAsync() : null;
-        await using var owned = modal is null ? await BridgeQueueHarness.CreateAsync(new()
+        await using var owned = modal is null ? await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema!.ConnectionString,
             ConfigureServices = services =>
