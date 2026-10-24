@@ -752,8 +752,9 @@ public class CheckCompactionReceiptTests
     }
 
     private static Task EndCallerTurnAsync(BridgeQueueHarness h) =>
-        h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn",
-            timestamp: DateTime.UtcNow);
+        StoreAwareTranscript.WriteAsync(h.Provider, h.SessionId, () =>
+            h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                timestamp: DateTime.UtcNow));
 
     private static async Task MarkSentAtFloorAsync(string connectionString, BridgeQueueHarness h, Guid messageId)
     {
