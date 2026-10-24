@@ -32,7 +32,7 @@ public sealed partial class LandGraphEvaluationTests
         if (fixture.Expected == 0) run.Lines.ShouldContain("approved", context);
         else
         {
-            run.Text.ShouldContain(fixture.Owner, Case.Sensitive, context);
+            run.PathText.ShouldContain(fixture.Owner, Case.Sensitive, context);
             run.Lines.ShouldNotContain("approved", context);
             run.Text.ShouldNotContain("evaluation-failed:", Case.Sensitive, context);
         }

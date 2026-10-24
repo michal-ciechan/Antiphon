@@ -82,13 +82,13 @@ public sealed partial class LandGraphEvaluationTests
         {
             var evaluated = await repo.RunToolAsync();
             evaluated.ExitCode.ShouldBe(1, evaluated.Text);
-            evaluated.Text.ShouldContain("docs/flag.md");
+            evaluated.PathText.ShouldContain("docs/flag.md");
         }
         var run = await RunScriptAsync(repo.Root, "-Update");
         run.ExitCode.ShouldBe(1, run.Text);
         if (variant is "relative-dir" or "identity" or "task-properties" or "property-body" or "target-framework")
             run.Text.ShouldContain("Target Hidden (missing pin)");
-        if (variant == "imported-directory") run.Text.ShouldContain("docs/flag.md");
+        if (variant == "imported-directory") run.PathText.ShouldContain("docs/flag.md");
         File.Exists(repo.Full(ManifestFile)).ShouldBeFalse(run.Text);
         File.Exists(repo.Full(EvaluationFile)).ShouldBeFalse(run.Text);
     }
