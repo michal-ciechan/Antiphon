@@ -206,7 +206,7 @@ public class AgentSessionLaunchQueueOwnershipTests
         public static async Task<OwnershipFixture> CreateAsync(
             FakeAgentProtocolAdapter adapter, bool dispatchedTask = false)
         {
-            var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
                 ConfigureServices = s =>
@@ -311,6 +311,8 @@ public class AgentSessionLaunchQueueOwnershipTests
 
     private sealed class OneAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
     {
-        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
+        public IAgentProtocolAdapter Create(AgentKind kind) =>
+            kind == AgentKind.ClaudeCode && adapter is FakeAgentProtocolAdapter fake
+                ? fake.WithClaudeDialogObservation() : adapter;
     }
 }
