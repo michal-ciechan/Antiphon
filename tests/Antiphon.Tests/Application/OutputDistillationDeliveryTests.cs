@@ -586,8 +586,10 @@ public class OutputDistillationDeliveryTests
             {
                 if (summary is not null)
                     Provider.GetRequiredService<OutputDistillationQueue>().PendingCount.ShouldBeGreaterThan(0,
-                        "settlement must commission the eligible distillation: " + string.Join(" | ",
-                            _logs.Entries.Where(e => e.Level >= LogLevel.Warning).Select(e => e.Message + " " + e.Exception)));
+                        $"settlement must commission the eligible distillation: status={seed.Task.Status} role={seed.Task.Role} reply={seed.Task.ReplyTo} outbound={seed.Task.OutboundDeliveryId} hold={seed.HoldUntil:O}; "
+                        + string.Join(" | ", _logs.Entries.Where(e => e.Level >= LogLevel.Information
+                            && !e.Category.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal))
+                            .Select(e => e.Message + " " + e.Exception)));
                 _worker = new(Provider.GetRequiredService<OutputDistillationQueue>(), Provider.GetRequiredService<IServiceScopeFactory>(),
                     Options.Create(Settings), Provider.GetRequiredService<ILogger<OutputDistillationHostedService>>());
                 await _worker.StartAsync(CancellationToken.None);
