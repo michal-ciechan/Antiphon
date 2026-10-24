@@ -659,6 +659,7 @@ public sealed class AgentTaskMidTurnRefineTests
         fx.Runner.NextEntries[fx.SessionId] = entries;
         fx.Runner.LastSequence = entries.Max(e => e.Sequence);
         await fx.Scope.Runtime.SyncTranscriptAsync(fx.SessionId, CancellationToken.None);
+        await fx.Scope.Actions.DrainPageAsync(fx.SessionId, CancellationToken.None);
     }
 
     private static void AssertNoKillOrBareEscape(RecordingInterruptRunner runner)
