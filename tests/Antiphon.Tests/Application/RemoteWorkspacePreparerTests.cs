@@ -853,7 +853,7 @@ public sealed class RemoteWorkspacePreparerTests
         var slot = new AdapterSlot();
         var taskId = Guid.NewGuid();
         var enqueueFault = cut == "queue-inserted" ? new BriefEnqueueFault(taskId) : null;
-        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
