@@ -125,8 +125,39 @@ TRX and remains historical incomplete evidence. No repeat or additional build
 is justified by this roster clarification while the no-pin policy blocker
 persists. No execution or acceptance status in this document changes.
 
+## Authorized policy-and-pin continuation
+
+The caller now authorizes the four exact SDK-item removals and hand-written exact
+pins for both existing targets. No Review approval is represented by these pins;
+the caller will commission real Review on the pushed tip before landing.
+
+V-4: one four-argument fixture admits the exact removal for each SDK item, then
+refuses Include, altered Remove, altered Condition, metadata, another owner,
+another target, evaluation-time use and task-output use. Commit tests before the
+policy and run CP-1 red (four assertion failures). The policy remains limited to
+the exact file/target/item/attributes; no general SDK item allowance is added.
+V-1: derive pins with TargetPins' exact XML normalization, commit them and policy,
+then run the real -Update and -Check; never hand-edit records.
+R-4: the 15 predecessor smoke cases execute on this source.
+R-5: both unchanged layout witnesses pass fresh and second default-apphost builds.
+Windows layout remains unchanged because neither target body nor condition changes.
+
+The current requested closed scope is CP-2..CP-6 after the red witness. Utility
+bootstraps and the extra red test build are explicitly accounted prerequisites.
+Each final TUnit project has one isolated build; layout witnesses necessarily
+perform their two default-apphost builds each. No passing selection is repeated.
+Estimated final floor: 21 minutes, plus bootstraps, red proof and slot admission.
+The prior stop findings and outcomes above remain historical; this authorization
+supersedes the no-pin constraint. PCs: no deliberate mutants in Code; all controls
+and missing-control discovery remain pending for SourceLanding Mutation.
+
 ### Checkpoints
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---|---|
-| CP-1 | Repair | `tests/Antiphon.Tests -> bin-fdd9519d-final/` | graph-records | `/*/*/(LandNonCodeSkipTests*)\|(LandGraphEvaluationTests*)/(C1385_RegistryMatchesNarrowGraph*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1385_UnrelatedScriptChangeStillSkips*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-2 V-3 R-1 R-2 | exactly 4 passed, 0 failed/skipped | 4 | 12 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---|---|---|
+| CP-1 | Guard | `tests/Antiphon.Tests -> bin-fdd9519d-red/` | sdk-removal-red | `/*/*/LandGraphEvaluationTests/Fdd9519d_SdkItemsAdmitOnlyReviewedRemoval` | V-4 red witness | expected four assertion failures before policy repair | 4 | 6 | true |
+| CP-2 | Final | `tests/Antiphon.Tests -> bin-fdd9519d-final/` | graph-records | `/*/*/(LandNonCodeSkipTests*)\|(LandGraphEvaluationTests*)/(C1385_RegistryMatchesNarrowGraph*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1385_UnrelatedScriptChangeStillSkips*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)\|(Fdd9519d_SdkItemsAdmitOnlyReviewedRemoval*)` | V-2 V-3 V-4 R-1 R-2 | exactly 8 passed, 0 failed/skipped | 8 | 10 | true |
+| CP-3 | Final | `tests/Antiphon.Agents.Pty.Tests -> bin-fdd9519d-pty/` | pty-smoke | `/*/*/(CxSessionTestHomeTests*)\|(StdinClipModelTests*)/*` | R-4 | exactly 14 passed, 0 failed/skipped | 14 | 2 | true |
+| CP-4 | Final | `tests/Antiphon.E2E -> bin-fdd9519d-e2e/` | e2e-smoke | `/*/*/LandDeliveryFixtureProbeTests/*` | R-4 | exactly 1 passed, 0 failed/skipped | 1 | 4 | true |
+| CP-5 | Final | n/a | pty-layout | `pwsh -NoProfile -File scripts/test-fake-provider-layout.ps1 -Project Pty -Phase Green -OutputPath bin-fdd9519d-layout-pty/` | R-5 | two builds pass and all layout assertions pass | n/a | 2 | true |
+| CP-6 | Final | n/a | e2e-layout | `pwsh -NoProfile -File scripts/test-fake-provider-layout.ps1 -Project E2E -Phase Green -OutputPath bin-fdd9519d-layout-e2e/` | R-5 | two builds pass and all layout assertions pass | n/a | 3 | true |
