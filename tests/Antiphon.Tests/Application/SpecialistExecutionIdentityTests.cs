@@ -34,7 +34,7 @@ public class SpecialistExecutionIdentityTests
         original.ExecutionDeadlineAt.HasValue.ShouldBe(deadlinePolicy);
         await f.ChangeGenerationAsync(drift);
         await using var bridge = await f.AttachBridgeAsync();
-        using var provider = f.Dispatcher(bridge).Provider;
+        await using var provider = f.Dispatcher(bridge).Provider;
         await provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
             .TickAsync(CancellationToken.None);
         if (drift == "profile")
@@ -498,7 +498,7 @@ public class SpecialistExecutionIdentityTests
             Func<Guid, string, CancellationToken, Task>? enqueueOverride = null)
         {
             var (dispatcher, provider) = Dispatcher(bridge);
-            using (provider)
+            await using (provider)
             {
                 dispatcher.AfterQueuedSnapshotAsync = afterSnapshot;
                 dispatcher.ReuseEnqueueOverride = enqueueOverride;
@@ -698,7 +698,7 @@ public class SpecialistExecutionIdentityTests
             if (deadlinePolicy)
                 availability.Calls.ShouldContain(c => c.Kind == kind && c.Alias == exact);
             var (dispatcher, provider) = AgentTaskStandingAgentDispatchTests.CreateHarness(connectionString: database.ConnectionString);
-            using (provider) await dispatcher.TickAsync(stop.Token);
+            await using (provider) await dispatcher.TickAsync(stop.Token);
             await using var verify = new AppDbContext(options);
             var result = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
             result.AgentKind.ShouldBe(drift == "public-kind" ? AgentKind.ClaudeCode : kind);
@@ -774,7 +774,7 @@ public class SpecialistExecutionIdentityTests
                 return task is not null;
             });
             var (dispatcher, provider) = AgentTaskStandingAgentDispatchTests.CreateHarness(connectionString: database.ConnectionString);
-            using (provider) await dispatcher.TickAsync(stop.Token);
+            await using (provider) await dispatcher.TickAsync(stop.Token);
             await using var verify = new AppDbContext(options);
             var result = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task!.Id);
             result.Status.ShouldBe(AgentTaskStatus.Dispatched, result.FailureReason);
