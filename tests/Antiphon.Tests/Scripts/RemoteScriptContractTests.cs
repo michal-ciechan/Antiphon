@@ -2081,7 +2081,7 @@ public sealed class RemoteScriptContractTests
                 var id = "22222222-2222-2222-2222-222222222222";
                 var row = new JsonObject { ["id"] = id, ["status"] = "Blocked",
                     ["runnerId"] = fault is "bound-task" or "bound-land" ? "server2" : "other", ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
-                    ["landRequestedAt"] = null, ["landStartedAt"] = null };
+                    ["landRequestedAt"] = fault == "bound-land" ? "2026-10-24T00:00:00Z" : null, ["landStartedAt"] = null };
                 envelope["items"]!.AsArray().Add(row);
                 var detail = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null };
                 if (fault == "summary") detail["summary"]!["runnerId"] = "different";
