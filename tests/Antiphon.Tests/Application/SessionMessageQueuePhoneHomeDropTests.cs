@@ -32,7 +32,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         await using var peerA = await host.ConnectPeerAsync();
         var liveA = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(liveA);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         var client = new RunnerScopedSessionRunnerClient(host.Directory, host.AllowedRunnerId);
 
@@ -96,7 +96,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         // A client still holding the connection that has since closed: its next write never leaves.
         var stale = new PhoneHomeRunnerClient(live);
@@ -127,7 +127,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         await using var peerA = await host.ConnectPeerAsync();
         var liveA = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(liveA);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
@@ -186,7 +186,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         await using var peerA = await host.ConnectPeerAsync();
         var liveA = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(liveA);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         var client = new RunnerScopedSessionRunnerClient(host.Directory, host.AllowedRunnerId);
 
@@ -245,7 +245,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         await using var peerA = await host.ConnectPeerAsync();
         var liveA = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(liveA);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         // The submit happens; its transcript record lags behind the confirm loop's first window.
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
