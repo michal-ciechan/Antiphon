@@ -192,7 +192,7 @@ public sealed class RolePolicyToolBundleDispatchTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var store = schema.ConnectionString;
         var fault = new NoticeFault { Mode = cut };
-        var parent = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var parent = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = store,
@@ -280,7 +280,7 @@ public sealed class RolePolicyToolBundleDispatchTests
                 await parent.DisposeAsync();
                 parentDisposed = true;
 
-                restarted = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+                restarted = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
                 {
                     AlwaysOn = true,
                     ConnectionString = store,
