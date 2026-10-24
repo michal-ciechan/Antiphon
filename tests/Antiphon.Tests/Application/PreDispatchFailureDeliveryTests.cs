@@ -476,7 +476,7 @@ public sealed class PreDispatchFailureDeliveryTests
 
     private static async Task<BridgeQueueHarness> CreateParentAsync(BridgeQueueHarness.HarnessOptions options)
     {
-        var parent = await BridgeQueueHarness.CreateAsync(options);
+        var parent = await ClaudeDialogFixture.CreateBridgeAsync(options);
         if (options.AttachSessionId is null)
         {
             await parent.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "caller baseline before delegation");
