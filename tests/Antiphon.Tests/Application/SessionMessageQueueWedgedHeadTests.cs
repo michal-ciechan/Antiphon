@@ -25,7 +25,7 @@ public class SessionMessageQueueWedgedHeadTests
     private static Task<BridgeQueueHarness> CreateAsync(
         bool alwaysOn = false, Action<IServiceCollection>? configureServices = null,
         int strandedAgeSeconds = 0) =>
-        BridgeQueueHarness.CreateAsync(new()
+        ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = alwaysOn,
             // These cases judge the recovery verdict, not delayed transcript ingestion.
