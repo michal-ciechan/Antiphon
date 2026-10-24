@@ -96,8 +96,8 @@ public class SpecialistQualificationTests
             ConnectionString = schema.ConnectionString, Delegation = settings,
             ConfigureServices = services =>
             {
-                services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
-                    NullLogger<PtyDeliveryProfile>.Instance, Options.Create(settings), backendOverride: "modern"));
+                services.AddSingleton(sp =>
+                    SpecialistExecutionIdentityTests.Card0758Fixture.SyntheticModernProfile(sp, settings));
                 services.AddSingleton<ISpecialistExecutionEvidenceReader>(verifier);
                 services.AddSingleton<IHostApplicationLifetime>(lifetime);
                 services.AddScoped<IModelAvailability, Available>();
@@ -153,16 +153,19 @@ public class SpecialistQualificationTests
                     a => a.RequestId, r => r.Id, (a, r) => r.Purpose).SingleAsync();
                 if (purpose == SpecialistRequestPurpose.Check && (task.AgentId == h.AgentId || change != "fallback")) answer = "ready";
             }
-            var next = (await db.TranscriptEntries.Where(e => e.AgentSessionId == executingSession).MaxAsync(e => (long?)e.Sequence) ?? 0) + 1;
-            var call = Guid.NewGuid().ToString("N");
-            var now = DateTime.UtcNow;
-            db.TranscriptEntries.AddRange(
-                new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next, Kind = TranscriptKinds.UserPrompt, Text = body, Timestamp = now, CreatedAt = now },
-                new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next + 1, Kind = TranscriptKinds.AssistantText,
-                    ApiCallId = call, Text = answer + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done"), CreatedAt = now },
-                new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next + 2, Kind = TranscriptKinds.TurnEnd,
-                    ApiCallId = call, StopReason = "end_turn", CreatedAt = now });
-            await db.SaveChangesAsync();
+            await StoreAwareTranscript.WriteAsync(h.Provider, executingSession, async () =>
+            {
+                var next = (await db.TranscriptEntries.Where(e => e.AgentSessionId == executingSession).MaxAsync(e => (long?)e.Sequence) ?? 0) + 1;
+                var call = Guid.NewGuid().ToString("N");
+                var now = DateTime.UtcNow;
+                db.TranscriptEntries.AddRange(
+                    new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next, Kind = TranscriptKinds.UserPrompt, Text = body, Timestamp = now, CreatedAt = now },
+                    new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next + 1, Kind = TranscriptKinds.AssistantText,
+                        ApiCallId = call, Text = answer + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done"), CreatedAt = now },
+                    new() { Id = Guid.NewGuid(), AgentSessionId = executingSession, Sequence = next + 2, Kind = TranscriptKinds.TurnEnd,
+                        ApiCallId = call, StopReason = "end_turn", CreatedAt = now });
+                await db.SaveChangesAsync();
+            });
         };
         await using (var scope = h.Provider.CreateAsyncScope())
             (await scope.ServiceProvider.GetRequiredService<SpecialistRequestService>().AuthorizeQualificationAsync(candidateId, CancellationToken.None)).ShouldBeTrue();
@@ -409,7 +412,9 @@ public class SpecialistQualificationTests
             routing.UpdatedAt = now;
             await db.SaveChangesAsync();
         }
-        h.Runtime.Register(sessionId, new FakeAgentProtocolAdapter { OnSubmitted = h.Adapter.OnSubmitted });
+        var adapter = new FakeAgentProtocolAdapter { OnSubmitted = h.Adapter.OnSubmitted };
+        await adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, sessionId);
+        h.Runtime.Register(sessionId, adapter);
         await using (var scope = h.Provider.CreateAsyncScope())
             (await scope.ServiceProvider.GetRequiredService<SpecialistRequestService>().AuthorizeQualificationAsync(candidateId, CancellationToken.None)).ShouldBeTrue();
         for (var index = 0; index < 2; index++)
