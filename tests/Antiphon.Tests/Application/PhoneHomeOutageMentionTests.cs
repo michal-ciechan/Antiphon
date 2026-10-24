@@ -26,27 +26,27 @@ public class PhoneHomeOutageMentionTests
         var row = (await h.RowsAsync()).ShouldHaveSingleItem("accepted mention must be durable before any runner List");
         row.Status.ShouldBe(QueuedMessageStatus.Pending);
         row.DeliveryAttempts.ShouldBe(0);
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         (await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None)).ShouldBe(1);
         await h.AssertReceiptAsync(row.Body);
         (await h.RowsAsync()).Single().Status.ShouldBe(QueuedMessageStatus.Sent);
-        peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(2);
+        peer.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(2);
     }
 
     [Test]
     public async Task C696Red_Mention_in_reconnect_gap_survives_restart()
     {
         await using var h = await PhoneHomeOutageHarness.CreateAsync();
-        await using var a = await h.RecoverAsync();
+        await using var a = await h.RecoverAsync(claudeDialogObservation: true);
         await h.DisconnectAsync(a);
         await h.RouteAsync("@fake please survive the desktop graph restart\n");
         var row = (await h.RowsAsync()).ShouldHaveSingleItem("reconnect gap must retain the accepted route");
         await h.RecreateGraphAsync();
         (await h.RowsAsync()).Single().Id.ShouldBe(row.Id);
-        await using var b = await h.RecoverAsync();
+        await using var b = await h.RecoverAsync(claudeDialogObservation: true);
         (await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None)).ShouldBe(1);
         await h.AssertReceiptAsync(row.Body);
-        b.RequestCount(PhoneHomeOperation.Input).ShouldBe(2);
+        b.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(2);
     }
     [Test]
     public async Task Busy_local_and_remote_mentions_wait_for_idle()
@@ -54,14 +54,14 @@ public class PhoneHomeOutageMentionTests
         foreach (var remote in new[] { false, true })
         {
             await using var h = await PhoneHomeOutageHarness.CreateAsync(remote);
-            await using var peer = remote ? await h.RecoverAsync() : null;
+            await using var peer = remote ? await h.RecoverAsync(claudeDialogObservation: true) : null;
             await h.Bridge.MarkWorkingAsync();
             (await h.MentionAsync("fake", "wait for this turn to end")).ShouldBeTrue();
             var row = (await h.RowsAsync()).ShouldHaveSingleItem();
             row.Origin.ShouldBe(QueuedMessageOrigin.Mention);
             row.DeliveryAttempts.ShouldBe(0);
             h.Bridge.Adapter.Inputs.ShouldBeEmpty();
-            if (peer is not null) peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(0);
+            if (peer is not null) peer.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(0);
             await h.Bridge.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
             await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
             await h.AssertReceiptAsync(row.Body);
@@ -81,7 +81,7 @@ public class PhoneHomeOutageMentionTests
             (i % 2 == 0 ? h.Queue : otherQueue).EnqueueMentionAsync(h.SessionId, body, occurrence, CancellationToken.None)));
         (await h.RowsAsync()).ShouldHaveSingleItem().Id.ShouldBe(occurrence);
         await h.RecreateGraphAsync();
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         var settled = await h.DurableStateAsync();
         await h.Queue.EnqueueMentionAsync(h.SessionId, body.ReplaceLineEndings("\n"), occurrence, CancellationToken.None);
@@ -106,10 +106,10 @@ public class PhoneHomeOutageMentionTests
         h.Router.ObserveDelta(h.SourceId, "\n");
         await PhoneHomeOutageHarness.UntilAsync(() => h.Diagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.CommandSkippedDuplicate));
         var row = (await h.RowsAsync()).ShouldHaveSingleItem();
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         await h.AssertReceiptAsync(row.Body);
-        peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(2);
+        peer.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(2);
     }
 
     [Test]
@@ -144,7 +144,7 @@ public class PhoneHomeOutageMentionTests
         (await h.MentionAsync("fake", "ambiguous")).ShouldBeFalse();
         await db.AgentSessions.Where(s => s.Id == h.SourceId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
         await h.RecreateGraphAsync();
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         await h.AssertReceiptAsync(row.Body);
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sibling)).ShouldBe(0);
@@ -156,7 +156,7 @@ public class PhoneHomeOutageMentionTests
     public async Task In_flight_mention_Enter_late_confirms_without_retyping()
     {
         await using var h = await PhoneHomeOutageHarness.CreateAsync();
-        await using var a = await h.RecoverAsync();
+        await using var a = await h.RecoverAsync(claudeDialogObservation: true);
         h.Runtime.Register(h.SessionId, h.Bridge.Adapter);
         var client = new RunnerScopedSessionRunnerClient(h.Host.Directory, h.Host.AllowedRunnerId);
         const string body = "[channel from c679-source] submitted before disconnect";
@@ -177,7 +177,7 @@ public class PhoneHomeOutageMentionTests
         attempted.DeliveryAttempts.ShouldBe(1);
         attempted.LastDeliveryBaselineSequence.ShouldNotBeNull();
         await h.RecreateGraphAsync();
-        await using var b = await h.RecoverAsync();
+        await using var b = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         var confirmed = (await h.RowsAsync()).Single();
         confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
@@ -198,11 +198,11 @@ public class PhoneHomeOutageMentionTests
         h.Diagnostics.Snapshot().Count(e => e.Stage == MentionRouteDiagnostics.Queued).ShouldBe(2);
         h.Diagnostics.Snapshot().ShouldNotContain(e => e.Stage == MentionRouteDiagnostics.InputSent);
         await h.RecreateGraphAsync();
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         foreach (var row in rows) await h.AssertReceiptAsync(row.Body);
         (await h.RowsAsync()).Count.ShouldBe(2);
-        peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(4, "mentions never coalesce into one turn");
+        peer.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(4, "mentions never coalesce into one turn");
     }
 }
