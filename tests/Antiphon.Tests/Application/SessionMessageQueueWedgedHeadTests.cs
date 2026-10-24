@@ -50,6 +50,7 @@ public class SessionMessageQueueWedgedHeadTests
         await using var db = CreateContext();
         await db.AgentSessions.Where(s => s.Id == h.SessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, next));
+        await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
     }
 
     // The UserPrompt rows the fake recorded, in order: the only evidence that says WHAT actually
