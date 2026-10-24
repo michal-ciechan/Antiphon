@@ -32,7 +32,7 @@ namespace Antiphon.Tests.Application;
 public class ChannelReplyLateConfirmDispatchTests
 {
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
@@ -221,7 +221,7 @@ public class ChannelReplyLateConfirmDispatchTests
         bool unifiedRecovery, bool catalog)
     {
         var producer = new HeldProducer();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -293,7 +293,7 @@ public class ChannelReplyLateConfirmDispatchTests
     public async Task Grace_dispatch_keeps_its_confirmed_turn_when_a_newer_turn_completes(
         bool unifiedRecovery, bool catalog)
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -362,7 +362,7 @@ public class ChannelReplyLateConfirmDispatchTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var arrivals = 0;
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -416,7 +416,7 @@ public class ChannelReplyLateConfirmDispatchTests
         bool unifiedRecovery, bool catalog)
     {
         var producer = new FailOnceProducer();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -458,7 +458,7 @@ public class ChannelReplyLateConfirmDispatchTests
         var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var arrivals = 0;
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -530,7 +530,7 @@ public class ChannelReplyLateConfirmDispatchTests
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var caller = new CancellationTokenSource();
         var producer = new CancellableWaitProducer(bound.Token);
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
@@ -629,7 +629,7 @@ public class ChannelReplyLateConfirmDispatchTests
     public async Task Bound_grace_dispatch_retains_the_direct_turn_trailing_text_watermark(
         bool unifiedRecovery, bool catalog)
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
             AlwaysOn = true,
