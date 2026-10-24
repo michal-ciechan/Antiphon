@@ -149,7 +149,7 @@ public class PolledCompletionNoteShrinkTests
     }
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync(bool shrinkPolledCompletionNotes = true) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Delegation = new DelegationSettings { ShrinkPolledCompletionNotes = shrinkPolledCompletionNotes },
         });
