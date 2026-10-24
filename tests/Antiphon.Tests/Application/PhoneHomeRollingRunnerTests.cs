@@ -11,6 +11,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -299,7 +300,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
     {
         private readonly List<IServiceScope> _scopes = [];
         private readonly string _root;
-        private readonly ConcurrentDictionary<Guid, string> _screens = new();
+        private readonly ConcurrentDictionary<Guid, FakeAgentProtocolAdapter> _adapters = new();
         private string? _stampedWorktree;
 
         public PhoneHomeTestHost Host { get; }
@@ -364,7 +365,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
             var workspaceCapabilities = new RunnerCapabilitiesDto(
                 "ModernConPty", "modern", "test", false,
                 Features: [RunnerCapabilityFeatures.WorkspaceRepositoryV1,
-                    RunnerCapabilityFeatures.WorkspacePublishV1], Platform: "linux");
+                    RunnerCapabilityFeatures.WorkspacePublishV1, ProviderDialogObservation.Capability], Platform: "linux");
             var peerA = await host.ConnectPeerAsync(
                 runnerId: RollingRunnerSettings.Server2, storeId: storeA, secret: secretA,
                 capabilities: workspaceCapabilities);
@@ -460,7 +461,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
             await using var db = NewDb();
             await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.WorktreePath, path)
-                .SetProperty(t => t.WorktreeBranch, "feat/rolling-pin"));
+                .SetProperty(t => t.WorktreeBranch, DelegateBranchName.Legacy(taskId)));
         }
 
         public Task<AgentTaskDispatcher.TickResult> TickAsync(Action<AgentTaskDispatcher>? configure = null)
@@ -529,6 +530,15 @@ public sealed partial class PhoneHomeRollingRunnerTests
         private void Script(PhoneHomeScriptedPeer peer)
         {
             var connection = Schema.ConnectionString;
+            FakeAgentProtocolAdapter Adapter(Guid sessionId) => _adapters.GetOrAdd(sessionId, id =>
+            {
+                var adapter = new FakeAgentProtocolAdapter();
+                adapter.EnableClaudeDialogObservation(connection, id);
+                adapter.OnSubmitted = text => StoreAwareTranscript.WriteAsync(Harness.Provider, id, () =>
+                    BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.UserPrompt, text,
+                        timestamp: DateTime.UtcNow, connectionString: connection));
+                return adapter;
+            });
             peer.Reply = frame =>
             {
                 if (frame.Operation == PhoneHomeOperation.WorkspaceMirror)
@@ -568,7 +578,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 {
                     return Result(frame, new RunnerCapabilitiesDto(
                         "ModernConPty", "modern", "test", false,
-                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1],
+                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1, ProviderDialogObservation.Capability],
                         VerificationCustodyBackend: VerificationCustodyBackends.LinuxCgroup,
                         RunnerStoreId: StoreA,
                         Platform: "linux"));
@@ -586,25 +596,29 @@ public sealed partial class PhoneHomeRollingRunnerTests
                     var sessionId = SessionIdOf(frame);
                     var text = InputText(frame);
                     if (sessionId != Guid.Empty && !string.IsNullOrEmpty(text))
-                    {
-                        _screens[sessionId] = text;
-                        if (text != "\r")
-                        {
-                            BridgeQueueHarness.InsertEntryAsync(
-                                sessionId, TranscriptKinds.UserPrompt, text, timestamp: DateTime.UtcNow,
-                                connectionString: connection).GetAwaiter().GetResult();
-                        }
-                    }
+                        Adapter(sessionId).SendInputAsync(text, CancellationToken.None).GetAwaiter().GetResult();
 
                     return null;
+                }
+
+                if (frame.Operation == PhoneHomeOperation.ConditionalInput)
+                {
+                    var sessionId = SessionIdOf(frame);
+                    var request = frame.Payload!.Value.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)!;
+                    var result = Adapter(sessionId).SendConditionalInputAsync(request, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    peer.Inputs.Add(frame);
+                    return Result(frame, result with { SessionId = sessionId });
                 }
 
                 if (frame.Operation == PhoneHomeOperation.Snapshot)
                 {
                     var sessionId = SessionIdOf(frame);
-                    _screens.TryGetValue(sessionId, out var screen);
-                    screen ??= "";
-                    return Result(frame, new RunnerSnapshotDto(sessionId, screen, screen, 1, DateTime.UtcNow));
+                    var adapter = Adapter(sessionId);
+                    var screen = adapter.SnapshotRenderedScreen();
+                    var dialog = adapter.ObserveDialogAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+                    return Result(frame, new RunnerSnapshotDto(sessionId, screen, screen, adapter.SnapshotSequence,
+                        adapter.AcceptedStartedAt!.Value, adapter.AcceptedStartedAt, dialog));
                 }
 
                 return null;

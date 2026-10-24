@@ -633,18 +633,16 @@ public sealed partial class PhoneHomeRollingRunnerTests
         (await PostDrainAsync(
                 world, RollingRunnerSettings.Server2, new DrainBody("busy session", RollingRunnerSettings.Server2Temp), token: true))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
-        await BridgeQueueHarness.InsertEntryAsync(
+        await StoreAwareTranscript.WriteAsync(world.Harness.Provider, world.SessionA, () => BridgeQueueHarness.InsertEntryAsync(
             world.SessionA, TranscriptKinds.UserPrompt, "open-turn", timestamp: DateTime.UtcNow,
-            connectionString: world.Schema.ConnectionString);
+            connectionString: world.Schema.ConnectionString));
 
         const string message = "after-the-turn";
         await world.Queue.EnqueueAsync(
             world.SessionA, message, MessageSendMode.WhenIdle, CancellationToken.None, deliverIfIdle: false);
         world.PeerA.Inputs.ShouldNotContain(frame => InputText(frame) == message);
 
-        await BridgeQueueHarness.InsertEntryAsync(
-            world.SessionA, TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: DateTime.UtcNow,
-            connectionString: world.Schema.ConnectionString);
+        await StoreAwareTranscript.SetWorkingAsync(world.Harness.Provider, world.Schema.ConnectionString, world.SessionA, false);
         await world.Queue.OnTurnEndAsync(world.SessionA, CancellationToken.None);
 
         world.PeerA.Inputs.ShouldContain(frame => InputText(frame) == message);
@@ -815,7 +813,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = _root,
                 WorktreePath = _root,
-                WorktreeBranch = "feat/" + title,
+                WorktreeBranch = DelegateBranchName.Legacy(id),
                 RunnerId = runnerId,
                 Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None,
