@@ -275,7 +275,7 @@ public sealed class CompletedCardWorktreeRemovalTests
     [Test]
     public async Task C1017_ProtectedIgnoredIsHeld()
     {
-        foreach (var path in new[] { ".claude/settings.json", "bin-test/appsettings.Development.json", "bin-test/data.user", "bin-test/.antiphon/unknown.txt", ".antiphon/unfamiliar-evidence/keep.txt" })
+        foreach (var path in new[] { ".claude/settings.json", "bin-test/appsettings.Development.json", "bin-test/data.user", "bin-test/.antiphon/report.md", ".antiphon/deliverables/keep.txt" })
         {
             await using var h = await CompletedCardRemovalFixture.CreateAsync();
             var file = await h.WriteAsync(path);
