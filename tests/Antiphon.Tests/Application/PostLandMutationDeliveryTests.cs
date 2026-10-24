@@ -320,6 +320,15 @@ public sealed partial class PostLandMutationDeliveryTests
             repaired.CompletionNoteQueuedAt.ShouldNotBeNull();
             repaired.CompletionNoteDigest.ShouldBe(DelegationNoteDigest.Compute(repaired.Result!));
             await StampDiscoveryClosedAsync(db, sent.Id);
+            // Receipt catch-up leaves durable routing work. Retention must keep its evidence
+            // until the fixture pumps that work, just as the production hosted driver does.
+            var routingDebt = await db.SessionRuntimeActions.CountAsync(a =>
+                a.AgentSessionId == settled.Bridge.SessionId);
+            await settled.Bridge.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(settled.Bridge.SessionId, CancellationToken.None);
+            (await db.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == settled.Bridge.SessionId))
+                .ShouldBe(0, "complete receipt routing before pruning its queue evidence");
+            Console.WriteLine($"C592_RETENTION routingDebtBefore={routingDebt}; routingDebtAfter=0");
             db.ChangeTracker.Clear();
             await retention.PruneQueuedMessagesAsync(CancellationToken.None);
         }
