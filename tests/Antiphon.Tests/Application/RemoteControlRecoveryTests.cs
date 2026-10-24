@@ -273,7 +273,7 @@ public class RemoteControlRecoveryTests
         await using var h = await ReadyIdleMenuAsync();
         _ = await DetectAsync(h);
         (await h.Queue.IsModalBlockedAsync(h.SessionId, CancellationToken.None)).ShouldBeTrue();
-        await h.Runtime.SendInputAsync(h.SessionId, "\u001b", CancellationToken.None, trackManualTurn: false);
+        await h.Runtime.SendInteractiveInputAsync(h.SessionId, "\u001b", CancellationToken.None, trackManualTurn: false);
         h.Adapter.Inputs.ShouldContain("\u001b");
         await h.Queue.EnqueueAsync(h.SessionId, "held ordinary work c514", MessageSendMode.WhenIdle, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
