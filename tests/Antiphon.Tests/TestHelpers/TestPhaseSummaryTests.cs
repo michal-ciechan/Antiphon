@@ -95,6 +95,12 @@ public sealed class TestPhaseSummaryTests
     [Timeout(180_000)]
     public async Task C1514T_PS51AndRerun(CancellationToken cancellationToken)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("CARD-1514: actual nightly native custody and PowerShell 5.1 rerun require Windows; Linux cannot qualify this owner.");
+            return;
+        }
+
         var live = C1514Support.FreshRoot();
         var liveTiming = Path.Combine(live, "timing");
         Directory.CreateDirectory(liveTiming);
