@@ -34,7 +34,7 @@ internal sealed class DeliveredSpillFixture(BridgeQueueHarness harness, ScaledTi
         SaveChangesInterceptor? interceptor = null, Action<IServiceCollection>? configureServices = null)
     {
         var clock = new ScaledTimeProvider(1);
-        var h = await BridgeQueueHarness.CreateAsync(new()
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = connection,
             TimeProvider = clock,
@@ -67,7 +67,7 @@ internal sealed class DeliveredSpillFixture(BridgeQueueHarness harness, ScaledTi
         NoInput();
         var previous = H;
         await previous.DisposeAsync();
-        H = await BridgeQueueHarness.CreateAsync(new()
+        H = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = previous.ConnectionString, TimeProvider = Clock,
             PreserveDatabaseOnDispose = true,
