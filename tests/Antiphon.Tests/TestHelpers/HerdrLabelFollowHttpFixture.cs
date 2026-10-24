@@ -12,6 +12,7 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.AgentTui;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -39,7 +40,14 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     private readonly List<IAgentProtocolAdapter> _adapters = [];
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "antiphon-c462-flow-" + Guid.NewGuid().ToString("N"));
     public string Logs => Path.Combine(Root, "logs");
-    public FakeHerdrServer Fake { get; } = new() { EchoSendTextToScreen = true };
+    // Label following is provider-independent. Claude on Herdr intentionally withholds
+    // automated startup input because that backend cannot prove complete input custody.
+    public FakeHerdrServer Fake { get; } = new()
+    {
+        EchoSendTextToScreen = true,
+        LaunchScriptAgentKind = HerdrAgentKinds.Grok,
+        GrokStartupScreen = GrokLinuxStartupFixture.Screen("1.0.41"),
+    };
     public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
     public HerdrLabelFollowDbFixture.RecordingBus Bus { get; } = new();
     public SessionRunnerRuntime Runtime { get; private set; } = null!;
@@ -71,6 +79,9 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         BuildHarness();
         var agent = await Harness.AgentService.CreateAsync(new("follow", Root, SessionBackend: SessionBackend.Herdr,
             HerdrTabLabel: tabPin ? "Old" : null, HerdrWorkspaceLabel: workspacePin ? "Old workspace" : null, RemoteControlEnabled: false), CancellationToken.None);
+        agent = await Harness.AgentService.UpdateAsync(agent.Id,
+            new(agent.Name, agent.WorkingDirectory, agent.Details, agent.DefaultWorkflowTemplateId,
+                agent.AssignmentPolicy, BoardId: agent.BoardId, Kind: AgentKind.Grok), CancellationToken.None);
         AgentId = agent.Id;
         if (!workspacePin || managedWorkspace)
         {
@@ -142,11 +153,10 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         var httpFactory = _wire.GetRequiredService<IHttpClientFactory>();
         var adapterClient = new SessionRunnerHttpClient(httpFactory.CreateClient(), httpFactory,
             Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings { BaseUrl = _app.Urls.Single() }));
-        var registry = new AgentRegistrySettings { DefaultDefinition = "claude", ClaudeReadyQuietPeriodMs = 150,
-            ClaudeReadyMaxWaitMs = 5000, ClaudeReadyMinTotalWaitMs = 0, ClaudeInputProbeTimeoutMs = 3000,
-            ClaudeInputProbePollIntervalMs = 50, ClaudeInputProbeClearTimeoutMs = 1000, ClaudeInputProbeRetypeIntervalMs = 2000,
-            ClaudeTrustPromptSettleMs = 200, Definitions = { ["claude"] = new() { Kind = "ClaudeCode", Exe = Antiphon.TestSupport.TestAppHostPath.Require("fakeclaude", AppContext.BaseDirectory) } } };
-        Harness = AgentControlServiceIntegrationTests.BuildHarness(Root, [], defaultKind: "ClaudeCode", connectionString: _store.ConnectionString,
+        var registry = new AgentRegistrySettings { DefaultDefinition = "grok", GrokReadyQuietPeriodMs = 150,
+            GrokReadyMaxWaitMs = 5000, GrokReadyMinTotalWaitMs = 0,
+            Definitions = { ["grok"] = new() { Kind = "Grok", Exe = Antiphon.TestSupport.TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory) } } };
+        Harness = AgentControlServiceIntegrationTests.BuildHarness(Root, [], defaultKind: "Grok", connectionString: _store.ConnectionString,
             configureServices: s => {
                 s.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));
                 s.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(registry));
