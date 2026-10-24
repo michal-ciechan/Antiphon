@@ -123,7 +123,11 @@ public class PhoneHomeImmediateSendTests
             await h.Queue.EnqueueDeliveringNowAsync(h.SessionId, "durable now", CancellationToken.None);
             await h.AssertReceiptAsync("durable now");
             (await h.RowsAsync()).ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == DeliveryVerdict.Delivered);
-            if (peer is not null) peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(6);
+            if (peer is not null)
+            {
+                peer.RequestCount(PhoneHomeOperation.ConditionalInput).ShouldBe(6);
+                peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(0, "Claude writes retain the dialog guard over phone-home");
+            }
         }
     }
 
