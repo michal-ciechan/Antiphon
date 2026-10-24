@@ -586,7 +586,9 @@ public sealed class BlockedTaskParkDeliveryTests
         // Restart replaces the harness root; local delivery retains the session's original cwd.
         var spillRoot = string.IsNullOrWhiteSpace(recipient.RunnerCwd) ? recipient.Cwd : f.Harness.TempRoot;
         var file = Path.Combine(spillRoot, queued.RemoteSpillRelativePath!);
-        File.Exists(file).ShouldBeTrue("G-154: spill exists in the recipient workspace");
+        File.Exists(file).ShouldBeTrue($"G-154: spill exists in the recipient workspace; answerBytes={Encoding.UTF8.GetByteCount(answer)}; "
+            + $"cwd={recipient.Cwd}; runnerCwd={recipient.RunnerCwd}; expected={file}; "
+            + $"files={string.Join(",", Directory.GetFiles(spillRoot, "*.md", SearchOption.AllDirectories))}");
         (await File.ReadAllTextAsync(file)).ShouldBe(spill, "G-154");
         f.Submitted.ShouldContain(queued.Body, "G-154");
         f.Recipient!.Inputs.Last().ShouldBe("\r", "G-154");
