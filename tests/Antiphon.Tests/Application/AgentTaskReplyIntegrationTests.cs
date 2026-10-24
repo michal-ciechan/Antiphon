@@ -2572,7 +2572,7 @@ public partial class AgentTaskReplyIntegrationTests
                     PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.MarkdownSources },
             },
         });
-        var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = isolated.ConnectionString,
             PreserveDatabaseOnDispose = true,
@@ -3907,7 +3907,7 @@ public partial class AgentTaskReplyIntegrationTests
     [Test]
     public async Task C691_settlement_through_the_real_session_service_keeps_a_false_kill_owner()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false });
         await using (var db = CreateContext())
             await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u
                 .SetProperty(a => a.IsPoolDelegate, true).SetProperty(a => a.BoardId, (Guid?)null));
@@ -3945,7 +3945,7 @@ public partial class AgentTaskReplyIntegrationTests
     [Arguments(false)]
     public async Task C691_settlement_preserves_an_AlwaysOn_or_standing_pool_delegate(bool alwaysOn)
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = alwaysOn });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = alwaysOn });
         await using (var db = CreateContext())
         {
             var row = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
@@ -5373,6 +5373,7 @@ public partial class AgentTaskReplyIntegrationTests
                 await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
             },
         };
+        adapter.EnableClaudeDialogObservation(TestDbFixture.ConnectionString, sessionId);
         factory.ServiceProvider.GetRequiredService<AgentSessionRuntime>().Register(sessionId, adapter);
         return adapter;
     }
