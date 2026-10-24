@@ -540,6 +540,7 @@ public class ContextCompactionSweepTests
         }
 
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, sessionId);
         adapter.OnSubmitted = submitted => InsertPromptAsync(sessionId, submitted);
         h.Runtime.Register(sessionId, adapter);
         return (sessionId, adapter);
