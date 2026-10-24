@@ -624,7 +624,9 @@ public class PolicyRefreshServiceTests
                             ["fake"] = new AgentDefinition
                             {
                                 Kind = kind,
-                                Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                                Exe = OperatingSystem.IsWindows()
+                                    ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                                    : "/bin/sh",
                             },
                         },
                     }));
