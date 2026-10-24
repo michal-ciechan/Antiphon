@@ -384,7 +384,7 @@ public class SessionMessageQueueInterruptedAttemptTests
         }
 
         await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
-        await h.Inner.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Inner.MarkIdleAsync();
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         await using var verify = h.CreateDb();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id))
