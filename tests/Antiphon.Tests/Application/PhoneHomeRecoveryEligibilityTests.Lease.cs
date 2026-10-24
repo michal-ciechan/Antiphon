@@ -114,7 +114,7 @@ public partial class PhoneHomeRecoveryEligibilityTests
                 case "draining":
                 case "retired":
                     world.Host.Directory.ApplyState(world.Host.AllowedRunnerId,
-                        new RunnerState(true, world.Clock.GetUtcNow(), "maintenance", null, false, null,
+                        new RunnerState(refusal == "draining", world.Clock.GetUtcNow(), "maintenance", null, false, null,
                             refusal == "retired" ? world.Clock.GetUtcNow() : null, "maintenance"));
                     break;
                 case "backlog":
