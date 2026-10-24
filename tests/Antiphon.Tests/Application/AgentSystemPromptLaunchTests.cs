@@ -753,7 +753,7 @@ public class AgentSystemPromptLaunchTests
         (RegisteringAdapterFactory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = alwaysOn,
             ConfigureServices = services =>
@@ -838,7 +838,7 @@ public class AgentSystemPromptLaunchTests
 
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
-            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime }.WithClaudeDialogObservation();
             // Model the whole round trip, as the harness does for its own adapter: a real Claude
             // records the submitted bootstrap in its JSONL (stamped) and the tailer turns it into
             // the UserPrompt row the delivery is confirmed against. Without it the bootstrap's
