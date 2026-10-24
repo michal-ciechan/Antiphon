@@ -72,7 +72,7 @@ public class ProviderQuotaRefusalAcceptanceTests
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(at ?? IncidentAt);
-        var h = await BridgeQueueHarness.CreateAsync(new()
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             TimeProvider = clock,
