@@ -27,7 +27,7 @@ public class ChannelPromptCorrelationTests
     private const string Envelope = "[Telegram \"Family\" — Tester 10:10] ";
     private static readonly CancellationToken Ct = CancellationToken.None;
 
-    private static Task<BridgeQueueHarness> HarnessAsync(IAntiphonMessagingProducer? producer = null) => BridgeQueueHarness.CreateAsync(new()
+    private static Task<BridgeQueueHarness> HarnessAsync(IAntiphonMessagingProducer? producer = null) => ClaudeDialogFixture.CreateBridgeAsync(new()
     {
         Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
         AlwaysOn = false,
@@ -298,7 +298,7 @@ public class ChannelPromptCorrelationTests
         content.ShouldBe(ChannelPromptFormat.FormatBatch([originalA], originalB));
         System.Text.Encoding.UTF8.GetByteCount(pointer).ShouldBeLessThanOrEqualTo(1024);
 
-        await using var restarted = await BridgeQueueHarness.CreateAsync(new()
+        await using var restarted = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = false, AttachSessionId = h.SessionId, AttachAgentId = h.AgentId,
@@ -319,7 +319,7 @@ public class ChannelPromptCorrelationTests
         (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, b)).ChannelReplySettledAt.ShouldNotBeNull();
         var courier = new RemoteSpillCourier();
-        await using var remote = await BridgeQueueHarness.CreateAsync(new()
+        await using var remote = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = false,
