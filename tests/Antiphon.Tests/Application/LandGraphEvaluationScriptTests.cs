@@ -11,6 +11,35 @@ public sealed partial class LandGraphEvaluationTests
     private const string EvaluationFile = "server/Application/Services/LandVerificationBuildGraph.evaluation.txt";
 
     [Test]
+    [Arguments("attribute", true)]
+    [Arguments("child", true)]
+    [Arguments("attribute", false)]
+    [Arguments("child", false)]
+    [Timeout(60_000)]
+    public async Task C1540_ProjectReferenceMetadataPrecheck(string form, bool reviewed)
+    {
+        var name = reviewed ? "IsAspireProjectResource" : "UnreviewedGraphMetadata";
+        var reference = form == "attribute"
+            ? $"<ProjectReference Include=\"../Library/Library.csproj\" {name}=\"false\" />"
+            : $"<ProjectReference Include=\"../Library/Library.csproj\"><{name}>false</{name}></ProjectReference>";
+        await using var repo = await ScriptRepoAsync(new()
+        {
+            ["App/App.csproj"] = SdkProject("<ItemGroup>" + reference + "</ItemGroup>"),
+            ["Library/Library.csproj"] = SdkProject(""),
+        });
+        var manifest = repo.Full("precheck-manifest.txt");
+        var run = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
+            "-ManifestPath", manifest);
+        run.ExitCode.ShouldBe(reviewed ? 0 : 1, run.Text);
+        File.Exists(manifest).ShouldBe(reviewed, run.Text);
+        if (!reviewed)
+        {
+            run.Text.ShouldContain("metadata the audit does not allow");
+            run.Text.ShouldContain(name);
+        }
+    }
+
+    [Test]
     [Arguments("relative-dir")]
     [Arguments("identity")]
     [Arguments("task-properties")]
