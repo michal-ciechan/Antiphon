@@ -407,6 +407,8 @@ public class AgentSessionInterruptedLaunchResumeTests
                 }
             }
 
+            if (adapter is FakeAgentProtocolAdapter fakeAdapter)
+                await fakeAdapter.EnableClaudeDialogObservationAsync(harness.ConnectionString, sessionId);
             if (runner is not null)
                 runner.SessionId = sessionId;
 
