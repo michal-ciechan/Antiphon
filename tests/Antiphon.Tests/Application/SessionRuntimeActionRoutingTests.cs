@@ -47,7 +47,7 @@ public partial class SessionRuntimeActionRoutingTests
         {
             Capabilities = new("test", "test", "test", false, SessionBackends: [SessionBackends.Herdr])
         };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = s =>
@@ -172,7 +172,7 @@ public partial class SessionRuntimeActionRoutingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = s => s.AddSingleton<ISessionRunnerClient>(runner)
@@ -287,7 +287,7 @@ public partial class SessionRuntimeActionRoutingTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient();
         var fault = new CommentCommitFault();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureDbContext = o => o.AddInterceptors(fault),
