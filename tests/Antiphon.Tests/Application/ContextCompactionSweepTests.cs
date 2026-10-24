@@ -28,7 +28,7 @@ public class ContextCompactionSweepTests
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });
 
     [Test]
     public async Task Fires_on_idle_and_full()
