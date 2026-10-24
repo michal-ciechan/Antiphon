@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +46,7 @@ public partial class StandingSessionSwitchConcurrencyTests
                     StopReason = "end_turn", Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
             await db.SaveChangesAsync();
         }
+        await source.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, f.B.Id);
         f.Harness.Provider.GetRequiredService<AgentSessionRuntime>().Register(f.B.Id, source);
         var queue = f.Harness.Provider.GetRequiredService<SessionMessageQueueService>();
         Task? flush = null; Task? selection = null;
