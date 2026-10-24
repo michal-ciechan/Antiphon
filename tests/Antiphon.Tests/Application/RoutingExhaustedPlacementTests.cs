@@ -548,7 +548,7 @@ public sealed class RoutingExhaustedPlacementTests
         }
         public async Task<BridgeQueueHarness> ParentAsync(CutFault? fault = null, Guid? attachSession = null, Guid? attachAgent = null)
         {
-            var parent = await BridgeQueueHarness.CreateAsync(new()
+            var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 AlwaysOn = true, PreserveDatabaseOnDispose = true, ConnectionString = database.ConnectionString,
                 TimeProvider = Clock, AttachSessionId = attachSession, AttachAgentId = attachAgent,
