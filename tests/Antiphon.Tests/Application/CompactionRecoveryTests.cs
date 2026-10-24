@@ -48,13 +48,21 @@ public class CompactionRecoveryTests
         Guid.NewGuid().ToString(), null, DateTimeOffset.UtcNow, null,
         text, null, null, null, null, null);
 
+    private static async Task ObserveAsync(BridgeQueueHarness h, SessionRunnerTranscriptEvent boundary)
+    {
+        await h.Runtime.ObserveTranscriptAsync(boundary, CancellationToken.None);
+        // Ingestion commits the action; the coordinator owns its deferred recovery effects.
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+            .DrainPageAsync(h.SessionId, CancellationToken.None);
+    }
+
     [Test]
     public async Task Compact_boundary_records_info_incident_and_enqueues_one_recovery_note()
     {
         await using var h = await CreateHarnessAsync();
         await SetPreambleAsync(h);
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 5), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 5));
 
         await using var db = CreateContext();
         var incident = await db.AgentIncidents.SingleAsync(
@@ -75,7 +83,7 @@ public class CompactionRecoveryTests
         await using var h = await CreateHarnessAsync();
         await SetPreambleAsync(h);
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 3), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 3));
 
         await using var db = CreateContext();
         (await db.AgentIncidents.AnyAsync(
@@ -90,7 +98,7 @@ public class CompactionRecoveryTests
         await using var h = await CreateHarnessAsync();
         await SetPreambleAsync(h);
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 7), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 7));
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
 
         // Prove the dedupe is independent of incident rows (PruneIncidentsAsync would delete them).
@@ -119,7 +127,7 @@ public class CompactionRecoveryTests
     {
         await using var h = await CreateHarnessAsync();
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 4), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 4));
 
         await using var db = CreateContext();
         (await db.AgentIncidents.AnyAsync(
@@ -148,7 +156,7 @@ public class CompactionRecoveryTests
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.UserPrompt, "<local-command-stdout>Compacted</local-command-stdout>");
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 11), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 11));
 
         h.Adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RecoveryNoteBody]);
         await using var db = CreateContext();
@@ -167,8 +175,7 @@ public class CompactionRecoveryTests
         await SetPreambleAsync(h);
         await h.MarkWorkingAsync(); // activity after the (nonexistent) last turn end → working
 
-        await h.Runtime.ObserveTranscriptAsync(
-            Boundary(h.SessionId, 9, "Context compacted (auto)"), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 9, "Context compacted (auto)"));
 
         h.Adapter.SubmittedBodies.ShouldBeEmpty("a working session must not be interrupted");
         await using (var db = CreateContext())
@@ -206,7 +213,7 @@ public class CompactionRecoveryTests
         });
         await db.SaveChangesAsync();
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 6), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 6));
 
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         var body = h.Adapter.SubmittedBodies[0];
@@ -232,7 +239,7 @@ public class CompactionRecoveryTests
         });
         await db.SaveChangesAsync();
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 8), CancellationToken.None);
+        await ObserveAsync(h, Boundary(h.SessionId, 8));
 
         h.Adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RecoveryNoteBody]);
     }
