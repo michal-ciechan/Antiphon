@@ -23,12 +23,12 @@ try {
     $iterations = if ($Phase -eq 'Red') { 1 } else { 2 }
     for ($iteration = 1; $iteration -le $iterations; $iteration++) {
         # Preserve SDK defaults: no UseAppHost=false or shared absolute output.
-        $lines = @(& dotnet build "tests/$name" "--property:OutputPath=$OutputPath" --nologo -maxcpucount:6 -nodeReuse:false 2>&1)
+        $lines = @(& dotnet build "tests/$name" "--property:OutputPath=$OutputPath" --nologo -maxcpucount:1 -nodeReuse:false 2>&1)
         $buildExit = $LASTEXITCODE
         $lines | Write-Output
         if ($Phase -eq 'Red') {
             $provider = $providers[0]
-            $destination = [regex]::Escape((Join-Path $consumer $provider) + '/')
+            $destination = [regex]::Escape($OutputPath + $provider + '/')
             if ($buildExit -eq 0 -or -not ($lines -match "error MSB3021:.*$destination") -or
                 -not (Test-Path -LiteralPath (Join-Path $consumer $provider) -PathType Leaf)) {
                 throw 'Expected a failed copy into a provider directory occupied by an apphost.'
