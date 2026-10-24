@@ -108,9 +108,6 @@ public sealed class InterimVerificationPolicyTests
     public async Task C544_RoleWorkspaceMatrix()
     {
         await using var world = await C544World.CreateAsync();
-        // An omitted workspace resolves through this setting before Interim shape admission.
-        // Keep the negative default-workspace row on Shared, regardless of the shipped default.
-        world.Delegation.DefaultWorkerWorkspace = WorkspaceMode.Shared;
         var baseline = await world.SettleReviewAsync();
         var code = world.InterimCode(baseline.Id);
         var review = world.InterimReview(baseline.Id);
@@ -118,7 +115,8 @@ public sealed class InterimVerificationPolicyTests
         {
             ("code-readonly", code with { Workspace = WorkspaceMode.ReadOnly }),
             ("code-shared", code with { Workspace = WorkspaceMode.Shared }),
-            ("code-default-workspace", code with { Workspace = null }),
+            // Fresh tasks default to Worktree; selecting an existing agent defaults to Shared.
+            ("code-default-workspace", code with { Workspace = null, Agent = "c544-existing-agent" }),
             ("review-worktree", review with { Workspace = WorkspaceMode.Worktree }),
             ("review-shared", review with { Workspace = WorkspaceMode.Shared }),
             ("orchestrator-code", code with { Kind = AgentTaskKind.Orchestrator }),
@@ -139,7 +137,6 @@ public sealed class InterimVerificationPolicyTests
             await using var db = world.CreateContext();
             (await db.AgentSessions.CountAsync(s => s.DefinitionName == "c544-delegate")).ShouldBe(1, row + ": no launch");
         }
-        world.Delegation.DefaultWorkerWorkspace = WorkspaceMode.Worktree;
         foreach (var (row, request) in new[] { ("code-worktree", code), ("review-readonly", review),
                      ("code-default-worktree", code with { Workspace = null }) })
             (await world.TaskAsync((await world.CreateTaskAsync(request)).Id)).VerificationRound.ShouldBe(VerificationRound.Interim, row);
