@@ -554,7 +554,8 @@ public class OutputDistillationDeliveryTests
                 var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
                 row.Role = AgentTaskRole.Review;
                 if (rootId is Guid root) row.RootTaskId = root;
-                row.RepoPath = cwd == Workspace.Worktree ? Workspace.Main : cwd;
+                // Standalone report directories have no repo, as in DelegationWorkspaceResolver.
+                row.RepoPath = cwd == Workspace.Worktree ? Workspace.Main : cwd == Workspace.Main ? cwd : null;
                 row.WorktreePath = cwd == Workspace.Worktree ? Workspace.Worktree : null;
                 if (deliverables)
                 {
