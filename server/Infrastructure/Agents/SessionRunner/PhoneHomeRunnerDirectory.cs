@@ -418,6 +418,49 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             Notify(connection.RunnerId);
     }
 
+    /// <summary>
+    /// A heartbeat can renew an expired connection, but cannot vouch for its inventory or event
+    /// backlog. The recovery pump checks this before catch-up and again when publishing recovery.
+    /// Initial connection recovery keeps its existing catch-up-before-live-events contract.
+    /// </summary>
+    internal bool CanRecoverLease(PhoneHomeLiveConnection connection)
+    {
+        lock (_gate)
+            return CanRecoverLeaseUnderLock(connection);
+    }
+
+    private bool CanRecoverLeaseUnderLock(PhoneHomeLiveConnection connection) =>
+        _slots.TryGetValue(connection.RunnerId, out var slot)
+        && ReferenceEquals(slot.Live, connection)
+        && slot.Epoch == connection.Epoch
+        && slot.Entry.Enabled
+        && connection.SocketOpen
+        && !connection.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
+        && connection.LastDisconnectReason is null
+        && connection.PendingEvents == 0
+        && slot.State is not { Draining: true }
+        && slot.State?.RetiredAt is null;
+
+    internal bool TryRecoverLease(PhoneHomeLiveConnection connection)
+    {
+        var flipped = false;
+        lock (_gate)
+        {
+            // Registration, replacement, drain or lease expiry can race the awaited inventory.
+            if (!CanRecoverLeaseUnderLock(connection))
+                return false;
+            if (!connection.DispatchEligible)
+            {
+                connection.DispatchEligible = true;
+                flipped = true;
+            }
+            _slots[connection.RunnerId].LastRecovered = connection;
+        }
+        if (flipped)
+            Notify(connection.RunnerId);
+        return true;
+    }
+
     private void ValidateTicket(string runnerId, Ticket ticket)
     {
         var now = _clock.GetUtcNow();

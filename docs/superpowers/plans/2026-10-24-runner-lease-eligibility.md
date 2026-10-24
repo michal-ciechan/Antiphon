@@ -79,3 +79,8 @@ Advancing the fake clock also made periodic refresh due, allowing an unrelated
 List to satisfy some negative-case request counts. Disable periodic refresh in
 the new fixture and repeat CP-1 with fresh bin-5e-red2/ before the product fix.
 Preserve this initial diagnostic run; no acceptance credit for its negative cases.
+
+Corrected S1 witness at 09876c033dbdab4a8b16b5c43ca9620a720a64bf:
+CP-1 executed all 10 new cases, all 10 failed on intended outcome/request-count
+assertions with unchanged production. No build/fixture/zero-test red credit.
+Build 215.26s; test wall 1.20s. Evidence run 20261024-093927-d900.
