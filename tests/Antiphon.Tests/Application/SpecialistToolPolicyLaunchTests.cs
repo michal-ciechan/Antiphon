@@ -31,7 +31,7 @@ public class SpecialistToolPolicyLaunchTests
         AgentKind effectiveKind, bool obstructPolicy, string? expectedCode)
     {
         var settings = new DelegationSettings { CheckInterpreterAgentSlug = $"c415-{Guid.NewGuid():N}" };
-        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = true,
             Delegation = settings,
@@ -97,7 +97,7 @@ public class SpecialistToolPolicyLaunchTests
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
-            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime }.WithClaudeDialogObservation();
             Created.Add(adapter);
             return adapter;
         }
