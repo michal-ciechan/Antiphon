@@ -436,7 +436,7 @@ public class ReviewLoopTests
     {
         await using var h = await HarnessAsync(withGitRepo: false);
 
-        var thread = await h.Threads.CreateAsync(h.AgentId, new CreateReviewThreadRequest(
+        var thread = await h.CreateThreadAsync(new CreateReviewThreadRequest(
             "notes/report.md", 12, "the questionable line", "Is this number right?", Dispatch: true),
             CancellationToken.None);
         thread.ShouldNotBeNull();
@@ -465,7 +465,7 @@ public class ReviewLoopTests
     {
         await using var h = await HarnessAsync(withGitRepo: false);
 
-        var a = await h.Threads.CreateAsync(h.AgentId, new CreateReviewThreadRequest(
+        var a = await h.CreateThreadAsync(new CreateReviewThreadRequest(
             "a.md", 1, null, "Question A", Dispatch: true), CancellationToken.None);
         // First dispatch is delivered immediately (idle); the second queues behind the now-working
         // session — deliver its turn first, then flush.
@@ -474,7 +474,7 @@ public class ReviewLoopTests
         await h.InsertTurnAsync(promptA, "Answer A");
         await h.Replies.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        var b = await h.Threads.CreateAsync(h.AgentId, new CreateReviewThreadRequest(
+        var b = await h.CreateThreadAsync(new CreateReviewThreadRequest(
             "b.md", 2, null, "Question B", Dispatch: true), CancellationToken.None);
         var promptB = h.Adapter.SubmittedBodies.Skip(1).Single();
         promptB.ShouldContain("Question B");
@@ -495,7 +495,7 @@ public class ReviewLoopTests
     {
         await using var h = await HarnessAsync(withGitRepo: false);
 
-        var thread = await h.Threads.CreateAsync(h.AgentId, new CreateReviewThreadRequest(
+        var thread = await h.CreateThreadAsync(new CreateReviewThreadRequest(
             "a.md", 1, null, "Pending question", Dispatch: true), CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
 
@@ -514,7 +514,7 @@ public class ReviewLoopTests
     {
         await using var h = await HarnessAsync(withGitRepo: false);
 
-        await h.Threads.CreateAsync(h.AgentId, new CreateReviewThreadRequest(
+        await h.CreateThreadAsync(new CreateReviewThreadRequest(
             "a.md", 1, null, "FYI only", Dispatch: true), CancellationToken.None);
         var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
 
@@ -541,6 +541,14 @@ public class ReviewLoopTests
         public required Guid AgentId { get; init; }
         public required Guid SessionId { get; init; }
         public required string Workspace { get; init; }
+
+        public async Task<ReviewThreadDto?> CreateThreadAsync(CreateReviewThreadRequest request, CancellationToken ct)
+        {
+            var thread = await Threads.CreateAsync(AgentId, request, ct);
+            // Dispatch commits a durable queue action; this offline harness has no hosted worker.
+            await Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(SessionId, ct);
+            return thread;
+        }
 
         /// <param name="at">Explicit call time — baseline tests need to straddle a checkpoint.</param>
         public async Task InsertToolCallAsync(string toolName, string filePath, DateTime? at = null)
@@ -594,6 +602,7 @@ public class ReviewLoopTests
                 await db.FileSectionReviews.Where(s => s.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.AgentReviewCheckpoints.Where(c => c.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
+                await db.SessionRuntimeActions.Where(a => a.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
                 await db.Agents.Where(a => a.Id == AgentId).ExecuteDeleteAsync();
@@ -635,6 +644,7 @@ public class ReviewLoopTests
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
