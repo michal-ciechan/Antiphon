@@ -16,9 +16,10 @@ assembly is requested. No source changes during the checkpoint run.
 
 LandGraphEvaluationPinsTests.cs declares the LandGraphEvaluationTests partial
 class, not a separate runnable class. The first OR operand runs every method in
-all its partial files, including all pins tests. The second operand runs exactly
+all its partial files, including all pins tests. The class segment admits those
+two classes; the method segment admits the evaluation method families and exactly
 the prior manifest registry case and C1380_DocsOnlyRebasedLandRecordsNonCodeSkip.
-Every operand ends with a wildcard. Inspect fresh TRX for each intended method
+Every OR operand ends with a wildcard. Inspect fresh TRX for each intended method
 and argument, nonzero execution, no unexpected methods, and all V/R outcomes.
 
 Manual acceptance: retain master's manifest bytes; run real audit -Update and
@@ -60,11 +61,18 @@ runner/platform pins. No full-assembly selection or unbounded class is run.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | Recut | `tests/Antiphon.Tests -> bin-c1540-recut/` | master-recut | `/*/*/LandGraphEvaluationTests/*\|/*/*/LandNonCodeSkipTests/(C1385_RegistryMatchesNarrowGraph*\|C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 full evaluation and pins, C1380 acceptance | all passed, 0 failed/skipped | 80 | 22 |
+| CP-1 | Recut | `tests/Antiphon.Tests -> bin-c1540-recut-final/` | master-recut | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/(C1483_S1_*)\|(C1483_S2_*)\|(C1483_S3_*)\|(C1483_S4_*)\|(C1483_S5_*)\|(C1528_*)\|(C1540_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 full evaluation and pins, C1380 acceptance | all passed, 0 failed/skipped | 80 | 22 |
 
 Run the checkpoint tool with --plan <this file> --after Recut
 --expected-source-sha <committed HEAD> --total-timeout 30m. Wait to terminal exit,
 then inspect fresh TRX and validate receipt source/build provenance.
+
+The first attempt at 030527ef5d528dc0f50a964db88f87b4482811f7 used an invalid
+full-path OR. It was stopped through the checkpoint tool, with executor death
+confirmed, before any result was credited. Retain run 20261024-015259-cf9e and its
+357s build cost; it has no terminal TRX/report. The corrected segment-local filter
+above needs a fresh build at its own committed SHA. This additional build is an
+explicit correction cost, not a green repetition or inherited failure.
 
 ## Pending Mutation and native work
 
