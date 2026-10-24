@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -261,6 +262,9 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
     {
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
+        // Exercise the repository mutation gate specifically. The newer outer execution
+        // gate otherwise refuses the competing drain before it reaches this test's cut.
+        h.ExecutionLeaseOverride = new PassThroughExecutionLease();
         var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
         fixture.Interceptor.RequestId = request.RequestId;
@@ -297,6 +301,20 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         final.HoldEpisode.ShouldBe(held.HoldEpisode, "V2.SourceCheckpointPreservesHoldEpisode");
         h.Fixture.Git.Commands.Count(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset").ShouldBe(1, "V2.OnlyLeaseOwnerResets");
         new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue();
+    }
+
+    private sealed class PassThroughExecutionLease : ILandExecutionLease
+    {
+        public Task<IAsyncDisposable?> TryAcquireAsync(string repository, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult<IAsyncDisposable?>(new Lease());
+        }
+
+        private sealed class Lease : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     [Test]
