@@ -301,7 +301,8 @@ internal static class Program
         {
             if (!claudeComposer || overlayActive || rcMenuActive) return;
             var rule = new string('─', 60);
-            Write("\r\n" + rule + "\r\n❯ " + composer.ToString().ReplaceLineEndings("\r\n  ")
+            // Replace the old composer: a probe token must disappear when Ctrl+U clears it.
+            Write("\x1b[2J\x1b[H" + rule + "\r\n❯ " + composer.ToString().ReplaceLineEndings("\r\n  ")
                 + "\r\n" + rule + "\r\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\r\n");
         }
         PaintClaudeComposer();
