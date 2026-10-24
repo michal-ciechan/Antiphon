@@ -32,10 +32,10 @@ public class DelegateBundleLaunchTests
     [Arguments(AgentTaskRole.Check)]
     [Arguments(AgentTaskRole.Diagnose)]
     [Arguments(AgentTaskRole.Distill)]
-    public void Phone_delegate_launch_and_brief_keep_stage_contracts(AgentTaskRole role)
+    public async Task Phone_delegate_launch_and_brief_keep_stage_contracts(AgentTaskRole role)
     {
         var (dispatcher, provider) = CreateHarness();
-        using var owned = provider;
+        await using var owned = provider;
         var task = TaskFor(AgentTaskKind.Worker, role);
         var normal = SpecOf(dispatcher, task, [InstructionBundles.BoardApi]).Args.ToList();
         var phone = SpecOf(dispatcher, task, [InstructionBundles.BoardApi],
@@ -68,7 +68,7 @@ public class DelegateBundleLaunchTests
             [InstructionBundles.StageCode, InstructionBundles.DelegateBasics], "style-phone", "Write the complete internal report.").Text;
         text.ShouldContain(InstructionBundles.TextOf(InstructionBundles.StageCode));
         text.ShouldContain("report every ID and actual outcome");
-        text.ShouldContain("Run each V-n and R-n");
+        text.ShouldContain("Run required V-n/R-n");
         text.ShouldContain("Report every PC-n/variant pending for Mutation");
         text.ShouldContain("next: review when implementation and ordinary V/R are complete");
         text.ShouldContain("""
@@ -82,10 +82,10 @@ public class DelegateBundleLaunchTests
     [Test]
     [Arguments(AgentKind.ClaudeCode)]
     [Arguments(AgentKind.Codex)]
-    public void C470_mutation_claude_and_codex_launch_contract(AgentKind kind)
+    public async Task C470_mutation_claude_and_codex_launch_contract(AgentKind kind)
     {
         var (dispatcher, provider) = CreateHarness();
-        using var owned = provider;
+        await using var owned = provider;
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Mutation);
         task.Workspace = WorkspaceMode.Shared;
         task.WorkingDirectory = Path.Combine(Path.GetTempPath(), "retained", "card-task-aabbccdd");
@@ -323,10 +323,10 @@ public class DelegateBundleLaunchTests
 
     /// <summary>CARD-1213 S2 (V-9): every provider transport carries the expanded composition.</summary>
     [Test]
-    public void C1213_ProvidersReceiveExpandedInstructions()
+    public async Task C1213_ProvidersReceiveExpandedInstructions()
     {
         var (dispatcher, provider) = CreateHarness();
-        using var owned = provider;
+        await using var owned = provider;
         var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Code);
         var expected = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(task.Kind, task.Role)).Text;
