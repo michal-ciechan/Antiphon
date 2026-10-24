@@ -699,6 +699,9 @@ public class PhoneHomeStrandedQueueTests
             await HeartbeatAsync(peer, live, clock);
             (await pump.RunCycleAsync(ct)).ShouldBeFalse();
             await WaitUntilAsync(() => peer.RequestCount(PhoneHomeOperation.List) == lists + 1);
+            // Request arrival precedes response processing. Do not advance fake time into
+            // the next interval while the previous off-cycle refresh is still in flight.
+            await WaitUntilAsync(() => RefreshFailureLogs(host) == failed);
         }
 
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldNotBeNull("heartbeats kept the lease valid");
