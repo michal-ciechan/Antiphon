@@ -565,7 +565,7 @@ public sealed class BlockedTaskParkDeliveryTests
         var tip = await PublishAsync(f);
         await StampAsync(f);
         await f.AnswerAsync(answer);
-        f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy).GetAwaiter().GetResult();
+        f.Launches.OnLaunch = id => AttachReviewRecipientAsync(f, id, busy).GetAwaiter().GetResult();
         await f.DispatchAsync();
         var queued = (await f.AnswerQueueAsync()).ShouldNotBeNull("G-154");
         var spill = queued.RemoteSpillBody.ShouldNotBeNull("G-154");
@@ -577,21 +577,16 @@ public sealed class BlockedTaskParkDeliveryTests
         spill.ShouldContain($"Parked source SHA: {tip}; full ref: ", Case.Sensitive, "G-154");
         if (busy) f.Recipient!.Inputs.ShouldBeEmpty("G-162");
         await f.RestartAsync();
-        await f.AttachRecipientAsync(queued.AgentSessionId);
+        await AttachReviewRecipientAsync(f, queued.AgentSessionId);
         if (busy) await f.EndTurnAsync(queued.AgentSessionId);
         await f.FlushAsync(queued.AgentSessionId);
         await f.DispatchAsync();
-        await using var db = f.Db();
-        var recipient = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == queued.AgentSessionId);
-        // Local cwd and fake runner storage both outlive the restarted server harness.
-        var spillRoot = string.IsNullOrWhiteSpace(recipient.RunnerCwd) ? recipient.Cwd : f.RunnerSpillRoot;
-        var file = Path.Combine(spillRoot, queued.RemoteSpillRelativePath!);
-        File.Exists(file).ShouldBeTrue($"G-154: spill exists in the recipient workspace; answerBytes={Encoding.UTF8.GetByteCount(answer)}; "
-            + $"cwd={recipient.Cwd}; runnerCwd={recipient.RunnerCwd}; expected={file}");
+        var file = Path.Combine(f.Harness.TempRoot, queued.RemoteSpillRelativePath!);
         (await File.ReadAllTextAsync(file)).ShouldBe(spill, "G-154");
         f.Submitted.ShouldContain(queued.Body, "G-154");
         f.Recipient!.Inputs.Last().ShouldBe("\r", "G-154");
         (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull("G-160");
+        await using var db = f.Db();
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == queued.AgentSessionId
             && t.Kind == TranscriptKinds.UserPrompt && t.Text == queued.Body)).ShouldBe(1, "G-155");
     }
