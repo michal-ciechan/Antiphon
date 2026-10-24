@@ -28,7 +28,7 @@ public class ApiErrorRecoveryServiceTests
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = true });
 
     [Test]
     public async Task A_local_command_record_after_the_stub_does_not_supersede_the_resume()
@@ -230,7 +230,7 @@ public class ApiErrorRecoveryServiceTests
         // shared uuid, both IsApiError, rate_limit/429. Sweep used to parse "" and write 6h.
         var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
@@ -265,7 +265,7 @@ public class ApiErrorRecoveryServiceTests
     {
         var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
 
         await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitProductionText,
@@ -288,7 +288,7 @@ public class ApiErrorRecoveryServiceTests
     {
         var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
@@ -334,7 +334,7 @@ public class ApiErrorRecoveryServiceTests
     {
         var now = TruncateUtcNow();
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
         await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText,
             timestamp: now.UtcDateTime);
@@ -365,7 +365,7 @@ public class ApiErrorRecoveryServiceTests
     {
         var now = TruncateUtcNow();
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
         await using (var stamp = CreateContext())
         {
