@@ -792,7 +792,7 @@ public class PhoneHomeStrandedQueueTests
     /// </summary>
     private static async Task<BridgeQueueHarness> CreateRunnerBoundHarnessAsync(PhoneHomeTestHost host, string connectionString)
     {
-        var h = await BridgeQueueHarness.CreateAsync(new()
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = connectionString,
             ConfigureServices = s =>
