@@ -382,7 +382,6 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public DateTime? AcceptedStartedAt { get; set; }
     public bool DialogGuardEnabled { get; set; }
-    public bool RecordGuardedPromptAttempts { get; set; }
     private readonly Guid _dialogEpoch = Guid.NewGuid();
     private long _dialogInputRevision;
     public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
@@ -449,9 +448,6 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 ? ConditionalInputOutcomes.ObservationUnknown : ConditionalInputOutcomes.ModalBlocked);
         }
 
-        // Launch fixtures retain their high-level prompt failure hooks while exercising guarded writes.
-        if (RecordGuardedPromptAttempts && request.Input is not ("\r" or "\u001b"))
-            await SendPromptAsync(StripBracketedPasteMarkers(request.Input), ct);
         ConditionalInputs.Add(request.Input);
         await SendInputAsync(request.Input, ct);
         SnapshotSequence++;
