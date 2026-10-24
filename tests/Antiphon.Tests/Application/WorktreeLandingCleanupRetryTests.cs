@@ -284,7 +284,7 @@ public sealed class WorktreeLandingCleanupRetryTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = h.Schema.ConnectionString,
@@ -363,7 +363,7 @@ public sealed class WorktreeLandingCleanupRetryTests
     public async Task C459_CompletePromptIsRequired()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -410,7 +410,7 @@ public sealed class WorktreeLandingCleanupRetryTests
     public async Task C459_IdleReceiptRecoversLostFlush()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var drop = new DropFlushWakeup();
@@ -437,7 +437,7 @@ public sealed class WorktreeLandingCleanupRetryTests
     public async Task C459_ReceiptFailureNeverRetypes()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -470,7 +470,7 @@ public sealed class WorktreeLandingCleanupRetryTests
     public async Task C459_EnqueueFailureRemainsOwed()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var cut = new EnqueueCut { Fail = true };
