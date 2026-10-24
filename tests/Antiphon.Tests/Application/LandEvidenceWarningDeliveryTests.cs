@@ -86,7 +86,7 @@ public sealed class LandEvidenceWarningDeliveryTests
         {
             var rig = new RefusalRig { _busy = busy, _mode = mode, _mismatch = mismatch };
             await rig.Land.InitializeAsync();
-            rig.Caller = await BridgeQueueHarness.CreateAsync(new()
+            rig.Caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
                 { AlwaysOn = false, ConnectionString = rig.Land.Schema.ConnectionString });
             rig.Land.Messages = rig.Caller.Queue;
             await BridgeQueueHarness.InsertEntryAsync(rig.Caller.SessionId, TranscriptKinds.UserPrompt,
