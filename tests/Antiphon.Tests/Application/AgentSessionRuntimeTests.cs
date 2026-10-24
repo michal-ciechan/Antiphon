@@ -116,10 +116,22 @@ public partial class AgentSessionRuntimeTests
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-runner-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
 
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var runnerClient = new DirectSessionRunnerClient(Path.Combine(tempRoot, "session-runner-logs"));
         try
         {
             var sessionId = Guid.NewGuid();
+            var startedAt = SessionGeneration.Normalize(DateTime.UtcNow);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, DefinitionName = "raw-shell", AgentKind = AgentKind.Raw,
+                    Status = SessionStatus.Running, Cwd = tempRoot, Cols = 120, Rows = 30,
+                    CreatedAt = startedAt, StartedAt = startedAt, LastSeenAt = startedAt,
+                });
+                await db.SaveChangesAsync();
+            }
             var launchSpec = new AgentLaunchSpec(
                 "raw-shell",
                 AgentKind.Raw,
@@ -129,10 +141,11 @@ public partial class AgentSessionRuntimeTests
                 tempRoot,
                 120,
                 30,
-                SessionId: sessionId);
+                SessionId: sessionId,
+                AcceptedStartedAt: startedAt);
             await runnerClient.StartAsync(sessionId, launchSpec, CancellationToken.None);
 
-            await using (var provider = BuildProvider())
+            await using (var provider = BuildProvider(schema.ConnectionString))
             {
                 var firstRuntime = new AgentSessionRuntime(
                     runnerClient,
@@ -144,7 +157,7 @@ public partial class AgentSessionRuntimeTests
                 firstRuntime.ListLiveSessions().ShouldContain(sessionId);
             }
 
-            await using (var provider = BuildProvider())
+            await using (var provider = BuildProvider(schema.ConnectionString))
             {
                 var restartedRuntime = new AgentSessionRuntime(
                     runnerClient,
@@ -807,9 +820,11 @@ public partial class AgentSessionRuntimeTests
         }
     }
 
-    private static ServiceProvider BuildProvider()
+    private static ServiceProvider BuildProvider(string? connectionString = null)
     {
         var services = new ServiceCollection();
+        if (connectionString is not null)
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         return services.BuildServiceProvider();
     }
 
