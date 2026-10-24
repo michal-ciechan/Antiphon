@@ -18,7 +18,7 @@ public sealed class RunnerAlarmNotifierTests
     [Test]
     public async Task a_note_is_a_pending_whenidle_system_row_hinted_and_never_typed_inline()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync();
         var flush = new DroppingFlushQueue(0);
         var notifier = new QueueRunnerAlarmNotifier(harness.Queue, flush, NullLogger<QueueRunnerAlarmNotifier>.Instance);
         const string header = "[runner server2 unavailable]";
