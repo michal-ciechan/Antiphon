@@ -141,6 +141,8 @@ public class TerminalRunnerSeatReleaseTests
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, provider: "Codex");
             await f.PrepareContinuationAsync();
+            var branch = RemoteWorkspaceService.OwnedBranch(f.TaskId);
+            await f.EditAsync((t, _) => t.WorktreeBranch = branch);
             await f.Live!.SubmitAsync("completed blocked task");
             await f.SettleAsync(syncBlock ? "done" : "blocked");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked);
@@ -175,7 +177,7 @@ public class TerminalRunnerSeatReleaseTests
             (await db.AgentTaskParks.CountAsync()).ShouldBe(0, "parking remains default-off");
             var task = await f.TaskAsync();
             task.Status.ShouldBe(AgentTaskStatus.Blocked); task.Result.ShouldContain("Complete seat report canary.");
-            task.WorktreeBranch.ShouldBe("feat/retained"); Directory.Exists(task.WorktreePath).ShouldBeTrue();
+            task.WorktreeBranch.ShouldBe(branch); Directory.Exists(task.WorktreePath).ShouldBeTrue();
         }
     }
 

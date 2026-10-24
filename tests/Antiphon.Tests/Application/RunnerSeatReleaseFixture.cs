@@ -553,6 +553,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
     public async Task AttachRecipientAsync(Guid sessionId, bool busy = false)
     {
         var adapter = sessionId == Harness.SessionId ? Harness.Adapter : new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(Schema.ConnectionString, sessionId);
         Recipient = adapter;
         adapter.OnSubmitted = async body =>
         {
