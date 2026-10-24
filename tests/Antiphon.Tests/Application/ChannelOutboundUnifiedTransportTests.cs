@@ -184,7 +184,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         if (busy)
         {
             h.Adapter.SubmittedBodies.ShouldBeEmpty();
-            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            await h.MarkIdleAsync(stopReason: "end_turn");
         }
         try { await h.Queue.FlushSessionAsync(h.SessionId, ct); }
         catch (IOException) when (fault.Fired == 1) { }
