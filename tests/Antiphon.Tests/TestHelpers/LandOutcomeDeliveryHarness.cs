@@ -53,7 +53,7 @@ internal sealed class LandOutcomeDeliveryHarness : IAsyncDisposable
         await Land.InitializeAsync();
         if (Probes is null)
             throw new InvalidOperationException("repository lease probe counter was not constructed");
-        Caller = await BridgeQueueHarness.CreateAsync(new()
+        Caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = Land.Schema.ConnectionString,
