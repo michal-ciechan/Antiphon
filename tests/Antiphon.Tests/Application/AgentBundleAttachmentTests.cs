@@ -412,7 +412,7 @@ public class AgentBundleAttachmentTests
         const string planChecklist =
             "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
         const string reviewChecklist =
-            "For changed input waits, ask: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
+            "For changed input waits: what releases the waiting session, after how long? Parking disabled means no automatic release deadline (CARD-1083).";
         InstructionBundles.TextOf(InstructionBundles.StagePlan).ShouldContain(planChecklist, customMessage: "c1065-release-question");
 
         var plan = InstructionBundleComposer.Compose(
