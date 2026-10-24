@@ -25,3 +25,5 @@ src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj	/Project[1]/ItemGroup[2]/Cont
 src/Messaging.Pack.props	/Project[1]/ItemGroup[1]	6C6DA450D5B77D695224F2D8B7B7E23F819A5D75E771296833DAF0AA3897A8AD
 src/Messaging.Pack.props	/Project[1]/PropertyGroup[1]/EnablePublicApiAnalyzers[1]	7266EEBEC429FC05B5311F6F5BC64308FFAFE27B18578E15840433181D9E99C8
 src/Messaging.Pack.props	/Project[1]/PropertyGroup[1]/WarningsAsErrors[1]	982FF3DA9E6A66B695DAA44FE4619313071A89EA2324441D76CA2E4AC070F6F6
+tests/Shared/FakeProviderOutput.targets	ExcludeRootFakeProviderAppHosts	86B41E26D960ECEB55A8E697F22E8A6A4560391041245CD20C0A907C902A3E84
+tests/Shared/FakeProviderOutput.targets	RemoveObsoleteRootFakeProviderAppHosts	8914F239E175AF5FE5636F20E7912FBCF28FF067B1113030C5761B01E5645E9C
