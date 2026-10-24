@@ -168,8 +168,8 @@ public sealed class TestTimingChokePointTests
 
             var emptyOff = TimeEmptyScopes(enabled: false);
             var emptyOn = TimeEmptyScopes(enabled: true);
-            var median = Median(ratios);
-            var upper = BootstrapUpper(ratios);
+            var median = PairedOverheadStatistics.Median(ratios);
+            var upper = PairedOverheadStatistics.BootstrapUpper(ratios);
             var payload = new
             {
                 oneMs = one.TotalMilliseconds,
@@ -485,30 +485,6 @@ public sealed class TestTimingChokePointTests
         var bytes = session?.ShardPath is not null && File.Exists(session.ShardPath) ? new FileInfo(session.ShardPath).Length : 0L;
         return new EmptyCost(watch.Elapsed.TotalNanoseconds / 100_000d, enabled ? bytes / 1000d : 0d,
             Stopwatch.GetElapsedTime(0, scopeTicks).TotalNanoseconds / 100_000d, scopeAllocated / 100_000d);
-    }
-
-    private static double Median(IReadOnlyList<double> values)
-    {
-        var sorted = values.OrderBy(v => v).ToArray();
-        return sorted[sorted.Length / 2];
-    }
-
-    private static double BootstrapUpper(IReadOnlyList<double> values)
-    {
-        const int draws = 2000;
-        var rng = new Random(1514);
-        var medians = new double[draws];
-        for (var draw = 0; draw < draws; draw++)
-        {
-            var sample = new double[values.Count];
-            for (var i = 0; i < values.Count; i++)
-                sample[i] = values[rng.Next(values.Count)];
-            medians[draw] = Median(sample);
-        }
-
-        Array.Sort(medians);
-        var index = (int)Math.Ceiling(0.95d * draws) - 1;
-        return medians[Math.Clamp(index, 0, draws - 1)];
     }
 
     private static TestTimingSession OpenReal(string root, string nonce)
