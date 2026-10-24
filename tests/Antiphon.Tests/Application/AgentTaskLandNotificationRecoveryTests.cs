@@ -35,7 +35,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C488_PreOperationReceiptUsesRequest()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId, detail: "reviewed_source_mismatch expected=aaa local=aaa remote=bbb candidate=bbb");
         note.Body.ShouldContain("expected=");
@@ -54,7 +54,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C467_V08_DestinationSnapshotsRemainOwed(string state)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var destination = state == "missing" ? Guid.NewGuid() : h.SessionId;
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, destination, state == "none" ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session);
@@ -74,7 +74,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C467_V10_BootScanFairnessAndClearedPending()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
             ConfigureServices = services => { services.AddSingleton<CompletionNoteFlushQueue>(); services.AddScoped<AgentTaskLandNotificationService>(); } });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var notes = new List<AgentTaskLandNotification>();
@@ -105,7 +105,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C467_V14_LandNotesDoNotCountAsReports()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId, detail: "immutable Land outcome for report-consumer controls");
         await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
@@ -141,8 +141,8 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C467_V09_KeyedQueueRacesAndDistinctEvents()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var first = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
-        await using var second = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var first = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var second = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var notification = Guid.NewGuid();
         var task = Guid.NewGuid();
         await first.Queue.EnqueueAsync(first.SessionId, "ordinary adversarial report", MessageSendMode.WhenIdle, CancellationToken.None,
@@ -181,8 +181,8 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     private static async Task AssertRecoveredIdentityMismatchAsync(SessionStatus callerStatus, bool differentDestination)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
-        await using var other = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var other = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, caller.SessionId);
@@ -263,7 +263,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C467_V08_RetryAndDestinationMatrix(int attempt, int seconds)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
@@ -295,7 +295,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var boundary = new RecordingBoundary();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(boundary) });
         var task = Guid.NewGuid(); var notification = Guid.NewGuid();
         Guid first = Guid.Empty, second = Guid.Empty;
@@ -325,7 +325,7 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
     public async Task C550_Recovery_prelink_records_queue_existing_key_after_the_link_is_saved(bool observerThrows)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, caller.SessionId);
