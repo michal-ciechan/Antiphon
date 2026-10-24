@@ -27,7 +27,7 @@ public class CompactionRecoveryTests
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConfigureServices = services => services.AddSingleton<CompactionRecoveryService>(),
@@ -187,7 +187,7 @@ public class CompactionRecoveryTests
     public async Task Compact_boundary_on_a_non_claude_orchestrator_session_queues_the_instructions_re_read_note()
     {
         var settings = new Antiphon.Server.Application.Settings.DelegationSettings();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             Delegation = settings,
