@@ -139,8 +139,10 @@ public sealed class TestTimingChokePointTests
             var warm = await PairedSampleAsync(lifecycle, offFirst: true, reps, cancellationToken);
             var ratios = new List<double>();
             var samples = new List<object>();
-            foreach (var offFirst in new[] { true, false, true, false, true })
+            // Predeclare the whole sample; never stop when a partial bound passes.
+            for (var pairIndex = 0; pairIndex < PairedOverheadStatistics.MinimumPairs; pairIndex++)
             {
+                var offFirst = pairIndex % 2 == 0;
                 var pair = await PairedSampleAsync(lifecycle, offFirst, reps, cancellationToken);
                 samples.Add(new
                 {
