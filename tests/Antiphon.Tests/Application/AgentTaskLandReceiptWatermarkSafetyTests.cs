@@ -6,6 +6,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 using Mode = Antiphon.Tests.TestHelpers.LandReceiptScanHarness.ScriptedTranscriptRunner.Mode;
@@ -513,6 +514,7 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
                 // is again in the runner's transcript only, and the queue's own pull persists it.
                 runner.Append(TranscriptKinds.TurnEnd, null);
                 await h.Runtime.SyncTranscriptAsync(h.SessionId, ct);
+                await h.Bridge.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, ct);
                 runner.Submissions.ShouldBe(1, "the real queue typed the note once the turn ended");
                 break;
             }
