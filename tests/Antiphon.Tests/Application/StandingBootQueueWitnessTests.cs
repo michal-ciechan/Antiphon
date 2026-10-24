@@ -280,7 +280,7 @@ public class StandingBootQueueWitnessTests
     private static async Task<BridgeQueueHarness> OpenQueueAsync(
         StandingBootWatchFixture f, IInterceptor? fault, bool grok)
     {
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = f.ConnectionString,
             PreserveDatabaseOnDispose = true,
