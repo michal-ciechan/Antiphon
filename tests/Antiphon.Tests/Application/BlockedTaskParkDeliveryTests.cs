@@ -583,12 +583,11 @@ public sealed class BlockedTaskParkDeliveryTests
         await f.DispatchAsync();
         await using var db = f.Db();
         var recipient = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == queued.AgentSessionId);
-        // Restart replaces the harness root; local delivery retains the session's original cwd.
-        var spillRoot = string.IsNullOrWhiteSpace(recipient.RunnerCwd) ? recipient.Cwd : f.Harness.TempRoot;
+        // Local cwd and fake runner storage both outlive the restarted server harness.
+        var spillRoot = string.IsNullOrWhiteSpace(recipient.RunnerCwd) ? recipient.Cwd : f.RunnerSpillRoot;
         var file = Path.Combine(spillRoot, queued.RemoteSpillRelativePath!);
         File.Exists(file).ShouldBeTrue($"G-154: spill exists in the recipient workspace; answerBytes={Encoding.UTF8.GetByteCount(answer)}; "
-            + $"cwd={recipient.Cwd}; runnerCwd={recipient.RunnerCwd}; expected={file}; "
-            + $"files={string.Join(",", Directory.GetFiles(spillRoot, "*.md", SearchOption.AllDirectories))}");
+            + $"cwd={recipient.Cwd}; runnerCwd={recipient.RunnerCwd}; expected={file}");
         (await File.ReadAllTextAsync(file)).ShouldBe(spill, "G-154");
         f.Submitted.ShouldContain(queued.Body, "G-154");
         f.Recipient!.Inputs.Last().ShouldBe("\r", "G-154");

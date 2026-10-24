@@ -42,6 +42,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
     public required BridgeQueueHarness Harness { get; set; }
     private BridgeQueueHarness.HarnessOptions? _harnessOptions;
     private readonly List<string> _roots = [];
+    // The fake runner's files survive server-harness restarts until fixture disposal.
+    public string RunnerSpillRoot => _roots[0];
     public required FakeTimeProvider Clock { get; init; }
     public required SeatWire Wire { get; init; }
     public required SeatDirectory Directory { get; init; }
@@ -576,7 +578,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     .FindDurableAsync(sessionId, body, default);
                 if (spill is not null)
                 {
-                    var file = Path.Combine(Harness.TempRoot, spill.Spill.RelativePath);
+                    var file = Path.Combine(RunnerSpillRoot, spill.Spill.RelativePath);
                     System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                     await File.WriteAllTextAsync(file, spill.Spill.Body);
                 }
