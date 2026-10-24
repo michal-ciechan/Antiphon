@@ -35,6 +35,36 @@ No full-assembly test run is selected. Expected cost: utility builds 3 minutes,
 audit 2 minutes, one test build plus four narrow acceptance tests 12 minutes,
 slot admission additional. No repeats after green. Restart: none.
 
+## Execution finding at source commit 5ff8440646270419e07dd3cf417c3224d5d0289c
+
+The source arrangement and both utility builds succeeded. Each bootstrap received
+a build-slot grant with `waited=0s`; checkpoint-tool build held its slot 12 seconds,
+Release evaluator build 6 seconds. These were the only builds. No tests executed.
+
+V-1 remains failed: real `-Update` passed the former HostCleanup refusal but then
+refused the inherited `tests/Shared/FakeProviderOutput.targets` item type
+`_SourceItemsToCopyToOutputDirectory`. That file also declares the SDK items
+`_SourceItemsToCopyToOutputDirectoryAlways`,
+`_SourceItemsToCopyToOutputDirectoryIfDifferent`, and
+`AllItemsFullPathWithTargetPath`, none admitted by the precheck's item inventory.
+Its introducing commit is `e9f0259e5fd07dbe9f50365f07c382839af6fdbd`.
+
+A read-only direct evaluator diagnostic (not record approval and not a bypass of
+the real wrapper) additionally returned exit 1 with these exact lines:
+
+```text
+refused: tests/Shared/FakeProviderOutput.targets Target ExcludeRootFakeProviderAppHosts (missing pin)
+refused: tests/Shared/FakeProviderOutput.targets Target RemoveObsoleteRootFakeProviderAppHosts (missing pin)
+```
+
+No record was published, no pin was edited, and no precheck or evaluation policy
+was relaxed. CP-1, V-2, V-3, R-1 and R-2 are **NOT RUN / pending**: their required
+fresh records cannot be produced under the caller's no-pin instruction. The
+one test-project build has not been spent on this known incomplete graph.
+The caller must commission the inherited target-policy/pin repair with its
+required Review, or authorize a separate behavior-preserving removal of those
+targets. The HostCleanup repair is independently pushed for that continuation.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
