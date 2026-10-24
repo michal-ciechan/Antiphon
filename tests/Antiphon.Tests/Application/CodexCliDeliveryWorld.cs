@@ -312,13 +312,14 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(recipient.List().Select(Map).ToArray());
         public async Task<SessionRunnerSessionDto> GetAsync(Guid id,CancellationToken ct) => Map(await recipient.GetAsync(id,ct));
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id,CancellationToken ct) { var s=recipient.GetBuffer(id);return Task.FromResult(new SessionRunnerBufferDto(id,s.Buffer,s.LastSequence)); }
-        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id,CancellationToken ct) { var s=await recipient.GetSnapshotAsync(id,ct);return new SessionRunnerSnapshotDto(id,s.RawOutput,s.RenderedScreen,s.LastSequence,s.StartedAt,s.AcceptedStartedAt); }
+        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id,CancellationToken ct) { var s=await recipient.GetSnapshotAsync(id,ct);return new SessionRunnerSnapshotDto(id,s.RawOutput,s.RenderedScreen,s.LastSequence,s.StartedAt,s.AcceptedStartedAt,s.Dialog); }
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id,CancellationToken ct)
         {
             var s=recipient.GetTranscript(id);
             return Task.FromResult(new SessionRunnerTranscriptDto(id,s.Entries.Select(e => new SessionRunnerTranscriptEvent(id,e.Sequence,e.Kind,e.Uuid,e.ParentUuid,e.Timestamp,e.Role,e.Text,e.ToolName,e.ToolInput,e.ToolUseId,e.ToolIsError,e.StopReason)).ToArray(),s.LastSequence));
         }
         public Task SendInputAsync(Guid id,string input,CancellationToken ct) => recipient.SendInputAsync(id,input,ct);
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id,RunnerConditionalInputRequest request,CancellationToken ct) => recipient.SendConditionalInputAsync(id,request,ct);
         public Task ClearLiveBufferAsync(Guid id,CancellationToken ct) => recipient.ClearLiveBufferAsync(id,ct);
         public Task ResizeAsync(Guid id,int cols,int rows,CancellationToken ct) => recipient.ResizeAsync(id,cols,rows,ct);
         public async Task<SessionRunnerSessionDto> KillAsync(Guid id,CancellationToken ct) { if(recipient.Terminals.TryGetValue(id,out var t)) await t.KillAsync(TimeSpan.FromSeconds(1),ct); return await GetAsync(id,ct); }

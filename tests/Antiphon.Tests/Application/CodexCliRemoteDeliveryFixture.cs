@@ -283,7 +283,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
-            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1, GrokRulesTransport.Capability],
+            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1, GrokRulesTransport.Capability, ProviderDialogObservation.Capability],
             CodexCliVersion: sample?.CodexCliVersion, CodexCliVersionCheckedAtUtc: sample?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: sample?.CodexCliVersionError, CodexCliLauncherFingerprint: sample?.CodexCliLauncherFingerprint);
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
@@ -303,7 +303,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (Kind == AgentKind.ClaudeCode)
             {
                 terminal.StartupOutput = "Claude Code\n";
-                terminal.ClaudeComposerChrome = true;
+                terminal.WithClaudeDialogObservation();
             }
             Terminals.Add(request.SessionId, terminal);
             _transcripts.Add(request.SessionId, []);
@@ -335,7 +335,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             return Session(request.SessionId);
         }
         public RunnerBufferDto GetBuffer(Guid id) => new(id, Terminals[id].SnapshotRawOutput(), _transcripts[id].Count);
-        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
+        public async Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
         {
             var terminal = Terminals[id];
             SnapshotReads++;
@@ -349,8 +349,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (Kind == AgentKind.Codex)
                 screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.V0158FooterOnlyReady,
                     "> " + terminal.ComposerText);
-            return Task.FromResult(new RunnerSnapshotDto(id, terminal.SnapshotRawOutput(), screen,
-                _transcripts[id].Count + terminal.Inputs.Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration));
+            return new RunnerSnapshotDto(id, terminal.SnapshotRawOutput(), screen,
+                Kind == AgentKind.ClaudeCode ? terminal.SnapshotSequence : _transcripts[id].Count + terminal.Inputs.Count,
+                terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration,
+                await terminal.ObserveDialogAsync(id, ct));
         }
         private static string GrokStartingScreen()
         {
@@ -365,7 +367,11 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (Kind == AgentKind.ClaudeCode && input == ComposerInputProbe.KillLine)
                 Terminals[id].PrimeComposer(""); // Actual scripted Ctrl+U effect; the readiness probe stays enabled.
         }
-        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct)
+        {
+            if (BeforeBody is { } check) await check(id, request.Input);
+            return (await Terminals[id].SendConditionalInputAsync(request, ct)) with { SessionId = id };
+        }
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => Terminals[id].ResizeAsync(cols, rows, ct);
         public async Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime expected, CancellationToken ct)
