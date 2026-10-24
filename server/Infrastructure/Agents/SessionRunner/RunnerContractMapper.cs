@@ -57,7 +57,10 @@ public sealed class RunnerContractMapper
 
     public SessionRunnerTranscriptDto MapTranscript(RunnerTranscriptDto transcript) =>
         new(transcript.SessionId, transcript.Entries.Select(MapTranscript).ToList(), transcript.LastSequence,
-            transcript.TerminalComplete, transcript.AcceptedStartedAt);
+            transcript.TerminalComplete, transcript.AcceptedStartedAt,
+            transcript.Readiness is { } readiness
+                ? new SessionRunnerTranscriptReadiness(readiness.Status, readiness.BindingId,
+                    readiness.ParsedThrough, readiness.ObservedLength, readiness.Reason) : null);
 
     public static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
         new(

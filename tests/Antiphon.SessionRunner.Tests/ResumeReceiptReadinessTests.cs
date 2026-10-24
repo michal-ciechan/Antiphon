@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
+[Category("Integration")]
 [NotInParallel("ClaudeConfigDirEnv")]
 public class ResumeReceiptReadinessTests
 {
@@ -17,7 +18,18 @@ public class ResumeReceiptReadinessTests
         await using var world = new World(Prompt("history", new string('x', (1 << 20) + 128)));
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processingHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processingRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var polls = 0;
+        var reads = 0;
+        world.Tailer.ReadinessAfterRead = async ct =>
+        {
+            if (Interlocked.Increment(ref reads) == 2)
+            {
+                processingHeld.TrySetResult();
+                await processingRelease.Task.WaitAsync(ct);
+            }
+        };
         world.Tailer.TerminalObservation.BeforePoll = async ct =>
         {
             if (Interlocked.Increment(ref polls) == 2)
@@ -30,9 +42,16 @@ public class ResumeReceiptReadinessTests
         try
         {
             await held.Task.WaitAsync(TimeSpan.FromSeconds(8));
-            world.Tailer.Snapshot().Readiness?.Status.ShouldBe("Behind");
+            (world.Tailer.Snapshot().Readiness?.Status).ShouldBe("Behind");
         }
         finally { release.TrySetResult(); }
+        try
+        {
+            await processingHeld.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            (world.Tailer.Snapshot().Readiness?.Status).ShouldBe("Behind", "bytes read are not yet parsed");
+            world.Tailer.Snapshot().Entries.ShouldBeEmpty();
+        }
+        finally { processingRelease.TrySetResult(); }
         await Ready(world.Tailer);
         var before = world.Tailer.Snapshot();
         before.Entries.Single().Uuid.ShouldBe("history");
@@ -45,7 +64,7 @@ public class ResumeReceiptReadinessTests
         try
         {
             await File.AppendAllTextAsync(world.Path, Prompt("receipt", "restart note"));
-            world.Tailer.Snapshot().Readiness?.Status.ShouldBe("Behind");
+            (world.Tailer.Snapshot().Readiness?.Status).ShouldBe("Behind");
         }
         finally { world.Tailer.TerminalObservation.ReadGate.Release(); }
         await Ready(world.Tailer);
@@ -58,12 +77,45 @@ public class ResumeReceiptReadinessTests
     [Test]
     public async Task C1574_Invalid_binding_or_partial_tail_is_unknown()
     {
-        foreach (var variant in new[] { "partial", "malformed", "revoked", "replacement", "truncated", "ignored" })
+        foreach (var variant in new[] { "partial", "malformed", "revoked", "replacement", "truncated", "ignored", "fork" })
         {
             Console.WriteLine("C1574 reader variant=" + variant);
             await using var world = new World(Prompt("initial", "hello"));
             world.Tailer.Start();
             await Ready(world.Tailer);
+            if (variant == "fork")
+            {
+                var oldBinding = world.Tailer.Snapshot().Readiness!.BindingId;
+                var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var fork = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(world.Path)!, Guid.NewGuid() + ".jsonl");
+                world.Tailer.ReadinessAfterRead = async ct =>
+                {
+                    if (world.Tailer.BoundTranscriptPath == fork)
+                    {
+                        held.TrySetResult();
+                        await release.Task.WaitAsync(ct);
+                    }
+                };
+                try
+                {
+                    File.SetLastWriteTimeUtc(world.Path, DateTime.UtcNow.AddMinutes(-1));
+                    await File.WriteAllTextAsync(fork, JsonSerializer.Serialize(new
+                    {
+                        type = "user", uuid = "fork", cwd = world.Root,
+                        message = new { role = "user", content = "hello" }
+                    }) + "\n");
+                    await held.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                    var observation = world.Tailer.Snapshot().Readiness!;
+                    observation.BindingId.ShouldNotBe(oldBinding);
+                    observation.Status.ShouldBe("Behind");
+                    observation.ParsedThrough.ShouldBe(0);
+                }
+                finally { release.TrySetResult(); }
+                await Ready(world.Tailer);
+                world.Tailer.Snapshot().Entries.Last().Uuid.ShouldBe("fork");
+                continue;
+            }
             await world.Tailer.TerminalObservation.ReadGate.WaitAsync();
             try
             {
@@ -79,7 +131,7 @@ public class ResumeReceiptReadinessTests
                     case "truncated": await File.WriteAllTextAsync(world.Path, ""); break;
                     case "ignored": await File.AppendAllTextAsync(world.Path, "{\"type\":\"unrecognized-valid-record\"}\n"); break;
                 }
-                world.Tailer.Snapshot().Readiness?.Status.ShouldNotBe("Ready", variant);
+                (world.Tailer.Snapshot().Readiness?.Status).ShouldNotBe("Ready", variant);
             }
             finally { world.Tailer.TerminalObservation.ReadGate.Release(); }
             if (variant == "ignored") await Ready(world.Tailer);
@@ -87,7 +139,7 @@ public class ResumeReceiptReadinessTests
             {
                 // Observe after the entire suffix has actually been consumed.
                 await Until(() => world.Tailer.Snapshot().Readiness?.ParsedThrough == new FileInfo(world.Path).Length);
-                world.Tailer.Snapshot().Readiness?.Status.ShouldBe("Unknown", variant);
+                (world.Tailer.Snapshot().Readiness?.Status).ShouldBe("Unknown", variant);
             }
         }
     }
@@ -120,7 +172,10 @@ public class ResumeReceiptReadinessTests
             Path = System.IO.Path.Combine(dir, id + ".jsonl");
             File.WriteAllText(Path, body);
             Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", Root);
-            Tailer = new TranscriptTailer(id, Root, new SessionRunnerEventHub(), NullLogger.Instance);
+            var inputs = new SessionInputLog();
+            inputs.Append("hello");
+            Tailer = new TranscriptTailer(id, Root, new SessionRunnerEventHub(), NullLogger.Instance,
+                inputLog: inputs, forkScanInterval: TimeSpan.FromMilliseconds(1));
         }
 
         public async ValueTask DisposeAsync()
