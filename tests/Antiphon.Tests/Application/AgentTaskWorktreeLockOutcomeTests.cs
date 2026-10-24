@@ -48,7 +48,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
         try
         {
             var h = producerHarness = await WorktreeGuardedCleanupTests.RemovalHarness.CreateAsync(async producer => {
-                receiver = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false,
+                receiver = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false,
                     ConnectionString = producer.Schema.ConnectionString, ConfigureServices = services => {
                         services.AddSingleton<CompletionNoteFlushQueue>(); services.AddSingleton<SpecialistFailureQueue>();
                         services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
