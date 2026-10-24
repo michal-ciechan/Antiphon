@@ -497,6 +497,17 @@ public sealed class SettlementSyncRecoveryTests
         (await world.Git.RunAsync(world.Git.Desktop, "rev-parse", world.Git.FullRef)).ShouldBe(head);
     }
 
+    [Test]
+    [Arguments(@"C:\Antiphon\worktrees\held-tree", "C:/Antiphon/worktrees/held-tree")]
+    [Arguments("/work/worktrees/held-tree", "/work/worktrees/held-tree")]
+    public void C1136_RegistrationPathUsesGitSeparators(string filesystemPath, string gitPath)
+    {
+        AssertWorktreeRegistrationContainsPath($"worktree {gitPath}\nHEAD {new string('a', 40)}\n", filesystemPath);
+    }
+
+    private static void AssertWorktreeRegistrationContainsPath(string porcelain, string path) =>
+        porcelain.ShouldContain("worktree " + path);
+
     /// <summary>
     /// CARD-1082 F3c D1. A Complete retirement of an earlier registration does not
     /// supersede the live debt after the same path is registered again. Temporary
@@ -521,8 +532,8 @@ public sealed class SettlementSyncRecoveryTests
         await AddRetirementAsync(world, seeded, WorktreeRetirementState.Complete, active: true,
             committedRemoval: true, gitDirectory: gitDir);
         await world.Git.RunAsync(world.Git.Desktop, "worktree", "add", "-b", world.Git.Branch, path, head);
-        (await world.Git.RunAsync(world.Git.Desktop, "worktree", "list", "--porcelain"))
-            .ShouldContain("worktree " + path);
+        AssertWorktreeRegistrationContainsPath(
+            await world.Git.RunAsync(world.Git.Desktop, "worktree", "list", "--porcelain"), path);
 
         await AssertNotDueAsync(world, seeded, "recreated registration is not due yet");
         world.DebtClock.Advance(TimeSpan.FromMinutes(59));
