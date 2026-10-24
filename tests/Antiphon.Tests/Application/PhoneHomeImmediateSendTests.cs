@@ -101,7 +101,7 @@ public class PhoneHomeImmediateSendTests
         foreach (var remote in new[] { false, true })
         {
             await using var h = await PhoneHomeOutageHarness.CreateAsync(remote);
-            await using var peer = remote ? await h.RecoverAsync() : null;
+            await using var peer = remote ? await h.RecoverAsync(claudeDialogObservation: true) : null;
             if (remote)
             {
                 // Stale inventory is still dispatchable when a heartbeat keeps its lease.
@@ -386,7 +386,7 @@ public class PhoneHomeImmediateSendTests
         JsonSerializer.Serialize(rows.Single(r => r.Id == old.Id)).ShouldBe(before);
         rows.Single(r => r.Id != old.Id).DeliveryAttempts.ShouldBe(0);
         rows.ShouldAllBe(r => r.Status == QueuedMessageStatus.Pending);
-        await using var peer = await h.RecoverAsync();
+        await using var peer = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.AssertReceiptAsync("old pending");

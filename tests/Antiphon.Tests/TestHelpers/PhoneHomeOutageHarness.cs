@@ -105,15 +105,17 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
         Bridge.Runtime.TryRemove(sessionId, out _).ShouldBeTrue();
     }
 
-    public async Task<PhoneHomeScriptedPeer> RecoverAsync(bool includeTarget = true, Guid? additionalSession = null)
+    public async Task<PhoneHomeScriptedPeer> RecoverAsync(bool includeTarget = true, Guid? additionalSession = null,
+        bool claudeDialogObservation = false)
     {
         var peer = await Host.ConnectPeerAsync();
         if (includeTarget) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(SessionId) with
         {
-            AcceptedStartedAt = Bridge.Adapter.AcceptedStartedAt,
+            AcceptedStartedAt = claudeDialogObservation ? Bridge.Adapter.AcceptedStartedAt : DateTime.UtcNow,
         });
         if (additionalSession is Guid other) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(other));
-        ConfigureTerminalPeer(peer);
+        if (claudeDialogObservation) ConfigureTerminalPeer(peer);
+        else PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, Bridge);
         var pump = PhoneHomeStrandedQueueTests.Pump(Host, Bridge);
         _pumps.Add(pump);
         (await pump.RunCycleAsync(_stop.Token)).ShouldBeTrue();
