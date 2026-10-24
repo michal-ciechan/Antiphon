@@ -143,6 +143,14 @@ public sealed class AgentTaskLandPreparationIdentityTests
                 .VerifyFilter.ShouldBe(selectedFilter);
         }
         await h.RestartServicesAsync();
+        // CARD-1432 removes superseded, non-refused pins after terminal success. Check the
+        // predecessor while the replacement is being verified and its request still protects it.
+        var previousPinChecked = false;
+        h.Verifier.Barrier = async () =>
+        {
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", previous.RecoveryRefPrefix + "/source")).Trim().ShouldBe(original);
+            previousPinChecked = true;
+        };
         await h.RunAsync();
         var completed = (await h.OperationAsync()).ShouldNotBeNull();
         completed.Id.ShouldNotBe(previous.Id, "an explicit fresh request must not strand changed work behind an unadvanced Verified checkpoint");
@@ -152,7 +160,8 @@ public sealed class AgentTaskLandPreparationIdentityTests
         h.Verifier.Calls.ShouldBe(2, "the changed preparation must receive fresh verification");
         await using (var db = h.CreateContext())
             (await db.AgentTaskLandings.SingleAsync(o => o.Id == previous.Id)).Active.ShouldBeFalse();
-        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", previous.RecoveryRefPrefix + "/source")).Trim().ShouldBe(original);
+        previousPinChecked.ShouldBeTrue("the replacement verified while its predecessor's source pin was retained");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", completed.RecoveryRefPrefix + "/source")).Trim().ShouldBe(currentSource);
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(completed.VerifiedSourceSha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
