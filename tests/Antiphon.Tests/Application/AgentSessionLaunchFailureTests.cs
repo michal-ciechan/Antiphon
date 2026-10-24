@@ -2810,7 +2810,7 @@ public class AgentSessionLaunchFailureTests
         public IAgentProtocolAdapter Create(AgentKind kind) =>
             _adapters.TryDequeue(out var adapter)
                 ? adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode
-                    ? fake.WithClaudeDialogObservation(recordPromptAttempts: true) : adapter
+                    ? fake.WithClaudeDialogObservation() : adapter
                 : throw new InvalidOperationException("No fake adapter was queued for this launch.");
     }
 
@@ -2819,7 +2819,7 @@ public class AgentSessionLaunchFailureTests
     {
         public IAgentProtocolAdapter Create(AgentKind kind) =>
             adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode
-                ? fake.WithClaudeDialogObservation(recordPromptAttempts: true) : adapter;
+                ? fake.WithClaudeDialogObservation() : adapter;
     }
 
     /// <summary>Creates the worktree directory and nothing else — no git in these tests.</summary>
