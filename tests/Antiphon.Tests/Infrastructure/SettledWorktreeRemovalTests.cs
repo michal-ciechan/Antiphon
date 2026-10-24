@@ -505,7 +505,7 @@ public sealed class SettledWorktreeRemovalTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.json")]
-    [Arguments("bin-private/keep.txt")]
+    [Arguments("bin-private/settings.local.json")]
     public async Task C459_FirstIgnoredInspectionRequired(string relative)
     {
         await using var h = await SettledRemovalHarness.CreateAsync();
@@ -523,7 +523,7 @@ public sealed class SettledWorktreeRemovalTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.json")]
-    [Arguments("bin-private/keep.txt")]
+    [Arguments("bin-private/settings.local.json")]
     public async Task C459_FinalIgnoredInspectionRequired(string relative)
     {
         await using var h = await SettledRemovalHarness.CreateAsync();
