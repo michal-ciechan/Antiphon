@@ -82,7 +82,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var producer = new KafkaAntiphonMessagingProducer(Options.Create(new AntiphonMessagingOptions
             { BootstrapServers = broker.GetBootstrapAddress(), OutboundTopic = topic }));
         var storeRoot = Path.Combine(Path.GetTempPath(), "c519-store-" + Guid.NewGuid().ToString("N"));
-        var h = await BridgeQueueHarness.CreateAsync(new()
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             TimeProvider = clock,
