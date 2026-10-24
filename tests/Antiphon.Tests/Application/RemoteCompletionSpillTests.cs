@@ -33,7 +33,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -67,7 +67,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -109,7 +109,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -135,7 +135,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -157,7 +157,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -179,7 +179,7 @@ public sealed class RemoteCompletionSpillTests
     public async Task Frozen_receipt_names_the_path_the_runner_actually_writes()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -208,7 +208,7 @@ public sealed class RemoteCompletionSpillTests
     public async Task Frozen_receipt_still_names_the_desktop_path_for_a_local_session()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -236,7 +236,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -277,7 +277,7 @@ public sealed class RemoteCompletionSpillTests
     {
         var courier = new RemoteSpillCourier();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
