@@ -52,7 +52,7 @@ public sealed class LandingRemovalControlTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.json")]
-    [Arguments("bin-private/keep.txt")]
+    [Arguments("bin-private/settings.local.json")]
     public Task C448_V18_FirstIgnoredContentGuard(string path)
         => new AgentTaskLandRemovalMatrixTests()
             .C448_V18_LowLevelRemovalRechecksAtBothContentBoundaries(1, path);
@@ -60,7 +60,7 @@ public sealed class LandingRemovalControlTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.json")]
-    [Arguments("bin-private/keep.txt")]
+    [Arguments("bin-private/settings.local.json")]
     public Task C448_V18_FinalIgnoredContentGuard(string path)
         => new AgentTaskLandRemovalMatrixTests()
             .C448_V18_LowLevelRemovalRechecksAtBothContentBoundaries(2, path);
