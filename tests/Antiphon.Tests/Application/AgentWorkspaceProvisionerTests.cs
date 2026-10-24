@@ -354,7 +354,9 @@ public class AgentWorkspaceProvisionerTests
             CheckInterpreterWorkingDirectory = scratch.Path,
         };
 
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        // A Check seat is also found by its logical role, so a unique slug cannot isolate this row.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var provisioner = new CheckInterpreterProvisioner(
             db, Options.Create(settings), TimeProvider.System,
             NullLogger<CheckInterpreterProvisioner>.Instance,
@@ -365,10 +367,13 @@ public class AgentWorkspaceProvisionerTests
         agent.ShouldNotBeNull();
         var content = scratch.ReadFloor();
         content.ShouldStartWith(AgentWorkspaceProvisioner.MarkerPrefix);
+        // Standing Check seats render their no-tools contract directly instead of the general ritual.
         content.ShouldContain(
-            "You have NO TOOLS, deliberately",
-            customMessage: "PrepareWorkspace arms the hook before the floor is rendered, so it knows");
-        content.ShouldContain("this file is the ritual");
+            "USE NO TOOLS. You have none, and a tool call is refused before it runs.");
+        content.ShouldContain("Facts arrive inline in each Check task. Do not read workspace files or run tools.");
+        File.ReadAllText(Path.Combine(scratch.Path, CheckInterpretation.DenyHookRelativePath))
+            .ShouldBe(CheckInterpretation.DenyAllToolsSettingsJson,
+                "PrepareWorkspace must still arm the deny-all hook before rendering the floor");
     }
 
     // ---- helpers ----------------------------------------------------------------------------------
