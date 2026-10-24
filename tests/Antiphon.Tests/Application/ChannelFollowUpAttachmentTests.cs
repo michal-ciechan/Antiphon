@@ -35,7 +35,7 @@ public class ChannelFollowUpAttachmentTests
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync(
         Action<IServiceCollection>? configure = null) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
