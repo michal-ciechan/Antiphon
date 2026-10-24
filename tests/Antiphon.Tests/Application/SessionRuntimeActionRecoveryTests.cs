@@ -31,7 +31,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -77,7 +77,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -139,7 +139,7 @@ public class SessionRuntimeActionRecoveryTests
     internal static async Task VerifyTaskAttemptReplacementAsync(bool catchup)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = s =>
@@ -191,7 +191,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -231,7 +231,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer { Failing = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -290,7 +290,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer { Failing = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -322,7 +322,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer { Failing = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -384,7 +384,7 @@ public class SessionRuntimeActionRecoveryTests
         const string dead = "dead-recipient";
         const string live = "live-recipient";
         var producer = new RecordingProducer { FailingConversations = { dead } };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -438,7 +438,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer { Failing = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -507,7 +507,7 @@ public class SessionRuntimeActionRecoveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var producer = new RecordingProducer { Failing = true };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
