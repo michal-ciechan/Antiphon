@@ -50,8 +50,8 @@ without embedding placement or runner/platform pins.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-RED | Witness | `tests/Antiphon.Tests -> bin-d18-red/` | precheck-witness | `/*/*/LandGraphEvaluationTests*/C1540_ProjectReferenceMetadataPrecheck*` | reviewed attribute/child and unknown attribute/child | 2 assertion failures, 2 passes | 4 | 7 |
-| CP-GREEN | Repair | `tests/Antiphon.Tests -> bin-d18-final/` | precheck-green | `/*/*/LandGraphEvaluationTests*/C1540_ProjectReferenceMetadataPrecheck*` | reviewed and unknown metadata forms | 4 passed, 0 failed/skipped | 4 | 1 |
-| CP-1 | Repair | CP-GREEN | final-repair | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/(C1483_S1_*)\|(C1483_S2_*)\|(C1483_S3_*)\|(C1483_S4_*)\|(C1483_S5_*)\|(C1528_*)\|(C1540_EnvironmentPropertyRefuses*)\|(C1540_TimestampMetadataRefuses*)\|(C1540_KnobGateNeedsPin*)\|(C1540_AdmittedNamesApprove*)\|(C1540_AdmittedVerdictIgnoresEnvironment*)\|(C1540_ExpressionSyntaxFailsClosed*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 C1380 | all passed, 0 failed/skipped | 80 | 22 |
+| CP-2 | Repair | `tests/Antiphon.Tests -> bin-d18-final/` | precheck-green | `/*/*/LandGraphEvaluationTests*/C1540_ProjectReferenceMetadataPrecheck*` | reviewed and unknown metadata forms | 4 passed, 0 failed/skipped | 4 | 1 |
+| CP-1 | Repair | CP-2 | final-repair | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/(C1483_S1_*)\|(C1483_S2_*)\|(C1483_S3_*)\|(C1483_S4_*)\|(C1483_S5_*)\|(C1528_*)\|(C1540_EnvironmentPropertyRefuses*)\|(C1540_TimestampMetadataRefuses*)\|(C1540_KnobGateNeedsPin*)\|(C1540_AdmittedNamesApprove*)\|(C1540_AdmittedVerdictIgnoresEnvironment*)\|(C1540_ExpressionSyntaxFailsClosed*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 C1380 | all passed, 0 failed/skipped | 80 | 22 |
 
 Run each committed group with --after Witness or Repair, --expected-source-sha
 <committed HEAD>, --total-timeout 30m. Wait to terminal exit; inspect every fresh
