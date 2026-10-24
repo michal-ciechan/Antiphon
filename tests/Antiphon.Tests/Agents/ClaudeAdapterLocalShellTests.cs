@@ -8,6 +8,8 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Application.Services;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Tests.Agents;
 
@@ -89,28 +91,17 @@ public class ClaudeAdapterLocalShellTests
     });
 
     [Test]
-    public async Task Send_prompt_clears_live_buffer_before_send()
+    public async Task Send_prompt_refuses_unsupported_local_backend_without_writing()
     {
         SkipIfNotWindows();
         using var script = new MarkerScript();
         await using var adapter = new ClaudeAdapter(FastOptions());
         await adapter.StartAsync(InteractiveCmdSpec(script.Dir), CancellationToken.None);
 
-        // First turn — populate buffer with prior content + done marker. The marker reaches
-        // the stream only as emit.cmd's file output, so the detector cannot fire before the
-        // turn's real output is in the buffer (see class doc).
-        await adapter.SendPromptAsync(".\\emit.cmd OLD_CONTENT_X", CancellationToken.None);
-        var first = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
-        first.TurnCompleted.ShouldBeTrue();
-        first.RawSnapshot.ShouldContain("OLD_CONTENT_X");
-
-        // Second turn — ClearLiveBuffer in SendPromptAsync should wipe OLD before NEW lands.
-        await adapter.SendPromptAsync(".\\emit.cmd NEW_CONTENT_Y", CancellationToken.None);
-        var second = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
-
-        second.TurnCompleted.ShouldBeTrue();
-        second.RawSnapshot.ShouldContain("NEW_CONTENT_Y");
-        second.RawSnapshot.ShouldNotContain("OLD_CONTENT_X");
+        var refused = await Should.ThrowAsync<ProviderDialogInputRefusedException>(() =>
+            adapter.SendPromptAsync(".\\emit.cmd WITHHELD_CONTENT_X", CancellationToken.None));
+        refused.Reason.ShouldBe(ConditionalInputOutcomes.Unsupported);
+        adapter.SnapshotRawOutput().ShouldNotContain("WITHHELD_CONTENT_X");
     }
 
     [Test]
@@ -121,7 +112,8 @@ public class ClaudeAdapterLocalShellTests
         await using var adapter = new ClaudeAdapter(FastOptions());
         await adapter.StartAsync(InteractiveCmdSpec(script.Dir), CancellationToken.None);
 
-        await adapter.SendPromptAsync(".\\emit.cmd synthetic_resp_marker", CancellationToken.None);
+        // Explicit input to a test-owned shell exercises detection, not automated Claude delivery.
+        await adapter.SendInputAsync(".\\emit.cmd synthetic_resp_marker\r", CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         result.TurnCompleted.ShouldBeTrue();
@@ -146,7 +138,7 @@ public class ClaudeAdapterLocalShellTests
         await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
 
         // Echo without "for Ns" tail — detector never fires.
-        await adapter.SendPromptAsync("echo no_marker_here", CancellationToken.None);
+        await adapter.SendInputAsync("echo no_marker_here\r", CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         result.TurnCompleted.ShouldBeFalse();
