@@ -81,7 +81,7 @@ public class SpecialistInputTransportTests
     private static async Task<BridgeQueueHarness> HarnessAsync(bool observable = true)
     {
         var settings = new DelegationSettings { ModernPtyBriefInlineMaxBytes = 128, ModernPtySingleWriteMaxBytes = 128 };
-        var h = await BridgeQueueHarness.CreateAsync(new()
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             Delegation = settings,
             ConfigureDeliveryVerification = v =>
