@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -731,6 +732,8 @@ public class AgentTaskCheckSweepTests
         // must report the caller Running for the superseded-check cancel to be reached.
         harness.Runner.LiveSessions.Add(seed.CallerSessionId);
 
+        await harness.ObserveCallerComposerAsync(seed.CallerSessionId, "[check] stale");
+
         await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
 
         await using var verify = harness.CreateContext();
@@ -756,9 +759,7 @@ public class AgentTaskCheckSweepTests
         await harness.SettleAsync(seed.Task.Id);
         await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
         harness.Runner.LiveSessions.Add(seed.CallerSessionId);
-        var rule = new string('─', 60);
-        harness.Runner.Snapshot = new SessionRunnerSnapshotDto(seed.CallerSessionId, "",
-            $"{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)", 0, DateTime.UtcNow);
+        await harness.ObserveCallerComposerAsync(seed.CallerSessionId);
 
         await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
 
@@ -1067,6 +1068,17 @@ public class AgentTaskCheckSweepTests
 
         public AppDbContext CreateContext() =>
             new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+
+        public async Task ObserveCallerComposerAsync(Guid sessionId, string draft = "")
+        {
+            var adapter = new FakeAgentProtocolAdapter
+            {
+                RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(draft: draft),
+                BeforeInput = (input, ct) => Runner.SendInputAsync(sessionId, input, ct),
+            };
+            await adapter.EnableClaudeDialogObservationAsync(_schema.ConnectionString, sessionId);
+            _provider.GetRequiredService<AgentSessionRuntime>().Register(sessionId, adapter);
+        }
 
         public async Task<int> CountTranscriptAsync(Guid sessionId)
         {
