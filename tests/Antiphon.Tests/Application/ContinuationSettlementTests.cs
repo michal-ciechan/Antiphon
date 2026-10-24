@@ -312,6 +312,11 @@ public class ContinuationSettlementTests
             Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
             WorkingDirectory: rig.World.RepositoryPath, Card: rig.World.Card.Id.ToString()));
 
+        var inspections = rig.World.Services.GetRequiredService<CardSiblingInspectionQueue>();
+        inspections.Start();
+        await using (var scope = rig.World.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+        await inspections.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
         await using (var scope = rig.World.Services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
 
