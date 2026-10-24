@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// recovered anyway, so dispatch went to a runner whose owner inventory had never been read.
 /// </summary>
 [Category("Integration")]
-public class PhoneHomeRecoveryEligibilityTests
+public partial class PhoneHomeRecoveryEligibilityTests
 {
     [Test]
     public async Task Silent_list_reply_leaves_the_runner_ineligible_until_catch_up_succeeds()
