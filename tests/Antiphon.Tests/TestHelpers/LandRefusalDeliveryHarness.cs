@@ -413,7 +413,7 @@ internal sealed class LandRefusalDeliveryHarness : IAsyncDisposable
 
     private async Task<BridgeQueueHarness> OpenBridgeAsync(string connection, Guid? sessionId, Guid? agentId)
     {
-        var bridge = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
