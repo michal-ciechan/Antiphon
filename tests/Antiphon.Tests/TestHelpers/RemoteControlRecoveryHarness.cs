@@ -58,7 +58,7 @@ internal sealed class RemoteControlRecoveryHarness : IAsyncDisposable
         var supervision = DefaultSupervision();
         configureSupervision?.Invoke(supervision);
 
-        var inner = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var inner = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = cs,
