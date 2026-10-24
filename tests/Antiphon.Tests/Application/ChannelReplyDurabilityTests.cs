@@ -43,7 +43,7 @@ public class ChannelReplyDurabilityTests
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
@@ -145,7 +145,7 @@ public class ChannelReplyDurabilityTests
     public async Task A_failed_late_confirm_publication_is_durably_uncertain_and_leaves_it_owed()
     {
         var logs = new List<string>();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
@@ -201,7 +201,7 @@ public class ChannelReplyDurabilityTests
     public async Task A_late_confirmed_no_reply_turn_does_not_warn_as_an_unpublished_reply()
     {
         var logs = new List<string>();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
@@ -233,7 +233,7 @@ public class ChannelReplyDurabilityTests
     public async Task A_late_confirmed_api_withheld_turn_does_not_warn_as_an_unpublished_reply()
     {
         var logs = new List<string>();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
@@ -511,7 +511,7 @@ public class ChannelReplyDurabilityTests
         // CARD-0401: TurnEnd.Text is null; the 61-char reset sentence is on the sibling AssistantText.
         var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions
             {
                 Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
