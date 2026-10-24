@@ -2157,7 +2157,7 @@ public class DataRetentionServiceTests
         public static async Task<C768Fixture> CreateAsync(int debounceMs = 0)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var harness = await BridgeQueueHarness.CreateAsync(new()
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
                 Bridge = new ChannelBridgeSettings
