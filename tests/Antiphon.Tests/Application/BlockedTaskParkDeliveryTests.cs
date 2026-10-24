@@ -50,7 +50,7 @@ public sealed class BlockedTaskParkDeliveryTests
             await PublishAsync(f);
             await StampAsync(f);
             await f.AnswerAsync("receipt canary");
-            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+            f.Launches.OnLaunch = id => AttachReviewRecipientAsync(f, id, busy: true).GetAwaiter().GetResult();
             await f.DispatchAsync();
             var row = (await f.AnswerQueueAsync())!;
             var held = await f.TaskAsync();
@@ -103,8 +103,11 @@ public sealed class BlockedTaskParkDeliveryTests
 
             // The wrong-session probe is the test's own old-session prompt. Remove it so the
             // following receipt check counts only a prompt the product delivered.
-            await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId && t.Text == row.Body)
+            var wrongSessionPrompts = db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId && t.Text == row.Body);
+            await db.SessionRuntimeActions.Where(a => a.TranscriptEntryId != null
+                    && wrongSessionPrompts.Any(t => t.Id == a.TranscriptEntryId))
                 .ExecuteDeleteAsync();
+            await wrongSessionPrompts.ExecuteDeleteAsync();
             await f.EndTurnAsync(row.AgentSessionId);
             await f.FlushAsync(row.AgentSessionId);
             await f.DispatchAsync();
@@ -138,7 +141,7 @@ public sealed class BlockedTaskParkDeliveryTests
             var answerId = (await f.TaskAsync()).ReleasedSeatAnswerId;
             answerId.ShouldNotBeNull(boundary);
             await f.RestartAsync();
-            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy).GetAwaiter().GetResult();
+            f.Launches.OnLaunch = id => AttachReviewRecipientAsync(f, id, busy).GetAwaiter().GetResult();
             try { await f.DispatchAsync(); }
             catch (InvalidOperationException) when (cut.Hit) { }
             var target = await f.TaskAsync();
@@ -147,7 +150,7 @@ public sealed class BlockedTaskParkDeliveryTests
             if (busy) f.Recipient?.Inputs.ShouldBeEmpty("G-162");
             (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBe(answerId, boundary);
             await f.RestartAsync();
-            await f.AttachRecipientAsync(sessionId);
+            await AttachReviewRecipientAsync(f, sessionId);
             try { await f.DispatchAsync(); }
             catch (InvalidOperationException) when (cut.Hit) { }
             var queued = await f.AnswerQueueAsync();
@@ -156,7 +159,7 @@ public sealed class BlockedTaskParkDeliveryTests
             try { await f.FlushAsync(sessionId); }
             catch (InvalidOperationException) when (cut.Hit) { }
             await f.RestartAsync();
-            await f.AttachRecipientAsync(sessionId);
+            await AttachReviewRecipientAsync(f, sessionId);
             if (boundary is "delivery-stamp" or "verdict-before")
             {
                 var interrupted = await f.AnswerQueueAsync();
