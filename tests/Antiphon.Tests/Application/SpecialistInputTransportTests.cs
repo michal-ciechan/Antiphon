@@ -251,6 +251,9 @@ public class SpecialistInputTransportTests
         await EnqueueAsync(h, task, Fit(task), false);
         await using (var db = BridgeQueueHarness.CreateContext())
             await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, DateTime.UtcNow.AddMinutes(1)));
+        // The replacement terminal has current dialog evidence; the frozen Check policy is
+        // the stale identity this test must refuse, rather than an unavailable old dialog.
+        await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
         await Should.ThrowAsync<SpecialistInputUnsupportedException>(() => h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None));
         h.Adapter.Inputs.ShouldBeEmpty();
     }
