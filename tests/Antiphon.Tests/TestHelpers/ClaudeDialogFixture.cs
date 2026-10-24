@@ -11,13 +11,20 @@ internal static class ClaudeDialogFixture
     public static Task<BridgeQueueHarness> CreateBridgeAsync(BridgeQueueHarness.HarnessOptions? options = null) =>
         BridgeQueueHarness.CreateAsync((options ?? new()) with { ClaudeDialogObservation = true });
 
+    /// <summary>Newly launched fakes bind their generation in StartAsync before accepting input.</summary>
+    public static FakeAgentProtocolAdapter WithClaudeDialogObservation(this FakeAgentProtocolAdapter adapter)
+    {
+        adapter.DialogGuardEnabled = true;
+        adapter.ClaudeComposerChrome = true;
+        return adapter;
+    }
+
     public static async Task EnableClaudeDialogObservationAsync(
         this FakeAgentProtocolAdapter adapter, string connectionString, Guid sessionId)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
         adapter.AcceptedStartedAt = await db.AgentSessions.Where(s => s.Id == sessionId)
             .Select(s => s.StartedAt).SingleAsync();
-        adapter.DialogGuardEnabled = true;
-        adapter.ClaudeComposerChrome = true;
+        adapter.WithClaudeDialogObservation();
     }
 }
