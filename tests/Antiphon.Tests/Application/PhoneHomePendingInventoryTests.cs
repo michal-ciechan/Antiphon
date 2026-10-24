@@ -76,7 +76,6 @@ public class PhoneHomePendingInventoryTests
         // Start a real manual-turn tracker through the adapter, then remove that adapter before
         // the wait starts. The persisted row is known, while list membership is still missing.
         h.Runtime.Register(h.SessionId, h.Bridge.Adapter);
-        await h.Bridge.Adapter.EnableClaudeDialogObservationAsync(h.Schema.ConnectionString, h.SessionId);
         h.Bridge.Provider.GetRequiredService<IOptions<AgentSessionSettings>>().Value.FirstDeltaTimeoutMs = 100;
         await using (var db = h.Db())
             await db.RunAttempts.Where(a => a.Id == h.AttemptId).ExecuteUpdateAsync(u => u.SetProperty(a => a.Phase, RunPhase.Succeeded));
@@ -85,8 +84,8 @@ public class PhoneHomePendingInventoryTests
             if (input == "\r") h.Runtime.TryRemove(h.SessionId, out _);
             return Task.CompletedTask;
         };
-        await h.Runtime.SendInputAsync(h.SessionId, "manual input", CancellationToken.None);
-        await h.Runtime.SendInputAsync(h.SessionId, "\r", CancellationToken.None);
+        await h.Runtime.SendInteractiveInputAsync(h.SessionId, "manual input", CancellationToken.None);
+        await h.Runtime.SendInteractiveInputAsync(h.SessionId, "\r", CancellationToken.None);
         await PhoneHomeOutageHarness.UntilAsync(() =>
         {
             using var db = h.Db();
