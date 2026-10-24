@@ -33,7 +33,7 @@ public class PhoneHomeQueuedTurnTests
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
         var client = new PhoneHomeRunnerClient(live);
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await PrepareGrokSessionAsync(h, host.StoreId);
         var nonce = "PHONE_HOME_NONCE_" + Guid.NewGuid().ToString("N")[..8];
         h.Adapter.OnSubmitted = async submitted =>
@@ -193,7 +193,7 @@ public class PhoneHomeQueuedTurnTests
     public async Task Rules_handoff_cuts_recover_before_ordinary_work()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = s =>
@@ -285,7 +285,7 @@ public class PhoneHomeQueuedTurnTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var insertFault = new ThrowOnQueuedMessageInsert();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -342,7 +342,7 @@ public class PhoneHomeQueuedTurnTests
     public async Task Offline_deferral_does_not_spend_attempts()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         h.Adapter.ThrowOnSend = new ServiceUnavailableException(
             "Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         var attemptsBefore = 0;
@@ -367,7 +367,7 @@ public class PhoneHomeQueuedTurnTests
     public async Task Rules_receipt_is_owner_bound_and_remote_readable()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = s =>
@@ -412,7 +412,7 @@ public class PhoneHomeQueuedTurnTests
     public async Task Rules_barrier_requires_prompt_ack_and_successful_end()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
         session.AgentKind = AgentKind.Grok;
@@ -428,7 +428,7 @@ public class PhoneHomeQueuedTurnTests
     private static async Task RecoverQueuedCutAsync(
         BridgeQueueHarness original, Guid queueId, string body, bool busy, long floor)
     {
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = original.ConnectionString,
@@ -503,7 +503,7 @@ public class PhoneHomeQueuedTurnTests
     }
 
     private static async Task<BridgeQueueHarness> CreateReceiptHarnessAsync(string connectionString) =>
-        await BridgeQueueHarness.CreateAsync(new()
+        await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = connectionString,
