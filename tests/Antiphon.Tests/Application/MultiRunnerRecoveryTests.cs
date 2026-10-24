@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -135,6 +136,9 @@ public sealed class MultiRunnerRecoveryTests
         await using var nextA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
         nextA.Sessions.Add(new RunnerSessionDto(sessionA, 1, now, "Running", null, "", 1));
         nextA.Transcripts[sessionA] = Transcript(sessionA);
+        // The first reconnect cycle starts teardown; a later cycle admits the replacement.
+        (await pump.RunCycleAsync(CancellationToken.None)).ShouldBeFalse();
+        await pump.EndPumpForTest();
         (await pump.RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
         nextA.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0);
         nextA.Incoming.Any(frame =>
@@ -200,7 +204,7 @@ public sealed class MultiRunnerRecoveryTests
         var storeB = Guid.NewGuid();
         await using var peerA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
         await using var peerB = await host.ConnectPeerAsync(runnerId: "runner-b", secret: secretB, storeId: storeB);
-        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services =>
@@ -244,8 +248,8 @@ public sealed class MultiRunnerRecoveryTests
             await db.SaveChangesAsync();
         }
 
-        peerA.Sessions.Add(Running(sessionA));
-        peerB.Sessions.Add(Running(sessionB));
+        peerA.Sessions.Add(Running(sessionA, now));
+        peerB.Sessions.Add(Running(sessionB, harness.Adapter.AcceptedStartedAt!.Value));
         EchoPrompts(peerA, harness, sessionA);
         EchoPrompts(peerB, harness, sessionB);
         await harness.InsertTurnAsync("prior-b", "done", sessionB);
@@ -269,7 +273,7 @@ public sealed class MultiRunnerRecoveryTests
 
         peerA.Socket.Abort();
         await using var nextA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
-        nextA.Sessions.Add(Running(sessionA));
+        nextA.Sessions.Add(Running(sessionA, now));
         EchoPrompts(nextA, harness, sessionA);
         host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: "runner-a"));
         (await Pump(host, harness).RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
@@ -376,11 +380,22 @@ public sealed class MultiRunnerRecoveryTests
         return services.BuildServiceProvider();
     }
 
-    private static RunnerSessionDto Running(Guid sessionId) =>
-        new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
+    private static RunnerSessionDto Running(Guid sessionId, DateTime generation) =>
+        new(sessionId, 1, generation, "Running", null, "", 0, AcceptedStartedAt: generation);
 
-    private static void EchoPrompts(PhoneHomeScriptedPeer peer, BridgeQueueHarness harness, Guid sessionId) =>
-        PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, harness, sessionId);
+    private static void EchoPrompts(PhoneHomeScriptedPeer peer, BridgeQueueHarness harness, Guid sessionId)
+    {
+        var terminal = new FakeAgentProtocolAdapter();
+        terminal.EnableClaudeDialogObservation(harness.ConnectionString, sessionId);
+        terminal.OnSubmitted = async body =>
+        {
+            await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body,
+                sessionId: sessionId, timestamp: DateTime.UtcNow);
+            await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd,
+                sessionId: sessionId, stopReason: "end_turn");
+        };
+        ClaudeDialogFixture.ConfigurePhoneHomePeer(peer, terminal, sessionId);
+    }
 
     private static async Task<QueuedMessageStatus> QueueStatusAsync(string connectionString, Guid sessionId, string body)
     {
