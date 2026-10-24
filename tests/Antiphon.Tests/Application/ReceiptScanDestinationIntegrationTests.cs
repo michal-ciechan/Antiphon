@@ -152,7 +152,11 @@ public sealed class ReceiptScanDestinationIntegrationTests
         var passes = await PassesAsync(h, fx.Note.Id, fx.Destination, 3, ct);
 
         var roster = Rosters(passes);
-        passes.Select(p => p.Commands).ShouldBe([11, 2, 2], roster);
+        // Runtime action admission binds newly ingested transcript rows to the current task
+        // attempt. Account for exactly that lookup as well as the existing receipt scan.
+        passes[0].Roster.Split('\n').Count(sql => sql.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)
+            && sql.Contains("\"Attempt\"", StringComparison.Ordinal)).ShouldBe(1, roster);
+        passes.Select(p => p.Commands).ShouldBe([12, 2, 2], roster);
         passes[0].PullsB.ShouldBe(1);
         passes[0].PullsA.ShouldBe(0);
         passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
