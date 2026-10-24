@@ -451,7 +451,7 @@ public class ChannelBridgeTests
     [Test]
     public async Task Redelivered_message_is_not_routed_twice()
     {
-        await using var h = await HarnessAsync();
+        await using var h = await HarnessAsync(ingestTranscript: true);
         await h.BindChannelAsync();
         var runtime = h.Provider.GetRequiredService<AgentSessionRuntime>();
         h.Adapter.OnSubmitted = async submitted =>
@@ -1009,7 +1009,7 @@ public class ChannelBridgeTests
     };
 
     private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0, long maxAttachmentBytes = 14 * 1024 * 1024,
-        TimeProvider? outboundClock = null)
+        TimeProvider? outboundClock = null, bool ingestTranscript = false)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1061,6 +1061,16 @@ public class ChannelBridgeTests
             MaxAttachmentBytes = maxAttachmentBytes,
         }));
         services.AddSingleton<ChannelInboundDebouncer>();
+        if (ingestTranscript)
+        {
+            // This witness ingests the submitted prompt through the real runtime.
+            // Match BridgeQueueHarness's committed-state and durable-action graph.
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<SessionStateCommandMetrics>();
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+            services.AddSingleton<SessionRuntimeActionCoordinator>();
+        }
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<ChatChannelService>();
