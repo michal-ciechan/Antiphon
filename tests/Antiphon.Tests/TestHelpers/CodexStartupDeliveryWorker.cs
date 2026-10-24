@@ -62,6 +62,7 @@ internal static class CodexStartupDeliveryWorker
         if (settings.CallerSessionId is Guid caller)
         {
             var callerAdapter = new FakeAgentProtocolAdapter { ReadyResult = true };
+            await callerAdapter.EnableClaudeDialogObservationAsync(settings.Connection, caller);
             callerAdapter.OnSubmitted = async submitted =>
             {
                 await BridgeQueueHarness.InsertEntryAsync(
