@@ -156,7 +156,7 @@ internal sealed class TaskInputDeliveryFixture : IAsyncDisposable
         Action<DbContextOptionsBuilder>? configureDb = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var bridge = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = schema.ConnectionString,
             AlwaysOn = false,
