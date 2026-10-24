@@ -2582,12 +2582,6 @@ public class AgentSessionLaunchFailureTests
                 },
             });
 
-            // The card launch's dialog admission reads the runtime before sending its work.
-            // Register factory-created Claude fakes at StartAsync, just as the runner is reachable
-            // during a real launch, rather than leaving those reads on the unsupported runner stub.
-            if (adapterFactory is QueueAdapterFactory queued)
-                queued.Runtime = harness.Runtime;
-
             var workspace = Path.Combine(harness.TempRoot, "launch-workspace");
             Directory.CreateDirectory(workspace);
             var sessionId = Guid.NewGuid();
@@ -2718,12 +2712,18 @@ public class AgentSessionLaunchFailureTests
             string prompt,
             string? remoteControlName = null,
             AgentKind kind = AgentKind.Raw,
-            CancellationToken ct = default) =>
-            Services.GetRequiredService<AgentSessionService>().StartAsync(
+            CancellationToken ct = default)
+        {
+            // Card work admission reads the runtime before sending its first prompt. Interactive
+            // fixtures opt into live queue delivery separately through WireDelivery.
+            if (Services.GetRequiredService<IAgentProtocolAdapterFactory>() is QueueAdapterFactory queued)
+                queued.Runtime = Runtime;
+            return Services.GetRequiredService<AgentSessionService>().StartAsync(
                 new StartAgentSessionRequest(
                     cardId, "fake", kind, prompt, RemoteControlName: remoteControlName),
                 LaunchSpec(Path.Combine(Harness.TempRoot, "repo"), kind),
                 ct);
+        }
 
         private static AgentLaunchSpec LaunchSpec(string cwd, AgentKind kind = AgentKind.Raw) =>
             new("fake", kind, "fake", [], new Dictionary<string, string>(), cwd, 120, 30);
