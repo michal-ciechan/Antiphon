@@ -21,7 +21,7 @@ public class CapacityRecoveryQueueTests
     public async Task Card0412_V12_held_channel_row_delivers_after_grant()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
@@ -69,7 +69,7 @@ public class CapacityRecoveryQueueTests
     public async Task Card0412_V12_unselected_held_row_stays_pending()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
@@ -114,7 +114,7 @@ public class CapacityRecoveryQueueTests
     public async Task Card0412_V12_repeat_enqueue_rediscovers_keyed_row()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
@@ -143,7 +143,7 @@ public class CapacityRecoveryQueueTests
     public async Task Card0412_V15_non_capacity_terminal_reason_blocks(string reason)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
@@ -181,7 +181,7 @@ public class CapacityRecoveryQueueTests
     public async Task Card0412_V14_later_user_prompt_is_unrelated_takeover()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
