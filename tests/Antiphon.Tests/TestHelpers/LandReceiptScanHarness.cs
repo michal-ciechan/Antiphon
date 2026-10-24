@@ -68,7 +68,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         h._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         try
         {
-            h._bridges.Add(await BridgeQueueHarness.CreateAsync(h.BridgeOptions(null, null)));
+            h._bridges.Add(await ClaudeDialogFixture.CreateBridgeAsync(h.BridgeOptions(null, null)));
             h.Bind();
             return h;
         }
@@ -82,7 +82,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     /// <summary>A process restart: a new provider (runtime, store, cache) over the same database and session.</summary>
     public async Task RestartAsync(bool store = true)
     {
-        _bridges.Add(await BridgeQueueHarness.CreateAsync(BridgeOptions(_bridges[0].SessionId, _bridges[0].AgentId, store)
+        _bridges.Add(await ClaudeDialogFixture.CreateBridgeAsync(BridgeOptions(_bridges[0].SessionId, _bridges[0].AgentId, store)
             with { PreserveDatabaseOnDispose = true }));
         await Db.DisposeAsync();
         Bind();
