@@ -500,14 +500,17 @@ public class WorktreeManagerGitIntegrationTests
             var manager = BuildManager(env.WorktreeRoot);
             await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "unrelated");
             var worktree = await manager.CreateAsync(env.RepoPath, "E03-003", "HEAD", CancellationToken.None);
+            var registrations = await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain", "-z");
 
             var refusal = await Should.ThrowAsync<InvalidOperationException>(() =>
                 manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None));
             refusal.Message.ShouldBe("typed_removal_authority_required");
 
             Directory.Exists(worktree.Path).ShouldBeTrue();
-            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
-                .ShouldNotContain(worktree.Path);
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain", "-z"))
+                .ShouldBe(registrations, "a refused removal must preserve every registration");
+            LandingGit.ParseRegistrations(registrations)
+                .ShouldContain(r => LandingGit.PathsEqual(r.Path, worktree.Path));
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-003"))
                 .ShouldContain(worktree.Branch);
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "unrelated"))
