@@ -143,7 +143,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             return false;
         }
 
-        if (ReferenceEquals(cycle.Recovered, live))
+        var recoveringLease = ReferenceEquals(cycle.Recovered, live);
+        if (recoveringLease)
         {
             // CARD-0679 D-2: nothing else would ever release this connection's later events. A
             // pump that ended because the connection was disposed drained a completed Events
@@ -166,8 +167,17 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                     runnerId, live.Epoch, slow.Worker, slow.SessionId, slow.EventName, slow.Phase, slow.ElapsedMs,
                     live.AccountingSnapshot().OldestPendingMs,
                     System.Text.Json.JsonSerializer.Serialize(live.Diagnostics.Snapshot(), PhoneHomeFraming.Json));
-            RefreshInventoryIfDue(live, cycle, ct);
-            return false;
+            if (live.DispatchEligible)
+            {
+                RefreshInventoryIfDue(live, cycle, ct);
+                return false;
+            }
+
+            // A lease expiry clears directory eligibility without replacing the connection.
+            // Renewed heartbeats must go through catch-up again, while its existing observer
+            // group continues draining events. Never start a second group for that connection.
+            if (!_directory.CanRecoverLease(live))
+                return false;
         }
 
         // CARD-0633 D-2: a failed catch-up is retried after CatchUpRetrySeconds on the connection's
@@ -183,11 +193,17 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             return false;
         }
 
+        if (recoveringLease && !_directory.TryRecoverLease(live))
+            return false;
+
         cycle.NextCatchUp = null;
         cycle.NextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
-        _directory.MarkRecovered(live);
-        cycle.Recovered = live;
-        StartPump(live, cycle, ct);
+        if (!recoveringLease)
+        {
+            _directory.MarkRecovered(live);
+            cycle.Recovered = live;
+            StartPump(live, cycle, ct);
+        }
         EnqueueSlotReconcile(live);
         return true;
     }
