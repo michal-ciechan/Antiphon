@@ -532,7 +532,7 @@ public class ReceiptFailureDeliveryTests
         public void Advance(TimeSpan amount) => _offset += amount;
     }
 
-    private sealed class DeliveryFault(Guid taskId, string cut) : SaveChangesInterceptor
+    private sealed class DeliveryFault(Guid taskId, string cut) : SaveChangesInterceptor, IDbTransactionInterceptor
     {
         public int ReceiptThrows;
         public int QueueThrows;
@@ -571,13 +571,27 @@ public class ReceiptFailureDeliveryTests
         public override ValueTask<int> SavedChangesAsync(
             SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
         {
-            if (_cutAfterSave)
-            {
-                _cutAfterSave = false;
-                QueueThrows++;
-                throw new IOException($"cut after durable {cut}");
-            }
+            // Queue insertion also stamps the task in an explicit transaction. SavedChanges
+            // is not durable until that transaction commits; throwing here would roll it back.
+            if (_cutAfterSave && eventData.Context!.Database.CurrentTransaction is null)
+                ThrowAfterCommit();
             return ValueTask.FromResult(result);
+        }
+
+        public Task TransactionCommittedAsync(
+            System.Data.Common.DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (_cutAfterSave)
+                ThrowAfterCommit();
+            return Task.CompletedTask;
+        }
+
+        private void ThrowAfterCommit()
+        {
+            _cutAfterSave = false;
+            QueueThrows++;
+            throw new IOException($"cut after durable {cut}");
         }
     }
 }
