@@ -46,7 +46,7 @@ public sealed class DispatcherRemotePrepStarvationTests
         host.Directory.MarkRecovered(live);
         peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
         var receiptAdapter = new AdapterSlot();
-        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
@@ -269,7 +269,7 @@ public sealed class DispatcherRemotePrepStarvationTests
     /// <summary>
     /// CARD-0633 V-15 uses the harness adapter as the launch factory so
     /// <see cref="QueuedReceiptAssertions"/> observes the same submitted body. The slot is filled
-    /// after <see cref="BridgeQueueHarness.CreateAsync"/> returns that adapter.
+    /// after <see cref="ClaudeDialogFixture.CreateBridgeAsync"/> returns that adapter.
     /// </summary>
     private sealed class AdapterSlot : IAgentProtocolAdapterFactory
     {
