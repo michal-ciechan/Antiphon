@@ -207,13 +207,13 @@ public sealed partial class SessionMessageQueueService
         _remoteSpills.Ack(sessionId, staged);
     }
 
-    private static void HoldChannelSpillBytes(SessionQueuedMessage row, string source, string wire)
+    private static void HoldGeneratedSpillBytes(SessionQueuedMessage row, string source, string wire)
     {
-        if (row.Origin != QueuedMessageOrigin.Channel || source == wire
-            || !ChannelPromptCorrelation.IsSpillPointer(wire))
+        if (source == wire || !IsOwnedSpillPointer(wire, row.Id)
+            || !wire.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal))
             return;
         // The file contains the whole composed batch, not just its head member. Keep those
-        // exact bytes before replacing Body, including local spills and tracked SendNow.
+        // exact bytes before replacing Body for every origin, including local SendNow spills.
         row.RemoteSpillBody = source;
         row.RemoteSpillRelativePath = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
     }
@@ -1077,7 +1077,7 @@ public sealed partial class SessionMessageQueueService
                     ? TypedBodySpill.TryReadChannelEnvelope(row.Body)
                     : null,
                 db, ct);
-            HoldChannelSpillBytes(row, row.Body, nowBody);
+            HoldGeneratedSpillBytes(row, row.Body, nowBody);
             if (!ReferenceEquals(nowBody, trimmed) && nowBody != trimmed)
                 row.Body = nowBody;
             BindGeneratedSpill(sessionId, row, nowBody);
@@ -1501,7 +1501,7 @@ public sealed partial class SessionMessageQueueService
                     ? TypedBodySpill.TryReadChannelEnvelope(message.Body)
                     : null,
                 db, ct, specialistInputPolicyJson: message.SpecialistInputPolicyJson);
-            HoldChannelSpillBytes(message, message.Body, sendNowBody);
+            HoldGeneratedSpillBytes(message, message.Body, sendNowBody);
             if (sendNowBody != message.Body)
                 message.Body = sendNowBody;
             BindGeneratedSpill(sessionId, message, sendNowBody);
@@ -2637,7 +2637,7 @@ public sealed partial class SessionMessageQueueService
             head.SpecialistInputPolicyJson,
             channelMarker: head.Origin == QueuedMessageOrigin.Channel
                 ? ChannelPromptCorrelation.OpeningMarker(head.Body) : null);
-        HoldChannelSpillBytes(head, composed, body);
+        HoldGeneratedSpillBytes(head, composed, body);
         BindGeneratedSpill(sessionId, head, body);
         if (!await HoldSpillBodyForDeliveryAsync(db, sessionId, head, body, ct))
             return FlushResult.Failed;
