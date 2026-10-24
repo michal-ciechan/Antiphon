@@ -294,6 +294,18 @@ internal static class Program
         // composer shows ONE placeholder for the whole paste, not one per read.
         var pasteBuffer = new StringBuilder();
 
+        // Opt-in native delivery fixtures need readable composer evidence for CARD-0680.
+        // Keep the ordinary append-only transport model unchanged for its existing callers.
+        var claudeComposer = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_CLAUDE_COMPOSER") == "1";
+        void PaintClaudeComposer()
+        {
+            if (!claudeComposer || overlayActive || rcMenuActive) return;
+            var rule = new string('─', 60);
+            Write("\r\n" + rule + "\r\n❯ " + composer.ToString().ReplaceLineEndings("\r\n  ")
+                + "\r\n" + rule + "\r\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\r\n");
+        }
+        PaintClaudeComposer();
+
         while (true)
         {
             Thread.Sleep(3);
@@ -338,6 +350,7 @@ internal static class Program
             {
                 if (!ProcessBurst(burst))
                     return 0;
+                PaintClaudeComposer();
             }
         }
 
