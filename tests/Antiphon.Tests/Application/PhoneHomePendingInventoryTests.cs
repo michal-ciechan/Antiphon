@@ -76,6 +76,7 @@ public class PhoneHomePendingInventoryTests
         // Start a real manual-turn tracker through the adapter, then remove that adapter before
         // the wait starts. The persisted row is known, while list membership is still missing.
         h.Runtime.Register(h.SessionId, h.Bridge.Adapter);
+        await h.Bridge.Adapter.EnableClaudeDialogObservationAsync(h.Schema.ConnectionString, h.SessionId);
         h.Bridge.Provider.GetRequiredService<IOptions<AgentSessionSettings>>().Value.FirstDeltaTimeoutMs = 100;
         await using (var db = h.Db())
             await db.RunAttempts.Where(a => a.Id == h.AttemptId).ExecuteUpdateAsync(u => u.SetProperty(a => a.Phase, RunPhase.Succeeded));
