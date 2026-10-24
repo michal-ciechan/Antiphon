@@ -278,7 +278,12 @@ public class HerdrSupervisionBackoffTests
     public async Task A_launch_still_owned_by_the_queue_is_consumed_only_after_its_catch_classifies_it()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var adapter = new FakeAgentProtocolAdapter { StartGate = gate, ThrowOnStart = Timeout() };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            StartGate = gate, ThrowOnStart = Timeout(),
+            ThrowOnStartFactory = () => { entered.TrySetResult(); return null; },
+        };
         await using var f = await Fixture.CreateAsync([adapter]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed);
         await f.TickAsync();
@@ -286,7 +291,11 @@ public class HerdrSupervisionBackoffTests
         {
             using var scope = f.Harness.Provider.CreateScope();
             await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(f.AgentId, new(), CancellationToken.None);
+            // Let the queued worker pass its Starting-state preflight before the fixture
+            // changes the row to Failed; otherwise it can return without entering StartAsync.
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             var session = await f.SessionAsync();
+            f.Harness.LaunchQueue.Owns(session.Id).ShouldBeTrue();
             await using var db = f.Db();
             await db.AgentSessions.Where(s => s.Id == session.Id).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.Status, SessionStatus.Failed)
