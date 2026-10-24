@@ -42,7 +42,7 @@ public partial class DispatchBaseNotificationTests
         var sink = new WarningLaunchSink();
         var h = await OpenAsync();
         var parent = h.SessionId; var parentAgent = h.AgentId;
-        await using var replacement = await BridgeQueueHarness.CreateAsync(new()
+        await using var replacement = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { AlwaysOn = true, PreserveDatabaseOnDispose = true, ConnectionString = schema.ConnectionString });
         Guid taskId;
         List<AgentTask> siblings;
@@ -200,7 +200,7 @@ public partial class DispatchBaseNotificationTests
 
         async Task<BridgeQueueHarness> OpenAsync(Guid? session = null, Guid? agent = null)
         {
-            var harness = await BridgeQueueHarness.CreateAsync(new()
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 AlwaysOn = true, PreserveDatabaseOnDispose = true, ValidateScopes = true,
                 ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
