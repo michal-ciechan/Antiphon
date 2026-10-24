@@ -291,15 +291,14 @@ public sealed class WorktreeGuardedCleanupTests
         Directory.Exists(h.H.Fixture.Source).ShouldBeTrue();
     }
 
-    // Review 5b79328d item 2 over real Git: a nested `.antiphon` tree under a disposable directory is
-    // protected, so the directory is not wholly disposable.
+    // A protected report name inside a nested `.antiphon` tree still overrides disposable output.
     [Test]
     public async Task C665_NestedAntiphonInDisposableDirectoryIsRefused()
     {
         await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
         var reads = 0;
         var directory = Path.Combine(h.H.Fixture.Source, "bin-private");
-        var path = Path.Combine(directory, ".antiphon", "other.json");
+        var path = Path.Combine(directory, ".antiphon", "report.md");
         h.OtherCommand = async (repo, args) => {
             if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
             {
@@ -311,7 +310,7 @@ public sealed class WorktreeGuardedCleanupTests
         };
         var result = await h.RemoveAsync();
         result.Residue.ShouldBe("ignored_content_preserved"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
-        result.Detail.ShouldBe("protected: bin-private/.antiphon/other.json");
+        result.Detail.ShouldBe("protected: bin-private/.antiphon/report.md");
         (await File.ReadAllTextAsync(path)).ShouldBe("nested spill");
     }
 
