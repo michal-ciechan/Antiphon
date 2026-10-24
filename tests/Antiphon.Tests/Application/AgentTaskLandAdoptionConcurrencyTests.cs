@@ -262,9 +262,6 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
     {
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
-        // Exercise the repository mutation gate specifically. The newer outer execution
-        // gate otherwise refuses the competing drain before it reaches this test's cut.
-        h.ExecutionLeaseOverride = new PassThroughExecutionLease();
         var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
         fixture.Interceptor.RequestId = request.RequestId;
@@ -272,7 +269,14 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         AgentTaskLandRequest? held = null;
         fixture.Boundary.AtCut = async () =>
         {
-            (await h.RunRequestAsync(request.RequestId)).ShouldBe(LandRunResult.Held, "V2.CompetingDrainHeldByRealLease");
+            // Only the competitor passes the outer gate. The owner retains the genuine
+            // execution lease required for its verification window after source recovery.
+            h.ExecutionLeaseOverride = new PassThroughExecutionLease();
+            try
+            {
+                (await h.RunRequestAsync(request.RequestId)).ShouldBe(LandRunResult.Held, "V2.CompetingDrainHeldByRealLease");
+            }
+            finally { h.ExecutionLeaseOverride = null; }
             await using var db = h.CreateContext();
             held = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
             held.State.ShouldBe(LandRequestState.Held);
