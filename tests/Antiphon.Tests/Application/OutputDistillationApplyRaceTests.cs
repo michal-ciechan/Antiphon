@@ -193,6 +193,7 @@ public class OutputDistillationApplyRaceTests
             await db.AgentSessions.Where(s => s.Id == session).ExecuteUpdateAsync(s => s.SetProperty(x => x.Cwd, h.Scratch));
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, session);
         adapter.OnSubmitted = _ => { submitted.TrySetResult(); return Task.CompletedTask; };
         h.Provider.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
         var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
@@ -261,6 +262,7 @@ public class OutputDistillationApplyRaceTests
             await edit.AgentSessions.Where(s => s.Id == session).ExecuteUpdateAsync(s => s.SetProperty(x => x.Cwd, h.Scratch));
         var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, session);
         h.Provider.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
