@@ -1219,7 +1219,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
             head.Succeeded.ShouldBeTrue();
             var artifacts = Path.Combine(root, "verify-artifacts", Guid.NewGuid().ToString("N"));
             Invocations.Add((worktree, filter, head.Output.Trim(), artifacts));
-            LastResult = await Inner.VerifyAsync(worktree, filter, correlation with { ArtifactsPath = artifacts }, ct);
+            // These probes inspect their own fresh TRX, rather than the shared artifact cache.
+            LastResult = await Inner.VerifyAsync(worktree, filter,
+                correlation with { ArtifactsPath = artifacts, CommonDirectory = null }, ct);
             return LastResult;
         }
     }

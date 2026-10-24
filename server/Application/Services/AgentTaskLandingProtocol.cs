@@ -607,7 +607,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             op.RepositoryPath, op.CommonDirectory, admin.Output.Trim(), op.TargetBeforeSha, Destination(op),
             op.VerificationFilter, request.ExpectedSourceSha, request.ReviewEvidenceId, request.RecoveryMode,
             request.RecoverySourceTaskId, op.RecoveryRefPrefix,
-            registrations.Where(r => r.Branch == op.SourceFullRef).Select(r => r.Path).Order(StringComparer.Ordinal).ToArray(),
+            // A branch switch in the task checkout is cleanup residue (CARD-1463). Bind its
+            // registration path independently of its current branch; other registrations still fence resume.
+            registrations.Where(r => r.Branch == op.SourceFullRef || SamePath(r.Path, op.WorktreePath))
+                .Select(r => r.Path).Order(StringComparer.Ordinal).ToArray(),
             Directory.Exists(op.WorktreePath) ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null),
             registrations);
     }
