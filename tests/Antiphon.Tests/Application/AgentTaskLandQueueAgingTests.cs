@@ -240,7 +240,7 @@ public sealed class AgentTaskLandQueueAgingTests
     public async Task C641_Queue_aged_note_reaches_busy_and_idle_caller(bool busy)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
