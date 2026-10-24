@@ -482,6 +482,7 @@ public sealed class CodexCliObservationTests
             .SetProperty(a => a.Kind, AgentKind.Codex).SetProperty(a => a.ModelLevel, AgentModelLevel.High));
         await db.AgentSessions.Where(s => s.Id == warm.Harness.SessionId).ExecuteUpdateAsync(u => u
             .SetProperty(s => s.AgentKind, AgentKind.Codex).SetProperty(s => s.EffectiveModelId, "gpt-6.1-sol"));
+        warm.Harness.Adapter.CodexComposerChrome = true;
         warm.Client.Sample = sample(DateTimeOffset.UtcNow);
         AgentTaskCreatedDto created;
         using (var scope = warm.Harness.Provider.CreateScope())
@@ -630,11 +631,11 @@ public sealed class CodexCliObservationTests
                     services.AddSingleton<ISessionRunnerClient>(client);
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(Registry()));
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
-                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString, clock)
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString, clock, sp)
                     { ReadyHold = busy ? new(TaskCreationOptions.RunContinuationsAsynchronously) : null });
                     services.AddSingleton<LandDeliveryBoundary>(boundary);
                     if (busy) services.AddSingleton<IEventBus>(sp => new BusyEventBus(
-                        sp.GetRequiredService<MockEventBus>(), schema.ConnectionString));
+                        sp.GetRequiredService<MockEventBus>(), schema.ConnectionString, sp));
                     services.AddSingleton(sp =>
                     {
                         var settings = sp.GetRequiredService<IOptions<DelegationSettings>>().Value;
@@ -727,7 +728,7 @@ public sealed class CodexCliObservationTests
 
     // A cold launch writes its own restart boundary. Mark activity AFTER that boundary,
     // at SessionStarted and before the real launch queue's boot flush.
-    private sealed class BusyEventBus(MockEventBus inner, string connection) : IEventBus
+    private sealed class BusyEventBus(MockEventBus inner, string connection, IServiceProvider provider) : IEventBus
     {
         public Task PublishToAllAsync(string name, object payload, CancellationToken ct = default) =>
             inner.PublishToAllAsync(name, payload, ct);
@@ -736,16 +737,19 @@ public sealed class CodexCliObservationTests
             if (name == "SessionStarted")
             {
                 var id = (Guid)payload.GetType().GetProperty("sessionId")!.GetValue(payload)!;
-                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.TurnEnd,
-                    stopReason: "end_turn", connectionString: connection);
-                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.AssistantText,
-                    "C959 activity after TurnEnd", connectionString: connection);
+                await StoreAwareTranscript.WriteAsync(provider, id, async () =>
+                {
+                    await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.TurnEnd,
+                        stopReason: "end_turn", connectionString: connection);
+                    await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.AssistantText,
+                        "C959 activity after TurnEnd", connectionString: connection);
+                });
             }
             await inner.PublishToGroupAsync(group, name, payload, ct);
         }
     }
 
-    private sealed class Factory(AgentSessionRuntime runtime, string connection, TimeProvider clock) : IAgentProtocolAdapterFactory
+    private sealed class Factory(AgentSessionRuntime runtime, string connection, TimeProvider clock, IServiceProvider provider) : IAgentProtocolAdapterFactory
     {
         public TaskCompletionSource<bool>? ReadyHold { get; init; }
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
@@ -753,13 +757,14 @@ public sealed class CodexCliObservationTests
         {
             var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime, ReadyHold = ReadyHold };
             if (kind == AgentKind.ClaudeCode) adapter.WithClaudeDialogObservation();
-            adapter.OnSubmitted = async text =>
+            if (kind == AgentKind.Codex) adapter.CodexComposerChrome = true;
+            adapter.OnSubmitted = text => StoreAwareTranscript.WriteAsync(provider, adapter.StartedSessionId!.Value, async () =>
             {
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, text,
                     timestamp: clock.GetUtcNow().UtcDateTime, connectionString: connection, createdAtUtc: clock.GetUtcNow().UtcDateTime);
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId.Value, TranscriptKinds.TurnEnd,
                     stopReason: "end_turn", connectionString: connection);
-            };
+            });
             Created.Add(adapter);
             return adapter;
         }
