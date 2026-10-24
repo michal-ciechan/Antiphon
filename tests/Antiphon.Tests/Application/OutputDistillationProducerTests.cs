@@ -79,6 +79,7 @@ public class OutputDistillationProducerTests
         var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(scratch.Path, parent);
         await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, new string('z', 1_400));
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         adapter.OnSubmitted = async body =>
