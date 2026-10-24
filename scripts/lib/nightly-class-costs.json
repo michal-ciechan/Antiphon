@@ -139,6 +139,66 @@
       "seconds": 1662,
       "basis": "observed-bound",
       "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests": {
+      "nodes": 27,
+      "seconds": 1740,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 993.855 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: recorded Windows class node count. Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.RunCheckpointScriptTests": {
+      "nodes": 26,
+      "seconds": 1420,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 811.425 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: recorded Windows class node count. Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.EvidenceDeletionGuardTests": {
+      "nodes": 6,
+      "seconds": 610,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 344.007 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: recorded Windows class node count. Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests": {
+      "nodes": 15,
+      "seconds": 600,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 339.016 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: recorded Windows class node count. Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.RunCheckpointSourceScriptTests": {
+      "nodes": 6,
+      "seconds": 400,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 223.116 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: recorded Windows class node count. Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.RetiredTempContainerScriptTests": {
+      "nodes": 13,
+      "seconds": 220,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 124.8 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.EvidenceDiffGuardTests": {
+      "nodes": 19,
+      "seconds": 210,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 119.9 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.EvidenceApprovedFixtureGuardTests": {
+      "nodes": 7,
+      "seconds": 190,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 103.7 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.BuildSlotScriptTests": {
+      "nodes": 19,
+      "seconds": 180,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 100.8 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Scripts.EvidenceSupplementalDeletionGuardTests": {
+      "nodes": 10,
+      "seconds": 140,
+      "basis": "observed-bound",
+      "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 75.9 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
     }
   }
 }
