@@ -300,6 +300,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
             var terminal = new FakeAgentProtocolAdapter();
+            if (Kind == AgentKind.Codex) terminal.CodexComposerChrome = true;
             if (Kind == AgentKind.ClaudeCode)
             {
                 terminal.StartupOutput = "Claude Code\n";
