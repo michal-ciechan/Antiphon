@@ -30,7 +30,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         await using var land = new LandingSafetyHarness();
         await land.InitializeAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = land.Schema.ConnectionString,
         });
@@ -59,7 +59,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         var capture = new MutationDispatchTestsCapture();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
+        await using var bridge = await CreateBridgeAsync(DispatchOptions(world, capture));
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -78,7 +78,7 @@ public sealed partial class PostLandMutationDeliveryTests
     public async Task C478_V09c_SettledMutationToCaller()
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = world.Host.Schema.ConnectionString,
             ConfigureServices = services =>
@@ -671,7 +671,7 @@ public sealed partial class PostLandMutationDeliveryTests
         }
         await using var land = new LandingSafetyHarness();
         await land.InitializeAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = land.Schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = land.Schema.ConnectionString });
         land.Messages = h.Queue;
         await using (var db = land.CreateContext())
         {
@@ -783,7 +783,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = h.Schema.ConnectionString });
+        await using var bridge = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = h.Schema.ConnectionString });
         h.Messages = bridge.Queue;
         await using (var db = h.CreateContext())
         {
@@ -838,7 +838,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         var capture = new MutationDispatchTestsCapture();
-        await using var h = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
+        await using var h = await CreateBridgeAsync(DispatchOptions(world, capture));
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -849,7 +849,7 @@ public sealed partial class PostLandMutationDeliveryTests
             await db.SaveChangesAsync();
         }
         var (session, queued, adapter) = await DispatchWorkerBriefAsync(world, h, capture, busy);
-        await using var recovered = await BridgeQueueHarness.CreateAsync(DispatchOptions(world, capture));
+        await using var recovered = await CreateBridgeAsync(DispatchOptions(world, capture));
         using (var scope = recovered.Provider.CreateScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
         await recovered.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
@@ -868,7 +868,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task SettlementCrashAsync(string cut, bool busy)
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = world.Host.Schema.ConnectionString,
             ConfigureServices = services =>
@@ -1180,7 +1180,7 @@ public sealed partial class PostLandMutationDeliveryTests
         }
         await db.SaveChangesAsync();
 
-        await using var recovery = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovery = await CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = connection,
         });
@@ -1227,7 +1227,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         var world = await PostLandMutationWorld.CreateAsync();
         options ??= new();
-        var bridge = await BridgeQueueHarness.CreateAsync(new()
+        var bridge = await CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = world.Host.Schema.ConnectionString,
             ConfigureDbContext = options.ConfigureDbContext,
@@ -1361,7 +1361,7 @@ public sealed partial class PostLandMutationDeliveryTests
     {
         await using var land = new LandingSafetyHarness();
         await land.InitializeAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = land.Schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = land.Schema.ConnectionString });
         land.Messages = h.Queue;
         await using (var db = land.CreateContext())
         {
@@ -1383,7 +1383,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task CompletionWrongIdentityAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var taskId = Guid.NewGuid();
         var body = "Mutation complete.\n--- next stage ---\nnext: none\n" + DelegationReportFormatter.ReportToken(taskId, "done");
@@ -1418,7 +1418,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task CompletionWrongSessionAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var taskId = Guid.NewGuid();
         var body = "Mutation complete.\n--- next stage ---\nnext: none\n" + DelegationReportFormatter.ReportToken(taskId, "done");
@@ -1446,7 +1446,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task LandWrongSessionAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -1473,7 +1473,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task LandWrongIdentityAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -1498,7 +1498,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task LandPartialPromptAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -1522,7 +1522,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task LandStalePromptAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -1630,6 +1630,10 @@ public sealed partial class PostLandMutationDeliveryTests
         });
         await db.SaveChangesAsync();
     }
+
+    // This family models a supported Claude caller, including its generation-bound dialog observation.
+    private static Task<BridgeQueueHarness> CreateBridgeAsync(BridgeQueueHarness.HarnessOptions options) =>
+        BridgeQueueHarness.CreateAsync(options with { ClaudeDialogObservation = true });
 
     private static BridgeQueueHarness.HarnessOptions DispatchOptions(
         PostLandMutationWorld world, MutationDispatchTestsCapture capture) => new()
