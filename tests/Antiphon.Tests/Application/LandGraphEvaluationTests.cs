@@ -420,6 +420,8 @@ public sealed partial class LandGraphEvaluationTests
 
     internal sealed record ToolRun(int ExitCode, string Text)
     {
+        public string PathText => Text;
+
         public IReadOnlyList<string> Lines { get; } =
             Text.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToArray();
     }

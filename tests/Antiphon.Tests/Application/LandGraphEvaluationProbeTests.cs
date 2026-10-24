@@ -5,6 +5,22 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class LandGraphEvaluationTests
 {
+    [Test]
+    [Arguments(@"C:\Users\fixture\docs\flag.md", "C:/Users/fixture/docs/flag.md")]
+    [Arguments(@"C:\Users\fixture\docs\missing.md", "C:/Users/fixture/docs/missing.md")]
+    [Arguments(@"C:\Users\fixture\docs\new", "C:/Users/fixture/docs/new")]
+    [Arguments(@"C:\Users\fixture\alias\flag.md", "C:/Users/fixture/alias/flag.md")]
+    [Arguments(@"\\host\share\fixture\docs\flag.md", "//host/share/fixture/docs/flag.md")]
+    [Arguments("/tmp/fixture/docs/flag.md", "/tmp/fixture/docs/flag.md")]
+    public void C1483_PathDiagnosticsUsePortableSeparators(string path, string expected)
+    {
+        const string prefix = "refused: App/App.csproj file-probe FileOrDirectoryExists ";
+        var run = new ToolRun(1, prefix + path);
+
+        run.PathText.ShouldBe(prefix + expected);
+        run.Text.ShouldBe(prefix + path, "retain the original diagnostic for failure evidence");
+    }
+
     // V-11: recording catches an existence dependency even when the file does not exist yet.
     [Test]
     [Arguments("docs/flag.md")]
@@ -29,7 +45,7 @@ public sealed partial class LandGraphEvaluationTests
         run.ExitCode.ShouldBe(1, run.Text);
         run.Text.ShouldContain("file-probe", Case.Sensitive, run.Text);
         run.Text.ShouldContain("App/App.csproj", Case.Sensitive, run.Text);
-        run.Text.ShouldContain(path, Case.Sensitive, run.Text);
+        run.PathText.ShouldContain(path, Case.Sensitive, run.Text);
         run.Lines.ShouldNotContain("approved", run.Text);
         repo.AssertUntouched();
     }
