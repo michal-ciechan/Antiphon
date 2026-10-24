@@ -58,15 +58,18 @@ public partial class HerdrAlwaysOnChannelParityTests
             var first = await StartNativeAsync(h, agent.Id, new(Fresh: true, Prompt: marker));
             var a = Guid.Parse(first.PersistentSessionId!);
             var directory = NativeDirectory(home, root, a, kind);
-            var firstProof = ConfirmNativePromptAsync(fake, directory, a, marker, kind, deadline.Token);
-            proofs.Add(firstProof);
+            var inputRefused = kind == AgentKind.ClaudeCode && backend == SessionBackend.Herdr;
+            var firstProof = inputRefused ? Task.CompletedTask
+                : ConfirmNativePromptAsync(fake, directory, a, marker, kind, deadline.Token);
+            if (!inputRefused) proofs.Add(firstProof);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token);
-            await RequireCompletedAsync(a);
+            if (inputRefused) await RequireClaudeHerdrInputRefusedAsync(h, a);
+            else await RequireCompletedAsync(a);
             await firstProof;
             if (fake is not null)
             {
-                // FakeHerdr emulates the provider's screen/transcript lane. Seed its native store;
-                // the real runner still validates Grok's directory and writes the provider argv.
+                // FakeHerdr emulates the provider's screen/transcript lane. Seed existing native
+                // history independently of delivery; Unknown custody cannot confirm the marker.
                 Directory.CreateDirectory(directory);
                 await File.WriteAllTextAsync(Path.Combine(directory, "history-marker.txt"), marker);
             }
@@ -75,7 +78,9 @@ public partial class HerdrAlwaysOnChannelParityTests
             var second = await StartNativeAsync(h, agent.Id, new(Fresh: true));
             var b = Guid.Parse(second.PersistentSessionId!); b.ShouldNotBe(a);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token);
-            await RequireCompletedAsync(b); await StopNativeAsync(h, agent.Id);
+            if (inputRefused) await RequireClaudeHerdrInputRefusedAsync(h, b);
+            else await RequireCompletedAsync(b);
+            await StopNativeAsync(h, agent.Id);
             var chatId = await BindChannelAsync(h, agent.Id);
             var nonce = $"queued-channel-recovery-{Guid.NewGuid():N}";
             var queuedId = Guid.NewGuid();
@@ -88,15 +93,21 @@ public partial class HerdrAlwaysOnChannelParityTests
                 current.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync();
             }
-            var resumedProof = ConfirmNativePromptAsync(fake, directory, a, nonce, kind, deadline.Token);
-            proofs.Add(resumedProof);
+            var resumedProof = inputRefused ? Task.CompletedTask
+                : ConfirmNativePromptAsync(fake, directory, a, nonce, kind, deadline.Token);
+            if (!inputRefused) proofs.Add(resumedProof);
             await StartNativeAsync(h, agent.Id, new(ResumeSessionId: a));
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token);
-            await RequireCompletedAsync(a);
+            if (inputRefused) await RequireClaudeHerdrInputRefusedAsync(h, a);
+            else await RequireCompletedAsync(a);
             await resumedProof;
             var requests = h.Runner!.StartRequests;
-            await StartNativeAsync(h, agent.Id, new(ResumeSessionId: a));
-            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), deadline.Token);
+            if (!inputRefused)
+            {
+                // Idempotent selection is supported only after a completed, live launch.
+                await StartNativeAsync(h, agent.Id, new(ResumeSessionId: a));
+                await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), deadline.Token);
+            }
             h.Runner.StartRequests.Count.ShouldBe(3, "a repeated selection must not enqueue a second launch");
             requests.Count.ShouldBe(3);
             requests.Select(r => r.SessionId).ShouldBe([a, b, a]);
@@ -111,7 +122,7 @@ public partial class HerdrAlwaysOnChannelParityTests
                 fake.LastLaunchScriptContent.ShouldContain(a.ToString("D"));
                 fake.LastLaunchScriptContent.ShouldNotContain("'--session-id'");
                 (await File.ReadAllTextAsync(Path.Combine(directory, "history-marker.txt"))).ShouldBe(marker);
-                CountAgentPanes(fake).ShouldBe(1);
+                CountAgentPanes(fake).ShouldBe(inputRefused ? 0 : 1);
             }
             else
             {
@@ -119,6 +130,25 @@ public partial class HerdrAlwaysOnChannelParityTests
                 NativePrompts(directory, kind).Count(x => x.Contains(nonce, StringComparison.Ordinal)).ShouldBe(1);
                 (await h.Runner.ListAsync(default)).Count(s => s.ExitCode is null && s.Status != "Exited").ShouldBe(1);
             }
+            if (inputRefused)
+            {
+                await using var verify = CreateContext();
+                var held = (await verify.SessionQueuedMessages.FindAsync(queuedId))!;
+                held.AgentSessionId.ShouldBe(a, "history selection still transfers never-attempted work");
+                held.Status.ShouldBe(QueuedMessageStatus.Pending);
+                held.Body.ShouldBe(nonce);
+                held.DeliveryAttempts.ShouldBe(0);
+                held.LastDeliveryBaselineSequence.ShouldBeNull();
+                (await verify.Agents.FindAsync(agent.Id))!.PersistentSessionId.ShouldBe(a.ToString("D"));
+                (await verify.AgentSessions.FindAsync(b))!.StandingAgentId.ShouldBe(agent.Id);
+                fake!.Requests.Where(r => r.GetProperty("method").GetString() == "pane.send_text"
+                    && r.GetProperty("params").GetProperty("text").GetString()!.Contains(nonce, StringComparison.Ordinal))
+                    .ShouldBeEmpty("Unknown custody must not type the queued body");
+                h.Messaging.SentReplies.ShouldBeEmpty("no receipt or provider turn was produced");
+                (await h.Dispatcher.PendingCountAsync(a)).ShouldBe(0);
+                return;
+            }
+
             // CARD-1276: the queue marks the legacy row before its first typed attempt
             // (ChannelPromptCorrelation.PrepareFirstAttempt), and the submitted prompt must carry
             // that marker (docs/session-runtime-invariants.md, CARD-0584). The delivered wire body is:
