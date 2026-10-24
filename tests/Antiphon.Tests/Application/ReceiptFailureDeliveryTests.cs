@@ -111,6 +111,7 @@ public class ReceiptFailureDeliveryTests
         var callerFault = new CallerFailureFault(task.Id, cut);
         var recovered = CreateProvider(schema, callerFault, clock);
         await using var caller = new FakeAgentProtocolAdapter();
+        await caller.EnableClaudeDialogObservationAsync(schema.ConnectionString, callerId);
         try
         {
             caller.OnSubmitted = async submitted =>
@@ -376,6 +377,7 @@ public class ReceiptFailureDeliveryTests
         var fault = new DeliveryFault(task.Id, cut);
         var provider = CreateProvider(schema, fault, clock);
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(schema.ConnectionString, sessionId);
         adapter.OnSubmitted = async submitted =>
         {
             // Read back the actual adapter submission; never synthesize acceptance from
