@@ -196,6 +196,39 @@ public class SessionMessageQueueServiceTests
     }
 
     [Test]
+    public async Task SendNow_preserves_a_complete_local_spill_for_a_queued_ui_message()
+    {
+        await using var h = await CreateHarnessAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var cwd = (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId)).Cwd!;
+        var body = "Complete queued UI message: " + new string('x', 2_000);
+        try
+        {
+            await MarkWorkingAsync(h);
+            var queued = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+            var id = queued.Messages.ShouldHaveSingleItem().Id;
+
+            await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
+
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            row.DeliveryAttempts.ShouldBe(1);
+            row.Body.ShouldContain(TypedBodySpill.PointerHeadline);
+            h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(row.Body);
+            (await File.ReadAllTextAsync(TypedBodySpill.InboxAbsolutePath(cwd, id.ToString("D"))))
+                .ShouldBe(body);
+            var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(t =>
+                t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt);
+            PromptSubmissionMatch.IsCompleteIn(row.Body, prompt.Text!).ShouldBeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(cwd)) Directory.Delete(cwd, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Cancel_removes_a_pending_message_without_delivering_it()
     {
         var h = await CreateHarnessAsync();
