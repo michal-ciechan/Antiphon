@@ -28,7 +28,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private static string Label(string method, string variant) => "C987." + method + "." + variant;
-    private static string AuthorityPath(HostCleanupToolFixture f) => f.Run + "/tool-copy-authority.json";
+    private static string AuthorityPath(HostCleanupToolFixture f) => Path.Combine(f.Run, "tool-copy-authority.json");
 
     [Test]
     [Arguments(0)] [Arguments(1)]
@@ -99,7 +99,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
             switch (variant)
             {
                 case "roster-count": f.Io.Nodes.Remove(f.Payload); expected = "tool-authority-inventory-mismatch"; break;
-                case "roster-membership": f.Io.Nodes.Remove(f.Payload); f.Io.Put(f.Tool + "/foreign.dll", "keep"); break;
+                case "roster-membership": f.Io.Nodes.Remove(f.Payload); f.Io.Put(Path.Combine(f.Tool, "foreign.dll"), "keep"); break;
                 case "content": f.Io.Nodes[f.Payload].Bytes = Encoding.UTF8.GetBytes("evil"); break;
                 case "stat-before": f.Io.Nodes[f.Payload].Stat = f.Io.Nodes[f.Payload].Stat with { Changed = 42 }; break;
                 case "stat-after":
@@ -133,19 +133,19 @@ public sealed class HostCleanupCheckpointAuthorityTests
                     expected = "tool-authority-root-mismatch"; break;
                 case "missing": f.Io.Nodes.Remove(AuthorityPath(f)); expected = "tool-authority-unreadable"; break;
                 case "forged-ledger":
-                    f.Owner.ToolCopy = null; f.Io.Put(f.Tool + "/.checkpoint-output-ledger.json", "{}");
+                    f.Owner.ToolCopy = null; f.Io.Put(Path.Combine(f.Tool, ".checkpoint-output-ledger.json"), "{}");
                     RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
                     new CheckpointOutputLedger(fresh).Check(f.Tool)!.StartsWith("output-memory-authority-missing", StringComparison.Ordinal).ShouldBeTrue(label);
                     f.Cleanup(fresh).Remove(f.Run).Reason.Contains("output-memory-authority-missing", StringComparison.Ordinal).ShouldBeTrue(label);
                     (await f.Wait(fresh)).ShouldBe(2, label);
                     f.Io.Text(f.Payload).ShouldBe("keep", label); continue;
                 case "linked":
-                    f.Io.Put(f.Files.Parent + "/outside", "outside-sentinel");
-                    f.Io.Nodes[f.Payload].Target = f.Files.Parent + "/outside";
+                    f.Io.Put(Path.Combine(f.Files.Parent, "outside"), "outside-sentinel");
+                    f.Io.Nodes[f.Payload].Target = Path.Combine(f.Files.Parent, "outside");
                     f.Io.Nodes[f.Payload].Stat = f.Io.Nodes[f.Payload].Stat with { Kind = "symlink", Mode = 0xA180 };
                     expected = "tool-authority-inventory-unreadable"; break;
                 case "hardlinked":
-                    f.Io.Put(f.Files.Parent + "/outside", "outside-sentinel");
+                    f.Io.Put(Path.Combine(f.Files.Parent, "outside"), "outside-sentinel");
                     f.Io.Nodes[f.Payload].Stat = f.Io.Nodes[f.Payload].Stat with { Links = 2 };
                     expected = "tool-authority-inventory-unreadable"; break;
                 default: throw new InvalidOperationException(variant);
@@ -159,7 +159,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
             f.Io.Count("unlink").ShouldBe(0, label);
             (await f.Wait(fresh)).ShouldBe(2, label);
             f.Io.DirectoryExists(f.Tool).ShouldBeTrue(label);
-            if (scenario is "linked" or "hardlinked") f.Io.Text(f.Files.Parent + "/outside").ShouldBe("outside-sentinel", label);
+            if (scenario is "linked" or "hardlinked") f.Io.Text(Path.Combine(f.Files.Parent, "outside")).ShouldBe("outside-sentinel", label);
             if (variant == "tool-path") f.Io.Events.Any(e => e.Path.StartsWith(record.ToolDirectory, StringComparison.Ordinal)).ShouldBeFalse(label);
         }
     }
@@ -169,8 +169,8 @@ public sealed class HostCleanupCheckpointAuthorityTests
         // Add the nested positive before sealing so the later directory recheck is independently reached.
         if (variant == "final-subdirectory")
         {
-            SafeWrite.Require(f.Files.Write.CreateDirectory(f.Tool + "/nested", f.Files.Write.Under(f.Tool)));
-            SafeWrite.Require(f.Files.Write.Text(f.Tool + "/nested/child", "keep", f.Files.Write.Under(f.Tool)));
+            SafeWrite.Require(f.Files.Write.CreateDirectory(Path.Combine(f.Tool, "nested"), f.Files.Write.Under(f.Tool)));
+            SafeWrite.Require(f.Files.Write.Text(Path.Combine(f.Tool, "nested", "child"), "keep", f.Files.Write.Under(f.Tool)));
             f.Owner.ToolCopy = ToolCopyAuthority.Seal(f.Run, f.Owner, f.Context);
         }
         var authority = ToolCopyAuthority.Load(f.Run, f.Owner, out var refusal, f.Files.FreshContext());
@@ -180,19 +180,19 @@ public sealed class HostCleanupCheckpointAuthorityTests
             authority.Remove(f.Tool + "-foreign").ShouldBe("tool-authority-root-mismatch", label);
             f.Io.Count("unlink").ShouldBe(0, label); return;
         }
-        var target = variant == "final-subdirectory" ? f.Tool + "/nested" : variant == "final-entry" ? f.Payload : f.Tool;
+        var target = variant == "final-subdirectory" ? Path.Combine(f.Tool, "nested") : variant == "final-entry" ? f.Payload : f.Tool;
         var observations = 0;
         f.Io.Before = (op, path) =>
         {
             if (variant == "late-addition" && op == "rmdir" && path == f.Tool)
-                f.Io.Put(f.Tool + "/late", "keep-late");
+                f.Io.Put(Path.Combine(f.Tool, "late"), "keep-late");
             else if (op == "stat" && path == target && ++observations == (variant == "final-root" ? 2 : variant == "final-entry" ? 4 : 3))
                 f.Io.Nodes[target].Stat = f.Io.Nodes[target].Stat with { Inode = 98765 };
         };
         if (variant == "late-addition")
         {
             Should.Throw<IOException>(() => authority.Remove(f.Tool), label);
-            f.Io.Text(f.Tool + "/late").ShouldBe("keep-late", label);
+            f.Io.Text(Path.Combine(f.Tool, "late")).ShouldBe("keep-late", label);
             f.Io.RecursiveIntents.ShouldBe(0, label);
         }
         else
@@ -210,7 +210,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         f.Io.Before = (op, path) =>
         {
             if (variant == "seal-creation" && op == "enumerate" && path == f.Tool && ++inventories == 2)
-                f.Io.Put(f.Tool + "/unrecorded", "outside-creation");
+                f.Io.Put(Path.Combine(f.Tool, "unrecorded"), "outside-creation");
         };
         f.Io.AfterRead = path =>
         {
@@ -240,7 +240,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
                 variant == "expected-sha" ? new string('b', 40) : null);
             exit.ShouldBe(variant == "dead-undone" ? 6 : variant == "unknown-wait" ? 75 : 2, Label(method, variant));
             if (variant == "dead-undone") output.ToString().ShouldContain("executor died without phase=done");
-            else { f.Io.Count("open", f.Run + "/.cleanup.lock").ShouldBe(0); f.Io.Count("unlink").ShouldBe(0); f.Io.DirectoryExists(f.Tool).ShouldBeTrue(); }
+            else { f.Io.Count("open", Path.Combine(f.Run, ".cleanup.lock")).ShouldBe(0); f.Io.Count("unlink").ShouldBe(0); f.Io.DirectoryExists(f.Tool).ShouldBeTrue(); }
         }
         // CARD-1302 item 3: cancellation reaches an already-entered production receipt read.
         var cancelFixture = new HostCleanupToolFixture(sealAuthority: true);
@@ -266,12 +266,12 @@ public sealed class HostCleanupCheckpointAuthorityTests
         const string method = nameof(Marker_transition_requires_gate_identity_and_dead_owner);
         foreach (var variant in new[] { "positive", "gate-writable", "gate-name", "current-state", "expected-state", "root-id", "attempt", "assembly", "created", "owner", "root-path", "fresh-death", "fresh-unknown", "fresh-reused", "first-bytes", "final-bytes", "foreign-file" })
         {
-            var f = new HostCleanupToolFixture(); var root = f.Files.Parent + "/c723-marker";
+            var f = new HostCleanupToolFixture(); var root = Path.Combine(f.Files.Parent, "c723-marker");
             f.Io.CreateDirectory(root);
             var current = new CheckpointRootMarker { RootId = "marker", RootPath = root, AttemptId = "attempt", AssemblyInvocationId = "assembly", CreatedAt = f.Files.Clock.GetUtcNow(), Owner = f.Dead };
             TestRootGuard.Write(root, current, f.Context);
             var expected = JsonSerializer.Deserialize<CheckpointRootMarker>(JsonSerializer.Serialize(current))!; expected.State = "deleting";
-            var marker = root + "/" + TestRootGuard.MarkerName; var label = Label(method, variant);
+            var marker = Path.Combine(root, TestRootGuard.MarkerName); var label = Label(method, variant);
             switch (variant)
             {
                 case "current-state": current.State = "sealed"; f.Io.Put(marker, JsonSerializer.Serialize(current)); break;
@@ -286,16 +286,16 @@ public sealed class HostCleanupCheckpointAuthorityTests
                 case "fresh-reused": f.Io.Processes[f.Dead.Pid] = new(f.Dead.StartUtcTicks + 1, 'R', false); break;
                 case "fresh-unknown": f.Io.Before = (op, path) => { if (op == "process" && path == f.Dead.Pid.ToString()) throw new IOException("unknown"); }; break;
             }
-            var gatePath = root + "/" + TestRootGuard.LockName;
+            var gatePath = Path.Combine(root, TestRootGuard.LockName);
             using var gate = variant is "gate-writable" or "gate-name"
-                ? f.Io.Open(variant == "gate-name" ? root + "/other.lock" : gatePath, FileMode.OpenOrCreate,
+                ? f.Io.Open(variant == "gate-name" ? Path.Combine(root, "other.lock") : gatePath, FileMode.OpenOrCreate,
                     variant == "gate-writable" ? FileAccess.Read : FileAccess.ReadWrite, FileShare.None)
                 : TestRootGuard.TryLock(f.Context, root)!;
-            Should.Throw<IOException>(() => f.Io.Open(gatePath == f.Io.StreamPath(gate) ? gatePath : root + "/other.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
+            Should.Throw<IOException>(() => f.Io.Open(gatePath == f.Io.StreamPath(gate) ? gatePath : Path.Combine(root, "other.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
             var before = f.Io.Text(marker);
             if (variant == "foreign-file")
             {
-                var foreign = root + "/foreign.json"; f.Io.Put(foreign, "foreign");
+                var foreign = Path.Combine(root, "foreign.json"); f.Io.Put(foreign, "foreign");
                 f.Files.Write.Text(foreign, "changed", f.Files.Write.Under(root)).ShouldBe("unrecorded-existing", label);
                 f.Io.Text(foreign).ShouldBe("foreign", label); continue;
             }
@@ -331,17 +331,17 @@ public sealed class HostCleanupCheckpointAuthorityTests
         f.Io.Count("mkdir-exclusive", run).ShouldBe(1, Label(method, "create"));
         await f.StartAsync();
         f.Io.Count("mkdir-exclusive", f.Tool).ShouldBe(1, Label(method, "start"));
-        f.Io.Count("copy", f.Tool + "/Antiphon.Checkpoints.dll").ShouldBe(1, Label(method, "start"));
+        f.Io.Count("copy", Path.Combine(f.Tool, "Antiphon.Checkpoints.dll")).ShouldBe(1, Label(method, "start"));
         f.Io.FileExists(AuthorityPath(f)).ShouldBeTrue(Label(method, "start"));
         ExecutorOwnershipStore.Write(f.Run, f.Dead, f.Context);
-        f.Io.Count("move", f.Run + "/executor-ownership.json").ShouldBe(1, Label(method, "ack"));
+        f.Io.Count("move", Path.Combine(f.Run, "executor-ownership.json")).ShouldBe(1, Label(method, "ack"));
         (await f.Wait(f.Files.FreshContext())).ShouldBe(0, Label(method, "wait") + ": " + f.LastWaitOutput);
         f.Io.Count("rmdir", f.Tool).ShouldBe(1, Label(method, "wait"));
 
         var runFixture = new HostCleanupToolFixture();
-        var source = runFixture.Files.Parent + "/source";
-        runFixture.Io.CreateDirectory(source); runFixture.Io.Put(source + "/Antiphon.Checkpoints.dll", "image");
-        var manifestPath = runFixture.Files.Parent + "/manifest.yaml";
+        var source = Path.Combine(runFixture.Files.Parent, "source");
+        runFixture.Io.CreateDirectory(source); runFixture.Io.Put(Path.Combine(source, "Antiphon.Checkpoints.dll"), "image");
+        var manifestPath = Path.Combine(runFixture.Files.Parent, "manifest.yaml");
         runFixture.Io.Put(manifestPath, ManifestLoader.ToYaml(HostCleanupToolFixture.Manifest()));
         var launches = 0; string? awaitedRun = null;
         var runtime = new CheckpointApp.Runtime
@@ -354,7 +354,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         (await CheckpointProgram.RunAsync(["run", manifestPath, "--repo-root", runFixture.Files.Parent], runtime)).ShouldBe(0, Label(method, "run"));
         launches.ShouldBe(1); awaitedRun.ShouldNotBeNull();
         runFixture.Io.Count("open-read", manifestPath).ShouldBe(1);
-        runFixture.Io.FileExists(awaitedRun + "/tool-copy-authority.json").ShouldBeTrue();
+        runFixture.Io.FileExists(Path.Combine(awaitedRun, "tool-copy-authority.json")).ShouldBeTrue();
 
         var stop = new HostCleanupToolFixture();
         stop.Owner.Launched = new ProcessIdentityProbe(stop.Context).Current(); RunOwnershipStore.Write(stop.Run, stop.Owner, stop.Context);
@@ -374,7 +374,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         output.Io.DirectoryExists(output.Root).ShouldBeFalse();
         await HostCleanupCheckpointCompatibilityTests.RetryDelayProof(Label(method, "delays"));
         // Current-image observation is injected as well, with zero unlink attempts.
-        var image = new HostCleanupToolFixture(); image.Io.ImageDirectory = image.Tool + "/child";
+        var image = new HostCleanupToolFixture(); image.Io.ImageDirectory = Path.Combine(image.Tool, "child");
         image.Cleanup().Remove(image.Run).Reason.ShouldBe("current-executor-image"); image.Io.Count("unlink").ShouldBe(0);
     }
 
