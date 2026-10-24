@@ -72,7 +72,7 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     }
 
     private static Task<BridgeQueueHarness> CreateBridgeAsync(PhoneHomeTestHost host, string connectionString,
-        Guid? sessionId = null, Guid? agentId = null, TimeProvider? clock = null) => BridgeQueueHarness.CreateAsync(new()
+        Guid? sessionId = null, Guid? agentId = null, TimeProvider? clock = null) => ClaudeDialogFixture.CreateBridgeAsync(new()
     {
         TimeProvider = clock, ConnectionString = connectionString, AlwaysOn = false, PreserveDatabaseOnDispose = true,
         AttachSessionId = sessionId, AttachAgentId = agentId,
