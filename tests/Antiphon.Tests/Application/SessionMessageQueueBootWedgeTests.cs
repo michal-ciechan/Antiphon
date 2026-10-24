@@ -261,7 +261,7 @@ public class SessionMessageQueueBootWedgeTests
     [Test]
     public async Task always_on_NoSubmitOutput_still_kills_without_BootWedged()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConfigureServices = RegisterDispatcher,
@@ -285,7 +285,7 @@ public class SessionMessageQueueBootWedgeTests
     }
 
     internal static Task<BridgeQueueHarness> CreateBootWedgeHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = RegisterDispatcher,
