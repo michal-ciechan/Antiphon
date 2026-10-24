@@ -113,6 +113,7 @@ public partial class SessionRuntimeActionRoutingTests
                 await using var db = h.CreateObserverContext();
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, nextGeneration));
                 h.Runtime.SetTestAcceptedStartedAt(h.SessionId, nextGeneration);
+                await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
             }
             await actions.DrainPageAsync(h.SessionId, default);
             h.Adapter.Inputs.ShouldBeEmpty("the admitted idle intent must recheck authoritative current eligibility");
