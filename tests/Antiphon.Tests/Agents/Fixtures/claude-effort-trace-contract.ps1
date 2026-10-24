@@ -9,7 +9,9 @@ try {
     $env:C449_STUCK = '0'
     $env:C1516_NEVER_CLEAR = '0'
     $env:C1516_CLEAR_DELAY_MS = '0'
-    '{"screen":"> Keep xhigh\n     Switch high"}' | Set-Content -LiteralPath $env:C449_CAPTURE
+    $ruler = ([string][char]0x2500) * 40
+    @{ screen = "> Keep xhigh`n     Switch high"; composer = "$ruler`n> {{composer}}`n$ruler`n? for shortcuts" } |
+        ConvertTo-Json | Set-Content -LiteralPath $env:C449_CAPTURE
     . (Join-Path $PSScriptRoot 'claude-effort-dialog.ps1') -DefinitionsOnly
     $script:events = [Collections.Generic.List[string]]::new()
     $script:PaintSink = { param($screen) $script:events.Add('paint:' + $screen) }
