@@ -616,7 +616,7 @@ public sealed class CodexCliObservationTests
             var client = new Client { Sample = new("0.160.0", clock.GetUtcNow(), null, new string('a',64)), ConfirmAbsentProcess = true };
             Factory? factory = null;
             var boundary = new BriefBoundary(schema.ConnectionString) { CancelAfterClaim = cancelAfterClaim };
-            var h = await BridgeQueueHarness.CreateAsync(new()
+            var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 AlwaysOn = false, ConnectionString = schema.ConnectionString,
                 TimeProvider = clock, PreserveDatabaseOnDispose = preserve,
@@ -752,6 +752,7 @@ public sealed class CodexCliObservationTests
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
             var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime, ReadyHold = ReadyHold };
+            if (kind == AgentKind.ClaudeCode) adapter.WithClaudeDialogObservation();
             adapter.OnSubmitted = async text =>
             {
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, text,
