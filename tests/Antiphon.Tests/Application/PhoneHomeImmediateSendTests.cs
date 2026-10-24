@@ -349,7 +349,7 @@ public class PhoneHomeImmediateSendTests
         // Herdr's blocked gate needs the real per-session profile and advertised capability;
         // the ordinary outage harness intentionally uses conservative pty ceilings.
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var herdr = await BridgeQueueHarness.CreateAsync(new()
+        await using var herdr = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services =>
