@@ -189,6 +189,10 @@ $ItemRules['ProjectReference'] = 'project'
 foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisibleTo')) {
     $ItemRules[$nameItem] = 'name'
 }
+# SDK internals are not general item types. Only the four exact removals in the
+# separately pinned fake-provider target are admitted; task outputs still refuse.
+$SdkRemovalItems = @('_SourceItemsToCopyToOutputDirectory', '_SourceItemsToCopyToOutputDirectoryAlways',
+    '_SourceItemsToCopyToOutputDirectoryIfDifferent', 'AllItemsFullPathWithTargetPath')
 # CARD-1409 repair 4 (Review 937bb1c9 F3): item metadata names, as attributes or child elements, per
 # item type, seeded from the tracked definition files. A type absent here allows none. The global-property
 # metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
@@ -1238,11 +1242,27 @@ function Assert-AllowedProperties($Doc, [string]$Path) {
 }
 
 # CARD-1409 (Review 31c77116 R3): every ItemGroup child, wherever the group sits, must be an allow-listed item type.
+function Test-ReviewedSdkRemoval($Node, [string]$Path, [string]$Name) {
+    if ($Path -cne 'tests/Shared/FakeProviderOutput.targets') { return $false }
+    $target = $Node.ParentNode.ParentNode
+    if ($target.LocalName -cne 'Target' -or $target.GetAttribute('Name') -cne 'ExcludeRootFakeProviderAppHosts' -or
+        $target.ParentNode -ne $Node.OwnerDocument.DocumentElement) { return $false }
+    $condition = "'%($Name.TargetPath)' == 'fakeclaude' or '%($Name.TargetPath)' == 'fakegrok'"
+    return $Node.Attributes.Count -eq 2 -and -not $Node.HasChildNodes -and
+        $Node.GetAttribute('Remove') -ceq "@($Name)" -and $Node.GetAttribute('Condition') -ceq $condition
+}
+
 function Assert-AllowedItemTypes($Doc, [string]$Path) {
     foreach ($group in $Doc.GetElementsByTagName('ItemGroup')) {
         foreach ($child in $group.ChildNodes) {
             if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
             $name = [string]$child.LocalName
+            if (Test-AllowedName $SdkRemovalItems $name $false) {
+                if (-not (Test-ReviewedSdkRemoval $child $Path $name)) {
+                    Exit-Audit 1 ('unreviewed SDK item removal; -Update cannot approve it: ' + $Path + ' ' + $name)
+                }
+                continue
+            }
             if (-not $ItemRules.ContainsKey($name)) { Exit-Audit 1 (Format-ItemTypeRefusal $Path $name) }
         }
     }
@@ -1605,6 +1625,8 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
             foreach ($node in $group.ChildNodes) {
                 if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
                 $local = [string]$node.LocalName
+                # Already checked as an exact metadata-free Remove; not an Include/Update allowance.
+                if (Test-AllowedName $SdkRemovalItems $local $false) { continue }
                 $rule = [string]$ItemRules[$local]
                 Assert-ItemOperationsAllowed $node ([string]$path) $local (Get-IncludeLabel $node)
                 # Include and Update are classified; Remove only subtracts and is left alone. The attribute text
