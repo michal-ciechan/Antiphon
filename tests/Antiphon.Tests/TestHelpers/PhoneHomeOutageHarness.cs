@@ -9,6 +9,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -107,13 +108,56 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     public async Task<PhoneHomeScriptedPeer> RecoverAsync(bool includeTarget = true, Guid? additionalSession = null)
     {
         var peer = await Host.ConnectPeerAsync();
-        if (includeTarget) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(SessionId));
+        if (includeTarget) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(SessionId) with
+        {
+            AcceptedStartedAt = Bridge.Adapter.AcceptedStartedAt,
+        });
         if (additionalSession is Guid other) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(other));
-        PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, Bridge);
+        ConfigureTerminalPeer(peer);
         var pump = PhoneHomeStrandedQueueTests.Pump(Host, Bridge);
         _pumps.Add(pump);
         (await pump.RunCycleAsync(_stop.Token)).ShouldBeTrue();
         return peer;
+    }
+
+    private void ConfigureTerminalPeer(PhoneHomeScriptedPeer peer)
+    {
+        // Keep the remote terminal separate from the locally registered adapter used by outage
+        // cuts. Both model the persisted generation; only the peer owns remote composer state.
+        var terminal = new FakeAgentProtocolAdapter
+        {
+            AcceptedStartedAt = Bridge.Adapter.AcceptedStartedAt,
+            OnSubmitted = Bridge.Adapter.OnSubmitted,
+        }.WithClaudeDialogObservation();
+        peer.Reply = frame =>
+        {
+            object? payload = frame.Operation switch
+            {
+                PhoneHomeOperation.Capabilities => new RunnerCapabilitiesDto(
+                    "InboxConhost", "inbox", "test", false,
+                    Features: [ProviderDialogObservation.Capability]),
+                PhoneHomeOperation.Snapshot => new RunnerSnapshotDto(
+                    SessionId, terminal.SnapshotRawOutput(), terminal.SnapshotRenderedScreen(),
+                    terminal.SnapshotSequence, terminal.AcceptedStartedAt!.Value,
+                    terminal.AcceptedStartedAt,
+                    terminal.ObserveDialogAsync(SessionId, CancellationToken.None).GetAwaiter().GetResult()),
+                PhoneHomeOperation.Buffer => new RunnerBufferDto(
+                    SessionId, terminal.SnapshotRawOutput(), terminal.SnapshotSequence),
+                PhoneHomeOperation.ConditionalInput => terminal.SendConditionalInputAsync(
+                    frame.Payload!.Value.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)!,
+                    CancellationToken.None).GetAwaiter().GetResult() with { SessionId = SessionId },
+                _ => null,
+            };
+            if (frame.Operation == PhoneHomeOperation.Input)
+            {
+                terminal.SendInputAsync(frame.Payload!.Value.GetProperty("input").GetString()!,
+                    CancellationToken.None).GetAwaiter().GetResult();
+                terminal.SnapshotSequence++;
+            }
+            return payload is null ? null : new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+        };
     }
 
     public async Task DisconnectAsync(PhoneHomeScriptedPeer peer)
