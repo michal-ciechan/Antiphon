@@ -156,8 +156,8 @@ public class BootLivenessProbeScopeTests
             AgentKind sessionKind = AgentKind.ClaudeCode,
             AgentSessionSettings? sessionSettings = null)
         {
-            var adapter = new FakeAgentProtocolAdapter();
-            var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+            var adapter = new FakeAgentProtocolAdapter().WithClaudeDialogObservation();
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = alwaysOn,
                 ConfigureServices = s =>
