@@ -60,8 +60,9 @@ public partial class HerdrAlwaysOnChannelParityTests
             var directory = NativeDirectory(home, root, a, kind);
             var firstProof = ConfirmNativePromptAsync(fake, directory, a, marker, kind, deadline.Token);
             proofs.Add(firstProof);
-            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token); await firstProof;
+            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token);
             await RequireCompletedAsync(a);
+            await firstProof;
             if (fake is not null)
             {
                 // FakeHerdr emulates the provider's screen/transcript lane. Seed its native store;
@@ -90,8 +91,9 @@ public partial class HerdrAlwaysOnChannelParityTests
             var resumedProof = ConfirmNativePromptAsync(fake, directory, a, nonce, kind, deadline.Token);
             proofs.Add(resumedProof);
             await StartNativeAsync(h, agent.Id, new(ResumeSessionId: a));
-            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token); await resumedProof;
+            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(50), deadline.Token);
             await RequireCompletedAsync(a);
+            await resumedProof;
             var requests = h.Runner!.StartRequests;
             await StartNativeAsync(h, agent.Id, new(ResumeSessionId: a));
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), deadline.Token);
