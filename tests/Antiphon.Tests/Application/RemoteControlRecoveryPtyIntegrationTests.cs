@@ -128,7 +128,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
         await h.Queue.EnqueueAsync(h.SessionId, "held-during-working-modal-c514", MessageSendMode.WhenIdle, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
-        await h.Runtime.SendInputAsync(h.SessionId, "\u001b", CancellationToken.None, trackManualTurn: false);
+        // This is the operator clearing the modal, not an automated dismissal.
+        await h.Runtime.SendInteractiveInputAsync(h.SessionId, "\u001b", CancellationToken.None, trackManualTurn: false);
         h.Adapter.RemoteControlMenuOpen.ShouldBeFalse();
         await h.MarkIdleAsync();
         h.Adapter.OnSubmitted = async submitted =>
@@ -160,7 +161,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         await h.TickWatchAsync();
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldContain("held-during-working-modal-c514");
-        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        h.Adapter.ConditionalInputs.ShouldBe(["held-during-working-modal-c514", "\r"],
+            "only the guarded work body and Enter are allowed; no automatic modal key or RC replay");
     }
 
     [Test]
@@ -227,7 +229,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var before = await CountQ(h);
         h.Adapter.RemoteControlMenuOpen = true;
-        await h.Runtime.SendInputAsync(h.SessionId, "internal-queued-body", CancellationToken.None);
+        // A provider-internal queue event does not enter through automated server input.
+        await h.Adapter.SendInputAsync("internal-queued-body", CancellationToken.None);
         h.Adapter.RemoteControlMenuOpen = false;
         (await CountQ(h)).ShouldBe(before);
     }
