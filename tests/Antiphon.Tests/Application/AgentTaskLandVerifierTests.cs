@@ -44,7 +44,8 @@ public sealed class AgentTaskLandVerifierTests
             (await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).LandVerifyFilter = "fixture-required";
             await db.SaveChangesAsync();
         }
-        var privateFile = Path.Combine(h.Fixture.Source, "bin-land", "keep.txt");
+        // Guarded cleanup protects user-local files even inside disposable build output.
+        var privateFile = Path.Combine(h.Fixture.Source, "bin-land", "keep.local.json");
         Directory.CreateDirectory(Path.GetDirectoryName(privateFile)!);
         await File.WriteAllTextAsync(privateFile, "pre-existing private verifier bytes");
         using var canceled = new CancellationTokenSource();
