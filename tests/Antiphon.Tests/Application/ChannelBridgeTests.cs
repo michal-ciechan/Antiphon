@@ -1140,6 +1140,7 @@ public class ChannelBridgeTests
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, sessionId);
         runtime.Register(sessionId, adapter);
 
         var dispatcher = provider.GetRequiredService<ChannelReplyDispatcher>();
