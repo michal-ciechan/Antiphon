@@ -592,7 +592,7 @@ public class CheckCompactionReceiptTests
 
     private static Task<BridgeQueueHarness> CallerAsync(
         string connectionString, Action<DbContextOptionsBuilder>? configureDbContext = null) =>
-        BridgeQueueHarness.CreateAsync(new()
+        ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = connectionString,
             ConfigureDbContext = configureDbContext,
