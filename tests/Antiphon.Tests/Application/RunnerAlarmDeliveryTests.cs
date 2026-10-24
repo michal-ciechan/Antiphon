@@ -308,7 +308,7 @@ public sealed class RunnerAlarmDeliveryTests
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var queue = flush ?? new CompletionNoteFlushQueue();
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = schema.ConnectionString,
             PreserveDatabaseOnDispose = true,
