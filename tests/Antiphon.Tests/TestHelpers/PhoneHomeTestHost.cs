@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
+using Antiphon.Observability;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
@@ -67,6 +68,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(host.Logs);
+        builder.Services.AddSingleton<LiveTiming>();
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
         if (shutdownTimeout is { } timeout)
             builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = timeout);
