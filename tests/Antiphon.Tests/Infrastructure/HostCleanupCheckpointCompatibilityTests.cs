@@ -691,16 +691,16 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     {
         var f = new SweepFixture();
         f.MarkRun(new ProcessIdentityProbe(f.Files.Context).Current());
-        f.Files.Io.Put(f.Root + "/sentinel", "keep");
+        f.Files.Io.Put(Path.Combine(f.Root, "sentinel"), "keep");
         f.ClearEvents();
 
         var receipt = f.Sweep.SweepOnce();
         receipt.Examined.ShouldBe(1, "C987.nested-live-reached");
         receipt.CompletedRoots.ShouldBe(0, "nested-live-retained");
         receipt.Skips.GetValueOrDefault("nested-identity-alive").ShouldBe(1, "C987.nested-live-guard");
-        f.Files.Io.Text(f.Root + "/sentinel").ShouldBe("keep", "nested-live-retained");
+        f.Files.Io.Text(Path.Combine(f.Root, "sentinel")).ShouldBe("keep", "nested-live-retained");
         f.AssertGateAndNoDelete();
-        f.Files.Io.Count("open-read", f.Run + "/executor-ownership.json").ShouldBeGreaterThan(0);
+        f.Files.Io.Count("open-read", Path.Combine(f.Run, "executor-ownership.json")).ShouldBeGreaterThan(0);
 
         // Removing only the live-owner veto must let this same candidate finish.
         f.MarkRun(f.Dead);
@@ -714,7 +714,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     public void unknown_nested_custody_vetoes_whole_root()
     {
         var f = new SweepFixture();
-        var sentinel = f.Run + "/tool/sentinel";
+        var sentinel = Path.Combine(f.Run, "tool", "sentinel");
         f.Files.Io.Put(sentinel, "keep");
         f.ClearEvents();
 
@@ -724,7 +724,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         receipt.Skips.GetValueOrDefault("nested-custody-missing").ShouldBe(1, "C987.nested-missing-guard");
         f.Files.Io.Text(sentinel).ShouldBe("keep", "nested-missing-retained");
         f.AssertGateAndNoDelete();
-        f.Files.Io.Count("file-exists", f.Run + "/ownership.json").ShouldBeGreaterThan(0);
+        f.Files.Io.Count("file-exists", Path.Combine(f.Run, "ownership.json")).ShouldBeGreaterThan(0);
 
         // Supply real serialized custody, never a canned deletion decision.
         f.MarkRun(f.Dead);
@@ -738,23 +738,23 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     {
         public HostCleanupCheckpointFixture Files { get; } = new();
         public string Root { get; }
-        public string Run => Root + "/custom-results/run";
+        public string Run => Path.Combine(Root, "custom-results", "run");
         public ProcessIdentity Dead => new(999, 1, Files.Io.MachineName, Files.Io.BootId, Files.Io.PidNamespace);
         public CheckpointTempRootSweep Sweep { get; }
 
         public SweepFixture()
         {
-            Root = Files.Parent + "/c723-" + Guid.NewGuid().ToString("N");
-            Files.Io.CreateDirectory(Run + "/tool");
+            Root = Path.Combine(Files.Parent, "c723-" + Guid.NewGuid().ToString("N"));
+            Files.Io.CreateDirectory(Path.Combine(Run, "tool"));
             TestRootGuard.Write(Root, new()
             {
                 RootId = Path.GetFileName(Root)["c723-".Length..], RootPath = Root,
                 AttemptId = "virtual-attempt", AssemblyInvocationId = "virtual-assembly",
                 CreatedAt = Files.Clock.GetUtcNow().AddHours(-1), Owner = Dead
             }, Files.Context);
-            var index = Files.Parent + "/.checkpoint-temp-roots";
+            var index = Path.Combine(Files.Parent, ".checkpoint-temp-roots");
             Files.Io.CreateDirectory(index);
-            Files.Io.Put(index + "/" + Path.GetFileName(Root) + ".json", JsonSerializer.Serialize(Root));
+            Files.Io.Put(Path.Combine(index, Path.GetFileName(Root) + ".json"), JsonSerializer.Serialize(Root));
             Sweep = new(Files.Context, Files.Parent, options: new() { Interval = TimeSpan.Zero });
         }
 
@@ -771,7 +771,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
 
         public void AssertGateAndNoDelete()
         {
-            Files.Io.Opens.ShouldContain(o => o.Path == Root + "/" + TestRootGuard.LockName
+            Files.Io.Opens.ShouldContain(o => o.Path == Path.Combine(Root, TestRootGuard.LockName)
                 && o.Share == FileShare.None, "C987.nested-guard-under-root-gate");
             Files.Io.Count("unlink").ShouldBe(0);
             Files.Io.Count("rmdir").ShouldBe(0);
@@ -796,13 +796,13 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     public void next_start_preserves_all_pre_existing_sibling_tools()
     {
         var f = new HostCleanupToolFixture();
-        var siblings = new[] { f.Files.Parent + "/.antiphon/checkpoints/dead/tool", f.Files.Parent + "/.antiphon/checkpoints/unknown/tool", f.Files.Parent + "/other/tool" };
+        var siblings = new[] { Path.Combine(f.Files.Parent, ".antiphon", "checkpoints", "dead", "tool"), Path.Combine(f.Files.Parent, ".antiphon", "checkpoints", "unknown", "tool"), Path.Combine(f.Files.Parent, "other", "tool") };
         foreach (var p in siblings)
         {
             var siblingRun = Path.GetDirectoryName(p)!;
             SafeWrite.Require(f.Files.Write.CreateDirectory(siblingRun, f.Files.Write.Under(f.Files.Parent)));
             SafeWrite.Require(f.Files.Write.CreateFreshDirectory(p, f.Files.Write.Under(siblingRun)));
-            SafeWrite.Require(f.Files.Write.Text(p + "/sentinel", "keep", f.Files.Write.Under(p)));
+            SafeWrite.Require(f.Files.Write.Text(Path.Combine(p, "sentinel"), "keep", f.Files.Write.Under(p)));
             SafeWrite.Require(f.Files.Ledger.Seal(p));
             RunOwnershipStore.Write(siblingRun, new()
             {
@@ -820,8 +820,8 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         foreach (var p in siblings)
         {
             f.Io.DirectoryExists(p).ShouldBeTrue();
-            f.Io.FileExists(p + "/sentinel").ShouldBeTrue();
-            f.Io.Text(p + "/sentinel").ShouldBe("keep");
+            f.Io.FileExists(Path.Combine(p, "sentinel")).ShouldBeTrue();
+            f.Io.Text(Path.Combine(p, "sentinel")).ShouldBe("keep");
         }
         f.Io.Count("unlink").ShouldBe(0); f.Io.Count("rmdir").ShouldBe(0);
     }
@@ -853,24 +853,24 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     [Test]
     public void age_clean_cannot_bypass_live_custody()
     {
-        var f = new HostCleanupToolFixture(); var results = f.Files.Root + "/results";
+        var f = new HostCleanupToolFixture(); var results = Path.Combine(f.Files.Root, "results");
         f.Io.CreateDirectory(results);
         var identities = new[] { f.Dead, new ProcessIdentityProbe(f.Context).Current(), new ProcessIdentityProbe(f.Context).Current() with { StartUtcTicks = 1 }, f.Dead with { Host = "foreign" } };
         for (var i = 0; i < identities.Length; i++)
         {
-            var run = results + "/run" + i; f.Io.CreateDirectory(run); f.Io.Put(run + "/sentinel", "keep");
+            var run = Path.Combine(results, "run" + i); f.Io.CreateDirectory(run); f.Io.Put(Path.Combine(run, "sentinel"), "keep");
             RunOwnershipStore.Write(run, new() { RunId = Path.GetFileName(run), RunDirectory = run, Starter = f.Dead, Launched = identities[i], Phase = "launched" }, f.Context);
             f.Io.Nodes[run].Stat = f.Io.Nodes[run].Stat with { Modified = (f.Files.Clock.GetUtcNow().AddDays(-8).UtcTicks - DateTime.UnixEpoch.Ticks) * 100 };
         }
         var result = new CheckpointOutputCleanup(f.Context).RemoveOlderRuns(results, TimeSpan.FromDays(7), false);
         result.Deleted.ShouldBeEmpty(); result.Refusals.ShouldContain("output-ledger-missing");
-        for (var i = 0; i < identities.Length; i++) f.Io.Text(results + "/run" + i + "/sentinel").ShouldBe("keep");
+        for (var i = 0; i < identities.Length; i++) f.Io.Text(Path.Combine(results, "run" + i, "sentinel")).ShouldBe("keep");
     }
 
     [Test]
     public void evidence_write_has_no_raw_delete_bypass()
     {
-        var f = new HostCleanupToolFixture(); f.Io.Nodes.Remove(f.Run + "/ownership.json");
+        var f = new HostCleanupToolFixture(); f.Io.Nodes.Remove(Path.Combine(f.Run, "ownership.json"));
         EvidenceFolder.Write(f.Run, new() { RunId = Path.GetFileName(f.Run) }, true, context: f.Context);
         f.Io.DirectoryExists(f.Tool).ShouldBeTrue(); f.Io.Text(f.Payload).ShouldBe("keep");
     }
@@ -879,7 +879,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     public void automatic_recovery_preserves_all_evidence()
     {
         var f = new HostCleanupToolFixture();
-        foreach (var n in new[] { "request.json", "manifest.resolved.yaml", "run.trx", "executor.log" }) f.Io.Put(f.Run + "/" + n, "evidence-" + n);
+        foreach (var n in new[] { "request.json", "manifest.resolved.yaml", "run.trx", "executor.log" }) f.Io.Put(Path.Combine(f.Run, n), "evidence-" + n);
         var before = f.Io.Nodes.Where(p => Path.GetDirectoryName(p.Key) == f.Run && p.Value.Stat.Kind == "file").ToDictionary(p => p.Key, p => Hash(p.Value.Bytes));
         f.Cleanup().Remove(f.Run).Outcome.ShouldBe("Removed");
         f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
@@ -937,7 +937,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     public async Task completed_wait_removes_only_tool(int exitCode, bool keepOutputs)
     {
         var f = new HostCleanupToolFixture(exitCode);
-        f.Io.Put(f.Run + "/request.json", JsonSerializer.Serialize(new RunRequest { KeepOutputs = keepOutputs }));
+        f.Io.Put(Path.Combine(f.Run, "request.json"), JsonSerializer.Serialize(new RunRequest { KeepOutputs = keepOutputs }));
         var hash = Hash(f.Io.Nodes[f.Receipt.MarkdownPath].Bytes);
         (await f.Wait()).ShouldBe(exitCode);
         f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
