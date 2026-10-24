@@ -22,7 +22,7 @@ internal static class LandQueueRaceWorker
         if (!Path.GetFullPath(settings.Root).StartsWith(owned, StringComparison.OrdinalIgnoreCase)
             || !File.Exists(Path.Combine(settings.Root, "owner"))) throw new InvalidOperationException("Unowned queue race worker");
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false,
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false,
             ConnectionString = Environment.GetEnvironmentVariable("ANTIPHON_C467_QUEUE_CONNECTION")!,
             ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(new Rendezvous(settings.Root)) });
         Guid row = default;
