@@ -127,7 +127,7 @@ public class SessionMessageQueueWedgedHeadTests
             deliveryVerdict: DeliveryVerdict.NoTranscriptRecord);
         await AdvanceGenerationAsync(h);
         // Use the EXACT body in history: even whole-head evidence cannot rescue a dead composer.
-        h.Adapter.RenderedScreenOverride = Body + "\n> ";
+        h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(Body);
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
@@ -147,7 +147,8 @@ public class SessionMessageQueueWedgedHeadTests
         var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1,
             status: interrupted ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending,
             deliveryVerdict: interrupted ? null : DeliveryVerdict.NoTranscriptRecord);
-        h.Adapter.RenderedScreenOverride = "[antiphon-task:a42e10c4]\n[antiphon-report:a42e10c4 done]\n> ";
+        h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(
+            "[antiphon-task:a42e10c4]\n[antiphon-report:a42e10c4 done]");
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
@@ -176,7 +177,7 @@ public class SessionMessageQueueWedgedHeadTests
         await using var h = await CreateAsync();
         var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, status: QueuedMessageStatus.Sent);
         await AdvanceGenerationAsync(h);
-        h.Adapter.RenderedScreenOverride = Body + "\n> ";
+        h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(Body);
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
@@ -196,7 +197,7 @@ public class SessionMessageQueueWedgedHeadTests
         var current = await GenerationAsync(h);
         var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, legacyNullGeneration: true,
             lastDeliveryStartedAt: generationChanged ? current.AddMinutes(-1) : current.AddSeconds(1));
-        if (generationChanged) h.Adapter.RenderedScreenOverride = Body + "\n> ";
+        if (generationChanged) h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(Body);
         else h.Adapter.PrimeComposer(Body);
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
@@ -428,10 +429,12 @@ public class SessionMessageQueueWedgedHeadTests
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "anything");
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         h.Adapter.PrimeComposer("");
-        // A later non-empty composer must not resurrect the resolved orphan. This is conversation
-        // history above an unreadable Claude box, so the transcript is the only release evidence.
+        // History alone cannot grant input authority, even though the later UserPrompt has
+        // resolved the canceled row. Delivery waits for a readable current composer.
         h.Adapter.RenderedScreenOverride = Body;
         h.Adapter.ClaudeComposerChrome = false;
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).ModalBlocked.ShouldBeTrue();
+        h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(Body);
         await AssertNextBodyDeliveredAsync(h, ["anything"]);
     }
 
