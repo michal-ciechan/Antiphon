@@ -164,7 +164,9 @@ public sealed class LandRequestWriteDiagnosticTests
         position.ShouldBeGreaterThan(0, customMessage: "D.MigrationExists");
         migrations[position - 1].EndsWith("_AddReviewSourceClean", StringComparison.Ordinal)
             .ShouldBeTrue("D.ActualImmediatePredecessor");
-        await db.GetService<IMigrator>().MigrateAsync(migrations[position - 1]);
+        // Seed the unrelated task with the schema its current EF model describes, then
+        // rewind before inserting the request in the actual legacy schema below.
+        await db.GetService<IMigrator>().MigrateAsync();
         var taskId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         db.AgentTasks.Add(new AgentTask
@@ -176,6 +178,7 @@ public sealed class LandRequestWriteDiagnosticTests
             CreatedAt = now, CompletedAt = now,
         });
         await db.SaveChangesAsync();
+        await db.GetService<IMigrator>().MigrateAsync(migrations[position - 1]);
         var requestId = Guid.NewGuid();
         var token = Guid.NewGuid();
         var expected = new string('a', 40);
@@ -188,14 +191,21 @@ public sealed class LandRequestWriteDiagnosticTests
             """);
         await db.GetService<IMigrator>().MigrateAsync(migrations[position]);
         await using var observer = new AppDbContext(options);
+        // Read only columns present at this migration; later model properties must not
+        // prevent checking the subject migration's legacy values.
+        var legacy = await observer.AgentTaskLandRequests.Where(r => r.Id == requestId)
+            .Select(r => new { r.ConcurrencyToken, r.ExpectedSourceSha, r.RecoveryLocalBeforeSha,
+                r.LastWriterOperation, r.LastWriterToken, r.LastWriterAt, r.RecoveryWitnessRequestId })
+            .SingleAsync();
+        legacy.ConcurrencyToken.ShouldBe(token, customMessage: "D.LegacyTokenUnchanged");
+        legacy.ExpectedSourceSha.ShouldBe(expected, customMessage: "D.LegacyApprovalUnchanged");
+        legacy.RecoveryLocalBeforeSha.ShouldBe(expected, customMessage: "D.LegacyProgressUnchanged");
+        legacy.LastWriterOperation.ShouldBeNull("D.LegacyWriterNull");
+        legacy.LastWriterToken.ShouldBeNull("D.LegacyWriterTokenNull");
+        legacy.LastWriterAt.ShouldBeNull("D.LegacyWriterAtNull");
+        legacy.RecoveryWitnessRequestId.ShouldBeNull("D.LegacyWitnessNull");
+        await db.GetService<IMigrator>().MigrateAsync();
         var saved = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
-        saved.ConcurrencyToken.ShouldBe(token, customMessage: "D.LegacyTokenUnchanged");
-        saved.ExpectedSourceSha.ShouldBe(expected, customMessage: "D.LegacyApprovalUnchanged");
-        saved.RecoveryLocalBeforeSha.ShouldBe(expected, customMessage: "D.LegacyProgressUnchanged");
-        saved.LastWriterOperation.ShouldBeNull("D.LegacyWriterNull");
-        saved.LastWriterToken.ShouldBeNull("D.LegacyWriterTokenNull");
-        saved.LastWriterAt.ShouldBeNull("D.LegacyWriterAtNull");
-        saved.RecoveryWitnessRequestId.ShouldBeNull("D.LegacyWitnessNull");
         var witness = Guid.NewGuid();
         saved.RecoveryWitnessRequestId = witness;
         saved.ConcurrencyToken = Guid.NewGuid();
