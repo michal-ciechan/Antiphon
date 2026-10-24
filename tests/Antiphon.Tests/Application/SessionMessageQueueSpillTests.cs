@@ -28,7 +28,7 @@ public class SessionMessageQueueSpillTests
     private static async Task<BridgeQueueHarness> ObservableHarnessAsync(
         ChannelBridgeSettings? bridge = null)
     {
-        var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             Bridge = bridge ?? new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
