@@ -280,7 +280,7 @@ public sealed class MultiRunnerRecoveryTests
         (await QueueStatusAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(QueuedMessageStatus.Pending);
         (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptB)).ShouldBe(1);
 
-        await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: sessionA);
+        await harness.MarkIdleAsync(sessionA, stopReason: "end_turn");
         await harness.Queue.FlushIfIdleAsync(sessionA, CancellationToken.None);
 
         (await QueueStatusAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(QueuedMessageStatus.Sent);
