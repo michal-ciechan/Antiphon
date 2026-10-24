@@ -298,11 +298,11 @@ public class AgentTaskSettlementRaceTests
         row.ReleasedAt.ShouldNotBeNull();
     }
 
-    internal static ServiceProvider BuildHarness(Action<IServiceCollection>? configure = null)
+    internal static ServiceProvider BuildHarness(Action<IServiceCollection>? configure = null, string? connectionString = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -389,7 +389,7 @@ public class AgentTaskSettlementRaceTests
     }
 
     internal static async Task<(AgentTask Task, Guid SessionId)> SeedSharedTaskAsync(
-        string workingDirectory, Guid parentSessionId)
+        string workingDirectory, Guid parentSessionId, string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -418,7 +418,7 @@ public class AgentTaskSettlementRaceTests
             DispatchedAt = now,
         };
 
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -515,11 +515,11 @@ public class AgentTaskSettlementRaceTests
         return (task, sessionId);
     }
 
-    internal static async Task<Guid> SeedSessionAsync(string cwd)
+    internal static async Task<Guid> SeedSessionAsync(string cwd, string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -582,11 +582,11 @@ public class AgentTaskSettlementRaceTests
     }
 
     internal static async Task SeedMarkedTurnAsync(
-        Guid sessionId, Guid taskId, string report, string verdict = "done")
+        Guid sessionId, Guid taskId, string report, string verdict = "done", string? connectionString = null)
     {
         var prompt = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.";
         var body = report.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(taskId, verdict);
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence) ?? 0;
@@ -609,7 +609,7 @@ public class AgentTaskSettlementRaceTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string? connectionString = null) => new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private sealed class TempWorkspace : IDisposable
     {
