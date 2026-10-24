@@ -647,6 +647,62 @@ under the restart runbook before checking `GET /api/orchestrator-instructions` s
 A Docs task reports the exact proposed configuration command/text; it never writes live settings
 or edits the generated file. The full wording stays here, outside section 8's size cap.
 
+### rc qualification run-group repair loop (CARD-1514)
+
+The overnight "rc batch" procedure, as practised 2026-10-24, repairs completed
+`antiphon-suite` launch groups while the full native Windows rc qualification continues.
+
+1. **Protect the qualification.** It runs detached on the desktop at a pinned rc tip.
+   Repair agents never touch, stop or restart it, acquire its native lock, or run native
+   or process-spawning tests on the desktop. Record its candidate SHA, run identity and
+   evidence location in every brief; keep the timing/group manifest required above.
+2. **Dispatch on each failing group.** As soon as a group finishes with failures or a
+   watchdog timeout, dispatch one `Debug` per group, titled `Run group NN: <short label>`,
+   with `-Card CARD-1514` (or the rc card), `-Worktree -Runner server2 -Kind Codex`.
+   Use the role matrix for the tier and the effective concurrency limits in section 1.
+   Supply failing classes/counts, sample methods, [CARD-0680 context](session-runtime-invariants.md#claude-automated-input-dialog-guard-card-0680) and the full sibling
+   exclusion list, so parallel fixers do not edit one another's classes.
+3. **Include this DO list.** Start from fetched `origin/master`; one isolated build under
+   `scripts/build-slot.ps1`, then run the compiled output through that gate with `--no-build`.
+   The 2026-10-24 workaround was necessary because `run-checkpoint.ps1` refused the test
+   DLL over its 64 MiB inventory-reader limit; it does not waive the build-slot gate.
+   Use exact `--treenode-filter` selections, with a trailing wildcard per class OR operand;
+   report counts per class and classify clusters. Supply a pure-string Windows-input
+   witness for path/semantics clusters where possible. Fix reproduced clusters with the
+   smallest change, reuse shared helpers and retain every assertion. A product change
+   requires a red witness and explicit reporting; the ordinary product Review still applies.
+   Non-reproducing Linux classes get a native rerun row, never an invented fix.
+   Budget 75 minutes with hard timeouts; rerun affected classes, push after each class fix,
+   do not rebase, and require clean `git merge-tree --write-tree origin/master HEAD` after
+   fetching master. No Review for fixture-only changes (operator); no Unit lane, tags or
+   release scripts. Finish with per-class red/green counts, native rows and `next: land`.
+4. **Land and triage.** Read each succeeded task's full report, then order
+   `delegate.ps1 -Land <task> -ExpectedSourceSha <full-sha>` and confirm publication.
+   A watchdog timeout also gets a desktop `Investigate -ReadOnly`, with run/group/timing
+   evidence; it grants no test, stop or lock authority. File a card for a product defect.
+5. **Qualify the next candidate.** Accumulate native rerun rows for a fresh full Windows
+   qualification of the next integrated rc candidate. These Linux repairs do not qualify
+   the running rc SHA. Cherry-picking landed repairs onto the rc line is a separate,
+   reviewed integration step under [release gates](release-gates.md#the-release-line),
+   including the prerequisite-chain and startup-path gates; a master land is not activation.
+
+Condensed task-brief template: CARD-1514 group 37, task `22bd72e0`
+(`GET /api/agent-tasks/22bd72e0` supplies the original goal). Replace run evidence,
+class roster and sibling exclusions for each dispatch; the DO list above remains mandatory:
+
+> DEBUG+FIX (server2/Linux). Full native Windows rc qualification run a779085c
+> (candidate rc/2026-10-24 = a97194ee7a4a, ... NOT yours to touch, stop or restart ...)
+> finished antiphon-suite group 37 with 54 failures of 438. Failures by class:
+> PhoneHomeTaskDispatchProjectionTests 18, RunnerAlarmDeliveryTests 9, RemoteControlRecoveryTests 7,
+> RunnerSeatOrphanSweepTests 7, ContextCompactionSweepTests 4, CardWorktreeCleanupRecoveryTests 3,
+> AgentTaskLandQueueAgingTests 2, PhoneHomeQueuedTurnTests 2, ScheduleSweepTests 1, ChannelOutboundRecoveryTests 1.
+> CONTEXT: CARD-0680 input-guard family (automated input to a Claude session withheld unless
+> the fixture supplies a current generation-bound dialog observation; shared helpers
+> ClaudeDialogFixture.CreateBridgeAsync, composer-screen builder, StoreAwareTranscript, ...).
+> Sibling fixers for groups 33-36 are in flight or queued (do not touch their classes: ...).
+> DO: ... keep every assertion ... Budget 75 minutes with hard timeouts; push after each
+> class fix. No Review (operator) for fixture-only changes ... do NOT rebase ... (next: land).
+
 ### Post-land miss retrospective (CARD-0811)
 
 Rule 6's post-land sibling. A defect that a Clean Review approved and that was found only in the
