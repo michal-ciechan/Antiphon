@@ -2,7 +2,10 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal static class PairedOverheadStatistics
 {
-    internal const int MinimumPairs = 5;
+    // Five pairs let one delayed arm determine the bootstrap 95% upper bound
+    // (5.792% of resamples). Nine reduce that probability to 0.145% while
+    // retaining the same median estimator, raw observations and 2% threshold.
+    internal const int MinimumPairs = 9;
 
     internal static double Median(IReadOnlyList<double> values)
     {
