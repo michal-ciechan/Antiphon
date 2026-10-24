@@ -30,7 +30,7 @@ internal static class PostLandMutationDeliveryWorker
             return;
         }
 
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = settings.Connection,
