@@ -327,7 +327,8 @@ public class MutationAdmissionTests
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
     private static CreateAgentTaskRequest Request(string goal, AgentTaskRole role) =>
-        new(Goal: goal, Role: role);
+        // These admission cases own plain directories and exercise role slots, not Git branching.
+        new(Goal: goal, Role: role, Workspace: WorkspaceMode.Shared);
 
     private static AgentTaskService.Caller ManualCaller(string directory) => new(null, null, directory);
 
