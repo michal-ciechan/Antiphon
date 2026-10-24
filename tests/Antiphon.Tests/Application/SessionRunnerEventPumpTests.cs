@@ -37,7 +37,7 @@ public class SessionRunnerEventPumpTests
         var bus = new GatedEventBus();
         var trace = new PhaseLogger { ThrowDiagnostics = diagnosticsFail };
         await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = store.ConnectionString,
             StartRuntimeActions = true,
@@ -174,7 +174,7 @@ public class SessionRunnerEventPumpTests
         var runner = new ScriptedSessionRunnerClient();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
         var read = new ConfirmReadBarrier();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = store.ConnectionString,
             StartRuntimeActions = true,
@@ -353,7 +353,7 @@ public class SessionRunnerEventPumpTests
     {
         var runner = new ScriptedSessionRunnerClient();
         var bus = new GatedEventBus();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConfigureServices = services =>
             {
