@@ -39,14 +39,14 @@ public class OutputDistillationDeliveryTests
     public async Task Ineligible_reports_do_not_enter_canonical_or_model_work(string scenario)
     {
         await using var f = await DeliveryFixture.CreateAsync();
-        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main);
-        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent);
-        await using var db = OutputDistillationHarness.CreateContext();
+        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main, f.ConnectionString);
+        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent, f.ConnectionString);
+        await using var db = f.CreateContext();
         var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
         row.Role = scenario is "Blocked" or "None" ? AgentTaskRole.Review : Enum.Parse<AgentTaskRole>(scenario);
         if (scenario == "None") row.ReplyTo = AgentTaskReplyTo.None;
         await db.SaveChangesAsync();
-        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, ReportOfLength(5500), scenario == "Blocked" ? "blocked" : "done");
+        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, ReportOfLength(5500), scenario == "Blocked" ? "blocked" : "done", f.ConnectionString);
         await f.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
         await db.Entry(row).ReloadAsync();
         row.ResultFilePath.ShouldBeNull();
@@ -104,7 +104,7 @@ public class OutputDistillationDeliveryTests
         else
         {
             seed.HoldUntil.ShouldBeNull();
-            await using var db = OutputDistillationHarness.CreateContext();
+            await using var db = f.CreateContext();
             (await db.OutputDistillations.CountAsync(d => d.TaskId == seed.Task.Id)).ShouldBe(0);
             (await db.AgentTasks.CountAsync(t => t.AgentName == f.Settings.OutputDistillerAgentSlug)).ShouldBe(0);
         }
@@ -125,7 +125,7 @@ public class OutputDistillationDeliveryTests
         note.Body.ShouldContain(Summary); note.Body.ShouldContain("Full report: " + seed.Task.ResultFilePath);
         note.Body.ShouldNotContain(Middle); note.Body.ShouldNotContain("GET /api/agent-tasks/");
         note.NoteHeader.ShouldBe(seed.Header); note.ContentDigest.ShouldBe(seed.Digest); note.HoldUntil.ShouldBeNull();
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).Result.ShouldBe(seed.Task.Result);
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seed.Task.Id)).ShouldBe(1);
     }
@@ -170,7 +170,7 @@ public class OutputDistillationDeliveryTests
         {
             if (scenario == "null")
             {
-                await using var db = OutputDistillationHarness.CreateContext();
+                await using var db = f.CreateContext();
                 await db.AgentTasks.Where(t => t.Id == seed.Task.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ResultFilePath, (string?)null));
             }
             if (scenario == "deleted") File.Delete(seed.Task.ResultFilePath!);
@@ -191,7 +191,7 @@ public class OutputDistillationDeliveryTests
         seed.Task.ResultFilePath.ShouldNotBeNull("settlement must retain a canonical file before worktree removal");
         await f.Provider.DisposeAsync();
         await f.Workspace.RemoveWorktreeAsync();
-        await using var recreated = AgentTaskSettlementRaceTests.BuildHarness();
+        await using var recreated = AgentTaskSettlementRaceTests.BuildHarness(connectionString: f.ConnectionString);
         await using var scope = recreated.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seed.Task.Id);
@@ -208,7 +208,7 @@ public class OutputDistillationDeliveryTests
         var anchors = "\n--- next stage ---\nnext: review\nhandoff: Verify the implementation.";
         var seed = await f.SettleAsync(ReportOfLength(5500 - anchors.Length) + anchors, failed: failed, deliverables: true);
         var annotatedHeader = seed.Header + "\nCaller warning: inspect generated files. Git: fixture revision; scope: server/.";
-        await using (var db = OutputDistillationHarness.CreateContext())
+        await using (var db = f.CreateContext())
             await db.SessionQueuedMessages.Where(m => m.Id == seed.NoteId)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.NoteHeader, annotatedHeader));
         seed = seed with { Header = annotatedHeader };
@@ -270,10 +270,10 @@ public class OutputDistillationDeliveryTests
     public async Task Host_cancellation_during_storage_can_retry_settlement_once()
     {
         await using var f = await DeliveryFixture.CreateAsync(enabled: false);
-        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main);
-        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent);
+        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main, f.ConnectionString);
+        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent, f.ConnectionString);
         var raw = ReportOfLength(5500);
-        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, raw, "done");
+        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, raw, "done", f.ConnectionString);
         using var host = new CancellationTokenSource();
         var store = (AgentReportStore)f.Provider.GetRequiredService<IAgentReportStore>();
         store.BeforeIoAsync = (phase, ct) => {
@@ -286,7 +286,7 @@ public class OutputDistillationDeliveryTests
         store.BeforeIoAsync = null;
         await using (var retry = f.Provider.CreateAsyncScope())
             await retry.ServiceProvider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         var settled = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded); settled.Result.ShouldBe(raw);
         settled.ResultFilePath.ShouldNotBeNull();
@@ -304,7 +304,7 @@ public class OutputDistillationDeliveryTests
         var seed = await f.SettleAsync(ReportOfLength(5500));
         await f.RunDistillerAsync(seed, Summary); await f.DeliverAsync(seed);
         (await File.ReadAllTextAsync(seed.Task.ResultFilePath!)).ShouldBe(seed.Task.Result);
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).LastPolledResultHash.ShouldBeNull();
         (await db.OutputDistillations.SingleAsync(t => t.TaskId == seed.Task.Id)).FullReadAt.ShouldBeNull();
         await using var scope = f.Provider.CreateAsyncScope();
@@ -365,7 +365,7 @@ public class OutputDistillationDeliveryTests
             for (var n = 0; n < 3; n++) requests!.TryEnqueue(new(Guid.NewGuid(), null,
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddSeconds(45), OutputDistillerMode.Apply)).ShouldBeTrue();
         if (scenario is "expired" or "timeout") f.Settings.OutputDistillerWaitSeconds = 2;
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         var holdId = Guid.NewGuid();
         if (scenario == "held")
         {
@@ -415,14 +415,14 @@ public class OutputDistillationDeliveryTests
         f.Settings.OutputDistillerWaitSeconds = 1; // only this test request's original deadline
         var seed = await f.SettleAsync(ReportOfLength(5500));
         seed.HoldUntil.ShouldNotBeNull();
-        await BridgeQueueHarness.InsertEntryAsync(seed.Task.ParentSessionId!.Value, TranscriptKinds.TurnEnd, null);
+        await BridgeQueueHarness.InsertEntryAsync(seed.Task.ParentSessionId!.Value, TranscriptKinds.TurnEnd, null, connectionString: f.ConnectionString);
         await f.RecreateForRawFallbackAsync();
         await Task.Delay(1100);
         var note = await f.DeliverAsync(seed, seedBaseline: false);
         note.Body.ShouldBe(seed.RawBody);
         (await File.ReadAllTextAsync(seed.Task.ResultFilePath!)).ShouldBe(seed.Task.Result);
         // Normal worker recovery delivered without a new turn-end wakeup or SendNow.
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seed.Task.Id)).ShouldBe(1);
     }
 
@@ -433,11 +433,11 @@ public class OutputDistillationDeliveryTests
         f.Settings.OutputDistillerWaitSeconds = 1;
         var seed = await f.SettleAsync(ReportOfLength(5500));
         var parent = seed.Task.ParentSessionId!.Value;
-        await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null);
+        await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null, connectionString: f.ConnectionString);
         await f.RecreateForRawFallbackAsync();
         var adapter = new FakeAgentProtocolAdapter();
-            await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent);
-        adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body);
+        await adapter.EnableClaudeDialogObservationAsync(f.ConnectionString, parent);
+        adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body, connectionString: f.ConnectionString);
         f.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent, adapter);
         await Task.Delay(1100);
         seed.HoldUntil!.Value.ShouldBeLessThan(DateTime.UtcNow);
@@ -447,7 +447,7 @@ public class OutputDistillationDeliveryTests
         var note = await f.ReadNoteAsync(seed.NoteId);
         note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered, "two completed normal flush opportunities must not strand an expired hold");
         note.DeliveryAttempts.ShouldBe(1);
-        await using var db = OutputDistillationHarness.CreateContext();
+        await using var db = f.CreateContext();
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
     }
 
@@ -462,7 +462,7 @@ public class OutputDistillationDeliveryTests
             seed.Task.ResultFilePath, DeliverableBundleService.ListAttachableFiles(seed.Task));
         var extra = ceiling + delta - System.Text.Encoding.UTF8.GetByteCount(baseBody) - 1;
         var header = seed.Header + "\n" + new string('é', extra / 2) + (extra % 2 == 1 ? "x" : "");
-        await using (var db = OutputDistillationHarness.CreateContext())
+        await using (var db = f.CreateContext())
             await db.SessionQueuedMessages.Where(m => m.Id == seed.NoteId).ExecuteUpdateAsync(s => s.SetProperty(m => m.NoteHeader, header));
         await f.RunDistillerAsync(seed, Summary);
         var applied = await f.ReadNoteAsync(seed.NoteId);
@@ -499,6 +499,9 @@ public class OutputDistillationDeliveryTests
     }
     internal sealed class DeliveryFixture : IAsyncDisposable
     {
+        private IsolatedTestSchema _schema = null!;
+        public string ConnectionString => _schema.ConnectionString;
+        public Antiphon.Server.Infrastructure.Data.AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
         public ReportWorkspace Workspace { get; } = new();
         public ServiceProvider Provider { get; private set; } = null!;
         public DelegationSettings Settings { get; private set; } = null!;
@@ -508,10 +511,19 @@ public class OutputDistillationDeliveryTests
         public static async Task<DeliveryFixture> CreateAsync(bool modern = true, OutputDistillerMode mode = OutputDistillerMode.Apply,
             bool enabled = true, bool worktree = false, Action<IServiceCollection>? configure = null)
         {
-            var f = new DeliveryFixture(); await f.Workspace.InitializeAsync(worktree);
+            var f = new DeliveryFixture();
+            f._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await f.Workspace.InitializeAsync(worktree);
             f.Settings = new() { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
                 OutputDistillerAgentSlug = "c419-" + Guid.NewGuid().ToString("N"),
                 OutputDistillerWorkingDirectory = Path.Combine(f.Workspace.Main, ".antiphon", "specialist"), MaxConcurrentTasks = 512 };
+            // Model transport sizes on Unix too; this fixture does not launch a Windows backend.
+            if (modern)
+            {
+                f.Settings.ReplyInlineMaxChars = f.Settings.ModernPtyReplyInlineMaxChars;
+                f.Settings.BriefInlineMaxBytes = f.Settings.ModernPtyBriefInlineMaxBytes;
+                f.Settings.PtySingleChunkBytes = f.Settings.ModernPtySingleWriteMaxBytes;
+            }
             f.Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
                 s.AddSingleton(Options.Create(f.Settings)); s.AddSingleton<ISessionRunnerClient, FakeSessionRunnerClient>();
                 s.AddScoped<IModelAvailability, ModelAvailability>();
@@ -523,7 +535,7 @@ public class OutputDistillationDeliveryTests
                 s.AddScoped<OutputDistillationService>(); s.AddSingleton<OutputDistillationQueue>();
                 s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
                 configure?.Invoke(s);
-            });
+            }, f.ConnectionString);
             (await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None))
                 .ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
             return f;
@@ -532,9 +544,9 @@ public class OutputDistillationDeliveryTests
             bool deliverables = false, Guid? parentId = null, Guid? rootId = null)
         {
             cwd ??= Workspace.Main;
-            var parent = parentId ?? await AgentTaskSettlementRaceTests.SeedSessionAsync(Workspace.Main); _parents.Add(parent);
-            var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(cwd, parent);
-            await using (var db = OutputDistillationHarness.CreateContext())
+            var parent = parentId ?? await AgentTaskSettlementRaceTests.SeedSessionAsync(Workspace.Main, ConnectionString); _parents.Add(parent);
+            var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(cwd, parent, ConnectionString);
+            await using (var db = CreateContext())
             {
                 var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
                 row.Role = AgentTaskRole.Review;
@@ -556,9 +568,9 @@ public class OutputDistillationDeliveryTests
                 var file = Path.Combine(cwd, ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}.md");
                 Directory.CreateDirectory(Path.GetDirectoryName(file)!); await File.WriteAllTextAsync(file, "delegate authored different detail");
             }
-            await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, report, failed ? "failed" : "done");
+            await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, report, failed ? "failed" : "done", ConnectionString);
             await Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
-            await using var read = OutputDistillationHarness.CreateContext();
+            await using var read = CreateContext();
             var stored = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
             stored.Result.ShouldBe(report);
             var note = (await read.SessionQueuedMessages.Where(m => m.SourceTaskId == task.Id).ToListAsync()).ShouldHaveSingleItem();
@@ -576,7 +588,7 @@ public class OutputDistillationDeliveryTests
             if (summary is not null)
             {
                 await UntilAsync(async () => {
-                    await using var db = OutputDistillationHarness.CreateContext();
+                    await using var db = CreateContext();
                     var task = await db.AgentTasks.SingleOrDefaultAsync(t => t.AgentName == Settings.OutputDistillerAgentSlug
                         && t.Role == AgentTaskRole.Distill && t.Status == AgentTaskStatus.Queued);
                     if (task is null)
@@ -596,7 +608,7 @@ public class OutputDistillationDeliveryTests
             }
             OutputDistillationRecord? record = null;
             await UntilAsync(async () => {
-                await using var db = OutputDistillationHarness.CreateContext();
+                await using var db = CreateContext();
                 record = await db.OutputDistillations.AsNoTracking().SingleOrDefaultAsync(r => r.TaskId == seed.Task.Id);
                 return record is not null;
             });
@@ -605,7 +617,7 @@ public class OutputDistillationDeliveryTests
         }
         public async Task<SessionQueuedMessage> ReadNoteAsync(Guid id)
         {
-            await using var db = OutputDistillationHarness.CreateContext();
+            await using var db = CreateContext();
             return await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
         }
         public async Task RecreateForRawFallbackAsync()
@@ -614,15 +626,15 @@ public class OutputDistillationDeliveryTests
             Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
                 s.AddSingleton(Options.Create(Settings));
                 s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
-            });
+            }, ConnectionString);
         }
         public async Task<SessionQueuedMessage> DeliverAsync(Settled seed, bool seedBaseline = true)
         {
             var parent = seed.Task.ParentSessionId!.Value;
-            if (seedBaseline) await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null);
+            if (seedBaseline) await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null, connectionString: ConnectionString);
             var adapter = new FakeAgentProtocolAdapter();
-            await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent);
-            adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body);
+            await adapter.EnableClaudeDialogObservationAsync(ConnectionString, parent);
+            adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body, connectionString: ConnectionString);
             Provider.GetRequiredService<AgentSessionRuntime>().Register(parent, adapter);
             _flush = new(Provider.GetRequiredService<IServiceScopeFactory>(), Provider.GetRequiredService<CompletionNoteFlushQueue>(),
                 Provider.GetRequiredService<SpecialistFailureQueue>(), TimeProvider.System, NullLogger<CompletionNoteWorkHostedService>.Instance);
@@ -635,7 +647,7 @@ public class OutputDistillationDeliveryTests
             }
             await _flush.StopAsync(CancellationToken.None); _flush.Dispose(); _flush = null;
             var note = await ReadNoteAsync(seed.NoteId);
-            await using var db = OutputDistillationHarness.CreateContext();
+            await using var db = CreateContext();
             var prompts = await db.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Kind == TranscriptKinds.UserPrompt).ToListAsync();
             prompts.ShouldHaveSingleItem().Text.ShouldBe(note.Body);
             note.DeliveryAttempts.ShouldBe(1); adapter.KillCount.ShouldBe(0);
@@ -648,10 +660,10 @@ public class OutputDistillationDeliveryTests
         {
             if (_worker is not null) { await _worker.StopAsync(CancellationToken.None); _worker.Dispose(); }
             if (_flush is not null) { await _flush.StopAsync(CancellationToken.None); _flush.Dispose(); }
-            await using (var db = OutputDistillationHarness.CreateContext())
+            await using (var db = CreateContext())
                 await db.SessionQueuedMessages.Where(m => _parents.Contains(m.AgentSessionId) && m.Status == QueuedMessageStatus.Pending)
                     .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled));
-            await Provider.DisposeAsync(); await Workspace.DisposeAsync();
+            await Provider.DisposeAsync(); await _schema.DisposeAsync(); await Workspace.DisposeAsync();
         }
         internal static async Task UntilAsync(Func<Task<bool>> predicate)
         {
