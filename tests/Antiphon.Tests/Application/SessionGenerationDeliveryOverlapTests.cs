@@ -104,6 +104,7 @@ public class SessionGenerationDeliveryOverlapTests
             AlwaysOn = true,
             ConfigureServices = s => s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapterB)),
         });
+        adapterB.WithClaudeDialogObservation();
         adapterB.RegisterOnStart = h.Runtime;
         h.Adapter.EchoTypedInputToScreen = false;
         DateTime generationA;
