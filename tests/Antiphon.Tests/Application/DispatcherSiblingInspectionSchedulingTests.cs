@@ -137,8 +137,8 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             await using var read = f.Read();
             var adoptedTask = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
             adoptedTask.WorktreePath.ShouldBe(adopted);
-            (await f.Repo.GitReadAsync("worktree", "list", "--porcelain")).Split('\n')
-                .Count(line => line == "worktree " + adopted).ShouldBe(1);
+            var registrations = await f.Git.LiveRegistrationsAsync(f.Repo.Path, default);
+            registrations.Count(r => LandingGit.PathsEqual(r.Path, adopted!)).ShouldBe(1);
         }
         else
         {
