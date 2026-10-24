@@ -5753,8 +5753,8 @@ public sealed partial class SessionMessageQueueService
         }
 
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
-        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } popupSnap
-            && GrokQuestionPopup.IsPresent(popupSnap.RenderedScreen))
+        var snapshot = await _runtime.TryGetLiveSnapshotAsync(sessionId, ct);
+        if (snapshot is not null && GrokQuestionPopup.IsPresent(snapshot.RenderedScreen))
         {
             _logger.LogInformation(
                 "Overlay dismiss withheld for session {SessionId}: Grok question popup is present (answer, do not Esc)",
@@ -5774,7 +5774,10 @@ public sealed partial class SessionMessageQueueService
             }
         }
 
-        if (kind == AgentKind.ClaudeCode && overlay.DismissKey == "\u001b")
+        // Only a matching RC menu gets the special dismissal intent. Clear-composer
+        // recovery uses ordinary guarded input, which rechecks any intervening dialog.
+        if (kind == AgentKind.ClaudeCode && overlay.DismissKey == "\u001b"
+            && snapshot is not null && ClaudeRemoteControlMenu.AllowsDismiss(snapshot.RenderedScreen))
             await _runtime.DismissRemoteControlAsync(sessionId, ct);
         else
             await _runtime.SendInputAsync(sessionId, overlay.DismissKey, ct, trackManualTurn: false);
