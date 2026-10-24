@@ -1,0 +1,28 @@
+<Project>
+  <!-- Keep the managed project references (notably StdinClipModel) copy-local.
+       Only the Unix apphosts conflict with the full-output staging directories.
+       Windows apphosts have .exe extensions and retain their existing layout. -->
+  <Target Name="ExcludeRootFakeProviderAppHosts" AfterTargets="GetCopyToOutputDirectoryItems"
+          Condition="'$(OS)' != 'Windows_NT'">
+    <ItemGroup>
+      <_SourceItemsToCopyToOutputDirectory Remove="@(_SourceItemsToCopyToOutputDirectory)"
+          Condition="'%(_SourceItemsToCopyToOutputDirectory.TargetPath)' == 'fakeclaude' or '%(_SourceItemsToCopyToOutputDirectory.TargetPath)' == 'fakegrok'" />
+      <_SourceItemsToCopyToOutputDirectoryAlways Remove="@(_SourceItemsToCopyToOutputDirectoryAlways)"
+          Condition="'%(_SourceItemsToCopyToOutputDirectoryAlways.TargetPath)' == 'fakeclaude' or '%(_SourceItemsToCopyToOutputDirectoryAlways.TargetPath)' == 'fakegrok'" />
+      <_SourceItemsToCopyToOutputDirectoryIfDifferent Remove="@(_SourceItemsToCopyToOutputDirectoryIfDifferent)"
+          Condition="'%(_SourceItemsToCopyToOutputDirectoryIfDifferent.TargetPath)' == 'fakeclaude' or '%(_SourceItemsToCopyToOutputDirectoryIfDifferent.TargetPath)' == 'fakegrok'" />
+      <AllItemsFullPathWithTargetPath Remove="@(AllItemsFullPathWithTargetPath)"
+          Condition="'%(AllItemsFullPathWithTargetPath.TargetPath)' == 'fakeclaude' or '%(AllItemsFullPathWithTargetPath.TargetPath)' == 'fakegrok'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Recover an output directory left by the old, failed Linux build. Never
+       delete the staged directory on subsequent builds. These are build outputs. -->
+  <Target Name="RemoveObsoleteRootFakeProviderAppHosts" BeforeTargets="CopyFakeClaude;CopyLandFakeGrok"
+          Condition="'$(OS)' != 'Windows_NT'">
+    <Delete Files="$(OutDir)fakeclaude"
+            Condition="Exists('$(OutDir)fakeclaude') and !$([System.IO.Directory]::Exists('$(OutDir)fakeclaude'))" />
+    <Delete Files="$(OutDir)fakegrok"
+            Condition="Exists('$(OutDir)fakegrok') and !$([System.IO.Directory]::Exists('$(OutDir)fakegrok'))" />
+  </Target>
+</Project>
