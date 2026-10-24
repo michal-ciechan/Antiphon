@@ -325,7 +325,7 @@ public class SessionRuntimeActionTests
         if (variant == "after-input")
         {
             await using var clone = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = clone.ConnectionString });
+            await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = clone.ConnectionString });
             await h.InsertTurnAsync("previous", "previous answer");
             var message = await h.SeedPendingMessageAsync("one complete queued body");
             var prior = h.Adapter.OnSubmitted!;
