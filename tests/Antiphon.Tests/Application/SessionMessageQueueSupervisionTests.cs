@@ -26,7 +26,7 @@ public class SessionMessageQueueSupervisionTests
     [Test]
     public async Task A_supervision_enqueue_on_a_working_session_cancels_instead_of_stranding()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await h.MarkWorkingAsync();
 
         await h.Queue.EnqueueAsync(
@@ -45,7 +45,7 @@ public class SessionMessageQueueSupervisionTests
     [Test]
     public async Task A_turn_end_cancels_a_pending_supervision_compact_instead_of_delivering_it()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await using (var db = CreateContext())
         {
             db.SessionQueuedMessages.Add(new SessionQueuedMessage
@@ -75,7 +75,7 @@ public class SessionMessageQueueSupervisionTests
     [Test]
     public async Task A_supervision_message_at_the_attempts_cap_cancels_instead_of_parking()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             Supervision = new SupervisionSettings
