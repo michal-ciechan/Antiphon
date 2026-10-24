@@ -1179,7 +1179,7 @@ public class AgentSessionServiceIntegrationTests
     [Test]
     public async Task C691_delete_through_the_real_session_service_refuses_a_false_kill()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConfigureServices = services => services.AddScoped<IDelegateSessionStopper>(
@@ -1247,7 +1247,7 @@ public class AgentSessionServiceIntegrationTests
     public async Task C691_delete_keeps_a_terminal_row_whose_remote_process_is_unknown(SessionStatus status)
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConfigureServices = services =>
@@ -1667,7 +1667,12 @@ public class AgentSessionServiceIntegrationTests
             _runtime = runtime;
         }
 
-        public IAgentProtocolAdapter Create(AgentKind kind) => new RuntimeRegisteringAdapter(_adapter, _runtime);
+        public IAgentProtocolAdapter Create(AgentKind kind)
+        {
+            if (kind == AgentKind.ClaudeCode && _adapter is FakeAgentProtocolAdapter fake)
+                fake.WithClaudeDialogObservation();
+            return new RuntimeRegisteringAdapter(_adapter, _runtime);
+        }
     }
 
     private sealed class RuntimeRegisteringAdapter : IAgentProtocolAdapter
