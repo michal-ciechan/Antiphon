@@ -120,7 +120,7 @@ public class AgentTaskAnswerTests
 
     private static async Task<BridgeQueueHarness> CreateHarnessAsync()
     {
-        return await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        return await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = services =>
