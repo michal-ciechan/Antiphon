@@ -171,7 +171,7 @@ public partial class DispatchBaseNotificationTests
     public async Task C508_WarningsAreNotReports(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = CreateContext(schema);
         var task = await SeedBareTaskAsync(db, h.SessionId);
         var dispatch = await SeedDispatchEventAsync(db, task.Id, DateTime.UtcNow);
@@ -204,7 +204,7 @@ public partial class DispatchBaseNotificationTests
     public async Task C508_WarningQueueDigestCollision(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = CreateContext(schema);
         var task = await SeedBareTaskAsync(db, h.SessionId);
         var dispatch = await SeedDispatchEventAsync(db, task.Id, DateTime.UtcNow);
@@ -649,7 +649,7 @@ public partial class DispatchBaseNotificationTests
     public async Task C508_IntentScanIsolation(string fault, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = CreateContext(schema);
         var now = DateTime.UtcNow;
         var poisonTask = await SeedBareTaskAsync(db, null, AgentTaskReplyTo.None);
