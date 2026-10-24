@@ -2554,7 +2554,7 @@ public class AgentSessionLaunchFailureTests
             Action<IServiceCollection>? extraServices,
             Action<DbContextOptionsBuilder>? configureDb = null)
         {
-            var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
                 ConfigureDbContext = configureDb,
@@ -2809,14 +2809,17 @@ public class AgentSessionLaunchFailureTests
 
         public IAgentProtocolAdapter Create(AgentKind kind) =>
             _adapters.TryDequeue(out var adapter)
-                ? adapter
+                ? adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode
+                    ? fake.WithClaudeDialogObservation() : adapter
                 : throw new InvalidOperationException("No fake adapter was queued for this launch.");
     }
 
     /// <summary>Hands the SAME adapter to every launch — how a relaunch re-touches one process.</summary>
     private sealed class SharedAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
     {
-        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
+        public IAgentProtocolAdapter Create(AgentKind kind) =>
+            adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode
+                ? fake.WithClaudeDialogObservation() : adapter;
     }
 
     /// <summary>Creates the worktree directory and nothing else — no git in these tests.</summary>
