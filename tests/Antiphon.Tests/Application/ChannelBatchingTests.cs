@@ -28,7 +28,7 @@ public class ChannelBatchingTests
 
     private static async Task<BridgeQueueHarness> CreateHarnessAsync(bool batching = true)
     {
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
