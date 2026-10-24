@@ -15,6 +15,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.PostgreSql;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
+using Serilog.Core;
+using Serilog.Events;
 using Shouldly;
 using TUnit.Core;
 
@@ -35,7 +37,8 @@ public sealed class LiveStartupIntegrationTests
         Console.WriteLine($"C1564 fixture-setup container-ready elapsedMs={clock.Elapsed.TotalMilliseconds}");
         clock.Restart();
         var root = Path.Combine(Path.GetTempPath(), "c1564-host-" + Guid.NewGuid().ToString("N"));
-        await using var factory = new StartupFactory(container.GetConnectionString(), root);
+        using var sink = new DisposalWitnessSink(root);
+        await using var factory = new StartupFactory(container.GetConnectionString(), root, sink);
         using var http = factory.CreateClient();
         using var response = await http.GetAsync("/api/diagnostics/startup", cancellationToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -62,7 +65,30 @@ public sealed class LiveStartupIntegrationTests
             throw new InvalidOperationException("Startup timing fixture refuses outbound messaging");
     }
 
-    private sealed class StartupFactory(string connection, string root) : WebApplicationFactory<server::Program>
+    // An explicit order assertion exposes the Windows sharing regression on Linux,
+    // where deleting the directory alone would silently unlink an open stream.
+    private sealed class DisposalWitnessSink : ILogEventSink, IDisposable
+    {
+        private readonly FileStream _stream;
+        public bool Disposed { get; private set; }
+        public int Events { get; private set; }
+
+        public DisposalWitnessSink(string root)
+        {
+            Directory.CreateDirectory(root);
+            _stream = new FileStream(Path.Combine(root, "disposal-witness.log"),
+                FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        }
+
+        public void Emit(LogEvent logEvent) => Events++;
+        public void Dispose()
+        {
+            _stream.Dispose();
+            Disposed = true;
+        }
+    }
+
+    private sealed class StartupFactory(string connection, string root, DisposalWitnessSink sink) : WebApplicationFactory<server::Program>
     {
         public RefusingSessionRunnerClient Runner { get; } = new();
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -92,6 +118,7 @@ public sealed class LiveStartupIntegrationTests
             }));
             builder.ConfigureServices(services =>
             {
+                services.AddSingleton<ILogEventSink>(sink);
                 services.RemoveAll<IAntiphonMessagingProducer>();
                 services.AddSingleton<IAntiphonMessagingProducer>(new RefusingProducer());
                 services.RemoveAll<ISessionRunnerClient>();
@@ -105,6 +132,8 @@ public sealed class LiveStartupIntegrationTests
         public override async ValueTask DisposeAsync()
         {
             await base.DisposeAsync();
+            sink.Events.ShouldBeGreaterThan(0, "the server logger must reach the held sink");
+            sink.Disposed.ShouldBeTrue("the host logger must be disposed before directory deletion is attempted");
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }
