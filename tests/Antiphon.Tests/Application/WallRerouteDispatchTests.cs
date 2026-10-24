@@ -24,7 +24,9 @@ public class WallRerouteDispatchTests
 
     [Test]
     public async Task Same_kind_wall_reroute_fable_to_opus_dispatches_on_the_next_tick() =>
-        await AssertWallDispatchAsync(AgentKind.ClaudeCode, UsageLimitWallParser.FableModelCapIncidentText);
+        // Subscription quota refusals now require explicit re-dispatch. This scenario is
+        // the automatic capacity-wall reroute, with the live session identifying fable.
+        await AssertWallDispatchAsync(AgentKind.ClaudeCode, "API error (status 503): capacity exhausted");
 
     private static async Task AssertWallDispatchAsync(AgentKind walledKind, string wallText)
     {
