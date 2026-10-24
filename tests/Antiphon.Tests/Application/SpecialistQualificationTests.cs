@@ -91,7 +91,7 @@ public class SpecialistQualificationTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings { CheckInterpreterAgentSlug = "c415-" + Guid.NewGuid().ToString("N"),
             ModernPtyBriefInlineMaxBytes = 128, ModernPtySingleWriteMaxBytes = 128 };
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString, Delegation = settings,
             ConfigureServices = services =>
