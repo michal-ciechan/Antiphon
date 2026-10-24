@@ -66,8 +66,11 @@ internal static partial class CodexCliRemoteDeliveryFixture
 
         private async Task OpenGraphAsync()
         {
+            var storePath = Path.Combine(Root, "runner-store-id");
+            await File.WriteAllTextAsync(storePath, _store.ToString("D"));
             var dispatcher = new PhoneHomeCommandDispatcher(Recipient, new PhoneHomeSettings
             {
+                RunnerId = "grok-linux", StoreIdPath = storePath,
                 AllowedCwd = Root, RunnerRepository = Path.Combine(Root, "repo"),
                 RunnerCloneSource = (await Git.GitReadAsync("remote", "get-url", "origin")).Trim(),
                 CapacityStatePath = Path.Combine(Root, "capacity"),
