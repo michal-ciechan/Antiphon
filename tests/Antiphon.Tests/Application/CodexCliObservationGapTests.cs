@@ -308,30 +308,44 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Unobservable_screen_retains_spill()
     {
-        await using var w = await World.CreateAsync();
-        var id = await w.CreateTaskAsync(Body);
-        await w.DispatchAsync();
-        var task = await TaskAsync(w, id);
-        var observed = ObserveFile(w, task, requireNullFloor: true);
-        var held = HoldPrompts(w);
-        w.Launch(); await w.JoinLaunchAsync();
-        var row = await QueueAsync(w, id);
-        row.LastDeliveryBaselineSequence.ShouldBeNull("C959-pc-218 actually unobservable baseline");
-        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered, "C959-pc-218 actual screen fallback verdict");
-        await using (var db = w.Context())
-            (await db.AgentIncidents.CountAsync(i => i.SessionId == task.AgentSessionId && i.Kind == AgentIncidentKind.DeliveryUnverified))
-                .ShouldBe(1, "C959-pc-218 persisted degraded delivery evidence");
-        await AssertRetainedAsync(w, task);
-        await ReleaseAsync(w, task.AgentSessionId!.Value, held);
-        await AssertReceiptAsync(w, task, observed, "unobservable-screen");
+        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
+        {
+            await using var w = await World.CreateAsync(kind: kind);
+            var id = await w.CreateTaskAsync(Body);
+            await w.DispatchAsync();
+            var task = await TaskAsync(w, id);
+            var observed = ObserveFile(w, task, requireNullFloor: true);
+            var held = HoldPrompts(w);
+            w.Launch(); await w.JoinLaunchAsync();
+            var row = await QueueAsync(w, id);
+            row.LastDeliveryBaselineSequence.ShouldBeNull("C959-pc-218 actually unobservable baseline");
+            if (kind == AgentKind.ClaudeCode)
+            {
+                row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered, "C959-pc-218 actual screen fallback verdict");
+                await using (var db = w.Context())
+                    (await db.AgentIncidents.CountAsync(i => i.SessionId == task.AgentSessionId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+                        .ShouldBe(1, "C959-pc-218 persisted degraded delivery evidence");
+            }
+            else
+            {
+                // Codex pointer consumption requires a complete receipt, even after a redraw.
+                row.Status.ShouldBe(QueuedMessageStatus.Pending);
+                row.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoComposerEvidence);
+                TaskBodies(w, task.AgentSessionId!.Value).ShouldHaveSingleItem();
+            }
+            await AssertRetainedAsync(w, task);
+            await ReleaseAsync(w, task.AgentSessionId!.Value, held);
+            await AssertReceiptAsync(w, task, observed, "unobservable-screen");
+        }
     }
 
     [Test]
     public async Task C1029_Unobservable_timestamp_floor_is_original()
     {
+        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
         foreach (var variant in new[] { "older", "null", "equal", "newer" })
         {
-            await using var w = await World.CreateAsync();
+            await using var w = await World.CreateAsync(kind: kind);
             var id = await w.CreateTaskAsync(Body);
             await w.DispatchAsync();
             var task = await TaskAsync(w, id);
@@ -343,6 +357,9 @@ public sealed class CodexCliObservationGapTests
             row.LastDeliveryBaselineSequence.ShouldBeNull();
             var started = row.LastDeliveryStartedAt.ShouldNotBeNull();
             var floor = started.AddSeconds(-30);
+            // Codex additionally fences receipts by the selected accepted generation.
+            if (kind == AgentKind.Codex && row.LastDeliveryGeneration is { } generation && generation > floor)
+                floor = generation;
             held.ShouldHaveSingleItem();
             // Retained recipient source timestamp differs from ingestion time. PostgreSQL's
             // microsecond precision makes one microsecond the representable boundary step.
@@ -357,9 +374,20 @@ public sealed class CodexCliObservationGapTests
             {
                 // Late confirmation runs before the next attempt save. This fault stops that
                 // later claim, so a correct negative cannot retype or overwrite the original floor.
-                w.Fault.QueueId = row.Id; w.Fault.RejectRetry = true;
-                await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
-                w.Fault.Hits.ShouldBe(1, "C959-pc-246 stale timestamp did not falsely settle");
+                if (kind == AgentKind.ClaudeCode)
+                {
+                    w.Fault.QueueId = row.Id; w.Fault.RejectRetry = true;
+                    await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
+                    w.Fault.Hits.ShouldBe(1, "C959-pc-246 stale timestamp did not falsely settle");
+                }
+                else
+                {
+                    await w.FlushAsync(task.AgentSessionId.Value);
+                    var heldAttempt = await QueueAsync(w, id);
+                    heldAttempt.DeliveryAttempts.ShouldBe(row.DeliveryAttempts, "Codex cannot retype an unconfirmed pointer");
+                    heldAttempt.Status.ShouldBe(QueuedMessageStatus.Pending);
+                    TaskBodies(w, task.AgentSessionId.Value).ShouldHaveSingleItem();
+                }
                 await AssertRetainedAsync(w, task);
                 (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(started);
                 await ReleaseAsync(w, task.AgentSessionId.Value, held);
@@ -590,6 +618,8 @@ public sealed class CodexCliObservationGapTests
     private static async Task AssertReceiptAsync(World w, AgentTask task, FileObservation observed, string vector)
     {
         await w.Harness.Runtime.CatchUpTranscriptAsync(task.AgentSessionId!.Value, CancellationToken.None);
+        await w.Harness.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+            .DrainPageAsync(task.AgentSessionId.Value, CancellationToken.None);
         var q = await QueueAsync(w, task.Id);
         var full = w.Freeze.Full[task.Id];
         full.ShouldContain(Body); full.ShouldNotContain("\r");
