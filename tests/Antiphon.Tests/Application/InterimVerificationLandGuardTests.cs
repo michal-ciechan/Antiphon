@@ -251,12 +251,18 @@ public sealed class InterimVerificationLandGuardTests
 
             var targetBefore = h.Git.TargetHead;
             var remoteBefore = h.Git.RemoteTarget;
+            var durableRefs = h.Git.Refs.Where(r => !LandRefRetention.IsObservation(r.Key))
+                .OrderBy(r => r.Key, StringComparer.Ordinal).ToArray();
             h.Git.Trace.Clear();
             await h.RestartServicesAsync();
             await h.RunAsync();
 
             h.Git.Trace.ShouldNotContain(a => a[0] == "push", row + ": zero push children");
-            h.Git.Trace.ShouldNotContain(a => a.Contains("update-ref") || a.Contains("--ff-only"), row + ": zero target advancement");
+            // CARD-1432 deletes transient observation pins with update-ref --stdin on refusal.
+            h.Git.Trace.ShouldNotContain(a => (a.Contains("update-ref") && !a.SequenceEqual(new[] { "update-ref", "--stdin" }))
+                || a.Contains("--ff-only"), row + ": zero target advancement");
+            h.Git.Refs.Where(r => !LandRefRetention.IsObservation(r.Key))
+                .OrderBy(r => r.Key, StringComparer.Ordinal).ToArray().ShouldBe(durableRefs, row + ": durable refs unchanged");
             h.Git.TargetHead.ShouldBe(targetBefore, row + ": target unchanged since the checkpoint");
             h.Git.RemoteTarget.ShouldBe(remoteBefore, row + ": remote unchanged");
             var op = await h.OperationAsync();
