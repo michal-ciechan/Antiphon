@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
@@ -24,6 +25,19 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public sealed class PhoneHomeDirectoryTests
 {
+    [Test]
+    public async Task Startup_diagnostics_uses_the_phone_home_hosts_registered_timing()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        using var response = await host.Http.GetAsync("/api/diagnostics/startup");
+        var faults = string.Join(Environment.NewLine,
+            host.Logs.Entries.Where(entry => entry.Exception is not null).Select(entry => entry.Exception));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, faults);
+        var snapshot = await response.Content.ReadFromJsonAsync<StartupSnapshot>();
+        snapshot.ShouldNotBeNull();
+        snapshot.RunId.ShouldBe(host.App.Services.GetRequiredService<LiveTiming>().ReadStartup().RunId);
+    }
+
     [Test]
     public void Capacity_above_bound_is_refused()
     {
