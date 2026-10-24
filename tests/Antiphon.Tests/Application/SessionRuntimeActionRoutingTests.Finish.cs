@@ -892,7 +892,7 @@ public partial class SessionRuntimeActionRoutingTests
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var runner = new ScriptedSessionRunnerClient();
-            var h = await BridgeQueueHarness.CreateAsync(new()
+            var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
                 PreserveDatabaseOnDispose = true,
@@ -919,7 +919,7 @@ public partial class SessionRuntimeActionRoutingTests
             var session = H.SessionId; var agent = H.AgentId;
             await Pump.StopAsync(default); Pump.Dispose(); await H.DisposeAsync();
             Runner = new ScriptedSessionRunnerClient();
-            H = await BridgeQueueHarness.CreateAsync(new()
+            H = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = Schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
                 PreserveDatabaseOnDispose = true, ConfigureDbContext = _configureDb,
