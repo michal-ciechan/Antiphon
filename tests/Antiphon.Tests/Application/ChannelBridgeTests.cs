@@ -37,7 +37,7 @@ public class ChannelBridgeTests
     [Test]
     public async Task Herdr_held_agent_inbound_is_parked_with_one_incident_and_no_start_notice_or_reroute()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0, AgentStartTimeoutSeconds = 5 },
@@ -911,7 +911,7 @@ public class ChannelBridgeTests
     [Test]
     public async Task Held_agent_without_fallback_sends_notice_and_does_not_throw()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings
