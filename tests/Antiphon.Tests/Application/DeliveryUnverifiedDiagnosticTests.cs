@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 public class DeliveryUnverifiedDiagnosticTests
 {
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ClockSpeed = 5,
