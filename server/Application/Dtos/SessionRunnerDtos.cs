@@ -95,12 +95,17 @@ public sealed record SessionRunnerTranscriptEvent(
     int? ModelCalls = null,
     string? ApiErrorTimeZoneId = null);
 
+/// <summary>Live reader progress; absence is unknown, never evidence of missing input.</summary>
+public sealed record SessionRunnerTranscriptReadiness(
+    string Status, string? BindingId, long ParsedThrough, long ObservedLength, string? Reason = null);
+
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,
     IReadOnlyList<SessionRunnerTranscriptEvent> Entries,
     long LastSequence,
     bool TerminalComplete = false,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    SessionRunnerTranscriptReadiness? Readiness = null);
 
 /// <summary>A restarted runner re-attached to a surviving pty-host; the session never stopped.</summary>
 public sealed record SessionRunnerAdoptedEvent(
