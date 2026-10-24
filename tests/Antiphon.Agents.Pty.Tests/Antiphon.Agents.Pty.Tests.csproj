@@ -47,6 +47,8 @@
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <Import Project="../Shared/FakeProviderOutput.targets" />
+
   <Target Name="CopyFakeClaude" AfterTargets="Build">
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj"
              Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
