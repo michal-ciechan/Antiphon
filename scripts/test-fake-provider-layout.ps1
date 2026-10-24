@@ -27,7 +27,7 @@ try {
         $buildExit = $LASTEXITCODE
         $lines | Write-Output
         if ($Phase -eq 'Red') {
-            $provider = $providers[0]
+            $provider = @($providers)[0]
             $destination = [regex]::Escape($OutputPath + $provider + '/')
             if ($buildExit -eq 0 -or -not ($lines -match "error MSB3021:.*$destination") -or
                 -not (Test-Path -LiteralPath (Join-Path $consumer $provider) -PathType Leaf)) {
