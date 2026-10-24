@@ -793,6 +793,7 @@ public class SessionMessageQueueServiceTests
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, sessionId);
         // CARD-0055: a submitted prompt becomes a UserPrompt transcript record, which is what a
         // delivery is now confirmed against. The trailing TurnEnd keeps the fake's post-delivery
         // state idle, exactly as it was before this modelling was added.
