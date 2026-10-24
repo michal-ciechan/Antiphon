@@ -224,6 +224,7 @@ public sealed class ExpectationDirectDeliveryTests
         committed.ShouldBe(0, "no attempt was committed for a changed destination");
 
         // Control: the current generation and owner accept a send.
+        await adapter.EnableClaudeDialogObservationAsync(f.Schema.ConnectionString, f.SessionId);
         var current = await f.Sender.SendAsync(f.SessionId, await f.GenerationAsync(), f.World.AgentId, "current body", Commit, CancellationToken.None);
         current.Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
         committed.ShouldBe(1);
@@ -321,9 +322,10 @@ public sealed class ExpectationDirectDeliveryTests
         adapter.Inputs.Count.ShouldBe(writes, "nothing is typed on top of a body that may stand in the composer");
 
         // The Enter finally lands. Its echo stays in the conversation, so the screen alone can
-        // never show the composer empty, and time passing is not evidence either.
+        // never show the composer empty in this tail-only frame, and time passing is not evidence either.
         adapter.SwallowSubmits = 0;
         adapter.PrimeComposer(string.Empty);
+        adapter.ClaudeComposerChrome = false;
         adapter.Emit("\n> " + unbased.Body + "\n");
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.Inputs.Count.ShouldBe(writes, "an echo on screen does not release the hold");
@@ -333,6 +335,7 @@ public sealed class ExpectationDirectDeliveryTests
             timestamp: DateTime.UtcNow, connectionString: f.Schema.ConnectionString);
         await BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
             connectionString: f.Schema.ConnectionString);
+        adapter.ClaudeComposerChrome = true;
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.ShouldBe(["land note for CARD-0641"]);
         (await f.ReloadAsync(unbased.Id)).ReceiptAt.ShouldBeNull("releasing the hold is not a receipt without a floor");
@@ -500,8 +503,8 @@ public sealed class ExpectationDirectDeliveryTests
     [Test]
     public async Task C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input()
     {
-        // No readable composer region (the bare fake screen), so the whole-screen rule applies and
-        // the submitted echo holds. The operator's audited release is the way out.
+        // After the supported send, the viewport no longer shows a readable composer region,
+        // so the submitted echo holds. The operator's audited release is the way out.
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
         EchoWithoutRecordingTheWatchdogPrompt(adapter);
@@ -509,6 +512,7 @@ public sealed class ExpectationDirectDeliveryTests
         var nudge = await f.NudgeAsync(checkTaskId: task);
         (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        adapter.ClaudeComposerChrome = false;
         Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(adapter.SnapshotRenderedScreen(), out _)
             .ShouldBeFalse("sanity: no composer region on this screen");
         var route = $"/api/sessions/{f.SessionId:D}/expectation-hold/release";
@@ -548,6 +552,7 @@ public sealed class ExpectationDirectDeliveryTests
         }
 
         // Released, so ordinary input proceeds. A second release finds nothing and records nothing.
+        adapter.ClaudeComposerChrome = true;
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.ShouldBe([nudge.Body, "land note for CARD-0641"]);
         (await f.Harness.Queue.ReleaseExpectationHoldAsync(f.SessionId, "again", Operator, CancellationToken.None))
