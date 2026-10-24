@@ -497,7 +497,7 @@ public class RepairSourceSettlementTests
         await using var world = await RepairSourceWorld.CreateAsync();
         var (repair, _) = await world.DispatchAsync();
         var c = await world.CommitInOwnerTreeAsync("repair work", push: true);
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
@@ -533,7 +533,7 @@ public class RepairSourceSettlementTests
         await using var world = await RepairSourceWorld.CreateAsync();
         var (repair, _) = await world.DispatchAsync();
         var c = await world.CommitInOwnerTreeAsync("repair work", push: true);
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
@@ -564,7 +564,7 @@ public class RepairSourceSettlementTests
     {
         await using var world = await RepairSourceWorld.CreateAsync();
         var (repair, sessionId) = await world.DispatchAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = world.Schema.ConnectionString,
