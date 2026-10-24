@@ -233,8 +233,11 @@ public class ChannelPromptCorrelationTests
         // A standing resume changes current generation, not the accepted generation of this receipt.
         await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u =>
             u.SetProperty(s => s.StartedAt, DateTime.UtcNow));
+        await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
         var promptTime = DateTimeOffset.UtcNow.AddSeconds(-10);
         await ReplayAsync(h, body, timestamp: promptTime);
+        // Transcript ingestion admits durable actions; execute the receipt confirmation before reading it.
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, Ct);
         var confirmed = await RowAsync(h, id);
         confirmed.Status.ShouldBe(QueuedMessageStatus.Sent);
         confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
