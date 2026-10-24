@@ -1990,8 +1990,8 @@ function Test-C1410_MeasuredCostGroups {
     # 19012 nodes) is packed by estimated serial seconds: measured rows from
     # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
     # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
-    # anywhere doubles. With CARD-1404 group-10 prices, this fixed fixture
-    # estimates 9-10 h in 60-100 launches (not a measured wall-clock SLA); every
+    # anywhere doubles. CARD-1567 and CARD-1577 calibrations make this fixed
+    # fixture estimate 14.62 h in 107 launches (not a measured wall-clock SLA); every
     # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
@@ -2132,12 +2132,13 @@ function Test-C1410_MeasuredCostGroups {
         $launches = @($plan).Count
         $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
-        # CARD-1567 reprices the unchanged 19012-node fixture from retained
-        # Windows diagnostic totals. Pin its new estimate rather than widening
-        # the old 9-10 hour envelope. Four synthetic suffix-probe launches are
-        # additional to the 100 real-fixture launches (not Windows qualification).
-        if ($launches -ne 104) { [void]$reasons.Add('launch-count') }
-        if ([Math]::Abs($suiteSeconds - 47108.09756097559) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        # CARD-1577 adds 5514.055555555556 seconds to CARD-1567's
+        # 47108.09756097559 seconds: sum(new per-node bound - old fallback)
+        # over the fixed listing. Its Rolling class has 26 nodes, while the
+        # Windows measurement denominator has 27. All other counts match.
+        # Repacking adds three launches: 103 real + four suffix probes.
+        if ($launches -ne 107) { [void]$reasons.Add('launch-count') }
+        if ([Math]::Abs($suiteSeconds - 52622.153116531146) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
