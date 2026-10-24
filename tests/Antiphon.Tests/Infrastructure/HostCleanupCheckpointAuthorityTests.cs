@@ -12,6 +12,20 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class HostCleanupCheckpointAuthorityTests
 {
+    [Test]
+    public void Virtual_Windows_paths_preserve_one_file_across_separator_spellings()
+    {
+        // Pure strings: exercise the virtual Windows filesystem without a native lock or process.
+        var io = new VirtualCheckpointIo(new Antiphon.Tests.TestHelpers.ControlledTimeProvider(), CheckpointPlatform.Windows);
+        const string written = @"C:\c987\owned\payload.txt";
+        const string observed = "C:/c987/owned/payload.txt";
+        io.Put(written, "keep");
+        io.FileExists(observed).ShouldBeTrue("Windows accepts both directory separators");
+        io.Text(observed).ShouldBe("keep");
+        io.Unlink(observed);
+        io.FileExists(written).ShouldBeFalse("an alias must address the same virtual file");
+    }
+
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private static string Label(string method, string variant) => "C987." + method + "." + variant;
     private static string AuthorityPath(HostCleanupToolFixture f) => f.Run + "/tool-copy-authority.json";
