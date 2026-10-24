@@ -175,7 +175,11 @@ public partial class PhoneHomeRecoveryEligibilityTests
             world.Host = await PhoneHomeTestHost.StartAsync(world.Clock, observer: world.Observer);
             world.Peer = await world.Host.ConnectPeerAsync();
             world.Live = await world.Host.WaitLiveAsync();
-            world.Pump = PhoneHomeRecoveryEligibilityTests.Pump(world.Host, Settings(world.Host),
+            var settings = Settings(world.Host);
+            // Expiry advances the clock past the periodic refresh interval too. Disable that
+            // independent List so every observed request here belongs to awaited recovery.
+            settings.InventoryRefreshSeconds = 0;
+            world.Pump = PhoneHomeRecoveryEligibilityTests.Pump(world.Host, settings,
                 world.Host.App.Services.GetRequiredService<IServiceScopeFactory>());
             (await world.Pump.RunCycleAsync(world.Stop.Token)).ShouldBeTrue();
             return world;

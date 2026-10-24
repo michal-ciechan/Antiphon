@@ -57,7 +57,7 @@ publication; this task does not restart/deploy. No release scripts/tags.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-5e-red/` | lease-red | `/*/*/PhoneHomeRecoveryEligibilityTests/Lease_*` | V-1,V-2,V-3,V-4 | diagnostic: guarded defect must fail | 10 | 4 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-5e-red2/` | lease-red | `/*/*/PhoneHomeRecoveryEligibilityTests/Lease_*` | V-1,V-2,V-3,V-4 | diagnostic: guarded defect must fail | 10 | 4 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-5e-final/` | recovery | `/*/*/PhoneHomeRecoveryEligibilityTests/*` | V-1,V-2,V-3,V-4,R-1 | all listed, 0 failed | 13 | 4 | true |
 | CP-3 | S2 | CP-2 | observers-inventory | `/*/Antiphon.Tests.Application/(PhoneHomeEventPumpTests*)\|(PhoneHomePendingInventoryTests*)\|(RunnerEligibilityObserverTests*)/*` | R-2,R-3 | all listed, 0 failed | 3 | 3 | true |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 5 | true |
@@ -72,3 +72,10 @@ PC-4: start a duplicate observer group after same-connection recovery.
 All PCs/variants are pending for method-scoped SourceLanding Mutation, including
 missing-control discovery. Code owns only ordinary regression red/green.
 Next stage is ordinary Review under the Code stage contract.
+
+Initial S1 witness at 7bb28a7a339391c9a2057e24a9fda422c57d1f6b:
+10 executed, 6 passed, 4 assertion failures; build 260.97s, test wall 1.36s.
+Advancing the fake clock also made periodic refresh due, allowing an unrelated
+List to satisfy some negative-case request counts. Disable periodic refresh in
+the new fixture and repeat CP-1 with fresh bin-5e-red2/ before the product fix.
+Preserve this initial diagnostic run; no acceptance credit for its negative cases.
