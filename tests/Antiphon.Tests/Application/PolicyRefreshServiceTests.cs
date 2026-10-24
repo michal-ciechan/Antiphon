@@ -610,7 +610,7 @@ public class PolicyRefreshServiceTests
     }
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync(string kind = "ClaudeCode") =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConfigureServices = services =>
@@ -684,7 +684,7 @@ public class PolicyRefreshServiceTests
 
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
-            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime }.WithClaudeDialogObservation();
             adapter.OnSubmitted = async submitted =>
             {
                 if (adapter.StartedSessionId is not Guid sessionId)
