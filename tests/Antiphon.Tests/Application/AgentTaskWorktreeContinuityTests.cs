@@ -73,7 +73,7 @@ public class AgentTaskWorktreeContinuityTests
         await using (var dispatchProvider = AgentTaskDispatchBaseGuardTests.CreateProvider(
             schema.ConnectionString, repo.WorktreeRoot))
         await using (var scope = dispatchProvider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var child = await db.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
         child.Status.ShouldBe(AgentTaskStatus.Dispatched);
