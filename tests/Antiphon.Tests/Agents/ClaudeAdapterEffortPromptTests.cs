@@ -94,7 +94,11 @@ public class ClaudeAdapterEffortPromptTests
         if (observation is not null) observation.Scratch = scratch;
         var capture = Path.Combine(scratch, "capture.json");
         var trace = Path.Combine(scratch, "trace.json");
-        await File.WriteAllTextAsync(capture, JsonSerializer.Serialize(new { screen = EffortTestScreen.Capture(0) }));
+        await File.WriteAllTextAsync(capture, JsonSerializer.Serialize(new
+        {
+            screen = EffortTestScreen.Capture(0),
+            composer = ScriptedClaudeInputGuard.Composer("{{composer}}"),
+        }));
         Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", "modern");
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings();
         // D-6: this real PowerShell fixture owns its clearance allowance. Runner fakes retain 500 ms.

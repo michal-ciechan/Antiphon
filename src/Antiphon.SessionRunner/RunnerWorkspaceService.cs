@@ -75,9 +75,11 @@ public sealed partial class RunnerWorkspaceService
         _cloneSource = policy.PrimaryCloneSource;
         _startProcess = startProcess;
         _repository = policy.PrimaryPath;
-        _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
-        _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
-        _bindingStateRoot = allowedCwd.TrimEnd('/') + "/workspace-bindings";
+        // Admission compares slash-normalized paths on every host, including Windows.
+        var allowedRoot = allowedCwd.Replace('\\', '/').TrimEnd('/');
+        _worktreeRoot = allowedRoot + "/worktrees";
+        _verificationMetadataRoot = allowedRoot + "/verification-creations";
+        _bindingStateRoot = allowedRoot + "/workspace-bindings";
         _timeout = timeout ?? TimeSpan.FromMinutes(10);
         _publishedBranch = publishedBranch;
     }

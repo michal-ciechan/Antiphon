@@ -15,7 +15,7 @@ function Paint {
         $screen = $script:template.Replace('> Keep', '  Keep').Replace('     Switch', '   > Switch')
         if ($script:highlight -eq 1) { $screen = $script:template }
     } else {
-        $screen = "Fable 5.1 with $script:applied effort" + [char]10 + '> ' + $script:composer + [char]10 + '? for shortcuts'
+        $screen = "Fable 5.1 with $script:applied effort" + [char]10 + $capture.composer.Replace('{{composer}}', $script:composer)
     }
     [Console]::Write(([char]27 + '[2J' + [char]27 + '[H') + $screen)
     if ($script:PaintSink) { & $script:PaintSink $screen }
