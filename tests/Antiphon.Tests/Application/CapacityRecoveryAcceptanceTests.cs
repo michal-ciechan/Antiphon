@@ -403,7 +403,7 @@ public class CapacityRecoveryAcceptanceTests
     public async Task Card0412_V10_fresh_wall_registration_bumps_wave()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
