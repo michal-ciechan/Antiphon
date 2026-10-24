@@ -63,6 +63,7 @@ publication; this task does not restart/deploy. No release scripts/tags.
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 5 | true |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-5e-repair/` | repaired-integration | `/*/Antiphon.Tests.Application/(PhoneHomeRecoveryEligibilityTests*)\|(PhoneHomeEventPumpTests*)\|(PhoneHomePendingInventoryTests*)\|(RunnerEligibilityObserverTests*)/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | all listed, 0 failed | 34 | 6 | true |
 | CP-6 | S3 | CP-5 | unit-rerun | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 5 | true |
+| CP-7 | S4 | `tests/Antiphon.Tests -> bin-5e-pending/` | final-integration | `/*/Antiphon.Tests.Application/(PhoneHomeRecoveryEligibilityTests*)\|(PhoneHomeEventPumpTests*)\|(PhoneHomePendingInventoryTests*)\|(RunnerEligibilityObserverTests*)/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | all listed, 0 failed | 34 | 6 | true |
 
 ## Mutation handoff
 
@@ -103,3 +104,22 @@ classes, including the red row. CP-6 is the one required rerun of the timed-out
 Unit selection under the same 8m cap. Hard run limits 15m execution / 18m wall;
 no further unchanged retries. If Unit times out or has native platform skips,
 retain the incomplete gate and report exact missing qualification to the caller.
+
+S3 at f9daec4041e5760e5568179bcbf7fcd208afedd7:
+CP-5 fresh TRX executed 34, passed 33, failed the same manual-input fixture at its
+10s barrier (the input guard now passed). All recovery cases, event and observer
+cases passed. CP-6 was explicitly stopped while running, before source edits,
+to repair that known fixture within the 60m task budget. Stop confirmed executor
+death but wait returned 6 (no terminal report); preserve the raw TRX/state/logs,
+not a fabricated clean receipt. R-4 remains incomplete, not passed.
+
+S4 uses SendInteractiveInputAsync for this test's explicitly manual input.
+That API records the terminal composer before the adapter removes itself during
+Enter, allowing the intended manual-turn tracker to start. The automated Claude
+API records after its conditional write and therefore observes the already-removed
+composer. Remove the unnecessary supported-observation setup; keep every barrier,
+phase and query-count assertion unchanged. CP-7 reruns all four full classes at
+the new committed tip. Limits: unchanged 8m row/build cap, 9m execution, 10m wall.
+No third whole-Unit attempt in this budget. R-4 requires a continuation with a
+bounded Unit manifest and any required native Windows qualification; next: code
+while that ordinary verification remains. Then ordinary Review is still required.
