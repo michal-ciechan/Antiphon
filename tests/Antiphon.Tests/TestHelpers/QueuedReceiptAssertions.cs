@@ -58,7 +58,8 @@ internal static class QueuedReceiptAssertions
                 queue = recovered.Queue;
             }
 
-            if (busy && !busyBeforeDelivery) await SetWorkingAsync(connection, sessionId, true);
+            var runtime = recovered?.Runtime ?? h.Runtime;
+            if (busy && !busyBeforeDelivery) await SetWorkingAsync(connection, sessionId, true, runtime);
 
             if (queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
             {
@@ -70,7 +71,7 @@ internal static class QueuedReceiptAssertions
                         .Status.ShouldBe(QueuedMessageStatus.Pending);
                     (await CountUserPromptsAsync(connection, sessionId)).ShouldBe(0,
                         "a busy caller must not receive the note until it is idle");
-                    await SetWorkingAsync(connection, sessionId, false);
+                    await SetWorkingAsync(connection, sessionId, false, runtime);
                     await queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
                 }
             }
@@ -191,10 +192,21 @@ internal static class QueuedReceiptAssertions
             e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
     }
 
-    private static async Task SetWorkingAsync(string connection, Guid sessionId, bool working)
+    private static async Task SetWorkingAsync(
+        string connection, Guid sessionId, bool working, AgentSessionRuntime? runtime = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var seq = ((await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
+        if (runtime is not null)
+        {
+            // Publish the committed transition to the same projection the queue reads.
+            await runtime.PersistTranscriptAsync(sessionId, [new SessionRunnerTranscriptEvent(
+                sessionId, seq, working ? TranscriptKinds.AssistantText : TranscriptKinds.TurnEnd,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "assistant",
+                working ? "busy" : null, null, null, null, null,
+                working ? null : TranscriptKinds.StopReasons.EndTurn)]);
+            return;
+        }
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
