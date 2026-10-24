@@ -2582,6 +2582,12 @@ public class AgentSessionLaunchFailureTests
                 },
             });
 
+            // The card launch's dialog admission reads the runtime before sending its work.
+            // Register factory-created Claude fakes at StartAsync, just as the runner is reachable
+            // during a real launch, rather than leaving those reads on the unsupported runner stub.
+            if (adapterFactory is QueueAdapterFactory queued)
+                queued.Runtime = harness.Runtime;
+
             var workspace = Path.Combine(harness.TempRoot, "launch-workspace");
             Directory.CreateDirectory(workspace);
             var sessionId = Guid.NewGuid();
@@ -2806,12 +2812,19 @@ public class AgentSessionLaunchFailureTests
     private sealed class QueueAdapterFactory(IEnumerable<IAgentProtocolAdapter> adapters) : IAgentProtocolAdapterFactory
     {
         private readonly Queue<IAgentProtocolAdapter> _adapters = new(adapters);
+        public AgentSessionRuntime? Runtime { private get; set; }
 
-        public IAgentProtocolAdapter Create(AgentKind kind) =>
-            _adapters.TryDequeue(out var adapter)
-                ? adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode
-                    ? fake.WithClaudeDialogObservation() : adapter
-                : throw new InvalidOperationException("No fake adapter was queued for this launch.");
+        public IAgentProtocolAdapter Create(AgentKind kind)
+        {
+            if (!_adapters.TryDequeue(out var adapter))
+                throw new InvalidOperationException("No fake adapter was queued for this launch.");
+            if (adapter is FakeAgentProtocolAdapter fake && kind == AgentKind.ClaudeCode)
+            {
+                fake.RegisterOnStart ??= Runtime;
+                return fake.WithClaudeDialogObservation();
+            }
+            return adapter;
+        }
     }
 
     /// <summary>Hands the SAME adapter to every launch — how a relaunch re-touches one process.</summary>
