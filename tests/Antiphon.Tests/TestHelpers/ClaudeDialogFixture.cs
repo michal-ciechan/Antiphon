@@ -19,6 +19,16 @@ internal static class ClaudeDialogFixture
         return adapter;
     }
 
+    /// <summary>For synchronous fixture attachment to an already persisted session.</summary>
+    public static void EnableClaudeDialogObservation(
+        this FakeAgentProtocolAdapter adapter, string connectionString, Guid sessionId)
+    {
+        using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        adapter.AcceptedStartedAt = db.AgentSessions.Where(s => s.Id == sessionId)
+            .Select(s => s.StartedAt).Single();
+        adapter.WithClaudeDialogObservation();
+    }
+
     public static async Task EnableClaudeDialogObservationAsync(
         this FakeAgentProtocolAdapter adapter, string connectionString, Guid sessionId)
     {
