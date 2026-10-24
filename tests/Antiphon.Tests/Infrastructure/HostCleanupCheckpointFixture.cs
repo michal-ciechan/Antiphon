@@ -163,8 +163,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
     public DateTime LastWriteTimeUtc(string path) { Enter("modified", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Modified / 100); }
     public string StreamPath(Stream stream) => ((WriteStream)stream).Path;
     public Dictionary<string, string> Environment { get; } = [];
-    public Dictionary<string, Node> Nodes { get; } = new(platform == CheckpointPlatform.Windows
-        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    public Dictionary<string, Node> Nodes { get; } = new(new FixturePathComparer(platform));
     public List<(string Operation, string Path)> Events { get; } = [];
     public List<CheckpointReadOpen> ReadRequests { get; } = [];
     public List<(string Path, FileMode Mode, FileAccess Access, FileShare Share)> Opens { get; } = [];
@@ -180,7 +179,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
     public uint Owner => 1000;
     public int RecursiveIntents { get; private set; }
     private ulong _inode = 10;
-    private readonly Dictionary<string, List<FileShare>> _held = [];
+    private readonly Dictionary<string, List<FileShare>> _held = new(new FixturePathComparer(platform));
     private long Now => (clock.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100;
 
     private void Enter(string operation, string path)
@@ -188,7 +187,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
         Events.Add((operation, path));
         Before?.Invoke(operation, path);
     }
-    public int Count(string operation, string? path = null) => Events.Count(e => e.Operation == operation && (path is null || e.Path == path));
+    public int Count(string operation, string? path = null) => Events.Count(e => e.Operation == operation && (path is null || Nodes.Comparer.Equals(e.Path, path)));
     public Node Put(string path, string text) => Put(path, Encoding.UTF8.GetBytes(text));
     public Node Put(string path, byte[] bytes)
     {
@@ -210,7 +209,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
     public IEnumerable<string> Enumerate(string path)
     {
         Enter("enumerate", path);
-        return Nodes.Keys.Where(p => Path.GetDirectoryName(p) == path).ToArray();
+        return Nodes.Keys.Where(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path)).ToArray();
     }
     public CheckpointStat Stat(string path, bool portable = false)
     {
@@ -279,11 +278,25 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
         if (recursive)
         {
             RecursiveIntents++;
-            foreach (var entry in Nodes.Keys.Where(p => p.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal)).ToArray())
+            var comparer = (FixturePathComparer)Nodes.Comparer;
+            foreach (var entry in Nodes.Keys.Where(p => comparer.IsChild(p, path)).ToArray())
                 Nodes.Remove(entry);
         }
-        if (Nodes.Keys.Any(p => Path.GetDirectoryName(p) == path)) throw new IOException("directory not empty");
+        if (Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path))) throw new IOException("directory not empty");
         Nodes.Remove(path);
+    }
+
+    // Production canonicalizes with the host Path APIs. Match their separator aliases while
+    // retaining the virtual platform's case rule; Linux fixtures on Windows use native paths too.
+    private sealed class FixturePathComparer(CheckpointPlatform platform) : IEqualityComparer<string>
+    {
+        private StringComparer Comparer => platform == CheckpointPlatform.Windows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        private string Key(string path) => platform == CheckpointPlatform.Windows || OperatingSystem.IsWindows()
+            ? path.Replace('\\', '/') : path;
+        public bool Equals(string? x, string? y) => x is null || y is null ? x == y : Comparer.Equals(Key(x), Key(y));
+        public int GetHashCode(string obj) => Comparer.GetHashCode(Key(obj));
+        public bool IsChild(string path, string parent) => Key(path).StartsWith(Key(parent) + "/",
+            platform == CheckpointPlatform.Windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
     public string? EnvironmentVariable(string name) => Environment.GetValueOrDefault(name) ?? (name == "PATH" ? "/bin" : null);
     public CheckpointGitResult Run(CheckpointGitRequest request)
@@ -342,8 +355,8 @@ internal sealed class HostCleanupToolFixture
     public VirtualCheckpointIo Io => Files.Io;
     public CheckpointCleanupContext Context => Files.Context;
     public string Run { get; private set; }
-    public string Tool => Run + "/tool";
-    public string Payload => Tool + "/fixture.dll";
+    public string Tool => Path.Combine(Run, "tool");
+    public string Payload => Path.Combine(Tool, "fixture.dll");
     public ProcessIdentity Dead => new(999, 1, Io.MachineName, Io.BootId, Io.PidNamespace);
     public RunOwnership Owner { get; }
     public HostCleanupToolFixture(int exit = 0, bool sealAuthority = false)
@@ -375,8 +388,8 @@ internal sealed class HostCleanupToolFixture
     };
     public async Task StartAsync()
     {
-        var source = Files.Parent + "/source-tool";
-        Io.CreateDirectory(source); Io.Put(source + "/Antiphon.Checkpoints.dll", "image");
+        var source = Path.Combine(Files.Parent, "source-tool");
+        Io.CreateDirectory(source); Io.Put(Path.Combine(source, "Antiphon.Checkpoints.dll"), "image");
         var launches = 0;
         var runtime = new CheckpointApp.Runtime
         {
@@ -388,7 +401,7 @@ internal sealed class HostCleanupToolFixture
         if (started.ExitCode != 0 || launches != 1) throw new InvalidOperationException("virtual starter failed");
         Run = started.RunDirectory;
         Receipt.State.RunId = Path.GetFileName(Run); Receipt.Report.RunId = Receipt.State.RunId;
-        SafeWrite.Require(new RunStateStore(Context).Write(Run + "/state.json", Receipt.State));
+        SafeWrite.Require(new RunStateStore(Context).Write(Path.Combine(Run, "state.json"), Receipt.State));
         ReportWriter.WriteFiles(Context, Run, Receipt.Report);
     }
     public static CheckpointManifest Manifest() => new()
