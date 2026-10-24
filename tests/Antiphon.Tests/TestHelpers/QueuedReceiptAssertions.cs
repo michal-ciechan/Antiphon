@@ -25,6 +25,7 @@ internal static class QueuedReceiptAssertions
         bool busyBeforeDelivery = false)
     {
         var adapter = h.Adapter;
+        await adapter.EnableClaudeDialogObservationAsync(connection, sessionId);
         BindRuntimeTranscript(adapter, sessionId, connection);
         if (!h.Runtime.ListLiveSessions().Contains(sessionId))
             h.Runtime.Register(sessionId, adapter);
@@ -45,7 +46,7 @@ internal static class QueuedReceiptAssertions
                     "a persisted queue row is not recipient acceptance");
                 queued.Status.ShouldBe(QueuedMessageStatus.Pending);
 
-                recovered = await BridgeQueueHarness.CreateAsync(new()
+                recovered = await ClaudeDialogFixture.CreateBridgeAsync(new()
                 {
                     AlwaysOn = false,
                     ConnectionString = connection,
