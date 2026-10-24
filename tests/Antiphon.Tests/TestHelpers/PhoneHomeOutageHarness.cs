@@ -131,35 +131,7 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
             AcceptedStartedAt = Bridge.Adapter.AcceptedStartedAt,
             OnSubmitted = Bridge.Adapter.OnSubmitted,
         }.WithClaudeDialogObservation();
-        peer.Reply = frame =>
-        {
-            object? payload = frame.Operation switch
-            {
-                PhoneHomeOperation.Capabilities => new RunnerCapabilitiesDto(
-                    "InboxConhost", "inbox", "test", false,
-                    Features: [ProviderDialogObservation.Capability]),
-                PhoneHomeOperation.Snapshot => new RunnerSnapshotDto(
-                    SessionId, terminal.SnapshotRawOutput(), terminal.SnapshotRenderedScreen(),
-                    terminal.SnapshotSequence, terminal.AcceptedStartedAt!.Value,
-                    terminal.AcceptedStartedAt,
-                    terminal.ObserveDialogAsync(SessionId, CancellationToken.None).GetAwaiter().GetResult()),
-                PhoneHomeOperation.Buffer => new RunnerBufferDto(
-                    SessionId, terminal.SnapshotRawOutput(), terminal.SnapshotSequence),
-                PhoneHomeOperation.ConditionalInput => terminal.SendConditionalInputAsync(
-                    frame.Payload!.Value.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)!,
-                    CancellationToken.None).GetAwaiter().GetResult() with { SessionId = SessionId },
-                _ => null,
-            };
-            if (frame.Operation == PhoneHomeOperation.Input)
-            {
-                terminal.SendInputAsync(frame.Payload!.Value.GetProperty("input").GetString()!,
-                    CancellationToken.None).GetAwaiter().GetResult();
-                terminal.SnapshotSequence++;
-            }
-            return payload is null ? null : new PhoneHomeFrame(
-                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
-                JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
-        };
+        ClaudeDialogFixture.ConfigurePhoneHomePeer(peer, terminal, SessionId);
     }
 
     public async Task DisconnectAsync(PhoneHomeScriptedPeer peer)
