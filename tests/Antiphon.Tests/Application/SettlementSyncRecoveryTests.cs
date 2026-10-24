@@ -506,7 +506,7 @@ public sealed class SettlementSyncRecoveryTests
     }
 
     private static void AssertWorktreeRegistrationContainsPath(string porcelain, string path) =>
-        porcelain.ShouldContain("worktree " + path);
+        porcelain.ShouldContain("worktree " + path.Replace('\\', '/'));
 
     /// <summary>
     /// CARD-1082 F3c D1. A Complete retirement of an earlier registration does not
