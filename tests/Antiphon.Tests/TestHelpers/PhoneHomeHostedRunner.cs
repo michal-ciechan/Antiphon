@@ -56,7 +56,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
         {
             Directory.CreateDirectory(h._root);
             h._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            h.Bridge = await BridgeQueueHarness.CreateAsync(new()
+            h.Bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = h._schema.ConnectionString,
                 AlwaysOn = false,
