@@ -76,6 +76,9 @@ public sealed class RemoteScriptContractTests
     public void C1066_Fixture_npm_install_uses_argument_log_under_nounset(bool miss)
     {
         var output = LinuxShell(C1066FixtureHarness(
+            "c849_fixture_resource_state",
+            "c849_fixture_owned_name",
+            "c849_fixture_cache_identity",
             "c849_fixture_workspace_labels_ok",
             "c849_fixture_work_mount",
             "c849_fixture_helper_exec",
@@ -130,8 +133,14 @@ public sealed class RemoteScriptContractTests
                 printf 'unexpected docker %s\n' "$1" >&2
                 return 1
             }
+            # Ownership and volume guards above are real; model only the container launch boundary.
+            c849_fixture_launch() {
+                [ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = --name ] && [ "$4" = "c849-${RUN}-npm-b" ] || return 97
+                docker "$@"
+            }
+            printf '%s\n' "c849${RUN}npmcache-npm" > "$CASE_DIR/.fixture-volumes"
             status=0
-            actual="$(c849_fixture_npm_install fixture-image "c849${RUN}fixture-npm" b)" || status=$?
+            actual="$(c849_fixture_npm_install fixture-image "c849${RUN}npmcache-npm" b)" || status=$?
             [ "$status" = {{(miss ? 2 : 0)}} ] && [ "$actual" = '{{(miss ? "NpmOfflineCacheMiss" : "")}}' ] || {
                 printf 'unexpected status=%s diagnosis=%s\n' "$status" "$actual"; exit 1;
             }
