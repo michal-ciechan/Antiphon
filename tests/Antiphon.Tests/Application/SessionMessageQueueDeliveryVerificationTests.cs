@@ -130,7 +130,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var incident = await db.AgentIncidents.SingleOrDefaultAsync(
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
         incident.ShouldNotBeNull();
-        incident.Message.ShouldContain("never appeared in the composer");
+        incident.Message.ShouldContain("required composer evidence was not observed");
 
         h.Adapter.Killed.ShouldBeTrue("always-on agent: the wedged session is killed for the supervisor to restart");
         h.Adapter.KillGenerationCalls.ShouldNotBeEmpty();
@@ -2394,7 +2394,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             h.Queue.EnqueueAsync(
                 h.SessionId, "CARD0164 ModeNow no-composer body long enough",
                 MessageSendMode.Now, CancellationToken.None));
-        ex.Message.ShouldContain("never appeared in the composer");
+        ex.Message.ShouldContain("required composer evidence was not observed");
         h.Runner.TranscriptGets.ShouldBe(1,
             "NoComposerEvidence performs the overlay catch-up and must not enter the Mode:Now grace pull loop");
     }
@@ -2470,7 +2470,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 
         var ex = await Should.ThrowAsync<ConflictException>(() =>
             h.Queue.EnqueueAsync(h.SessionId, "send now please", MessageSendMode.Now, CancellationToken.None));
-        ex.Message.ShouldContain("never appeared in the composer");
+        ex.Message.ShouldContain("required composer evidence was not observed");
 
         await using var db = CreateContext();
         (await db.AgentIncidents.AnyAsync(
