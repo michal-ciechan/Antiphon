@@ -17,7 +17,7 @@ public partial class LegacyCheckNotePublicationTests
     public async Task Legacy_production_retries_keep_the_first_body()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var harness = await BridgeQueueHarness.CreateAsync(
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var session = await db.AgentSessions.SingleAsync(s => s.Id == harness.SessionId);
