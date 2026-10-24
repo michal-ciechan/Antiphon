@@ -6098,6 +6098,7 @@ public sealed class RemoteScriptContractTests
             "c849_fixture_launch", "c849_fixture_consumer_release", "c849_cold_seed", "c849_smoke",
             "c849_image", "c849_prepare", "c849_optional_donor", "c849_empty_volume", "c849_require_ready",
             "c849_no_temp_containers", "c849_prune_idle", "c849_no_cache_attachments", "c849_status_body",
+            "c849_cold_reuse_receipts",
             "c849_status_zero", "c849_seed_failure", "c849_saved_copy", "c849_assert_mounts", "c849_budget_gate" };
         return string.Join('\n', functions.Select(name => Block(remote, name))) + "\n" +
             string.Join('\n', doubles.Select(name => name + "() { printf 'UNEXPECTED " + name +
