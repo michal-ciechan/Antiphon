@@ -350,7 +350,8 @@ public class AgentSessionInterruptedLaunchResumeTests
                 {
                     s.AddSingleton(Options.Create(new GrokRulesSettings()));
                     s.AddSingleton<GrokRulesRefreshService>();
-                    s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter.WithClaudeDialogObservation()));
+                    s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(
+                        adapter is FakeAgentProtocolAdapter fake ? fake.WithClaudeDialogObservation() : adapter));
                     if (runner is not null)
                         s.AddSingleton<ISessionRunnerClient>(runner);
                 },
