@@ -161,7 +161,7 @@ public class CheckCompactionCrashTests
     public async Task Committed_failure_reaches_parent_after_worker_death()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: DateTime.UtcNow);
         var seat = await CheckCompactionFixture.SeedConfirmedAsync(schema.ConnectionString);
         await using (var db = NewDb(schema.ConnectionString))
@@ -216,7 +216,7 @@ public class CheckCompactionCrashTests
     public async Task Accepted_parent_prompt_survives_lost_verdict()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var body = "immutable failure note that was already accepted";
         var noteId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
