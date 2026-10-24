@@ -359,12 +359,17 @@ public sealed record RunnerTranscriptEvent(
     string? ApiErrorTimeZoneId = null);
 
 /// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
+/// <summary>Live reader progress; absence is unknown, never evidence of missing input.</summary>
+public sealed record RunnerTranscriptReadiness(
+    string Status, string? BindingId, long ParsedThrough, long ObservedLength, string? Reason = null);
+
 public sealed record RunnerTranscriptDto(
     Guid SessionId,
     IReadOnlyList<RunnerTranscriptEvent> Entries,
     long LastSequence,
     bool TerminalComplete = false,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    RunnerTranscriptReadiness? Readiness = null);
 
 /// <summary>Normalized transcript entry kinds (see <see cref="RunnerTranscriptEvent.Kind"/>).</summary>
 public static class TranscriptKinds
