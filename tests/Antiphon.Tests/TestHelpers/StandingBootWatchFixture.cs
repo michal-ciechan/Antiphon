@@ -118,6 +118,11 @@ internal sealed class StandingBootWatchFixture : IAsyncDisposable
         services.AddSingleton<TimeProvider>(clock);
         services.AddSingleton<IDelegateSessionStopper>(stopper);
         services.AddSingleton<ISessionRunnerClient>(runner);
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<AgentSessionRuntime>();
         var provider = services.BuildServiceProvider();
         return new StandingBootWatchFixture(schema, provider, log)
