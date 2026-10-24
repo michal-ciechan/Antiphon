@@ -414,7 +414,7 @@ public sealed class RunnerAlarmDeliveryTests
         public int Throws;
     }
 
-    /// <summary>Arms after the alarm row's save commits, so the next read is the post-insert refresh.</summary>
+    /// <summary>Arms after the alarm row's save commits, before the queue DTO refresh.</summary>
     private sealed class MarkAlarmInsertSaved(PostInsertReadFault fault) : SaveChangesInterceptor
     {
         public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
@@ -434,7 +434,11 @@ public sealed class RunnerAlarmDeliveryTests
         public override InterceptionResult<DbDataReader> ReaderExecuting(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
         {
-            if (fault.Saved && fault.Throws == 0)
+            // The state-store seed also reads after the insert. Fault the queue refresh this
+            // test owns, rather than poisoning the working-state cache before the flush hint.
+            if (fault.Saved && fault.Throws == 0
+                && command.CommandText.Contains("FROM \"SessionQueuedMessages\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("\"NoteHeader\"", StringComparison.Ordinal))
             {
                 fault.Throws = 1;
                 throw new InvalidOperationException("owned post-insert read failure");
