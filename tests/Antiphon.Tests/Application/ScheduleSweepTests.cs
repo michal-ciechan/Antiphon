@@ -455,6 +455,7 @@ public class ScheduleSweepTests
         public void RegisterIdle(Guid sessionId)
         {
             var adapter = new FakeAgentProtocolAdapter();
+            adapter.EnableClaudeDialogObservation(TestDbFixture.ConnectionString, sessionId);
             adapter.OnSubmitted = async submitted =>
             {
                 await using var db = CreateContext();
