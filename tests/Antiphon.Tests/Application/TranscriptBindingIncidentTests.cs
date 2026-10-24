@@ -32,7 +32,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Transcript_fault_event_creates_incident_and_alert()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -70,7 +70,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Transcript_fault_for_a_channel_bound_agent_is_critical()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -112,7 +112,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Heuristic_bind_event_creates_info_incident_without_alert()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -146,7 +146,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Empty_transcript_still_reads_idle()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
         });
@@ -167,7 +167,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Delegate_task_session_fault_records_incident_on_the_task_agent()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -238,7 +238,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task Delegate_task_session_heuristic_bind_records_incident_on_the_task_agent()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -321,7 +321,7 @@ public class TranscriptBindingIncidentTests
     public async Task Unowned_session_fault_logs_error_and_raises_a_standalone_alert()
     {
         var logs = new List<string>();
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -368,7 +368,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task A_prolonged_refusal_escalates_to_critical_without_a_channel_binding()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -421,7 +421,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task A_fresh_refusal_records_the_incident_but_does_not_escalate()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -460,7 +460,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task The_escalation_does_not_re_fire_within_its_repeat_window()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -500,7 +500,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task ClaimRevoked_fault_records_TranscriptClaimRevoked_warning()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -532,7 +532,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task ClaimRevoked_fault_is_critical_when_the_displaced_agent_is_channel_bound()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
@@ -565,7 +565,7 @@ public class TranscriptBindingIncidentTests
     [Test]
     public async Task ClaimRevoked_fault_never_escalates_to_TranscriptBindStuck()
     {
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -616,7 +616,7 @@ public class TranscriptBindingIncidentTests
     public async Task Fault_for_a_task_whose_agent_row_is_gone_alerts_instead_of_swallowing_a_foreign_key_error()
     {
         var logs = new List<string>();
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
@@ -711,7 +711,7 @@ public class TranscriptBindingIncidentTests
     public async Task A_fault_whose_incident_cannot_be_written_names_the_database_error_and_still_alerts()
     {
         var logs = new List<string>();
-        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
             ConfigureServices = s =>
