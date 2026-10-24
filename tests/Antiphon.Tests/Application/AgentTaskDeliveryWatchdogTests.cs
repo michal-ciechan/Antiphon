@@ -1286,28 +1286,36 @@ public partial class AgentTaskDeliveryWatchdogTests
     {
         var (harness, _) = CreateHarness();
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 40);
-        await SeedAbandonedSubagentFanOutAsync(
-            task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 35);
-
-        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
-            .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
-
-        await using (var mid = CreateContext())
+        try
         {
-            var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
-            nudged.Status.ShouldBe(AgentTaskStatus.Dispatched);
-            nudged.ReportNudgedAt.ShouldNotBeNull("unmarked announcement is nudged once");
+            await SeedAbandonedSubagentFanOutAsync(
+                task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 35);
+
+            (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+                .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
+
+            await using (var mid = CreateContext())
+            {
+                var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
+                nudged.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                nudged.ReportNudgedAt.ShouldNotBeNull("unmarked announcement is nudged once");
+            }
+
+            await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            settled.Status.ShouldBe(
+                AgentTaskStatus.Dispatched,
+                "CARD-0248: settling the fan-out announcement on an unanswered, undelivered nudge "
+                + "is the production bug on the subagent arm");
+            settled.Result.ShouldBeNull();
         }
-
-        await harness.SettleDeferredReportsAsync(CancellationToken.None);
-
-        await using var verify = CreateContext();
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(
-            AgentTaskStatus.Dispatched,
-            "CARD-0248: settling the fan-out announcement on an unanswered, undelivered nudge "
-            + "is the production bug on the subagent arm");
-        settled.Result.ShouldBeNull();
+        finally
+        {
+            // This deliberately overdue task must not reach another test's global watchdog sweep.
+            await RetireSeededTaskAsync(task);
+        }
     }
 
     [Test]
