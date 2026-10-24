@@ -503,7 +503,7 @@ public sealed class SessionQueueReceiptPlumbingTests
     public async Task C1022_Partial_receipt_turn_parks_interrupted_attempt()
     {
         // Reproduce the native fixture's persisted state through the real queue without a PTY.
-        await using var world = await BridgeQueueHarness.CreateAsync();
+        await using var world = await ClaudeDialogFixture.CreateBridgeAsync();
         const string body = "C1022 portable receipt " + "identity prefix ";
         var complete = body + new string('x', 300) + " COMPLETE TAIL";
         await world.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
