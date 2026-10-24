@@ -108,6 +108,9 @@ public sealed class InterimVerificationPolicyTests
     public async Task C544_RoleWorkspaceMatrix()
     {
         await using var world = await C544World.CreateAsync();
+        // An omitted workspace resolves through this setting before Interim shape admission.
+        // Keep the negative default-workspace row on Shared, regardless of the shipped default.
+        world.Delegation.DefaultWorkerWorkspace = WorkspaceMode.Shared;
         var baseline = await world.SettleReviewAsync();
         var code = world.InterimCode(baseline.Id);
         var review = world.InterimReview(baseline.Id);
@@ -136,7 +139,9 @@ public sealed class InterimVerificationPolicyTests
             await using var db = world.CreateContext();
             (await db.AgentSessions.CountAsync(s => s.DefinitionName == "c544-delegate")).ShouldBe(1, row + ": no launch");
         }
-        foreach (var (row, request) in new[] { ("code-worktree", code), ("review-readonly", review) })
+        world.Delegation.DefaultWorkerWorkspace = WorkspaceMode.Worktree;
+        foreach (var (row, request) in new[] { ("code-worktree", code), ("review-readonly", review),
+                     ("code-default-worktree", code with { Workspace = null }) })
             (await world.TaskAsync((await world.CreateTaskAsync(request)).Id)).VerificationRound.ShouldBe(VerificationRound.Interim, row);
     }
 
