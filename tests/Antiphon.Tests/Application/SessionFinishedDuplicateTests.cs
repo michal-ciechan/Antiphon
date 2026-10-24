@@ -31,7 +31,7 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class SessionFinishedDuplicateTests
 {
-    private static Task<BridgeQueueHarness> CreateHarnessAsync() => BridgeQueueHarness.CreateAsync();
+    private static Task<BridgeQueueHarness> CreateHarnessAsync() => ClaudeDialogFixture.CreateBridgeAsync();
 
     private static int FinishedCount(BridgeQueueHarness h) =>
         h.EventBus.PublishedEvents.Count(e => e.EventName == "SessionFinished");
