@@ -65,7 +65,7 @@ public class ReadyGateFailureNoticeDeliveryTests
         };
         var fault = new NoticeFault { Mode = cut };
         var preserve = path == "crash-after-enqueue";
-        var parent = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var parent = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             PreserveDatabaseOnDispose = preserve,
@@ -145,7 +145,7 @@ public class ReadyGateFailureNoticeDeliveryTests
                 await parent.DisposeAsync();
                 parentDisposed = true;
 
-                restarted = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+                restarted = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
                 {
                     AlwaysOn = true,
                     AttachSessionId = sessionId,
