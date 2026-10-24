@@ -24,7 +24,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task Dispatcher_pointer_survives_queue_binding_and_reaches_a_complete_UserPrompt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -99,7 +99,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task Grok_rules_launch_brief_uses_runner_ceiling_despite_a_modern_desktop_profile()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services =>
@@ -160,7 +160,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -192,7 +192,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task SendNow_persists_the_spill_body_before_delivery_so_a_restart_can_read_it()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -225,7 +225,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task A_null_body_spill_pointer_is_canceled_instead_of_a_silent_lookup_miss()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -263,7 +263,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task A_null_body_pointer_is_respilled_when_the_source_message_is_still_on_the_row()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -298,7 +298,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task A_screen_only_Delivered_null_body_is_respilled_from_the_source_message()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -335,7 +335,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task A_screen_only_Delivered_null_body_pointer_is_canceled_instead_of_typed_without_bytes()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -370,7 +370,7 @@ public sealed class DurableRunnerSpillReceiptTests
     public async Task A_complete_matching_UserPrompt_releases_a_null_body_pointer()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -412,7 +412,7 @@ public sealed class DurableRunnerSpillReceiptTests
         var writer = new RunnerWorkspaceService(root + "/repo", root);
         try
         {
-            await using var h = await BridgeQueueHarness.CreateAsync(new()
+            await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
                 ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
@@ -487,7 +487,7 @@ public sealed class DurableRunnerSpillReceiptTests
         var writer = new RunnerWorkspaceService(root + "/repo", root);
         try
         {
-            await using var h = await BridgeQueueHarness.CreateAsync(new()
+            await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
                 ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
