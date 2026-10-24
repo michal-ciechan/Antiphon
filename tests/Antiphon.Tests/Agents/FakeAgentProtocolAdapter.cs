@@ -62,6 +62,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public int EmptyComposerSnapshotsAfterEnter { get; set; }
     private int _emptyComposerSnapshotsRemaining;
     private readonly StringBuilder _composer = new();
+    public string ComposerText => _composer.ToString();
 
     /// <summary>
     /// CARD-0650 S4 repair 3: render the composer the way current Claude does, between two
