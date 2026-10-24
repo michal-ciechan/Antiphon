@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -11,6 +12,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -78,6 +80,8 @@ public sealed partial class AgentTaskCommitEndpointTests
                 {
                     Id = agentId, Name = "c527-" + agentId.ToString("N")[..8], Slug = "c527-" + agentId.ToString("N")[..8],
                     WorkingDirectory = repo.Path, Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium,
+                    PoolClaudeEffort = ClaudeLaunchArgs.Effort(AgentModelLevel.Medium, AgentTaskRole.Commit,
+                        scope.ServiceProvider.GetRequiredService<IOptions<DelegationSettings>>().Value.ClaudeEffortByRole),
                     Status = AgentStatus.Idle, IsPoolDelegate = true, PoolIdleSince = DateTime.UtcNow.AddMinutes(-10),
                     PersistentSessionId = childSession.ToString("D"), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
                 });
@@ -87,8 +91,8 @@ public sealed partial class AgentTaskCommitEndpointTests
             await ChainEntryAsync(parent, TranscriptKinds.TurnEnd, null);
             await ChainEntryAsync(childSession, TranscriptKinds.UserPrompt, "Ready for work.");
             await ChainEntryAsync(childSession, TranscriptKinds.TurnEnd, null);
-            var parentAdapter = ChainAdapter(parent);
-            var childAdapter = ChainAdapter(childSession);
+            var parentAdapter = await ChainAdapterAsync(parent);
+            var childAdapter = await ChainAdapterAsync(childSession);
             await ChainEntryAsync(workerSession, TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(taskId));
             await ChainEntryAsync(workerSession, TranscriptKinds.AssistantText, "Assigned work complete.\n" + DelegationReportFormatter.ReportToken(taskId, "done"));
             await ChainEntryAsync(workerSession, TranscriptKinds.TurnEnd, null);
@@ -214,7 +218,7 @@ public sealed partial class AgentTaskCommitEndpointTests
             (await repo.GitReadAsync("rev-parse", "origin/master")).ShouldBe(upstream);
         }
 
-        private FakeAgentProtocolAdapter ChainAdapter(Guid session)
+        private async Task<FakeAgentProtocolAdapter> ChainAdapterAsync(Guid session)
         {
             var adapter = new FakeAgentProtocolAdapter
             {
@@ -224,6 +228,9 @@ public sealed partial class AgentTaskCommitEndpointTests
                     await ChainEntryAsync(session, TranscriptKinds.TurnEnd, null);
                 },
             };
+            await using var scope = _factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await adapter.EnableClaudeDialogObservationAsync(db.Database.GetConnectionString()!, session);
             _factory.Services.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
             return adapter;
         }
