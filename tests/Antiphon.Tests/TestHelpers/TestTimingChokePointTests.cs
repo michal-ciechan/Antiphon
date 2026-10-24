@@ -183,6 +183,10 @@ public sealed class TestTimingChokePointTests
                 emptyOffNsPerScope = emptyOff.NsPerScope,
                 emptyOnNsPerScope = emptyOn.NsPerScope,
                 emptyOnBytesPerCase = emptyOn.BytesPerCase,
+                emptyOffScopeNs = emptyOff.ScopeNs,
+                emptyOnScopeNs = emptyOn.ScopeNs,
+                emptyOffAllocatedBytesPerScope = emptyOff.AllocatedBytesPerScope,
+                emptyOnAllocatedBytesPerScope = emptyOn.AllocatedBytesPerScope,
                 samples,
             };
             await File.WriteAllTextAsync(Path.Combine(evidence, "overhead-raw.json"),
@@ -439,6 +443,8 @@ public sealed class TestTimingChokePointTests
         var watch = Stopwatch.StartNew();
         TestTimingSession? session = null;
         IDisposable? lease = null;
+        long scopeTicks = 0;
+        long scopeAllocated = 0;
         if (enabled)
         {
             session = OpenReal(Path.Combine(root, "timing"), "empty");
@@ -456,11 +462,15 @@ public sealed class TestTimingChokePointTests
                     session.BeginCase(id, "Empty", "Scopes", [], session.NowTicks());
                 }
 
+                var allocated = GC.GetAllocatedBytesForCurrentThread();
+                var started = Stopwatch.GetTimestamp();
                 for (var scope = 0; scope < 100; scope++)
                 {
                     using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "span");
                 }
 
+                scopeTicks += Stopwatch.GetTimestamp() - started;
+                scopeAllocated += GC.GetAllocatedBytesForCurrentThread() - allocated;
                 if (session is not null)
                     session.EndCase(id, "Passed", session.NowTicks());
             }
@@ -473,7 +483,8 @@ public sealed class TestTimingChokePointTests
             watch.Stop();
         }
         var bytes = session?.ShardPath is not null && File.Exists(session.ShardPath) ? new FileInfo(session.ShardPath).Length : 0L;
-        return new EmptyCost(watch.Elapsed.TotalNanoseconds / 100_000d, enabled ? bytes / 1000d : 0d);
+        return new EmptyCost(watch.Elapsed.TotalNanoseconds / 100_000d, enabled ? bytes / 1000d : 0d,
+            Stopwatch.GetElapsedTime(0, scopeTicks).TotalNanoseconds / 100_000d, scopeAllocated / 100_000d);
     }
 
     private static double Median(IReadOnlyList<double> values)
@@ -522,5 +533,6 @@ public sealed class TestTimingChokePointTests
 
     private readonly record struct PairResult(SampleResult Off, SampleResult On);
 
-    private readonly record struct EmptyCost(double NsPerScope, double BytesPerCase);
+    private readonly record struct EmptyCost(double NsPerScope, double BytesPerCase,
+        double ScopeNs, double AllocatedBytesPerScope);
 }

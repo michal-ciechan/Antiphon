@@ -74,7 +74,7 @@ try
     // Log.Logger. Each host therefore owns its configured logger, while static calls use the
     // same file and alert sinks as injected loggers. Teardown below closes only this startup's
     // logger; an older host must not close a newer host's static logger.
-    builder.Host.UseSerilog((ctx, lc) =>
+    builder.Host.UseSerilog((ctx, services, lc) =>
     {
         var logPath = ctx.Configuration["Serilog:LogPath"] ?? "logs";
         // Console verbosity is separable from the file's. Test hosts turn this down to Warning so a
@@ -93,6 +93,7 @@ try
         // LogRetentionTests.
         lc
             .ReadFrom.Configuration(ctx.Configuration)
+            .ReadFrom.Services(services)
             .Enrich.FromLogContext()
             .WriteTo.Console(
                 restrictedToMinimumLevel: consoleLevel,
