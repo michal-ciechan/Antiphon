@@ -170,7 +170,7 @@ public sealed class DefaultRunnerRerouteTests
         foreach (var cut in new[] { BlockNoteCut.CrashAfterSave, BlockNoteCut.EnqueueFails })
         {
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
             { AlwaysOn = false, ConnectionString = schema.ConnectionString });
             using var workspace = new TempWorkspace();
             var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
@@ -209,7 +209,7 @@ public sealed class DefaultRunnerRerouteTests
     public async Task C796_Repeated_desktop_codex_resume_is_idempotent()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         using var workspace = new TempWorkspace();
         var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
@@ -232,7 +232,7 @@ public sealed class DefaultRunnerRerouteTests
         foreach (var busy in new[] { false, true })
         {
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
             { AlwaysOn = false, ConnectionString = schema.ConnectionString });
             using var workspace = new TempWorkspace();
             if (busy)
@@ -264,7 +264,7 @@ public sealed class DefaultRunnerRerouteTests
     public async Task C796_Remote_legacy_kind_block_note_recovers_after_restart()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
         { AlwaysOn = false, ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true });
         using var workspace = new TempWorkspace();
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
@@ -277,7 +277,7 @@ public sealed class DefaultRunnerRerouteTests
         catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException) { }
         fault.Fired.ShouldBeTrue();
         await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
-        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        await using var recovered = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = schema.ConnectionString,
             AttachSessionId = parent.SessionId, AttachAgentId = parent.AgentId,
@@ -292,7 +292,7 @@ public sealed class DefaultRunnerRerouteTests
         foreach (var cut in new[] { BlockNoteCut.CrashAfterSave, BlockNoteCut.EnqueueFails })
         {
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            await using var parent = await ClaudeDialogFixture.CreateBridgeAsync(new()
             { AlwaysOn = false, ConnectionString = schema.ConnectionString });
             using var workspace = new TempWorkspace();
             var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
