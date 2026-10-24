@@ -30,7 +30,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Delivered_outcome_stamps_the_verdict()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
 
         await h.Queue.EnqueueAsync(h.SessionId, Body, MessageSendMode.WhenIdle, CancellationToken.None);
 
@@ -44,7 +44,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Fresh_typed_attempt_clears_a_stale_NoSubmitOutput()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await h.SeedPendingMessageAsync(
             Body,
             deliveryAttempts: 1,
@@ -64,7 +64,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Verdict_less_Sent_with_matching_UserPrompt_is_late_confirmed()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
         await h.SeedPendingMessageAsync(
             Body,
@@ -88,7 +88,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Verdict_less_Sent_with_head_on_screen_sends_Enter_only()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
         await h.SeedPendingMessageAsync(
             Body,
@@ -111,7 +111,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Verdict_less_Sent_with_nothing_on_screen_is_reverted_then_retyped()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
         await h.SeedPendingMessageAsync(
             Body,
@@ -132,7 +132,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Verdict_less_Sent_outside_the_window_is_untouched()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await h.SeedPendingMessageAsync(
             Body,
             deliveryAttempts: 1,
@@ -153,7 +153,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Verdict_less_Sent_on_a_working_session_is_untouched()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
         await h.SeedPendingMessageAsync(
             Body,
@@ -174,7 +174,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Pending_NoSubmitOutput_with_head_on_screen_sends_Enter_only()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await h.SeedPendingMessageAsync(
             Body,
             deliveryAttempts: 1,
@@ -197,7 +197,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Pending_NoSubmitOutput_late_UserPrompt_wins_before_input()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         await h.SeedPendingMessageAsync(
             Body,
             deliveryAttempts: 1,
@@ -221,7 +221,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Snapshot_unavailable_does_not_retype_or_revert()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
         await h.SeedPendingMessageAsync(
             Body,
@@ -242,7 +242,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     [Test]
     public async Task Multi_row_batch_is_recovered_as_one_composed_body()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions
             {
                 Bridge = new Antiphon.Server.Application.Settings.ChannelBridgeSettings
