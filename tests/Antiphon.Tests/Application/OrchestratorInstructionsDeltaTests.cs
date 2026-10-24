@@ -40,7 +40,7 @@ public sealed class OrchestratorInstructionsDeltaTests
             notice.ShouldContain("GET /api/orchestrator-instructions");
             notice.ShouldContain("-Refine");
             notice.ShouldContain("NO_REPLY");
-            notice.ShouldContain(delta.Split('\n')[0], "the first transition must survive wrapper clipping whole");
+            notice.ShouldContain(delta.Split('\n')[0]);
         }
     }
 
