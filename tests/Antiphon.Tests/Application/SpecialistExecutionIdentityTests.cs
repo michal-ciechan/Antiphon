@@ -463,7 +463,7 @@ public class SpecialistExecutionIdentityTests
                 .SingleAsync(s => s.Id == CurrentSessionId)).StartedAt;
         }
 
-        public Task<BridgeQueueHarness> AttachBridgeAsync() => BridgeQueueHarness.CreateAsync(new()
+        public Task<BridgeQueueHarness> AttachBridgeAsync() => ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = ConnectionString, AttachAgentId = AgentId,
             AttachSessionId = CurrentSessionId, Delegation = Settings,
