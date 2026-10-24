@@ -49,14 +49,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                     new(body, Title: body, Role: AgentTaskRole.Docs, AgentKind: AgentKind.Codex,
                         ModelLevel: level, Workspace: WorkspaceMode.Worktree, RunnerId: host.AllowedRunnerId),
                     new(null, null, git.Path), CancellationToken.None);
-            async Task Tick()
-            {
-                using var scope = h.Provider.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
-            }
-            await Tick();
-            await h.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync();
-            await Tick();
+            await world.DispatchAsync();
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
             task.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959-v21-remote-claim " + vector);

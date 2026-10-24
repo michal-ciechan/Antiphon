@@ -160,7 +160,7 @@ public sealed class CodexCliObservationTests
             {
                 adapter.SubmittedBodies.ShouldBeEmpty("C959-pc-188 busy recipient " + vector);
                 queued.Status.ShouldBe(QueuedMessageStatus.Pending, "C959-v21-busy-persisted " + vector);
-                await k.Harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: row.AgentSessionId);
+                await k.Harness.MarkIdleAsync(row.AgentSessionId, stopReason: "end_turn");
                 await k.Harness.Queue.FlushSessionAsync(row.AgentSessionId!.Value, CancellationToken.None);
             }
             if (kind == AgentKind.ClaudeCode)
@@ -280,7 +280,7 @@ public sealed class CodexCliObservationTests
                 if (busy)
                 {
                     adapter.SubmittedBodies.ShouldBeEmpty("C959-v22-busy " + vector);
-                    await recovered.Harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: row.AgentSessionId);
+                    await recovered.Harness.MarkIdleAsync(row.AgentSessionId, stopReason: "end_turn");
                     await recovered.Harness.Queue.FlushSessionAsync(row.AgentSessionId!.Value, CancellationToken.None);
                 }
                 var frozen = recovered.Boundary.Briefs[taskId];
