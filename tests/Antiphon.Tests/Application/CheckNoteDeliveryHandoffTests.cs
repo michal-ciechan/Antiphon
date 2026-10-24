@@ -114,7 +114,7 @@ public partial class CheckNoteDeliveryHandoffTests
                     CheckInterpreterWorkingDirectory = scratch,
                     CheckInterpreterWaitSeconds = 60,
                 };
-                var harness = await BridgeQueueHarness.CreateAsync(new()
+                var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
                 {
                     ConnectionString = schema.ConnectionString,
                     Delegation = delegation,
