@@ -122,7 +122,7 @@ public class RemoteControlRecoveryPtyIntegrationTests
     public async Task C514_Working_modal_waits_for_operator_then_converts_without_replay()
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
-        await h.MarkWorkingAsync();
+        await h.Inner.MarkWorkingAsync();
         h.Adapter.RemoteControlMenuOpen = true;
         await h.TickWatchAsync();
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
@@ -131,7 +131,7 @@ public class RemoteControlRecoveryPtyIntegrationTests
         // This is the operator clearing the modal, not an automated dismissal.
         await h.Runtime.SendInteractiveInputAsync(h.SessionId, "\u001b", CancellationToken.None, trackManualTurn: false);
         h.Adapter.RemoteControlMenuOpen.ShouldBeFalse();
-        await h.MarkIdleAsync();
+        await h.Inner.MarkIdleAsync();
         h.Adapter.OnSubmitted = async submitted =>
         {
             await using var db = h.CreateDb();
