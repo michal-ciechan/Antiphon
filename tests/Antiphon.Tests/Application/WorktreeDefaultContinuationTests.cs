@@ -434,6 +434,7 @@ public sealed class WorktreeDefaultContinuationTests
             Kind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             IsPoolDelegate = pool,
+            PoolClaudeEffort = pool ? ClaudeLaunchArgs.Effort(AgentModelLevel.Medium) : null,
             PoolIdleSince = pool ? now.AddMinutes(-10) : null,
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now.AddMinutes(-30),
