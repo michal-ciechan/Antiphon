@@ -436,6 +436,7 @@ public class OutputDistillationDeliveryTests
         await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null);
         await f.RecreateForRawFallbackAsync();
         var adapter = new FakeAgentProtocolAdapter();
+            await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent);
         adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body);
         f.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent, adapter);
         await Task.Delay(1100);
@@ -620,6 +621,7 @@ public class OutputDistillationDeliveryTests
             var parent = seed.Task.ParentSessionId!.Value;
             if (seedBaseline) await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null);
             var adapter = new FakeAgentProtocolAdapter();
+            await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent);
             adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body);
             Provider.GetRequiredService<AgentSessionRuntime>().Register(parent, adapter);
             _flush = new(Provider.GetRequiredService<IServiceScopeFactory>(), Provider.GetRequiredService<CompletionNoteFlushQueue>(),
