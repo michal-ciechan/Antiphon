@@ -30,7 +30,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             await ExecuteAsync(connection, "DO $$ BEGIN CREATE ROLE c590_observer; EXCEPTION WHEN duplicate_object THEN NULL; END $$;");
             await ExecuteAsync(connection, "GRANT SELECT ON \"SessionQueuedMessages\" TO c590_observer");
-            await using var restricted = connection.Clone();
+            await using var restricted = (NpgsqlConnection)((ICloneable)connection).Clone();
             await restricted.OpenAsync();
             await ExecuteAsync(restricted, "SET ROLE c590_observer");
             var failed = false;
@@ -74,7 +74,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Pending", "body", 0, null);
-            await using var second = connection.Clone();
+            await using var second = (NpgsqlConnection)((ICloneable)connection).Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT COUNT(*) FROM \"SessionQueuedMessages\" WHERE \"Body\" = 'body' AND \"AgentSessionId\" = @s", session)).ShouldBe(1);
         });
@@ -85,7 +85,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Sent", "body", 1, 8);
-            await using var second = connection.Clone();
+            await using var second = (NpgsqlConnection)((ICloneable)connection).Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT \"DeliveryAttempts\" FROM \"SessionQueuedMessages\" WHERE \"AgentSessionId\" = @s", session)).ShouldBe(1);
         });
@@ -97,7 +97,7 @@ public sealed class DockerDeliveryDatabaseTests
             await using var tx = await connection.BeginTransactionAsync();
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Pending", "hidden", 0, null, tx);
-            await using var second = connection.Clone();
+            await using var second = (NpgsqlConnection)((ICloneable)connection).Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT COUNT(*) FROM \"SessionQueuedMessages\" WHERE \"Body\" = 'hidden' AND \"AgentSessionId\" = @s", session)).ShouldBe(0);
             await tx.RollbackAsync();
