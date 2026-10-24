@@ -50,7 +50,7 @@ public sealed partial class AgentTaskLandPublicationTests
         var path = Path.Combine(h.Fixture.Source, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(path, "retained caller evidence\n");
-        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = h.Schema.ConnectionString,
         });
