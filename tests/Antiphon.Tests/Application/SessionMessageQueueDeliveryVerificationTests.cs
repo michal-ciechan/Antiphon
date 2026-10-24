@@ -40,8 +40,12 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
+    // Supported Claude deliveries use the shared generation-bound dialog fixture.
+    private static Task<BridgeQueueHarness> CreateClaudeHarnessAsync(BridgeQueueHarness.HarnessOptions options) =>
+        BridgeQueueHarness.CreateAsync(options with { ClaudeDialogObservation = true });
+
     private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn, bool rePressMargin = false) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = alwaysOn,
             ClockSpeed = TestClockSpeed,
@@ -652,7 +656,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_unobservable_body_trailing_frames_are_not_submit_evidence_and_re_enter_until_no_submit_output()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
         h.Adapter.ComposerFramesAfterEvidence = [" frame one", " frame two", " frame three"];
@@ -671,7 +675,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_unobservable_no_post_enter_output_returns_no_submit_output_after_three_enters()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
 
@@ -689,7 +693,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         // hole latched emptied-composer on that single poll, suppressed re-Enter, and
         // certified Sent after 1 Enter. Must send 3 Enters and return NoSubmitOutput.
         await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
         h.Adapter.EmptyComposerSnapshotsAfterEnter = 1;
@@ -713,7 +717,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_unobservable_working_indicator_confirms_by_screen()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "\n• Working (0s • esc to interrupt)";
 
@@ -744,7 +748,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_unobservable_redraw_with_body_visible_is_NoSubmitOutput_not_Sent()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: false, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "\nStarting session\nMCP (0/2)";
 
@@ -768,7 +772,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_unobservable_transient_empty_frame_does_not_latch_emptied_composer()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: false, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
         h.Adapter.EmptyComposerSnapshotsAfterEnter = 1;
@@ -792,7 +796,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_unobservable_sustained_composer_departure_confirms_by_screen()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: false);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
         h.Adapter.SubmitAck = "";
 
@@ -812,7 +816,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_matching_UserPrompt_still_wins_as_transcript_proof()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: false);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
 
         var receipt = await h.Queue.EnqueueAsync(
             h.SessionId, "grok body confirmed by a matching UserPrompt row",
@@ -834,7 +838,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_observable_queued_body_without_UserPrompt_reverts_to_Pending()
     {
         await using var h = await ObservableHarnessAsync(alwaysOn: false, rePressMargin: true);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         const string body = "CARD0355-GK-Q marker that leaves the composer with no UserPrompt";
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
 
@@ -873,7 +877,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ClockSpeed = TestClockSpeed,
@@ -920,7 +924,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task A_batch_body_longer_than_the_match_window_confirms_on_its_head()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ClockSpeed = TestClockSpeed,
@@ -1221,7 +1225,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Parking_a_channel_bound_agents_message_raises_a_critical_incident()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ClockSpeed = TestClockSpeed,
@@ -1725,7 +1729,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_slash_usage_is_refused_at_enqueue_with_zero_bytes_typed()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
 
         var ex = await Should.ThrowAsync<ValidationException>(() =>
             h.Queue.EnqueueAsync(h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None));
@@ -1746,7 +1750,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_slash_usage_Now_is_refused_with_zero_bytes_typed()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
 
         var ex = await Should.ThrowAsync<ValidationException>(() =>
             h.Queue.EnqueueAsync(h.SessionId, "/usage", MessageSendMode.Now, CancellationToken.None));
@@ -1760,7 +1764,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Codex_slash_usage_with_arguments_is_refused_too()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
 
         await Should.ThrowAsync<ValidationException>(() =>
             h.Queue.EnqueueAsync(
@@ -1773,7 +1777,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task A_queued_Codex_slash_usage_is_refused_at_deliver_parks_and_does_not_kill()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         await h.SeedPendingMessageAsync("/usage");
 
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
@@ -1837,7 +1841,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Grok_slash_usage_is_not_forbidden_and_still_types()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
 
         await h.Queue.EnqueueAsync(
             h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -1852,7 +1856,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task A_WritesUserPrompt_false_command_sends_exactly_one_Enter_and_skips_confirm()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         // Real Grok /usage writes no UserPrompt. The harness's OnSubmitted would fake one and
         // make the confirm loop look like the local-command arm (one Enter, Sent). Null it so a
         // regression onto CARD-0055 re-presses Enter and this goes red.
@@ -1917,7 +1921,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task NoComposerEvidence_on_a_working_session_sends_no_Esc()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         await h.MarkWorkingAsync();
         // Default OverlayScreen contains Grok's DetectFragments, so S6 matches AND S5 would
         // recover — both go through TryDismissOverlayAsync's working-gate.
@@ -1936,7 +1940,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task NoComposerEvidence_on_idle_Supported_kind_sends_one_Esc_retypes_and_succeeds()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OverlayOpen = true;
         h.Adapter.OverlayScreen = "an unmeasured overlay that is not in DetectFragments";
 
@@ -1952,7 +1956,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task NoComposerEvidence_on_idle_Unknown_kind_sends_no_Esc()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await SetKindAsync(h, AgentKind.Codex);
         h.Adapter.EchoTypedInputToScreen = false;
 
         await h.Queue.EnqueueAsync(
@@ -1966,7 +1970,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Overlay_recovery_is_one_shot_two_evidence_failures_produce_one_Esc()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OverlayOpen = true;
         h.Adapter.OverlayScreen = "an unmeasured overlay";
         h.Adapter.EchoTypedInputToScreen = false;
@@ -1983,7 +1987,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Proactive_detector_Escs_before_typing_when_a_measured_fragment_is_visible()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OverlayOpen = true;
 
         await h.Queue.EnqueueAsync(h.SessionId, "after measured overlay", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -1997,7 +2001,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task Proactive_detector_does_not_Esc_an_unmeasured_modal()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OverlayOpen = true;
         h.Adapter.OverlayScreen = "Do you want to approve this tool?";
 
@@ -2038,7 +2042,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task LocalCommandNotAccepted_never_kills_an_always_on_idle_agent()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.EchoTypedInputToScreen = false;
 
         await h.Queue.EnqueueAsync(
@@ -2508,14 +2512,14 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task C475_OverlayRecoveryDisabledNeverEscapes()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        await using var h = await CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ClockSpeed = TestClockSpeed,
             ConfigureDeliveryVerification = v => v.OverlayRecoveryEnabled = false,
         });
         await h.InsertTurnAsync("prior", "answer");
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Adapter.OverlayOpen = true;
         h.Adapter.EchoTypedInputToScreen = false;
         await h.Queue.EnqueueAsync(h.SessionId, "no overlay recovery", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -2527,7 +2531,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task C475_OverlayRecoveryPullsBeforeWorkingDecision()
     {
         await using var h = await ObservableHarnessAsync();
-        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await SetKindAsync(h, AgentKind.Grok);
         h.Runner.SetTranscript(new SessionRunnerTranscriptDto(
             h.SessionId,
             [new SessionRunnerTranscriptEvent(
@@ -2541,11 +2545,14 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.Inputs.ShouldNotContain("\u001b");
     }
 
-    private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
+    private static async Task SetKindAsync(BridgeQueueHarness h, AgentKind kind)
     {
         await using var db = CreateContext();
-        await db.AgentSessions.Where(s => s.Id == sessionId)
+        await db.AgentSessions.Where(s => s.Id == h.SessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, kind));
+        // Keep the non-Claude cases on their original provider-neutral screen model.
+        h.Adapter.DialogGuardEnabled = kind == AgentKind.ClaudeCode;
+        h.Adapter.ClaudeComposerChrome = kind == AgentKind.ClaudeCode;
     }
 
     [Test]
@@ -2686,6 +2693,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task C514_Multiline_release_keeps_LF_paste_and_separate_Enter()
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.Adapter.EnableClaudeDialogObservationAsync(h.Inner.ConnectionString, h.SessionId);
         const string body = "line one of the work\nline two of the work";
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
         h.Adapter.Inputs.Count.ShouldBeGreaterThanOrEqualTo(2);

@@ -205,7 +205,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     }
 
     private static Task<BridgeQueueHarness> BlindHarnessAsync(ScaledTimeProvider clock) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        CreateClaudeHarnessAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             TimeProvider = clock,
