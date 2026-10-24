@@ -151,6 +151,23 @@ The prior stop findings and outcomes above remain historical; this authorization
 supersedes the no-pin constraint. PCs: no deliberate mutants in Code; all controls
 and missing-control discovery remain pending for SourceLanding Mutation.
 
+The test-only source `c311d7b0c5bbb48c784d52c225a1d2c0d648dc55` ran CP-1
+as run `20261024-094834-5708`: fresh TRX confirms four intended assertion
+failures, each at its exact removal's formerly disallowed item type. No fixture
+or build failure substituted for red. Build source was verified and clean;
+both build and row slots were granted with zero wait. Build 192.216 seconds,
+test row 10.083 seconds. One mistyped abbreviated expected-source argument was
+rejected before any run/row/build, then corrected to the full committed SHA.
+
+The narrow policy and exact target pins were committed before regeneration.
+Real `-Update` succeeded using the unchanged evaluator staged by CP-1 (no extra
+evaluator bootstrap): digest
+`8D4CCE85EBDE82978FD648F0F5DDCEA221A3F492C4A28D67DCD1A7A549FCF34B`,
+65 definition files. The tool's current census supersedes the brief's older
+64-file observation. Both records are real tool output. The two target bodies,
+their Windows conditions, provider sources and consumer project files are
+byte-unchanged; no new approval record is asserted. Real Review is still owed.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
