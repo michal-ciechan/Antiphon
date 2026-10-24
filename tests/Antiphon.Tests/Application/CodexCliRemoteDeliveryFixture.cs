@@ -341,10 +341,13 @@ internal static partial class CodexCliRemoteDeliveryFixture
             string startup = Kind switch
             {
                 AgentKind.Grok => Ready ? GrokStartupFixture.ReadyScreen() : GrokStartingScreen(),
-                AgentKind.ClaudeCode => "Claude Code\n> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+                AgentKind.ClaudeCode => ClaudeDialogFixture.ComposerScreen("Claude Code"),
                 _ => CodexStartupFixtures.P3,
             };
             var screen = terminal.Inputs.Count == 0 ? startup : terminal.SnapshotRenderedScreen();
+            if (Kind == AgentKind.Codex)
+                screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.V0158FooterOnlyReady,
+                    "> " + terminal.ComposerText);
             return Task.FromResult(new RunnerSnapshotDto(id, terminal.SnapshotRawOutput(), screen,
                 _transcripts[id].Count + terminal.Inputs.Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration));
         }
