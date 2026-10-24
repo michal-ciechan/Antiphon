@@ -61,6 +61,8 @@ publication; this task does not restart/deploy. No release scripts/tags.
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-5e-final/` | recovery | `/*/*/PhoneHomeRecoveryEligibilityTests/*` | V-1,V-2,V-3,V-4,R-1 | all listed, 0 failed | 13 | 4 | true |
 | CP-3 | S2 | CP-2 | observers-inventory | `/*/Antiphon.Tests.Application/(PhoneHomeEventPumpTests*)\|(PhoneHomePendingInventoryTests*)\|(RunnerEligibilityObserverTests*)/*` | R-2,R-3 | all listed, 0 failed | 3 | 3 | true |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 5 | true |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-5e-repair/` | repaired-integration | `/*/Antiphon.Tests.Application/(PhoneHomeRecoveryEligibilityTests*)\|(PhoneHomeEventPumpTests*)\|(PhoneHomePendingInventoryTests*)\|(RunnerEligibilityObserverTests*)/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | all listed, 0 failed | 34 | 6 | true |
+| CP-6 | S3 | CP-5 | unit-rerun | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 5 | true |
 
 ## Mutation handoff
 
@@ -84,3 +86,20 @@ Corrected S1 witness at 09876c033dbdab4a8b16b5c43ca9620a720a64bf:
 CP-1 executed all 10 new cases, all 10 failed on intended outcome/request-count
 assertions with unchanged production. No build/fixture/zero-test red credit.
 Build 215.26s; test wall 1.20s. Evidence run 20261024-093927-d900.
+
+S2 at 8e08a51f5481b511096d29e0a6b83cc3d1f33cfc:
+CP-2 passed 13/13. CP-3 passed 20/21; Warm_negative_does_not_hide_a_newly_committed_target
+was refused by the Claude observation guard. The automatic baseline compiled the
+base but its 2.35s method invocation produced no TRX; the tool's NEW label is
+unproven and is not attribution evidence. Keep attribution unknown. Its additional
+leased base build/run was explicitly requested to verify this one failure.
+CP-4 hit the unchanged 8m row cap without a TRX; no Unit pass/count is claimed.
+Evidence run 20261024-094424-59fe. Source stayed clean, build provenance verified.
+
+S3 enables the existing supported-Claude fixture only at that manual-input
+boundary; no guard, assertion or timeout is weakened. Make the retirement case
+independent of the drain flag. CP-5 reruns all four full affected integration
+classes, including the red row. CP-6 is the one required rerun of the timed-out
+Unit selection under the same 8m cap. Hard run limits 15m execution / 18m wall;
+no further unchanged retries. If Unit times out or has native platform skips,
+retain the incomplete gate and report exact missing qualification to the caller.
