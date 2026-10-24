@@ -35,7 +35,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var git = new InspectionGit { Block = true };
         var slot = new InspectionAdapterSlot();
-        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ValidateScopes = true, ConnectionString = schema.ConnectionString,
             Delegation = new DelegationSettings { MaxConcurrentTasks = 32, AllowedRoots = ["/", "C:\\"] },

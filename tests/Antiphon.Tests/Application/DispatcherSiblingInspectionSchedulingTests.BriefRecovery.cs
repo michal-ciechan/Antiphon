@@ -46,7 +46,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         var slot = new InspectionAdapterSlot();
         var git = new InspectionGit();
         var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = true, ValidateScopes = true, ConnectionString = schema.ConnectionString,
             // Absent launches deliver the recovery note to the Claude caller through guarded input.
