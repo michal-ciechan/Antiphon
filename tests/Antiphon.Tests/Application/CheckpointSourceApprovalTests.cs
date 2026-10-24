@@ -114,6 +114,8 @@ public sealed class CheckpointSourceApprovalTests
             var target = h.Git.TargetHead;
             var remote = h.Git.RemoteTarget;
             var verifierCalls = h.Verifier.Calls;
+            var durableRefs = h.Git.Refs.Where(r => !LandRefRetention.IsObservation(r.Key))
+                .OrderBy(r => r.Key, StringComparer.Ordinal).ToArray();
             h.Git.Trace.Clear();
             await h.RestartServicesAsync();
             await h.RunAsync();
@@ -128,8 +130,11 @@ public sealed class CheckpointSourceApprovalTests
                 h.Git.TargetHead.ShouldBe(target, label);
                 h.Git.RemoteTarget.ShouldBe(remote, label);
                 h.Verifier.Calls.ShouldBe(verifierCalls, label);
-                h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("update-ref") ||
-                    a.Contains("--ff-only") || a.Contains("rebase"), label);
+                // A refusal may delete observation pins; every durable ref must stay unchanged.
+                h.Git.Trace.ShouldNotContain(a => a[0] == "push" || (a.Contains("update-ref")
+                    && !a.SequenceEqual(new[] { "update-ref", "--stdin" })) || a.Contains("--ff-only") || a.Contains("rebase"), label);
+                h.Git.Refs.Where(r => !LandRefRetention.IsObservation(r.Key))
+                    .OrderBy(r => r.Key, StringComparer.Ordinal).ToArray().ShouldBe(durableRefs, label);
                 if (op is not null)
                 {
                     new AgentTaskLandingState().HasPublication(op).ShouldBeFalse(label);
@@ -185,6 +190,8 @@ public sealed class CheckpointSourceApprovalTests
                 h.Fixture.SourceRef)).Trim();
             var remoteTarget = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
                 h.Fixture.TargetRef)).Trim();
+            var localBranches = await h.Fixture.RequiredAsync(h.Fixture.Repository,
+                "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/");
             h.Fixture.Git.Trace.Clear();
             if (timing == "resume") await h.RunAsync();
             else await h.RunQueuedAsync();
@@ -199,8 +206,11 @@ public sealed class CheckpointSourceApprovalTests
                     h.Fixture.SourceRef)).Trim().ShouldBe(remoteSource, label);
                 (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
                     h.Fixture.TargetRef)).Trim().ShouldBe(remoteTarget, label);
-                h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("update-ref") || a.Contains("reset") ||
+                h.Fixture.Git.Trace.ShouldNotContain(a => (a.Contains("update-ref")
+                    && !a.SequenceEqual(new[] { "update-ref", "--stdin" })) || a.Contains("reset") ||
                     a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), label);
+                (await h.Fixture.RequiredAsync(h.Fixture.Repository, "for-each-ref",
+                    "--format=%(refname) %(objectname)", "refs/heads/")).ShouldBe(localBranches, label);
                 await using var db = h.CreateContext();
                 var stored = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
                 stored.ReviewEvidenceId.ShouldBe(evidenceId, label);
