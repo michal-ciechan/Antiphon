@@ -131,10 +131,18 @@ public sealed class LiveStartupIntegrationTests
         }
         public override async ValueTask DisposeAsync()
         {
-            await base.DisposeAsync();
-            sink.Events.ShouldBeGreaterThan(0, "the server logger must reach the held sink");
-            sink.Disposed.ShouldBeTrue("the host logger must be disposed before directory deletion is attempted");
-            if (Directory.Exists(root)) Directory.Delete(root, true);
+            // Model another startup occupying the process-global gate. Entry-point
+            // finally cannot win the race and hide a missing host-owned disposal.
+            var gate = server::Program.StartupGate;
+            (await gate.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
+            try
+            {
+                await base.DisposeAsync();
+                sink.Events.ShouldBeGreaterThan(0, "the server logger must reach the held sink");
+                sink.Disposed.ShouldBeTrue("the host logger must be disposed before directory deletion is attempted");
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+            finally { gate.Release(); }
         }
     }
 }
