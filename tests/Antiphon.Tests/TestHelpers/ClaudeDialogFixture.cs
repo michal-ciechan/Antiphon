@@ -12,8 +12,9 @@ internal static class ClaudeDialogFixture
         BridgeQueueHarness.CreateAsync((options ?? new()) with { ClaudeDialogObservation = true });
 
     /// <summary>Newly launched fakes bind their generation in StartAsync before accepting input.</summary>
-    public static FakeAgentProtocolAdapter WithClaudeDialogObservation(this FakeAgentProtocolAdapter adapter)
+    public static FakeAgentProtocolAdapter WithClaudeDialogObservation(this FakeAgentProtocolAdapter adapter, bool recordPromptAttempts = false)
     {
+        if (recordPromptAttempts) adapter.RecordGuardedPromptAttempts = true;
         adapter.DialogGuardEnabled = true;
         adapter.ClaudeComposerChrome = true;
         return adapter;
