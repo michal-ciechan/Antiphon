@@ -90,7 +90,7 @@ public partial class AgentTaskReplyIntegrationTests
 
     // The harness deletes its agent and sessions on dispose, so the caller asserts inside its lifetime.
     private static Task<BridgeQueueHarness> CreateReleaseEvictingHarnessAsync(ReleaseEvictingRunner runner) =>
-        BridgeQueueHarness.CreateAsync(new()
+        ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConfigureServices = services => services.AddSingleton<ISessionRunnerClient>(runner),

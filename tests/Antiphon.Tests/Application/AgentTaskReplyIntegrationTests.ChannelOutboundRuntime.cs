@@ -182,7 +182,7 @@ public partial class AgentTaskReplyIntegrationTests
 
         try
         {
-            h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+            h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 ConnectionString = isolated.ConnectionString,
                 PreserveDatabaseOnDispose = true,
