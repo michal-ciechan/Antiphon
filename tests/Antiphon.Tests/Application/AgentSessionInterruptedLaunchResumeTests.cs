@@ -343,14 +343,14 @@ public class AgentSessionInterruptedLaunchResumeTests
             RecordingKillRunner? runner,
             bool dispatchedTask)
         {
-            var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+            var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
                 ConfigureServices = s =>
                 {
                     s.AddSingleton(Options.Create(new GrokRulesSettings()));
                     s.AddSingleton<GrokRulesRefreshService>();
-                    s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter));
+                    s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter.WithClaudeDialogObservation()));
                     if (runner is not null)
                         s.AddSingleton<ISessionRunnerClient>(runner);
                 },
