@@ -25,7 +25,7 @@ public sealed class CompletionNoteDurableSweepTests
         var flushes = new CompletionNoteFlushQueue();
         var boundary = new LostFlushBoundary();
         var clock = new SweepClock();
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
