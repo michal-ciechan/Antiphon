@@ -1,5 +1,9 @@
 using Antiphon.DockerStack.Fixture;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -26,7 +30,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             await ExecuteAsync(connection, "DO $$ BEGIN CREATE ROLE c590_observer; EXCEPTION WHEN duplicate_object THEN NULL; END $$;");
             await ExecuteAsync(connection, "GRANT SELECT ON \"SessionQueuedMessages\" TO c590_observer");
-            await using var restricted = new NpgsqlConnection(connection.ConnectionString);
+            await using var restricted = connection.Clone();
             await restricted.OpenAsync();
             await ExecuteAsync(restricted, "SET ROLE c590_observer");
             var failed = false;
@@ -70,7 +74,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Pending", "body", 0, null);
-            await using var second = new NpgsqlConnection(connection.ConnectionString);
+            await using var second = connection.Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT COUNT(*) FROM \"SessionQueuedMessages\" WHERE \"Body\" = 'body' AND \"AgentSessionId\" = @s", session)).ShouldBe(1);
         });
@@ -81,7 +85,7 @@ public sealed class DockerDeliveryDatabaseTests
         {
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Sent", "body", 1, 8);
-            await using var second = new NpgsqlConnection(connection.ConnectionString);
+            await using var second = connection.Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT \"DeliveryAttempts\" FROM \"SessionQueuedMessages\" WHERE \"AgentSessionId\" = @s", session)).ShouldBe(1);
         });
@@ -93,7 +97,7 @@ public sealed class DockerDeliveryDatabaseTests
             await using var tx = await connection.BeginTransactionAsync();
             var session = Guid.NewGuid();
             await InsertAsync(connection, session, "Pending", "hidden", 0, null, tx);
-            await using var second = new NpgsqlConnection(connection.ConnectionString);
+            await using var second = connection.Clone();
             await second.OpenAsync();
             (await ScalarAsync(second, "SELECT COUNT(*) FROM \"SessionQueuedMessages\" WHERE \"Body\" = 'hidden' AND \"AgentSessionId\" = @s", session)).ShouldBe(0);
             await tx.RollbackAsync();
@@ -203,21 +207,21 @@ public sealed class DockerDeliveryDatabaseTests
         NpgsqlConnection connection, Guid session, string status, string body, int attempts, long? floor, NpgsqlTransaction? tx = null)
     {
         var id = Guid.NewGuid();
-        await using var command = new NpgsqlCommand(
-            """
-            INSERT INTO "SessionQueuedMessages"
-                ("Id", "AgentSessionId", "Body", "Status", "Sequence", "Origin", "DeliveryAttempts",
-                 "LastDeliveryBaselineSequence", "CreatedAt", "MaintenanceKind", "MaintenanceSlotActive", "RulesFollowOnCount")
-            VALUES
-                (@id, @session, @body, @status, 2, 0, @attempts, @floor, NOW(), 0, false, 0)
-            """, connection, tx);
-        command.Parameters.AddWithValue("id", id);
-        command.Parameters.AddWithValue("session", session);
-        command.Parameters.AddWithValue("body", body);
-        command.Parameters.AddWithValue("status", status);
-        command.Parameters.AddWithValue("attempts", attempts);
-        command.Parameters.AddWithValue("floor", (object?)floor ?? DBNull.Value);
-        await command.ExecuteNonQueryAsync();
+        // Use the migrated model's enum/default values and satisfy the session foreign key.
+        // Sharing this connection also keeps the open-transaction visibility witness intact.
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(connection).Options);
+        if (tx is not null) await db.Database.UseTransactionAsync(tx);
+        if (!await db.AgentSessions.AnyAsync(s => s.Id == session))
+            db.AgentSessions.Add(new AgentSession { Id = session, DefinitionName = "database-fixture" });
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = id, AgentSessionId = session, Body = body,
+            Status = Enum.Parse<QueuedMessageStatus>(status), Sequence = 2,
+            DeliveryAttempts = attempts, LastDeliveryBaselineSequence = floor,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
         return id;
     }
 
