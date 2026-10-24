@@ -415,7 +415,7 @@ existing safety tests; this card does not redesign those guards.
 ### Overhead protocol
 
 V-13 uses the same built probe/helper binaries, host, isolated data/cache state,
-limit widths and exact roster. Warm once, then run five paired OFF/ON samples in
+limit widths and exact roster. Warm once, then run nine paired OFF/ON samples in
 alternating order (OFF/ON, ON/OFF, ...). A sample is a fixed workload with real DB
 clone/drop, safe host request, scratch Git, filesystem create/delete and async
 in-process work; choose sufficient fixed repetitions for >=10 seconds per sample,
@@ -432,6 +432,16 @@ Keep per-sample wall/CPU/allocation/bytes/records/dropped counts; measured inter
 includes recorder final flush. Compute paired relative overhead
 `(onWall-offWall)/offWall` and its median, plus bootstrap 95% upper bound. Accept
 only median and upper bound <2%, matching work/outcomes and zero dropped records.
+The 2026-10-24 Debug repair increases the predeclared minimum from five to nine
+pairs: one outlier controls the bootstrap median in 5.792% of five-pair resamples,
+but only 0.145% of nine-pair resamples. Keep the same bootstrap median, all raw
+ratios, ten-second arm minimum and 2% threshold; do not discard slow pairs or
+collect until a bound passes. The Linux baseline at eb5f263211ee7edae81ae75e28e5a4f3bc627399
+measured median 0.222%, upper 0.358%, scope-only OFF/ON 81 ns/3.28 us and
+0/694 allocated bytes per scope. Whole-case ON including serialization/flush
+was 7.09 us/scope. Its five-pair method took 147 s; nine pairs provisionally
+budget about 227 s (+80 s), within the unchanged 300 s test timeout. Native
+Windows CP-8 remains required; these Linux measurements do not qualify it.
 A noisy/contended result is inconclusive, not success: fix the overhead or request
 one specifically budgeted follow-up measurement, never rerun until green. Run the
 same protocol on the Windows preflight. Supervisor manifest/discovery/summary

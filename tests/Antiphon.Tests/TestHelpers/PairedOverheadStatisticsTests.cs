@@ -9,6 +9,7 @@ public sealed class PairedOverheadStatisticsTests
     [Test]
     public void Five_pairs_cannot_support_the_noise_robust_bound()
     {
+        PairedOverheadStatistics.MinimumPairs.ShouldBe(9);
         // With five pairs one outlier controls the median in 5.792% of
         // resamples, and therefore controls the 95% upper bound.
         Should.Throw<ArgumentException>(() =>

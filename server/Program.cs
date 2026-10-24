@@ -52,6 +52,7 @@ using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 Program.StartupGate.Wait();
 var startupGateHeld = true;
 Serilog.ILogger? ownedLogger = null;
+Antiphon.Server.Infrastructure.Logging.HostLoggerLifetime? ownedLoggerLifetime = null;
 
 try
 {
@@ -65,6 +66,10 @@ try
     using var liveTiming = new LiveTiming(timingLogs.CreateLogger<LiveTiming>());
     using var configurationTiming = liveTiming.BeginStartup(StartupOperation.ConfigLoad);
     var builder = WebApplication.CreateBuilder(args);
+    // A factory registration makes DI own disposal; registering an existing
+    // instance would leave it with the caller. Resolve only after logger freeze.
+    builder.Services.AddSingleton(_ =>
+        new Antiphon.Server.Infrastructure.Logging.HostLoggerLifetime((IDisposable)ownedLogger!));
     builder.Services.AddSingleton(liveTiming);
     builder.Services.AddTransient<LiveTimingHttpHandler>();
     builder.Services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<LiveTimingHttpHandler>());
@@ -1000,6 +1005,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Freeze() replaces the bootstrap wrapper with its configured inner logger. Capture that
     // exact instance so this host can close it without touching a later host's static logger.
     ownedLogger = Log.Logger;
+    ownedLoggerLifetime = app.Services.GetRequiredService<Antiphon.Server.Infrastructure.Logging.HostLoggerLifetime>();
 
     if (builder.Configuration["Deliverables:BrowserPath"] is not null
         || builder.Configuration["Deliverables:RenderTimeoutSeconds"] is not null
@@ -1278,7 +1284,13 @@ finally
         // this startup still holds the gate, any current static logger is its own.
         if (startupGateHeld && ownedLogger is not null)
             ownedLogger = Log.Logger;
-        if (ownedLogger is not null)
+        if (ownedLoggerLifetime is not null)
+        {
+            ownedLoggerLifetime.Dispose();
+            if (ReferenceEquals(Log.Logger, ownedLogger))
+                Log.Logger = Serilog.Core.Logger.None;
+        }
+        else if (ownedLogger is not null)
         {
             if (ReferenceEquals(Log.Logger, ownedLogger))
                 Log.CloseAndFlush();
