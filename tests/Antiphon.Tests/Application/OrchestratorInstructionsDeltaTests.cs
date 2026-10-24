@@ -8,6 +8,43 @@ namespace Antiphon.Tests.Application;
 public sealed class OrchestratorInstructionsDeltaTests
 {
     [Test]
+    public void A_long_Windows_notice_path_keeps_the_chain_failure_and_recovery_visible()
+    {
+        var path = @"C:\Antiphon\verification\task-399d76fc\continuation\temp\antiphon-bridge-queue-"
+            + new string('a', 32) + "\\" + new string('w', 100) + @"\i.md";
+        var known = "ClaudeCode/Low (haiku)";
+        var unknown = "unknown (chain read failed)";
+        var before = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", [new MatrixInstructionRow("Plan", known, known, known, known, "role")]),
+        };
+        var after = before with
+        {
+            Matrix = before.Matrix with
+            {
+                Rows = [new MatrixInstructionRow("Plan", unknown, unknown, unknown, unknown, unknown)],
+            },
+        };
+        foreach (var delta in new[]
+        {
+            OrchestratorInstructionsDelta.Format(before, after),
+            OrchestratorInstructionsDelta.Format(after, before),
+        })
+        {
+            var notice = ChannelPreamble.OrchestratorInstructionsChangedBody(delta, path,
+                "http://localhost:17202/api/orchestrator-instructions", "12345678", "87654321");
+            notice.Length.ShouldBeLessThanOrEqualTo(700);
+            notice.ShouldContain(unknown);
+            notice.ShouldContain(known);
+            notice.ShouldContain(path);
+            notice.ShouldContain("GET /api/orchestrator-instructions");
+            notice.ShouldContain("-Refine");
+            notice.ShouldContain("NO_REPLY");
+            notice.ShouldContain(delta.Split('\n')[0], "the first transition must survive wrapper clipping whole");
+        }
+    }
+
+    [Test]
     public void A_long_known_value_keeps_the_unknown_transition_reason_visible()
     {
         var before = Sample() with
