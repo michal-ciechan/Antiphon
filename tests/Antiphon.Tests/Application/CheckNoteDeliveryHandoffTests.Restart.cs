@@ -84,6 +84,8 @@ public partial class CheckNoteDeliveryHandoffTests
                     "the exit is attributed to the recovery, never to an operator Stop");
         }
 
+        await h.InterpreterAdapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.InterpreterSessionId);
+
         // The real chain, on the RESUMED generation: a real check run, a real interpretation
         // dispatched to the restarted seat, and the note it produced typed into the caller.
         var taskId = await SeedCheckedDelegateAsync(h);
