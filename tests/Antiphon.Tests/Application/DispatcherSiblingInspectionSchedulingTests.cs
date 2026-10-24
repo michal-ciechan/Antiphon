@@ -77,9 +77,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                     var reviewed = await edit.AgentTaskLandRequests.SingleAsync();
                     reviewed.ExpectedSourceSha = (await fixture.Repo.GitReadAsync("rev-parse", "master")).Trim(); break;
                 case "adopted checkout":
-                    // Exercise Git's quoted porcelain paths on every OS, including Linux.
-                    await fixture.Repo.GitAsync("config", "core.quotePath", "true");
-                    adopted = Path.Combine(fixture.Repo.WorktreeRoot, "adopted-\u00e9");
+                    // Exercise record delimiters where newlines are legal in filenames.
+                    var adoptedName = Path.GetInvalidFileNameChars().Contains('\n') ? "adopted" : "adopted\ncheckout";
+                    adopted = Path.Combine(fixture.Repo.WorktreeRoot, adoptedName);
                     var branch = "feat/card-task-" + row.Id.ToString("N")[..8];
                     await fixture.Repo.GitAsync("worktree", "add", "-b", branch, adopted, "master");
                     row.WorktreePath = adopted; row.WorktreeBranch = branch; break;
