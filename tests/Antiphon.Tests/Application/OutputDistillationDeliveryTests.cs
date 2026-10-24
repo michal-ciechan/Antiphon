@@ -11,6 +11,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -500,6 +501,7 @@ public class OutputDistillationDeliveryTests
     internal sealed class DeliveryFixture : IAsyncDisposable
     {
         private IsolatedTestSchema _schema = null!;
+        private readonly CapturingLoggerProvider _logs = new();
         public string ConnectionString => _schema.ConnectionString;
         public Antiphon.Server.Infrastructure.Data.AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
         public ReportWorkspace Workspace { get; } = new();
@@ -525,6 +527,7 @@ public class OutputDistillationDeliveryTests
                 f.Settings.PtySingleChunkBytes = f.Settings.ModernPtySingleWriteMaxBytes;
             }
             f.Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
+                s.AddLogging(b => b.AddProvider(f._logs));
                 s.AddSingleton(Options.Create(f.Settings)); s.AddSingleton<ISessionRunnerClient, FakeSessionRunnerClient>();
                 s.AddScoped<IModelAvailability, ModelAvailability>();
                 s.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
@@ -581,8 +584,12 @@ public class OutputDistillationDeliveryTests
         {
             if (_worker is null)
             {
+                if (summary is not null)
+                    Provider.GetRequiredService<OutputDistillationQueue>().PendingCount.ShouldBeGreaterThan(0,
+                        "settlement must commission the eligible distillation: " + string.Join(" | ",
+                            _logs.Entries.Where(e => e.Level >= LogLevel.Warning).Select(e => e.Message + " " + e.Exception)));
                 _worker = new(Provider.GetRequiredService<OutputDistillationQueue>(), Provider.GetRequiredService<IServiceScopeFactory>(),
-                    Options.Create(Settings), NullLogger<OutputDistillationHostedService>.Instance);
+                    Options.Create(Settings), Provider.GetRequiredService<ILogger<OutputDistillationHostedService>>());
                 await _worker.StartAsync(CancellationToken.None);
             }
             if (summary is not null)
