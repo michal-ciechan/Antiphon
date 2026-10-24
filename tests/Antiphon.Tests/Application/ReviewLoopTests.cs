@@ -672,6 +672,7 @@ public class ReviewLoopTests
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, sessionId);
         runtime.Register(sessionId, adapter);
 
         var scope2 = provider.CreateScope();
