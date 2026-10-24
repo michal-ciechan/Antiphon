@@ -639,7 +639,7 @@ public sealed class CodexStartupDeliveryTests
 
         var ex = await Should.ThrowAsync<ConflictException>(
             () => h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None));
-        ex.Message.ShouldContain("is still starting");
+        ex.Message.ShouldContain(ExpectedImmediateRefusal(status));
         WorkWrites(adapter).ShouldBeEmpty("R-65");
         await using (var db = OpenDb(h))
         {
@@ -711,7 +711,7 @@ public sealed class CodexStartupDeliveryTests
         var before = await CountQueueAsync(h);
         var ex = await Should.ThrowAsync<ConflictException>(
             () => h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None));
-        ex.Message.ShouldContain("is still starting");
+        ex.Message.ShouldContain(ExpectedImmediateRefusal(status));
         WorkWrites(adapter).ShouldBeEmpty("R-66");
         (await CountQueueAsync(h)).ShouldBe(before, "R-66");
     }
@@ -859,6 +859,11 @@ public sealed class CodexStartupDeliveryTests
         await db.SaveChangesAsync();
         return h;
     }
+
+    // Created/terminal rows fail liveness before readiness; live non-Running rows
+    // still exercise the startup gate. Both refusals must leave input untouched.
+    private static string ExpectedImmediateRefusal(SessionStatus status) =>
+        status is SessionStatus.Starting or SessionStatus.Stopping ? "is still starting" : "is not live";
 
     private static AppDbContext OpenDb(BridgeQueueHarness h) =>
         new(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
