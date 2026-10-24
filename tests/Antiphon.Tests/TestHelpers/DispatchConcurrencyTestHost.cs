@@ -644,6 +644,7 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
     public void BindPrompt(Guid sessionId)
     {
         var adapter = new FakeAgentProtocolAdapter { TurnCompleted = true, ReadyResult = true };
+        adapter.EnableClaudeDialogObservation(Shop.ConnectionString, sessionId);
         adapter.OnSubmitted = body => PersistPromptAsync(sessionId, body);
         try
         {
