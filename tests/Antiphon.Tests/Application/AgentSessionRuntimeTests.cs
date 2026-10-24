@@ -112,10 +112,6 @@ public partial class AgentSessionRuntimeTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Backend_runtime_can_send_input_to_live_runner_session_after_restart()
     {
-        // CARD-1187: the launch spec is cmd.exe. Skip before any launch.
-        if (!OperatingSystem.IsWindows())
-            throw new TUnit.Core.Exceptions.SkipTestException("A cmd.exe launch spec needs Windows");
-
         var eventBus = new MockEventBus();
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-runner-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
@@ -125,10 +121,10 @@ public partial class AgentSessionRuntimeTests
         {
             var sessionId = Guid.NewGuid();
             var launchSpec = new AgentLaunchSpec(
-                "raw-cmd",
+                "raw-shell",
                 AgentKind.Raw,
-                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                ["/d", "/q", "/k", "@echo off & prompt $G"],
+                OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh",
+                OperatingSystem.IsWindows() ? ["/d", "/q", "/k", "@echo off & prompt $G"] : ["-i"],
                 new Dictionary<string, string>(),
                 tempRoot,
                 120,
