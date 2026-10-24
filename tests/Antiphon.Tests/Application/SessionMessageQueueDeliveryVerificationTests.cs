@@ -99,7 +99,8 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 
         string[] expected = modalBeforeEscape ? [body] : [body, "\u001b", body];
         h.Adapter.Inputs.ShouldBe(expected);
-        h.Adapter.ConditionalInputs.ShouldBe(expected, "every recovery write stays behind the dialog guard");
+        // Every recovery write stays behind the dialog guard.
+        h.Adapter.ConditionalInputs.ShouldBe(expected);
         h.Adapter.SubmittedBodies.ShouldBeEmpty("composer evidence is absent, so Enter stays withheld");
         h.Adapter.Killed.ShouldBeFalse();
     }
