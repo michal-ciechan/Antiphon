@@ -258,6 +258,13 @@ public partial class SessionRuntimeActionRoutingTests
             h.Adapter.Inputs.ShouldBeEmpty("an incomplete identity stays parked without another body or Enter");
             return;
         }
+        if (variant == "old-generation")
+        {
+            // The old action has been refused above. The positive G2 request needs
+            // the replacement runtime and its current generation-bound observation.
+            await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
+            h.Runtime.SetTestAcceptedStartedAt(h.SessionId, h.Adapter.AcceptedStartedAt!.Value);
+        }
         await f.StreamAsync(f.Entry("UserPrompt", body), f.Entry("TurnEnd"));
         await Task.Delay(TimeSpan.FromMilliseconds(1100));
         await f.Actions.RequestAsync(h.SessionId, "status", default);
