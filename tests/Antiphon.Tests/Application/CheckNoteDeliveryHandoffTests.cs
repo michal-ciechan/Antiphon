@@ -210,6 +210,7 @@ public partial class CheckNoteDeliveryHandoffTests
             InterpreterAdapter = new FakeAgentProtocolAdapter();
             var sid = InterpreterSessionId;
             var store = _schema.ConnectionString;
+            await InterpreterAdapter.EnableClaudeDialogObservationAsync(store, sid);
             // A standing interpreter has taken turns before. Without one ended turn on record its
             // transcript baseline is unobservable, delivery falls back to SCREEN evidence, and a
             // swallowed submit would be reported Delivered with nothing in the transcript at all -
