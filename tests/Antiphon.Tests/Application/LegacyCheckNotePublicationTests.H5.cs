@@ -324,7 +324,7 @@ public partial class LegacyCheckNotePublicationTests
     private static async Task<World> SeedAsync()
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var harness = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString, AlwaysOn = false });
+        var harness = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString, AlwaysOn = false });
         var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var session = await db.AgentSessions.SingleAsync(s => s.Id == harness.SessionId);
         var generation = SessionGeneration.Normalize(session.StartedAt);
