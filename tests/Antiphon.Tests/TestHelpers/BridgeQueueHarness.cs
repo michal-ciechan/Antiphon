@@ -768,9 +768,13 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         /// </summary>
         public int TranscriptGets { get; private set; }
 
+        // Opt-in scheduling/fault seam. Legacy fake runners retain their unknown snapshots.
+        public Func<Guid, CancellationToken, Task<SessionRunnerTranscriptDto>>? TranscriptPull { get; set; }
+
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
         {
             TranscriptGets++;
+            if (TranscriptPull is { } pull) return pull(sessionId, ct);
             return Task.FromResult(_transcripts.TryGetValue(sessionId, out var transcript)
                 ? transcript
                 : new SessionRunnerTranscriptDto(sessionId, [], 0));

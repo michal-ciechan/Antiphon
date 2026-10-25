@@ -23,7 +23,7 @@ namespace Antiphon.Server.Application.Services;
 /// This service observes runner output, republishes SignalR deltas, tracks
 /// manual xterm turns, and forwards input/resize/kill commands to the runner.
 /// </summary>
-public sealed class AgentSessionRuntime
+public sealed partial class AgentSessionRuntime
 {
     private static readonly TimeSpan ManualTurnPollInterval = TimeSpan.FromMilliseconds(100);
 
