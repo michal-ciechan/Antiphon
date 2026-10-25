@@ -109,6 +109,10 @@ public sealed class DispatcherRemotePrepStarvationTests
             held.Detail.ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
         }
 
+        // Preparation runs off the serial tick; wait for the peer to receive every request.
+        using (var requests = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            while (peer.RequestCount(PhoneHomeOperation.WorkspaceMirror) < 3)
+                await Task.Delay(20, requests.Token);
         peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(3);
 
         var queued = await db.SessionQueuedMessages.AsNoTracking()
@@ -232,7 +236,7 @@ public sealed class DispatcherRemotePrepStarvationTests
                 Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = workspace,
                 WorktreePath = workspace,
-                WorktreeBranch = "feat/remote-" + minutes,
+                WorktreeBranch = $"feat/card-task-{id.ToString("N")[..8]}",
                 RunnerId = runnerId,
                 Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None,
