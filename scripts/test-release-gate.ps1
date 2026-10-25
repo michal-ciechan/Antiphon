@@ -791,7 +791,7 @@ function Test-C599_MetadataParsers {
     Assert-C487 -Cond ($optin.Categories -contains 'OptIn') -Name 'C599 MetadataParsers json parser preserves the raw OptIn category'
     Assert-C487 -Cond ([bool]$optin.Excluded) -Name 'C599 MetadataParsers json OptIn still excluded in the default lane'
 
-    $rec = 'TestNodeUid { Value = u1 } TypeName = BoardE2ETests MethodName = Board_loads Namespace = E2E TestMetadataProperty { Key = OptIn'
+    $rec = 'TestNodeUid { Value = u1 }, TypeName = BoardE2ETests, MethodName = Board_loads, Namespace = E2E, TestMetadataProperty { Key = OptIn }'
     $diag = ConvertFrom-NightlyDiagnosticRecord -Record $rec -State 'Discovered'
     Assert-C487 -Cond ([string]$diag.Uid -eq 'u1') -Name 'C599 MetadataParsers diagnostic parser reads the same uid' -Detail $diag.Uid
     Assert-C487 -Cond ($diag.Categories -contains 'OptIn') -Name 'C599 MetadataParsers diagnostic parser preserves the raw category'
