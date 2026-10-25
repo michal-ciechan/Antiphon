@@ -316,8 +316,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var agentDto = await scope.ServiceProvider.GetRequiredService<AgentService>()
             .CreateAsync(new CreateAgentRequest("BridgeQueue", workspace), CancellationToken.None);
 
-        await using (var db = scope.ServiceProvider.GetRequiredService<AppDbContext>())
         {
+            // The retained scope owns this context; CardService uses it after seeding.
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = clock.GetUtcNow().UtcDateTime;
             db.AgentSessions.Add(new AgentSession
             {
