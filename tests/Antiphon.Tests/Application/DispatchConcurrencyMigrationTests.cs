@@ -27,7 +27,6 @@ public sealed class DispatchConcurrencyMigrationTests
         var projectQ = Guid.NewGuid();
         await using (var db = NewDb(schema.ConnectionString))
         {
-            await RewindAsync(db);
             db.Projects.AddRange(Project(projectP, "P", now), Project(projectQ, "Q", now));
             await db.SaveChangesAsync();
             foreach (var projectId in new Guid?[] { projectP, projectQ, null })
@@ -84,6 +83,10 @@ public sealed class DispatchConcurrencyMigrationTests
                 LastProvenance = "Human",
             });
             await db.SaveChangesAsync();
+            // Seed with the current model, then retain its historical columns in the
+            // predecessor schema. Current entities cannot be inserted after a rewind.
+            db.ChangeTracker.Clear();
+            await RewindAsync(db);
         }
 
         string[] beforeTasks;
