@@ -749,10 +749,10 @@ public class AgentSystemPromptLaunchTests
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
-    private static RegisteringAdapterFactory Factory(BridgeQueueHarness h) =>
+    internal static RegisteringAdapterFactory Factory(BridgeQueueHarness h) =>
         (RegisteringAdapterFactory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>();
 
-    private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
+    internal static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
         ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = alwaysOn,
@@ -781,7 +781,7 @@ public class AgentSystemPromptLaunchTests
             },
         });
 
-    private static async Task SetPreambleAsync(BridgeQueueHarness h, string template)
+    internal static async Task SetPreambleAsync(BridgeQueueHarness h, string template)
     {
         await using var db = CreateContext();
         await db.Agents.Where(a => a.Id == h.AgentId)
@@ -812,7 +812,7 @@ public class AgentSystemPromptLaunchTests
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status));
     }
 
-    private static async Task<AgentDetailDto> StartAsync(
+    internal static async Task<AgentDetailDto> StartAsync(
         BridgeQueueHarness h, bool fresh, string? prompt = null)
     {
         // Fresh scope per start: the harness scope's DbContext tracks stale agent state.
@@ -829,7 +829,7 @@ public class AgentSystemPromptLaunchTests
         return await refresh.GetByIdAsync(h.AgentId, CancellationToken.None);
     }
 
-    private sealed class RegisteringAdapterFactory(AgentSessionRuntime runtime) : IAgentProtocolAdapterFactory
+    internal sealed class RegisteringAdapterFactory(AgentSessionRuntime runtime) : IAgentProtocolAdapterFactory
     {
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
 
