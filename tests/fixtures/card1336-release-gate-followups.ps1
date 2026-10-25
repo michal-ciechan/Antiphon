@@ -75,7 +75,8 @@ function New-C1336Candidate {
     foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
         if ($path -and -not (Test-Path (Join-Path $seed $path))) { Write-C1336File $seed $path 'fixture source' }
     }
-    foreach ($path in (Git-C1336 $repoRoot @('ls-files', 'tests/*.csproj', 'scripts/fixtures/nightly/c487-probe/Probe.csproj')).Split("`n")) {
+    # Keep the fixture's project census current with policy, including probes outside tests/.
+    foreach ($path in (Git-C1336 $repoRoot @('ls-files', '*.csproj')).Split("`n")) {
         Write-C1336File $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
     }
     Add-Content (Join-Path $seed 'scripts/nightly-run.ps1') '# C1336 owned clone self-hop'
