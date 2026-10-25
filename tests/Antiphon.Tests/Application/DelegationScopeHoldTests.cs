@@ -156,13 +156,13 @@ public class DelegationScopeHoldTests
     public async Task a_worktree_task_dispatches_over_a_shared_holder_with_one_warning()
     {
         using var workspace = new TempWorkspace();
-        var dispatcher = CreateDispatcher();
+        var launches = new DispatcherAdmissionFixture.RecordingSink();
+        var dispatcher = CreateDispatcher(launches: launches);
         var holder = await SeedRunningTaskAsync(
             workspace.Path, WorkspaceMode.Shared, "delivery", title: "the shared writer",
             branch: "feat/holder");
-        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
         var isolated = await SeedQueuedTaskAsync(
-            workspace.Path, WorkspaceMode.Worktree, "delivery", pinnedAgentId: agentId);
+            workspace.Path, WorkspaceMode.Worktree, "delivery");
 
         await dispatcher.TickAsync(CancellationToken.None);
 
@@ -170,6 +170,7 @@ public class DelegationScopeHoldTests
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched,
             "a worktree collides at merge, not at dispatch: " + dispatched.FailureReason);
+        launches.Sessions.ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
         (await verify.AgentTaskEvents
                 .AnyAsync(e => e.AgentTaskId == isolated.Id && e.Type == AgentTaskEventType.Held))
             .ShouldBeFalse();
@@ -187,19 +188,20 @@ public class DelegationScopeHoldTests
     public async Task two_worktree_tasks_in_one_area_both_run()
     {
         using var workspace = new TempWorkspace();
-        var dispatcher = CreateDispatcher();
+        var launches = new DispatcherAdmissionFixture.RecordingSink();
+        var dispatcher = CreateDispatcher(launches: launches);
         await SeedRunningTaskAsync(
             workspace.Path, WorkspaceMode.Worktree, "delivery", title: "worktree one",
             branch: "feat/one");
-        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
         var second = await SeedQueuedTaskAsync(
-            workspace.Path, WorkspaceMode.Worktree, "delivery", pinnedAgentId: agentId);
+            workspace.Path, WorkspaceMode.Worktree, "delivery");
 
         await dispatcher.TickAsync(CancellationToken.None);
 
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == second.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
+        launches.Sessions.ShouldHaveSingleItem().ShouldBe(dispatched.AgentSessionId!.Value);
         (await verify.AgentTaskEvents
                 .CountAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Warning))
             .ShouldBe(1);
@@ -287,7 +289,8 @@ public class DelegationScopeHoldTests
 
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static AgentTaskDispatcher CreateDispatcher(bool serialiseSharedWriters = true)
+    private static AgentTaskDispatcher CreateDispatcher(bool serialiseSharedWriters = true,
+        DispatcherAdmissionFixture.RecordingSink? launches = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -313,6 +316,7 @@ public class DelegationScopeHoldTests
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<IAgentTaskLaunchSink>(launches ?? new DispatcherAdmissionFixture.RecordingSink());
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
