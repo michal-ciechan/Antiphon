@@ -126,6 +126,10 @@ public sealed class RetiredTempContainerScriptTests
             $accepted=$true;try{Assert-ZeroCounters $s 'server2-temp'}catch{$accepted=$false};if($accepted){throw 'c994-shared-null'}
             $s.runnerSessions=0;Assert-ZeroCounters $s 'server2-temp'
             """);run.Exit.ShouldBe(0,"c994-wrapper-strict-null c994-shared-null: "+run.Output);
+    }
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C994_Host_strict_volume_admission_remains_independent(){
+        C1008HostFixture.RequireNativeLinux();
         using var host=new C1008HostFixture(main:false);host.Docker["containers"]!.AsArray().Add(host.Container('7',"antiphon-runner-temp","session-runner",false));
         var present=await host.Run("retire-temp-runner");present.Exit.ShouldBe(2,"c994-host-strict-null");present.Output.ShouldContain("RunnerCounterUnknown");
         var strict=await host.Run("retire-temp-runner","""
@@ -167,6 +171,10 @@ public sealed class RetiredTempContainerScriptTests
     public async Task C994_Resume_never_runs_container_cleanup(){
         foreach(var present in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;
             var run=await f.Run("retire-temp","-ResumeRecycle","c100800000000000000000000000000000001");run.Exit.ShouldBe(present?2:0,"c994-resume-isolation: "+run.Output);Cases(run.Trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBeFalse("c994-resume-isolation");}
+    }
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C994_Host_resume_never_runs_container_cleanup(){
+        C1008HostFixture.RequireNativeLinux();
         using var host=new C1008HostFixture();
         var proof=await host.Run(extra:"""
             LANE=host;C1008_PROJECT="$HOST_PROJECT"
@@ -304,6 +312,10 @@ public sealed class RetiredTempContainerScriptTests
               $c.dryRun=$value;$ok=$true;try{Assert-C994BridgeContext $c 'retire-temp-containers'}catch{$ok=$false};if($ok){throw 'c994-bridge-context'}
             }
             """);run.Exit.ShouldBe(0,"c994-bridge-context c994-literal-transport: "+run.Output);
+    }
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C994_Host_bridge_transport_preserves_literal_context(){
+        C1008HostFixture.RequireNativeLinux();
         using var host=new C1008HostFixture(main:false);
         host.Docker["containers"]!.AsArray().Add(host.Container('7',"antiphon-runner-temp","session-runner",false));
         // Same-generation container carries the token bind. Its stack SHA must render that roster.
