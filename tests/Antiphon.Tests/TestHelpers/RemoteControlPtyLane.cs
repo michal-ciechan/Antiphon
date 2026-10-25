@@ -334,6 +334,7 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await NativePtyDiagnostics.CaptureAsync(Client, SessionId, "remote-control");
         await PumpCts.CancelAsync();
         try { await Pumping; } catch (OperationCanceledException) { }
         PumpCts.Dispose();

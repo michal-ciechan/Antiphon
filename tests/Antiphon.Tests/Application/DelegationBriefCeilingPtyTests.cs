@@ -357,6 +357,7 @@ public class DelegationBriefCeilingPtyTests
 
         public async ValueTask DisposeAsync()
         {
+            await NativePtyDiagnostics.CaptureAsync(_client, _sessionId, "brief-ceiling");
             try { await _client.KillAsync(_sessionId, CancellationToken.None); } catch { /* best effort */ }
             await _client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))

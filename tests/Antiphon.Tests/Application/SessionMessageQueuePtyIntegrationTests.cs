@@ -908,6 +908,7 @@ public class SessionMessageQueuePtyIntegrationTests
     private static async Task CleanupAsync(
         DirectSessionRunnerClient client, Guid sessionId, string cwd, string transcriptPath)
     {
+        await NativePtyDiagnostics.CaptureAsync(client, sessionId, "claude-queue");
         try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
         await client.DisposeAsync();
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
@@ -931,6 +932,7 @@ public class SessionMessageQueuePtyIntegrationTests
                 return true;
             await Task.Delay(150);
         }
+        await NativePtyDiagnostics.CaptureAsync(client, sessionId, "claude-output-timeout");
         return false;
     }
 }

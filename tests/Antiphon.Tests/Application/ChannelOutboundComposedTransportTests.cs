@@ -31,7 +31,7 @@ public sealed class ChannelOutboundComposedTransportTests
     public async Task Sealed_four_source_pdf_crosses_pump_broker_gateway_and_fake_slack()
     {
         var specimen = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
-            "..", "Fixtures", "Card0418"));
+            "Fixtures", "Card0418"));
         var names = new[] { "requirements.md", "design.md", "external-api.md", "current-snapshots.md" };
         var sources = new List<(string Name, byte[] Bytes)>();
         foreach (var name in names)

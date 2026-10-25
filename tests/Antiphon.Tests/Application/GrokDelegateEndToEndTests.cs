@@ -1024,6 +1024,8 @@ public class GrokDelegateEndToEndTests
     {
         public async ValueTask DisposeAsync()
         {
+            foreach (var session in await Runner.ListAsync(CancellationToken.None))
+                await NativePtyDiagnostics.CaptureAsync(Runner, session.SessionId, "grok-delegate");
             await Runner.DisposeAsync();
             await Provider.DisposeAsync();
         }

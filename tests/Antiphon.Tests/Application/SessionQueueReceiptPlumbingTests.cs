@@ -769,6 +769,8 @@ public sealed class SessionQueueReceiptPlumbingTests
 
         private async Task DisposeCoreAsync()
         {
+            Console.WriteLine("PTY_DIAGNOSTIC receipt-plumbing writes=" + System.Text.Json.JsonSerializer.Serialize(Forward.Writes));
+            await NativePtyDiagnostics.CaptureAsync(Client, SessionId, "receipt-plumbing", LogDirectory);
             List<Exception> errors = [];
             await AttemptAsync(StopPumpAsync);
             AttemptSync(_pump.Dispose);
