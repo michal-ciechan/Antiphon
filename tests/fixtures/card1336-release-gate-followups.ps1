@@ -110,6 +110,8 @@ function New-C1336Candidate {
     Write-C487NativePassSeams $seams $trace @(@{Id='fixture-one';ClassName='Fixture.Fixture';MethodName='One';Outcome='Passed'}) @(@{uid='fixture-one';type='Fixture';method='One';namespace='Fixture'})
     Add-Content $seams @"
 `$NightlySeams.Git = `$null
+# Synthetic workload records model the full Windows RC profile on either host.
+`$NightlySeams.HostPlatform = { return 'windows' }
 `$NightlySeams.E2EPrerequisites = { return @{Ok=`$true;Rows=@()} }
 Set-Item Function:script:Get-NightlyDefaultStateRoot { return '$($master.Replace("'", "''"))' }
 "@
@@ -130,7 +132,7 @@ $NightlySeams.StartProcess = {
         $allowed = ($args.Count -eq 3 -and $args[2] -ceq 'ci') -or
             ($args.Count -eq 4 -and $args[2] -ceq 'run' -and $args[3] -in @('build', 'lint'))
     }
-    if ($leaf -match '^Antiphon\.(Tests|SessionRunner\.Tests|PtyHost\.Tests|Agents\.Pty\.Tests|Messaging\.Tests|E2E|MarkdownPdf\.Tests)\.exe$') { $allowed = $true }
+    if ($leaf -match '^Antiphon\.(Tests|SessionRunner\.Tests|PtyHost\.Tests|Agents\.Pty\.Tests|Messaging\.Tests|Observability\.Tests|E2E|MarkdownPdf\.Tests)\.exe$') { $allowed = $true }
     if ($leaf -in @('pwsh', 'pwsh.exe') -and $fileIndex -ge 0) {
         $target = [IO.Path]::GetFileName(([string]$args[$fileIndex + 1] -replace '\\', '/'))
         $policy = Get-Content (Join-Path $WorkingDirectory 'tests/test-execution-policy.json') -Raw | ConvertFrom-Json
