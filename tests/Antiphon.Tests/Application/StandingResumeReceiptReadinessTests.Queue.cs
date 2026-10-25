@@ -118,7 +118,7 @@ public partial class StandingResumeReceiptReadinessTests
             id = await EnqueueNoteAsync(h, generation);
             await using var db = h.CreateObserverContext();
             var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
-            row.Status = QueuedMessageStatus.Sent; row.SentAt = row.LastDeliveryStartedAt = h.Now.AddMinutes(-24);
+            row.Status = QueuedMessageStatus.Sent; row.SentAt = row.LastDeliveryStartedAt = h.Now.AddMinutes(-124);
             row.LastDeliveryGeneration = generation; row.LastDeliveryBaselineSequence = 0; row.DeliveryAttempts = 1;
             await db.SaveChangesAsync(); original = await RowAsync(h, id);
         }
@@ -126,6 +126,10 @@ public partial class StandingResumeReceiptReadinessTests
         { ConnectionString = schema.ConnectionString, AttachSessionId = sessionId, AttachAgentId = agentId });
         rebuilt.Runner.TranscriptPull = (sid, _) => Task.FromResult(new SessionRunnerTranscriptDto(sid, [], 0,
             AcceptedStartedAt: generation, Readiness: new("Behind", "binding", 0, 100)));
+        await rebuilt.Queue.TryPollLocalCommandAsync(sessionId,
+            new LocalCommandPoll(AgentKind.ClaudeCode, "/usage", [], OpensOverlay: true,
+                OverlaySettleMs: 0, PanelTimeoutSeconds: 1), default);
+        rebuilt.Adapter.Inputs.ShouldBeEmpty("local-command Esc is automatic input too");
         await rebuilt.Queue.FlushSessionAsync(sessionId, default);
         rebuilt.Adapter.Inputs.ShouldBeEmpty("interrupted claims cannot re-Enter or retype while Behind");
         var after = await RowAsync(rebuilt, id);
@@ -140,7 +144,7 @@ public partial class StandingResumeReceiptReadinessTests
             [new(sid, 1, TranscriptKinds.UserPrompt, "reconstructed-receipt", null, new DateTimeOffset(generation),
                 "user", NoteBody, null, null, null, null, null)], 1, AcceptedStartedAt: generation,
             Readiness: new("Behind", "binding", 50, 100)));
-        await rebuilt.Queue.FlushSessionAsync(sessionId, default);
+        await rebuilt.Queue.FlushStrandedQueuesAsync(default);
         (await RowAsync(rebuilt, id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         rebuilt.Adapter.Inputs.ShouldBeEmpty();
     }
@@ -177,6 +181,35 @@ public partial class StandingResumeReceiptReadinessTests
             if (variant == "generation") h.Adapter.Killed.ShouldBeFalse();
             Console.WriteLine($"C1574 genuine-absence variant={variant} conditionalCalls={h.Adapter.KillGenerationCalls.Count}");
         }
+    }
+
+    [Test]
+    public async Task C1574_Ordinary_repeated_note_body_keeps_direct_send_contract()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AlwaysOn = false,
+            ConfigureDeliveryVerification = v => { v.TranscriptConfirmEnabled = false; v.TranscriptConfirmTimeoutSeconds = 1; }
+        });
+        var generation = await OwnAsync(h);
+        var id = await EnqueueNoteAsync(h, generation);
+        await using (var db = h.CreateObserverContext())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            row.Status = QueuedMessageStatus.Sent;
+            row.DeliveryAttempts = 1;
+            row.LastDeliveryStartedAt = row.DeliveryVerdictAt = row.SentAt = h.Now;
+            row.LastDeliveryGeneration = generation; row.LastDeliveryBaselineSequence = 0;
+            row.DeliveryVerdict = DeliveryVerdict.Delivered;
+            await db.SaveChangesAsync();
+        }
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        // Identical text is an ordinary unkeyed Now send after the original obligation settled.
+        // It retains the explicit generic-confirmation setting and does not become a resume note.
+        var result = await h.Queue.EnqueueAsync(h.SessionId, NoteBody, MessageSendMode.Now, default);
+        result.LastDelivery!.Verdict.ShouldBe(nameof(DeliveryVerdict.Delivered));
+        h.Adapter.SubmittedBodies.ShouldBe([NoteBody]);
     }
 
     private static async Task<DateTime> OwnAsync(BridgeQueueHarness h)

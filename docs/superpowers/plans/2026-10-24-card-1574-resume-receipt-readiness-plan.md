@@ -385,6 +385,8 @@ location in commands. Use the checkpoint tool and host build-slot gate.
 | CP-42 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-2 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Accepted_note_outlives_grace_without_retyping` | V-5 | 1 passed, 0 failed/skipped | 1 | 3 |
 | CP-43 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-3 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Recreated_services_recover_the_original_note` | V-6 | 1 passed, 0 failed/skipped | 1 | 3 |
 | CP-44 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-4 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Ready_absence_keeps_existing_recovery_rules` | V-7 | 1 passed, 0 failed/skipped | 1 | 3 |
+| CP-35 | S2-scope-red | `tests/Antiphon.Tests -> bin-c1574-queue-red/` | queue-body-scope | `/*/*/StandingResumeReceiptReadinessTests/C1574_Ordinary_repeated_note_body_keeps_direct_send_contract` | D-4,R-5 | 1 executed; exact compatibility witness | 1 | 2 |
+| CP-45 | S2-scope | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-body-scope | `/*/*/StandingResumeReceiptReadinessTests/C1574_Ordinary_repeated_note_body_keeps_direct_send_contract` | D-4,R-5 | 1 executed; exact compatibility witness | 1 | 2 |
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
 
 CP-1/CP-3 deliberately exit with failed assertions and are historical diagnostic
@@ -501,3 +503,5 @@ the SQL fence helper is shared with checked Working recovery. It does not run th
 whole class. Both S2a green rows run serially; no provider process is launched.
 
 Continuation ad9a35c6: operator requires exact methods, one red/green per behavior and one build per slice. CP-31..34 replace broad CP-3; CP-41..44 replace broad CP-4. CP-5 shares their build. V-3 is already qualified and is not repeated. PCs remain pending.
+
+Scope follow-up: CP-35 witnesses an ordinary identical-body Now send after the keyed note settled. Expanded V-6 also checks local-command Esc and stranded discovery after 124 minutes. Run CP-33,CP-35 red, then the affected CP-41..45 and CP-5 once after the repair, sharing one build per slice. No broad lane.
