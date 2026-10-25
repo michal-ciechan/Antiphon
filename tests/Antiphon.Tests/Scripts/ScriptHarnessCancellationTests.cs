@@ -75,9 +75,9 @@ public sealed class ScriptHarnessCancellationTests
         var directory = Path.Combine(Path.GetTempPath(), "c889-cancel-" + nonce);
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "nonce"), nonce);
-        var before = SnapshotOwnedDirectories();
+        var ownedDirectories = new List<string>();
         using var cancel = new CancellationTokenSource();
-        var run = Start(directory, "before-ready", cancel.Token, ignoreCancel: true);
+        var run = Start(directory, "before-ready", cancel.Token, ignoreCancel: true, ownedDirectories);
         try
         {
             await WaitForHoldingAsync(directory, nonce, "before-ready", run);
@@ -100,7 +100,8 @@ public sealed class ScriptHarnessCancellationTests
                 "harness-both-pipes-drained type=" + error.GetType().Name + " msg=" + error.Message + " head=" + head);
             diagnostic.ShouldContain("C578_BUILD_ERROR_" + nonce, Case.Sensitive, "harness-both-pipes-drained");
             diagnostic.Contains("retained results=", StringComparison.Ordinal).ShouldBeFalse("harness-fallback-joins-owned-tree");
-            SnapshotOwnedDirectories().Except(before).ShouldBeEmpty("harness-fallback-joins-owned-tree");
+            ownedDirectories.Count.ShouldBe(2, "harness-fallback-joins-owned-tree");
+            ownedDirectories.Where(Directory.Exists).ShouldBeEmpty("harness-fallback-joins-owned-tree");
         }
         finally
         {
@@ -139,12 +140,24 @@ public sealed class ScriptHarnessCancellationTests
         await Task.CompletedTask;
     }
 
-    private static Task<ScriptHarnessResult> Start(string directory, string phase, CancellationToken token, bool ignoreCancel = false)
+    private static Task<ScriptHarnessResult> Start(string directory, string phase, CancellationToken token,
+        bool ignoreCancel = false, List<string>? ownedDirectories = null)
     {
         var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-run-checkpoint.ps1");
         var args = new List<string> { "-C889Descriptor", directory, "-C889HoldPhase", phase };
         if (ignoreCancel) args.Add("-C889IgnoreCancel");
-        var options = ScriptHarnessOptions.Default with { AdditionalArguments = args };
+        var options = ScriptHarnessOptions.Default with
+        {
+            AdditionalArguments = args,
+            OwnerFactory = ownedDirectories is null ? null : request =>
+            {
+                ownedDirectories.Add(request.ResultsDirectory);
+                ownedDirectories.Add(request.ControlDirectory);
+                return OperatingSystem.IsWindows() ? new WindowsScriptHarnessProcess(request) :
+                    OperatingSystem.IsLinux() ? new LinuxScriptHarnessProcess(request) :
+                    throw new PlatformNotSupportedException("ScriptHarness requires Windows or Linux process ownership.");
+            },
+        };
         return ScriptHarnessProcess.RunAsync(
             "test-run-checkpoint.ps1", "C578", "C578_FailedBuildKeepsLogAndExit", script, options, token);
     }
@@ -287,18 +300,6 @@ public sealed class ScriptHarnessCancellationTests
             }
             catch (ArgumentException) { }
         }
-    }
-
-    private static HashSet<string> SnapshotOwnedDirectories()
-    {
-        var root = Path.GetTempPath();
-        return Directory.Exists(root)
-            ? Directory.GetDirectories(root)
-                .Select(Path.GetFileName)
-                .Where(name => name != null && (name.StartsWith("c578-nightly-", StringComparison.Ordinal) || name.StartsWith("antiphon-script-control-", StringComparison.Ordinal)))
-                .Select(name => name!)
-                .ToHashSet(StringComparer.Ordinal)
-            : [];
     }
 
     private static void TryDelete(string directory)
