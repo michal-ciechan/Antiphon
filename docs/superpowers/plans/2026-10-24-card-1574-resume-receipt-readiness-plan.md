@@ -342,7 +342,6 @@ and variant names in its report. Never accept a build error or zero tests as red
 | PC-24 | Retry before checking late receipt | V-5 method: exactly one submitted body after catch-up |
 | PC-25 | Refund/clear the attempt record on defer | V-6 method: original attempt fields and row ID remain equal |
 | PC-26 | Propagate observation timeout into launch cleanup | V-4 method: timed-out pull leaves completed live launch and retained note |
-
 | PC-27 | Forget observed truncation when the same file regrows | `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`: truncation-regrowth is never Ready without replay |
 | PC-28 | Remove strict byte validation before replacement decoding | `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`: invalid-utf8 refuses Ready |
 
