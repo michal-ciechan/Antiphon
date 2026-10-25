@@ -21,9 +21,17 @@ transcript baseline, including zero for empty history; duplicate replay can be
 Ready without adding rows. Behind and unsupported/unknown snapshots can still
 ingest positive receipt evidence but cannot qualify absence. The observation's
 five-second cancellation budget returns Unknown; caller cancellation propagates.
-This observation grants no input, failure, kill or seat-release authority. The
-durable resume-note producer and queue-entry fences are a separate pending slice;
-this runtime API alone does not protect resumed launches.
+This observation grants no input, failure, kill or seat-release authority. A standing Claude resume note is one immutable keyed System queue row for its
+normalized launch generation, committed before input without waiting for replay.
+While that obligation is unresolved, queue flush, Now, SendNow and interrupted
+recovery pull and persist readiness and reconcile the original attempt before
+Working or additional input. Only a complete UserPrompt above its stored floor
+confirms the note; screen and queued-command evidence do not. After confirmation
+and grace, Behind/Unknown defers the negative verdict with the original attempt
+coordinates and no refund, retype, Enter recovery, incident or recovery kill.
+Ready absence retains the existing Working/AlwaysOn/generation recovery brakes.
+Observation timeout is a temporary deferral, never launch cancellation or seat
+release. Both matching product components require activation qualification.
 
 Transcript ingestion commits each stored row and its `SessionRuntimeAction` in the
 same transaction under the session write lease. UI publication, queue confirmation,
