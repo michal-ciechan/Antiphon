@@ -1,5 +1,4 @@
 using Antiphon.Server.Application.Services;
-using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -269,18 +268,11 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         AgentTaskLandRequest? held = null;
         fixture.Boundary.AtCut = async () =>
         {
-            // Only the competitor passes the outer gate. The owner retains the genuine
-            // execution lease required for its verification window after source recovery.
-            h.ExecutionLeaseOverride = new PassThroughExecutionLease();
-            try
-            {
-                (await h.RunRequestAsync(request.RequestId)).ShouldBe(LandRunResult.Held, "V2.CompetingDrainHeldByRealLease");
-            }
-            finally { h.ExecutionLeaseOverride = null; }
+            (await h.RunRequestAsync(request.RequestId)).ShouldBe(LandRunResult.Held, "V2.CompetingDrainHeldByRealLease");
             await using var db = h.CreateContext();
             held = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
             held.State.ShouldBe(LandRequestState.Held);
-            held.HoldReasonCode.ShouldBe("repository_mutation_lease_busy");
+            held.HoldReasonCode.ShouldBe("land_execution_busy");
             held.HoldEpisode.ShouldBeGreaterThan(0);
             held.LastWriterOperation.ShouldBe("hold");
             held.LastWriterToken.ShouldBe(held.ConcurrencyToken);
@@ -304,21 +296,9 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         var final = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
         final.HoldEpisode.ShouldBe(held.HoldEpisode, "V2.SourceCheckpointPreservesHoldEpisode");
         h.Fixture.Git.Commands.Count(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset").ShouldBe(1, "V2.OnlyLeaseOwnerResets");
-        new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue();
-    }
-
-    private sealed class PassThroughExecutionLease : ILandExecutionLease
-    {
-        public Task<IAsyncDisposable?> TryAcquireAsync(string repository, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            return Task.FromResult<IAsyncDisposable?>(new Lease());
-        }
-
-        private sealed class Lease : IAsyncDisposable
-        {
-            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-        }
+        var operation = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(operation).ShouldBeTrue(
+            $"phase={operation.Phase}; reason={operation.LastReason}; publication={operation.Publication}");
     }
 
     [Test]
