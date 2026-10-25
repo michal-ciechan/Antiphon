@@ -10,6 +10,10 @@ tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.ansi -text
 
 *.sh text eol=lf
 
+# C1361 compiles raw Bash strings and writes them verbatim to probe.sh.
+# Keep their source newlines LF on Windows as well as Linux.
+tests/Antiphon.Tests/Scripts/C1361CensusProbes.cs text eol=lf
+
 # Bundle byte budgets and hashes must not depend on checkout line endings.
 server/Bundles/*.md text eol=lf
 
