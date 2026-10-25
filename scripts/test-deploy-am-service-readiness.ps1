@@ -39,6 +39,11 @@ function Invoke-C504Shell {
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    [Console]::WriteLine(('C504 shell launch: ' + (@{
+        executable=$start.FileName
+        resolved=@(Get-Command sh -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source)
+        script=$shellFile
+    } | ConvertTo-Json -Compress)))
     $process = [Diagnostics.Process]::Start($start)
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -49,7 +54,10 @@ function Invoke-C504Shell {
         }
         [Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), 10000) | Out-Null
         $output = $stdout.Result.TrimEnd("`r", "`n")
-        if ($stderr.Result) { throw 'Shell launch wrote unexpected stderr.' }
+        if ($stderr.Result) {
+            $detail = $stderr.Result.Substring(0, [Math]::Min(4096, $stderr.Result.Length))
+            throw ('Shell launch wrote unexpected stderr: ' + $detail)
+        }
         $lines = if ($output) { @($output -split "`r?`n") } else { @() }
         return [pscustomobject]@{ExitCode=$process.ExitCode;Output=$lines}
     } finally { $process.Dispose() }
@@ -94,7 +102,7 @@ $ssh = {
     throw 'Unexpected remote runner command.'
 }
 
-$record = [ordered]@{case=$ReadinessCase;shellExit=$null;shellOutput=@();outerError='';outerLog='';adapterNames=@();laterCalls=0;completed=$false}
+$record = [ordered]@{case=$ReadinessCase;shellExit=$null;shellOutput=@();outerError='';errorType='';errorPosition='';errorStack='';outerLog='';adapterNames=@();laterCalls=0;completed=$false}
 $resultFile = Join-Path $FixtureDirectory 'result.json'
 try {
     $result = $null
@@ -110,6 +118,9 @@ try {
     if ($script:deploymentResult) { $record.adapterNames = @($script:deploymentResult.AdapterNames) }
 } catch {
     $record.outerError = $_.Exception.Message
+    $record.errorType = $_.Exception.GetType().FullName
+    $record.errorPosition = $_.InvocationInfo.PositionMessage
+    $record.errorStack = $_.ScriptStackTrace
 }
 $record.outerLog = $script:hostLines -join [Environment]::NewLine
 if ($script:verifyResult) {
@@ -119,6 +130,14 @@ if ($script:verifyResult) {
 $record.laterCalls = $script:laterCalls
 $record.completed = $true
 [IO.File]::WriteAllText($resultFile, ($record | ConvertTo-Json -Depth 8 -Compress))
+# The parent asserts its child exit before reading result.json. Surface the saved
+# error here so a native launch refusal is not hidden by the generic verdict.
+# Shell/HTTP output stays out of this diagnostic projection.
+[Console]::WriteLine(('C504 verification result: ' + ([ordered]@{
+    case=$record.case;shellExit=$record.shellExit;laterCalls=$record.laterCalls
+    outerError=$record.outerError;errorType=$record.errorType
+    errorPosition=$record.errorPosition;errorStack=$record.errorStack
+} | ConvertTo-Json -Compress)))
 if ($null -eq $record.shellExit) { throw 'Verification shell did not execute.' }
 Write-Host "PASS C504 $ReadinessCase"
 Write-Host 'DEPLOY-AM-SERVICE TESTS EXIT CODE: 0  (PASS)'

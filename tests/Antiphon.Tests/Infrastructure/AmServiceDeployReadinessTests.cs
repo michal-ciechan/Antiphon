@@ -452,6 +452,8 @@ public sealed class AmServiceDeployReadinessTests
         {
             var tools = ResolveTools(_originalPath, out var toolError)
                 ?? throw new InvalidOperationException(toolError);
+            Console.WriteLine($"C504 fixture case={caseName} mode={_mode} pid={Environment.ProcessId} directory={_directory} " +
+                $"curl={tools.Curl} sh={tools.Sh} sleep={tools.Sleep} cygpath={tools.Cygpath ?? "unused"}");
             var initialCodes = _mode == "timeout-ready" ? new[] { 28 } : InitialRefusalCodes;
             var wrappers = Path.Combine(_directory, "wrappers");
             Directory.CreateDirectory(wrappers);
