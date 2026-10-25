@@ -11,11 +11,27 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
 {
+    private readonly List<string> _outputs = [];
+
+    private string RepeatRoot()
+    {
+        var root = TempDir();
+        _outputs.Add(CheckpointRepeatFixture.OutputDirectory(root));
+        return root;
+    }
+
+    [After(Test)]
+    public void RemoveRepeatOutputs()
+    {
+        foreach (var output in _outputs)
+            if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
+    }
+
     [Test]
     [Timeout(180_000)]
     public async Task C885_RepeatBuildAndSingleRun(CancellationToken cancellationToken)
     {
-        var root = TempDir();
+        var root = RepeatRoot();
         var template = CheckpointRepeatFixture.WriteTemplate(root);
         var result = await CheckpointRepeatFixture.RunScriptAsync(root, 5, template, cancellationToken);
         result.ExitCode.ShouldBe(0, result.Text);
@@ -33,7 +49,7 @@ public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
     [Timeout(180_000)]
     public async Task C885_RepeatReceiptAndTimings(CancellationToken cancellationToken)
     {
-        var root = TempDir();
+        var root = RepeatRoot();
         var result = await CheckpointRepeatFixture.RunScriptAsync(root, 5,
             CheckpointRepeatFixture.WriteTemplate(root), cancellationToken);
         result.ExitCode.ShouldBe(0, result.Text);
@@ -57,7 +73,7 @@ public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
     [Timeout(180_000)]
     public async Task C885_RepeatFailurePartialAndInvalidInput(CancellationToken cancellationToken)
     {
-        var root = TempDir();
+        var root = RepeatRoot();
         var failed = await CheckpointRepeatFixture.RunScriptAsync(root, 5,
             CheckpointRepeatFixture.WriteTemplate(root, failingOrdinal: 2), cancellationToken);
         failed.ExitCode.ShouldBe(1, failed.Text);
@@ -66,7 +82,7 @@ public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
             doc.RootElement.GetProperty("failed").GetInt32().ShouldBe(1, "script-original-failure-retained");
             doc.RootElement.GetProperty("repeat").GetProperty("passed").GetInt32().ShouldBe(4);
         }
-        var invalidRoot = TempDir();
+        var invalidRoot = RepeatRoot();
         var invalid = await CheckpointRepeatFixture.RunScriptAsync(invalidRoot, 0,
             CheckpointRepeatFixture.WriteTemplate(invalidRoot), cancellationToken);
         invalid.ExitCode.ShouldBe(2, "invalid-repeat-no-launch");
@@ -77,7 +93,7 @@ public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
     [Timeout(180_000)]
     public async Task C885_RepeatNoBuildAndLeaseCustody(CancellationToken cancellationToken)
     {
-        var root = TempDir();
+        var root = RepeatRoot();
         var template = CheckpointRepeatFixture.WriteTemplate(root);
         var first = await CheckpointRepeatFixture.RunScriptAsync(root, 5, template, cancellationToken);
         first.ExitCode.ShouldBe(0, first.Text);

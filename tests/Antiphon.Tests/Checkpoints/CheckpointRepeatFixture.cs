@@ -8,6 +8,11 @@ internal static class CheckpointRepeatFixture
 {
     internal sealed record ScriptResult(int ExitCode, string Text, string[] Calls, string? Evidence, string? Trx);
 
+    internal static string OutputName(string root) => "bin-c885-script-" + Path.GetFileName(root);
+
+    internal static string OutputDirectory(string root) =>
+        Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.RepeatHost", OutputName(root));
+
     public static string WriteTemplate(string root, int requested = 5, int? failingOrdinal = null)
     {
         var ns = XNamespace.Get("http://microsoft.com/schemas/VisualStudio/TeamTest/2010");
@@ -83,7 +88,7 @@ internal static class CheckpointRepeatFixture
             UseShellExecute = false,
         };
         foreach (var argument in new[] { "-NoProfile", "-File", script, "-Name", "CP-1", "-Project",
-                     "tests/Antiphon.Checkpoints.RepeatHost", "-OutputPath", "bin-c885-script/", "-Filter",
+                     "tests/Antiphon.Checkpoints.RepeatHost", "-OutputPath", OutputName(root) + "/", "-Filter",
                      "/*/*/SampleTests*/*", "-MinExecuted", "3", "-Repeat", repeat.ToString(),
                      "-ResultsRoot", results, "-DotnetShim", shim, "-NoSlot" })
             psi.ArgumentList.Add(argument);
