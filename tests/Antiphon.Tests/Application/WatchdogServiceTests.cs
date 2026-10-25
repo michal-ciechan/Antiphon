@@ -45,6 +45,8 @@ public class WatchdogServiceTests
         };
         foreach (var row in cases)
         {
+            if (row.Name == "ansi")
+                new WatchdogMatcher().IsActiveUnsafeRmApproval(row.Screen).ShouldBeTrue("ANSI matcher coverage before terminal rendering");
             await using var fixture = await C566Fixture.CreateAsync(row.Screen, row.Kind);
             var sent = await fixture.Service.ScanAsync(CancellationToken.None);
             sent.ShouldBe(row.Expected ? 1 : 0, row.Name);
@@ -77,14 +79,14 @@ public class WatchdogServiceTests
         {
             await using var fixture = await C566Fixture.CreateAsync("old (Y/n)\n" + C566Menu);
             fixture.Adapter.EchoTypedInputToScreen = false;
-            await fixture.Runtime.SendInputAsync(fixture.Session.Id, answer, CancellationToken.None, trackManualTurn: false);
+            await fixture.Runtime.SendInteractiveInputAsync(fixture.Session.Id, answer, CancellationToken.None, trackManualTurn: false);
             var before = fixture.Adapter.Inputs.ToArray();
             (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
             fixture.Clock.Advance(TimeSpan.FromMinutes(5));
             (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
             fixture.Adapter.Inputs.ShouldBe(before);
             fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded").ShouldBe(0);
-            await fixture.Runtime.SendInputAsync(fixture.Session.Id, new string('\b', answer.Length),
+            await fixture.Runtime.SendInteractiveInputAsync(fixture.Session.Id, new string('\b', answer.Length),
                 CancellationToken.None, trackManualTurn: false);
             (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
             fixture.Adapter.Inputs.Last().ShouldBe("2");
@@ -174,6 +176,7 @@ public class WatchdogServiceTests
                 await C566SeedEntryAsync(parent.Id, seq + 1, TranscriptKinds.TurnEnd, null);
             }
         };
+        await parentAdapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent.Id);
         harness.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent.Id, parentAdapter);
         var taskId = Guid.NewGuid();
         var task = new AgentTask
@@ -308,6 +311,7 @@ public class WatchdogServiceTests
                 await C566SeedEntryAsync(parent.Id, seq + 1, TranscriptKinds.TurnEnd, null);
             }
         };
+        await parentAdapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, parent.Id);
         harness.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent.Id, parentAdapter);
         var taskId = Guid.NewGuid();
         fixture.Db.AgentTasks.Add(new AgentTask
@@ -686,7 +690,8 @@ public class WatchdogServiceTests
                 NullLogger<AgentSessionRuntime>.Instance);
             var adapter = new FakeAgentProtocolAdapter
             {
-                RenderedScreenOverride = rendered,
+                // A rendered terminal grid contains glyphs, not raw ANSI control bytes.
+                RenderedScreenOverride = MentionScanner.StripAnsi(rendered),
                 DialogGuardEnabled = true,
                 AcceptedStartedAt = session.StartedAt,
                 EchoTypedInputToScreen = false // the measured modal consumes '2', not the composer
