@@ -151,6 +151,16 @@ public class WorktreeManagerSafetyTests
 [Category("Slow")]
 public class WorktreeManagerGitIntegrationTests
 {
+    [Test]
+    public void Windows_registration_assertions_use_git_separators()
+    {
+        const string native = @"C:\fixture\worktrees\card-task-aabbccdd";
+        const string porcelain = "worktree C:/fixture/worktrees/card-task-aabbccdd\nHEAD abc\nbranch refs/heads/feat/card-task-aabbccdd\n\n";
+        porcelain.ShouldContain(RegistrationLine(native));
+        porcelain.ShouldNotContain(RegistrationLine(@"C:\fixture\worktrees\card-task-deadbeef"));
+    }
+
+    private static string RegistrationLine(string path) => "worktree " + path;
 
     [Test]
     public async Task C1213_ExplicitBranchKeepsDirectoryIdentity()
@@ -378,8 +388,8 @@ public class WorktreeManagerGitIntegrationTests
         Directory.Exists(liveAdmin).ShouldBeTrue("live-sibling-admin-kept");
         Directory.Exists(missingAdmin).ShouldBeTrue("missing-sibling-admin-kept");
         var porcelain = await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain");
-        porcelain.ShouldContain("worktree " + live.Path, customMessage: "live-sibling-registered");
-        porcelain.ShouldContain("worktree " + missing.Path, customMessage: "missing-sibling-registered");
+        porcelain.ShouldContain(RegistrationLine(live.Path), customMessage: "live-sibling-registered");
+        porcelain.ShouldContain(RegistrationLine(missing.Path), customMessage: "missing-sibling-registered");
         (await GitTestEnvironment.RunGitAsync(live.Path, "status", "--porcelain")).ShouldBeEmpty("live-sibling-usable");
     }
 
@@ -547,7 +557,7 @@ public class WorktreeManagerGitIntegrationTests
 
             Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
-                .ShouldNotContain(worktree.Path);
+                .ShouldNotContain(RegistrationLine(worktree.Path));
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-007"))
                 .ShouldContain(worktree.Branch);
             var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
