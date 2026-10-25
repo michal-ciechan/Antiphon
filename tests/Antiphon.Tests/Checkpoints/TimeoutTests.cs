@@ -114,7 +114,9 @@ public sealed class TimeoutTests : CheckpointTestBase
             Width = 1,
             TotalTimeout = TimeSpan.FromMilliseconds(200),
         }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
-        result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["skipped", "timeout"]);
+        result.ExitCode.ShouldBe(ExitCodes.Timeout);
+        result.State.Reason.ShouldBe("execution-budget-exceeded");
+        result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["execution-budget-exceeded", "skipped"]);
     }
 
     [Test]
