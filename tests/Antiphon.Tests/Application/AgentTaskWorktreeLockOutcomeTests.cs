@@ -72,7 +72,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
             var baselineSubmissions = bridge.Adapter.SubmittedBodies.Count;
             await using (var db = h.H.CreateContext())
                 (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == bridge.SessionId && m.Status == QueuedMessageStatus.Pending)).ShouldBeFalse();
-            if (busy) await bridge.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "owned recipient is busy", timestamp: DateTime.UtcNow);
+            if (busy) await StoreAwareTranscript.SetWorkingAsync(bridge.Provider, bridge.ConnectionString, bridge.SessionId, working: true);
             h.Diagnostics.Owners = owners;
             h.Diagnostics.OwnerName = new string('n', 80); h.Diagnostics.OwnerPath = new string('p', 512);
             h.Probe.Code = null; // Captured failed cleanup, no retry nomination.
@@ -116,8 +116,10 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 await using (var db = h.H.CreateContext())
                     (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == bridge.SessionId && p.Kind == TranscriptKinds.UserPrompt
                         && p.Text!.Contains(capture.Id.ToString("N")))).ShouldBe(0);
-                await bridge.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: DateTime.UtcNow);
-                // The standing completion worker must observe eligibility without a direct flush.
+                await StoreAwareTranscript.SetWorkingAsync(bridge.Provider, bridge.ConnectionString, bridge.SessionId, working: false);
+                // Model the turn-end wakeup after publishing idle to the loaded store. The standing
+                // completion worker still owns delivery; the fixture never calls a direct flush.
+                bridge.Provider.GetRequiredService<CompletionNoteFlushQueue>().TryEnqueue(bridge.SessionId);
             }
             await UntilAsync(async () => {
                 await using var db = h.H.CreateContext();
