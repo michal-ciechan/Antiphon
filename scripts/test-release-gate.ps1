@@ -2101,7 +2101,8 @@ function Test-C599_ExecutionArtifacts {
     $root = New-C599Root
     $trx = Join-Path $root 'e2e-all.trx'
     $diag = Join-Path $root 'e2e-exec'
-    $nativeArgs = @(Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory $diag -Classes @('SmokeE2ETests', 'BoardE2ETests'))
+    $nativeArgs = @(Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory $diag `
+        -Classes @('SmokeE2ETests', 'BoardE2ETests') -GroupFilter '/*/*/(SmokeE2ETests*)|(BoardE2ETests*)/*')
     Assert-C487 -Cond ($nativeArgs -contains '--report-trx') -Name 'C599 ExecutionArtifacts the executor requests a fresh TRX'
     Assert-C487 -Cond ($nativeArgs -contains '--diagnostic') -Name 'C599 ExecutionArtifacts the executor requests MTP diagnostics'
     Assert-C487 -Cond ($nativeArgs -contains '--diagnostic-output-directory') -Name 'C599 ExecutionArtifacts the executor pins the diagnostic directory'
