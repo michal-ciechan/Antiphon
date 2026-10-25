@@ -89,7 +89,11 @@ internal static class CheckpointNativeDiagnostics
             using (var handle = context.Io.OpenRead(path, request))
                 Console.WriteLine("CHECKPOINT_NATIVE retained-handle=" + JsonSerializer.Serialize(handle.Inspect()));
             // Existing verified reader/deadline; a separate 32 KiB diagnostic cap.
-            using var json = JsonDocument.Parse(ConfinedFileReader.Read(root, path, 32 * 1024));
+            var text = ConfinedFileReader.Read(root, path, 32 * 1024);
+            Console.WriteLine($"CHECKPOINT_NATIVE verified-text chars={text.Length} cr={text.Count(c => c == '\r')} lf={text.Count(c => c == '\n')}");
+            // Coverage diagnostics may name Markdown or C# inputs, not receipts.
+            if (!Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase)) return;
+            using var json = JsonDocument.Parse(text);
             Fields(json.RootElement, "receipt");
             foreach (var property in json.RootElement.EnumerateObject())
                 if (property.Name is "rows" or "builds" && property.Value.ValueKind == JsonValueKind.Array)
@@ -104,7 +108,7 @@ internal static class CheckpointNativeDiagnostics
         if (value.ValueKind != JsonValueKind.Object) return;
         string[] allowed = ["id", "runId", "phase", "state", "exitCode", "reason", "verdict", "slot", "slotReason",
             "terminalReason", "executed", "passed", "failed", "skipped", "repositoryRoot", "project", "outputPath",
-            "sourceState", "commit", "fingerprint", "cleanupRefusals"];
+            "sourceState", "commit", "fingerprint", "cleanupRefusals", "starter", "launched", "executor"];
         foreach (var field in value.EnumerateObject())
             if (allowed.Contains(field.Name, StringComparer.OrdinalIgnoreCase))
                 Console.WriteLine($"CHECKPOINT_NATIVE {kind}.{field.Name}={Cap(field.Value.GetRawText())}");
