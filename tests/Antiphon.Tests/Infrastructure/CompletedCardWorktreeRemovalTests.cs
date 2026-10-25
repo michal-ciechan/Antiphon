@@ -19,6 +19,19 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class CompletedCardWorktreeRemovalTests
 {
     [Test]
+    public async Task C1017_WindowsLineEndingsDoNotDirtyFixtureCheckout()
+    {
+        // Run with an owned GIT_CONFIG_GLOBAL containing core.autocrlf=true/core.eol=crlf
+        // to exercise Windows checkout semantics on Linux without changing the host config.
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        var bytes = await File.ReadAllBytesAsync(Path.Combine(f.Tree, "keep.txt"));
+        bytes.ShouldBe(System.Text.Encoding.UTF8.GetBytes("seed\n"), "fixture writers and worktree creation must agree on exact bytes");
+        var result = await f.CleanupAsync();
+        result.IsClean.ShouldBeTrue(result.Residue);
+        await f.AssertRemovedAsync();
+    }
+
+    [Test]
     public async Task C1017_EvidenceNeedsDoneDisposition()
     {
         await using var f = await CompletedCardCleanupFixture.CreateAsync();
