@@ -57,6 +57,10 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     {
         var f = new CompletedCardCleanupFixture(clock);
         await f.Host.InitializeAsync();
+        // FixtureGit ignores global configuration, while WorktreeManager starts native Git.
+        // Bind both readers/writers to the fixture's LF bytes even on a CRLF-configured host.
+        await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "config", "core.autocrlf", "false");
+        await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "config", "core.eol", "lf");
         var branch = "feat/card-task-" + f.TaskId.ToString("N")[..8];
         f.Tree = Path.Combine(f.Host.Fixture.Root, "trees", leaf ?? "card-task-" + f.TaskId.ToString("N")[..8]);
         if (leaf is null)
