@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
@@ -173,6 +174,10 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
                             throw new IOException("nested executor " + status.Reason + ": " + run);
                     }
                 }
+                // The inventory and custody checks above precede any attribute changes.
+                // Git loose objects are read-only on Windows; fixture disposal owns these bytes.
+                if (_io is CheckpointNativeIo)
+                    ReadOnlyDirectory.ClearReadOnly(root);
                 _beforeDelete?.Invoke(root);
                 _io.RemoveDirectory(root, recursive: true);
                 new CheckpointTempRootSweep(_context, _temp).Unregister(root);

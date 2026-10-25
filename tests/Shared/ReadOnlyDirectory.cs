@@ -15,7 +15,7 @@ internal static class ReadOnlyDirectory
         Directory.Delete(path, recursive: true);
     }
 
-    private static void ClearReadOnly(string path)
+    internal static void ClearReadOnly(string path)
     {
         var attributes = File.GetAttributes(path);
         if ((attributes & FileAttributes.ReadOnly) != 0)

@@ -40,7 +40,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
 {
     internal static Task<PhoneHomeRegistrationResponse> RegisterRuntimeAsync(PhoneHomeTestHost host,
         Guid storeId, RunnerCapabilitiesDto capabilities) =>
-        host.RegisterAsync(storeId: storeId, capabilities: capabilities);
+        host.RegisterAsync(storeId: storeId, platform: capabilities.Platform, capabilities: capabilities);
 
     public required IsolatedTestSchema Schema { get; init; }
     public required BridgeQueueHarness Harness { get; set; }
@@ -646,7 +646,15 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         Wire.Dispose();
         await Schema.DisposeAsync();
         foreach (var root in _roots)
-            if (System.IO.Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
+            if (System.IO.Directory.Exists(root))
+            {
+                try { ReadOnlyDirectory.Delete(root); }
+                catch (Exception ex)
+                {
+                    FixtureFileDiagnostics.WriteLandingLocks(root, ex);
+                    throw;
+                }
+            }
     }
 
     /// <summary>Only I/O is faked: the child writes the bytes it actually received into a

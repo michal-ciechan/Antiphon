@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetTests
 {
-    internal static string PorcelainPath(string path) => path;
+    internal static string PorcelainPath(string path) => path.Replace('\\', '/');
 
     [Test]
     public void Windows_registration_path_matches_git_porcelain()
