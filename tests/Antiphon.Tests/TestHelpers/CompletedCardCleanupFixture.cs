@@ -56,6 +56,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     public static async Task<CompletedCardCleanupFixture> CreateAsync(string? leaf = null, TimeProvider? clock = null)
     {
         var f = new CompletedCardCleanupFixture(clock);
+        Console.WriteLine($"C1017_FIXTURE stage=host-initialize task={f.TaskId} root={f.Host.Fixture.Root}");
         await f.Host.InitializeAsync();
         // FixtureGit ignores global configuration, while WorktreeManager starts native Git.
         // Bind both readers/writers to the fixture's LF bytes even on a CRLF-configured host.
@@ -63,6 +64,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "config", "core.eol", "lf");
         var branch = "feat/card-task-" + f.TaskId.ToString("N")[..8];
         f.Tree = Path.Combine(f.Host.Fixture.Root, "trees", leaf ?? "card-task-" + f.TaskId.ToString("N")[..8]);
+        Console.WriteLine($"C1017_FIXTURE stage=worktree-create task={f.TaskId} tree={f.Tree}");
         if (leaf is null)
         {
             await using var lease = await f.Host.Services.GetRequiredService<IRepositoryMutationLease>()
@@ -72,6 +74,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
                 f.Host.Fixture.Repository, "task-" + f.TaskId.ToString("N")[..8], f.Host.Fixture.SeedSha, lease!, CancellationToken.None);
         }
         else await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "worktree", "add", "-b", branch, f.Tree, "HEAD");
+        Console.WriteLine($"C1017_FIXTURE stage=worktree-created task={f.TaskId} tree={f.Tree}");
         Directory.CreateDirectory(Path.GetDirectoryName(f.Sentinel)!);
         await File.WriteAllTextAsync(f.Sentinel, f.OriginalBytes);
         await using var db = f.Host.CreateContext();
@@ -249,16 +252,42 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         if (TargetId == Guid.Empty) await DiscoverAsync();
         await using var scope = Host.Services.CreateAsyncScope();
         configure?.Invoke(scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>());
-        return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupService>()
+        var result = await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupService>()
             .TryCleanupLocalAsync(TargetId, null, CancellationToken.None);
+        await DiagnoseAsync(result);
+        return result;
     }
 
     public async Task<WorktreeRemoval> CleanupDirectAsync(Guid? runId = null)
     {
         if (EndpointId == Guid.Empty) await DiscoverAsync();
         await using var scope = Host.Services.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>()
+        var result = await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>()
             .TryAsync(EndpointId, runId, CancellationToken.None);
+        await DiagnoseAsync(result);
+        return result;
+    }
+
+    private async Task DiagnoseAsync(WorktreeRemoval result)
+    {
+        Console.WriteLine($"C1017_CLEANUP task={TaskId} endpoint={EndpointId} result={JsonSerializer.Serialize(result)}");
+        if (result.IsClean || !OperatingSystem.IsWindows()) return;
+        try
+        {
+            FixtureFileDiagnostics.Write(Tree);
+            FixtureFileDiagnostics.Write(Path.Combine(Tree, ".git"));
+            // These commands inspect only the fixture repository, through its existing bounded runner.
+            foreach (var args in new[]
+                     {
+                         new[] { "worktree", "list", "--porcelain" },
+                         new[] { "status", "--porcelain=v1", "--untracked-files=all" },
+                     })
+            {
+                var observed = await Host.Fixture.Git.RunAsync(Host.Fixture.Repository, args, CancellationToken.None);
+                Console.WriteLine($"C1017_GIT command={string.Join(' ', args)} exit={observed.ExitCode} stdout={observed.Output} stderr={observed.Diagnostic}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine("C1017_DIAGNOSTIC unavailable: " + ex.Message); }
     }
 
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;
@@ -286,6 +315,15 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             || !Guid.TryParseExact(Path.GetFileName(root), "N", out _)
             || (await File.ReadAllTextAsync(Path.Combine(Host.Fixture.Repository, "fixture-owner.txt"))).Trim() != TaskId.ToString("N"))
             throw new InvalidOperationException("C1017 fixture ownership changed");
-        Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(root);
+        try
+        {
+            Console.WriteLine($"C1017_FIXTURE stage=delete-root task={TaskId} root={root}");
+            Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(root);
+        }
+        catch (Exception ex)
+        {
+            FixtureFileDiagnostics.WriteLandingLocks(root, ex);
+            throw;
+        }
     }
 }

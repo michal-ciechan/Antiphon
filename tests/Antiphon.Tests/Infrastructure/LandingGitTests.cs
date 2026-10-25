@@ -91,6 +91,7 @@ public sealed class LandingGitTests
         var destination = await fixture.Git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None);
         fixture.Git.Trace.Clear();
         (await fixture.Git.PushAsync(fixture.Repository, destination, intended, CancellationToken.None)).Succeeded.ShouldBeTrue();
+        Console.WriteLine($"C448_PUSH expectedEndpoint={JsonSerializer.Serialize(fixture.Remote)} actual={JsonSerializer.Serialize(fixture.Git.Trace.Where(a => a[0] == "push"))}");
         fixture.Git.Trace.Single(a => a[0] == "push").ShouldBe(["push", fixture.Remote, $"{intended}:{fixture.TargetRef}"]);
         (await fixture.RequiredAsync(fixture.Remote, "rev-parse", fixture.TargetRef)).Trim().ShouldBe(intended);
         await fixture.AssertRemoteSourceAsync();
@@ -566,6 +567,8 @@ public sealed class LandingGitTests
             ["push", "origin", "master"], new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct));
         watch.Stop();
 
+        Console.WriteLine($"C1076_BUDGET elapsed={watch.Elapsed} error={thrown}");
+
         thrown.Message.ShouldBe("git_timeout");
         watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
         var common = await git.CommonDirectoryAsync(repo.Path, ct);
@@ -649,6 +652,7 @@ public sealed class LandingGitTests
         }
 
         record.ShouldNotBeNull("a fencing record exists while the batch runs");
+        Console.WriteLine($"C1432_JOURNAL expectedCommon={JsonSerializer.Serialize(common)} record={JsonSerializer.Serialize(record)}");
         record.ProcessId.ShouldNotBeNull("the started child is recorded");
         record.CommonDirectory.ShouldBe(common);
         record.Purpose.ShouldBeNull("the batch is the untagged journal, like every other update-ref");

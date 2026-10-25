@@ -257,6 +257,7 @@ public sealed class RepositoryChildRecoveryTests
             var raw = (await repo.GitReadAsync("rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
             var git = new LandingGit();
             var canonical = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+            Console.WriteLine($"C452_ALIAS raw={JsonSerializer.Serialize(raw)} canonical={JsonSerializer.Serialize(canonical)} expected={JsonSerializer.Serialize(Path.GetFullPath(admin))}");
             canonical.ShouldBe(Path.GetFullPath(admin));
             // Git on this Linux host realpaths gitdir-file aliases before rev-parse prints them.
             // Keep the real repository and alias; adapt only that one Git spelling at the script
@@ -401,9 +402,11 @@ public sealed class RepositoryChildRecoveryTests
         string[] arguments = ["-NoProfile", "-File",
             Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options];
         var result = await RunProcessAsync("pwsh", arguments, environment);
+        Console.WriteLine($"C452_RECOVERY shell=pwsh exit={result.Exit} stdout={result.Output} stderr={result.Error}");
         if (OperatingSystem.IsWindows())
         {
             var legacy = await RunProcessAsync("powershell.exe", arguments, environment);
+            Console.WriteLine($"C452_RECOVERY shell=powershell.exe exit={legacy.Exit} stdout={legacy.Output} stderr={legacy.Error}");
             legacy.Exit.ShouldBe(result.Exit, "Windows PowerShell 5.1 must make the same recovery decision");
         }
         return result;
