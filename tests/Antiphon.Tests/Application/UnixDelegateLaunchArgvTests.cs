@@ -26,7 +26,7 @@ public sealed class UnixDelegateLaunchArgvTests
         File.WriteAllText(child, "#!/bin/sh\ntemp=\"$ANTIPHON_TEST_ARGV.tmp.$$\"\nprintf '%s\\0' \"$@\" > \"$temp\"\nmv \"$temp\" \"$ANTIPHON_TEST_ARGV\"\nprintf 'ARGV_CAPTURED\\n'\nwhile :; do sleep 1; done\n");
         File.SetUnixFileMode(child, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var (dispatcher, provider) = GrokRulesLaunchRefusalTests.CreateDelegateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var task = GrokRulesLaunchRefusalTests.TaskFor(AgentTaskKind.Worker, role);
         var sessionId = Guid.NewGuid();
         var spec = GrokRulesLaunchRefusalTests.SpecOf(dispatcher, task, AgentKind.ClaudeCode, null);
