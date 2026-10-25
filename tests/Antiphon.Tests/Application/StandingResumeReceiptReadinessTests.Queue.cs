@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -64,7 +65,7 @@ public partial class StandingResumeReceiptReadinessTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
-            ConnectionString = schema.ConnectionString,
+            ConnectionString = schema.ConnectionString, TimeProvider = new ScaledTimeProvider(1),
             ConfigureDeliveryVerification = v => { v.TranscriptConfirmTimeoutSeconds = 1; v.PostFailureConfirmGraceSeconds = 1; }
         });
         var generation = await OwnAsync(h);
@@ -81,6 +82,7 @@ public partial class StandingResumeReceiptReadinessTests
         original.DeliveryAttempts.ShouldBe(1);
         original.Status.ShouldBe(QueuedMessageStatus.Pending);
         var inputCount = h.Adapter.Inputs.Count;
+        ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(24));
         foreach (var status in new[] { "Behind", "Unknown" })
         {
             progress = progress with { Status = status };
@@ -171,7 +173,7 @@ public partial class StandingResumeReceiptReadinessTests
                 Readiness: new("Ready", "binding", 100, 100)));
             await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord,
                 default, generation);
-            h.Adapter.KillGenerationCalls.Count.ShouldBe(variant == "idle" ? 1 : variant == "generation" ? 1 : 0, variant);
+            h.Adapter.KillGenerationCalls.Count.ShouldBe(variant == "idle" ? 1 : 0, variant);
             if (variant == "generation") h.Adapter.Killed.ShouldBeFalse();
             Console.WriteLine($"C1574 genuine-absence variant={variant} conditionalCalls={h.Adapter.KillGenerationCalls.Count}");
         }
