@@ -34,7 +34,10 @@ public sealed class RunnerAlarmWiringTests
         _factory.Services.GetRequiredService<IRunnerAlarmExclusion>().ShouldBeOfType<NeverExcluded>();
         _factory.Services.GetRequiredService<IRunnerEligibilitySnapshotSource>().ShouldBeOfType<PhoneHomeRunnerDirectory>();
         var directory = _factory.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
-        directory.Observer.ShouldBeSameAs(_factory.Services.GetRequiredService<AlarmWakeQueue>());
+        directory.Observer.ShouldBeSameAs(_factory.Services.GetRequiredService<IRunnerEligibilityObserver>());
+        directory.Observer.ShouldBeOfType<CompositeRunnerEligibilityObserver>();
+        _factory.Services.GetRequiredService<IRepositoryFenceObserver>()
+            .ShouldBeSameAs(_factory.Services.GetRequiredService<AlarmWakeQueue>());
         var alarms = _factory.Services.GetRequiredService<IOptions<AlarmSettings>>().Value;
         alarms.RunnerGraceSeconds.ShouldBe(180);
         alarms.SweepMinutes.ShouldBe(15);
