@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -66,7 +67,12 @@ public class SessionFinishedDuplicateTests
     private static async Task ObserveAsync(BridgeQueueHarness h, IEnumerable<SessionRunnerTranscriptEvent> entries)
     {
         foreach (var entry in entries)
+        {
             await h.Runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
+            // Ingestion commits action debt; execute it before observing the next idle edge.
+            await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(h.SessionId, CancellationToken.None);
+        }
     }
 
     [Test]
