@@ -4726,15 +4726,12 @@ function Get-C1339PreReleaseState {
         (Get-C1339Peel $Fx $Fx.PreTag) + '/' + [IO.File]::ReadAllText($Fx.Gh.StorePath)
 }
 
-function Test-C1339_PromoteReservationAndTarget {
+# Keep the reservation matrices method-scoped: the combined fresh/resumed/target
+# rehearsal exceeded the unchanged five-minute ScriptHarness execution budget.
+function Invoke-C1339PromotionReservations {
+    param([bool]$Resume)
     $happy = New-C1339PromotionFixture
-    $preBefore = Get-C1339PreReleaseState $happy
     $result = Invoke-C1339Promote $happy
-    $object = Invoke-C1339LocalGit $happy @('show-ref', '--verify', '--hash', ('refs/tags/' + $happy.FinalTag)) -Remote -AllowAbsent
-    $peel = Get-C1339Peel $happy $happy.FinalTag
-    $type = if ($object) { Invoke-C1339LocalGit $happy @('cat-file', '-t', $object) -Remote } else { '' }
-    $preChecks = @(New-C1339Check ((Get-C1339PreReleaseState $happy) -ceq $preBefore) 'fresh success')
-    $recoveryChecks = @()
 
     $variants = @(
         @{ label = 'C1339 G-43 reservation-journal'; reason = 'missing'; edits = @(
@@ -4775,7 +4772,7 @@ function Test-C1339_PromoteReservationAndTarget {
             { Update-C599Json $path { param($j) Set-C599AField $j.reservations[0] 'finalTag' 'v2026.10.15.2' } },
             { Update-C599Json $path { param($j) Set-C599AField $j.reservations[0] 'finalTag' $fx.PreTag } }) }
     )
-    foreach ($resume in @($false, $true)) {
+    foreach ($resume in @($Resume)) {
         $fx = New-C1339PromotionFixture
         if ($resume) { Add-C1339Tag $fx $fx.FinalTag $fx.Head }
         $valid = Invoke-C1339Promote $fx @{ WhatIf = $true }
@@ -4797,6 +4794,26 @@ function Test-C1339_PromoteReservationAndTarget {
         }
         if ($resume) { Assert-C599AMatrix 'C1339 G-53 reservation-resume' $resumedChecks }
     }
+
+}
+
+function Test-C1339_PromoteFreshReservations {
+    Invoke-C1339PromotionReservations -Resume $false
+}
+
+function Test-C1339_PromoteResumedReservations {
+    Invoke-C1339PromotionReservations -Resume $true
+}
+
+function Test-C1339_PromoteReservationAndTarget {
+    $happy = New-C1339PromotionFixture
+    $preBefore = Get-C1339PreReleaseState $happy
+    $result = Invoke-C1339Promote $happy
+    $object = Invoke-C1339LocalGit $happy @('show-ref', '--verify', '--hash', ('refs/tags/' + $happy.FinalTag)) -Remote -AllowAbsent
+    $peel = Get-C1339Peel $happy $happy.FinalTag
+    $type = if ($object) { Invoke-C1339LocalGit $happy @('cat-file', '-t', $object) -Remote } else { '' }
+    $preChecks = @(New-C1339Check ((Get-C1339PreReleaseState $happy) -ceq $preBefore) 'fresh success')
+    $recoveryChecks = @()
 
     $head = Invoke-C1339LocalGit $happy @('rev-parse', 'HEAD')
     $live = Invoke-C1339LocalGit $happy @('rev-parse', ('refs/heads/' + $happy.CandidateRef)) -Remote
