@@ -36,7 +36,9 @@ public sealed class RunnerAlarmNotifierTests
         harness.Adapter.SubmittedBodies.ShouldBeEmpty();
         flush.Calls.ShouldBe([harness.SessionId]);
 
-        await Should.ThrowAsync<Exception>(() => notifier.NotifyAsync(Guid.NewGuid(), header, body, CancellationToken.None));
-        db.SessionQueuedMessages.Count(message => message.AgentSessionId != harness.SessionId).ShouldBe(0);
+        var missingSessionId = Guid.NewGuid();
+        await Should.ThrowAsync<Exception>(() => notifier.NotifyAsync(missingSessionId, header, body, CancellationToken.None));
+        db.SessionQueuedMessages.Count(message => message.AgentSessionId == missingSessionId).ShouldBe(0);
+        db.SessionQueuedMessages.Count(message => message.AgentSessionId == harness.SessionId).ShouldBe(1);
     }
 }
