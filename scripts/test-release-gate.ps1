@@ -1740,7 +1740,18 @@ function Test-C599_NoActivation {
     Assert-C487 -Cond ($pushes.Count -ge 1) -Name 'C599 NoActivation the publication really pushed something' -Detail ([string]$pushes.Count)
     $forced = @($pushes | Where-Object { $_ -match '--force' -or $_ -match '--force-with-lease' -or $_ -match 'push\s+\S+\s+\+' })
     Assert-C487 -Cond ($forced.Count -eq 0) -Name 'C599 NoActivation no observed push carried a force flag or plus refspec' -Detail ($forced -join ';')
-    $deletes = @(($trace -split "`n") | Where-Object { $_ -match 'tag -d' -or $_ -match 'push.*:refs/tags' })
+    $isTagDeletion = {
+        param([string]$Call)
+        return ($Call -match '\btag\s+(-d|--delete)(\s|$)' -or
+            ($Call -match '^GIT push\s' -and
+                ($Call -match '\s:refs/tags/' -or $Call -match '\s(--delete|-d)(\s|$)')))
+    }
+    Assert-C487 -Cond ((& $isTagDeletion 'GIT tag -d v2026.10.15.1') -and
+        (& $isTagDeletion 'GIT push origin :refs/tags/v2026.10.15.1') -and
+        (& $isTagDeletion 'GIT push origin --delete v2026.10.15.1') -and
+        -not (& $isTagDeletion 'GIT push origin refs/antiphon-release-push/fixture/*:refs/tags/*')) `
+        -Name 'C599 NoActivation deletion matcher distinguishes a populated source refspec'
+    $deletes = @(($trace -split "`n") | Where-Object { & $isTagDeletion $_ })
     Assert-C487 -Cond ($deletes.Count -eq 0) -Name 'C599 NoActivation no observed call deleted or re-created a tag' -Detail ($deletes -join ';')
 }
 
