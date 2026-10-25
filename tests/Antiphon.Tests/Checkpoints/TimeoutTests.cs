@@ -12,6 +12,32 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class TimeoutTests : CheckpointTestBase
 {
     [Test]
+    public async Task budget_expiry_can_join_its_timer_from_a_cancellation_continuation()
+    {
+        var budget = new RunBudgetClock(TimeSpan.FromMilliseconds(100), null);
+        var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = budget.Token.Register(() => { _ = DisposeFromCallback(); });
+        async Task DisposeFromCallback()
+        {
+            try
+            {
+                if ((object)budget is IAsyncDisposable asyncBudget)
+                    await asyncBudget.DisposeAsync();
+                else
+                    budget.Dispose();
+                disposed.TrySetResult();
+            }
+            catch (Exception error) { disposed.TrySetException(error); }
+        }
+
+        // A synchronous join waits for the callback currently executing this continuation.
+        // Bound the witness without disposing the registration on that failed path: that
+        // would synchronously join the same stuck callback and hang the whole test host.
+        await disposed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        registration.Dispose();
+    }
+
+    [Test]
     public async Task total_deadline_skips_a_queued_build_without_starting_it()
     {
         var driver = new FakeDriver();
