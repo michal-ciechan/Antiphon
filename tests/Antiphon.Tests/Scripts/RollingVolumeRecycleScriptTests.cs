@@ -671,24 +671,28 @@ public sealed class RollingVolumeRecycleScriptTests
     }
 
     [Test]
+    [Arguments("present")]
+    [Arguments("absent")]
+    [Arguments("missing-shell")]
+    [Arguments("failing-shell")]
+    [Timeout(400_000)]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1008_Legacy_rolling_and_jq_rosters_remain()
+    public async Task C1008_Legacy_rolling_and_jq_rosters_remain(string mode, CancellationToken cancellationToken)
     {
-        foreach (var mode in new[] { "present", "absent", "missing-shell", "failing-shell" })
+        // Each mode runs the complete 62/66-invocation roster. Keep its assertions and
+        // serial process limiter, with a deadline per mode rather than for all 252 children.
+        var arguments = new List<string> { "-NoProfile", "-File",
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode };
+        if (mode == "present")
         {
-            var arguments = new List<string> { "-NoProfile", "-File",
-                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode };
-            if (mode == "present")
-            {
-                arguments.Add("-RequireJq");
-                arguments.ShouldContain("-RequireJq", customMessage: "c983-consumer-requires-jq");
-            }
-            var run = await C1008Process("pwsh", arguments.ToArray());
-            Console.WriteLine(run.Output);
-            run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", Case.Sensitive, "rolling-regressions-preserved: " + run.Output);
-            if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
-            run.Exit.ShouldBe(0);
+            arguments.Add("-RequireJq");
+            arguments.ShouldContain("-RequireJq", customMessage: "c983-consumer-requires-jq");
         }
+        var run = await C1008Process("pwsh", cancellationToken, arguments.ToArray());
+        Console.WriteLine(run.Output);
+        run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", Case.Sensitive, "rolling-regressions-preserved: " + run.Output);
+        if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
+        run.Exit.ShouldBe(0);
     }
 
     [Test]
@@ -756,12 +760,16 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Output.ShouldNotContain("UnhandledExit");
     }
 
-    private static async Task<(int Exit, string Output)> C1008Process(string command, params string[] args)
+    private static Task<(int Exit, string Output)> C1008Process(string command, params string[] args)
+        => C1008Process(command, CancellationToken.None, args);
+
+    private static async Task<(int Exit, string Output)> C1008Process(string command, CancellationToken cancellationToken, params string[] args)
     {
         var psi = new ProcessStartInfo(command) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMinutes(12));
         try { await proc.WaitForExitAsync(deadline.Token); }
         catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
         return (proc.ExitCode, await stdout + await stderr);
