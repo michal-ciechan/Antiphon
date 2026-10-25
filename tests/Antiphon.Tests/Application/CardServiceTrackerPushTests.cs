@@ -354,6 +354,7 @@ public class CardServiceTrackerPushTests
 
         var boardIds = await db.Boards.Where(b => projectIds.Contains(b.ProjectId)).Select(b => b.Id).ToListAsync();
         var cardIds = await db.Cards.Where(c => boardIds.Contains(c.BoardId)).Select(c => c.Id).ToListAsync();
+        await db.CardWorktreeCleanups.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.CardRevisions.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.Cards.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync();
