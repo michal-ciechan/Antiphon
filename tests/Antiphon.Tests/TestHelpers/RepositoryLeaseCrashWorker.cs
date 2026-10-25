@@ -53,7 +53,7 @@ internal static class RepositoryLeaseCrashWorker
         $server = $loadContext.LoadFromAssemblyPath($args[0])
         $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
         $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
-        $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null))
+        $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null, $null))
         foreach ($repository in @($args[1], $args[2])) {
             $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
             if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
