@@ -1982,6 +1982,15 @@ function Test-C1584_E2EExpandedBudget {
         foreach ($node in $required) { if (-not $covered.ContainsKey($node.Uid)) { $reasons.Add('missing-node') } }
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'e2e' -Fallback 0
         if ($watchdog -ne 7200000) { $reasons.Add('watchdog') }
+        # A future four-row method cannot silently defeat the E2E ceiling.
+        $oversizeNodes = @(1..4 | ForEach-Object { [pscustomobject]@{
+            ClassName = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests'; Type = 'AgentTaskLandDeliveryE2ETests'
+            Method = 'Unsplittable'; Uid = ('oversize-' + $_); Categories = @('OptIn')
+        } })
+        $refused = $false
+        try { [void]@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $oversizeNodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions) }
+        catch { $refused = ($_.Exception.Message -like 'launch-estimate-ceiling*ceiling=1800') }
+        if (-not $refused) { $reasons.Add('oversized-method-not-refused') }
         $detail = 'required=' + $required.Count + ' excluded=' + ($nodes.Count - $required.Count) + ' launches=' + $chunks.Count + ' maxBoundSeconds=' + $maxSeconds + ' watchdog=' + $watchdog + ' groups=' + ($shapes -join ',') + ' reasons=' + ($reasons -join ',')
         Write-Host $detail
         $ok = ($reasons.Count -eq 0)

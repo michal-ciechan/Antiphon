@@ -199,6 +199,186 @@
       "seconds": 140,
       "basis": "observed-bound",
       "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 75.9 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.E2E.AgentE2ETests": {
+      "nodes": 2,
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.AgentTaskLandDeliveryE2ETests": {
+      "nodes": 52,
+      "seconds": 31200,
+      "basis": "observed-bound",
+      "source": "CARD-1584: Windows rc run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee. Single watchdog-truncated run: 51 completed landing cases summed 7147.9 s; slowest completed supplied case C488_ReviewToLandReceiptMatrix(idle, spill) 348.1 s. Provisional bound 600 s PER EXPANDED CASE (1.72x slowest), including unobserved siblings; not a complete-class wall measurement or p95. Matrices retain every argument in methods of at most two rows. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.BoardE2ETests": {
+      "nodes": 10,
+      "seconds": 3000,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.CardCliE2ETests": {
+      "nodes": 10,
+      "seconds": 3000,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ChannelE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ChannelOutboundIsolatedTests": {
+      "nodes": 3,
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ChromiumRuntimeSmokeTests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ContractSnapshotTests": {
+      "nodes": 5,
+      "seconds": 1500,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.CreatedResourceTests": {
+      "nodes": 3,
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.DelegationPipelineE2ETests": {
+      "nodes": 2,
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.DelegationSequencingE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.DirectoryAutocompleteE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests": {
+      "nodes": 13,
+      "seconds": 7800,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured native delivery class; conservative 600 s per expanded case borrowed from the landing fixture bound (348.1 s x 1.72) in Windows rc run a779085c09ec4397a4b49941fd3cad07. Not a measurement of this class or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.DispatchConcurrencySettingsE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.Fixtures.IsolatedSessionRunnerTeardownTests": {
+      "nodes": 2,
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.Fixtures.PtyBackendEnvGuardTests": {
+      "nodes": 1,
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.LandDeliveryFixtureProbeTests": {
+      "nodes": 1,
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.OrchestratorE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.OutputDistillationApplyCanaryTests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.OutputDistillationCanaryGuardTests": {
+      "nodes": 33,
+      "seconds": 330,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.PipelineGlanceE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ProjectDeleteE2ETests": {
+      "nodes": 8,
+      "seconds": 2400,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ReleaseGateIsolationTests": {
+      "nodes": 3,
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ReleaseGateReportDeliveryTests": {
+      "nodes": 2,
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.ScheduleCliE2ETests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.SmokeE2ETests": {
+      "nodes": 2,
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.WorkflowDeleteTests": {
+      "nodes": 6,
+      "seconds": 1800,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.WorkflowOutputTests": {
+      "nodes": 4,
+      "seconds": 1200,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.E2E.WorktreeRetirementDeliveryE2ETests": {
+      "nodes": 5,
+      "seconds": 2500,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured native retirement/delivery class; explicit provisional 500 s per expanded case, at most three rows per method (1500 s). Requires fresh release-owned Windows measurements; not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+    },
+    "Antiphon.TestSupport.TestClassificationGuardTests": {
+      "nodes": 1,
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     }
   }
 }
