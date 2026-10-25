@@ -11,6 +11,16 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ScriptHarnessLinuxOwnershipTests
 {
+    [Before(Test)]
+    public void RequireNativeLinux() =>
+        RequirePlatform(OperatingSystem.IsLinux() ? "linux" : "other");
+
+    internal static void RequirePlatform(string platform)
+    {
+        if (platform != "linux")
+            throw new TUnit.Core.Exceptions.SkipTestException("Native Linux process-group ownership qualification requires Linux (procfs, setsid and POSIX signals).");
+    }
+
     [Test]
     public async Task Invalid_group_handshake_never_starts_harness()
     {
