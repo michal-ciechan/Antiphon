@@ -91,6 +91,16 @@ public sealed class RunBudgetClock : IDisposable, IAsyncDisposable
         {
             Accumulate();
             _reason = Cause();
+            // A timer may fire before the monotonic deadline (for example after
+            // millisecond truncation). Keep the one-shot deadline armed until due.
+            if (_reason is null)
+            {
+                if (ExecutionLimit is TimeSpan limit)
+                    _executionTimer?.Change(_waiting > 0 && _work == 0
+                        ? Timeout.InfiniteTimeSpan : limit - _execution, Timeout.InfiniteTimeSpan);
+                if (HardWallLimit is TimeSpan wall)
+                    _wallTimer?.Change(Remaining(wall, _time.GetElapsedTime(_started)), Timeout.InfiniteTimeSpan);
+            }
         }
         if (_reason is not null) _expired.Cancel();
     }
