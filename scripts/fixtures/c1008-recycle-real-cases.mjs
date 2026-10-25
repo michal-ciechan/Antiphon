@@ -458,7 +458,7 @@ async function c994Cases() {
     const f=exitedFixture();gitGraph(f,'dirty',f.temp);
     reclaimed(await host(f,'RD-7-cleanup','C',{hostCase:'retire-temp-containers'}));
     const r=await host(f,'RD-7','C',{cleanupOperation:f.cleanupOp});
-    capture('RD-7',r,r=>{refused(r);if(r.diagnosis!=='RecycleWorktreeDirty')throw Error('DirtyAuditBypassed');absent(f);stillVolumes(f);});
+    capture('RD-7',r,r=>{gitRefusal(r);if(!r.diagnosis.startsWith('RecycleWorktreeDirty audit check='))throw Error('DirtyAuditBypassed');absent(f);stillVolumes(f);});
   }
   {
     const f=exitedFixture();const first=await host(f,'RD-8-partial','C',{hostCase:'retire-temp-containers',containerFailAt:2});
