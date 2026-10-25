@@ -349,6 +349,7 @@ public class AgentTaskStandingAgentDispatchTests
             await runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
         }
 
+        await provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(sessionId, CancellationToken.None);
         var settled = await ReloadTaskAsync(task.Id);
         settled.Status.ShouldBe(
             AgentTaskStatus.Succeeded,
@@ -393,6 +394,7 @@ public class AgentTaskStandingAgentDispatchTests
             await runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
         }
 
+        await provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(sessionId, CancellationToken.None);
         var stored = await ReloadTaskAsync(task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
         stored.ReportNudgedAt.ShouldNotBeNull();
@@ -525,6 +527,9 @@ public class AgentTaskStandingAgentDispatchTests
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<ISessionRunnerClient, BridgeQueueHarness.EmptyRunnerClient>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<SessionMessageQueueService>();
         if (bridge is not null)
         {
