@@ -93,6 +93,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private int _pendingBytes;
     private bool _reading = true;
     private bool _readinessParseFailed;
+    private bool _readinessBindingInvalidated;
+    private readonly UTF8Encoding _readinessUtf8 = new(false, true);
 
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
@@ -214,7 +216,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             if (!file.Exists || !TerminalObservation.IsCurrentFile(path))
                 return Result("Unknown", 0, "file_identity_changed");
             var length = file.Length;
-            if (length < _parsedThrough) return Result("Unknown", length, "file_shortened");
+            if (length < _parsedThrough) _readinessBindingInvalidated = true;
+            if (_readinessBindingInvalidated) return Result("Unknown", length, "file_shortened");
             if (_reading) return Result("Behind", length, "read_in_flight");
             if (length > _parsedThrough) return Result("Behind", length, "unread_suffix");
             if (_readinessParseFailed) return Result("Unknown", length, "parse_failed");
@@ -445,6 +448,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                         try
                         {
                             var info = new FileInfo(path);
+                            if (info.Exists && info.Length < offset)
+                                lock (_gate) _readinessBindingInvalidated = true;
                             if (info.Exists && info.Length > offset)
                             {
                                 byte[] buffer;
@@ -544,7 +549,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             var count = i - start;
             if (count > 0)
             {
-                var line = Encoding.UTF8.GetString(pending.GetRange(start, count).ToArray()).TrimEnd('\r');
+                var bytes = pending.GetRange(start, count).ToArray();
+                // Preserve legacy normalization, but replacement decoding cannot certify live
+                // receipt readiness. A malformed byte invalidates this binding's observation.
+                try { _readinessUtf8.GetCharCount(bytes); }
+                catch (DecoderFallbackException) { lock (_gate) _readinessParseFailed = true; }
+                var line = Encoding.UTF8.GetString(bytes).TrimEnd('\r');
                 EmitLine(line);
             }
             start = i + 1;
@@ -756,6 +766,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             _parsedThrough = 0;
             _pendingBytes = 0;
             _readinessParseFailed = false;
+            _readinessBindingInvalidated = false;
             _reading = true;
         }
         try { _onBound?.Invoke(path, how); }
