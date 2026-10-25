@@ -1476,6 +1476,10 @@ public sealed partial class SessionMessageQueueService
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             if (!await CanWriteResumeInputAsync(db, sessionId, ct))
                 return await GetQueueAsync(sessionId, ct);
+            if (StandingResumeNote.IsNote(message)
+                && (await CaptureSessionGenerationAsync(sessionId, ct) is not { } noteGeneration
+                    || message.RuntimeActionKey != StandingResumeNote.Key(noteGeneration)))
+                return await GetQueueAsync(sessionId, ct);
             var beforeCall = db.Entry(message).CurrentValues.Clone();
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -1533,7 +1537,8 @@ public sealed partial class SessionMessageQueueService
             {
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
                     firstInputDeadlineAt: FirstInputDeadline([message]),
-                    pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message));
+                    pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message),
+                    resumeNote: StandingResumeNote.IsNote(message));
             }
             catch (OptionalBriefExpiredException)
             {
@@ -2367,6 +2372,8 @@ public sealed partial class SessionMessageQueueService
             .FirstAsync(ct);
         var sessionGeneration = SessionGeneration.Normalize(attemptSession.StartedAt);
         var sessionKind = attemptSession.AgentKind;
+        pending = pending.Where(m => !StandingResumeNote.IsNote(m)
+            || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0) return FlushResult.Nothing;
@@ -2737,7 +2744,8 @@ public sealed partial class SessionMessageQueueService
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
-                pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration));
+                pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
+                resumeNote: StandingResumeNote.IsNote(head));
         }
         catch (OptionalBriefExpiredException)
         {
@@ -3010,7 +3018,7 @@ public sealed partial class SessionMessageQueueService
             if ((!_verification.TranscriptConfirmEnabled && !pointer && !StandingResumeNote.IsNote(m))
                 || (m.DeliveryAttempts == 0 && !(pointer && m.LastDeliveryStartedAt != null)))
                 continue;
-            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
+            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body) && !StandingResumeNote.IsNote(m))
                 continue;
 
             TranscriptConfirm match;
@@ -3021,13 +3029,13 @@ public sealed partial class SessionMessageQueueService
             }
             else if (m.LastDeliveryBaselineSequence is { } floor)
             {
-                match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct);
+                match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct, StandingResumeNote.IsNote(m));
             }
             else if (m.LastDeliveryStartedAt is { } started)
             {
                 // CARD-0164 null-baseline arm: wall-clock floor from the attempt's own start.
                 match = await TryFindUnobservableConfirmingRecordAsync(
-                    db, sessionId, m.Body, started - tolerance, ct);
+                    db, sessionId, m.Body, started - tolerance, ct, StandingResumeNote.IsNote(m));
             }
             else
             {
@@ -3402,7 +3410,8 @@ public sealed partial class SessionMessageQueueService
         {
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
-                ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt);
+                ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt,
+                resumeNote: StandingResumeNote.IsNote(head));
             outcome = outcome with { PointerConsumed = pointerAttempt is not null };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -3652,23 +3661,21 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private static Task<bool> RequiresCompletePromptReceiptAsync(
+    private static Task<bool> RequiresCompleteSpecialistPromptAsync(
         AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
         db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
-            && m.Body == body && (m.SpecialistInputPolicyJson != null
-                || (m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey != null
-                    && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix))), ct);
+            && m.Body == body && m.SpecialistInputPolicyJson != null, ct);
 
     private static Task<bool> RequiresSubmittedChannelPromptAsync(
         AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
         db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
             && m.Body == body && m.Origin == QueuedMessageOrigin.Channel, ct);
 
-    private async Task<bool> RequiresCompletePromptReceiptAsync(
+    private async Task<bool> RequiresCompleteSpecialistPromptAsync(
         Guid sessionId, string body, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        return await RequiresCompletePromptReceiptAsync(
+        return await RequiresCompleteSpecialistPromptAsync(
             scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, body, ct);
     }
 
@@ -3831,7 +3838,7 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
-        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null)
+        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
     {
         if (pointerAttempt is not null) overlayRecovery = false;
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
@@ -3948,7 +3955,7 @@ public sealed partial class SessionMessageQueueService
         // loop — an unobservable baseline runs a wall-clock-floored variant that looks for the
         // FIRST matching UserPrompt, with the screen-only verdict retained only as the deadline
         // fallback (bind-failed sessions still degrade-Delivered rather than hard-failing).
-        var fullInline = await RequiresCompletePromptReceiptAsync(sessionId, trimmed, ct);
+        var fullInline = resumeNote || await RequiresCompleteSpecialistPromptAsync(sessionId, trimmed, ct);
         var baseline = pointerAttempt is not null || fullInline || (verify && _verification.TranscriptConfirmEnabled)
             ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
@@ -4115,7 +4122,7 @@ public sealed partial class SessionMessageQueueService
             {
                 return await WaitForTranscriptConfirmAsync(
                     sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
-                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt);
+                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote);
             }
 
             // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
@@ -4171,10 +4178,10 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
-        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null)
+        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
-        var fullInline = await RequiresCompletePromptReceiptAsync(sessionId, body, ct);
+        var fullInline = resumeNote || await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
         var observable = baseline.Observable;
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
         if (fullInline && firstInputDeadlineAt is { } inputDeadline && inputDeadline < deadline)
@@ -4198,9 +4205,9 @@ public sealed partial class SessionMessageQueueService
             var match = pointerAttempt is not null
                 ? await ReadPointerReceiptAsync(sessionId, body, pointerAttempt, ct)
                 : observable
-                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct)
+                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct, resumeNote)
                 : await TryFindUnobservableConfirmingRecordAsync(
-                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct);
+                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct, resumeNote);
             if (match.Identity)
             {
                 if (!match.Complete)
@@ -4413,17 +4420,17 @@ public sealed partial class SessionMessageQueueService
     /// timestamps are never evidence.
     /// </summary>
     private async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
-        Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
+        Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await TryFindUnobservableConfirmingRecordAsync(db, sessionId, body, confirmFrom, ct);
+        return await TryFindUnobservableConfirmingRecordAsync(db, sessionId, body, confirmFrom, ct, requireCompleteUserPrompt);
     }
 
     private static async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
-        AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
+        AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
-        var fullInline = await RequiresCompletePromptReceiptAsync(db, sessionId, body, ct);
+        var fullInline = requireCompleteUserPrompt || await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
         var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
@@ -4612,17 +4619,17 @@ public sealed partial class SessionMessageQueueService
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
     private async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
-        Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+        Guid sessionId, string body, long baselineSequence, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct);
+        return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct, requireCompleteUserPrompt);
     }
 
     private static async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
-        AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+        AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
-        var fullInline = await RequiresCompletePromptReceiptAsync(db, sessionId, body, ct);
+        var fullInline = requireCompleteUserPrompt || await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
         var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var texts = await db.TranscriptEntries
             .AsNoTracking()
@@ -5911,6 +5918,8 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+                return new LocalCommandPollResult.Skipped("receipt readiness pending");
             if (!(await _runtime.ListLiveSessionsAsync(ct)).Contains(sessionId))
                 return new LocalCommandPollResult.Skipped("not live");
             if (!await IsAcceptingInputAsync(sessionId, ct))

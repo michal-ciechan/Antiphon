@@ -78,14 +78,21 @@ internal static class QueueAttention
                     && m.LastDeliveryStartedAt != null
                     && m.LastDeliveryStartedAt >= windowFloor));
 
+    public static Expression<Func<SessionQueuedMessage, bool>> ResumeReceiptAwaitingEvidence(DateTime cutoff) =>
+        m => m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey != null
+            && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix)
+            && (m.Status == QueuedMessageStatus.Pending || m.Status == QueuedMessageStatus.Sent)
+            && m.DeliveryVerdict != DeliveryVerdict.Delivered && m.DeliveryVerdict != DeliveryVerdict.LateConfirmed
+            && m.CreatedAt <= cutoff;
+
     /// <summary>
     /// The ordinary delivery/retry union. Receipt-only spill obligations use
     /// <see cref="DeliveredSpillAwaitingReceipt"/> separately, without input-admission gates.
     /// </summary>
     public static Expression<Func<SessionQueuedMessage, bool>> NeedsAttention(
         int maxAttempts, DateTime strandedCutoff, DateTime ageFloor, DateTime windowFloor) =>
-        Or(DeliverablePending(maxAttempts, strandedCutoff, windowFloor),
-            InterruptedSent(ageFloor, windowFloor));
+        Or(Or(DeliverablePending(maxAttempts, strandedCutoff, windowFloor),
+            InterruptedSent(ageFloor, windowFloor)), ResumeReceiptAwaitingEvidence(strandedCutoff));
 
     /// <summary>
     /// <see cref="NeedsAttention"/> narrowed to rows no human is watching — delegation and
@@ -96,7 +103,9 @@ internal static class QueueAttention
         int maxAttempts, DateTime strandedCutoff, DateTime ageFloor, DateTime windowFloor) =>
         And(m => m.Origin == QueuedMessageOrigin.Delegation
                 || m.Origin == QueuedMessageOrigin.Supervision
-                || m.Origin == QueuedMessageOrigin.Mention,
+                || m.Origin == QueuedMessageOrigin.Mention
+                || (m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey != null
+                    && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix)),
             NeedsAttention(maxAttempts, strandedCutoff, ageFloor, windowFloor));
 
     private static Expression<Func<T, bool>> Or<T>(

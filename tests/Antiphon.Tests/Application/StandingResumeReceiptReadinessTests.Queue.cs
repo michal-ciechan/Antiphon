@@ -19,44 +19,75 @@ public partial class StandingResumeReceiptReadinessTests
     [Test]
     public async Task C1574_Resume_note_waits_then_receipts_once()
     {
-        await using var h = await AgentSystemPromptLaunchTests.CreateHarnessAsync(true);
-        await AgentSystemPromptLaunchTests.SetPreambleAsync(h, "Standing agent {{agent.name}}");
-        await using (var db = h.CreateObserverContext())
-            await db.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
-        await h.Runtime.DisposeSessionAsync(h.SessionId);
-        h.Runner.TranscriptPull = async (id, _) =>
+        foreach (var variant in new[] { "eligible", "channel", "timeout" })
         {
-            await using var db = h.CreateObserverContext();
-            var generation = (await db.AgentSessions.SingleAsync(s => s.Id == id)).StartedAt;
-            return new(id, [], 0, AcceptedStartedAt: generation,
-                Readiness: new("Behind", "launch-binding", 0, 100));
-        };
-        var started = await AgentSystemPromptLaunchTests.StartAsync(h, false);
-        started.PersistentSessionId.ShouldBe(h.SessionId.ToString("D"));
-        var adapter = AgentSystemPromptLaunchTests.Factory(h).Created.ShouldHaveSingleItem();
-        adapter.Inputs.ShouldBeEmpty("launch completes without typing into unread history");
-        await using var verify = h.CreateObserverContext();
-        var session = await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-        session.Status.ShouldBe(SessionStatus.Running);
-        var row = (await verify.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
-            .ShouldHaveSingleItem();
-        row.RuntimeActionKey.ShouldBe(NoteKey(session.StartedAt));
-        row.Origin.ShouldBe(QueuedMessageOrigin.System);
-        row.DeliveryAttempts.ShouldBe(0);
-        // An old identical prompt cannot satisfy the new attempt's floor.
-        await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt, row.Body,
-            timestamp: session.StartedAt.AddMinutes(-10));
-        await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.TurnEnd);
-        h.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(id, [], 0,
-            AcceptedStartedAt: session.StartedAt, Readiness: new("Ready", "launch-binding", 100, 100)));
-        await h.Queue.FlushSessionAsync(h.SessionId, default);
-        adapter.SubmittedBodies.ShouldBe([row.Body]);
-        await verify.Entry(row).ReloadAsync();
-        row.DeliveryAttempts.ShouldBe(1);
-        row.Status.ShouldBe(QueuedMessageStatus.Sent);
-        row.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
-        adapter.KillGenerationCalls.ShouldBeEmpty();
+            await using var h = await AgentSystemPromptLaunchTests.CreateHarnessAsync(true);
+            await AgentSystemPromptLaunchTests.SetPreambleAsync(h, "Standing agent {agentName}");
+            await using (var db = h.CreateObserverContext())
+                await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await h.Runtime.DisposeSessionAsync(h.SessionId);
+            string? channelBody = null;
+            if (variant == "channel")
+            {
+                await h.Queue.EnqueueAsync(h.SessionId, "An owed channel message stays ahead of the restart note.",
+                    MessageSendMode.WhenIdle, default, origin: QueuedMessageOrigin.Channel, deliverIfIdle: false);
+                await using var db = h.CreateObserverContext();
+                channelBody = (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId)).Body;
+            }
+            h.Runner.TranscriptPull = async (id, ct) =>
+            {
+                if (variant == "timeout") await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                await using var db = h.CreateObserverContext();
+                var generation = (await db.AgentSessions.SingleAsync(s => s.Id == id)).StartedAt;
+                return new(id, [], 0, AcceptedStartedAt: generation,
+                    Readiness: new("Behind", "launch-binding", 0, 100));
+            };
+            var started = await AgentSystemPromptLaunchTests.StartAsync(h, false);
+            started.PersistentSessionId.ShouldBe(h.SessionId.ToString("D"));
+            var adapter = AgentSystemPromptLaunchTests.Factory(h).Created.ShouldHaveSingleItem();
+            adapter.Inputs.ShouldBeEmpty(variant + ": launch completes without typing into unread history");
+            await using var verify = h.CreateObserverContext();
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.Status.ShouldBe(SessionStatus.Running, variant);
+            var row = (await verify.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId
+                    && m.RuntimeActionKey != null).ToListAsync()).ShouldHaveSingleItem();
+            row.RuntimeActionKey.ShouldBe(NoteKey(session.StartedAt));
+            row.Origin.ShouldBe(QueuedMessageOrigin.System);
+            row.DeliveryAttempts.ShouldBe(0);
+            await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt, row.Body,
+                timestamp: session.StartedAt.AddMinutes(-10));
+            await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.TurnEnd);
+            h.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(id, [], 0,
+                AcceptedStartedAt: session.StartedAt, Readiness: new("Ready", "launch-binding", 100, 100)));
+            await h.Queue.FlushSessionAsync(h.SessionId, default);
+            if (channelBody is not null)
+            {
+                adapter.SubmittedBodies.ShouldBe([channelBody], "owed channel receives its normal first turn");
+                await h.Queue.FlushSessionAsync(h.SessionId, default);
+            }
+            adapter.SubmittedBodies.ShouldBe(channelBody is null ? [row.Body] : [channelBody, row.Body], variant);
+            await verify.Entry(row).ReloadAsync();
+            row.DeliveryAttempts.ShouldBe(1);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
+            adapter.KillGenerationCalls.ShouldBeEmpty();
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == row.Body
+                && t.Sequence > row.LastDeliveryBaselineSequence)).ShouldBe(1);
+            Console.WriteLine($"C1574 launch variant={variant} attempts={row.DeliveryAttempts}");
+        }
+        await using var fresh = await AgentSystemPromptLaunchTests.CreateHarnessAsync(true);
+        await AgentSystemPromptLaunchTests.SetPreambleAsync(fresh, "Standing agent {agentName}");
+        await using (var db = fresh.CreateObserverContext())
+            await db.AgentSessions.Where(s => s.Id == fresh.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Failed));
+        var created = await AgentSystemPromptLaunchTests.StartAsync(fresh, true);
+        var freshId = Guid.Parse(created.PersistentSessionId!);
+        AgentSystemPromptLaunchTests.Factory(fresh).Created.ShouldHaveSingleItem().SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, freshId)]);
+        await using var freshDb = fresh.CreateObserverContext();
+        (await freshDb.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == freshId && m.RuntimeActionKey != null)).ShouldBeFalse();
     }
 
     [Test]
@@ -71,8 +102,9 @@ public partial class StandingResumeReceiptReadinessTests
         var generation = await OwnAsync(h);
         var progress = new SessionRunnerTranscriptReadiness("Ready", "binding", 100, 100);
         var entries = new List<SessionRunnerTranscriptEvent>();
+        var legacy = false;
         h.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(id, entries.ToArray(),
-            entries.Count, AcceptedStartedAt: generation, Readiness: progress));
+            entries.Count, AcceptedStartedAt: generation, Readiness: legacy ? null : progress));
         h.Adapter.OnSubmitted = _ => { progress = progress with { Status = "Behind", ParsedThrough = 50 }; return Task.CompletedTask; };
         var id = await EnqueueNoteAsync(h, generation);
         await h.Queue.FlushSessionAsync(h.SessionId, default);
@@ -83,17 +115,25 @@ public partial class StandingResumeReceiptReadinessTests
         original.Status.ShouldBe(QueuedMessageStatus.Pending);
         var inputCount = h.Adapter.Inputs.Count;
         ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(24));
-        foreach (var status in new[] { "Behind", "Unknown" })
+        foreach (var status in new[] { "Behind", "Unknown", "Legacy" })
         {
+            legacy = status == "Legacy";
             progress = progress with { Status = status };
             await h.Queue.FlushSessionAsync(h.SessionId, default);
             try { await h.Queue.EnqueueAsync(h.SessionId, "Automated input must wait for readiness", MessageSendMode.Now,
                 default, origin: QueuedMessageOrigin.System); } catch (ConflictException) { }
             await h.Queue.SendNowAsync(h.SessionId, id, default);
+            var expectationClaimed = false;
+            await h.Queue.SendExpectationNowAsync(h.SessionId, generation, h.AgentId,
+                "A watchdog direct send must also wait for receipt readiness.",
+                (_, _) => { expectationClaimed = true; return Task.FromResult(true); }, default);
+            expectationClaimed.ShouldBeFalse(status);
             h.Adapter.Inputs.Count.ShouldBe(inputCount, status);
             var current = await RowAsync(h, id);
             current.DeliveryAttempts.ShouldBe(original.DeliveryAttempts);
             current.LastDeliveryStartedAt.ShouldBe(original.LastDeliveryStartedAt);
+            current.LastDeliveryGeneration.ShouldBe(original.LastDeliveryGeneration);
+            current.DeliveryVerdictAt.ShouldBeNull();
             current.LastDeliveryBaselineSequence.ShouldBe(original.LastDeliveryBaselineSequence);
             h.Adapter.KillGenerationCalls.ShouldBeEmpty(status);
         }
@@ -115,15 +155,28 @@ public partial class StandingResumeReceiptReadinessTests
         { ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true }))
         {
             generation = await OwnAsync(h); sessionId = h.SessionId; agentId = h.AgentId;
-            id = await EnqueueNoteAsync(h, generation);
+            id = Guid.Empty;
+            try
+            {
+                await h.Queue.EnqueueAsync(h.SessionId, NoteBody, MessageSendMode.WhenIdle, default,
+                    origin: QueuedMessageOrigin.System, deliverIfIdle: false, runtimeActionKey: NoteKey(generation),
+                    onCreated: created => { id = created; throw new InvalidOperationException("accepted-ack-lost"); });
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "accepted-ack-lost") { }
+            id.ShouldNotBe(Guid.Empty);
+            await h.Queue.EnqueueAsync(h.SessionId, "A replay cannot replace the original accepted body.",
+                MessageSendMode.WhenIdle, default, origin: QueuedMessageOrigin.System,
+                deliverIfIdle: false, runtimeActionKey: NoteKey(generation));
+            (await RowAsync(h, id)).Body.ShouldBe(NoteBody);
             await using var db = h.CreateObserverContext();
             var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
-            row.Status = QueuedMessageStatus.Sent; row.SentAt = row.LastDeliveryStartedAt = h.Now.AddMinutes(-124);
+            row.Status = QueuedMessageStatus.Sent; row.SentAt = row.LastDeliveryStartedAt = h.Now;
             row.LastDeliveryGeneration = generation; row.LastDeliveryBaselineSequence = 0; row.DeliveryAttempts = 1;
             await db.SaveChangesAsync(); original = await RowAsync(h, id);
         }
         await using var rebuilt = await ClaudeDialogFixture.CreateBridgeAsync(new()
-        { ConnectionString = schema.ConnectionString, AttachSessionId = sessionId, AttachAgentId = agentId });
+        { ConnectionString = schema.ConnectionString, AttachSessionId = sessionId, AttachAgentId = agentId,
+            TimeProvider = new ScaledTimeProvider(1, DateTimeOffset.UtcNow.AddMinutes(124)) });
         rebuilt.Runner.TranscriptPull = (sid, _) => Task.FromResult(new SessionRunnerTranscriptDto(sid, [], 0,
             AcceptedStartedAt: generation, Readiness: new("Behind", "binding", 0, 100)));
         await rebuilt.Queue.TryPollLocalCommandAsync(sessionId,

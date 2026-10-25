@@ -5,6 +5,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -26,24 +27,32 @@ public sealed partial class SessionMessageQueueService
     private async Task<ResumeReceiptFence> ObserveResumeReceiptFenceAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (session is not { AgentKind: AgentKind.ClaudeCode, StandingAgentId: { } owner })
-            return new(null, true);
-        var key = StandingResumeNote.Key(session.StartedAt);
-        var note = await db.SessionQueuedMessages.FirstOrDefaultAsync(m => m.AgentSessionId == sessionId
-            && m.RuntimeActionKey == key && m.Origin == QueuedMessageOrigin.System
-            && (m.Status == QueuedMessageStatus.Pending || m.Status == QueuedMessageStatus.Sent)
-            && m.DeliveryVerdict != DeliveryVerdict.Delivered && m.DeliveryVerdict != DeliveryVerdict.LateConfirmed, ct);
-        if (note is null) return new(null, true);
+        try
+        {
+            var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is not { AgentKind: AgentKind.ClaudeCode, StandingAgentId: { } owner })
+                return new(null, true);
+            var key = StandingResumeNote.Key(session.StartedAt);
+            var note = await db.SessionQueuedMessages.FirstOrDefaultAsync(m => m.AgentSessionId == sessionId
+                && m.RuntimeActionKey == key && m.Origin == QueuedMessageOrigin.System
+                && (m.Status == QueuedMessageStatus.Pending || m.Status == QueuedMessageStatus.Sent)
+                && m.DeliveryVerdict != DeliveryVerdict.Delivered && m.DeliveryVerdict != DeliveryVerdict.LateConfirmed, ct);
+            if (note is null) return new(null, true);
 
-        var observation = await _runtime.ObserveReceiptReadinessAsync(sessionId, session.StartedAt, owner, ct);
-        // Positive evidence can arrive even in a Behind snapshot. Reconcile it before Working,
-        // selecting another row, or recovering an interrupted claim, with the original floor.
-        if (note.DeliveryAttempts > 0)
-            await LateConfirmAttemptedMessagesAsync(db, sessionId, [note], session.AgentKind, ct);
-        if (note.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
-            return new(note, true, true);
-        return new(note, observation.Status == ReceiptReadinessStatus.Ready);
+            var observation = await _runtime.ObserveReceiptReadinessAsync(sessionId, session.StartedAt, owner, ct);
+            // Positive evidence can arrive even in a Behind snapshot. Reconcile it before Working,
+            // selecting another row, or recovering an interrupted claim, with the original floor.
+            if (note.DeliveryAttempts > 0)
+                await LateConfirmAttemptedMessagesAsync(db, sessionId, [note], session.AgentKind, ct);
+            if (note.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+                return new(note, true, true);
+            return new(note, observation.Status == ReceiptReadinessStatus.Ready);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Receipt fence unavailable for session {SessionId}; deferring automatic input", sessionId);
+            return new(null, false);
+        }
     }
 
     private async Task<bool> CanWriteResumeInputAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
@@ -91,7 +100,7 @@ public sealed partial class SessionMessageQueueService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var fence = await ObserveResumeReceiptFenceAsync(db, sessionId, ct);
-        if (fence.Note is null) return false;
+        if (fence.Note is null) return !fence.Ready;
         if (fence.Confirmed && ids is { Count: > 0 } && ids.All(id => id == fence.Note.Id)) return true;
         if (fence.Ready) return false;
         if (ids is { Count: > 0 })
