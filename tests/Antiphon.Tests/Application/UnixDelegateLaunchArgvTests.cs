@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -18,7 +19,7 @@ public sealed class UnixDelegateLaunchArgvTests
     [Arguments(AgentTaskRole.Code)]
     public async Task Composed_delegate_argv_reaches_native_child(AgentTaskRole role)
     {
-        if (OperatingSystem.IsWindows()) throw new InvalidOperationException("Unix checkpoint selected on Windows");
+        if (OperatingSystem.IsWindows()) throw new SkipTestException("Unix PTY argv witness; Windows argv has its own native parser tests.");
         var root = Path.Combine(Path.GetTempPath(), "c863-compose-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var capture = Path.Combine(root, "argv.bin");

@@ -152,7 +152,9 @@ public sealed class OrchestratorInstructionsRendererTests
     }
 
     [Test]
-    public void Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision()
+    [Arguments("\n")]
+    [Arguments("\r\n")]
+    public void Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision(string lineEnding)
     {
         const string unknown = "unknown (chain read failed)";
         var roles = Antiphon.Server.Application.Services.ComplexityRoutingService.RoutableRoles;
@@ -163,7 +165,7 @@ public sealed class OrchestratorInstructionsRendererTests
         };
         var body = OrchestratorInstructionsRenderer.Render(snapshot);
         body.ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
-        foreach (var line in body.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+        foreach (var line in Lines(body, lineEnding).Where(line => line.StartsWith("- ", StringComparison.Ordinal)
                      || line.StartsWith("  ", StringComparison.Ordinal)))
         {
             Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
@@ -187,7 +189,7 @@ public sealed class OrchestratorInstructionsRendererTests
         worstBody.ShouldContain("  Plan: effective " + combined);
         worstBody.ShouldContain("  Plan: source " + combined);
         worstBody.ShouldNotContain("+2");
-        foreach (var line in worstBody.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+        foreach (var line in Lines(worstBody, lineEnding).Where(line => line.StartsWith("- ", StringComparison.Ordinal)
                      || line.StartsWith("  ", StringComparison.Ordinal)))
         {
             Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
@@ -203,7 +205,9 @@ public sealed class OrchestratorInstructionsRendererTests
     }
 
     [Test]
-    public void The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure()
+    [Arguments("\n")]
+    [Arguments("\r\n")]
+    public void The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure(string lineEnding)
     {
         string[] roles = ["Investigate", "Plan", "TestDesign", "Code", "Mutation", "Review", "Debug",
             "Coverage", "Docs", "Commit", "Test", "Deploy", "Merge", "Custom"];
@@ -216,7 +220,7 @@ public sealed class OrchestratorInstructionsRendererTests
         var body = OrchestratorInstructionsRenderer.Render(snapshot);
         foreach (var role in roles)
         {
-            var matches = body.Split('\n').Where(line => line.StartsWith($"- {role}:", StringComparison.Ordinal)).ToArray();
+            var matches = Lines(body, lineEnding).Where(line => line.StartsWith($"- {role}:", StringComparison.Ordinal)).ToArray();
             matches.Length.ShouldBe(1, $"matrix row {role}");
             var line = matches.Single();
             Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
@@ -235,6 +239,11 @@ public sealed class OrchestratorInstructionsRendererTests
         fitted.ShouldNotContain("more: GET /api/routing-pins");
         fitted.ShouldNotContain("more: GET /api/model-availability");
     }
+
+    // A line terminator is outside the 160-byte content budget. Exercise both
+    // newline conventions on every host, including CRLF on Linux.
+    private static string[] Lines(string body, string lineEnding) =>
+        body.ReplaceLineEndings(lineEnding).Split(["\r\n", "\n"], StringSplitOptions.None);
 
     private static OrchestratorInstructionsSnapshot Sample() => new(
         Caps: new PipelineCapsSection(
