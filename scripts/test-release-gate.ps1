@@ -290,7 +290,7 @@ function New-C599RcGreen {
 $script:C599RepoPolicyPath = Join-Path $repoRoot (Join-Path 'tests' 'test-execution-policy.json')
 $script:C599IntentId = 'intent-20260923T083000Z'
 $script:C599RunId = 'rc-run-1'
-$script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e', 'markdown-pdf')
+$script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e', 'markdown-pdf', 'observability')
 $script:C599Rosters = @{ client = @('lint', 'build', 'vitest'); scripts = @('test-release-gate.ps1', 'test-nightly.ps1') }
 $script:C599ABasePolicy = $null
 $script:C599PolicyClones = [System.Collections.Generic.List[string]]::new()
