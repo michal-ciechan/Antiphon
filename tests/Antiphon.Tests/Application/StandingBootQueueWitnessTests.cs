@@ -299,9 +299,10 @@ public class StandingBootQueueWitnessTests
         {
             var busy = await f.WorkingAsync();
             var at = DateTime.UtcNow;
-            await BridgeQueueHarness.InsertEntryAsync(f.SessionId,
-                busy ? TranscriptKinds.QueuedUserPrompt : TranscriptKinds.UserPrompt, submitted,
-                timestamp: at, connectionString: f.ConnectionString, createdAtUtc: at);
+            await StoreAwareTranscript.WriteAsync(harness.Provider, f.SessionId, () =>
+                BridgeQueueHarness.InsertEntryAsync(f.SessionId,
+                    busy ? TranscriptKinds.QueuedUserPrompt : TranscriptKinds.UserPrompt, submitted,
+                    timestamp: at, connectionString: f.ConnectionString, createdAtUtc: at));
         };
         return harness;
     }
