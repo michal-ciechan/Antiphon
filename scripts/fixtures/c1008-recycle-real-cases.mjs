@@ -362,6 +362,8 @@ async function c994Wrapper(f,phase) {
   }
   fs.copyFileSync('scripts/lib/runner-operator-token.ps1',dir+'/lib/runner-operator-token.ps1');
   fs.writeFileSync(f.root+'/operator-token','inert-fixture-operator');
+  // The wrapper's offline prerequisite seam requires both a verifier and owned state.
+  const wrapperState=f.root+'/wrapper-state.json';fs.writeFileSync(wrapperState,'{}');
   const bridge=f.root+'/wrapper-bridge.ps1';
   fs.writeFileSync(bridge,`
 param([string]$Case,[string]$Manifest)
@@ -369,6 +371,13 @@ $ErrorActionPreference='Stop'
 if($Case -eq 'rollout-lock'){[Console]::WriteLine('C1008_LOCKED');[Console]::Out.Flush();[void][Console]::ReadLine();exit 0}
 if($Case -eq 'temp-project-absent'){& docker ps -aq --no-trunc --filter 'label=com.docker.compose.project=${f.temp}';exit $LASTEXITCODE}
 $m=Get-Content -Raw $Manifest|ConvertFrom-Json
+if($Case -eq 'host-jq-prerequisite'){
+ if($m.sourceSha -cne '${source}' -or $m.runId -notmatch '^c727[0-9a-f]{12}$' -or $m.mode -cne 'check' -or $m.phase -notin @('drain-temp','retire-temp','deploy-temp')){exit 2}
+ @{schema=1;lane='host';mode=$m.mode;lookupPath='/usr/local/bin/jq';path='/usr/local/bin/jq';
+   version='jq-1.7.1';digest='5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5';
+   uid=0;gid=0;permissions='755';trueExit=0;falseExit=1;installed=$false;outcome='existing'}|ConvertTo-Json -Compress
+ exit 0
+}
 $env:C590_CASE=$Case;$env:C590_SHA=$m.sourceSha;$env:C590_RUN=$m.runId;$env:C590_REEXEC='1';$env:C604_SERVER_ORIGIN='${originUrl}'
 if($Case -eq 'retire-temp-containers'){
  $env:C994_OPERATION=$m.tempContainerCleanup.operationId
@@ -393,8 +402,8 @@ if(Test-Path -LiteralPath ('${f.root}/evidence/'+$Case)){Copy-Item -LiteralPath 
 exit $code
 `);
   const env={...process.env,ANTIPHON_API:originUrl,ANTIPHON_TASK_TOKEN:'',ANTIPHON_OPERATOR_TOKEN_FILE:f.root+'/operator-token',
-    C727_TEST_VERIFY_STUB:bridge,C727_TEST_POLL_MS:'5'};
-  delete env.C727_TEST_HTTP_STUB;delete env.C727_TEST_STATE;delete env.C727_TEST_WAIT_MS;
+    C727_TEST_VERIFY_STUB:bridge,C727_TEST_STATE:wrapperState,C727_TEST_POLL_MS:'5'};
+  delete env.C727_TEST_HTTP_STUB;delete env.C727_TEST_WAIT_MS;
   const result=await boundedChild('pwsh',['-NoProfile','-File',dir+'/deploy-server2.ps1','-Rolling','-Sha',source,'-Phase',phase,'-WaitIdleMinutes','1'],{env},90000);
   fs.writeFileSync(f.root+'/wrapper-'+phase+'.log',result.stdout+result.stderr);
   if(result.code!==0)throw Error('WrapperFailed:'+phase+':'+result.stdout+result.stderr);
