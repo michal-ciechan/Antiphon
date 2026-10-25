@@ -618,7 +618,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task ValidateTicketAsync(AgentTask task, AgentTaskLanding op, AgentTaskLandRequest request,
         PreparedLandingVerification ticket, CancellationToken ct)
     {
-        Require(request.IsPending && request.State == LandRequestState.Running
+        // A competing drain can record its wait while this coordinator retains the
+        // genuine execution lease. Its hold does not replace this request or ticket.
+        var executing = request.State == LandRequestState.Running
+            || request.State == LandRequestState.Held && request.HoldReasonCode == "land_execution_busy";
+        Require(request.IsPending && executing
             && task.CurrentLandRequestId == request.Id && task.ActiveLandingId == op.Id
             && task.LandAttempt == request.Attempt && LandApproval.RequestStatusEligible(task, request)
             && op.Active && op.Phase == LandPhase.Prepared, "verification_ticket_changed");
