@@ -877,22 +877,8 @@ public sealed class PhoneHomeCommandDispatcher
         return Result(request, await _runtime.ReadWorkspaceRepositoryIdentityAsync(body, ct));
     }
 
-    internal bool IsAdmittedCwd(string? cwd)
-    {
-        if (string.IsNullOrWhiteSpace(cwd))
-            return false;
-        var root = _settings.AllowedCwd.TrimEnd('/');
-        if (string.Equals(cwd, root, StringComparison.Ordinal))
-            return true;
-        var prefix = root + "/worktrees/";
-        if (!cwd.StartsWith(prefix, StringComparison.Ordinal))
-            return false;
-        var name = cwd[prefix.Length..];
-        return name.Length > 0
-            && !name.Contains('/', StringComparison.Ordinal)
-            && name != "."
-            && name != "..";
-    }
+    internal bool IsAdmittedCwd(string? cwd) =>
+        RunnerWorkspaceCwd.IsAdmitted(cwd, _settings.AllowedCwd, OperatingSystem.IsWindows());
 
     private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)
     {
