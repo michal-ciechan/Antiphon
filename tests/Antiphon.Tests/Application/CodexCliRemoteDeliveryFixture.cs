@@ -49,14 +49,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                     new(body, Title: body, Role: AgentTaskRole.Docs, AgentKind: AgentKind.Codex,
                         ModelLevel: level, Workspace: WorkspaceMode.Worktree, RunnerId: host.AllowedRunnerId),
                     new(null, null, git.Path), CancellationToken.None);
-            async Task Tick()
-            {
-                using var scope = h.Provider.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
-            }
-            await Tick();
-            await h.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync();
-            await Tick();
+            await world.DispatchAsync();
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
             task.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959-v21-remote-claim " + vector);
@@ -130,6 +123,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
                 retained.RemoteSpillBody.ShouldBe(expectedFull, "C959-write-failure-durable-E");
                 retained.RemoteSpillRelativePath.ShouldBe(owned, "C959-write-failure-original-owned-path");
+                retained.DeliveryAttempts.ShouldBe(0, "a proven pre-input spill refusal consumes no pointer attempt");
+                retained.LastDeliveryStartedAt.ShouldBeNull();
+                retained.LastDeliveryGeneration.ShouldBeNull();
+                retained.LastDeliveryBaselineSequence.ShouldBeNull();
                 (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == task.AgentSessionId
                     && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire))
                     .ShouldBe(0, "C959-write-failure-zero-receipt");
@@ -302,6 +299,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
             var terminal = new FakeAgentProtocolAdapter();
+            if (Kind == AgentKind.Codex) terminal.CodexComposerChrome = true;
             if (Kind == AgentKind.ClaudeCode)
             {
                 terminal.StartupOutput = "Claude Code\n";

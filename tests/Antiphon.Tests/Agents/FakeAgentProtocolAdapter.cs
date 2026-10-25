@@ -70,6 +70,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     /// output. Everything emitted, echoes of submitted prompts included, stays above the box.
     /// </summary>
     public bool ClaudeComposerChrome { get; set; }
+    public bool CodexComposerChrome { get; set; }
     public static readonly string ClaudeRule = new('─', 60);
     public const string ClaudeHintBar = "  ⏵⏵ bypass permissions on (shift+tab to cycle)";
 
@@ -640,6 +641,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 if (prompt >= 0) return screen.Insert(prompt + 1, " " + composer.ReplaceLineEndings("\n  "));
             }
             return screen;
+        }
+
+        if (CodexComposerChrome)
+        {
+            return screen + "\n› " + composer.ReplaceLineEndings("\n  ")
+                + "\n\n  GPT-6.1-Sol medium · " + (StartedCwd ?? "/test/cwd");
         }
 
         if (ClaudeComposerChrome)
