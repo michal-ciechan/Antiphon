@@ -71,6 +71,14 @@ public class DelegateLaunchArgvIntegrityTests
             throw new SkipTestException("CommandLineToArgvW is Windows-only");
     }
 
+    [Test]
+    public async Task Dispatcher_harness_releases_async_only_services_on_every_platform()
+    {
+        var (_, provider) = CreateHarness();
+        await using var ownedProvider = provider;
+        provider.GetRequiredService<CardSiblingInspectionQueue>().ShouldNotBeNull();
+    }
+
     // ---- the real launch, every (kind × role × agent kind) -----------------------------------
 
     /// <summary>
@@ -80,11 +88,11 @@ public class DelegateLaunchArgvIntegrityTests
     /// repo's own bundle files today.
     /// </summary>
     [Test]
-    public void Every_dispatched_launch_round_trips_through_both_backends()
+    public async Task Every_dispatched_launch_round_trips_through_both_backends()
     {
         SkipIfNotWindows();
         var (dispatcher, provider) = CreateHarness();
-        using var _ = provider;
+        await using var _ = provider;
 
         var checkedCases = 0;
         var refused = 0;
@@ -126,11 +134,11 @@ public class DelegateLaunchArgvIntegrityTests
     }
 
     [Test]
-    public void Every_codex_launch_fits_both_launcher_hops_at_production_budget()
+    public async Task Every_codex_launch_fits_both_launcher_hops_at_production_budget()
     {
         SkipIfNotWindows();
         var (dispatcher, provider) = CreateHarness();
-        using var _ = provider;
+        await using var _ = provider;
         var node = @"C:\Program Files\nodejs\node.exe";
         var js = @"C:\npm\node_modules\@openai\codex\bin\codex.js";
         var native = @"C:\" + new string('n', 200) + @"\codex.exe";
@@ -171,11 +179,11 @@ public class DelegateLaunchArgvIntegrityTests
     /// the shape the 2026-08-17 shred actually ran on.
     /// </summary>
     [Test]
-    public void Every_dispatched_launch_round_trips_with_role_defaults_alone()
+    public async Task Every_dispatched_launch_round_trips_with_role_defaults_alone()
     {
         SkipIfNotWindows();
         var (dispatcher, provider) = CreateHarness();
-        using var _ = provider;
+        await using var _ = provider;
 
         var checkedCases = 0;
         foreach (var kind in Enum.GetValues<AgentTaskKind>())

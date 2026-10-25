@@ -173,8 +173,10 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
         request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, secret ?? Secret);
         var registration = Registration(bootId, storeId, runnerId);
-        if (platform is not null)
-            registration = registration with { Platform = platform };
+        // Real adapters report the current host OS. Retain an explicitly requested
+        // mismatch for protocol refusal tests, otherwise register that same platform.
+        if ((platform ?? capabilities?.Platform) is { } reportedPlatform)
+            registration = registration with { Platform = reportedPlatform };
         if (capabilities is not null)
             registration = registration with { Capabilities = capabilities };
         request.Content = JsonContent.Create(registration, options: PhoneHomeFraming.Json);

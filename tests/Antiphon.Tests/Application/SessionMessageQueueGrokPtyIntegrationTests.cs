@@ -770,6 +770,7 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             await Task.Delay(150);
         }
 
+        await NativePtyDiagnostics.CaptureAsync(client, sessionId, "grok-output-timeout");
         return false;
     }
 }

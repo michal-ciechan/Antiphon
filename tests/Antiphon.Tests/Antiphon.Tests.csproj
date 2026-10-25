@@ -30,6 +30,7 @@
   <ItemGroup>
     <!-- Pinned real-Claude record shapes (captured by headed canaries; e.g. compact-boundary.jsonl). -->
     <Content Include="Agents\Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Card0418\**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Antiphon.Agents.Pty.Tests\Fixtures\CodexStartup\**\*"
              Link="Fixtures\CodexStartup\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
