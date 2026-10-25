@@ -387,13 +387,13 @@ public class SessionGenerationExitTests
             await db.SaveChangesAsync();
         }
 
-        var transcript = new RunnerTranscriptEvent(
-            other, 1, TranscriptKinds.AssistantText, Guid.NewGuid().ToString("N"), null,
-            DateTimeOffset.UtcNow, "assistant", "gate", null, null, null, null, null);
-        scenario.Bus.Hold("SessionTranscript");
+        // Transcript publication is deferred to action workers. Raw output still runs on
+        // the SSE consumer, so it supplies the barrier ahead of the queued exit.
+        var output = new RunnerOutputEvent(other, 1, "gate");
+        scenario.Bus.Hold("AgentTextDelta");
         await scenario.Handler.WriteSseAsync(
-            SessionRunnerEventNames.SessionTranscript,
-            JsonSerializer.Serialize(transcript, WebJson));
+            SessionRunnerEventNames.SessionOutput,
+            JsonSerializer.Serialize(output, WebJson));
         await scenario.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await scenario.WriteExitAsync(scenario.GenerationA);
         await scenario.ResumeBAsync();
