@@ -246,7 +246,7 @@ public sealed class EvidenceDeletionGuardTests
         var ownedBlob = Path.Combine(f.Repo, ".git", "objects", missingBlob.Oid[..2], missingBlob.Oid[2..]);
         File.Exists(ownedBlob).ShouldBeTrue("fixture-owned loose blob exists, never delete borrowed objects");
         var recoveryHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
-            "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + deletion + "') { [IO.File]::Delete(" + EvidenceGitFixture.Quote(ownedBlob) + "); Write-Host 'FAULT-HIT' }; return $r }";
+            "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + deletion + "') { [IO.File]::SetAttributes(" + EvidenceGitFixture.Quote(ownedBlob) + ", [IO.FileAttributes]::Normal); [IO.File]::Delete(" + EvidenceGitFixture.Quote(ownedBlob) + "); Write-Host 'FAULT-HIT' }; return $r }";
         var recovery = await f.DeletionAsync(b, deletion, inv, hook: recoveryHook);
         recovery.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         recovery.Exit.ShouldBe(2, "c1015-deletion-recoverable");
