@@ -180,7 +180,11 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
         Census(Run(Make(source: source, roster: []))).ShouldBe(["One.A.First:selected method absent from checklist", "One.Child.A.ChildOnly:selected method absent from checklist", "Two.A.First:selected method absent from checklist"], "c1005-pc-25");
         Census(Run(Make(source: source, filter: "/*/One/A/*", roster: ["One.A.First"]))).ShouldBeEmpty("c1005-pc-26");
         Census(Run(Make(source: source, filter: "/*/*/One.A/*", roster: ["One.A.First"]))).ShouldBeEmpty("c1005-pc-27");
-        Census(Run(Make(source: source, filter: "/*/One/(A)|(B)/*", roster: ["One.A.First"]))).ShouldBe(["One.B.Second:selected method absent from checklist"], "c1005-pc-28");
+        // Canonical OR operands require suffix wildcards; include their prefix matches in the roster.
+        Census(Run(Make(source: source, filter: "/*/One/(A*)|(B*)/*", roster: ["One.A.First", "One.AB.Decoy", "One.AExtra.Second"]))).ShouldBe(["One.B.Second:selected method absent from checklist"], "c1005-pc-28");
+        var windowsProject = Make(source: source, filter: "/*/One/A/*", roster: ["One.A.First"]);
+        File.WriteAllText(windowsProject.Plan, File.ReadAllText(windowsProject.Plan).Replace("tests/Sample", @"tests\Sample"));
+        Census(Run(windowsProject)).ShouldBeEmpty("c1005-windows-project-separators");
         Census(Run(Make(source: source, filter: "/*/One/A*/*", roster: ["One.A.First", "One.AB.Decoy"]))).ShouldBe(["One.AExtra.Second:selected method absent from checklist"], "c1005-pc-29");
         Census(Run(Make(source: source, filter: "/*/One/A/*", roster: ["One.A.First"]))).ShouldBeEmpty("c1005-pc-30");
         Census(Run(Make(source: source, filter: "/*/*/Outer/*", roster: ["One.Outer.First"]))).ShouldBeEmpty("c1005-pc-31");
