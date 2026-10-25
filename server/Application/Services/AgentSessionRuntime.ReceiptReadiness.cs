@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

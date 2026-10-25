@@ -12,6 +12,19 @@ first-write path. Other providers and ordinary messages retain their existing ru
 
 ## Deferred transcript effects (CARD-1259)
 
+CARD-1574 receipt-readiness observation is separate from catch-up's "new rows"
+result. It requires a complete runner snapshot for the requested accepted launch,
+the same physical standing owner and current agent pointer, unchanged route/store,
+and committed persistence under the session write lease. The commit transaction
+rechecks launch ownership under the session row lock. Ready returns the stored
+transcript baseline, including zero for empty history; duplicate replay can be
+Ready without adding rows. Behind and unsupported/unknown snapshots can still
+ingest positive receipt evidence but cannot qualify absence. The observation's
+five-second cancellation budget returns Unknown; caller cancellation propagates.
+This observation grants no input, failure, kill or seat-release authority. The
+durable resume-note producer and queue-entry fences are a separate pending slice;
+this runtime API alone does not protect resumed launches.
+
 Transcript ingestion commits each stored row and its `SessionRuntimeAction` in the
 same transaction under the session write lease. UI publication, queue confirmation,
 compaction recovery and reply routing run after the lease is released. Catch-up and
