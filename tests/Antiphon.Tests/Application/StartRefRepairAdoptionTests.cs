@@ -81,7 +81,9 @@ public sealed class StartRefRepairAdoptionTests
         await using var db = c.H.CreateContext();
         (await db.AgentTaskLandRequests.SingleAsync()).SourceRefusalReason.ShouldBe("adopt_source_lineage");
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
-        c.H.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && (a[0] == "push" || a[0] == "update-ref"));
+        c.H.Fixture.Git.Trace.Where(a => a.Length > 0 &&
+            (a[0] == "push" || a[0] == "update-ref" && a.Contains(c.H.Fixture.SourceRef)))
+            .ShouldBeEmpty("refusal must not mutate the owner branch; source-observation pins are retained");
         var pins = await c.H.Fixture.RequiredAsync(c.H.Fixture.Repository, "for-each-ref", "refs/antiphon/land");
         pins.ShouldNotContain("/adopt/");
         (await c.H.Fixture.RequiredAsync(c.H.Fixture.Repository, "rev-parse", c.H.Fixture.SourceRef)).Trim().ShouldBe(c.L);
@@ -100,7 +102,9 @@ public sealed class StartRefRepairAdoptionTests
         await using var db = c.H.CreateContext();
         (await db.AgentTaskLandRequests.SingleAsync()).SourceRefusalReason.ShouldBe("detached_head");
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
-        c.H.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && (a[0] == "push" || a[0] == "update-ref"));
+        c.H.Fixture.Git.Trace.Where(a => a.Length > 0 &&
+            (a[0] == "push" || a[0] == "update-ref" && a.Contains(c.H.Fixture.SourceRef)))
+            .ShouldBeEmpty("refusal must not mutate the owner branch; source-observation pins are retained");
         (await c.H.Fixture.RequiredAsync(c.H.Fixture.Repository, "for-each-ref", "refs/antiphon/land"))
             .ShouldNotContain("/adopt/");
     }
