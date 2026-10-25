@@ -93,57 +93,75 @@ public partial class StandingResumeReceiptReadinessTests
     [Test]
     public async Task C1574_Accepted_note_outlives_grace_without_retyping()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        foreach (var path in new[] { "action", "forced" })
         {
-            ConnectionString = schema.ConnectionString, TimeProvider = new ScaledTimeProvider(1),
-            ConfigureDeliveryVerification = v => { v.TranscriptConfirmTimeoutSeconds = 1; v.PostFailureConfirmGraceSeconds = 1; }
-        });
-        var generation = await OwnAsync(h);
-        var progress = new SessionRunnerTranscriptReadiness("Ready", "binding", 100, 100);
-        var entries = new List<SessionRunnerTranscriptEvent>();
-        var legacy = false;
-        h.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(id, entries.ToArray(),
-            entries.Count, AcceptedStartedAt: generation, Readiness: legacy ? null : progress));
-        h.Adapter.OnSubmitted = _ => { progress = progress with { Status = "Behind", ParsedThrough = 50 }; return Task.CompletedTask; };
-        var id = await EnqueueNoteAsync(h, generation);
-        await h.Queue.FlushSessionAsync(h.SessionId, default);
-        h.Adapter.SubmittedBodies.ShouldBe([NoteBody]);
-        h.Adapter.KillGenerationCalls.ShouldBeEmpty("absence during replay cannot kill");
-        var original = await RowAsync(h, id);
-        original.DeliveryAttempts.ShouldBe(1);
-        original.Status.ShouldBe(QueuedMessageStatus.Pending);
-        var inputCount = h.Adapter.Inputs.Count;
-        ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(24));
-        foreach (var status in new[] { "Behind", "Unknown", "Legacy" })
-        {
-            legacy = status == "Legacy";
-            progress = progress with { Status = status };
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+            {
+                ConnectionString = schema.ConnectionString, TimeProvider = new ScaledTimeProvider(1),
+                ConfigureDeliveryVerification = v => { v.TranscriptConfirmTimeoutSeconds = 1; v.PostFailureConfirmGraceSeconds = 1; }
+            });
+            var generation = await OwnAsync(h);
+            var progress = new SessionRunnerTranscriptReadiness("Ready", "binding", 100, 100);
+            var entries = new List<SessionRunnerTranscriptEvent>();
+            var legacy = false;
+            h.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(id, entries.ToArray(),
+                entries.Count, AcceptedStartedAt: generation, Readiness: legacy ? null : progress));
+            h.Adapter.OnSubmitted = _ => { progress = progress with { Status = "Behind", ParsedThrough = 50 }; return Task.CompletedTask; };
+            var id = await EnqueueNoteAsync(h, generation);
+            if (path == "forced")
+                await h.Queue.SendNowAsync(h.SessionId, id, default);
+            else
+            {
+                var action = new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = h.SessionId,
+                    AcceptedGeneration = generation, Sequence = 0, Phase = SessionRuntimeActionCoordinator.QueuePhase,
+                    TriggerKind = "c1574-resume-test", CreatedAt = h.Now, DueAt = h.Now };
+                await using (var db = h.CreateObserverContext())
+                {
+                    db.SessionRuntimeActions.Add(action);
+                    await db.SaveChangesAsync();
+                }
+                (await h.Queue.OnRuntimeActionAsync(action, false, default)).Deferred.ShouldBeTrue(
+                    "the deferred action must retain its queue retry obligation after an uncertain submit");
+            }
+            h.Adapter.SubmittedBodies.ShouldBe([NoteBody]);
+            h.Adapter.KillGenerationCalls.ShouldBeEmpty("absence during replay cannot kill");
+            var original = await RowAsync(h, id);
+            original.DeliveryAttempts.ShouldBe(1);
+            original.Status.ShouldBe(QueuedMessageStatus.Pending);
+            var inputCount = h.Adapter.Inputs.Count;
+            ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(24));
+            foreach (var status in new[] { "Behind", "Unknown", "Legacy" })
+            {
+                legacy = status == "Legacy";
+                progress = progress with { Status = status };
+                await h.Queue.FlushSessionAsync(h.SessionId, default);
+                try { await h.Queue.EnqueueAsync(h.SessionId, "Automated input must wait for readiness", MessageSendMode.Now,
+                    default, origin: QueuedMessageOrigin.System); } catch (ConflictException) { }
+                await h.Queue.SendNowAsync(h.SessionId, id, default);
+                var expectationClaimed = false;
+                await h.Queue.SendExpectationNowAsync(h.SessionId, generation, h.AgentId,
+                    "A watchdog direct send must also wait for receipt readiness.",
+                    (_, _) => { expectationClaimed = true; return Task.FromResult(true); }, default);
+                expectationClaimed.ShouldBeFalse(status);
+                h.Adapter.Inputs.Count.ShouldBe(inputCount, status);
+                var current = await RowAsync(h, id);
+                current.DeliveryAttempts.ShouldBe(original.DeliveryAttempts);
+                current.LastDeliveryStartedAt.ShouldBe(original.LastDeliveryStartedAt);
+                current.LastDeliveryGeneration.ShouldBe(original.LastDeliveryGeneration);
+                current.DeliveryVerdictAt.ShouldBeNull();
+                current.LastDeliveryBaselineSequence.ShouldBe(original.LastDeliveryBaselineSequence);
+                h.Adapter.KillGenerationCalls.ShouldBeEmpty(status);
+                Console.WriteLine($"C1574 accepted path={path} readiness={status} attempts={current.DeliveryAttempts}");
+            }
+            entries.Add(new(h.SessionId, 1, TranscriptKinds.UserPrompt, "late-receipt", null,
+                new DateTimeOffset(generation), "user", NoteBody, null, null, null, null, null));
             await h.Queue.FlushSessionAsync(h.SessionId, default);
-            try { await h.Queue.EnqueueAsync(h.SessionId, "Automated input must wait for readiness", MessageSendMode.Now,
-                default, origin: QueuedMessageOrigin.System); } catch (ConflictException) { }
-            await h.Queue.SendNowAsync(h.SessionId, id, default);
-            var expectationClaimed = false;
-            await h.Queue.SendExpectationNowAsync(h.SessionId, generation, h.AgentId,
-                "A watchdog direct send must also wait for receipt readiness.",
-                (_, _) => { expectationClaimed = true; return Task.FromResult(true); }, default);
-            expectationClaimed.ShouldBeFalse(status);
-            h.Adapter.Inputs.Count.ShouldBe(inputCount, status);
-            var current = await RowAsync(h, id);
-            current.DeliveryAttempts.ShouldBe(original.DeliveryAttempts);
-            current.LastDeliveryStartedAt.ShouldBe(original.LastDeliveryStartedAt);
-            current.LastDeliveryGeneration.ShouldBe(original.LastDeliveryGeneration);
-            current.DeliveryVerdictAt.ShouldBeNull();
-            current.LastDeliveryBaselineSequence.ShouldBe(original.LastDeliveryBaselineSequence);
-            h.Adapter.KillGenerationCalls.ShouldBeEmpty(status);
+            var final = await RowAsync(h, id);
+            final.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            final.DeliveryAttempts.ShouldBe(1);
+            h.Adapter.Inputs.Count.ShouldBe(inputCount);
         }
-        entries.Add(new(h.SessionId, 1, TranscriptKinds.UserPrompt, "late-receipt", null,
-            new DateTimeOffset(generation), "user", NoteBody, null, null, null, null, null));
-        await h.Queue.FlushSessionAsync(h.SessionId, default);
-        var final = await RowAsync(h, id);
-        final.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
-        final.DeliveryAttempts.ShouldBe(1);
-        h.Adapter.Inputs.Count.ShouldBe(inputCount);
     }
 
     [Test]
