@@ -279,6 +279,7 @@ const LIVENESS_KIND_LIST: AttentionKind[] = [
   'ReportUnsettled',
   'UnmarkedWaiting',
   'PastExpectedIdle',
+  'ProviderInputWait',
   'ProgressStalled',
   'Overdue',
   'ChecksSpent',
@@ -385,9 +386,9 @@ function pin(overrides: Partial<RoutingPinRefDto> = {}): RoutingPinRefDto {
 }
 
 describe('livenessFor', () => {
-  it('pins the ten progress kinds and excludes BlockedQuestion and CardStalled', () => {
+  it('pins the eleven progress kinds and excludes BlockedQuestion and CardStalled', () => {
     expect([...LIVENESS_KINDS].sort()).toEqual([...LIVENESS_KIND_LIST].sort())
-    expect(LIVENESS_KINDS.size).toBe(10)
+    expect(LIVENESS_KINDS.size).toBe(11)
     expect(LIVENESS_KINDS.has('BlockedQuestion')).toBe(false)
     expect(LIVENESS_KINDS.has('CardStalled')).toBe(false)
   })
