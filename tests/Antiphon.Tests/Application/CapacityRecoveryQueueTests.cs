@@ -37,7 +37,7 @@ public class CapacityRecoveryQueueTests
             var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
             row.Status.ShouldBe(QueuedMessageStatus.Pending);
             row.NoteHeader.ShouldBe("Held");
-            row.Body.ShouldBe("channel body");
+            row.Body.ShouldBe(ChannelPromptCorrelation.Mark(row.Id, "channel body"));
             row.Origin.ShouldBe(QueuedMessageOrigin.Channel);
         }
 
@@ -104,8 +104,10 @@ public class CapacityRecoveryQueueTests
         h.Adapter.SentInput.ShouldContain("older channel");
         h.Adapter.SentInput.ShouldNotContain("newer channel");
         await using var verify = Ctx(schema);
-        var newer = await verify.SessionQueuedMessages.SingleAsync(
-            m => m.AgentSessionId == h.SessionId && m.Body == "newer channel");
+        var newer = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == h.SessionId && m.ConversationKey == "telegram:-1002")
+            .SingleAsync();
+        newer.Body.ShouldBe(ChannelPromptCorrelation.Mark(newer.Id, "newer channel"));
         newer.Status.ShouldBe(QueuedMessageStatus.Pending);
         newer.NoteHeader.ShouldBe("Held");
     }
