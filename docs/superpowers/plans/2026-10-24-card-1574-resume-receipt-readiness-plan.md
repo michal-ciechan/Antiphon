@@ -375,6 +375,8 @@ location in commands. Use the checkpoint tool and host build-slot gate.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-red | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader-red/` | portable-reader-red | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 2 executed; V-1 has an assertion failure on absent Ready (not compile/setup); record actual V-2 outcome | 2 | 2 |
 | CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader/` | portable-reader-green | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 3 passed, 0 failed/skipped; every named matrix plus the truncation-regrowth/invalid-utf8 extension checked | 3 | 2 |
+| CP-3a | S2a-red | `tests/Antiphon.Tests -> bin-c1574-observe-red/` | portable-observe-red | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 executed; assertion red on absent runtime Ready | 1 | 4 |
+| CP-4a | S2a | `tests/Antiphon.Tests -> bin-c1574-observe/` | portable-observe-green | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 passed, 0 failed/skipped; all runtime/transport scenarios checked | 1 | 4 |
 | CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1574-resume-red/` | portable-resume-red | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 executed; assertion reds in readiness propagation/commit fencing, durable resume, delayed receipt and restart recovery; V-7 outcomes recorded separately | 5 | 4 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1574-resume/` | portable-resume-green | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 passed, 0 failed/skipped; every cut/variant checked | 5 | 4 |
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-existing/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
@@ -477,3 +479,13 @@ in production. No setting, runner pin or live queue action is requested here.
 ## Code checkpoint amendment (2026-10-25)
 
 Reader inspection added a separate red/green witness for two D-3 holes: observed truncation followed by same-inode/same-extent regrowth, and malformed UTF-8 hidden by replacement decoding before JSON validation. CP-1 and the first two CP-2 receipts remain historical two-method selections. Subsequent CP-2 uses the three-method full reader class with the new exact method `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`. Each new compiling guard has its own pending PC-27/PC-28; no Mutation is executed by Code. The first three-method CP-2 is intentionally red before the reader repair. The source changes and new assertion justify that changed proof selection; no unchanged green repetition is requested. S2 and Final scope remain incomplete in this budgeted checkpoint.
+
+## Continuation 109f308b: bounded S2a checkpoint slice
+
+The continuation brief overrides the generic Final sweep: one ordinary red and one
+narrow green per behavior; no Unit lane or broad integration selection. CP-3a and
+CP-4a isolate V-3/R-2 runtime/transport readiness before launch/queue integration.
+They compile the shared server test project once per committed group and execute
+only the exact V-3 method. Original CP-3/CP-4 remain due for V-4..V-7 once those
+methods exist; CP-5 remains due with the queue changes. This split does not claim
+those IDs or the whole S2 complete. PCs remain pending for Mutation.
