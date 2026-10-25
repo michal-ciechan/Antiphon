@@ -21,10 +21,13 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
         await AssertRunAsync(root, 3, 6, cancellationToken);
     }
 
-    private static async Task AssertRunAsync(string root, int repeat, int expectedExecuted,
+    private async Task AssertRunAsync(string root, int repeat, int expectedExecuted,
         CancellationToken cancellationToken)
     {
         var results = Path.Combine(root, $"results-{repeat}");
+        var outputName = CheckpointRepeatFixture.OutputName(root) + $"-sequence-{repeat}";
+        var outputDirectory = Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.FilterHost", outputName);
+        Directory.Exists(outputDirectory).ShouldBeFalse("the invocation must own a fresh output path");
         var psi = new ProcessStartInfo("pwsh")
         {
             WorkingDirectory = CheckpointFixtures.RepoRoot,
@@ -36,14 +39,17 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
         {
             "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
             "-Name", $"CP-repeat-{repeat}", "-Project", "tests/Antiphon.Checkpoints.FilterHost",
-            "-OutputPath", $"bin-c885-sequence-{repeat}/", "-Filter", "/*/*/FilterHostTests*/*",
+            "-OutputPath", outputName + "/", "-Filter", "/*/*/FilterHostTests*/*",
             "-MinExecuted", "2", "-ResultsRoot", results, "-Repeat", repeat.ToString(), "-NoSlot",
         })
             psi.ArgumentList.Add(argument);
 
         using var process = Process.Start(psi)!;
+        RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+        try
+        {
         await process.WaitForExitAsync(cancellationToken);
         var output = await stdout + "\n" + await stderr;
         process.ExitCode.ShouldBe(0, $"sequence-repeat-{repeat}: {output}");
@@ -65,5 +71,16 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
         }
         else
             output.ShouldNotContain(" repetitions=", Case.Sensitive, "sequence-default-trailer-token");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
     }
 }
