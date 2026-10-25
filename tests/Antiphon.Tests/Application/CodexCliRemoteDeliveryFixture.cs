@@ -123,6 +123,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
                 retained.RemoteSpillBody.ShouldBe(expectedFull, "C959-write-failure-durable-E");
                 retained.RemoteSpillRelativePath.ShouldBe(owned, "C959-write-failure-original-owned-path");
+                retained.DeliveryAttempts.ShouldBe(0, "a proven pre-input spill refusal consumes no pointer attempt");
+                retained.LastDeliveryStartedAt.ShouldBeNull();
+                retained.LastDeliveryGeneration.ShouldBeNull();
+                retained.LastDeliveryBaselineSequence.ShouldBeNull();
                 (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == task.AgentSessionId
                     && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire))
                     .ShouldBe(0, "C959-write-failure-zero-receipt");
