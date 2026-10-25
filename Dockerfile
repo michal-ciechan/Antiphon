@@ -21,6 +21,7 @@ WORKDIR /src
 COPY global.json Directory.Build.props Directory.Build.targets ./
 COPY src/ src/
 COPY server/ server/
+COPY scripts/lib/*.cs scripts/lib/
 COPY docker/stack/init-state.sh /stack/init-state.sh
 RUN dotnet publish server/Antiphon.Server.csproj -c Release -r linux-x64 --self-contained false -p:SourceRevisionId=$SOURCE_REVISION -o /publish
 
