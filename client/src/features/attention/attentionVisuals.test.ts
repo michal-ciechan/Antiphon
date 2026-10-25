@@ -39,6 +39,7 @@ const ALL_KINDS: AttentionKind[] = [
   'BriefUndelivered',
   'UncorrelatedReport',
   'PastExpectedIdle',
+  'ProviderInputWait',
   'ChecksSpent',
   'SessionDisagreement',
   'RecentCriticalIncident',
