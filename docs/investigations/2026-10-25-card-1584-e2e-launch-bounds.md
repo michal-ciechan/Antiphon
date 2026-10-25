@@ -66,3 +66,16 @@ assembly/source bindings and summary joins. Merely appending groups under
 the last suite's existing top-level binding would produce misleading evidence.
 It needs its own multi-suite manifest/summary witness; no sidecar schema is
 changed in this focused repair.
+
+The isolated two-project build at 6c35542b2b2afa4298369c228e03adca17c00c95
+completed in 176.12 seconds (slot held 177 s, waited 0 s, max CPU count 6),
+zero errors and 1201 compiler warnings. The four-method compiled planner
+run at that SHA had three passes, one failure, zero skips in 45.955 seconds:
+only C1410 suite-hours failed. Its full-listing fixture also contains the shared
+TestClassificationGuardTests node, whose cost changed from 0.5 to 10 seconds.
+The exact golden total increases by 9.5 to 52631.653116531146 seconds; all
+107 launches, 19284 required nodes including synthetic probes, zero missing/
+double/extra selections and existing packing/watchdog assertions were intact.
+The final repair changes only the PowerShell expected arithmetic and this
+record; the already built host and E2E binaries remain applicable. Rerun only
+C1410_MeasuredCostGroups with --no-build. Historical red evidence is retained.
