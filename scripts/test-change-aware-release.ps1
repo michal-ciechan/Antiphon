@@ -297,13 +297,18 @@ function Test-C1313_ParameterHops {
         RunId=$q.RunId;SelectionMode=$q.SelectionMode;BaselineSha=$q.BaselineSha;TimingRoot=$q.TimingRoot
         BaselineReceiptPath=$q.BaselineReceiptPath;QualificationPath=$q.QualificationPath;ReleaseIntentPath=$q.ReleaseIntentPath;TrainManifestPath=$q.TrainManifestPath;SeamsPath=$fx.Seams;SkipPublish=$true;PassThru=$true}
     $cut=& "$PSScriptRoot/release-cut.ps1" @args
-    $summaries=@(Get-ChildItem (Join-Path $fx.Release 'candidates') -Filter summary.json -Recurse)
+    $summaryFiles=@(Get-ChildItem (Join-Path $fx.Release 'candidates') -Filter summary.json -Recurse)
+    # Timing also writes summary.json. Only run records carry the consumed selection.
+    $summaries=@($summaryFiles | Where-Object {
+        $record=Get-Content $_.FullName -Raw|ConvertFrom-Json
+        $null -ne $record.PSObject.Properties['runId']
+    })
     $consumed=$null;if($summaries.Count -eq 1){$consumed=(Get-Content $summaries[0].FullName -Raw|ConvertFrom-Json).selection}
     $bindingEvidence=Join-Path $ResultsDirectory 'hop-bindings'
     [void][IO.Directory]::CreateDirectory($bindingEvidence)
     Write-NightlyAtomicJson (Join-Path $bindingEvidence 'bound.json') $bound.Selection
     $summaryInventory=@();$index=0
-    foreach($file in $summaries){
+    foreach($file in $summaryFiles){
         $document=Get-Content $file.FullName -Raw|ConvertFrom-Json
         Copy-Item $file.FullName (Join-Path $bindingEvidence ("summary-$index.json"))
         $summaryInventory+=@{path=$file.FullName;runId=$document.runId;hasSelection=($null -ne $document.selection)};$index++
