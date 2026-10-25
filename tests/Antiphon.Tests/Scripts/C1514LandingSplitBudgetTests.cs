@@ -8,6 +8,11 @@ namespace Antiphon.Tests.Scripts;
 public sealed class C1514LandingSplitBudgetTests
 {
     [Test]
+    public Task C1584_E2EExpandedBudget() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1584", "C1584_E2EExpandedBudget", 1,
+            "C1584 E2E expanded cases fit conservative launch bounds with every required node once");
+
+    [Test]
     public Task C1577_Group71MeasuredBudget() =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1577", "C1577_Group71MeasuredBudget", 1,
             "C1577 group 71 uses observed bounds within half the unchanged watchdog with every node once");
