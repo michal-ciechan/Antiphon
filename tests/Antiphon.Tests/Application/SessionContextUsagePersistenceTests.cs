@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -23,6 +24,13 @@ public class SessionContextUsagePersistenceTests
         await using var fixture = await SessionStateTestFixture.CreateAsync();
         var sessionId = fixture.SessionId;
         var runtime = fixture.Runtime;
+        await using (var seed = fixture.Db())
+        {
+            var session = await seed.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.DefinitionName = "grok";
+            session.AgentKind = AgentKind.Grok;
+            await seed.SaveChangesAsync();
+        }
 
         var t0 = DateTimeOffset.UtcNow.AddHours(-2);
         // Session 98c61e03 shape: loop-sum turns go up and down, a single-call turn
