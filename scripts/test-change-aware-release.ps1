@@ -299,6 +299,22 @@ function Test-C1313_ParameterHops {
     $cut=& "$PSScriptRoot/release-cut.ps1" @args
     $summaries=@(Get-ChildItem (Join-Path $fx.Release 'candidates') -Filter summary.json -Recurse)
     $consumed=$null;if($summaries.Count -eq 1){$consumed=(Get-Content $summaries[0].FullName -Raw|ConvertFrom-Json).selection}
+    $bindingEvidence=Join-Path $ResultsDirectory 'hop-bindings'
+    [void][IO.Directory]::CreateDirectory($bindingEvidence)
+    Write-NightlyAtomicJson (Join-Path $bindingEvidence 'bound.json') $bound.Selection
+    $summaryInventory=@();$index=0
+    foreach($file in $summaries){
+        $document=Get-Content $file.FullName -Raw|ConvertFrom-Json
+        Copy-Item $file.FullName (Join-Path $bindingEvidence ("summary-$index.json"))
+        $summaryInventory+=@{path=$file.FullName;runId=$document.runId;hasSelection=($null -ne $document.selection)};$index++
+        if($document.selection){
+            foreach($field in @('baselineSha','candidateSha','runId','timingRoot','baselineReceiptPath','qualificationPath','releaseIntentPath','trainManifestPath','trainDigest','selectionDigest')){
+                Write-Host ("C1313 hop-binding {0}={1}" -f $field,($document.selection.$field -ceq $bound.Selection.$field))
+            }
+        }
+    }
+    Write-NightlyAtomicJson (Join-Path $bindingEvidence 'inventory.json') $summaryInventory
+    Write-Host ("C1313 hop-summary-count={0}" -f $summaries.Count)
     Assert-Fx ($consumed -and $consumed.baselineSha -ceq $fx.B -and $consumed.candidateSha -ceq $fx.A -and
         $consumed.runId -ceq $q.RunId -and $consumed.timingRoot -ceq $q.TimingRoot -and
         $consumed.baselineReceiptPath -ceq $q.BaselineReceiptPath -and $consumed.qualificationPath -ceq $q.QualificationPath -and
@@ -352,7 +368,7 @@ finally {
     # Retain actual native TRX/diagnostics independently of disposable fixture cleanup.
     $retained=Join-Path $repoRoot ('.antiphon/test-output/c1313-s6a/'+[guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($retained)
-    foreach($item in Get-ChildItem $ResultsDirectory -Directory | Where-Object {$_.Name -match '^(native-|hop-native|discovery)'}){Copy-Item $item.FullName $retained -Recurse}
+    foreach($item in Get-ChildItem $ResultsDirectory -Directory | Where-Object {$_.Name -match '^(native-|hop-native|hop-bindings|discovery)'}){Copy-Item $item.FullName $retained -Recurse}
     foreach($root in $script:FixtureRoots){Get-ChildItem $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}
 }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0
