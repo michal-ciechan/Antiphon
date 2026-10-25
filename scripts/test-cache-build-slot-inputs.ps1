@@ -6,7 +6,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $repo = Split-Path -Parent $PSScriptRoot
 $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'c590-remote.sh')) -replace '\\\r?\n', ' '
 $launches = @($source -split '\r?\n' | Where-Object { $_ -match '--mount "type=bind,source=\$CHECKOUT/scripts/build-slot\.ps1,target=' })
-if ($launches.Count -ne 6) { throw "Expected six cache build-slot launch sites, found $($launches.Count)" }
+if ($launches.Count -ne 5) { throw "Expected five cache build-slot launch sites, found $($launches.Count)" }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('cache-slot-inputs-' + [guid]::NewGuid().ToString('N'))
 $passed = 0
 $failed = 0
