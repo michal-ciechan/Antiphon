@@ -251,7 +251,17 @@ public class MutationDispatchTests
         public async Task Tick()
         {
             using var scope = Bridge.Provider.CreateScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.TickAsync(default);
+            var inspection = Bridge.Provider.GetRequiredService<CardSiblingInspectionQueue>();
+            if (inspection.Outstanding > 0)
+            {
+                // Card-base inspection now completes outside the dispatch transaction.
+                // Join that observation before the next scheduler tick claims its result.
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await inspection.WhenIdleAsync(deadline.Token);
+                await dispatcher.TickAsync(default);
+            }
             await Bridge.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
         }
         public async Task Settle(Guid id)
