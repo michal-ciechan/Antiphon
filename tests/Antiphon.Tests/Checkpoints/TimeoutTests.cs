@@ -36,7 +36,7 @@ public sealed class TimeoutTests : CheckpointTestBase
             Slots = new FixedSlotClient("unavailable"),
             Width = 2,
             TotalTimeout = TimeSpan.FromMilliseconds(200),
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
         driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
         result.State.Builds.Single(build => build.Id == "bin-a").State.ShouldBe("failed");
         result.State.Builds.Single(build => build.Id == "bin-b").State.ShouldBe("skipped");
@@ -87,7 +87,7 @@ public sealed class TimeoutTests : CheckpointTestBase
             Commit = new string('b', 40),
             Width = 1,
             TotalTimeout = TimeSpan.FromMilliseconds(200),
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
         result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["skipped", "timeout"]);
     }
 
