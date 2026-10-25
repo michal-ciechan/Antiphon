@@ -450,8 +450,8 @@ public sealed class DurableRunnerSpillReceiptTests
                     await record(submitted);
             };
 
-            await h.InsertTranscriptEntryAsync(
-                TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn, timestamp: DateTime.UtcNow);
+            await StoreAwareTranscript.WriteAsync(h.Provider, h.SessionId, () => h.InsertTranscriptEntryAsync(
+                TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn, timestamp: DateTime.UtcNow));
             await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
 
             h.Adapter.SubmittedBodies.ShouldNotBeEmpty();
