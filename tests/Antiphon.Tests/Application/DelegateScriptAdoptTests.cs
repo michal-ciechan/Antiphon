@@ -46,11 +46,11 @@ public sealed class DelegateScriptAdoptTests
                 summary = new { id = review, status = "Succeeded", title = "review", kind = "Worker",
                     role = "Review", modelLevel = "High" },
                 reviewEvidence = new { id = evidence, subjectTaskId = subject, reviewedSourceSha = sha,
-                    reviewedSourceRef = "refs/heads/repair", outcome = "Clean" },
+                    reviewedSourceClean = true, reviewedSourceRef = "refs/heads/repair", outcome = "Clean" },
             }));
         var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", review.ToString());
         result.ExitCode.ShouldBe(0, result.Output);
-        result.Output.ShouldContain($"Review evidence: {evidence}; subject {subject}; reviewed {sha}; ref refs/heads/repair; outcome Clean");
+        result.Output.ShouldContain($"Review evidence: {evidence}; subject {subject}; reviewed {sha}; clean True; ref refs/heads/repair; outcome Clean");
     }
 
     [Test]
