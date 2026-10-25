@@ -469,6 +469,15 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         if (request.RequireClaudeDialogClear
             && (await GetCapabilitiesAsync(ct))?.Features?.Contains(ProviderDialogObservation.Capability) != true)
             return new(sessionId, ConditionalInputOutcomes.Unsupported);
+        // Guarded task pointers need the same queue-owned bytes as ordinary Input.
+        // Retain transient staging until the conditional write is positively acknowledged.
+        var spill = _spills is null ? null : await _spills.FindDurableAsync(sessionId, request.Input, ct);
+        var transient = false;
+        if (spill is null && _spills is not null && _spills.TryPeek(sessionId, request.Input, out var staged))
+        {
+            spill = staged;
+            transient = true;
+        }
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.ConditionalInput,
             new
@@ -481,12 +490,19 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
                 expectedInputRevision = request.ExpectedInputRevision,
                 expectedRuntimeEpoch = request.ExpectedRuntimeEpoch,
                 dialogIntent = request.DialogIntent,
+                runnerCwd = spill?.RunnerCwd,
+                spill = spill?.Spill,
             },
             ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error && frame.ErrorCode == PhoneHomeProblemTypes.SpillWriteFailedBeforeInput)
+            ThrowIfError(frame);
         if (frame.Kind == PhoneHomeFrameKind.Error)
             return new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
-        return Read<RunnerConditionalInputResult>(frame)
+        var result = Read<RunnerConditionalInputResult>(frame)
             ?? new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unknown, request.ExpectedAcceptedStartedAt, request.ExpectedLastSequence);
+        if (transient && spill is not null && result.Outcome == ConditionalInputOutcomes.Written)
+            _spills!.Ack(sessionId, spill);
+        return result;
     }
 
     public async Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
