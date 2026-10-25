@@ -264,6 +264,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public bool Ack { get; set; } = true;
         public bool HoldTurnEnd { get; set; }
         public int SnapshotReads { get; private set; }
+        public Guid RunnerStoreId { get; set; }
         private readonly Dictionary<Guid, GrokRulesReceipt> _rules = [];
         private readonly List<(Guid Session, string Text)> _heldAcks = [];
         public void ReleaseAcks()
