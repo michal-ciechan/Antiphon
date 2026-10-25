@@ -2762,7 +2762,10 @@ public sealed partial class SessionMessageQueueService
             if (run.Count != 1
                 || !await TryCommitTaskInputFallbackAsync(db, sessionId, run[0], ct))
             {
-                await RevertRunAsync(db, run);
+                // The runner proved that the first pointer write never reached the terminal.
+                // Retaining its attempt would make pointer recovery hold an empty composer forever.
+                await RevertRunAsync(db, run, refundUnwrittenPointer: run.Count == 1
+                    && run[0].DeliveryAttempts == 1 && IsCodexPointer(rulesSession.AgentKind, run[0]));
                 await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
             }
             return FlushResult.Failed;
@@ -3199,12 +3202,21 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
+    private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run,
+        bool refundUnwrittenPointer = false)
     {
         foreach (var m in run)
         {
             m.Status = QueuedMessageStatus.Pending;
             m.SentAt = null;
+            if (refundUnwrittenPointer)
+            {
+                m.DeliveryAttempts--;
+                m.LastDeliveryStartedAt = null;
+                m.LastDeliveryGeneration = null;
+                m.LastDeliveryBaselineSequence = null;
+                ClearAttemptVerdict(m);
+            }
         }
         // Not the caller's token: when the revert is racing shutdown, completing it is the point.
         await db.SaveChangesAsync(CancellationToken.None);
