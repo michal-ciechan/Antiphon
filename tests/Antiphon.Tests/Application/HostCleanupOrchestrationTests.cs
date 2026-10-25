@@ -43,7 +43,6 @@ public sealed class HostCleanupOrchestrationTests
         migrations[cleanup - 1].ShouldBe("20261002101556_AddAgentTaskEventInputBody",
             "C826.cleanup-migration-after-current-master");
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(migrations[cleanup - 1]);
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask
@@ -60,11 +59,15 @@ public sealed class HostCleanupOrchestrationTests
         });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
+        // The current model includes columns newer than this migration. Seed at latest,
+        // then rewind to the populated predecessor before exercising the upgrade.
+        await migrator.MigrateAsync(migrations[cleanup - 1]);
         await migrator.MigrateAsync(migrations[cleanup]);
-        var sentinel = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == eventId);
+        var sentinel = await db.AgentTaskEvents.AsNoTracking().Where(e => e.Id == eventId)
+            .Select(e => new { e.InputBody, e.Detail }).SingleAsync();
         sentinel.InputBody.ShouldBe("existing input body", "C826.upgrade-preserves-input-body");
         sentinel.Detail.ShouldBe("existing event", "C826.upgrade-preserves-event");
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId)).Title
+        (await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => t.Title).SingleAsync())
             .ShouldBe("cleanup upgrade sentinel", "C826.upgrade-preserves-task");
         db.Database.HasPendingModelChanges().ShouldBeFalse("C826.cleanup-snapshot-agrees");
     }
