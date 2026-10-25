@@ -348,7 +348,12 @@ function ConvertTo-NightlyProfileLaunchGroups {
         Add-Member -InputObject $parts -NotePropertyName Key -NotePropertyValue ([string]$parts.Bare)
         Add-Member -InputObject $parts -NotePropertyName NodeCount -NotePropertyValue ([int]$cost.NodeCount)
         Add-Member -InputObject $parts -NotePropertyName Seconds -NotePropertyValue ([double]$cost.Seconds)
-        if ($known.Count -gt 0 -and [double]$cost.Seconds -gt [double]$script:NightlyLaunchLoneClassBudgetSeconds) {
+        # CARD-1584: native E2E startup is priced per expanded case. Keep
+        # lone E2E classes below 25 minutes; large matrices expose small
+        # argument batches as methods so this splitter can honor the bound.
+        $classBudget = [double]$script:NightlyLaunchLoneClassBudgetSeconds
+        if ($parts.Namespace -ceq 'Antiphon.E2E' -or $parts.Namespace.StartsWith('Antiphon.E2E.', [StringComparison]::Ordinal)) { $classBudget = 1500 }
+        if ($known.Count -gt 0 -and [double]$cost.Seconds -gt $classBudget) {
             [void]$oversized.Add([pscustomobject]@{ Parts = $parts; Nodes = $known })
             continue
         }
@@ -431,8 +436,12 @@ function Get-NightlyProfileLaunchPlan {
     # splitter's target: refuse the plan before launching any test process.
     foreach ($launch in $plan) {
         $seconds = [double]$launch.seconds
-        if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt 2400) {
-            throw ('launch-estimate-ceiling id={0} seconds={1} ceiling=2400' -f $launch.id, $seconds)
+        $ceiling = 2400
+        foreach ($class in @($launch.classes)) {
+            if ([string]$class -clike 'Antiphon.E2E.*') { $ceiling = 1800 }
+        }
+        if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt $ceiling) {
+            throw ('launch-estimate-ceiling id={0} seconds={1} ceiling={2}' -f $launch.id, $seconds, $ceiling)
         }
     }
     return $plan

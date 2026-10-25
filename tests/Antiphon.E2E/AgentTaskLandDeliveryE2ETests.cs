@@ -181,14 +181,26 @@ public class AgentTaskLandDeliveryE2ETests
         var received = await f.ReceiptAsync(); await f.AssertOnePromptAsync(received);
     }
 
+    // CARD-1584: each method selects at most two expanded cases (2 x 600 s).
     [Test]
     [Arguments("landed")]
     [Arguments("already-present")]
+    public Task C467_V29_RealOutcomeProducerMatrix_Batch1(string outcome) =>
+        C467_V29_RealOutcomeProducerMatrix(outcome);
+
+    [Test]
     [Arguments("residue-cleanup")]
     [Arguments("preoperation-refusal")]
+    public Task C467_V29_RealOutcomeProducerMatrix_Batch2(string outcome) =>
+        C467_V29_RealOutcomeProducerMatrix(outcome);
+
+    [Test]
     [Arguments("operation-refusal")]
     [Arguments("conflict")]
-    public async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
+    public Task C467_V29_RealOutcomeProducerMatrix_Batch3(string outcome) =>
+        C467_V29_RealOutcomeProducerMatrix(outcome);
+
+    private async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.ArrangeOutcomeAsync(outcome);
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
@@ -292,14 +304,26 @@ public class AgentTaskLandDeliveryE2ETests
         await f.RefuseStaleReviewAsync(receipt);
     }
 
+    // CARD-1584: each method selects at most two expanded cases (2 x 600 s).
     [Test]
     [Arguments("idle", "raw")]
     [Arguments("idle", "Apply")]
+    public Task C488_ReviewToLandReceiptMatrix_Batch1(string recipient, string form) =>
+        C488_ReviewToLandReceiptMatrix(recipient, form);
+
+    [Test]
     [Arguments("idle", "spill")]
     [Arguments("busy", "raw")]
+    public Task C488_ReviewToLandReceiptMatrix_Batch2(string recipient, string form) =>
+        C488_ReviewToLandReceiptMatrix(recipient, form);
+
+    [Test]
     [Arguments("busy", "Apply")]
     [Arguments("busy", "spill")]
-    public async Task C488_ReviewToLandReceiptMatrix(string recipient, string form)
+    public Task C488_ReviewToLandReceiptMatrix_Batch3(string recipient, string form) =>
+        C488_ReviewToLandReceiptMatrix(recipient, form);
+
+    private async Task C488_ReviewToLandReceiptMatrix(string recipient, string form)
     {
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(busy: recipient == "busy", completionForm: form);
@@ -324,17 +348,37 @@ public class AgentTaskLandDeliveryE2ETests
         await f.LandReviewedAsync(receipt);
     }
 
+    // CARD-1584: each method selects at most two expanded cases (2 x 600 s).
     [Test]
     [Arguments("settlement-before-save")]
     [Arguments("settlement-before-commit")]
+    public Task C488_ReviewDeliveryCrashMatrix_Batch1(string cut) =>
+        C488_ReviewDeliveryCrashMatrix(cut);
+
+    [Test]
     [Arguments("enqueue-exception")]
     [Arguments("queue-before-commit")]
+    public Task C488_ReviewDeliveryCrashMatrix_Batch2(string cut) =>
+        C488_ReviewDeliveryCrashMatrix(cut);
+
+    [Test]
     [Arguments("queue-inserted-before-outbox-link")]
     [Arguments("queue-committed-before-wakeup")]
+    public Task C488_ReviewDeliveryCrashMatrix_Batch3(string cut) =>
+        C488_ReviewDeliveryCrashMatrix(cut);
+
+    [Test]
     [Arguments("idle-lost-wakeup")]
     [Arguments("before-typing")]
+    public Task C488_ReviewDeliveryCrashMatrix_Batch4(string cut) =>
+        C488_ReviewDeliveryCrashMatrix(cut);
+
+    [Test]
     [Arguments("prompt-before-verdict")]
-    public async Task C488_ReviewDeliveryCrashMatrix(string cut)
+    public Task C488_ReviewDeliveryCrashMatrix_Batch5(string cut) =>
+        C488_ReviewDeliveryCrashMatrix(cut);
+
+    private async Task C488_ReviewDeliveryCrashMatrix(string cut)
     {
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync();
@@ -402,16 +446,32 @@ public class AgentTaskLandDeliveryE2ETests
         await f.AssertReviewSettledOnceAfterScansAsync(receipt);
     }
 
+    // CARD-1584: each method selects at most two expanded cases (2 x 600 s).
     [Test]
     [Arguments("Sent-only")]
     [Arguments("QueuedUserPrompt")]
+    public Task C494_ReviewReceiptRejectsFalseEvidence_Batch1(string arm) =>
+        C494_ReviewReceiptRejectsFalseEvidence(arm);
+
+    [Test]
     [Arguments("wrong-session")]
     [Arguments("wrong-id")]
+    public Task C494_ReviewReceiptRejectsFalseEvidence_Batch2(string arm) =>
+        C494_ReviewReceiptRejectsFalseEvidence(arm);
+
+    [Test]
     [Arguments("wrong-sha")]
     [Arguments("partial-middle")]
+    public Task C494_ReviewReceiptRejectsFalseEvidence_Batch3(string arm) =>
+        C494_ReviewReceiptRejectsFalseEvidence(arm);
+
+    [Test]
     [Arguments("old-sequence")]
     [Arguments("old-time")]
-    public async Task C494_ReviewReceiptRejectsFalseEvidence(string arm)
+    public Task C494_ReviewReceiptRejectsFalseEvidence_Batch4(string arm) =>
+        C494_ReviewReceiptRejectsFalseEvidence(arm);
+
+    private async Task C494_ReviewReceiptRejectsFalseEvidence(string arm)
     {
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(cut: "attempt");
