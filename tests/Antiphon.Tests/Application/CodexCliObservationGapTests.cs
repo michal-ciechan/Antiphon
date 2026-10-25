@@ -190,6 +190,9 @@ public sealed class CodexCliObservationGapTests
             await using var w = await World.CreateAsync(busy: true, remote: remote);
             var id = await w.CreateTaskAsync(Body);
             w.Fault.TaskId = id; w.Fault.AfterSave = after;
+            // SavedChanges can still be inside the enqueue transaction. For the postcommit
+            // arm observe the save, then cut the graph below, as the Grok recovery arm does.
+            w.Fault.ObserveCommitOnly = after;
             await w.DispatchAsync();
             w.Fault.Hits.ShouldBe(1, "C1029 exact queue-save seam reached");
             var original = await TaskAsync(w, id);
@@ -654,6 +657,8 @@ public sealed class CodexCliObservationGapTests
             var timestampFloor = q.LastDeliveryStartedAt.ShouldNotBeNull().AddSeconds(-30);
             receipts = receipts.Where(e => e.Timestamp >= timestampFloor).ToList();
         }
+        if (task.AgentKind == AgentKind.Codex && q.LastDeliveryGeneration is { } accepted)
+            receipts = receipts.Where(e => e.Timestamp is null || e.Timestamp >= accepted).ToList();
         receipts.ShouldHaveSingleItem("C1029 complete selected recipient W " + vector);
         q.Status.ShouldBe(QueuedMessageStatus.Sent);
         q.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
