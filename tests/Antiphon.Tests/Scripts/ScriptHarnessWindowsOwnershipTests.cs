@@ -11,6 +11,13 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ScriptHarnessWindowsOwnershipTests
 {
+    [Before(Test)]
+    public void RequireNativeWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Native Windows job ownership qualification requires Windows.");
+    }
+
     [Test]
     public Task Child_is_assigned_before_first_instruction()
     {
