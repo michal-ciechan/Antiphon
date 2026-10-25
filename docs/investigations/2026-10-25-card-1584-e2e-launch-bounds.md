@@ -79,3 +79,42 @@ double/extra selections and existing packing/watchdog assertions were intact.
 The final repair changes only the PowerShell expected arithmetic and this
 record; the already built host and E2E binaries remain applicable. Rerun only
 C1410_MeasuredCostGroups with --no-build. Historical red evidence is retained.
+
+## Final evidence
+
+C1410_MeasuredCostGroups passed at
+04f7d8b4de76b937d22fb64ff44b34cf52af70bf: one executed, one passed,
+zero failed/skipped, 28.114 seconds. The leased --no-build rerun waited
+zero seconds and held its slot for 31 seconds. Together with the earlier
+three passing methods this completes all four planner regression obligations.
+The original four-method run's one golden-total failure remains historical red;
+it is not represented as an all-green run. No C# source changed after the build.
+
+Ignored local evidence (relative to /work/worktrees/task-71c5f35f):
+
+- .antiphon/c1584-build.log (both projects, one isolated build)
+- .antiphon/c1584-tunit/c1584-planners.trx (three passes, one golden-total red)
+- .antiphon/c1584-listing-green/c1584-listing-green.trx (exact repaired method)
+- .antiphon/c1584-red (expected original planner assertion failure)
+- .antiphon/c1584-final-script (direct repaired planner witness)
+- .antiphon/c1584-owned-outputs.txt (35 task-created bin-c1584 roots;
+  pre-build inventory was empty; removed after all child runs exited)
+
+The existing antiphon full-listing golden census remains 107 launches and
+19284 required nodes including probes; only its estimated total changed.
+Native E2E success and actual Windows durations remain unverified by design.
+No native runs, Unit lane, live qualification changes, tags or Review dispatch.
+Restart: none. Caller handoff: land; CARD-1585 remains open and untouched.
+
+Pushed implementation/test slices (full SHA):
+
+- c023f3c84bc4fdb31b65bdef12baa2c477560efb: initial witness authoring
+- d8f453ff8b03bb916990c630d82eba18df66013d: literal PowerShell correction,
+  then the intended original-defect red witness
+- 6c35542b2b2afa4298369c228e03adca17c00c95: cost/splitting repair and compiled verification
+- 04f7d8b4de76b937d22fb64ff44b34cf52af70bf: exact shared-node golden arithmetic repair
+
+Evidence-diff at the last implementation tip: four commits, zero violations.
+The fetched origin/master was e5a867361937752b959c1451824ab9716fac83c0;
+merge-tree --write-tree completed without conflicts. Final report-only commit
+is checked again before handoff. No merge, rebase, reset or force push occurred.
