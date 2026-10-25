@@ -259,6 +259,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
     internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
         public AgentKind Kind { get; init; } = AgentKind.Codex;
+        public TimeProvider Clock { get; set; } = TimeProvider.System;
         public bool Ready { get; set; } = true;
         public bool Ack { get; set; } = true;
         public bool HoldTurnEnd { get; set; }
@@ -279,7 +280,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public void Append(Guid id, string kind, string? text = null, string? stopReason = null, DateTimeOffset? timestamp = null, bool nullTimestamp = false, long? sequence = null)
         {
             var entries = _transcripts[id];
-            entries.Add(new(id, sequence ?? (entries.LastOrDefault()?.Sequence ?? 0) + 1, kind, Guid.NewGuid().ToString("N"), null, nullTimestamp ? null : timestamp ?? DateTimeOffset.UtcNow,
+            entries.Add(new(id, sequence ?? (entries.LastOrDefault()?.Sequence ?? 0) + 1, kind, Guid.NewGuid().ToString("N"), null, nullTimestamp ? null : timestamp ?? Clock.GetUtcNow(),
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
@@ -294,7 +295,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public string Health() => "Healthy";
         public IReadOnlyList<RunnerSessionDto> List() => Terminals.Keys.Select(Session).ToList();
         private RunnerSessionDto Session(Guid id) => new(id, 1234, Terminals[id].StartedAcceptedGeneration!.Value,
-            Terminals[id].Killed ? "Exited" : "Running", Terminals[id].Killed ? 0 : null, "Unknown", _transcripts[id].Count,
+            Terminals[id].Killed ? "Exited" : "Running", Terminals[id].Killed ? 0 : null, "Unknown", OutputSequence(id),
             GrokRulesReceipt: _rules.GetValueOrDefault(id), AcceptedStartedAt: Terminals[id].StartedAcceptedGeneration);
         public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(Terminals.ContainsKey(id) ? Session(id) : new RunnerSessionDto(id, null, DateTime.UtcNow, "Exited", 0, "Unknown", 0));
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
@@ -334,7 +335,9 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 SessionId: request.SessionId, AcceptedStartedAt: request.AcceptedStartedAt), ct);
             return Session(request.SessionId);
         }
-        public RunnerBufferDto GetBuffer(Guid id) => new(id, Terminals[id].SnapshotRawOutput(), _transcripts[id].Count);
+        private long OutputSequence(Guid id) => Kind == AgentKind.ClaudeCode
+            ? Terminals[id].SnapshotSequence : _transcripts[id].Count + Terminals[id].Inputs.Count;
+        public RunnerBufferDto GetBuffer(Guid id) => new(id, Terminals[id].SnapshotRawOutput(), OutputSequence(id));
         public async Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
         {
             var terminal = Terminals[id];
@@ -350,7 +353,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.V0158FooterOnlyReady,
                     "> " + terminal.ComposerText);
             return new RunnerSnapshotDto(id, terminal.SnapshotRawOutput(), screen,
-                Kind == AgentKind.ClaudeCode ? terminal.SnapshotSequence : _transcripts[id].Count + terminal.Inputs.Count,
+                OutputSequence(id),
                 terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration,
                 await terminal.ObserveDialogAsync(id, ct));
         }
@@ -364,13 +367,17 @@ internal static partial class CodexCliRemoteDeliveryFixture
         {
             if (BeforeBody is { } check) await check(id, input);
             await Terminals[id].SendInputAsync(input, ct);
+            if (Kind == AgentKind.ClaudeCode) Terminals[id].SnapshotSequence++;
             if (Kind == AgentKind.ClaudeCode && input == ComposerInputProbe.KillLine)
                 Terminals[id].PrimeComposer(""); // Actual scripted Ctrl+U effect; the readiness probe stays enabled.
         }
         public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct)
         {
             if (BeforeBody is { } check) await check(id, request.Input);
-            return (await Terminals[id].SendConditionalInputAsync(request, ct)) with { SessionId = id };
+            var result = await Terminals[id].SendConditionalInputAsync(request, ct);
+            if (result.Outcome == ConditionalInputOutcomes.Written && request.Input == ComposerInputProbe.KillLine)
+                Terminals[id].PrimeComposer("");
+            return result with { SessionId = id };
         }
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => Terminals[id].ResizeAsync(cols, rows, ct);
