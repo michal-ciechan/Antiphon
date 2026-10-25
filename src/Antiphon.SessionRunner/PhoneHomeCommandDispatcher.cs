@@ -438,6 +438,7 @@ public sealed class PhoneHomeCommandDispatcher
                 {
                     var body = request.Payload?.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Conditional input body is required.");
+                    await WriteSpillIfPresentAsync(request, ct);
                     return Result(request, await _runtime.SendConditionalInputAsync(ReadSessionId(request), body, ct));
                 }),
                 PhoneHomeOperation.ClearBuffer => await MutateAsync(request, async () =>
