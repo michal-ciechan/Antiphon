@@ -126,6 +126,11 @@ public sealed class GrokRulesCompactionRecoveryTests
             await db.SaveChangesAsync();
             await rules.RecoverActiveAsync(CancellationToken.None);
         }
+        // Offline ingestion only commits actions; execute its effects before checking recovery.
+        // Startup deliberately exercises RecoverActiveAsync instead of the ingestion lane.
+        if (lane != "startup")
+            await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(h.SessionId, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBeEmpty("native auto compaction during a tool turn must not flush older work");
         captured.Kind.ShouldBe(TranscriptKinds.CompactBoundary);
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId && m.RulesBoundarySequence != null))
