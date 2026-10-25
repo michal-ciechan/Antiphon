@@ -252,8 +252,9 @@ public class MutationDispatchTests
         {
             using var scope = Bridge.Provider.CreateScope();
             var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-            await dispatcher.TickAsync(default);
             var inspection = Bridge.Provider.GetRequiredService<CardSiblingInspectionQueue>();
+            inspection.Start();
+            await dispatcher.TickAsync(default);
             if (inspection.Outstanding > 0)
             {
                 // Card-base inspection now completes outside the dispatch transaction.
