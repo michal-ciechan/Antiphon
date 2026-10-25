@@ -54,6 +54,8 @@ public sealed partial class SessionMessageQueueService
             await using (var scope = _scopeFactory.CreateAsyncScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+                    return ExpectationSendResult.Refuse("receipt_readiness_pending");
                 var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
                 if (session is null || session.Status != SessionStatus.Running)
                     return ExpectationSendResult.Refuse("destination_not_running");

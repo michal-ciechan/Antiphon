@@ -682,7 +682,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // brief enqueued at dispatch time is sitting Pending right now. If the launch note
             // above started a turn, this no-ops and the turn-end flush takes over.
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
-            await _messageQueue.FlushSessionAsync(session.Id, ct);
+            if (resumeMode is not null && session.AgentKind == AgentKind.ClaudeCode
+                && session.StandingAgentId is not null && !string.IsNullOrWhiteSpace(notes?.ResumeBody))
+                await FlushContainedResumeAsync(session.Id, ct);
+            else
+                await _messageQueue.FlushSessionAsync(session.Id, ct);
 
             // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an
             // AgentChanged event, and zero evidence that anything can be reached.
