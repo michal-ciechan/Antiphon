@@ -12,6 +12,29 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingRegistrationFreshnessTests
 {
     [Test]
+    public async Task C975_WindowsBacklinkUsesGitDirectorySpelling()
+    {
+        const string observer = @"C:\fixture with spaces\observer";
+        var queries = new List<(string Directory, string[] Arguments)>();
+
+        var contents = await BacklinkContentsAsync(observer, (directory, arguments) =>
+        {
+            queries.Add((directory, arguments));
+            return Task.FromResult("C:/fixture with spaces/observer/.git\r\n");
+        });
+
+        contents.ShouldBe("C:/fixture with spaces/observer/.git\n",
+            "Git for Windows must recognize the observer backlink rather than a malformed backslash path");
+        queries.ShouldHaveSingleItem();
+        queries[0].Directory.ShouldBe(observer);
+        queries[0].Arguments.ShouldBe(new[] { "rev-parse", "--absolute-git-dir" });
+    }
+
+    private static Task<string> BacklinkContentsAsync(string observer,
+        Func<string, string[], Task<string>> readGit) =>
+        Task.FromResult(Path.Combine(observer, ".git") + "\n");
+
+    [Test]
     [Arguments(LandInspectionScope.IdentityOnly)]
     [Arguments(LandInspectionScope.IdentityAndStatus)]
     [Arguments(LandInspectionScope.Full)]
@@ -181,7 +204,8 @@ public sealed class LandingRegistrationFreshnessTests
         {
             redirected.ShouldBeFalse("each scenario injects one backlink change");
             redirected = true;
-            await File.WriteAllTextAsync(backlink, Path.Combine(fixture.Observer, ".git") + "\n");
+            await File.WriteAllTextAsync(backlink, await BacklinkContentsAsync(fixture.Observer,
+                (directory, arguments) => RequiredAsync(reader, directory, arguments)));
             AssertStamp();
             var listed = await RequiredAsync(reader, fixture.Repository, "worktree", "list", "--porcelain", "-z");
             var rows = LandingGit.ParseRegistrations(listed);
