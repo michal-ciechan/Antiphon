@@ -299,6 +299,8 @@ remain visible in diagnostics. Do not count internal scenarios as test execution
 | G-24 | D-7 receipt reconciliation precedes retry | PC-24 |
 | G-25 | D-7 attempt metadata retained on deferral/reconstruction | PC-25 |
 | G-26 | D-9 observation timeout is a deferral, not launch cancellation | PC-26 |
+| G-27 | D-3 an observed shortened binding stays invalid through regrowth | PC-27 |
+| G-28 | D-3 malformed UTF-8 cannot be hidden by replacement decoding | PC-28 |
 
 Existing Working, non-AlwaysOn and conditional-kill generation guards are retained,
 not weakened or replaced; V-7 exercises them and their pre-existing tests remain
@@ -341,7 +343,10 @@ and variant names in its report. Never accept a build error or zero tests as red
 | PC-25 | Refund/clear the attempt record on defer | V-6 method: original attempt fields and row ID remain equal |
 | PC-26 | Propagate observation timeout into launch cleanup | V-4 method: timed-out pull leaves completed live launch and retained note |
 
-Inventory: guards=26, mapped=26, missing=0, duplicate PC maps=0. If implementation
+| PC-27 | Forget observed truncation when the same file regrows | `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`: truncation-regrowth is never Ready without replay |
+| PC-28 | Remove strict byte validation before replacement decoding | `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`: invalid-utf8 refuses Ready |
+
+Inventory: guards=28, mapped=28, missing=0, duplicate PC maps=0. If implementation
 shares a gate, each entry point still needs its named reachability witness. Ordinary
 red proofs cover each changed behavior before its fix; post-land controls remain
 pending until their own witnessed red/restore/green runs.
@@ -369,7 +374,7 @@ location in commands. Use the checkpoint tool and host build-slot gate.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-red | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader-red/` | portable-reader-red | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 2 executed; V-1 has an assertion failure on absent Ready (not compile/setup); record actual V-2 outcome | 2 | 2 |
-| CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader/` | portable-reader-green | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 2 passed, 0 failed/skipped; every named matrix scenario checked | 2 | 2 |
+| CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader/` | portable-reader-green | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 3 passed, 0 failed/skipped; every named matrix plus the truncation-regrowth/invalid-utf8 extension checked | 3 | 2 |
 | CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1574-resume-red/` | portable-resume-red | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 executed; assertion reds in readiness propagation/commit fencing, durable resume, delayed receipt and restart recovery; V-7 outcomes recorded separately | 5 | 4 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1574-resume/` | portable-resume-green | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 passed, 0 failed/skipped; every cut/variant checked | 5 | 4 |
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-existing/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
@@ -411,9 +416,9 @@ the 10-minute server portion avoids at least 15.5 minutes of unrelated execution
 before accounting for full-run repeats; comparisons are estimates across different
 fixture mixes, not measured savings.
 
-Post-land Mutation: **26 controls**, budget **3 minutes
+Post-land Mutation: **28 controls**, budget **3 minutes
 per method-scoped red/restore/green cycle** including amortized build/setup:
-**78 minutes total provisional**, split into four independently joined
+**84 minutes total provisional**, split into four independently joined
 batches of at most seven controls / 21 minutes each. Only PCs require that work;
 do not run them during Code. If a batch/run is expected or observed above 30
 minutes, caller commissions Debug with source, selection, host/load and timings
@@ -468,3 +473,7 @@ Publish the exact Code tip for ordinary Review before landing. A master land alo
 does not activate either runner readiness or the server gate; caller must qualify
 both running versions on the reviewed rc line before claiming the incident fixed
 in production. No setting, runner pin or live queue action is requested here.
+
+## Code checkpoint amendment (2026-10-25)
+
+Reader inspection added a separate red/green witness for two D-3 holes: observed truncation followed by same-inode/same-extent regrowth, and malformed UTF-8 hidden by replacement decoding before JSON validation. CP-1 and the first two CP-2 receipts remain historical two-method selections. Subsequent CP-2 uses the three-method full reader class with the new exact method `C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown`. Each new compiling guard has its own pending PC-27/PC-28; no Mutation is executed by Code. The first three-method CP-2 is intentionally red before the reader repair. The source changes and new assertion justify that changed proof selection; no unchanged green repetition is requested. S2 and Final scope remain incomplete in this budgeted checkpoint.

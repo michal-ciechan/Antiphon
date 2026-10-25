@@ -144,6 +144,51 @@ public class ResumeReceiptReadinessTests
         }
     }
 
+    [Test]
+    public async Task C1574_Truncation_regrowth_and_invalid_utf8_stay_unknown()
+    {
+        var unsafeVariants = new List<string>();
+        foreach (var variant in new[] { "truncation-regrowth", "invalid-utf8" })
+        {
+            Console.WriteLine("C1574 reader variant=" + variant);
+            var initial = Prompt("initial", "hello");
+            await using var world = new World(initial);
+            world.Tailer.Start();
+            await Ready(world.Tailer);
+            await world.Tailer.TerminalObservation.ReadGate.WaitAsync();
+            try
+            {
+                if (variant == "truncation-regrowth")
+                {
+                    await File.WriteAllTextAsync(world.Path, "");
+                    (world.Tailer.Snapshot().Readiness?.Status).ShouldBe("Unknown");
+                    // Same inode and extent, different complete content: the old parsed prefix
+                    // cannot become authoritative simply because the file grew again.
+                    var replacement = Prompt("changed", "other");
+                    replacement.Length.ShouldBe(initial.Length);
+                    await File.WriteAllTextAsync(world.Path, replacement);
+                    if (world.Tailer.Snapshot().Readiness?.Status == "Ready")
+                        unsafeVariants.Add(variant);
+                }
+                else
+                {
+                    await using var append = new FileStream(world.Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    await append.WriteAsync(System.Text.Encoding.UTF8.GetBytes("{\"type\":\"user\",\"uuid\":\"invalid\",\"message\":{\"role\":\"user\",\"content\":\""));
+                    await append.WriteAsync(new byte[] { 0xff });
+                    await append.WriteAsync(System.Text.Encoding.UTF8.GetBytes("\"}}\n"));
+                }
+            }
+            finally { world.Tailer.TerminalObservation.ReadGate.Release(); }
+            if (variant == "invalid-utf8")
+            {
+                await Until(() => world.Tailer.Snapshot().Readiness?.ParsedThrough == new FileInfo(world.Path).Length);
+                if (world.Tailer.Snapshot().Readiness?.Status == "Ready")
+                    unsafeVariants.Add(variant);
+            }
+        }
+        unsafeVariants.ShouldBeEmpty("neither lost history nor replacement-decoded input can certify a complete current transcript");
+    }
+
     private static async Task Ready(TranscriptTailer tailer) =>
         await Until(() => tailer.Snapshot().Readiness?.Status == "Ready");
 
