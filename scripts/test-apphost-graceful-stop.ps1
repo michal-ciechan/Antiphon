@@ -47,6 +47,9 @@ function Install-C716Scripts {
     New-Item -ItemType Directory -Path $scripts -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Destination (Join-Path $scripts 'restart-apphost.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $here 'apphost-common.ps1') -Destination (Join-Path $scripts 'apphost-common.ps1') -Force
+    $lib = Join-Path $scripts 'lib'
+    New-Item -ItemType Directory -Path $lib -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $here 'lib/live-startup-timing.ps1') -Destination (Join-Path $lib 'live-startup-timing.ps1') -Force
     @(
         '# inert CARD-0716'
         'Write-Host "check-daemon-build inert"'
