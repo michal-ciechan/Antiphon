@@ -30,9 +30,11 @@ public sealed class LandingRegistrationFreshnessTests
         queries[0].Arguments.ShouldBe(new[] { "rev-parse", "--absolute-git-dir" });
     }
 
-    private static Task<string> BacklinkContentsAsync(string observer,
+    private static async Task<string> BacklinkContentsAsync(string observer,
         Func<string, string[], Task<string>> readGit) =>
-        Task.FromResult(Path.Combine(observer, ".git") + "\n");
+        // Preserve Git's spelling, as LandHalfResetFixture does: Git for Windows does
+        // not interpret a backslash-written admin backlink as the observer checkout.
+        (await readGit(observer, ["rev-parse", "--absolute-git-dir"])).Trim() + "\n";
 
     [Test]
     [Arguments(LandInspectionScope.IdentityOnly)]
@@ -206,8 +208,12 @@ public sealed class LandingRegistrationFreshnessTests
             redirected = true;
             await File.WriteAllTextAsync(backlink, await BacklinkContentsAsync(fixture.Observer,
                 (directory, arguments) => RequiredAsync(reader, directory, arguments)));
+            Console.WriteLine($"C975 backlink={System.Text.Json.JsonSerializer.Serialize(await File.ReadAllTextAsync(backlink))} " +
+                $"parentStampBefore={stamp:O} parentStampAfter={Directory.GetLastWriteTimeUtc(worktrees):O} " +
+                $"entriesBefore={entryCount} entriesAfter={Directory.EnumerateFileSystemEntries(worktrees).Count()}");
             AssertStamp();
             var listed = await RequiredAsync(reader, fixture.Repository, "worktree", "list", "--porcelain", "-z");
+            Console.WriteLine("C975 liveRegistrations=" + System.Text.Json.JsonSerializer.Serialize(listed));
             var rows = LandingGit.ParseRegistrations(listed);
             rows.Any(row => LandingGit.PathsEqual(row.Path, fixture.Source)).ShouldBeFalse();
             rows.Any(row => LandingGit.PathsEqual(row.Path, fixture.Observer)).ShouldBeTrue();
