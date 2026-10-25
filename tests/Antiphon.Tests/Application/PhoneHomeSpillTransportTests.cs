@@ -28,6 +28,45 @@ namespace Antiphon.Tests.Application;
 public sealed class PhoneHomeSpillTransportTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Conditional_input_carries_spill_and_only_acks_a_written_result(bool failSpill)
+    {
+        using var runner = new RunnerSide();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        live.DispatchEligible = true;
+        peer.Reply = runner.Answer;
+        var courier = new RemoteSpillCourier();
+        var client = new PhoneHomeRunnerClient(live, courier);
+        var sessionId = Guid.NewGuid();
+        const string body = "complete conditional spill α\nretained until acknowledged";
+        courier.Stage(sessionId, runner.Cwd, new PhoneHomeInputSpill(RunnerSide.Relative, body));
+        var request = new RunnerConditionalInputRequest(DateTime.UtcNow, 0, "Read .antiphon/inbox/brief.md in full");
+        if (failSpill)
+        {
+            Directory.CreateDirectory(runner.SpillPath); // A directory cannot be replaced by the spill file.
+            await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.RunnerSpillWriteException>(() =>
+                client.SendConditionalInputAsync(sessionId, request, CancellationToken.None));
+            runner.Inputs.ShouldBeEmpty("failed spill must precede every terminal write");
+            courier.IsStaged(sessionId).ShouldBeTrue();
+            return;
+        }
+        runner.ConditionalOutcome = ConditionalInputOutcomes.StaleObservation;
+        var refused = await client.SendConditionalInputAsync(sessionId, request, CancellationToken.None);
+        refused.Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        runner.SpillSeenAtConditional.ShouldBe(body, "the runner must write the complete spill before conditional input");
+        runner.Inputs.ShouldBeEmpty();
+        courier.IsStaged(sessionId).ShouldBeTrue("a refused conditional write cannot acknowledge the staged body");
+        runner.ConditionalOutcome = ConditionalInputOutcomes.Written;
+        (await client.SendConditionalInputAsync(sessionId, request, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        runner.Inputs.ShouldHaveSingleItem().ShouldBe(request.Input);
+        (await File.ReadAllTextAsync(runner.SpillPath)).ShouldBe(body);
+        courier.IsStaged(sessionId).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Staged_body_reaches_the_runner_and_lands_on_disk()
     {
         using var runner = new RunnerSide();
@@ -146,10 +185,12 @@ public sealed class PhoneHomeSpillTransportTests
         public string Cwd { get; }
         public string SpillPath { get; }
         public List<string> Inputs { get; } = [];
+        public string ConditionalOutcome { get; set; } = ConditionalInputOutcomes.Written;
+        public string? SpillSeenAtConditional { get; private set; }
 
         /// <summary>Answers the peer's frame by running the REAL runner-side dispatcher.</summary>
         public PhoneHomeFrame? Answer(PhoneHomeFrame frame) =>
-            frame.Operation == PhoneHomeOperation.Input
+            frame.Operation is PhoneHomeOperation.Input or PhoneHomeOperation.ConditionalInput
                 ? _dispatcher.DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult()
                 : null;
 
@@ -185,10 +226,14 @@ public sealed class PhoneHomeSpillTransportTests
                 owner.Inputs.Add(input);
                 return Task.CompletedTask;
             }
-            public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
-                Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
-                Task.FromResult(new RunnerConditionalInputResult(
-                    sessionId, ConditionalInputOutcomes.Written, DateTime.UtcNow, 1));
+            public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+                Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+            {
+                owner.SpillSeenAtConditional = File.Exists(owner.SpillPath)
+                    ? await File.ReadAllTextAsync(owner.SpillPath, ct) : null;
+                if (owner.ConditionalOutcome == ConditionalInputOutcomes.Written) owner.Inputs.Add(request.Input);
+                return new(sessionId, owner.ConditionalOutcome, DateTime.UtcNow, 1);
+            }
             public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
             public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
             public Task<RunnerKillGenerationResult> KillGenerationAsync(
