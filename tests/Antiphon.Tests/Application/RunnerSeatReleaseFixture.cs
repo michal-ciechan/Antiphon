@@ -38,6 +38,10 @@ namespace Antiphon.Tests.Application;
 /// <summary>Migrated isolated PostgreSQL, real queue/state/DI and serialized fake runner I/O.</summary>
 internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
 {
+    internal static Task<PhoneHomeRegistrationResponse> RegisterRuntimeAsync(PhoneHomeTestHost host,
+        Guid storeId, RunnerCapabilitiesDto capabilities) =>
+        host.RegisterAsync(storeId: storeId, capabilities: capabilities);
+
     public required IsolatedTestSchema Schema { get; init; }
     public required BridgeQueueHarness Harness { get; set; }
     private BridgeQueueHarness.HarnessOptions? _harnessOptions;
@@ -787,7 +791,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             if (_phoneHome)
             {
                 _phoneHost = await PhoneHomeTestHost.StartAsync();
-                var ticket = await _phoneHost.RegisterAsync(storeId: Runtime.RunnerStoreId, capabilities: adapter.Capabilities());
+                var ticket = await RegisterRuntimeAsync(_phoneHost, Runtime.RunnerStoreId, adapter.Capabilities());
                 _socket = new ClientWebSocket();
                 _socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
                 await _socket.ConnectAsync(_phoneHost.ConnectUri, default);

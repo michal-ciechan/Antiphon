@@ -11,6 +11,34 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointTempScopeTests : CheckpointTestBase
 {
     [Test]
+    public async Task teardown_clears_read_only_git_objects_before_windows_delete()
+    {
+        string? gitObject = null;
+        var scope = new CheckpointTestScope(beforeDelete: _ =>
+        {
+            // Force the Windows deletion rule on Linux as well.
+            if ((File.GetAttributes(gitObject!) & FileAttributes.ReadOnly) != 0)
+                throw new UnauthorizedAccessException("Windows cannot delete a read-only Git object");
+        });
+        var root = scope.TempDir();
+        gitObject = Path.Combine(root, ".git", "objects", "ab", "fixture");
+        Directory.CreateDirectory(Path.GetDirectoryName(gitObject)!);
+        File.WriteAllText(gitObject, "git object");
+        File.SetAttributes(gitObject, File.GetAttributes(gitObject) | FileAttributes.ReadOnly);
+        try
+        {
+            await scope.DisposeAsync();
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (File.Exists(gitObject))
+                File.SetAttributes(gitObject, File.GetAttributes(gitObject) & ~FileAttributes.ReadOnly);
+            await scope.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task unfinished_registered_work_retains_roots(CancellationToken cancellationToken)
     {
         using var timing = new CheckpointTimingHarness(nameof(unfinished_registered_work_retains_roots), "two-roots", cancellationToken);
