@@ -62,7 +62,11 @@ public class ClaudeAdapterEffortPromptTests
     public async Task Local_clear_failure_retains_evidence_before_scratch_cleanup()
     {
         var observation = new FailureObservation();
-        await Should.ThrowAsync<ShouldAssertException>(() => RunAsync(false, "xhigh", true, observation));
+        // Shouldly 4.3 ThrowAsync rethrows assertion exceptions; this failure is intentional.
+        ShouldAssertException? failure = null;
+        try { await RunAsync(false, "xhigh", true, observation); }
+        catch (ShouldAssertException ex) { failure = ex; }
+        failure.ShouldNotBeNull("the controlled readiness assertion must fail");
         Directory.Exists(observation.Scratch).ShouldBeFalse();
         observation.Artifact.ShouldNotBeNull("readiness failure must retain evidence before scratch cleanup");
         var evidence = await File.ReadAllTextAsync(observation.Artifact);
