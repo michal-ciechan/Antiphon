@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Antiphon.SessionRunner.Contracts;
@@ -43,7 +44,7 @@ public class StandingSessionQueueSwitchTests
     [Test]
     public async Task Target_late_confirmation_and_open_task_guards_remain_intact()
     {
-        var adapter = new FakeAgentProtocolAdapter();
+        var adapter = new FakeAgentProtocolAdapter().WithClaudeDialogObservation();
         await using var f = new StandingRecoveryFixture(adapter);
         await f.SeedAsync();
         adapter.RegisterOnStart = f.Harness.Provider.GetRequiredService<AgentSessionRuntime>();
@@ -160,7 +161,7 @@ public class StandingSessionQueueSwitchTests
     [Test]
     public async Task Only_unattempted_messages_move_atomically_and_keep_order_and_routing()
     {
-        var adapter = new FakeAgentProtocolAdapter();
+        var adapter = new FakeAgentProtocolAdapter().WithClaudeDialogObservation();
         await using var f = new StandingRecoveryFixture(adapter);
         await f.SeedAsync();
         adapter.RegisterOnStart = f.Harness.Provider.GetRequiredService<AgentSessionRuntime>();
