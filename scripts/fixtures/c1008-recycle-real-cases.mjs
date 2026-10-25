@@ -87,8 +87,8 @@ const endpoint = http.createServer(async (req,res) => {
     }
     if(runner==='server2-temp'&&req.method==='GET'&&active.retirementSequence){
       active.retirementReads=(active.retirementReads||0)+1;
-      if(active.retirementReads===2)Object.assign(active.statuses[runner],vectors.tempRetiredAbsent,{available:true,dispatchEligible:true,runnerSessions:0});
-      if(active.retirementReads>=3)Object.assign(active.statuses[runner],vectors.tempRetiredAbsent);
+      if(active.retirementReads===2)Object.assign(active.statuses[runner],vectors.tempRetiredAbsent,{buildVersion:previousSha,available:true,dispatchEligible:true,runnerSessions:0});
+      if(active.retirementReads>=3)Object.assign(active.statuses[runner],vectors.tempRetiredAbsent,{buildVersion:previousSha});
       if(active.exitNext&&!active.exitedByFixture){
         for(const id of containers(active.temp)) {const c=JSON.parse(docker('inspect',id))[0];ownedObject(ownedRoot(root),c);if(c.State.Running)runDocker('stop','--time','1','--',id);}
         active.exitedByFixture=true;
@@ -426,7 +426,7 @@ async function c994Cases() {
   }
   {
     const f=fixture(false);createContainer(f,'session-runner',true,[],f.temp);createContainer(f,'state-init',false,[],f.temp);
-    f.statuses['server2-temp']=structuredClone(vectors.tempAccepting);f.retirementSequence=true;
+    f.statuses['server2-temp']={...structuredClone(vectors.tempAccepting),buildVersion:previousSha};f.retirementSequence=true;
     await c994Wrapper(f,'drain-temp');absent(f);stillVolumes(f);sameMain(f);
     if(!f.sequenceEvidence.some(s=>s.retiredAt&&s.available&&!s.exited)||!f.sequenceEvidence.some(s=>s.retiredAt&&!s.available&&!s.exited)||!f.exitedByFixture)throw Error('RetirementExitSequenceMissing');
     f.retirementSequence=false;
