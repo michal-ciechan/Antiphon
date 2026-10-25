@@ -12,6 +12,22 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class TimeoutTests : CheckpointTestBase
 {
     [Test]
+    public async Task budget_rearms_a_timer_that_fires_before_the_monotonic_deadline()
+    {
+        await using var budget = new RunBudgetClock(TimeSpan.FromMilliseconds(200), null, new EarlyTimerClock());
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = budget.Token.Register(() => canceled.TrySetResult());
+        await canceled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        budget.Reason.ShouldBe("execution-budget-exceeded");
+    }
+
+    private sealed class EarlyTimerClock : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            TimeProvider.System.CreateTimer(callback, state, TimeSpan.FromMilliseconds(10), period);
+    }
+
+    [Test]
     public async Task budget_expiry_can_join_its_timer_from_a_cancellation_continuation()
     {
         var budget = new RunBudgetClock(TimeSpan.FromMilliseconds(100), null);
