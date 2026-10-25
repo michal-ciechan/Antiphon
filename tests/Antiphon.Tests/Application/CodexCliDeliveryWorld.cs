@@ -54,6 +54,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             var root = System.IO.Directory.CreateTempSubdirectory("c1029-recipient-").FullName;
             var world = new World { Schema = schema, Git = git, Root = root, Busy = busy, Kind = kind,
                 Remote = remote, Recipient = new(sample) { Kind = kind }, Freeze = new(schema.ConnectionString) };
+            world.Recipient.Clock = world.Clock;
             try
             {
                 await git.CommitFileAsync("seed.txt", "C1029 retained recipient\n");
