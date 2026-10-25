@@ -400,8 +400,8 @@ source SHA; select only the rows due for that group. Use the tool's `run`, then
 Selections are `--rows CP-1`, `--rows CP-2`, `--rows CP-3`, then
 `--rows CP-4,CP-5 --serial`. Supply `--expected-source-sha <full-committed-sha>`
 on each run, `--max-wait 00:00:45` on run/wait, and retain the printed run path
-for `wait --run <path>`. Override importer limits with `--row-timeout 4` for
-CP-1/2 and `--row-timeout 8` for CP-3; use the imported manifest with individual
+for `wait --run <path>`. Override importer limits with `--row-timeout 4m` for
+CP-1/2 and `--row-timeout 8m` for CP-3; use the imported manifest with individual
 limits of 8 and 4 minutes for CP-4/5. Intended red rows retain their original
 receipts; CP-2/4 are the distinct narrow green records after the fixes.
 Use `scripts/build-slot.ps1` if compiling/invoking the checkpoint CLI via `dotnet

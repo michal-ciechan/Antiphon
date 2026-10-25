@@ -575,6 +575,8 @@ public sealed partial class SessionMessageQueueService
             DeliveryOutcome outcome;
             try
             {
+                if (!await CanWriteResumeInputAsync(sessionId, ct))
+                    throw new ConflictException("Transcript receipt readiness is pending; input was deferred.");
                 await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
                 await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
                 await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -907,8 +909,10 @@ public sealed partial class SessionMessageQueueService
             // Pending here; DeliverNextLockedAsync is the single automatic admission predicate
             // (CARD-0574 D-10). The launch path flushes the queue itself the moment boot completes
             // (FlushSessionAsync).
+            var resumeReady = !deliverIfIdle || await CanWriteResumeInputAsync(db, sessionId, ct);
             var working = await ReadWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
+                && resumeReady
                 && await _runtime.IsLiveOrUnknownAsync(session, ct)
                 && !working)
             {
@@ -996,6 +1000,8 @@ public sealed partial class SessionMessageQueueService
         TranscriptBaseline nowBaseline;
         try
         {
+            if (!await CanWriteResumeInputAsync(sessionId, ct))
+                throw new ConflictException("Transcript receipt readiness is pending; input was deferred.");
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -1468,6 +1474,8 @@ public sealed partial class SessionMessageQueueService
             }
 
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
+            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+                return await GetQueueAsync(sessionId, ct);
             var beforeCall = db.Entry(message).CurrentValues.Clone();
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -1617,6 +1625,8 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+                return lateConfirmed.ToResult() with { Deferred = true };
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
             if (action is not null)
             {
@@ -1782,7 +1792,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                if (!await ReadWorkingAsync(db, sessionId, ct))
+                if (await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
                     result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
             finally
@@ -1831,7 +1841,7 @@ public sealed partial class SessionMessageQueueService
             // Boot is not the moment to compact — cancel-not-strand, a later sweep re-derives.
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
-            result = !await ReadWorkingAsync(db, sessionId, ct)
+            result = await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct)
                 ? await DeliverNextLockedAsync(db, sessionId, ct)
                 : FlushResult.Nothing;
             if (result == FlushResult.Nothing && receipts.Confirmed > 0)
@@ -1885,7 +1895,7 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
-            if (!await ReadWorkingAsync(db, sessionId, ct))
+            if (await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
             {
                 // A pending auto-compact after a *manual* compact is redundant; drop it.
                 await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
@@ -2263,6 +2273,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
         }
 
+        if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return TemporaryBlock();
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         if (rulesSession is null || rulesSession.Status != SessionStatus.Running
             || rulesSession.GrokRulesState == GrokRulesState.Failed
@@ -2983,8 +2994,9 @@ public sealed partial class SessionMessageQueueService
         AgentKind? knownKind, CancellationToken ct)
     {
         var kind = knownKind ?? await TryGetSessionKindAsync(sessionId, ct);
-        var currentGeneration = kind == AgentKind.Codex ? await CaptureSessionGenerationAsync(sessionId, ct) : null;
-        if (!_verification.TranscriptConfirmEnabled && !pending.Any(m => IsCodexPointer(kind, m)))
+        var currentGeneration = kind == AgentKind.Codex || pending.Any(StandingResumeNote.IsNote)
+            ? await CaptureSessionGenerationAsync(sessionId, ct) : null;
+        if (!_verification.TranscriptConfirmEnabled && !pending.Any(m => IsCodexPointer(kind, m) || StandingResumeNote.IsNote(m)))
             return LateConfirmCounts.Empty;
 
         var confirmed = 0;
@@ -2996,7 +3008,9 @@ public sealed partial class SessionMessageQueueService
         foreach (var m in pending)
         {
             var pointer = IsCodexPointer(kind, m);
-            if ((!_verification.TranscriptConfirmEnabled && !pointer)
+            if (StandingResumeNote.IsNote(m) && (currentGeneration is not { } noteGeneration
+                || !SessionGeneration.Equal(m.LastDeliveryGeneration, noteGeneration))) continue;
+            if ((!_verification.TranscriptConfirmEnabled && !pointer && !StandingResumeNote.IsNote(m))
                 || (m.DeliveryAttempts == 0 && !(pointer && m.LastDeliveryStartedAt != null)))
                 continue;
             if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
@@ -3259,7 +3273,7 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings ceilings,
         LateConfirmCollector? lateConfirmed = null)
     {
-        if (run.Count == 0)
+        if (run.Count == 0 || !await CanWriteResumeInputAsync(db, sessionId, ct))
             return FlushResult.Nothing;
         if (run.Any(m => m.MaintenanceKind != RemoteControlMaintenanceKind.None))
             return FlushResult.Nothing;
@@ -3345,6 +3359,7 @@ public sealed partial class SessionMessageQueueService
         CancellationToken ct,
         PtyDeliveryCeilings ceilings)
     {
+        if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return FlushResult.Nothing;
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
         if (head.SpecialistInputPolicyJson is not null)
@@ -3649,21 +3664,23 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private static Task<bool> RequiresCompleteSpecialistPromptAsync(
+    private static Task<bool> RequiresCompletePromptReceiptAsync(
         AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
         db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
-            && m.Body == body && m.SpecialistInputPolicyJson != null, ct);
+            && m.Body == body && (m.SpecialistInputPolicyJson != null
+                || (m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey != null
+                    && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix))), ct);
 
     private static Task<bool> RequiresSubmittedChannelPromptAsync(
         AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
         db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
             && m.Body == body && m.Origin == QueuedMessageOrigin.Channel, ct);
 
-    private async Task<bool> RequiresCompleteSpecialistPromptAsync(
+    private async Task<bool> RequiresCompletePromptReceiptAsync(
         Guid sessionId, string body, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        return await RequiresCompleteSpecialistPromptAsync(
+        return await RequiresCompletePromptReceiptAsync(
             scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, body, ct);
     }
 
@@ -3788,7 +3805,13 @@ public sealed partial class SessionMessageQueueService
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence, ct);
-        return new TranscriptBaseline(max is not null, max ?? 0);
+        var launch = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+        var noteKey = StandingResumeNote.Key(launch.StartedAt);
+        var resumeNote = launch.AgentKind == AgentKind.ClaudeCode && launch.StandingAgentId is not null
+            && await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey == noteKey
+                && m.Status == QueuedMessageStatus.Pending, ct);
+        return new TranscriptBaseline(max is not null || resumeNote, max ?? 0);
     }
 
     // Inject text into the session terminal and submit it, reusing the runtime's input path (which also
@@ -3937,7 +3960,7 @@ public sealed partial class SessionMessageQueueService
         // loop — an unobservable baseline runs a wall-clock-floored variant that looks for the
         // FIRST matching UserPrompt, with the screen-only verdict retained only as the deadline
         // fallback (bind-failed sessions still degrade-Delivered rather than hard-failing).
-        var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, trimmed, ct);
+        var fullInline = await RequiresCompletePromptReceiptAsync(sessionId, trimmed, ct);
         var baseline = pointerAttempt is not null || fullInline || (verify && _verification.TranscriptConfirmEnabled)
             ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
@@ -4163,7 +4186,7 @@ public sealed partial class SessionMessageQueueService
         DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
-        var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
+        var fullInline = await RequiresCompletePromptReceiptAsync(sessionId, body, ct);
         var observable = baseline.Observable;
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
         if (fullInline && firstInputDeadlineAt is { } inputDeadline && inputDeadline < deadline)
@@ -4349,6 +4372,14 @@ public sealed partial class SessionMessageQueueService
                 && (observable || !sawPositiveSubmit);
             if (mayReEnter)
             {
+                await using var receiptScope = _scopeFactory.CreateAsyncScope();
+                var receiptFence = await ObserveResumeReceiptFenceAsync(
+                    receiptScope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
+                if (!receiptFence.Ready || receiptFence.Confirmed)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+                    continue;
+                }
                 if (pointerAttempt is not null
                     && !(await ObservePointerAsync(sessionId, body, pointerAttempt, ct)).CompleteComposer)
                 {
@@ -4404,7 +4435,7 @@ public sealed partial class SessionMessageQueueService
     private static async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
     {
-        var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
+        var fullInline = await RequiresCompletePromptReceiptAsync(db, sessionId, body, ct);
         var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
@@ -4489,7 +4520,7 @@ public sealed partial class SessionMessageQueueService
         var truncated = new HashSet<Guid>();
         var confirmedChannel = new HashSet<Guid>();
         var grace = TimeSpan.FromSeconds(Math.Max(0, _verification.PostFailureConfirmGraceSeconds));
-        if (!_verification.TranscriptConfirmEnabled || grace <= TimeSpan.Zero)
+        if ((!_verification.TranscriptConfirmEnabled && !await HasResumeReceiptObligationAsync(sessionId, ct)) || grace <= TimeSpan.Zero)
             return (confirmed, truncated, confirmedChannel);
 
         var deadline = UtcNow() + grace;
@@ -4603,7 +4634,7 @@ public sealed partial class SessionMessageQueueService
     private static async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
     {
-        var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
+        var fullInline = await RequiresCompletePromptReceiptAsync(db, sessionId, body, ct);
         var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var texts = await db.TranscriptEntries
             .AsNoTracking()
@@ -5008,7 +5039,9 @@ public sealed partial class SessionMessageQueueService
             HashSet<Guid> lateConfirmed = [];
             HashSet<Guid> lateTruncated = [];
             HashSet<Guid> lateConfirmedChannel = [];
-            if (verdict == DeliveryVerdict.NoTranscriptRecord && messageIds is { Count: > 0 })
+            if ((verdict == DeliveryVerdict.NoTranscriptRecord
+                    || (verdict == DeliveryVerdict.NoSubmitOutput && await HasResumeReceiptObligationAsync(sessionId, ct)))
+                && messageIds is { Count: > 0 })
                 (lateConfirmed, lateTruncated, lateConfirmedChannel) = await GraceConfirmAsync(sessionId, messageIds, ct);
             // CARD-1247: the grace pull stores the turn with no turn-end routing, so a Channel row it
             // promotes to Sent was invisible to every earlier dispatch. Mirror the CARD-0313
@@ -5038,6 +5071,10 @@ public sealed partial class SessionMessageQueueService
                 await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
                 return;
             }
+
+            if (verdict is DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput
+                && await DeferResumeAbsenceAsync(sessionId, messageIds, verdict, ct))
+                return;
 
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -5764,6 +5801,10 @@ public sealed partial class SessionMessageQueueService
             return false;
         }
 
+        await using var receiptScope = _scopeFactory.CreateAsyncScope();
+        var receiptFence = await ObserveResumeReceiptFenceAsync(
+            receiptScope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
+        if (!receiptFence.Ready || receiptFence.Confirmed) return false;
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
         var snapshot = await _runtime.TryGetLiveSnapshotAsync(sessionId, ct);
         if (snapshot is not null && GrokQuestionPopup.IsPresent(snapshot.RenderedScreen))
@@ -5957,7 +5998,7 @@ public sealed partial class SessionMessageQueueService
     private async Task<LocalCommandTypeResult> TypeLocalCommandAsync(
         Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null)
     {
-        if (await IsModalBlockedAsync(sessionId, ct))
+        if (!await CanWriteResumeInputAsync(sessionId, ct) || await IsModalBlockedAsync(sessionId, ct))
             return LocalCommandTypeResult.NotAccepted;
 
         if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } before)

@@ -752,8 +752,9 @@ public class AgentSystemPromptLaunchTests
     internal static RegisteringAdapterFactory Factory(BridgeQueueHarness h) =>
         (RegisteringAdapterFactory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>();
 
-    internal static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
-        ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
+    internal static async Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn)
+    {
+        var h = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = alwaysOn,
             ConfigureServices = services =>
@@ -780,6 +781,15 @@ public class AgentSystemPromptLaunchTests
                     new RegisteringAdapterFactory(sp.GetRequiredService<AgentSessionRuntime>()));
             },
         });
+        h.Runner.TranscriptPull = async (id, ct) =>
+        {
+            await using var db = h.CreateObserverContext();
+            var generation = await db.AgentSessions.Where(s => s.Id == id).Select(s => s.StartedAt).SingleAsync(ct);
+            return new SessionRunnerTranscriptDto(id, [], 0, AcceptedStartedAt: generation,
+                Readiness: new("Ready", "launch-fixture-binding", 0, 0));
+        };
+        return h;
+    }
 
     internal static async Task SetPreambleAsync(BridgeQueueHarness h, string template)
     {

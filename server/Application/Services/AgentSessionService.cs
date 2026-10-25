@@ -3436,6 +3436,32 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         body = ChannelPreamble.WithSessionTag(body, sessionId);
 
+        var launch = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+        if (resumeMode is not null && launch.AgentKind == AgentKind.ClaudeCode
+            && launch.CardId is null && launch.WorktreeId is null && launch.StandingAgentId is { } standingOwner
+            && await _db.Agents.AnyAsync(a => a.Id == standingOwner
+                && a.PersistentSessionId == sessionId.ToString("D") && !a.IsPoolDelegate, ct))
+        {
+            var key = StandingResumeNote.Key(launch.StartedAt);
+            // Both attempts address the SAME durable obligation, including a failed acknowledgement
+            // after insert. No immediate send, unkeyed fallback, or inline verification on boot.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    await _messageQueue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct,
+                        origin: QueuedMessageOrigin.System, deliverIfIdle: false, runtimeActionKey: key);
+                    return true;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "Durable resume note enqueue attempt {Attempt} failed for session {SessionId}",
+                        attempt + 1, sessionId);
+                }
+            }
+            return true; // A real input obligation; never add an unrelated boot probe.
+        }
+
         var yieldToChannel = await _db.SessionQueuedMessages.AnyAsync(
             m => m.AgentSessionId == sessionId
                 && m.Origin == QueuedMessageOrigin.Channel
