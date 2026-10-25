@@ -28,14 +28,15 @@ public sealed class ReleaseGateStatusTests
         "C599 StatusIdentity a newer sha carries no tag");
 
     [Test]
-    public Task C599_NoActivation() => RunCaseAsync("C599_NoActivation", 13,
+    public Task C599_NoActivation() => RunCaseAsync("C599_NoActivation", 14,
         "C599 NoActivation release-status performs no restart-apphost",
         "C599 NoActivation release-status performs no git checkout",
         "C599 NoActivation publish-release performs no restart-apphost",
         "C599 NoActivation control: the publication ran",
         "C599 NoActivation the publication really pushed something",
         "C599 NoActivation no observed push carried a force flag or plus refspec",
-        "C599 NoActivation no observed call deleted or re-created a tag");
+        "C599 NoActivation no observed call deleted or re-created a tag",
+        "C599 NoActivation deletion matcher distinguishes a populated source refspec");
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C599", caseName, expectedRows, requiredRows);
