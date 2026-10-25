@@ -3,6 +3,7 @@ using Antiphon.HostCleanup.Diagnostics;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -16,6 +17,7 @@ public sealed class FileUseCaptureTests
     [Arguments("mapped-file")]
     public async Task C1539_linux_holder(string mode)
     {
+        RequireLinuxIntegration();
         using var fixture = new Holder(mode);
         await fixture.Ready();
         Exception failure = new UnauthorizedAccessException("access denied");
@@ -73,6 +75,7 @@ public sealed class FileUseCaptureTests
     [Arguments("exited")]
     public async Task C1539_absent_inputs(string kind)
     {
+        RequireLinuxIntegration();
         using var fixture = new Holder("exclusive-file"); await fixture.Ready();
         var source = new ControlledSource(fixture.Child.Id) { Denied = kind == "denied", ExitOnEnrichment = kind == "exited" };
         if (kind is "already-free" or "zero") { await fixture.Release(); source = new ControlledSource(Environment.ProcessId); }
@@ -91,6 +94,7 @@ public sealed class FileUseCaptureTests
     [Test]
     public async Task C1539_budget_and_caps()
     {
+        RequireLinuxIntegration();
         using var scratch = new Scratch();
         var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
         using var started = new ManualResetEventSlim(); using var release = new ManualResetEventSlim(); using var done = new ManualResetEventSlim();
@@ -154,6 +158,7 @@ public sealed class FileUseCaptureTests
     [Test]
     public async Task C1539_redaction_before_sinks()
     {
+        RequireLinuxIntegration();
         using var scratch = new Scratch();
         var secret = "synthetic-sensitive-marker";
         var values = new[] { "{{key:fixture}}", "sk-abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345", "github_pat_1234567890123456789012345", "Bearer fixture-bearer", "12345678:12345678901234567890123456789012345", "Password=fixture-password", "clientApiKey=fixture-api", "--token fixture-switch", "postgres://user:fixture-url@db/path?fixture-query#fixture-fragment", "-EncodedCommand fixture-payload", "opaque-positional-value", secret };
@@ -172,6 +177,7 @@ public sealed class FileUseCaptureTests
     [Test]
     public async Task C1539_persistence_fail_safe()
     {
+        RequireLinuxIntegration();
         using var scratch = new Scratch();
         var provider = new Provider((_, _) => Empty());
         var request = new FileUseRequest(scratch.Path, new UnauthorizedAccessException("original"), scratch.Evidence);
@@ -196,6 +202,7 @@ public sealed class FileUseCaptureTests
     [Test]
     public async Task C1539_generation_and_ownership()
     {
+        RequireLinuxIntegration();
         using var fixture = new Holder("exclusive-file"); await fixture.Ready();
         var src = new ControlledSource(fixture.Child.Id); var request = new FileUseRequest(fixture.Path, new UnauthorizedAccessException(), fixture.Evidence);
         var first = await new FileUseCapture(new LinuxFileUseProvider(src)).TryCaptureAsync(request);
@@ -216,6 +223,15 @@ public sealed class FileUseCaptureTests
         var provider = new Provider((_, _) => throw new Exception("must not scan"));
         var result = await new FileUseCapture(provider, new BrokenWriter()).TryCaptureAsync(new("/unused", new IOException("unrelated"), "/unused"));
         result.Status.ShouldBe(FileUseStatus.NotTriggered); provider.Calls.ShouldBe(0); result.EvidencePath.ShouldBeNull();
+    }
+
+    private static void RequireLinuxIntegration()
+    {
+        // These rows require /proc identities, mmap/unlink semantics, or the Linux-only
+        // no-follow evidence writer. Windows provider contracts live in FileUseWindowsTests;
+        // the shipped Windows evidence writer explicitly remains unavailable (S2 debt).
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.");
     }
 
     private static FileUseObservation Empty() => new(FileUseStatus.NoOwnersObserved, FileUseCoverage.Complete, [], []);
