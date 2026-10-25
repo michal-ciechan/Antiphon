@@ -161,6 +161,7 @@ public sealed class ExpectationReceiptTests
         // The standing agent restarted into a new session, which happens to echo the old body.
         var replacement = await f.AddSessionAsync(ownedByStandingAgent: true, makeCurrent: true);
         var replacementAdapter = new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
+        await replacementAdapter.EnableClaudeDialogObservationAsync(f.Schema.ConnectionString, replacement);
         f.Harness.Runtime.Register(replacement, replacementAdapter);
         await f.AppendTranscriptAsync(replacement, TranscriptKinds.UserPrompt, oldAttempt.Body);
 
