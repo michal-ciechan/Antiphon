@@ -167,8 +167,9 @@ public class DelegationScopeHoldTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         await using var verify = CreateContext();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id)).Status
-            .ShouldBe(AgentTaskStatus.Dispatched, "a worktree collides at merge, not at dispatch");
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched,
+            "a worktree collides at merge, not at dispatch: " + dispatched.FailureReason);
         (await verify.AgentTaskEvents
                 .AnyAsync(e => e.AgentTaskId == isolated.Id && e.Type == AgentTaskEventType.Held))
             .ShouldBeFalse();
@@ -197,8 +198,8 @@ public class DelegationScopeHoldTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         await using var verify = CreateContext();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id)).Status
-            .ShouldBe(AgentTaskStatus.Dispatched);
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == second.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
         (await verify.AgentTaskEvents
                 .CountAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Warning))
             .ShouldBe(1);
@@ -434,6 +435,7 @@ public class DelegationScopeHoldTests
             Kind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             IsPoolDelegate = true,
+            PoolClaudeEffort = ClaudeLaunchArgs.Effort(AgentModelLevel.Medium),
             PoolIdleSince = now.AddMinutes(-3),
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
