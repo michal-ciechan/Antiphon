@@ -335,7 +335,12 @@ public sealed class BlockedTaskParkReleaseTests
             if (owner != "none") continue;
 
             // Independently challenge pool and retirement reservations with an otherwise reusable row.
-            await world.EditAsync((_, a) => { a.Status = AgentStatus.Idle; a.PoolIdleSince = world.Now.AddDays(-2); });
+            await world.EditAsync((_, a) =>
+            {
+                a.Status = AgentStatus.Idle;
+                a.PoolIdleSince = world.Now.AddDays(-2);
+                a.PoolClaudeEffort = ClaudeLaunchArgs.Effort(a.ModelLevel);
+            });
             // Make the identity otherwise live/reusable, so a missing reservation predicate
             // cannot hide behind the stopped-session check or a pool attribute mismatch.
             await store.AgentSessions.Where(s => s.Id == world.SessionId)
