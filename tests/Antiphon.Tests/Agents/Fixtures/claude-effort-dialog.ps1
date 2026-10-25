@@ -17,7 +17,8 @@ function Paint {
     } else {
         $screen = "Fable 5.1 with $script:applied effort" + [char]10 + $capture.composer.Replace('{{composer}}', $script:composer)
     }
-    [Console]::Write(([char]27 + '[2J' + [char]27 + '[H') + $screen)
+    # The terminal needs an explicit carriage return on Unix as well as Windows.
+    [Console]::Write(([char]27 + '[2J' + [char]27 + '[H') + $screen.Replace("`r`n", "`n").Replace("`n", "`r`n"))
     if ($script:PaintSink) { & $script:PaintSink $screen }
 }
 function Publish-Trace([string]$phase) {

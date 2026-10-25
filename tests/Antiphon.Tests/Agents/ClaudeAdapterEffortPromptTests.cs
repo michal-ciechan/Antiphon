@@ -19,7 +19,7 @@ public class ClaudeAdapterEffortPromptTests
         var scratch = Directory.CreateTempSubdirectory("c449-deaf-").FullName;
         var script = Path.Combine(scratch, "deaf.ps1");
         await File.WriteAllTextAsync(script,
-            "[Console]::Write('" + EffortFixtureComposer.Screen("").Replace("'", "''") + "')\n"
+            "[Console]::Write('" + EffortFixtureComposer.Screen("").ReplaceLineEndings("\r\n").Replace("'", "''") + "')\n"
             + "while ($true) { [void][Console]::ReadKey($true) }\n");
         var settings = RunnerClaudeAdapterEffortPromptTests.Settings(1000);
         settings.ClaudeInputProbeRetypeIntervalMs = 100;
