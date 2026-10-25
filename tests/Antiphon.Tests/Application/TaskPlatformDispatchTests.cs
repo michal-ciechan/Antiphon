@@ -604,7 +604,7 @@ public sealed class TaskPlatformDispatchTests
             Id = id, RootTaskId = id, Title = "dispatch", Goal = "dispatch",
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium, Workspace = WorkspaceMode.Worktree,
-            WorkingDirectory = path, WorktreePath = path, WorktreeBranch = "feat/c710",
+            WorkingDirectory = path, WorktreePath = path, WorktreeBranch = $"feat/card-task-{id.ToString("N")[..8]}",
             RunnerId = runnerId, RequiredPlatform = platform, Status = AgentTaskStatus.Queued,
             ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
         });
