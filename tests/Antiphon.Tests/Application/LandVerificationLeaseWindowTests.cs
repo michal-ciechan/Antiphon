@@ -78,6 +78,18 @@ public sealed class LandVerificationLeaseWindowTests
         });
 
     [Test]
+    public async Task C1388_UnrelatedHoldStillRefusesResume() =>
+        await RefuseAsync("c1388-held-writer", "verification_ticket_changed", async world =>
+        {
+            await using var db = world.CreateContext();
+            var operation = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == world.Owner.Id);
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == operation.ApprovalLandRequestId);
+            request.State = LandRequestState.Held;
+            request.HoldReasonCode = "repository_or_source_writer";
+            await db.SaveChangesAsync();
+        });
+
+    [Test]
     public async Task C1388_LandWorktreeIdentityChangeRefusesResume() =>
         await RefuseAsync("c1388-identity", "land_worktree_identity_changed", async world =>
         {
