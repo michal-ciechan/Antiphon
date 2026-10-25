@@ -377,9 +377,15 @@ location in commands. Use the checkpoint tool and host build-slot gate.
 | CP-3a | S2a-red | `tests/Antiphon.Tests -> bin-c1574-observe-red/` | portable-observe-red | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 executed; assertion red on absent runtime Ready | 1 | 4 |
 | CP-4a | S2a | `tests/Antiphon.Tests -> bin-c1574-observe/` | portable-observe-green | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 passed, 0 failed/skipped; all runtime/transport scenarios checked | 1 | 4 |
 | CP-4b | S2a | `tests/Antiphon.Tests -> bin-c1574-observe/` | portable-observe-adjacent | `/*/*/WorkingTranscriptRecoveryTests/C1205_Generation_changed_after_validation_must_not_append_old_end` | R-2 | 1 passed, 0 failed/skipped; existing local recovery rejects stale generation before append | 1 | 1 |
-| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1574-resume-red/` | portable-resume-red | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 executed; assertion reds in readiness propagation/commit fencing, durable resume, delayed receipt and restart recovery; V-7 outcomes recorded separately | 5 | 4 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1574-resume/` | portable-resume-green | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 passed, 0 failed/skipped; every cut/variant checked | 5 | 4 |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-existing/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
+| CP-31 | S2-red | `tests/Antiphon.Tests -> bin-c1574-queue-red/` | queue-1 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Resume_note_waits_then_receipts_once` | V-4 | 1 executed; record assertion witness | 1 | 3 |
+| CP-32 | S2-red | `tests/Antiphon.Tests -> bin-c1574-queue-red/` | queue-2 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Accepted_note_outlives_grace_without_retyping` | V-5 | 1 executed; record assertion witness | 1 | 3 |
+| CP-33 | S2-red | `tests/Antiphon.Tests -> bin-c1574-queue-red/` | queue-3 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Recreated_services_recover_the_original_note` | V-6 | 1 executed; record assertion witness | 1 | 3 |
+| CP-34 | S2-red | `tests/Antiphon.Tests -> bin-c1574-queue-red/` | queue-4 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Ready_absence_keeps_existing_recovery_rules` | V-7 | 1 executed; record assertion witness | 1 | 3 |
+| CP-41 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-1 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Resume_note_waits_then_receipts_once` | V-4 | 1 passed, 0 failed/skipped | 1 | 3 |
+| CP-42 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-2 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Accepted_note_outlives_grace_without_retyping` | V-5 | 1 passed, 0 failed/skipped | 1 | 3 |
+| CP-43 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-3 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Recreated_services_recover_the_original_note` | V-6 | 1 passed, 0 failed/skipped | 1 | 3 |
+| CP-44 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | queue-4 | `/*/*/StandingResumeReceiptReadinessTests/C1574_Ready_absence_keeps_existing_recovery_rules` | V-7 | 1 passed, 0 failed/skipped | 1 | 3 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-queue/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
 
 CP-1/CP-3 deliberately exit with failed assertions and are historical diagnostic
 red receipts, never green qualification. Compile scaffolding must default Unknown;
@@ -493,3 +499,5 @@ those IDs or the whole S2 complete. PCs remain pending for Mutation.
 CP-4b reuses the CP-4a build for one exact adjacent recovery-race smoke, because
 the SQL fence helper is shared with checked Working recovery. It does not run the
 whole class. Both S2a green rows run serially; no provider process is launched.
+
+Continuation ad9a35c6: operator requires exact methods, one red/green per behavior and one build per slice. CP-31..34 replace broad CP-3; CP-41..44 replace broad CP-4. CP-5 shares their build. V-3 is already qualified and is not repeated. PCs remain pending.

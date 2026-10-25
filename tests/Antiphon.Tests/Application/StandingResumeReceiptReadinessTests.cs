@@ -19,7 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public class StandingResumeReceiptReadinessTests
+public partial class StandingResumeReceiptReadinessTests
 {
     [Test]
     public async Task C1574_Transport_and_persistence_fence_readiness()
