@@ -199,7 +199,7 @@ public static class CheckpointApp
         var executionLimit = TimeSpan.FromMinutes(totalMinutes);
         var wallLimit = request.HardWallTimeoutMinutes ?? manifest.Timeouts.HardWallMinutes;
         var admissionLimit = TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes);
-        using var budget = new RunBudgetClock(executionLimit,
+        await using var budget = new RunBudgetClock(executionLimit,
             wallLimit is int wall ? TimeSpan.FromMinutes(wall) : executionLimit + admissionLimit, runtime.TimeProvider);
         state.HardWallTimeoutAt = budget.StartedAt + budget.HardWallLimit;
         var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider ?? TimeProvider.System);

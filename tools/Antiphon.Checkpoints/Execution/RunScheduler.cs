@@ -57,7 +57,7 @@ public sealed class RunScheduler
 
     public async Task<SchedulerResult> RunAsync(SchedulerRequest request, CancellationToken cancellationToken)
     {
-        using var ownedBudget = request.Budget is null ? new RunBudgetClock(request.TotalTimeout,
+        await using var ownedBudget = request.Budget is null ? new RunBudgetClock(request.TotalTimeout,
             request.HardWallTimeout ?? (request.TotalTimeout is TimeSpan execution
                 ? execution + TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes) : null), _buildTimeProvider) : null;
         var budget = request.Budget ?? ownedBudget!;
