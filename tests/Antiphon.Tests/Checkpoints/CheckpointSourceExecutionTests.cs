@@ -312,8 +312,12 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         exit.ShouldBe(ExitCodes.ExecutorCrashed);
         var report = Read(run);
         report.Source.End.ShouldBeNull("executor-error-has-no-observed-end");
-        ReportValidator.Validate(report, Sha).ShouldBe("report_source_ineligible");
+        ReportValidator.Validate(report, Sha).ShouldBe("report_failed");
         report.ExitCode.ShouldBe(ExitCodes.ExecutorCrashed);
+        // Even a forged green verdict cannot make the missing source observation eligible.
+        report.ExitCode = ExitCodes.Green;
+        report.Verdict = "GREEN";
+        ReportValidator.Validate(report, Sha).ShouldBe("report_source_ineligible");
 
         foreach (var terminal in new[] { "build-failed", "missing-trx" })
         {
