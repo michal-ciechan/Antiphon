@@ -846,7 +846,7 @@ public class PhoneHomeStrandedQueueTests
             SharedSecret = host.Secret,
         }),
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
-        logger ?? NullLogger<PhoneHomeRecoveryPump>.Instance);
+        logger ?? host.App.Services.GetRequiredService<ILogger<PhoneHomeRecoveryPump>>());
 
     internal static RunnerSessionDto RunningOnRunner(Guid sessionId) =>
         new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);

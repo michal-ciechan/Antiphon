@@ -30,7 +30,6 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public SessionMessageQueueService? Messages { get; set; }
     public AppDbContext? CurrentLandContext { get; private set; }
     public ILandingGit? GitOverride { get; set; }
-    public ILandExecutionLease? ExecutionLeaseOverride { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
     public DbCommandInterceptor? CommandInterceptor { get; set; }
     public DbTransactionInterceptor? TransactionInterceptor { get; set; }
@@ -301,7 +300,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), GitOverride ?? Fixture.Git, Boundary,
-            leaseWaiters: Services.GetService<RepositoryLeaseWaiters>(), executionLeases: ExecutionLeaseOverride);
+            leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
