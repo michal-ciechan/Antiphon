@@ -377,6 +377,7 @@ location in commands. Use the checkpoint tool and host build-slot gate.
 | CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1574-reader/` | portable-reader-green | `/*/*/ResumeReceiptReadinessTests/*` | V-1,V-2,R-1 | 3 passed, 0 failed/skipped; every named matrix plus the truncation-regrowth/invalid-utf8 extension checked | 3 | 2 |
 | CP-3a | S2a-red | `tests/Antiphon.Tests -> bin-c1574-observe-red/` | portable-observe-red | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 executed; assertion red on absent runtime Ready | 1 | 4 |
 | CP-4a | S2a | `tests/Antiphon.Tests -> bin-c1574-observe/` | portable-observe-green | `/*/*/StandingResumeReceiptReadinessTests/C1574_Transport_and_persistence_fence_readiness` | V-3,R-2 | 1 passed, 0 failed/skipped; all runtime/transport scenarios checked | 1 | 4 |
+| CP-4b | S2a | CP-4a | portable-observe-adjacent | `/*/*/WorkingTranscriptRecoveryTests/C1205_Generation_changed_after_validation_must_not_append_old_end` | R-2 | 1 passed, 0 failed/skipped; existing local recovery rejects stale generation before append | 1 | 1 |
 | CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1574-resume-red/` | portable-resume-red | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 executed; assertion reds in readiness propagation/commit fencing, durable resume, delayed receipt and restart recovery; V-7 outcomes recorded separately | 5 | 4 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1574-resume/` | portable-resume-green | `/*/*/StandingResumeReceiptReadinessTests/*` | V-3..V-7,R-2..R-5 | 5 passed, 0 failed/skipped; every cut/variant checked | 5 | 4 |
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1574-existing/` | portable-existing-contracts | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_*` | R-5 | 3 passed, 0 failed/skipped; existing direct-send grace remains intact | 3 | 2 |
@@ -489,3 +490,7 @@ They compile the shared server test project once per committed group and execute
 only the exact V-3 method. Original CP-3/CP-4 remain due for V-4..V-7 once those
 methods exist; CP-5 remains due with the queue changes. This split does not claim
 those IDs or the whole S2 complete. PCs remain pending for Mutation.
+
+CP-4b reuses the CP-4a build for one exact adjacent recovery-race smoke, because
+the SQL fence helper is shared with checked Working recovery. It does not run the
+whole class. Both S2a green rows run serially; no provider process is launched.

@@ -26,10 +26,11 @@ public class StandingResumeReceiptReadinessTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var commit = new CommitControl();
+        var fence = new FenceControl();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
-            ConfigureDbContext = options => options.AddInterceptors(commit)
+            ConfigureDbContext = options => options.AddInterceptors(commit, fence)
         });
         await using (var db = h.CreateObserverContext())
         {
@@ -171,6 +172,39 @@ public class StandingResumeReceiptReadinessTests
             }
         }
         h.Runner.TranscriptPull = (id, ct) => client.GetTranscriptAsync(id, ct);
+        // Change ownership after the outer recheck, while the SQL fence is about to lock.
+        foreach (var variant in new[] { "generation", "store", "owner" })
+        {
+            fence.Arm();
+            handler.Snapshot = snapshot with { Entries = [Entry("commit-race-" + variant, 3)], LastSequence = 3 };
+            var racing = Observe();
+            try
+            {
+                await fence.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                fence.InTransaction.ShouldBeTrue();
+                await using (var db = h.CreateObserverContext())
+                {
+                    var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+                    if (variant == "generation") session.StartedAt = generation.AddSeconds(1);
+                    if (variant == "store") session.RunnerStoreId = Guid.NewGuid();
+                    if (variant == "owner") session.StandingAgentId = Guid.NewGuid();
+                    await db.SaveChangesAsync();
+                }
+                fence.Release.TrySetResult();
+                (await racing).Status.ShouldBe(ReceiptReadinessStatus.Unknown, "commit-race-" + variant);
+                await using var verify = h.CreateObserverContext();
+                (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Uuid == "commit-race-" + variant)).ShouldBeFalse("stale launch rows must not commit");
+            }
+            finally
+            {
+                fence.Release.TrySetResult(); await racing;
+                await using var db = h.CreateObserverContext();
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.StartedAt, generation).SetProperty(s => s.RunnerStoreId, (Guid?)null)
+                    .SetProperty(s => s.StandingAgentId, h.AgentId));
+            }
+        }
         handler.Snapshot = snapshot with { Entries = [receipt, behindEntry, Entry("held-commit", 3)], LastSequence = 3 };
         commit.Hold = true;
         var pending = Observe();
@@ -194,6 +228,14 @@ public class StandingResumeReceiptReadinessTests
         (await Observe()).Status.ShouldBe(ReceiptReadinessStatus.Unknown, "retained persistence fault");
         handler.Snapshot = snapshot with { Entries = [Entry("repair", 5)], LastSequence = 5 };
         (await Observe()).Status.ShouldBe(ReceiptReadinessStatus.Ready, "successful new commit clears the persistence fault");
+
+        handler.Snapshot = snapshot with { Entries = [Entry("rebased", 1)], LastSequence = 1 };
+        var rebased = await Observe();
+        rebased.Status.ShouldBe(ReceiptReadinessStatus.Ready);
+        rebased.BaselineSequence.ShouldBe(6, "the delivery floor is in stored, not runner, sequence space");
+        await using (var db = h.CreateObserverContext())
+            (await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == h.SessionId && t.Uuid == "rebased"))
+                .Sequence.ShouldBe(6);
 
         // A healthy remote route is admissible; the separate local-only recovery probe is not reused.
         await using (var db = h.CreateObserverContext())
@@ -228,6 +270,26 @@ public class StandingResumeReceiptReadinessTests
             if (Fail) throw new HttpRequestException("fixture pull failure");
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
                 LegacyJson ?? JsonSerializer.Serialize(Snapshot, RunnerContractMapper.Json), Encoding.UTF8, "application/json") });
+        }
+    }
+    private sealed class FenceControl : DbCommandInterceptor
+    {
+        private bool _hold;
+        public bool InTransaction;
+        public TaskCompletionSource Entered { get; private set; } = Signal();
+        public TaskCompletionSource Release { get; private set; } = Signal();
+        public void Arm() { Entered = Signal(); Release = Signal(); _hold = true; }
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (_hold && command.CommandText.Contains("FOR UPDATE") && command.CommandText.Contains("AgentSessions"))
+            {
+                _hold = false;
+                InTransaction = data.Context!.Database.CurrentTransaction is not null;
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(ct);
+            }
+            return result;
         }
     }
     private sealed class CommitControl : DbTransactionInterceptor
