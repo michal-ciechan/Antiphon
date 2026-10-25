@@ -173,8 +173,10 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             var path = "docs/superpowers/plans/" + name;
             var first = new StringWriter(); var second = new StringWriter();
             var command = new CoverageCommand();
-            command.Run(CheckpointFixtures.RepoRoot, path, format: "json", output: first).ShouldBe(0, "c1046-real-plans");
-            command.Run(CheckpointFixtures.RepoRoot, path, format: "json", output: second).ShouldBe(0, "c1046-real-plans");
+            var firstExit = command.Run(CheckpointFixtures.RepoRoot, path, format: "json", output: first);
+            CheckpointNativeDiagnostics.Coverage(firstExit, CheckpointFixtures.RepoRoot, first).ShouldBe(0, "c1046-real-plans");
+            var secondExit = command.Run(CheckpointFixtures.RepoRoot, path, format: "json", output: second);
+            CheckpointNativeDiagnostics.Coverage(secondExit, CheckpointFixtures.RepoRoot, second).ShouldBe(0, "c1046-real-plans");
             second.ToString().ShouldBe(first.ToString(), "c1046-real-plans-deterministic");
             using var document = JsonDocument.Parse(first.ToString());
             var root = document.RootElement;
@@ -252,7 +254,8 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
         {
             cancellationToken.ThrowIfCancellationRequested();
             var output = new StringWriter();
-            command.Run(root, plan, tests, "json", output: output).ShouldBe(0, label);
+            var exit = command.Run(root, plan, tests, "json", output: output);
+            CheckpointNativeDiagnostics.Coverage(exit, root, output).ShouldBe(0, label);
             using var document = JsonDocument.Parse(output.ToString());
             var report = document.RootElement;
             report.GetProperty("invalid").GetBoolean().ShouldBeFalse(label);

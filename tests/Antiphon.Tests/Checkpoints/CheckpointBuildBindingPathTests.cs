@@ -105,6 +105,10 @@ public sealed class CheckpointBuildBindingPathTests
             Directory.CreateDirectory(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(binding.OutputPath))!);
             SafeWrite.Require(SafeWrite.CreateFreshDirectory(binding.OutputPath, SafeWrite.Under(binding.OutputPath)));
         }
-        public void Dispose() => Directory.Delete(Root, recursive: true);
+        public void Dispose()
+        {
+            CheckpointNativeDiagnostics.Capture(nameof(CheckpointBuildBindingPathTests), [Root]);
+            Directory.Delete(Root, recursive: true);
+        }
     }
 }

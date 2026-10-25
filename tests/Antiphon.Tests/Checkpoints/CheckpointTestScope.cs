@@ -209,7 +209,10 @@ public abstract class CheckpointTestBase
     public async Task CloseCheckpointScopeAsync()
     {
         if (_scope is not null)
+        {
+            CheckpointNativeDiagnostics.Capture(GetType().Name, _scope.Roots);
             await _scope.DisposeAsync();
+        }
     }
 
     protected string TempDir() => (_scope ?? throw new InvalidOperationException("checkpoint test has no scope")).TempDir();
