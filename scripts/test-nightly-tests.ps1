@@ -2238,7 +2238,9 @@ function Test-C1410_MeasuredCostGroups {
         # Windows measurement denominator has 27. All other counts match.
         # Repacking adds three launches: 103 real + four suffix probes.
         if ($launches -ne 107) { [void]$reasons.Add('launch-count') }
-        if ([Math]::Abs($suiteSeconds - 52622.153116531146) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        # CARD-1584: the shared TestClassificationGuardTests node now has
+        # an explicit 10 s bound instead of 0.5 s: +9.5 s, census unchanged.
+        if ([Math]::Abs($suiteSeconds - 52631.653116531146) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
