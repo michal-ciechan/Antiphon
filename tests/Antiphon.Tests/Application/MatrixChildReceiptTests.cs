@@ -286,6 +286,9 @@ public sealed class MatrixChildReceiptTests
             await EntryAsync(factory, session, TranscriptKinds.UserPrompt, body);
             await EntryAsync(factory, session, TranscriptKinds.TurnEnd, null);
         }};
+        using var scope = factory.Services.CreateScope();
+        adapter.EnableClaudeDialogObservation(
+            scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.GetConnectionString()!, session);
         factory.Services.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
         return adapter;
     }
