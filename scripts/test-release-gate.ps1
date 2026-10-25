@@ -1102,6 +1102,8 @@ function New-C599RunFx {
         Write-C487NativePassSeams $seams $trace $rows $nodes
         Add-Content -LiteralPath $seams -Encoding ASCII -Value @'
 $NightlySeams.Git = $null
+# The fake process records model full Windows RC execution on every host.
+$NightlySeams.HostPlatform = { return 'windows' }
 $NightlySeams.E2EPrerequisites = { return @{Ok=$true;Rows=@()} }
 '@
     } else {
@@ -1139,12 +1141,32 @@ function Invoke-C599Run {
     return Invoke-AntiphonNightlyRun @splat
 }
 
+function Test-C599RunSummaryRecord {
+    param([string]$Json)
+    $record = $Json | ConvertFrom-Json -ErrorAction Stop
+    return ($null -ne $record.PSObject.Properties['runId'])
+}
+
+function Test-C599_RunSummaryIdentity {
+    # Pure strings: force Windows-shaped input without filesystem/native admission.
+    $windows = '{"runId":"windows-fixture","clone":"C:\\Antiphon\\nightly\\checkout","logDir":"C:\\Antiphon\\nightly\\logs\\run"}'
+    $timing = '{"version":1,"complete":true,"tests":[],"sharedFixtures":[]}'
+    Assert-C487 -Cond (Test-C599RunSummaryRecord $windows) -Name 'C599 RunSummaryIdentity Windows path record is a run summary'
+    Assert-C487 -Cond (-not (Test-C599RunSummaryRecord $timing)) -Name 'C599 RunSummaryIdentity timing record is not a run summary'
+    $saved = $script:NightlySeams
+    try {
+        $script:NightlySeams = @{ HostPlatform = { return 'windows' } }
+        Assert-C487 -Cond ((Get-NightlyExecutionPlatform) -ceq 'windows') -Name 'C599 RunSummaryIdentity Windows observation needs no native work'
+    } finally { $script:NightlySeams = $saved }
+}
+
 function Assert-C599RcChild {
     param($Fx, $Result, [string]$LogRoot, [string]$Label)
     Assert-C487 -Cond ($Result.Phase -ceq 'hop' -and -not $Result.Refusal -and $Result.Sha -ceq $Fx.Sha) `
         -Name ('C599 {0} outer run reaches self-reexec without refusal' -f $Label) `
         -Detail ('phase={0} refusal={1} exit={2}' -f $Result.Phase, $Result.Refusal, $Result.ExitCode)
-    $summaries = @(Get-ChildItem -LiteralPath $LogRoot -Filter summary.json -Recurse -ErrorAction SilentlyContinue)
+    $summaries = @(Get-ChildItem -LiteralPath $LogRoot -Filter summary.json -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { Test-C599RunSummaryRecord (Get-Content -LiteralPath $_.FullName -Raw) })
     $summary = $null
     if ($summaries.Count -eq 1) { $summary = Get-Content -LiteralPath $summaries[0].FullName -Raw | ConvertFrom-Json }
     Assert-C487 -Cond ($summaries.Count -eq 1 -and $null -ne $summary -and $summary.runId -ceq $Fx.RunId) `
