@@ -103,7 +103,7 @@ public class ResumeReceiptReadinessTests
                     await File.WriteAllTextAsync(fork, JsonSerializer.Serialize(new
                     {
                         type = "user", uuid = "fork", cwd = world.Root,
-                        message = new { role = "user", content = "hello" }
+                        message = new { role = "user", content = "the first prompt after the clear" }
                     }) + "\n");
                     await held.Task.WaitAsync(TimeSpan.FromSeconds(8));
                     var observation = world.Tailer.Snapshot().Readiness!;
@@ -173,7 +173,7 @@ public class ResumeReceiptReadinessTests
             File.WriteAllText(Path, body);
             Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", Root);
             var inputs = new SessionInputLog();
-            inputs.Append("hello");
+            inputs.Append("the first prompt after the clear");
             Tailer = new TranscriptTailer(id, Root, new SessionRunnerEventHub(), NullLogger.Instance,
                 inputLog: inputs, forkScanInterval: TimeSpan.FromMilliseconds(1));
         }
