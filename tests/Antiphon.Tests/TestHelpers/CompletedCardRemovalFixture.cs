@@ -53,8 +53,15 @@ internal sealed class CompletedCardRemovalFixture(CompletedCardCleanupFixture ca
     {
         await using var lease = await LeaseAsync();
         var request = Request(lease);
-        return await Host.Services.GetRequiredService<GuardedWorktreeRemoval>()
+        var result = await Host.Services.GetRequiredService<GuardedWorktreeRemoval>()
             .RemoveAsync(change?.Invoke(request) ?? request, CancellationToken.None);
+        Console.WriteLine($"C1017_GUARDED_REMOVAL task={Card.TaskId} result={System.Text.Json.JsonSerializer.Serialize(result)}");
+        if (OperatingSystem.IsWindows() && !result.IsClean)
+        {
+            FixtureFileDiagnostics.Write(Tree);
+            FixtureFileDiagnostics.Write(WorktreeSetAside.SetAsidePath(Tree));
+        }
+        return result;
     }
 
     public async Task AssertHeldAsync(WorktreeRemoval result)
