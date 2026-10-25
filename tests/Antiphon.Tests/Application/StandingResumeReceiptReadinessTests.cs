@@ -27,6 +27,7 @@ public class StandingResumeReceiptReadinessTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var commit = new CommitControl();
         var fence = new FenceControl();
+        var storeId = Guid.NewGuid();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
@@ -35,7 +36,9 @@ public class StandingResumeReceiptReadinessTests
         await using (var db = h.CreateObserverContext())
         {
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.StandingAgentId, h.AgentId));
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.StandingAgentId, h.AgentId)
+                    .SetProperty(s => s.RunnerId, "fixture-runner").SetProperty(s => s.RunnerStoreId, storeId)
+                    .SetProperty(s => s.RunnerCwd, "/fixture"));
         }
         DateTime generation;
         await using (var db = h.CreateObserverContext())
@@ -127,6 +130,7 @@ public class StandingResumeReceiptReadinessTests
         (await Observe()).Status.ShouldBe(ReceiptReadinessStatus.Unknown, "failed pull");
         handler.Fail = false;
 
+        // A valid all-present remote binding permits independent coordinate changes.
         // Independently change each launch/route coordinate while the pull is held.
         foreach (var variant in new[] { "generation", "route", "store", "cwd", "owner", "owner-pointer", "terminal" })
         {
@@ -164,8 +168,8 @@ public class StandingResumeReceiptReadinessTests
                 release.TrySetResult(); await observation;
                 await using var db = h.CreateObserverContext();
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
-                    .SetProperty(s => s.StartedAt, generation).SetProperty(s => s.RunnerId, (string?)null)
-                    .SetProperty(s => s.RunnerStoreId, (Guid?)null).SetProperty(s => s.RunnerCwd, (string?)null)
+                    .SetProperty(s => s.StartedAt, generation).SetProperty(s => s.RunnerId, "fixture-runner")
+                    .SetProperty(s => s.RunnerStoreId, storeId).SetProperty(s => s.RunnerCwd, "/fixture")
                     .SetProperty(s => s.StandingAgentId, h.AgentId).SetProperty(s => s.Status, SessionStatus.Running));
                 await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u
                     .SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
