@@ -1077,7 +1077,7 @@ function New-C599RunFx {
                 Set-Content -LiteralPath $target -Value 'fixture source' -Encoding ASCII
             }
         }
-        $projects = Invoke-C599RealGit $repoRoot @('ls-files', 'tests/*.csproj', 'scripts/fixtures/nightly/c487-probe/Probe.csproj')
+        $projects = Invoke-C599RealGit $repoRoot @('ls-files', 'tests/*.csproj', 'scripts/fixtures/*.csproj')
         foreach ($path in $projects.Split("`n")) {
             $target = Join-Path $seed $path
             New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
