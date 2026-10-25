@@ -31,7 +31,11 @@ and grace, Behind/Unknown defers the negative verdict with the original attempt
 coordinates and no refund, retype, Enter recovery, incident or recovery kill.
 Ready absence retains the existing Working/AlwaysOn/generation recovery brakes.
 Observation timeout is a temporary deferral, never launch cancellation or seat
-release. Both matching product components require activation qualification.
+release. A resumed-note launch contains its final queue flush failures. Receipt
+matching carries the keyed row contract explicitly; repeating a settled note's text
+in an ordinary send does not activate it. Interrupted resume-note discovery has
+no age expiry and includes capped attempts for receipt reconciliation only. Local
+command opening Esc and watchdog direct sends obey the same pre-input fence. Both matching product components require activation qualification.
 
 Transcript ingestion commits each stored row and its `SessionRuntimeAction` in the
 same transaction under the session write lease. UI publication, queue confirmation,

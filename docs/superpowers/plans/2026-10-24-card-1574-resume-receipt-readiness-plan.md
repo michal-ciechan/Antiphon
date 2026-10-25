@@ -506,3 +506,5 @@ whole class. Both S2a green rows run serially; no provider process is launched.
 Continuation ad9a35c6: operator requires exact methods, one red/green per behavior and one build per slice. CP-31..34 replace broad CP-3; CP-41..44 replace broad CP-4. CP-5 shares their build. V-3 is already qualified and is not repeated. PCs remain pending.
 
 Scope follow-up: CP-35 witnesses an ordinary identical-body Now send after the keyed note settled. Expanded V-6 also checks local-command Esc and stranded discovery after 124 minutes. Run CP-33,CP-35 red, then the affected CP-41..45 and CP-5 once after the repair, sharing one build per slice. No broad lane.
+
+Final continuation qualification expands V-4 with eligible/channel/own-timeout and real fresh bootstrap cases, V-5 with legacy-null readiness and watchdog direct admission, and V-6 with post-commit acknowledgement failure and immutable-key replay. These remain one execution per exact method. V-3 and S1 are not repeated. No PC is discharged.
