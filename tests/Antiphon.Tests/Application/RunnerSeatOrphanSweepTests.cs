@@ -18,6 +18,16 @@ namespace Antiphon.Tests.Application;
 public class RunnerSeatOrphanSweepTests
 {
     [Test]
+    public async Task Windows_capabilities_register_with_the_runtime_platform()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var capabilities = new RunnerCapabilitiesDto("fixture", "fixture", "fixture", false,
+            Platform: "windows");
+        var ticket = await RunnerSeatReleaseFixture.RegisterRuntimeAsync(host, Guid.NewGuid(), capabilities);
+        ticket.Ticket.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
     public async Task Existing_job_discovers_debt_without_settlement_callback()
     {
         foreach (var status in new[] { AgentTaskStatus.Succeeded, AgentTaskStatus.Failed,

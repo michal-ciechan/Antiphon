@@ -17,6 +17,16 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class LandGraphEvaluationTests
 {
+    internal static string NativeLinkTarget(string target, bool windows) => target;
+
+    [Test]
+    public void Windows_link_targets_use_native_separators()
+    {
+        NativeLinkTarget("../docs", windows: true).ShouldBe(@"..\docs");
+        NativeLinkTarget("../external.props", windows: true).ShouldBe(@"..\external.props");
+        NativeLinkTarget("../docs", windows: false).ShouldBe("../docs");
+    }
+
     // V-4: the plan's D-1 members exist on the SDK pinned by global.json, before anything relies on them.
     [Test]
     [Timeout(300_000)]
@@ -563,6 +573,7 @@ public sealed partial class LandGraphEvaluationTests
 
         private static async Task CreateLinkAsync(string path, string target)
         {
+            target = NativeLinkTarget(target, OperatingSystem.IsWindows());
             var parent = Path.GetDirectoryName(path)!;
             Directory.CreateDirectory(parent);
             var isDirectory = Directory.Exists(Path.Combine(parent, target));

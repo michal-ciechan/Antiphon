@@ -12,6 +12,15 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetTests
 {
+    internal static string PorcelainPath(string path) => path;
+
+    [Test]
+    public void Windows_registration_path_matches_git_porcelain()
+    {
+        var porcelain = "worktree C:/fixture/trees/moved-source\nHEAD " + new string('a', 40) + "\n";
+        porcelain.ShouldContain(PorcelainPath(@"C:\fixture\trees\moved-source"));
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -661,7 +670,7 @@ public sealed class AgentTaskLandHalfResetTests
         {
             Directory.Exists(marker).ShouldBeTrue("H.ChangedRegistrationPreserved");
             (await File.ReadAllTextAsync(Path.Combine(marker, "feature.txt"))).ShouldBe("valuable feature\n");
-            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "list", "--porcelain")).ShouldContain(marker, customMessage: "H.ChangedRegistrationStillRegistered");
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "list", "--porcelain")).ShouldContain(PorcelainPath(marker), customMessage: "H.ChangedRegistrationStillRegistered");
         }
         AssertNoResetOrPublication(h);
     }
