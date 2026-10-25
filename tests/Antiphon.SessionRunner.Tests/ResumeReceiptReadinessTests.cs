@@ -182,8 +182,13 @@ public class ResumeReceiptReadinessTests
             if (variant == "invalid-utf8")
             {
                 await Until(() => world.Tailer.Snapshot().Readiness?.ParsedThrough == new FileInfo(world.Path).Length);
-                if (world.Tailer.Snapshot().Readiness?.Status == "Ready")
-                    unsafeVariants.Add(variant);
+                await world.Tailer.TerminalObservation.ReadGate.WaitAsync();
+                try
+                {
+                    if (world.Tailer.Snapshot().Readiness?.Status == "Ready")
+                        unsafeVariants.Add(variant);
+                }
+                finally { world.Tailer.TerminalObservation.ReadGate.Release(); }
             }
         }
         unsafeVariants.ShouldBeEmpty("neither lost history nor replacement-decoded input can certify a complete current transcript");
