@@ -208,7 +208,9 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Rollout_lock_covers_final_census() {
-        using var first=Fixture("session-runner");using var second=Fixture("session-runner");
+        // The real empty census reaches the same final receipt under the rollout lock.
+        // Container-generation/removal proofs belong to the other cases, outside this barrier wait.
+        using var first=Fixture();using var second=Fixture();
         var finalBarrier=first.Root+"/final-barrier";var release=first.Root+"/final-release";
         var firstExtra=$$"""
             original_save=$(declare -f c994_save); eval "${original_save/c994_save/c994_save_original}"
