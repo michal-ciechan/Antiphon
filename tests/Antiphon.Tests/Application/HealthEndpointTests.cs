@@ -56,7 +56,7 @@ public class HealthEndpointTests
         body.InformationalVersion.ShouldContain(body.Version);
         AntiphonVersion.Sha.ShouldBe(body.Version);
         body.Capabilities.ShouldNotBeNull();
-        body.Capabilities.ShouldBe([AntiphonCapabilities.LandV2]);
+        body.Capabilities.ShouldBe([AntiphonCapabilities.LandV2, AntiphonCapabilities.OperatorShutdownV1]);
 
         var health = await client.GetAsync("/health");
         health.StatusCode.ShouldBe(HttpStatusCode.OK);
