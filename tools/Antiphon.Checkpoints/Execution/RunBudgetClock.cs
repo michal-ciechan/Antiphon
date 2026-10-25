@@ -1,7 +1,7 @@
 namespace Antiphon.Checkpoints;
 
 /// <summary>Monotonic run wall time, less the union of admission-only intervals.</summary>
-public sealed class RunBudgetClock : IDisposable
+public sealed class RunBudgetClock : IDisposable, IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly TimeProvider _time;
@@ -173,11 +173,14 @@ public sealed class RunBudgetClock : IDisposable
         finally { observedWait((int)_time.GetElapsedTime(started).TotalSeconds); }
     }
 
-    public void Dispose()
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
-        // Join timer callbacks before disposing the cancellation source they use.
-        if (_executionTimer is not null) _executionTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        if (_wallTimer is not null) _wallTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        // Cancellation can finish the scheduler inline on this timer's callback.
+        // Yield while joining it so that callback can return before the source is disposed.
+        if (_executionTimer is not null) await _executionTimer.DisposeAsync().ConfigureAwait(false);
+        if (_wallTimer is not null) await _wallTimer.DisposeAsync().ConfigureAwait(false);
         _expired.Dispose();
     }
 }
