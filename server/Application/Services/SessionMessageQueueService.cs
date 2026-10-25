@@ -1583,6 +1583,13 @@ public sealed partial class SessionMessageQueueService
             if (outcome.Verdict != DeliveryVerdict.Delivered)
             {
                 await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
+                var disposition = await ReadReceiptAttemptDispositionAsync(sessionId, [message.Id], ct);
+                if (disposition.Deferred || (StandingResumeNote.IsNote(message) && disposition.Confirmed))
+                {
+                    var retained = await GetQueueAsync(sessionId, ct);
+                    await PublishQueueChangedAsync(retained, ct);
+                    return retained;
+                }
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
@@ -2845,6 +2852,9 @@ public sealed partial class SessionMessageQueueService
         }
 
         await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
+        var disposition = await ReadReceiptAttemptDispositionAsync(sessionId, ids, ct);
+        if (disposition.Deferred) return TemporaryBlock();
+        if (run.Any(StandingResumeNote.IsNote) && disposition.Confirmed) return FlushResult.LateConfirmed;
         return FlushResult.Failed;
     }
 

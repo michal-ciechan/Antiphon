@@ -92,6 +92,20 @@ public sealed partial class SessionMessageQueueService
             && m.DeliveryVerdict != DeliveryVerdict.Delivered && m.DeliveryVerdict != DeliveryVerdict.LateConfirmed, ct);
     }
 
+    private async Task<(bool Deferred, bool Confirmed)> ReadReceiptAttemptDispositionAsync(
+        Guid sessionId, IReadOnlyList<Guid> ids, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && ids.Contains(m.Id))
+            .Select(m => new { m.Status, m.DeliveryVerdict, m.DeliveryVerdictAt }).ToListAsync(ct);
+        return (rows.Any(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryVerdictAt == null
+                && m.DeliveryVerdict is DeliveryVerdict.NoTranscriptRecord or DeliveryVerdict.NoSubmitOutput),
+            rows.Count == ids.Count && rows.All(m => m.Status == QueuedMessageStatus.Sent
+                && m.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed));
+    }
+
     // The row carries the observed failure, but no adjudication timestamp: absence cannot yet
     // reach incident/refund/restart policy. Preserve every original attempt coordinate.
     private async Task<bool> DeferResumeAbsenceAsync(Guid sessionId, IReadOnlyList<Guid>? ids,
