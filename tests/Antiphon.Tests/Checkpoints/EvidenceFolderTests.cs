@@ -35,6 +35,7 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
             if (attempts == 2) stream.Dispose();
         }).Remove(dir);
         Console.WriteLine($"held-file outcome={receipt.Outcome} attempts={attempts} elapsedMs={clock.Elapsed.TotalMilliseconds:F1}");
+        Console.WriteLine(receipt);
         receipt.Outcome.ShouldBe("Removed", "held-file-removed: the native sharing failure must be retried");
         attempts.ShouldBe(2, "held-file-two-attempts: removal must follow exactly one native sharing failure");
         Directory.Exists(tool).ShouldBeFalse("held-file-tool-absent: the removal receipt must match the filesystem");

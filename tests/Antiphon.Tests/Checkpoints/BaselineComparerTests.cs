@@ -229,12 +229,18 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         var driver = new FakeDriver();
         driver.When(request => request.FileName == "git", (request, _) =>
         {
+            CheckpointNativeDiagnostics.Driver(request);
             var stdout = request.Arguments.Contains("rev-parse") ? new string('a', 40) + "\n" : "";
             return Task.FromResult(new DriverResult(0, stdout, ""));
         });
-        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsBuild, (request, _) =>
+        {
+            CheckpointNativeDiagnostics.Driver(request);
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
         driver.When(CheckpointFixtures.IsRun, (request, _) =>
         {
+            CheckpointNativeDiagnostics.Driver(request);
             var path = CheckpointFixtures.TrxFile(request);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, trx(request));

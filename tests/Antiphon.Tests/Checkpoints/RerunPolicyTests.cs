@@ -134,13 +134,13 @@ public sealed class RerunPolicyTests : CheckpointTestBase
         result.ExitCode.ShouldBe(1);
     }
 
-    private Task<RowRunResult> Run(FakeDriver driver, IReadOnlyList<string> known)
+    private async Task<RowRunResult> Run(FakeDriver driver, IReadOnlyList<string> known)
     {
         // CARD-1267: the fresh output root is created under an existing project directory.
         var workingDirectory = TempDir();
         Directory.CreateDirectory(Path.Combine(workingDirectory, "tests/Antiphon.Tests"));
         var runner = new RowRunner(driver, new FakePlatform());
-        return runner.RunAsync(new RowRequest
+        var result = await runner.RunAsync(new RowRequest
         {
             Name = "CP-2",
             Project = "tests/Antiphon.Tests",
@@ -152,5 +152,7 @@ public sealed class RerunPolicyTests : CheckpointTestBase
             KnownFlaky = known,
             Commit = new string('d', 40),
         }, TextWriter.Null, CancellationToken.None);
+        if (CheckpointNativeDiagnostics.Enabled) Console.WriteLine("CHECKPOINT_NATIVE row-output=" + result.Output);
+        return result;
     }
 }
