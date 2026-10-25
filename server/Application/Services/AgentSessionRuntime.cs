@@ -1014,7 +1014,7 @@ public sealed partial class AgentSessionRuntime
                         ? Result(TranscriptRecoveryOutcome.Unknown, "persist_failure_retained")
                         : Result(TranscriptRecoveryOutcome.CheckedWorking, "runner_working");
 
-                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before, ct);
+                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before, ct: ct);
                 if (persisted.RecoveryFenceRejection is { } rejection)
                 {
                     _logger.LogWarning("Checked transcript recovery fence rejected session {SessionId}, generation {Generation}, reason {Reason}",
@@ -1313,7 +1313,7 @@ public sealed partial class AgentSessionRuntime
     }
 
     private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries,
-        RecoveryObservation? expectedRecovery = null, CancellationToken ct = default)
+        RecoveryObservation? expectedRecovery = null, ReceiptLaunchStamp? expectedReceipt = null, CancellationToken ct = default)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
@@ -1428,11 +1428,15 @@ public sealed partial class AgentSessionRuntime
             // row lock; never Agents/registration locks or queue callbacks from here.
             // Prepare identities first, then revalidate inside this transaction before any
             // INSERT. Publication happens in the caller only after this transaction commits.
-            await using var recoveryTransaction = expectedRecovery is null
+            await using var recoveryTransaction = expectedRecovery is null && expectedReceipt is null
                 ? null : await db.Database.BeginTransactionAsync(ct);
+            if (expectedRecovery is not null || expectedReceipt is not null)
+                await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, expectedReceipt is null ? CancellationToken.None : ct);
+            if (expectedReceipt is not null
+                && await ReadReceiptLaunchStampAsync(db, sessionId, expectedReceipt.StandingAgentId, ct) != expectedReceipt)
+                return PersistResult.Empty with { RecoveryFenceRejection = "ownership_changed_at_commit" };
             if (expectedRecovery is not null)
             {
-                await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
                 var fenced = await ReadRecoveryObservationAsync(db, sessionId, CancellationToken.None);
                 if (fenced is null || !fenced.LocalRunning
                     || !SessionGeneration.Equal(fenced.Generation, expectedRecovery.Generation)
