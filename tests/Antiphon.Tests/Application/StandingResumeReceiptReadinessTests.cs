@@ -205,7 +205,7 @@ public class StandingResumeReceiptReadinessTests
                 fence.Release.TrySetResult(); await racing;
                 await using var db = h.CreateObserverContext();
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
-                    .SetProperty(s => s.StartedAt, generation).SetProperty(s => s.RunnerStoreId, (Guid?)null)
+                    .SetProperty(s => s.StartedAt, generation).SetProperty(s => s.RunnerStoreId, storeId)
                     .SetProperty(s => s.StandingAgentId, h.AgentId));
             }
         }
