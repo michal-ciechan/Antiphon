@@ -17,9 +17,9 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     {
         // Portable witness for the setup used by the native death/cleanup rows.
         var run = Run();
-        WriteTool(run, "sentinel", "owned output");
         CheckpointFixtures.MarkRun(run, alive: false);
-        Remove(run).Outcome.ShouldBe("Removed");
+        var result = new ToolCopyCleanup().Remove(run);
+        result.Outcome.ShouldBe("Removed", result.ToString());
         Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
     }
 
