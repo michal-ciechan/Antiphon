@@ -54,8 +54,9 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                         services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
                             NullLogger<PtyDeliveryProfile>.Instance, backendOverride: backend));
                         services.AddScoped<AgentTaskLandNotificationService>(); } });
+                // Unix PTYs retain the conservative ceiling; Windows selectors do not apply there.
                 (await receiver.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(default))
-                    .SingleWriteMaxBytes.ShouldBe(backend == "modern" ? 86400 : 1024);
+                    .SingleWriteMaxBytes.ShouldBe(OperatingSystem.IsWindows() && backend == "modern" ? 86400 : 1024);
                 producer.Messages = receiver.Queue;
                 await using var db = producer.CreateContext();
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);
@@ -97,7 +98,7 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                 System.Text.Encoding.UTF8.GetByteCount(original.Body).ShouldBeLessThanOrEqualTo(1024);
                 original.ParentSessionId.ShouldBe(bridge.SessionId); original.Body.ShouldContain(capture.Id.ToString("N"));
                 original.Body.ShouldContain(owners ? h.Diagnostics.OwnerName : "InsufficientPrivileges");
-                original.Body.ShouldContain("Git git_exit_128 exit=128");
+                original.Body.ShouldContain("Git unregister_exit_128 exit=128");
                 original.Body.ShouldContain("DeleteAccessOpen=");
                 if (owners) original.Body.ShouldContain("PID=4321");
                 capture.CaptureState.ShouldBe(WorktreeCleanupCaptureState.Captured);
