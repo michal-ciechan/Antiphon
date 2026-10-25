@@ -13,6 +13,17 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
 {
     [Test]
+    public void recovery_fixture_records_tool_custody_before_cleanup()
+    {
+        // Portable witness for the setup used by the native death/cleanup rows.
+        var run = Run();
+        WriteTool(run, "sentinel", "owned output");
+        CheckpointFixtures.MarkRun(run, alive: false);
+        Remove(run).Outcome.ShouldBe("Removed");
+        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task native_identity_keeps_live_then_removes_dead()
     {
         if (!Windows()) return;
