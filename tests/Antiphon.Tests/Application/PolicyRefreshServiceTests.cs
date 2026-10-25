@@ -161,6 +161,16 @@ public class PolicyRefreshServiceTests
         await using var h = await CreateHarnessAsync();
         var factory = Factory(h);
         await SeedRelaunchReadyAsync(h, consecutiveFailures: 2);
+        // The resumed note waits for a complete transcript snapshot of this accepted launch.
+        // The default empty runner response models a legacy peer with unknown readiness.
+        h.Runner.TranscriptPull = async (id, ct) =>
+        {
+            await using var observed = CreateContext();
+            var generation = await observed.AgentSessions.Where(s => s.Id == id)
+                .Select(s => s.StartedAt).SingleAsync(ct);
+            return new(id, [], 0, AcceptedStartedAt: generation,
+                Readiness: new("Ready", "policy-refresh-launch", 0, 0));
+        };
 
         (await SweepAsync(h)).ShouldBe(1);
         await WaitForLaunchAsync(h);
