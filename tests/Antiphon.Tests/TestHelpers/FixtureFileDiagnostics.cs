@@ -18,7 +18,7 @@ internal static class FixtureFileDiagnostics
             if (entry is FileInfo file) Console.WriteLine($"FIXTURE_FILE length={file.Length}");
             if (OperatingSystem.IsWindows())
             {
-                var acl = entry is DirectoryInfo directory ? directory.GetAccessControl() : ((FileInfo)entry).GetAccessControl();
+                FileSystemSecurity acl = entry is DirectoryInfo directory ? directory.GetAccessControl() : ((FileInfo)entry).GetAccessControl();
                 Console.WriteLine("FIXTURE_FILE acl=" + acl.GetSecurityDescriptorSddlForm(AccessControlSections.Access));
             }
         }
