@@ -26,7 +26,7 @@ public class ClaudeAdapterEffortPromptTests
         var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
         await using var adapter = new ClaudeAdapter(Options.Create(settings), logger);
         var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
-        { Exe = "pwsh.exe", Cwd = scratch, Args = ["-NoProfile", "-File", script] };
+        { Exe = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh", Cwd = scratch, Args = ["-NoProfile", "-File", script] };
         try
         {
             await adapter.StartAsync(spec, CancellationToken.None);
@@ -106,7 +106,7 @@ public class ClaudeAdapterEffortPromptTests
         var adapter = new ClaudeAdapter(Options.Create(settings), logger);
         var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
         {
-            Exe = "pwsh.exe", Cwd = scratch,
+            Exe = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh", Cwd = scratch,
             Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
             Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested,
                 ["C1516_CLEAR_DELAY_MS"] = Environment.GetEnvironmentVariable("C1516_CLEAR_DELAY_MS") ?? "0", ["C1516_NEVER_CLEAR"] = neverClear ? "1" : "0" }
