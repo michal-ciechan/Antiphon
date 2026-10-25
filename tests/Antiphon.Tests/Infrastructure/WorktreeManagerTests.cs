@@ -160,7 +160,7 @@ public class WorktreeManagerGitIntegrationTests
         porcelain.ShouldNotContain(RegistrationLine(@"C:\fixture\worktrees\card-task-deadbeef"));
     }
 
-    private static string RegistrationLine(string path) => "worktree " + path;
+    private static string RegistrationLine(string path) => "worktree " + path.Replace('\\', '/');
 
     [Test]
     public async Task C1213_ExplicitBranchKeepsDirectoryIdentity()
