@@ -245,16 +245,42 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         if (TargetId == Guid.Empty) await DiscoverAsync();
         await using var scope = Host.Services.CreateAsyncScope();
         configure?.Invoke(scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>());
-        return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupService>()
+        var result = await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupService>()
             .TryCleanupLocalAsync(TargetId, null, CancellationToken.None);
+        await DiagnoseAsync(result);
+        return result;
     }
 
     public async Task<WorktreeRemoval> CleanupDirectAsync(Guid? runId = null)
     {
         if (EndpointId == Guid.Empty) await DiscoverAsync();
         await using var scope = Host.Services.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>()
+        var result = await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>()
             .TryAsync(EndpointId, runId, CancellationToken.None);
+        await DiagnoseAsync(result);
+        return result;
+    }
+
+    private async Task DiagnoseAsync(WorktreeRemoval result)
+    {
+        Console.WriteLine($"C1017_CLEANUP task={TaskId} endpoint={EndpointId} result={JsonSerializer.Serialize(result)}");
+        if (result.IsClean || !OperatingSystem.IsWindows()) return;
+        try
+        {
+            FixtureFileDiagnostics.Write(Tree);
+            FixtureFileDiagnostics.Write(Path.Combine(Tree, ".git"));
+            // These commands inspect only the fixture repository, through its existing bounded runner.
+            foreach (var args in new[]
+                     {
+                         new[] { "worktree", "list", "--porcelain" },
+                         new[] { "status", "--porcelain=v1", "--untracked-files=all" },
+                     })
+            {
+                var observed = await Host.Fixture.Git.RunAsync(Host.Fixture.Repository, args, CancellationToken.None);
+                Console.WriteLine($"C1017_GIT command={string.Join(' ', args)} exit={observed.ExitCode} stdout={observed.Output} stderr={observed.Diagnostic}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine("C1017_DIAGNOSTIC unavailable: " + ex.Message); }
     }
 
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;

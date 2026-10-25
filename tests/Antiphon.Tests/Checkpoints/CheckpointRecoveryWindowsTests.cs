@@ -33,16 +33,16 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         {
             Own(run, child, "launched");
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            File.WriteAllText(sentinel, "live");
+            WriteTool(run, "sentinel", "live");
             var deletes = 0;
             var cleanup = new ToolCopyCleanup(beforeDelete: _ => deletes++);
-            cleanup.Remove(run).Outcome.ShouldBe("Retained");
+            Remove(run, cleanup).Outcome.ShouldBe("Retained");
             deletes.ShouldBe(0);
             File.ReadAllText(sentinel).ShouldBe("live");
             var reused = new ProcessIdentityProbe().Capture(child.Id) with { StartUtcTicks = 1 };
             new ProcessIdentityProbe().Observe(reused).Verdict.ShouldBe(ProcessVerdict.ReusedPid);
             await Stop(child);
-            cleanup.Remove(run).Outcome.ShouldBe("Removed");
+            Remove(run, cleanup).Outcome.ShouldBe("Removed");
         }
         finally { await Stop(child); }
     }
@@ -55,7 +55,14 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         var source = Path.Combine(CheckpointFixtures.RepoRoot, "tools", "Antiphon.Checkpoints", "bin-c804-windows");
         if (!Directory.Exists(source)) source = Path.GetDirectoryName(typeof(DetachedLauncher).Assembly.Location)!;
         var staged = Path.Combine(sandbox, "staged");
-        ShadowCopy.CopyToolOutput(source, staged);
+        try { ShadowCopy.CopyToolOutput(source, staged); }
+        catch (Exception ex)
+        {
+            FixtureFileDiagnostics.Write(source, ex);
+            FixtureFileDiagnostics.Write(Path.Combine(source, "Antiphon.Tests.dll"));
+            FixtureFileDiagnostics.Write(Path.Combine(staged, "Antiphon.Tests.dll"));
+            throw;
+        }
         var pid = new DetachedLauncher(new FakePlatform { IsWindows = true }).Start(new LaunchRequest(
             "dotnet", [Path.Combine(staged, "Antiphon.Checkpoints.dll"), "hold"], sandbox));
         using var child = Process.GetProcessById(pid);
@@ -82,12 +89,10 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
             new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
             { RunId = Path.GetFileName(run), Phase = "done", ExecutorPid = child.Id, ExitCode = 0 });
-            (await new WaitCommand().WaitAsync(run, TimeSpan.FromMilliseconds(25), TimeSpan.FromSeconds(1),
-                new StringWriter(), CancellationToken.None)).ShouldBe(ExitCodes.StillRunning);
+            (await WaitAsync(run, TimeSpan.FromMilliseconds(25))).ShouldBe(ExitCodes.StillRunning);
             Directory.Exists(Path.Combine(run, "tool")).ShouldBeTrue();
             await Stop(child);
-            (await new WaitCommand().WaitAsync(run, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
-                new StringWriter(), CancellationToken.None)).ShouldBe(0);
+            (await WaitAsync(run, TimeSpan.FromSeconds(1))).ShouldBe(0);
             Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
         }
         finally { await Stop(child); }
@@ -102,10 +107,10 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         try
         {
             Own(run, starter, "preparing");
-            File.WriteAllText(Path.Combine(run, "tool", "partial"), "copy began");
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");
+            WriteTool(run, "partial", "copy began");
+            Remove(run).Outcome.ShouldBe("Retained");
             await Stop(starter);
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
+            Remove(run).Outcome.ShouldBe("Removed");
         }
         finally { await Stop(starter); }
     }
@@ -223,13 +228,13 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         {
             Own(run, child, "launch-attempted", includeLaunch: false);
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            File.WriteAllText(sentinel, "unknown");
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");
+            WriteTool(run, "sentinel", "unknown");
+            Remove(run).Outcome.ShouldBe("Retained");
             File.ReadAllText(sentinel).ShouldBe("unknown");
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");
+            Remove(run).Outcome.ShouldBe("Retained");
             await Stop(child);
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
+            Remove(run).Outcome.ShouldBe("Removed");
         }
         finally { await Stop(child); }
     }
@@ -241,13 +246,13 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         var run = Run();
         CheckpointFixtures.MarkRun(run, alive: false);
         var path = Path.Combine(run, "tool", "locked.bin");
-        File.WriteAllText(path, "lock");
+        WriteTool(run, "locked.bin", "lock");
         using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Failed");
+            Remove(run).Outcome.ShouldBe("Failed");
             Directory.Exists(Path.Combine(run, "tool")).ShouldBeTrue();
         }
-        new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
+        Remove(run).Outcome.ShouldBe("Removed");
     }
 
     [Test]
@@ -374,8 +379,34 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     private string Run()
     {
         var run = Path.Combine(TempDir(), "run-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(run, "tool"));
+        var tool = Path.Combine(run, "tool");
+        Directory.CreateDirectory(run);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         return run;
+    }
+
+    private static void WriteTool(string run, string name, string content)
+    {
+        var tool = Path.Combine(run, "tool");
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, name), content, SafeWrite.Under(tool)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
+    }
+
+    private static CleanupReceipt Remove(string run, ToolCopyCleanup? cleanup = null)
+    {
+        var result = (cleanup ?? new ToolCopyCleanup()).Remove(run);
+        Console.WriteLine(result);
+        if (result.Outcome is "Failed" or "Refused") FixtureFileDiagnostics.Write(result.Path);
+        return result;
+    }
+
+    private static async Task<int> WaitAsync(string run, TimeSpan timeout)
+    {
+        var output = new StringWriter();
+        var exit = await new WaitCommand().WaitAsync(run, timeout, TimeSpan.FromSeconds(1), output, CancellationToken.None);
+        Console.WriteLine($"WINDOWS_RECOVERY_WAIT exit={exit} output={output}");
+        return exit;
     }
 
     private static void Own(string run, Process child, string phase, bool includeLaunch = true)

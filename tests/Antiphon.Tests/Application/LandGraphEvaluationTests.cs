@@ -17,7 +17,8 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class LandGraphEvaluationTests
 {
-    internal static string NativeLinkTarget(string target, bool windows) => target;
+    internal static string NativeLinkTarget(string target, bool windows) =>
+        windows ? target.Replace('/', '\\') : target;
 
     [Test]
     public void Windows_link_targets_use_native_separators()
