@@ -55,6 +55,13 @@ public sealed class CardCleanupSchedulingSchemaTests
 
         await migrator.MigrateAsync(migrations[position]);
         db.ChangeTracker.Clear();
+        (await db.Database.GetPendingMigrationsAsync()).ShouldBe(migrations.Skip(position + 1));
+        // Exercise the named upgrade first, then restore the current schema for current-model reads.
+        (await ColumnCountAsync(db, "WorktreeResidueRunCandidates", "ActionKey")).ShouldBe(1);
+        (await ColumnCountAsync(db, "WorktreeResidueRunCandidates", "AcceptedAt")).ShouldBe(1);
+        (await ColumnCountAsync(db, "CardWorktreeCleanupEndpoints", "EvidenceDigest")).ShouldBe(1);
+        (await ColumnCountAsync(db, "WorktreeResidueCandidateCursors", "EvidenceDigest")).ShouldBe(1);
+        await migrator.MigrateAsync();
         (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         db.Database.HasPendingModelChanges().ShouldBeFalse();
 
