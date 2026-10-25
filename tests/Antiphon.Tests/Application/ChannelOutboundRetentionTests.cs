@@ -234,6 +234,14 @@ public sealed class ChannelOutboundRetentionTests
             await w.H.TickOutboundAsync(); await w.H.TickOutboundAsync();
             w.H.Messaging.SentReplies.Last().Text.ShouldBe("last native tail");
             w.H.Messaging.SentReplies.Count.ShouldBe(suppressed ? 1 : 2);
+            // Snapshot ingestion leaves durable effects even after the outbound pump finishes.
+            // Retention must protect them until this offline fixture runs the action consumer.
+            (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == w.H.SessionId)).ShouldBeTrue();
+            await w.Retention(db).PruneTranscriptsAsync(default);
+            (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == w.H.SessionId)).ShouldBeTrue();
+            await w.H.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(w.H.SessionId, default);
+            (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == w.H.SessionId)).ShouldBeFalse();
             await db.TranscriptEntries.ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, w.Old));
             await db.SessionQueuedMessages.ExecuteUpdateAsync(u => u.SetProperty(m => m.CreatedAt, w.Old));
             await w.Retention(db).PruneTranscriptsAsync(default);
