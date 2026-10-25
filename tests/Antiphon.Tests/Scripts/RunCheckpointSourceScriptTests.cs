@@ -251,10 +251,9 @@ public sealed class RunCheckpointSourceScriptTests
         malformed.Exit.ShouldBe(3, malformed.Output);
         malformed.Source.GetProperty("executed").GetInt32().ShouldBe(0, "zero-count-persists");
 
-        File.Delete(fixture.Stamp);
-        Directory.CreateDirectory(fixture.Stamp);
-        File.WriteAllText(Path.Combine(fixture.Stamp, "block"), "keep the stamp directory nonempty");
-        var interrupted = await fixture.RunAsync();
+        // Collide with the next phase log after admission; an existing stamp is now
+        // an ordinary preflight refusal rather than a driver interruption.
+        var interrupted = await fixture.RunAsync(interruptRunLog: true);
         interrupted.Exit.ShouldBe(2, interrupted.Output);
         interrupted.Output.ShouldContain("driver interruption", Case.Sensitive);
         interrupted.Source.GetProperty("end").ValueKind.ShouldBe(JsonValueKind.Null,
@@ -377,7 +376,8 @@ public sealed class RunCheckpointSourceScriptTests
         public string External => Path.Combine(Root, "external");
         public string Observations => Path.Combine(External, "children.jsonl");
         public string Head { get; }
-        public string Stamp => Path.Combine(Repo, "sample", "bin-c835", "checkpoint-build-source.json");
+        private string _outputPath = "bin-c835/";
+        public string Stamp => Path.Combine(Repo, "sample", _outputPath, "checkpoint-build-source.json");
         public int Calls => File.Exists(Path.Combine(External, "calls.txt"))
             ? File.ReadAllLines(Path.Combine(External, "calls.txt")).Length : 0;
         public int SlotCalls => File.Exists(Path.Combine(External, "slot-calls.txt"))
@@ -423,7 +423,12 @@ public sealed class RunCheckpointSourceScriptTests
                 if ($env:C835_DRIFT -eq ('same-count-' + $phase)) {
                     Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'second dirty value'
                 }
-                if ($phase -eq 'build') { exit [int]$env:C835_BUILD_EXIT }
+                if ($phase -eq 'build') {
+                    if ($env:C835_RUN_LOG_COLLISION) {
+                        [void][IO.Directory]::CreateDirectory($env:C835_RUN_LOG_COLLISION)
+                    }
+                    exit [int]$env:C835_BUILD_EXIT
+                }
                 $result = ''
                 for ($i = 0; $i -lt $items.Count; $i++) {
                     if ($items[$i] -eq '--results-directory') { $result = [string]$items[$i + 1] }
@@ -450,13 +455,17 @@ public sealed class RunCheckpointSourceScriptTests
 
         public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
             string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
-            bool useSlot = false, bool slotDrift = false, string? nativeCwd = null)
+            bool useSlot = false, bool slotDrift = false, string? nativeCwd = null,
+            bool interruptRunLog = false)
         {
             var round = ++_round;
+            // Rebuilds require fresh output ownership. NoBuild deliberately keeps
+            // the most recently selected output so stamp reuse/refusal stays real.
+            if (!noBuild) _outputPath = round == 1 ? "bin-c835/" : $"bin-c835-{round}/";
             var resultRoot = Path.Combine(External, "results-" + round);
             var args = new List<string> { "-NoProfile", "-NonInteractive", "-File",
                 Path.Combine(ProjectRoot, "scripts", "run-checkpoint.ps1"), "-Name", "CP-2",
-                "-Project", "sample", "-OutputPath", "bin-c835/", "-Filter", "/*/*/C585SampleTests/*",
+                "-Project", "sample", "-OutputPath", _outputPath, "-Filter", "/*/*/C585SampleTests/*",
                 "-ResultsRoot", resultRoot, "-MinExecuted", "1", "-DotnetShim",
                 Path.Combine(External, "shim.ps1") };
             if (!useSlot) args.Add("-NoSlot");
@@ -467,6 +476,8 @@ public sealed class RunCheckpointSourceScriptTests
                 ["C835_CALLS"] = Path.Combine(External, "calls.txt"),
                 ["C835_REPO"] = Repo,
                 ["C835_BUILD_EXIT"] = buildExit.ToString(),
+                ["C835_RUN_LOG_COLLISION"] = interruptRunLog
+                    ? Path.Combine(resultRoot, "CP-2-round-" + round, "run.log") : null,
                 ["C835_TRX"] = trx is null ? null : Path.Combine(ProjectRoot, "scripts", "fixtures", trx),
                 ["C835_DRIFT"] = driftPhase,
                 ["C835_SLOT_CALLS"] = Path.Combine(External, "slot-calls.txt"),
