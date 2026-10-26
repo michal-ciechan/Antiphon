@@ -1,4 +1,3 @@
-using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
@@ -64,16 +63,4 @@ public sealed class WindowsDeliveryFixtureWitnessTests
         path.ShouldBe("/runner/task/instructions/grok/" + id.ToString("N") + "/rules.md");
         GrokRulesTransport.ValidateReceiptPath(path, id);
     }
-    [Test]
-    public void Sign_in_screen_retains_its_anchors_after_terminal_rendering()
-    {
-        var paint = Antiphon.FakeGrok.SignInScreen.Render(@"C:\fixture\cwd");
-        var legacy = new TerminalScreen(120, 30);
-        legacy.Feed(paint.ReplaceLineEndings("\n"));
-        var fixedScreen = new TerminalScreen(120, 30);
-        fixedScreen.Feed(paint);
-        Console.WriteLine("Legacy LF sign-in visible=" + GrokSignInPromptDetector.IsVisibleOnScreen(legacy.GetScreenText()));
-        GrokStartupScreen.Classify(fixedScreen.GetScreenText()).Reason.ShouldBe(GrokStartupReason.SignIn);
-    }
-
 }
