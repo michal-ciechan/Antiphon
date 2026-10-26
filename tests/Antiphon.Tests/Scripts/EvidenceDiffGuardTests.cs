@@ -202,8 +202,8 @@ public sealed class EvidenceDiffGuardTests
     public async Task Handles_literal_paths_and_case_variants()
     {
         await using var f = await EvidenceGitFixture.CreateAsync();
-        var canary = Path.Combine(f.Root, "path-executed");
-        var shell = ".antiphon/$(New-Item -ItemType File -Path '" + canary.Replace("\\", "/") + "').json";
+        var canary = Path.Combine(f.Repo, "path-executed");
+        var shell = ".antiphon/$(New-Item -ItemType File -Path 'path-executed').json";
         foreach (var (path, label) in new[] { (".ANTIPHON/case.json", "root-case"),
             (".antiphon/a b\t\n\u00e9.json", "literal-newline"), (shell, "no-path-execution") })
         {
@@ -243,7 +243,9 @@ public sealed class EvidenceDiffGuardTests
         (await f.HistoryAsync("fixture-tag", f.Base)).Exit.ShouldBe(0);
         var head = await f.AddCommitAsync(f.Base, ".antiphon/missing.md", Text(Guid.NewGuid().ToString()));
         var e = (await f.TreeAsync(head)).Single(x => x.Path == ".antiphon/missing.md");
-        File.Delete(Path.Combine(f.Repo, ".git", "objects", e.Oid[..2], e.Oid[2..]));
+        var objectPath = Path.Combine(f.Repo, ".git", "objects", e.Oid[..2], e.Oid[2..]);
+        File.SetAttributes(objectPath, FileAttributes.Normal);
+        File.Delete(objectPath);
         (await f.HistoryAsync(f.Base, head)).Exit.ShouldBe(2);
     }
 

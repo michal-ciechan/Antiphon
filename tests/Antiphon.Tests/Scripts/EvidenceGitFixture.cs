@@ -45,6 +45,9 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
             await f.GitAsync("config", "user.email", "evidence@example.invalid");
             await f.GitAsync("config", "commit.gpgsign", "false");
             await f.GitAsync("config", "core.hooksPath", Path.Combine(f.Root, "no-hooks"));
+            // Object-only index: deliberately invalid paths must reach the evidence
+            // policy on Windows too. These trees are never checked out.
+            await f.GitAsync("config", "core.protectNTFS", "false");
             await f.GitAsync("config", "credential.helper", "");
             await f.GitAsync("read-tree", "--empty");
             if (anchored)
