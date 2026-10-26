@@ -2848,7 +2848,7 @@ public sealed class LandNonCodeSkipTests
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            var candidate = Path.Combine(dir, "git");
+            var candidate = Path.Combine(dir, OperatingSystem.IsWindows() ? "git.exe" : "git");
             if (File.Exists(candidate)) return candidate;
         }
         throw new InvalidOperationException("git was not found on PATH.");
