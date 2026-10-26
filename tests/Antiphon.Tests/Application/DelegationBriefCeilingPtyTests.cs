@@ -299,7 +299,7 @@ public class DelegationBriefCeilingPtyTests
                 Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_STDIN_CLIP"] = "1" },
                 Cwd: h.Cwd,
                 Cols: 120,
-                Rows: 30);
+                Rows: 30).WithNativeClaudeDialog();
 
             await h._client.StartAsync(h._sessionId, spec, CancellationToken.None);
             var ready = await h.WaitRawAsync(
@@ -314,7 +314,7 @@ public class DelegationBriefCeilingPtyTests
                 {
                     Id = h._sessionId, CardId = null, DefinitionName = "fakeclaude",
                     AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
-                    Cwd = h.Cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                    Cwd = h.Cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = spec.AcceptedStartedAt!.Value, LastSeenAt = now,
                 });
                 await db.SaveChangesAsync();
             }

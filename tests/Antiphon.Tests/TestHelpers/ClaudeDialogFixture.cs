@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,12 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>Explicit supported-Claude fixture setup; the default fake still supplies no observation.</summary>
 internal static class ClaudeDialogFixture
 {
+    public static AgentLaunchSpec WithNativeClaudeDialog(this AgentLaunchSpec spec) => spec with
+    {
+        Env = new Dictionary<string, string>(spec.Env) { ["ANTIPHON_FAKE_CLAUDE_COMPOSER"] = "1" },
+        AcceptedStartedAt = spec.AcceptedStartedAt ?? SessionGeneration.Normalize(DateTime.UtcNow),
+    };
+
     public static void ConfigurePhoneHomePeer(
         PhoneHomeScriptedPeer peer, FakeAgentProtocolAdapter terminal, Guid sessionId)
     {
