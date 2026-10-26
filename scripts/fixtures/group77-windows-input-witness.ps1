@@ -34,8 +34,8 @@ if ($Case -ceq 'admission') {
         foreach ($platform in @('windows','linux')) {
             $type = $row.Class + $platform
             $condition = if ($platform -ceq 'linux') { 'true' } else { 'false' }
-            $body = ($gate + ' public static class ' + $type + ' { public static string Run() { ' + $prefix + ' return "native-setup"; } }').Replace('OperatingSystem.IsLinux()', $condition)
-            $body = 'using System; namespace W' + $type + ' { namespace TUnit.Core.Exceptions { public class SkipTestException : Exception { public SkipTestException(string reason) : base(reason) {} } } ' + $body + ' }'
+            $body = ($gate + ' public static class ' + $type + ' { public static string Run() { ' + $prefix + ' return "native-setup"; } }').Replace('OperatingSystem.IsLinux()', 'Platform.IsLinux')
+            $body = 'using System; namespace W' + $type + ' { public static class Platform { public static bool IsLinux = ' + $condition + '; } namespace TUnit.Core.Exceptions { public class SkipTestException : Exception { public SkipTestException(string reason) : base(reason) {} } } ' + $body + ' }'
             Add-Type $body
             $result = $null; $errorSeen = $null
             try { $result = ('W' + $type + '.' + $type -as [type])::Run() }
