@@ -74,4 +74,41 @@ Final validation selects only
 `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets`
 (14 arguments), using `dotnet run --no-build` through `scripts/build-slot.ps1`.
 No Unit lane, native test lane, tags, release, deployment or runner changes.
-Final budget verification is pending at this evidence commit.
+At the initial evidence commit, final budget verification was pending.
+
+## Final outcome
+
+Fixture-only repair `b5ecf49cd5856fcc62dee7b07f58b1af3238b5da` passed all
+14 exact-budget arguments, zero failed/skipped. Full SQL independently confirms
+70 existing-brief statements and 65 each for missing-brief/watchdog. The other
+11 budgets retain their original values. No product source, helper body, timeout,
+guard, or test selection changed. Initial reproduction source was clean base;
+fix build and green execution used the clean committed fixture-repair source.
+The later report-only commit does not claim a separate test run.
+
+The incremental isolated build took 212.87 seconds, zero errors. Both builds
+reported 1,196 warnings. Build slot wait was zero, held 214 seconds. The exact
+green selection's host duration was 55.670 seconds, separate granted slot held
+59 seconds with zero wait. Evidence is `fix-build.log`, `green.log`,
+`green/run.trx`, `green/*.sql.txt`, and `green-phases/` under the external evidence
+root. `red-summary.json` and `green-summary.json` retain source SHA, literal
+filters, all TRX argument outcomes/durations, phase module identities and artifact
+SHA-256 hashes. Both phase recorders report no failure and zero dropped phases.
+Red assembly fixture spans measured DB start 5.110 seconds and migrations
+34.299 seconds; other unavailable phase attribution stays unknown. These are
+one-run observations, not a measured p95 or a reason to alter timeouts.
+
+Rerun with a fresh isolated build through the host gate, then use that same output:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label split8-build -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-split8/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label split8-budgets -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-split8/ -- --treenode-filter '/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets' --report-trx --results-directory .antiphon/split8-budgets
+```
+
+Landing handoff: land the fixture-only exact-budget repair; rc also needs the
+existing platform-registration correction from
+`6befcc97c22e12e58ac4ae538010dec8b517d597`. Its native Windows case is pending
+with the caller's qualification, not credited by this Linux run. No Review is
+requested for this fixture-only change, per the commissioning brief. No product
+restart is needed. The live Windows lock, build slots and qualification were
+never accessed.
