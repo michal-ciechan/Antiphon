@@ -999,6 +999,8 @@ case "$mode" in
     done
     SOURCE=live; FAULT=none
     run case_runner_cache_inventory; accept present-temp-accepted
+    [ ! -e "$CASE_DIR/server2-temp-container-census.txt" ] || fail present-temp-stale-absence-proof
+    pass present-temp-clears-absence-proof
     FAULT=attachment
     run c849_volume "$C849_PACKAGES" nuget-packages yes "$image_id"
     refuse unmarked-consumer-refused CacheUnmarkedInUse
