@@ -1,6 +1,7 @@
 # CARD-1483 S5: author-time approval of the land build graph.
 # -Update requires the emulation pre-check AND real MSBuild evaluation, with no restore.
-# -Check verifies the pre-check, manifest and digest/SDK/pins evaluation record; it does not evaluate.
+# -Check verifies the pre-check, manifest and digest/pins evaluation record; it does not evaluate.
+# The recorded SDK is evaluator provenance, not an exact SDK requirement for the checking host.
 # CARD-1528: -Update also refuses unobserved filesystem/unsupported evaluation functions.
 # CARD-1540: timestamp metadata and unreviewed environment properties refuse; knob reads need exact pins.
 # Land itself only compares the definition digest; it never runs this evaluator.
@@ -135,9 +136,13 @@ try {
         if (-not [System.IO.File]::Exists($EvaluationPath)) { throw 'evaluation record missing; run -Update' }
         $record = [System.IO.File]::ReadAllLines($EvaluationPath)
         if ($record.Length -ne 3) { throw 'evaluation record must be three lines' }
-        foreach ($i in 0..2) {
+        foreach ($i in @(0, 2)) {
             if ($record[$i] -cne $expected[$i]) { throw ('evaluation record mismatch: ' + @('digest', 'SDK', 'pins SHA')[$i]) }
         }
+        # global.json is part of the exact graph digest and owns SDK selection/roll-forward.
+        # Keep the author's SDK identity as provenance: legitimate checking hosts can resolve
+        # different SDKs under that committed policy without invalidating this approval.
+        if ($record[1] -cnotmatch '^\d+\.\d+\.\d+[^\s]*$') { throw 'evaluation record has invalid SDK provenance' }
         Assert-HeadSource $head
     }
 } catch {
