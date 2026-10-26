@@ -112,6 +112,14 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Complete_source_stamp_requires_every_manifested_attachment", 1, ""),
     ];
 
+    // Later Linux-native fixtures participate in source closure without widening the
+    // frozen child runtime selection or its exact outcome counts.
+    internal static readonly Entry[] NativeSourceOnly =
+    [
+        new("Antiphon.Tests.Scripts", "NightlyProbeSupervisorTests", "C1375_DeadlineKillsAndJoinsTree", 1,
+            "CARD-1375 native expiry qualification requires Linux."),
+    ];
+
     // Legacy call sites are source-closure accounting, outside the S1 child runtime roster.
     internal static readonly Entry[] Existing =
     [
