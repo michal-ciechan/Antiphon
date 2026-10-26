@@ -39,7 +39,7 @@ public sealed class MarkdownPdfRealBrowserTests
         var before = new Dictionary<string, string>();
         foreach (var name in names)
         {
-            var source = Path.Combine(specimen, name);
+            var source = Path.Combine(specimen, name + ".fixture");
             before[name] = await HashAsync(source);
             File.Copy(source, Path.Combine(root, name));
         }
@@ -110,7 +110,7 @@ public sealed class MarkdownPdfRealBrowserTests
             images.ExitCode.ShouldBe(0, images.Stderr);
             Directory.GetFiles(root, "page-*.png").Length.ShouldBe(4);
             foreach (var name in names)
-                (await HashAsync(Path.Combine(specimen, name))).ShouldBe(before[name]);
+                (await HashAsync(Path.Combine(specimen, name + ".fixture"))).ShouldBe(before[name]);
             Console.WriteLine($"CARD-0418 V-20 artifact: {pdf} sha256={await HashAsync(pdf)}");
         }
         finally
