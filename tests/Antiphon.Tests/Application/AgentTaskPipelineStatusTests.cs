@@ -939,12 +939,12 @@ public partial class AgentTaskPipelineStatusTests
 }
 
 /// <summary>
-/// HTTP contract for <c>GET /api/agent-tasks/pipeline</c>. Shares the session factory, so it is
-/// <c>[NotInParallel]</c> like every other Program-host consumer.
+/// HTTP contract for <c>GET /api/agent-tasks/pipeline</c>. Shares one dedicated factory for the
+/// session so fleet-wide assertions cannot see rows left by unrelated HTTP fixtures.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
-[ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<AgentTaskPipelineWebAppFactory>(Shared = SharedType.PerTestSession)]
 public class AgentTaskPipelineEndpointTests
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -953,9 +953,9 @@ public class AgentTaskPipelineEndpointTests
         Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
     };
 
-    private readonly AntiphonWebAppFactory _factory;
+    private readonly AgentTaskPipelineWebAppFactory _factory;
 
-    public AgentTaskPipelineEndpointTests(AntiphonWebAppFactory factory) => _factory = factory;
+    public AgentTaskPipelineEndpointTests(AgentTaskPipelineWebAppFactory factory) => _factory = factory;
 
     [Before(Test)]
     public Task ResetAsync() => _factory.ResetAsync();
@@ -1159,3 +1159,5 @@ public class AgentTaskPipelineEndpointTests
         empty.RootElement.GetProperty("investigateBacklog").GetProperty("items").GetArrayLength().ShouldBe(0);
     }
 }
+
+public sealed class AgentTaskPipelineWebAppFactory : AntiphonWebAppFactory;
