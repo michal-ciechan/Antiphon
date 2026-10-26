@@ -681,22 +681,23 @@ public sealed class ChannelOutboundRecoveryTests
             using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
                 while (true)
                 {
-                    var marker = File.Exists(markerPath) ? await File.ReadAllTextAsync(markerPath) : "";
+                    var marker = File.Exists(markerPath)
+                        ? await LiveFixtureText.ReadAsync(markerPath, cancellationToken: watchdog.Token) : "";
                     var complete = cut == "conversion-dispatched"
                         ? marker.StartsWith($"dispatch-warning-claim-committed|{acceptedId:N}|",
                             StringComparison.Ordinal) && marker.Length >=
                             $"dispatch-warning-claim-committed|{acceptedId:N}|".Length + 32
-                        : running ? marker == "dispatch-ready" : marker.Length > 0;
+                        : running ? marker == "dispatch-ready" : marker == cut;
                     if (complete) break;
                     child.HasExited.ShouldBeFalse("probe exited before its admission/task barrier");
                     await Task.Delay(25, watchdog.Token);
                 }
             if (cut == "conversion-dispatched")
-                (await File.ReadAllTextAsync(markerPath)).ShouldStartWith(
+                (await LiveFixtureText.ReadAsync(markerPath)).ShouldStartWith(
                     $"dispatch-warning-claim-committed|{acceptedId:N}|");
             if (running)
             {
-                (await File.ReadAllTextAsync(markerPath)).ShouldBe("dispatch-ready");
+                (await LiveFixtureText.ReadAsync(markerPath)).ShouldBe("dispatch-ready");
                 using var launchDocument = JsonDocument.Parse(await File.ReadAllTextAsync(launchSpecPath));
                 var launch = launchDocument.RootElement;
                 nativeSessionId = launch.GetProperty("SessionId").GetGuid();
