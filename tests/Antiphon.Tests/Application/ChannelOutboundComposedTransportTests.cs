@@ -34,8 +34,9 @@ public sealed class ChannelOutboundComposedTransportTests
             "Fixtures", "Card0418"));
         var names = new[] { "requirements.md", "design.md", "external-api.md", "current-snapshots.md" };
         var sources = new List<(string Name, byte[] Bytes)>();
+        // Store the specimen as fixture data; keep the Markdown attachment names on the wire.
         foreach (var name in names)
-            sources.Add((name, await File.ReadAllBytesAsync(Path.Combine(specimen, name))));
+            sources.Add((name, await File.ReadAllBytesAsync(Path.Combine(specimen, name + ".fixture"))));
         var pdf = await File.ReadAllBytesAsync(Path.Combine(specimen, "combined.pdf"));
         Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant().ShouldBe(
             "5e6aaaf18d0e9b5f057ea351b517fd243ce15520495c1ebdfb88e9cbdf27a806");
