@@ -158,8 +158,8 @@ public sealed class PhoneHomeCompletedCardTransportTests
             var settings = new PhoneHomeSettings
             {
                 Enabled = true, RunnerId = Host.AllowedRunnerId, ServerOrigin = Host.Http.BaseAddress!.ToString(),
-                SecretPath = secretPath, StoreIdPath = storePath, AllowedCwd = Path.Combine(F.Root, "work"),
-                RunnerRepository = F.Repository, RunnerCloneSource = F.Origin,
+                SecretPath = secretPath, StoreIdPath = storePath, AllowedCwd = _configured ? Path.Combine(F.Root, "work") : "/work",
+                RunnerRepository = _configured ? F.Repository : "/work/repos/antiphon", RunnerCloneSource = F.Origin,
                 LaunchGenerationsPath = Path.Combine(state, "launch"), CapacityStatePath = Path.Combine(state, "capacity"),
                 Capacity = 2, ProbeSecondaryRepositoryPushAccess = false,
             };
