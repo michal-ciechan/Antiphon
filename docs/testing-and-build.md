@@ -9,6 +9,20 @@ For an existing clean Windows checkout, run
 files still contain CRLF, remove only those working files and restore them from HEAD again
 (leave index entries intact), then rerun the byte test, which also exercises this restore path.
 
+The shared C487 PowerShell fixture completion clears read-only attributes on files under its
+owned results root before the outer ScriptHarnessProcess joins and deletes that tree. It skips
+reparse points, including a linked root, and leaves deletion to the outer owner. This includes
+bare Git repositories that are absent from a fixture's checkout registry. Fault hooks that
+delete a loose Git object during assertions clear that object's attributes at the fault cut.
+The C578 fixture also uses its unique Fx.OutputPath for cancellation runs, so a prior completed
+case cannot supply their build output. The forced-Windows witnesses are
+`scripts/fixtures/c487-readonly-windows-witness.ps1`,
+`scripts/fixtures/checkpoint-output-windows-witness.ps1`, and
+`scripts/fixtures/evidence-supplemental-windows-witness.ps1`.
+`scripts/fixtures/group76-native-diagnostics.ps1` records native runtime, line endings, build
+artifacts and classified TRX failures without launching tests. Its output is diagnostic;
+the Windows C1050 audits still require their native apphost and trusted checkpoint source stamp.
+
 CARD-1022 release A: the five PTY assembly guards clear inherited `ANTIPHON_PTY_BACKEND`;
 the isolated default is ModernConPty on Windows (both staged files required) and UnixPty
 elsewhere. A native Windows qualification with missing prerequisites fails. Explicit legacy
