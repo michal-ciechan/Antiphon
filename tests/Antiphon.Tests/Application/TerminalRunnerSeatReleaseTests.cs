@@ -622,13 +622,19 @@ public class TerminalRunnerSeatReleaseTests
             if (at != "BeforeDispatch") return;
             entered.SetResult(); await resume.Task;
         });
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var answer = f.TryAnswerAsync("race answer");
+        Task answer = Task.CompletedTask;
         try
         {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            answer = f.TryAnswerAsync("race answer");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "answer cannot mutate while release owns the queue gate");
         }
-        finally { resume.TrySetResult(); await release; await answer; }
+        finally
+        {
+            // A boundary timeout must release and join the operation before fixture disposal.
+            resume.TrySetResult();
+            await Task.WhenAll(release, answer);
+        }
         var duplicate = await Task.WhenAll(f.TryAnswerAsync("race answer"), f.TryAnswerAsync("race answer"));
         var task = await f.TaskAsync();
         task.Attempt.ShouldBe(2, "one accepted answer produces exactly one target attempt");
