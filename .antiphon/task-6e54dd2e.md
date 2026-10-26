@@ -32,6 +32,8 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label group49-native-phonehome -- 
 
 Grok requires staged fake providers, ModernConPTY, PowerShell and the shared PostgreSQL test infrastructure. Inspect actual failing method names, exceptions and retained native PTY diagnostics before commissioning a fix. Phone-home's replay case is explicitly Linux-only, so its Windows failure must be C1032_TransportClientUnsupported. Expected Windows roster: six Grok cases; phone-home one executed case and one Linux-only skip. No whole-group rerun or desktop process operation was performed by this task.
 
+Landing observation: report commit 890b0783fccffb1f8b2cc95f0a978a1ba6566d28 has a clean merge-tree with origin/rc/2026-10-26 at bedea1c03cd788d83b2ff54c40bfb603927bd69c. Merge-tree against fetched origin/master b6db2de3dd0c0bad2ba30823d01882ca6fc9388e conflicts at `.antiphon/task-af2b78c8.md` and `docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`. The same conflicts reproduce with the unchanged task base, so they are inherited rc/master divergence, not this report's delta. No merge, rebase or conflict repair was attempted. Landing owns reconciliation; do not claim the whole branch is master-landable. Evidence history guard reported one report entry and zero violations. All 33 producer-owned output directories were removed.
+
 --- next stage ---
 next: land
 handoff: Report-only branch; no product fix or native gate credit. Caller owns the exact native reruns after lane release. No fixture-only Review needed.
