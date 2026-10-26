@@ -63,7 +63,7 @@ public sealed partial class ChannelOutboundIsolatedTests
         var expected = new byte[4][];
         for (var i = 0; i < relative.Length; i++)
         {
-            expected[i] = await File.ReadAllBytesAsync(Path.Combine(specimen, fixtureNames[i]), ct);
+            expected[i] = await File.ReadAllBytesAsync(Path.Combine(specimen, fixtureNames[i] + ".fixture"), ct);
             var path = Path.Combine(repo, relative[i]);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllBytesAsync(path, expected[i], ct);
