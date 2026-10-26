@@ -241,6 +241,15 @@ Linux because their fixture requires Windows ConPTY/native FakeGrok. These count
 describe the required roster, not an execution receipt. Linux results do not discharge
 any Windows obligation; there is no cross-host receipt merger or new profile.
 
+The three Linux-native SessionRunner classes `UnixPtyArgvAdmissionTests` (15 cases,
+CARD-0863), `AgentPinPublicationTests` (6) and `AgentPinWorkspaceStoreTests` (3,
+both CARD-0262) have Windows-only RC exclusions. All 24 cases remain required on
+Linux; their Linux checkpoint manifests and separate Windows native obligations
+are unchanged. `test-rc-platform.ps1 -Case LinuxSessionRunnerAdmission` checks the
+source roster, both platform censuses and launch plans, and frozen Windows authority.
+A runtime skip alone leaves required coverage incomplete, so this admission belongs
+in the profile policy. These exclusions are dispositions, not execution receipts.
+
 CARD-1415 keeps two Windows-only, method-scoped `antiphon` rows for cases that skip by design
 there, because a launched skip leaves the census incomplete:
 `C1213_RemoteSourceLandingKeepsLegacyIdentity` (POSIX runner paths) and
