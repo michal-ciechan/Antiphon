@@ -147,7 +147,13 @@ function Test-C1500_WindowsSharedReadAndPs51 {
             $exitCode = $LASTEXITCODE
             $r = $json | ConvertFrom-Json
             Assert-C487 ($versionOk -and $exitCode -eq 0 -and $r.observationComplete -and $r.inputs.nativeLock.status -ceq 'ok' -and
-                $r.locks.native.ownerObservation.status -ceq 'alive' -and $r.state.sha -ceq $ShaA) ('C1500 ' + $hostName + '-shared-read')
+                $r.locks.native.ownerObservation.status -ceq 'alive' -and $r.state.sha -ceq $ShaA) ('C1500 ' + $hostName + '-shared-read') (@{
+                    hostName=$hostName;hostPath=$hostPath;version=($version -join ' ');versionOk=$versionOk;exitCode=$exitCode
+                    outerRuntime=$PSVersionTable.PSVersion.ToString();outerEdition=$PSVersionTable.PSEdition
+                    observationComplete=$r.observationComplete;reason=$r.reason;identityMismatches=@($r.identityMismatches)
+                    nativeReadStatus=$r.inputs.nativeLock.status;nativeReadReason=$r.inputs.nativeLock.reason
+                    ownerStatus=$r.locks.native.ownerObservation.status;ownerReason=$r.locks.native.ownerObservation.reason
+                }|ConvertTo-Json -Depth 6 -Compress)
         }
     } finally { $stream.Dispose() }
     Assert-C487 ([Convert]::ToBase64String([IO.File]::ReadAllBytes($native)) -ceq [Convert]::ToBase64String($before)) 'C1500 native-bytes-preserved'
