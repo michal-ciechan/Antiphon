@@ -151,17 +151,7 @@ internal static class Program
             }
         }
 
-        Write($"""
-            {cwd}
-                                                             Connecting...
-                                             Approve in your browser to finish signing in.
-                                                               FYED-XF4N
-                                                Make sure your browser shows this code.
-                                                If it doesn't open, click here to copy.
-                                           Copying not working? Click here to show full URL.
-                                                        Waiting for approval...
-                                                             ctrl+q  quit
-            """ + "\r\n");
+        Write(SignInScreen.Render(cwd));
 
         var gate = new object();
         var pending = new List<byte[]>();
