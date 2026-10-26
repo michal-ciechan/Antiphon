@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "19b8901f38309deb9a40af10077e85d8944c87176c39081c200120e85b90be1f",
+  "policyHash": "67fb49932cf43763c6dd0bafd61ccac4d2945e72f8ceeed97c9d1910de35f38d",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -446,6 +446,27 @@
           "class": "HerdrNamedTabPlacementLiveTests",
           "reason": "live desktop session",
           "owner": "CARD-0599"
+        },
+        {
+          "suite": "session-runner",
+          "class": "UnixPtyArgvAdmissionTests",
+          "platform": "windows",
+          "reason": "Native Linux Unix PtyHost argv qualification; remains required on Linux.",
+          "owner": "CARD-0863"
+        },
+        {
+          "suite": "session-runner",
+          "class": "AgentPinPublicationTests",
+          "platform": "windows",
+          "reason": "Native Linux pin publication qualification requires POSIX filesystem primitives; remains required on Linux.",
+          "owner": "CARD-0262"
+        },
+        {
+          "suite": "session-runner",
+          "class": "AgentPinWorkspaceStoreTests",
+          "platform": "windows",
+          "reason": "Native Linux pin inspection qualification requires POSIX paths and mkfifo; remains required on Linux.",
+          "owner": "CARD-0262"
         },
         {
           "suite": "session-runner",
