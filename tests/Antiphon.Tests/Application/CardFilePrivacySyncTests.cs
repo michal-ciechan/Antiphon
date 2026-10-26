@@ -182,7 +182,7 @@ public class CardFilePrivacySyncTests
             card.Alias = "C408_PRIVATE_CARD_ALIAS";
             card.LabelsJson = "[\"C408_PRIVATE_CARD_LABEL\"]";
             card.ExternalIssueRef = new Antiphon.Server.Domain.Entities.ExternalIssueRef {
-                Id = Guid.NewGuid(), CardId = privateId, ExternalId = "C408_PRIVATE_CARD_ID",
+                Id = Guid.NewGuid(), CardId = privateId, ExternalId = $"C408_PRIVATE_CARD_ID_{privateId:N}",
                 ExternalKey = "C408_PRIVATE_CARD_KEY", Url = "https://example.invalid/C408_PRIVATE_CARD_URL",
                 Author = "C408_PRIVATE_CARD_AUTHOR" };
             db.ExternalIssueRefs.Add(card.ExternalIssueRef);
