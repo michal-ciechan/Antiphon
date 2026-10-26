@@ -120,3 +120,20 @@ If it fails, commission the exact failing method with its native assertion
 evidence. No source fix, fixture-only review exemption, release credit or native
 green verdict is claimed here. The authorized investigation completed without an
 approval pause; the native acceptance failure remains unresolved.
+
+## Publication checks
+
+Initial report commit: `026f03c65200368891d5926744e9f67253a815aa`, pushed to
+the assigned branch. Evidence-history guard over the task range passed: one
+commit, one entry, zero violations. Cleanup removed 33 producer-owned alternate
+output roots, each matched against the completed build log and checked for linked
+path components. No build/test driver remains running.
+
+After fetching master and rc, `git merge-tree --write-tree origin/rc/2026-10-26
+HEAD` returned exit 0. The master check returned exit 1 with add/add conflicts in
+`.antiphon/task-af2b78c8.md` and
+`docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`. Repeating that
+check with the untouched task base produced exactly the same conflicts; neither
+file was changed by this task. A whole-branch master merge is not conflict-free.
+No target merge, conflict repair or rebase was attempted. This task supplies a
+report-only delta, with no source repair to promote to rc/master.
