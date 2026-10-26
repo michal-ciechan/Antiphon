@@ -146,7 +146,18 @@ public static partial class ClaudeScreen
                 && (compact.Contains("low", StringComparison.Ordinal)
                     || compact.Contains("medium", StringComparison.Ordinal)
                     || compact.Contains("high", StringComparison.Ordinal)
-                    || compact.Contains("max", StringComparison.Ordinal)));
+                    || compact.Contains("max", StringComparison.Ordinal)))
+            || IsWrappedHintCommandRow(row);
+    }
+
+    /// <summary>
+    /// The hint bar's right-hand slash-command badges ("/rc", "/effort") wrapped onto a row of
+    /// their own when the bar is wider than the terminal (Claude 2.1.310 added "← for agents").
+    /// </summary>
+    private static bool IsWrappedHintCommandRow(string row)
+    {
+        var tokens = row.Split([' ', '·', ' '], StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length > 0 && tokens.All(t => t is "/rc" or "/effort");
     }
 
     private static int LastRuleRow(string[] rows, int from)
