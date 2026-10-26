@@ -5,7 +5,8 @@ internal static class LiveFixtureText
     internal static async Task<string> ReadAsync(string path,
         Func<string, FileShare, Stream>? open = null, CancellationToken cancellationToken = default)
     {
-        await using var stream = (open ?? Open)(path, FileShare.Read);
+        // Windows sharing is reciprocal: the reader must share the existing writer's access.
+        await using var stream = (open ?? Open)(path, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return await reader.ReadToEndAsync(cancellationToken);
     }
