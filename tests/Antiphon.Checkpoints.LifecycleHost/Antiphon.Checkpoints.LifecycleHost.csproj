@@ -13,5 +13,8 @@
     <ProjectReference Include="../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj" />
     <Compile Include="../Antiphon.Tests/Checkpoints/CheckpointTestScope.cs" Link="CheckpointTestScope.cs" />
     <Compile Include="../Antiphon.Tests/Checkpoints/CheckpointTempRootSweep.cs" Link="CheckpointTempRootSweep.cs" />
+    <!-- CheckpointTestScope uses the shared read-only cleanup helper and its timing seam. -->
+    <Compile Include="../Shared/ReadOnlyDirectory.cs" Link="TestHelpers/ReadOnlyDirectory.cs" />
+    <Compile Include="../Shared/TestTiming.cs" Link="TestHelpers/TestTiming.cs" />
   </ItemGroup>
 </Project>
