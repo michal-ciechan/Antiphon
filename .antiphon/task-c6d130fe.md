@@ -40,7 +40,9 @@ Native rerun rows are the four exact class filters in the table, on the candidat
 
 ## Evidence and cleanup
 
-Ignored full logs, TRX and HTML reports: `/work/worktrees/task-c6d130fe/.antiphon/c6d130fe-evidence/`. These are local generated evidence and are not pushed. The committed report preserves counts, tested source, commands and limitations. The 33 producer-owned `bin-c6d130fe` directories are inventoried in `outputs.txt` there and removed after all runs. Evidence-history validation is required over the report-only commit before handoff; no reviewed-source-clean or Windows-green claim is made.
+Ignored full logs, TRX and HTML reports: `/work/worktrees/task-c6d130fe/.antiphon/c6d130fe-evidence/`. These are local generated evidence and are not pushed. The committed report preserves counts, tested source, commands and limitations. The 33 producer-owned `bin-c6d130fe` directories are inventoried in `outputs.txt` there and were removed after all runs. Evidence-history validation over report commit `1f06eb63ed0a000885d461dbc5bdc6232c47b648` passed: 1 commit, 1 entry, 0 violations. No reviewed-source-clean or Windows-green claim is made.
+
+The read-only `git merge-tree --write-tree origin/rc/2026-10-26 HEAD` check was clean. After fetching master, its corresponding check found inherited add/add conflicts in `.antiphon/task-af2b78c8.md` and `docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`. Neither path belongs to this report-only delta; no merge or conflict repair was performed. Landing should preserve RC/master target policy and handle inherited divergence separately.
 
 --- next stage ---
 next: land
