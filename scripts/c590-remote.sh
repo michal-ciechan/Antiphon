@@ -5361,6 +5361,7 @@ case_runner_cache_inventory() {
     command -v jq >/dev/null || write_result false CacheInventoryToolMissing 2
     local runner project container image status running temp_census previous=''
     : > "$CASE_DIR/identities.txt"
+    rm -f -- "$CASE_DIR/server2-temp-container-census.txt" || write_result false CacheInventoryLookupFailed 2
     for runner in server2 server2-temp; do
         project="$HOST_PROJECT"
         [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
