@@ -2451,6 +2451,13 @@ model_mount_exec() {
     shift 2
     if field_has "$mount" readonly; then
         [ "$(id -u)" != 0 ] || { printf 'read-only model requires non-root\n' >&2; return 97; }
+        # These exact production probes cannot write. Changing shared directory
+        # modes for a reader would also deny a concurrent writable mount.
+        if [ "$#" = 5 ] && [ "$1" = sh ] && [ "$2" = -c ] && [ "$4" = sh ]; then
+            case "$3" in
+                'test -f "$1"'|'test -e "$1"') "$@"; return ;;
+            esac
+        fi
         find "$data" -type d -exec chmod a-w {} +
         "$@" || status=$?
         find "$data" -type d -exec chmod u+w {} +
