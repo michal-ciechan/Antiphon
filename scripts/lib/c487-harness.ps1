@@ -315,8 +315,32 @@ function Write-C487Evidence {
     $Body | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
+function Clear-C487OwnedResultReadOnly {
+    # The parent owns deletion after joining the process tree. Git's read-only
+    # objects must first be writable on Windows; never follow fixture links.
+    param([string]$ResultsDirectory)
+    if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) { return }
+    $pending = New-Object 'System.Collections.Generic.Stack[object]'
+    $pending.Push((Get-Item -LiteralPath $ResultsDirectory -Force -ErrorAction Stop))
+    $cleared = 0
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Pop()
+        if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory.FullName -Force -ErrorAction Stop)) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+            if (($item.Attributes -band [IO.FileAttributes]::Directory) -ne 0) { $pending.Push($item) }
+            elseif (($item.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+                $item.IsReadOnly = $false
+                $cleared++
+            }
+        }
+    }
+    if ($cleared -gt 0) { Write-Host ('C487 cleanup clearedReadOnlyFiles={0}' -f $cleared) }
+}
+
 function Complete-C487Harness {
     param([string]$ResultsDirectory, [int]$ExpectedRows)
+    Clear-C487OwnedResultReadOnly -ResultsDirectory $ResultsDirectory
     Write-Host ''
     Write-Host ('C487: {0} passed, {1} failed, {2} rows' -f $script:C487Passed, $script:C487Failed, $script:C487Rows)
     if ($ExpectedRows -gt 0 -and $script:C487Rows -lt $ExpectedRows) {
