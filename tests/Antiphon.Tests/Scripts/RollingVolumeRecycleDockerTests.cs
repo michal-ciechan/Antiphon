@@ -16,6 +16,7 @@ public sealed class RollingVolumeRecycleDockerTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Real_docker_comparison()
     {
+        NativeLinuxGate.Require("C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups).");
         var psi = new ProcessStartInfo("node") {
             WorkingDirectory = DelegateScriptRunner.RepoRoot,
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
