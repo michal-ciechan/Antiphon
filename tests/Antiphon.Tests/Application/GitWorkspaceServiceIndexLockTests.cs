@@ -17,9 +17,11 @@ public sealed class GitWorkspaceServiceIndexLockTests
     {
         using var repo = new ScratchGitRepo("c543-status");
         await repo.CommitFileAsync("tracked.txt", "seed\n");
-        await Task.Delay(1100);
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, "tracked.txt"), "changed\n");
+        // A clean file with stale stat data requires an index refresh on Windows too.
+        // Dirty content alone need not make git status rewrite the index.
+        File.SetLastWriteTimeUtc(Path.Combine(repo.Path, "tracked.txt"), DateTime.UtcNow.AddHours(-1));
         var index = Path.Combine(repo.Path, ".git", "index");
+        File.SetLastWriteTimeUtc(index, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
         var before = File.GetLastWriteTimeUtc(index);
         var git = new GitWorkspaceService(new ListLogger<GitWorkspaceService>([]), new GitProcessGate(),
             Options.Create(new GitSettings()));
@@ -27,8 +29,9 @@ public sealed class GitWorkspaceServiceIndexLockTests
         result.Succeeded.ShouldBeTrue();
         File.GetLastWriteTimeUtc(index).ShouldBe(before);
 
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, "tracked.txt"), "changed again\n");
-        (await ScratchGitRepo.GitInAsync(repo.Path, "status", "--porcelain")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(repo.Path,
+            new Dictionary<string, string> { ["GIT_OPTIONAL_LOCKS"] = "1" },
+            "status", "--porcelain")).Ok.ShouldBeTrue();
         File.GetLastWriteTimeUtc(index).ShouldNotBe(before);
     }
 
