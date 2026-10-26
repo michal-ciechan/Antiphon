@@ -22,6 +22,15 @@ if ([string]::IsNullOrWhiteSpace($ResultsDirectory) -and [string]::IsNullOrWhite
 }
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $script:RepoRoot = Split-Path -Parent $here
+$script:C585Runtime = [ordered]@{
+    powerShellVersion = $PSVersionTable.PSVersion.ToString()
+    psEdition = [string]$PSVersionTable.PSEdition
+    os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
+    isWindows = [bool]$IsWindows
+    directorySeparator = [string][IO.Path]::DirectorySeparatorChar
+    repoRoot = $script:RepoRoot
+}
+Write-Host ('C585 RUNTIME ' + ($script:C585Runtime | ConvertTo-Json -Compress))
 $script:Runner = Join-Path $here 'run-checkpoint.ps1'
 $script:Fixtures = Join-Path $here 'fixtures'
 $script:GreenTrx = Join-Path $script:Fixtures 'c585-green.trx'
@@ -731,7 +740,7 @@ function Start-C578Runner {
     $psi.RedirectStandardError = $true
     $psi.WorkingDirectory = $script:RepoRoot
     foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $script:Runner,
-        '-Name', 'CP-1', '-Project', 'tests/Antiphon.Tests', '-OutputPath', 'bin-c578h/',
+        '-Name', 'CP-1', '-Project', 'tests/Antiphon.Tests', '-OutputPath', $Fx.OutputPath,
         '-Filter', '/*/*/C585SampleTests/*', '-ResultsRoot', $Fx.ResultsRoot,
         '-MinExecuted', '1', '-DotnetShim', $Fx.Shim)) { [void]$psi.ArgumentList.Add([string]$token) }
     # The fake HTTP endpoint and the slot shim prevent contact with a live runner.
@@ -922,7 +931,7 @@ function Stop-C578Owned {
 
 function Save-C578Evidence {
     param($Fx, $Run, [string]$Observation)
-    $record = @("wrapperExit=$($Run.Process.ExitCode)", $Observation, "calls=$(Read-C578Log (Join-Path $Fx.Root 'calls.log'))",
+    $record = @("wrapperExit=$($Run.Process.ExitCode)", $Observation, "runtime=$($script:C585Runtime | ConvertTo-Json -Compress)", "outputPath=$($Fx.OutputPath)", "calls=$(Read-C578Log (Join-Path $Fx.Root 'calls.log'))",
         "buildLog=$(Read-C578Log (Join-Path $Fx.PhaseDir 'build.log'))", "runLog=$(Read-C578Log (Join-Path $Fx.PhaseDir 'run.log'))") -join "`n"
     Set-Content -LiteralPath (Join-Path $Fx.Root 'observation.txt') -Value $record
     if ($env:C578_EVIDENCE_ROOT) {
@@ -1287,5 +1296,5 @@ if ($Case) {
 } else {
     foreach ($fn in @(Get-C487CaseFunctions -Prefix 'C585_') + @(Get-C487CaseFunctions -Prefix 'C589_') + @(Get-C487CaseFunctions -Prefix 'C578_')) { & $fn }
 }
-Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-checkpoint-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
+Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-checkpoint-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows; runtime = $script:C585Runtime }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C585ExpectedRows })
