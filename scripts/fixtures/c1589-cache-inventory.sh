@@ -72,17 +72,12 @@ for fault in census partial-census stopped-container; do
 done
 # Also exercise the real PC-31 producer and expected-red recorder when supplied.
 if [ "${2:-}" = controls ]; then
+    source <(awk '/^c849_[a-z_]+\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$repo/scripts/c590-remote.sh")
     source <(awk '/^c849_fixture_inventory_fault\(\) \(/ { active=1 } active { print } active && /^\)$/ { active=0 }' "$repo/scripts/c590-remote.sh")
-    source <(awk '/^c849_fixture_control\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$repo/scripts/c590-remote.sh")
-    for fault in hold hold-null; do
-        (c849_fixture_inventory_fault "$fault") > "$root/result" 2>&1 || { cat "$root/result"; exit 1; }
-        printf 'PASS control-positive-%s\n' "$fault"
-    done
-    for fault in live eligible accepting sessions queued runner unknown routing drain retirement census partial-census stopped-container; do
-        diagnosis=CacheInventoryRunnerMissing
-        case "$fault" in census|partial-census) diagnosis=CacheInventoryLookupFailed ;; unknown) diagnosis=CacheInventoryStatusInvalid ;; esac
-        c849_fixture_control PC-31 "$diagnosis" c849_fixture_inventory_fault "hold-$fault"
-        printf 'PASS control-negative-%s\n' "$fault"
-    done
-    [ "$(wc -l < "$root/fixture-control-variants.txt")" = 13 ]
+    c849_fixture_case_bind
+    : > "$root/fixture-controls.txt"; : > "$root/fixture-control-variants.txt"
+    c849_fixture_inventory_controls
+    [ "$(wc -l < "$root/fixture-control-variants.txt")" = 16 ]
+    [ "$(wc -l < "$root/fixture-controls.txt")" = 1 ]
+    printf 'PASS PC-31 positive=2 expected-red=16\n'
 fi
