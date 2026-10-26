@@ -224,7 +224,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false,
             createdPaths: [output, control]);
 
-        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + unknown]);
+        // Ledger entries retain portable relative separators in their diagnostic.
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: "
+            + Path.Combine(output, "checkpoint-lifecycle-host/TestResults/unknown.txt")]);
         result.Deleted.ShouldBe([control]);
         Directory.Exists(control).ShouldBeFalse("unchanged sealed output is a removable control");
         File.ReadAllText(unknown).ShouldBe("UNKNOWN REPORT BYTES");
@@ -1153,10 +1155,10 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var failing = InitGitRepo();
         var victim = Path.Combine(failing, "keep.txt");
         File.WriteAllText(victim, "original");
-        // A script written and executed in this process is ETXTBSY under parallel load.
-        // RunGit maps that Win32Exception to git-unavailable. /bin/false exits 1 without that race.
-        File.Exists("/bin/false").ShouldBeTrue();
-        SafeWrite.Text(victim, "changed", SafeWrite.Under(failing, gitExecutable: "/bin/false")).ShouldBe("git-failed");
+        var failingGit = new FailingGit();
+        var write = new CheckpointWrite(new(CheckpointCleanupDefaults.Context.Io, failingGit));
+        write.Text(victim, "changed", write.Under(failing)).ShouldBe("git-failed");
+        failingGit.Calls.ShouldBe(1);
         File.ReadAllText(victim).ShouldBe("original");
 
         if (!OperatingSystem.IsLinux())
@@ -1193,7 +1195,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(latest, "original-latest");
         File.WriteAllText(dll, "dll-bytes");
         var before = new[] { latest, dll }.ToDictionary(path => path, path => (Bytes: File.ReadAllBytes(path), Mtime: File.GetLastWriteTimeUtc(path)));
-        File.Exists("/bin/false").ShouldBeTrue();
+        var failingGit = new FailingGit();
         var launched = 0;
         var output = new StringWriter();
         var manifest = new CheckpointManifest
@@ -1203,8 +1205,13 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
         };
         var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
-            new CheckpointApp.Runtime { GitExecutable = "/bin/false", Launch = _ => { launched++; return 1; } });
+            new CheckpointApp.Runtime
+            {
+                CleanupContext = new(CheckpointCleanupDefaults.Context.Io, failingGit),
+                Launch = _ => { launched++; return 1; },
+            });
         started.ExitCode.ShouldBe(ExitCodes.Invalid);
+        failingGit.Calls.ShouldBeGreaterThan(0);
         launched.ShouldBe(0);
         output.ToString().ShouldContain("refused: git-failed");
         Directory.GetDirectories(results).ShouldBeEmpty();
@@ -1212,6 +1219,16 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         {
             File.ReadAllBytes(path).ShouldBe(snapshot.Bytes);
             File.GetLastWriteTimeUtc(path).ShouldBe(snapshot.Mtime);
+        }
+    }
+
+    private sealed class FailingGit : ICheckpointGitRunner
+    {
+        public int Calls { get; private set; }
+        public CheckpointGitResult Run(CheckpointGitRequest request)
+        {
+            Calls++;
+            return new(1, "", "fixture git failure", false);
         }
     }
 
