@@ -65,8 +65,9 @@ public sealed class LandNonCodeSkipTests
         await h.RequestAsync();
         await h.RunQueuedAsync();
 
-        h.Verifier.Calls.ShouldBe(0, "a docs-only rebased candidate must not invoke the verifier or its build slot");
         var op = (await h.OperationAsync())!;
+        h.Verifier.Calls.ShouldBe(0, "a docs-only rebased candidate must not invoke the verifier or its build slot; " +
+            $"publication={op.Publication}; reason={op.LastReason}; command={op.VerificationCommand}");
         op.TargetBeforeSha.ShouldBe(target);
         op.RebasedSourceSha.ShouldNotBe(op.OriginalSourceSha);
         op.VerificationPassed.ShouldBeFalse();
@@ -334,7 +335,9 @@ public sealed class LandNonCodeSkipTests
         }
 
         var digest = LandVerificationBuildGraph.FingerprintOf(selected);
-        digest.ShouldBe(LandVerificationBuildGraph.Fingerprint);
+        digest.ShouldBe(LandVerificationBuildGraph.Fingerprint,
+            $"selected definitions={selected.Count}; audited definitions={LandVerificationBuildGraph.AuditedCount}; " +
+            "run scripts/audit-land-verification-graph.ps1 -Check to capture the admission refusal");
         LandVerificationBuildGraph.AuditedCount.ShouldBe(selected.Count);
 
         var manifestLines = await File.ReadAllLinesAsync(Path.Combine(root, "server", "Application", "Services",
@@ -2604,6 +2607,9 @@ public sealed class LandNonCodeSkipTests
             }
             var path = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
             var ran = await RunAuditAsync(root, "en-US", new Dictionary<string, string?> { ["PATH"] = path }, "-Check");
+            Console.WriteLine($"C1390_MISSING_NUL platform={Environment.OSVersion.Platform}; git={realGit}; " +
+                $"shim={Path.Combine(bin, OperatingSystem.IsWindows() ? "git.cmd" : "git")}; " +
+                $"tree-bytes={tree.Length}; supplied-bytes={tree.Length - 1}; audit-exit={ran.Code}");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
             ran.Stderr.ShouldContain("missing its trailing NUL");
         });
@@ -2665,8 +2671,9 @@ public sealed class LandNonCodeSkipTests
     {
         await h.RequestAsync(filter);
         await h.RunQueuedAsync(filter);
-        h.Verifier.Calls.ShouldBe(build ? 1 : 0);
         var op = (await h.OperationAsync())!;
+        h.Verifier.Calls.ShouldBe(build ? 1 : 0,
+            $"publication={op.Publication}; reason={op.LastReason}; command={op.VerificationCommand}");
         op.Publication.ShouldBe(LandPublicationOutcome.Landed);
         op.VerificationPassed.ShouldBe(build);
         if (build) op.VerificationSkipReason.ShouldBeNull();
