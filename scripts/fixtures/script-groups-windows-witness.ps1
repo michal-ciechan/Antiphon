@@ -1,8 +1,19 @@
 # String-only Windows fixture witnesses. No native host, provider home or daemon is used.
-param([ValidateSet('admission','blob','literal-path','cleanup')][string]$Case)
+param(
+    [ValidateSet('admission','blob','literal-path','cleanup','ntfs','diagnostics')][string]$Case,
+    [ValidatePattern('^$|^[0-9a-f]{40}$')][string]$SourceRef = '',
+    [string]$TrxPath = ''
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-function Read-Source([string]$Path) { [IO.File]::ReadAllText((Join-Path $root $Path)) }
+function Read-Source([string]$Path) {
+    if ($SourceRef) {
+        $text = & git -C $root show ($SourceRef + ':' + $Path)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot read $SourceRef : $Path" }
+        return ($text -join "`n")
+    }
+    [IO.File]::ReadAllText((Join-Path $root $Path))
+}
 function Require([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message } }
 switch ($Case) {
     admission {
@@ -113,5 +124,57 @@ public static class CleanupWitness {
         Require ([WindowsFs]::Entries.Count -eq 0) 'cleanup retained an owned path'
         Require (-not [WindowsFs]::ReadOnly) 'cleanup never normalized the owned Git object'
         Write-Host 'WINDOWS_WITNESS cleanup: actual cleanup and existing deletion helper remove read-only owned objects'
+    }
+    ntfs {
+        # This is the control-character/colon subset of Git's Windows path check,
+        # not a replacement for a native git.exe rerun. Compile the actual factory
+        # configuration statements with an in-memory local config sink.
+        $source = Read-Source 'tests/Antiphon.Tests/Scripts/EvidenceGitFixture.cs'
+        $config = [regex]::Matches($source,'(?m)^\s*await f\.GitAsync\("config",[^\r\n]+;')
+        Require ($config.Count -ge 5) 'fixture configuration statements missing'
+        $code = @'
+using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public sealed class ConfigFixture {
+    public string Root = @"C:\Users\fixture\Temp\evidence";
+    public Dictionary<string,string> Local = new();
+    public Task GitAsync(params string[] args) { Local.Add(args[1], args[2]); return Task.CompletedTask; }
+    public static async Task<ConfigFixture> Build() { var f = new ConfigFixture(); CONFIG return f; }
+}
+public static class WindowsIndex {
+    public static bool Admits(string path, bool protect) => !protect || !path.Any(c => c < 32 || ":<>\"|?*".Contains(c));
+}
+'@
+        Add-Type $code.Replace('CONFIG',(($config | ForEach-Object Value) -join "`n"))
+        $fixture = [ConfigFixture]::Build().GetAwaiter().GetResult()
+        Require ([WindowsIndex]::Admits('.antiphon/fixtures/ready.approved.json',$true)) 'valid path control failed'
+        $protect = $fixture.Local['core.protectNTFS'] -cne 'false'
+        foreach ($path in @(".antiphon/fixtures/ready.approved.json`n", ".antiphon/a b`t`nfile.json", '.antiphon/C:/Temp/probe.json')) {
+            Require (-not [WindowsIndex]::Admits($path,$true)) 'forced Windows invalid path control failed'
+            Require ([WindowsIndex]::Admits($path,$protect)) 'owned object-only index refuses the deliberate Windows-invalid path before the policy can inspect it'
+        }
+        Write-Host 'WINDOWS_WITNESS ntfs: actual local config admits object-only control-character and colon vectors; native Git pending'
+    }
+    diagnostics {
+        Require (-not [string]::IsNullOrWhiteSpace($TrxPath)) '-TrxPath is required'
+        [xml]$trx = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $TrxPath).Path)
+        $definitions = @{}
+        foreach ($definition in $trx.TestRun.TestDefinitions.UnitTest) {
+            $definitions[[string]$definition.id] = [string]$definition.TestMethod.className + '.' + [string]$definition.TestMethod.name
+        }
+        $rows = @($trx.TestRun.Results.UnitTestResult)
+        Require ($rows.Count -gt 0) 'TRX contains no results'
+        foreach ($result in $rows) {
+            if ($result.outcome -ne 'Failed') { continue }
+            Require ($definitions.ContainsKey([string]$result.testId)) 'failure definition missing'
+            Write-Host ('SCRIPT_FAILURE method={0} display={1} duration={2}' -f $definitions[[string]$result.testId],$result.testName,$result.duration)
+            foreach ($detail in @($result.Output.ErrorInfo.Message,$result.Output.ErrorInfo.StackTrace)) {
+                if ($detail) { Write-Host ([string]$detail).Replace('C994_SECRET_SENTINEL','<fixture-sentinel>').Replace('PAYLOAD-C1015-PRIVATE-CANARY','<fixture-payload>') }
+            }
+        }
+        Write-Host ('SCRIPT_TRX results={0} failed={1} nativeQualification=not-established-by-reader' -f $rows.Count,@($rows | Where-Object outcome -eq 'Failed').Count)
     }
 }
