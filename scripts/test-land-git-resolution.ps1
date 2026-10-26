@@ -1,7 +1,11 @@
+# Compile the real fixture lookup with only PATH, the OS selector and File.Exists modeled.
+# Windows-style input is exercised on Linux without changing process-global environment.
+# This is a filename-resolution witness; native process/shim execution needs its own rerun.
 param([string]$Repository = (Get-Location).Path)
 $ErrorActionPreference = 'Stop'
 $file = Join-Path $Repository 'tests/Antiphon.Tests/Application/LandNonCodeSkipTests.cs'
 $source = [IO.File]::ReadAllText($file)
+Write-Host ('LAND_GIT_RESOLUTION source-sha256=' + (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash)
 $start = $source.IndexOf('    private static string WhichGit()', [StringComparison]::Ordinal)
 $end = $source.IndexOf('    private static string RenderAuditArgument', $start, [StringComparison]::Ordinal)
 if ($start -lt 0 -or $end -le $start) { throw 'WhichGit source boundary missing' }
