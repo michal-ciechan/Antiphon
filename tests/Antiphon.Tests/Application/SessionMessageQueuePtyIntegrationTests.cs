@@ -98,6 +98,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         try
         {
+            spec = spec.WithNativeClaudeDialog();
             await client.StartAsync(sessionId, spec, CancellationToken.None);
 
             var ready = await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15));
@@ -118,7 +119,7 @@ public class SessionMessageQueuePtyIntegrationTests
                     Cols = 120,
                     Rows = 30,
                     CreatedAt = now,
-                    StartedAt = now,
+                    StartedAt = spec.AcceptedStartedAt!.Value,
                     LastSeenAt = now,
                 });
                 await db.SaveChangesAsync();
@@ -220,6 +221,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         try
         {
+            spec = spec.WithNativeClaudeDialog();
             await client.StartAsync(sessionId, spec, CancellationToken.None);
             (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
                 .ShouldBeTrue();
@@ -232,7 +234,7 @@ public class SessionMessageQueuePtyIntegrationTests
                 {
                     Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
                     AgentKind = AgentKind.Grok, Status = SessionStatus.Running,
-                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = spec.AcceptedStartedAt!.Value, LastSeenAt = now,
                 });
                 await db.SaveChangesAsync();
             }
@@ -324,6 +326,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         try
         {
+            spec = spec.WithNativeClaudeDialog();
             await client.StartAsync(sessionId, spec, CancellationToken.None);
             (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
                 .ShouldBeTrue();
@@ -336,7 +339,7 @@ public class SessionMessageQueuePtyIntegrationTests
                 {
                     Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
                     AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
-                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = spec.AcceptedStartedAt!.Value, LastSeenAt = now,
                 });
                 // Working state so both messages stay pending until the turn-end flush batches them.
                 db.TranscriptEntries.Add(new TranscriptEntry
@@ -459,6 +462,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         try
         {
+            spec = spec.WithNativeClaudeDialog();
             await client.StartAsync(sessionId, spec, CancellationToken.None);
             (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
                 .ShouldBeTrue();
@@ -471,7 +475,7 @@ public class SessionMessageQueuePtyIntegrationTests
                 {
                     Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
                     AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
-                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = spec.AcceptedStartedAt!.Value, LastSeenAt = now,
                 });
                 await db.SaveChangesAsync();
             }
@@ -598,6 +602,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         try
         {
+            spec = spec.WithNativeClaudeDialog();
             await client.StartAsync(sessionId, spec, CancellationToken.None);
 
             var expected = "--echo-args␟--echo-argv-strict␟--append-system-prompt␟"
@@ -686,7 +691,7 @@ public class SessionMessageQueuePtyIntegrationTests
         try
         {
             await StartSwallowingFakeAsync(client, sessionId, cwd, transcriptPath, swallowEnters: 1);
-            await SeedIdleClaudeSessionAsync(sessionId, cwd);
+            await SeedIdleClaudeSessionAsync(client, sessionId, cwd);
             pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
@@ -761,7 +766,7 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             // More swallows than SubmitAttempts: nothing this delivery does can submit.
             await StartSwallowingFakeAsync(client, sessionId, cwd, transcriptPath, swallowEnters: 9);
-            await SeedIdleClaudeSessionAsync(sessionId, cwd);
+            await SeedIdleClaudeSessionAsync(client, sessionId, cwd);
             pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
@@ -840,6 +845,7 @@ public class SessionMessageQueuePtyIntegrationTests
             Cols: 120,
             Rows: 30);
 
+        spec = spec.WithNativeClaudeDialog();
         await client.StartAsync(sessionId, spec, CancellationToken.None);
         // Both banners: the fake announces every armed model, and a test that believed it armed the
         // swallow model and did not would otherwise pass for entirely the wrong reason.
@@ -855,7 +861,7 @@ public class SessionMessageQueuePtyIntegrationTests
     /// does both jobs. Without a row the CARD-0055 observability gate degrades the delivery to the
     /// legacy screen-only verdict, which is precisely the behaviour these tests exist to replace.
     /// </summary>
-    private static async Task SeedIdleClaudeSessionAsync(Guid sessionId, string cwd)
+    private static async Task SeedIdleClaudeSessionAsync(DirectSessionRunnerClient client, Guid sessionId, string cwd)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var now = DateTime.UtcNow;
@@ -863,7 +869,8 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
             AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
-            Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+            Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now,
+            StartedAt = (await client.GetAsync(sessionId, CancellationToken.None)).AcceptedStartedAt!.Value, LastSeenAt = now,
         });
         db.TranscriptEntries.Add(new TranscriptEntry
         {

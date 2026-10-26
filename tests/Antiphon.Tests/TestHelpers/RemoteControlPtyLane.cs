@@ -128,7 +128,7 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
             Cwd: cwd,
             Cols: 120,
             Rows: 30,
-            AcceptedStartedAt: generation);
+            AcceptedStartedAt: generation).WithNativeClaudeDialog();
 
         SessionRunnerSessionDto started;
         try
