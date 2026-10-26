@@ -118,11 +118,18 @@ internal static class WindowsUnitSkipRoster
     [
         new("Antiphon.Tests.Scripts", "NightlyProbeSupervisorTests", "C1375_DeadlineKillsAndJoinsTree", 1,
             "CARD-1375 native expiry qualification requires Linux."),
+        new("Antiphon.Tests.Scripts", "RetiredTempContainerDockerTests", "C994_Real_retired_temp_lifecycle", 1,
+            "C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups)."),
+        new("Antiphon.Tests.Scripts", "RollingVolumeRecycleDockerTests", "C1008_Real_docker_comparison", 1,
+            "C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups)."),
     ];
 
     // Legacy call sites are source-closure accounting, outside the S1 child runtime roster.
     internal static readonly Entry[] Existing =
     [
+        new("Antiphon.Tests.Scripts", "RetiredTempContainerScriptTests", "C994_Host_strict_volume_admission_remains_independent", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RetiredTempContainerScriptTests", "C994_Host_resume_never_runs_container_cleanup", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RetiredTempContainerScriptTests", "C994_Host_bridge_transport_preserves_literal_context", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "C1364BoundLandWaitProofTests", "C1364_Host_recycle_admission_reports_waited", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "C1364BoundLandWaitProofTests", "C1364_Host_recycle_post_removal_reports_waited", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "C1364BoundLandWaitProofTests", "C1364_Host_cleanup_reports_waited", 1, ExistingReason),
