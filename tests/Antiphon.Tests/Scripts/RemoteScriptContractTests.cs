@@ -8867,7 +8867,11 @@ public sealed class RemoteScriptContractTests
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        process.StandardInput.Write(script.Replace("\r\n", "\n"));
+        var input = script.Replace("\r\n", "\n");
+        Console.WriteLine($"REMOTE_SHELL_START platform={Environment.OSVersion.Platform}; executable={start.FileName}; " +
+            $"input-sha256={Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)))}");
+        var elapsed = Stopwatch.StartNew();
+        process.StandardInput.Write(input);
         process.StandardInput.Close();
         if (!process.WaitForExit(60_000))
         {
@@ -8876,6 +8880,7 @@ public sealed class RemoteScriptContractTests
         }
 
         process.WaitForExit();
+        Console.WriteLine($"REMOTE_SHELL_EXIT exit={process.ExitCode}; elapsed-ms={elapsed.ElapsedMilliseconds}");
         var output = stdout.Result;
         Console.WriteLine(output);
         Console.WriteLine(stderr.Result);
