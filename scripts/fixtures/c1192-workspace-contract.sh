@@ -1833,12 +1833,32 @@ plant_host_decoys() {
     printf 'host-decoy\n' > "$CASE_DIR/fixture-controller/shared-release"
 }
 
+# A read-only mount restricts its reader, not a peer's writable mount of the same
+# volume. Interleave a peer write at the exact reader command, without a scheduler
+# race: chmod on the shared backing tree must not make that write fail.
+race_reader_allows_peer_write() (
+    local data="$C1192_ROOT/volumes/$WORK/data" predicate status=0
+    mkdir -p "$data/race"
+    printf 'ready\n' > "$data/race/reader-probe"
+    sh() {
+        ( printf 'peer-write\n' > "$C1192_PEER_WRITE" ) 2>/dev/null || true
+        command sh "$@"
+    }
+    for predicate in c849_fixture_volume_test_file c849_fixture_volume_test_exists; do
+        C1192_PEER_WRITE="$data/race/$predicate-peer"
+        "$predicate" /fixture/race/reader-probe || return 1
+        [ -s "$C1192_PEER_WRITE" ] || status=1
+    done
+    return "$status"
+)
+
 mode_race() {
-    local code=0 out boundary=0 mounts_ok=0 feed_ok=0 all_seen=0
+    local code=0 out boundary=0 mounts_ok=0 feed_ok=0 all_seen=0 reader_peer=0
     enable_synthetic_clock
     reset_runtime
     : > "$C1192_ROOT/scenario.err"
     require_init
+    race_reader_allows_peer_write && reader_peer=1
     out=$(c849_fixture_nuget_race 2>>"$C1192_ROOT/scenario.err") || code=$?
     refuse_unexpected
     classify_race_mounts
@@ -1851,9 +1871,10 @@ mode_race() {
         mounts_ok=1
     fi
     if race_paths_match; then feed_ok=1; fi
-    if [ "$code" = 0 ] && [ "$all_seen" = 1 ] && race_files_present; then boundary=1; fi
+    if [ "$code" = 0 ] && [ "$all_seen" = 1 ] && [ "$reader_peer" = 1 ] && race_files_present; then boundary=1; fi
     emit race-code "$code"
     emit race-diagnosis "$(diagnosis_of "$out")"
+    emit race-reader-permits-peer-write "$reader_peer"
     emit race-boundary "$boundary"
     if [ "$boundary" = 1 ] && [ "$mounts_ok" = 1 ]; then
         emit race-work-volume-mount 1
