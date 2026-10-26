@@ -48,7 +48,6 @@
              Link="TestHelpers\FakeHerdrServer.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\FakeHerdrTransport.cs"
              Link="TestHelpers\FakeHerdrTransport.cs" />
-    <Compile Include="..\..\src\Antiphon.FakeGrok\SignInScreen.cs" Link="TestHelpers\GrokSignInScreen.cs" />
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestHelpers\HerdrTestProcess.cs" />
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestHelpers\ReadOnlyDirectory.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\TestHelpers\PhoneHomeTestWebSocket.cs"
