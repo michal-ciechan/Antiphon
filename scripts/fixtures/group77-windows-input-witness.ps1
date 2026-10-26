@@ -64,18 +64,30 @@ Require ($assignment.Count -eq 1) 'Bash selection assignment missing/ambiguous'
 $script:Platform = 'Windows_NT'
 function Get-Command($Name) {
     switch ($Name) {
-        'bash' { [pscustomobject]@{Source='C:\Windows\System32\bash.exe'} }
+        'bash' { [pscustomobject]@{Source=$(if ($env:OS -ceq 'Windows_NT') { 'C:\Windows\System32\bash.exe' } else { '/usr/bin/bash' })} }
         'git' { [pscustomobject]@{Source='C:\Program Files\Git\cmd\git.exe'} }
         default { throw "Unexpected discovery: $Name" }
     }
 }
 function Split-Path($Path, [switch]$Parent) { return $Path.Substring(0, $Path.LastIndexOf('\')) }
 function Join-Path($Path, $ChildPath) { return $Path.TrimEnd('\') + '\' + $ChildPath.Replace('/', '\') }
-function Test-Path($LiteralPath, $PathType) { return $LiteralPath -ceq 'C:\Program Files\Git\bin\bash.exe' }
+$script:InstalledBash = 'C:\Program Files\Git\usr\bin\bash.exe'
+function Test-Path($LiteralPath, $PathType) { return $LiteralPath -ceq $script:InstalledBash }
 $oldOs = $env:OS
 try {
     $env:OS = $script:Platform
     Invoke-Expression $assignment[0].Extent.Text
-    Require ($bash -ceq 'C:\Program Files\Git\bin\bash.exe') ('Windows PATH contains WSL first; selected=' + $bash)
-    Write-Host 'GROUP77 bash: Windows Git installation selected despite WSL bash first on PATH.'
+    Require ($bash -ceq $script:InstalledBash) ('Windows PATH contains WSL first; selected=' + $bash)
+    $script:InstalledBash = 'C:\Program Files\Git\bin\bash.exe'
+    Invoke-Expression $assignment[0].Extent.Text
+    Require ($bash -ceq $script:InstalledBash) 'Git bin fallback did not select its owned shell'
+    $script:InstalledBash = ''
+    $missing = $null
+    try { Invoke-Expression $assignment[0].Extent.Text } catch { $missing = $_.Exception.Message }
+    Require ($missing -like '*requires Git Bash*') 'Missing Git Bash must refuse rather than fall back to WSL'
+    $env:OS = 'Linux'
+    Invoke-Expression $assignment[0].Extent.Text
+    Require ($bash -ceq '/usr/bin/bash') 'Linux shell discovery changed'
+    Write-Host 'GROUP77 bash: 4 discovery controls passed (Windows usr/bin, bin fallback, missing refusal, Linux).'
+
 } finally { $env:OS = $oldOs }
