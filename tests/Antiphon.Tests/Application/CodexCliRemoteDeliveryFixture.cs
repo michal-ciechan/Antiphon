@@ -253,6 +253,9 @@ internal static partial class CodexCliRemoteDeliveryFixture
         }
     }
 
+    internal static string RulesPath(string cwd, Guid sessionId) =>
+        cwd.TrimEnd('/') + "/instructions/grok/" + sessionId.ToString("N") + "/rules.md";
+
     internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
         public AgentKind Kind { get; init; } = AgentKind.Codex;
@@ -310,7 +313,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (request.GrokRulesPayload is { } payload)
             {
                 var bytes = Encoding.UTF8.GetBytes(payload.Content);
-                var path = Path.Combine(request.Cwd, "instructions", "grok", request.SessionId.ToString("N"), "rules.md");
+                var path = RulesPath(request.Cwd, request.SessionId);
                 System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 await File.WriteAllBytesAsync(path, bytes, ct);
                 _rules[request.SessionId] = new(path, GrokRulesTransport.Hash(bytes), bytes.Length, 1, payload.Generation);
