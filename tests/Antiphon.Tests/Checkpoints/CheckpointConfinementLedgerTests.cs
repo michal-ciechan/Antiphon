@@ -583,7 +583,9 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     {
         var modified = File.GetLastWriteTimeUtc(path);
         new FileInfo(path).Length.ShouldBe(content.Length);
-        File.WriteAllText(path, content);
+        // Setup Git sees the user's autocrlf config; confinement uses hardened Git.
+        // Persist the same LF bytes on both hosts before either observes the file.
+        File.WriteAllText(path, content.ReplaceLineEndings("\n"));
         File.SetLastWriteTimeUtc(path, modified);
     }
 
