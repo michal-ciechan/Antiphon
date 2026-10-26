@@ -42,10 +42,8 @@ public sealed class GitWorkspaceServiceIndexLockTests
         var hooks = Path.Combine(repo.Path, "c543-hooks");
         Directory.CreateDirectory(hooks);
         var hook = Path.Combine(hooks, "pre-commit");
-        // Git-for-Windows sh has no sleep on PATH; ping -n 9 is ~8 s and is the delay that
-        // actually holds the lock-taking child so TimeoutSeconds=1 can kill it.
-        await File.WriteAllTextAsync(hook,
-            "#!/bin/sh\necho started > hook-started\nping -n 9 127.0.0.1 >/dev/null 2>&1\necho ended > hook-ended\n".Replace("\r\n", "\n"));
+        await ScratchGitRepo.WriteExecutableHookAsync(hook,
+            StallHooks(OperatingSystem.IsWindows()).PreCommit);
         await repo.GitAsync("config", "core.hooksPath", hooks);
         var lockPath = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "--path-format=absolute", "--git-path", "index.lock"))
             .StdOut.Trim();
@@ -74,9 +72,9 @@ public sealed class GitWorkspaceServiceIndexLockTests
         await repo.CommitFileAsync("a.txt", "a\n");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "b.txt"), "b\n");
         await repo.GitAsync("add", "--", "b.txt");
-        var hook = Path.Combine(repo.Path, "fsmonitor.cmd");
-        await File.WriteAllTextAsync(hook,
-            "@echo off\r\necho started>fsmonitor-started\r\nping -n 6 127.0.0.1 >nul\r\necho 1\r\n");
+        var scripts = StallHooks(OperatingSystem.IsWindows());
+        var hook = Path.Combine(repo.Path, scripts.FsmonitorName);
+        await ScratchGitRepo.WriteExecutableHookAsync(hook, scripts.Fsmonitor);
         await repo.GitAsync("config", "core.useBuiltinFSMonitor", "false");
         await repo.GitAsync("config", "core.fsmonitor", hook.Replace('\\', '/'));
         var lockPath = (await ScratchGitRepo.GitInAsync(repo.Path, "rev-parse", "--path-format=absolute", "--git-path", "index.lock"))
@@ -99,6 +97,37 @@ public sealed class GitWorkspaceServiceIndexLockTests
         File.Exists(lockPath).ShouldBeTrue();
         (await File.ReadAllBytesAsync(lockPath)).ShouldBe(foreign);
         logs.ShouldNotContain(l => l.Contains("Reclaimed orphaned git index lock", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Windows_stall_hooks_keep_the_native_shell_commands()
+    {
+        // Force the Windows branch on Linux without starting cmd.exe or taking a native lock.
+        var scripts = StallHooks(windows: true);
+        scripts.PreCommit.ShouldStartWith("#!/bin/sh\n");
+        scripts.PreCommit.ShouldContain("ping -n 9 127.0.0.1 >/dev/null 2>&1\n");
+        scripts.PreCommit.ShouldContain("echo started > hook-started\n");
+        scripts.PreCommit.ShouldContain("echo ended > hook-ended\n");
+        scripts.FsmonitorName.ShouldBe("fsmonitor.cmd");
+        scripts.Fsmonitor.ShouldStartWith("@echo off\r\n");
+        scripts.Fsmonitor.ShouldContain("ping -n 6 127.0.0.1 >nul\r\n");
+        scripts.Fsmonitor.ShouldContain("echo started>fsmonitor-started\r\n");
+        scripts.Fsmonitor.ShouldEndWith("echo 1\r\n");
+        scripts.PreCommit.ShouldNotContain("sleep");
+        scripts.Fsmonitor.ShouldNotContain("sleep");
+    }
+
+    private static (string PreCommit, string FsmonitorName, string Fsmonitor) StallHooks(bool windows)
+    {
+        // Git-for-Windows sh has no sleep on PATH. Keep its ping delay and cmd fsmonitor;
+        // Unix needs an executable sh hook and sleep's Unix argument syntax instead.
+        var delay = windows ? "ping -n 9 127.0.0.1 >/dev/null 2>&1" : "sleep 8";
+        return (
+            $"#!/bin/sh\necho started > hook-started\n{delay}\necho ended > hook-ended\n",
+            windows ? "fsmonitor.cmd" : "fsmonitor.sh",
+            windows
+                ? "@echo off\r\necho started>fsmonitor-started\r\nping -n 6 127.0.0.1 >nul\r\necho 1\r\n"
+                : "#!/bin/sh\necho started > fsmonitor-started\nsleep 5\necho 1\n");
     }
 
     private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
