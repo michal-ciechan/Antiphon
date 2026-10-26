@@ -334,6 +334,21 @@ if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
     return
 }
 
+function Resolve-C1336Bash {
+    if ($env:OS -ne 'Windows_NT') {
+        return (Get-Command bash -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    }
+    # Windows PATH can put the WSL launcher first. This fixture needs a shell
+    # that opens its Windows-owned script/capture paths directly.
+    $git = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $installation = Split-Path -Parent (Split-Path -Parent $git)
+    foreach ($relative in @('usr/bin/bash.exe', 'bin/bash.exe')) {
+        $candidate = Join-Path $installation $relative
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    throw 'C1336 Windows wrapper fixture requires Git Bash beside installed Git; WSL bash cannot read Windows fixture paths.'
+}
+
 function Invoke-C1336Wrapper {
     param([string]$Name, [string]$Schedule, [int]$SshExit)
     $root = Join-Path $ResultsDirectory $Name
@@ -358,7 +373,8 @@ set +e
 source "$1"
 '@
     [System.IO.File]::WriteAllText($launcherPath, $launcher.Replace("`r`n", "`n") + "`n", $utf8)
-    $bash = (Get-Command bash -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $bash = Resolve-C1336Bash
+    Write-Host ('C1336 W shell={0}; runtime={1}; OS={2}' -f $bash, $PSVersionTable.PSVersion, $env:OS)
     $start = [System.Diagnostics.ProcessStartInfo]::new($bash)
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
