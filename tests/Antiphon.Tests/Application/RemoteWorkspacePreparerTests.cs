@@ -974,7 +974,7 @@ public sealed class RemoteWorkspacePreparerTests
 
         if (busy)
         {
-            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, sessionId);
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(harness, schema.ConnectionString, sessionId);
             ready!.TrySetResult(true);
         }
         else if (cut == "queue-inserted")

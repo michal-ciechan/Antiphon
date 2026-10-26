@@ -491,7 +491,7 @@ public partial class CheckNoteDeliveryHandoffTests
         h.Adapter.Inputs.ShouldBeEmpty();
 
         // The turn ends; the first flush types it and has its Enter swallowed.
-        await h.H.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await StoreAwareTranscript.AppendTurnEndAsync(h.H);
         await h.H.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         (await CheckRowAsync(h)).DeliveryAttempts.ShouldBe(1);
         (await h.PromptsAsync(h.SessionId)).ShouldBeEmpty();
@@ -681,7 +681,7 @@ public partial class CheckNoteDeliveryHandoffTests
         queued.DeliveryAttempts.ShouldBe(0, "a busy recipient is not typed into");
         h.Adapter.Inputs.ShouldBeEmpty();
 
-        await h.H.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await StoreAwareTranscript.AppendTurnEndAsync(h.H);
         await h.H.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         (await CheckRowAsync(h)).DeliveryAttempts.ShouldBe(1);
         (await h.PromptsAsync(h.SessionId)).ShouldBeEmpty();

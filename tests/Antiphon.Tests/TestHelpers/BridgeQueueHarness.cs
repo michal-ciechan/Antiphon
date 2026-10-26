@@ -498,24 +498,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     }
 
     /// <summary>Awaits activity after the last TurnEnd and makes it visible to the loaded working-state store.</summary>
-    public async Task MarkWorkingAsync(Guid? sessionId = null)
-    {
-        var id = sessionId ?? SessionId;
-        using var lease = await Provider.GetRequiredService<SessionStateStore>()
-            .BeginWriteAsync(id, CancellationToken.None);
-        await InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "working on it", sessionId: id);
-        await lease.ReconcileAsync(reset: false, CancellationToken.None);
-    }
+    public Task MarkWorkingAsync(Guid? sessionId = null) => StoreAwareTranscript.MarkWorkingAsync(this, sessionId);
 
     /// <summary>Ends the current turn and makes it visible to the loaded working-state store, the twin of <see cref="MarkWorkingAsync"/>.</summary>
-    public async Task MarkIdleAsync(Guid? sessionId = null)
-    {
-        var id = sessionId ?? SessionId;
-        using var lease = await Provider.GetRequiredService<SessionStateStore>()
-            .BeginWriteAsync(id, CancellationToken.None);
-        await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, sessionId: id);
-        await lease.ReconcileAsync(reset: false, CancellationToken.None);
-    }
+    public Task MarkIdleAsync(Guid? sessionId = null) => StoreAwareTranscript.MarkIdleAsync(this, sessionId);
 
     /// <summary>
     /// A Pending message already in the queue. <paramref name="deliveryAttempts"/> and

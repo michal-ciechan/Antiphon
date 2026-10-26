@@ -1268,8 +1268,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task A_working_session_is_not_killed_when_the_record_never_arrives()
     {
         await using var h = await ObservableHarnessAsync();
-        h.Adapter.OnSubmitted = _ =>
-            h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "on it");
+        h.Adapter.OnSubmitted = _ => StoreAwareTranscript.MarkWorkingAsync(h, text: "on it");
 
         await h.Queue.EnqueueAsync(
             h.SessionId, "the body whose record never got ingested",
