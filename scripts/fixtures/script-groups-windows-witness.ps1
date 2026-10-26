@@ -165,7 +165,7 @@ public static class WindowsIndex {
         foreach ($definition in $trx.TestRun.TestDefinitions.UnitTest) {
             $definitions[[string]$definition.id] = [string]$definition.TestMethod.className + '.' + [string]$definition.TestMethod.name
         }
-        $rows = @($trx.TestRun.Results.UnitTestResult)
+        $rows = @($trx.TestRun.Results.UnitTestResult | Where-Object { $null -ne $_ })
         Require ($rows.Count -gt 0) 'TRX contains no results'
         foreach ($result in $rows) {
             if ($result.outcome -ne 'Failed') { continue }
