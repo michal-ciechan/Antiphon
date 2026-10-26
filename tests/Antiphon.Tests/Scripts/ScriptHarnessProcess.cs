@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using System.Text;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -121,7 +122,12 @@ internal static class ScriptHarnessProcess
             {
                 try
                 {
-                    if (Directory.Exists(results)) Directory.Delete(results, true);
+                    if (Directory.Exists(results))
+                    {
+                        StartRefGit.DeleteDirectory(results);
+                        if (Directory.Exists(results))
+                            throw new IOException("Owned script results remain after cleanup.");
+                    }
                     if (Directory.Exists(control)) Directory.Delete(control, true);
                 }
                 catch (Exception ex) { cleanupErrors.Add("owned-path deletion: " + ex.Message); }
