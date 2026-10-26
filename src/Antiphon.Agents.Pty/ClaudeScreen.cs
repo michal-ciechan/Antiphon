@@ -157,12 +157,22 @@ public static partial class ClaudeScreen
 
     /// <summary>
     /// The hint bar's right-hand slash-command badges ("/rc", "/effort") wrapped onto a row of
-    /// their own when the bar is wider than the terminal (Claude 2.1.310 added "← for agents").
+    /// their own when the bar is wider than the terminal (Claude 2.1.310 added "← for agents"),
+    /// optionally followed by the remote-control status ("/rc connecting…").
     /// </summary>
     private static bool IsWrappedHintCommandRow(string row)
     {
         var tokens = row.Split([' ', '·', ' '], StringSplitOptions.RemoveEmptyEntries);
-        return tokens.Length > 0 && tokens.All(t => t is "/rc" or "/effort");
+        return tokens.Length > 0 && tokens[0] is "/rc" or "/effort"
+            && tokens.All(t => t is "/rc" or "/effort" || IsRemoteControlStatusWord(t));
+    }
+
+    private static bool IsRemoteControlStatusWord(string token)
+    {
+        var word = token.TrimEnd('…', '.');
+        return word.Length > 0 && word.All(char.IsLetter)
+            && (token.EndsWith('…') || token.EndsWith("...", StringComparison.Ordinal)
+                || word is "connected" or "disconnected" or "failed" or "offline");
     }
 
     private static int LastRuleRow(string[] rows, int from)
