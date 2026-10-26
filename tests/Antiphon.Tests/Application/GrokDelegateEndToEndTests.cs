@@ -12,6 +12,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -1039,14 +1040,19 @@ public class GrokDelegateEndToEndTests
     internal static async Task PumpTranscriptAsync(IServiceProvider provider, Guid sessionId, CancellationToken ct)
     {
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
-        while (!ct.IsCancellationRequested)
+        using var worker = new SessionRuntimeActionHostedService(provider.GetRequiredService<SessionRuntimeActionCoordinator>());
+        await worker.StartAsync(CancellationToken.None);
+        try
         {
-            try { await runtime.SyncTranscriptAsync(sessionId, CancellationToken.None); }
-            catch (Exception) { /* the session may not be live yet, or already gone */ }
-
-            try { await Task.Delay(150, ct); }
-            catch (OperationCanceledException) { break; }
+            while (!ct.IsCancellationRequested)
+            {
+                try { await runtime.SyncTranscriptAsync(sessionId, CancellationToken.None); }
+                catch (Exception) { /* the session may not be live yet, or already gone */ }
+                try { await Task.Delay(150, ct); }
+                catch (OperationCanceledException) { break; }
+            }
         }
+        finally { await worker.StopAsync(CancellationToken.None); }
     }
 
     internal static async Task WaitUntilAsync(
