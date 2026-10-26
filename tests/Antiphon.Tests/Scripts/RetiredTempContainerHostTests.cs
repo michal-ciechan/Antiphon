@@ -10,6 +10,9 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RetiredTempContainerHostTests
 {
+    [Before(Test)]
+    public void RequireNativeLinux() => C1008HostFixture.RequireNativeLinux();
+
     private const string Project = "antiphon-runner-temp";
     private static C1008HostFixture Fixture(params string[] services) {
         var f = new C1008HostFixture(main:false); var id='7';

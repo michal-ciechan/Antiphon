@@ -10,6 +10,9 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RollingProductionMountTests
 {
+    [Before(Test)]
+    public void RequireNativeLinux() => C1008HostFixture.RequireNativeLinux();
+
     private static JsonObject Observation(C1008HostFixture f, string project) => new()
     {
         ["model"] = f.Docker["models"]![project]!.DeepClone(),
