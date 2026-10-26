@@ -65,7 +65,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
     public void C1210_Roster_closure_matches_source_gates()
     {
         var roots = SourceRoots();
-        var expected = WindowsUnitSkipRoster.Native.Concat(WindowsUnitSkipRoster.Existing).ToArray();
+        var expected = WindowsUnitSkipRoster.Native.Concat(WindowsUnitSkipRoster.NativeSourceOnly)
+            .Concat(WindowsUnitSkipRoster.Existing).ToArray();
         AssertClosure(roots, expected, true);
         Entry[] vectorRoster = [new("Antiphon.Tests.Scripts", "Probe", "Case", 1, "literal")];
         const string healthy = "namespace Antiphon.Tests.Scripts; class Probe { void Case() { C1008HostFixture.RequireNativeLinux(); } }";
@@ -113,6 +114,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
             var entry = expected.SingleOrDefault(entry => entry.Identity == identity);
             entry.ShouldNotBeNull("c1210-unrostered-gate: " + identity);
             var expectedCall = entry.Helper ? "C1105AuditContract" : WindowsUnitSkipRoster.Native.Contains(entry)
+                || WindowsUnitSkipRoster.NativeSourceOnly.Contains(entry)
                 ? "NativeLinuxGate.Require" : "C1008HostFixture.RequireNativeLinux";
             name.ShouldBe(expectedCall, "c1210-roster-without-gate: " + identity);
             actual.Add(identity);
