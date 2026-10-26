@@ -35,6 +35,7 @@ internal static class QueuedReceiptAssertions
 
         BridgeQueueHarness? recovered = null;
         var queue = h.Queue;
+        var owner = h;
         try
         {
             if (cut is "queue-inserted" or "lost-wakeup")
@@ -55,9 +56,10 @@ internal static class QueuedReceiptAssertions
                 recovered.Runtime.Register(sessionId, adapter);
                 await MarkRecipientLiveAsync(connection, sessionId);
                 queue = recovered.Queue;
+                owner = recovered;
             }
 
-            if (busy && !busyBeforeDelivery) await SetWorkingAsync(connection, sessionId, true);
+            if (busy && !busyBeforeDelivery) await StoreAwareTranscript.SetWorkingAsync(owner, sessionId, true);
 
             if (queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
             {
@@ -69,7 +71,7 @@ internal static class QueuedReceiptAssertions
                         .Status.ShouldBe(QueuedMessageStatus.Pending);
                     (await CountUserPromptsAsync(connection, sessionId)).ShouldBe(0,
                         "a busy caller must not receive the note until it is idle");
-                    await SetWorkingAsync(connection, sessionId, false);
+                    await StoreAwareTranscript.SetWorkingAsync(owner, sessionId, false);
                     await queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
                 }
             }
@@ -95,10 +97,10 @@ internal static class QueuedReceiptAssertions
         }
     }
 
-    public static async Task HoldRecipientBusyAsync(string connection, Guid sessionId)
+    public static async Task HoldRecipientBusyAsync(BridgeQueueHarness h, string connection, Guid sessionId)
     {
         await MarkRecipientLiveAsync(connection, sessionId);
-        await SetWorkingAsync(connection, sessionId, true);
+        await StoreAwareTranscript.SetWorkingAsync(h, sessionId, true);
     }
 
     private static async Task<string> AssertSubmittedAsync(
@@ -188,23 +190,5 @@ internal static class QueuedReceiptAssertions
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         return await db.TranscriptEntries.CountAsync(e =>
             e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
-    }
-
-    private static async Task SetWorkingAsync(string connection, Guid sessionId, bool working)
-    {
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-        var seq = ((await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
-        db.TranscriptEntries.Add(new TranscriptEntry
-        {
-            Id = Guid.NewGuid(),
-            AgentSessionId = sessionId,
-            Sequence = seq,
-            Kind = working ? TranscriptKinds.AssistantText : TranscriptKinds.TurnEnd,
-            Text = working ? "busy" : null,
-            StopReason = working ? null : TranscriptKinds.StopReasons.EndTurn,
-            CreatedAt = DateTime.UtcNow,
-            Timestamp = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync();
     }
 }

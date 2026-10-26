@@ -115,7 +115,7 @@ public sealed class DispatcherRemotePrepStarvationTests
             .SingleAsync(m => m.ExecutionTaskId == localId);
         if (busy)
         {
-            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, sessionId);
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(harness, schema.ConnectionString, sessionId);
             ready!.TrySetResult(true);
             await harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
                 .WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);

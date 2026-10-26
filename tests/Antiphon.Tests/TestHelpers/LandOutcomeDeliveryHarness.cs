@@ -69,7 +69,7 @@ internal sealed class LandOutcomeDeliveryHarness : IAsyncDisposable
     }
 
     public async Task MarkBusyAsync() =>
-        await Caller.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "caller is mid-turn");
+        await StoreAwareTranscript.MarkWorkingAsync(Caller, text: "caller is mid-turn");
 
     public async Task<AgentTaskLandNotification> LandAsync(bool conflict)
     {

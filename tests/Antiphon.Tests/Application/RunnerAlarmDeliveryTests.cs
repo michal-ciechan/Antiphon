@@ -352,20 +352,8 @@ public sealed class RunnerAlarmDeliveryTests
         return id;
     }
 
-    private static async Task SetWorkingAsync(Rig rig, bool working)
-    {
-        var seq = ((await rig.Db.TranscriptEntries.Where(entry => entry.AgentSessionId == rig.Harness.SessionId)
-            .MaxAsync(entry => (long?)entry.Sequence)) ?? 0) + 1;
-        rig.Db.TranscriptEntries.Add(new TranscriptEntry
-        {
-            Id = Guid.NewGuid(), AgentSessionId = rig.Harness.SessionId, Sequence = seq,
-            Kind = working ? TranscriptKinds.AssistantText : TranscriptKinds.TurnEnd,
-            Text = working ? "busy" : null,
-            StopReason = working ? null : TranscriptKinds.StopReasons.EndTurn,
-            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
-        });
-        await rig.Db.SaveChangesAsync();
-    }
+    private static Task SetWorkingAsync(Rig rig, bool working) =>
+        StoreAwareTranscript.SetWorkingAsync(rig.Harness, rig.Harness.SessionId, working);
 
     private static async Task<List<string>> PromptsAsync(Rig rig) =>
         await rig.Db.TranscriptEntries.AsNoTracking()

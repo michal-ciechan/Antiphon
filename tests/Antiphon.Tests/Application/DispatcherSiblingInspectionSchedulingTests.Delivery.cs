@@ -96,7 +96,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             var launches = harness.Provider.GetRequiredService<AgentSessionLaunchQueue>();
             if (scenario == "busy")
             {
-                await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, recipient);
+                await QueuedReceiptAssertions.HoldRecipientBusyAsync(harness, schema.ConnectionString, recipient);
                 ready!.TrySetResult(true);
                 await launches.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             }

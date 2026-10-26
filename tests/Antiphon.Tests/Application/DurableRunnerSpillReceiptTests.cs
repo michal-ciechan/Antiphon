@@ -71,7 +71,7 @@ public sealed class DurableRunnerSpillReceiptTests
         System.Text.Encoding.UTF8.GetByteCount(pointer.Replace(relative, bound, StringComparison.Ordinal))
             .ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
         h.Queue.StageRemoteSpill(h.SessionId, cwd, staged[0]);
-        await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+        await QueuedReceiptAssertions.HoldRecipientBusyAsync(h, schema.ConnectionString, h.SessionId);
         await h.Queue.EnqueueAsync(h.SessionId, pointer, MessageSendMode.WhenIdle,
             CancellationToken.None, QueuedMessageOrigin.Delegation);
 
@@ -169,7 +169,7 @@ public sealed class DurableRunnerSpillReceiptTests
         const string oldPath = ".antiphon/old-brief.md";
         var fullBody = "durable-receipt-0647\n" + new string('r', 4096);
         h.Queue.StageRemoteSpill(h.SessionId, cwd, new PhoneHomeInputSpill(oldPath, fullBody));
-        await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+        await QueuedReceiptAssertions.HoldRecipientBusyAsync(h, schema.ConnectionString, h.SessionId);
         await h.Queue.EnqueueAsync(h.SessionId, "Read " + cwd + "/" + oldPath,
             MessageSendMode.WhenIdle, CancellationToken.None, QueuedMessageOrigin.Delegation);
 
@@ -423,7 +423,7 @@ public sealed class DurableRunnerSpillReceiptTests
             // original bytes, and a complete UserPrompt of that pointer is what clears them.
             const string marker = "[antiphon-task:f67e6efa]";
             var fullBody = marker + " joined-brief-0647\n" + new string('j', 2048);
-            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(h, schema.ConnectionString, h.SessionId);
             await h.Queue.EnqueueAsync(h.SessionId, fullBody, MessageSendMode.WhenIdle, CancellationToken.None);
 
             await using (var before = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))

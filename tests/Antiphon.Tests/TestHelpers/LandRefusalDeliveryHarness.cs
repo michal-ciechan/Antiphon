@@ -156,10 +156,10 @@ internal sealed class LandRefusalDeliveryHarness : IAsyncDisposable
     public Task<int> FlushStrandedAsync() => Caller.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
 
     public Task MarkWorkingAsync() =>
-        Caller.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "caller is mid-turn");
+        StoreAwareTranscript.MarkWorkingAsync(Caller, text: "caller is mid-turn");
 
     public Task MarkIdleTurnAsync() =>
-        Caller.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        StoreAwareTranscript.AppendTurnEndAsync(Caller);
 
     public async Task<bool> IsWorkingAsync()
     {
