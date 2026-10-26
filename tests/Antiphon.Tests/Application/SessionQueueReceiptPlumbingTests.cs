@@ -640,8 +640,9 @@ public sealed class SessionQueueReceiptPlumbingTests
             try
             {
                 world.Queue = provider.GetRequiredService<SessionMessageQueueService>();
-                await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", kind, FakeClaudeExe, [],
-                    new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript, ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = overlay ? "/usage" : "" }, cwd, 120, 30), CancellationToken.None);
+                var spec = new AgentLaunchSpec("fakeclaude", kind, FakeClaudeExe, [],
+                    new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript, ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = overlay ? "/usage" : "" }, cwd, 120, 30).WithNativeClaudeDialog();
+                await inner.StartAsync(sessionId, spec, CancellationToken.None);
                 if (checkpoint is not null) await checkpoint("launched", world);
                 await using (var scope = provider.CreateAsyncScope())
                 {
@@ -808,7 +809,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         }
     }
 
-    private sealed class ForwardingClient(ISessionRunnerClient inner) : ISessionRunnerClient
+    internal sealed class ForwardingClient(ISessionRunnerClient inner) : ISessionRunnerClient
     {
         public List<string> Writes { get; } = [];
         public List<string> Payloads { get; } = [];
@@ -832,7 +833,16 @@ public sealed class SessionQueueReceiptPlumbingTests
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => inner.GetBufferAsync(id, ct);
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => inner.GetSnapshotAsync(id, ct);
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => inner.GetTranscriptAsync(id, ct);
-        public async Task SendInputAsync(Guid id, string input, CancellationToken ct)
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) =>
+            WriteAsync(input, () => inner.SendInputAsync(id, input, ct), ct);
+        public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+            Guid id, RunnerConditionalInputRequest request, CancellationToken ct)
+        {
+            RunnerConditionalInputResult? result = null;
+            await WriteAsync(request.Input, async () => result = await inner.SendConditionalInputAsync(id, request, ct), ct);
+            return result!;
+        }
+        private async Task WriteAsync(string input, Func<Task> write, CancellationToken ct)
         {
             if (BlockWrites)
             {
@@ -845,7 +855,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             if (CutAtEnter == "before" && input == "\r") throw new InvalidOperationException("injected cut before Enter");
             Writes.Add(input);
             Payloads.Add(input);
-            await inner.SendInputAsync(id, input, ct);
+            await write();
             if (CutAtEnter == "after" && input == "\r") throw new InvalidOperationException("injected cut after Enter");
         }
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => inner.ClearLiveBufferAsync(id, ct);
