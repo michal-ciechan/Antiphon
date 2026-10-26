@@ -78,7 +78,7 @@ public static class HarnessFlowWitness {
     }
 }
 '@
-$prefix = "using System; using System.IO; using System.Linq; using System.Collections.Generic; using System.Threading; using System.Threading.Tasks;`n"
+$prefix = "#nullable enable annotations`nusing System; using System.IO; using System.Linq; using System.Collections.Generic; using System.Threading; using System.Threading.Tasks;`n"
 Add-Type ($prefix + $source + "`n" + $driver.Replace('DELETION',$deletion))
 $sibling = Join-Path ([IO.Path]::GetTempPath()) ('ab1cd00f-flow-' + [guid]::NewGuid().ToString('N'))
 [Antiphon.Tests.Scripts.HarnessFlowWitness]::Run($sibling).GetAwaiter().GetResult()
