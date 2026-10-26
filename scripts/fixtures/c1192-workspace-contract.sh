@@ -3029,7 +3029,7 @@ s7_roster() {
     : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
     for family in $(seq -w 1 32); do
         printf 'PASS PC-%s\n' "$family" >> "$CASE_DIR/fixture-controls.txt"
-        count=1; case "$family" in 13|14|29|30) count=2 ;; 15|18|27|31) count=3 ;; 28) count=4 ;; esac
+        count=1; case "$family" in 13|14|29|30) count=2 ;; 15|18|27) count=3 ;; 28) count=4 ;; 31) count=16 ;; esac
         for ordinal in $(seq 1 "$count"); do printf 'PC-%s.%02d expected-red\n' "$family" "$ordinal" >> "$CASE_DIR/fixture-control-variants.txt"; done
     done
 }
@@ -3041,7 +3041,7 @@ mode_evidence() {
     s7_roster
     local good=0 fault code=0 out
     [ "$(wc -l < "$CASE_DIR/fixture-summary.txt")" = 9 ] && good=1; emit summary-nine-lines "$good"
-    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=9\ncontrols=32\nexpected-red=32\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' "$SHA" "$IMAGE_ID" > "$C1192_ROOT/expected-summary"
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=9\ncontrols=32\nexpected-red=32\nvariants=60\nexpected-red-variants=60\nproduction-mutations=0\n' "$SHA" "$IMAGE_ID" > "$C1192_ROOT/expected-summary"
     good=0; cmp -s "$C1192_ROOT/expected-summary" "$CASE_DIR/fixture-summary.txt" && good=1; emit summary-exact-bytes "$good"
     good=0; ( c849_fixture_roster ) && good=1; emit roster-complete "$good"
     for fault in missing duplicate family variant family-duplicate variant-duplicate; do

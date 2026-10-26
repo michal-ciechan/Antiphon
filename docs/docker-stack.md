@@ -791,7 +791,7 @@ a rolling phase or clear admission on its own.
 
 | Gate | Command | Required receipt summary |
 |---|---|---|
-| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0` |
+| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=60 expectedRedVariants=60 inventories=2 failures=0 productionMutations=0` |
 | Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
 | Retired temp, saved donor available | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
 | After redeploy-old, before drain-temp, CP-4 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
@@ -799,11 +799,22 @@ a rolling phase or clear admission on its own.
 
 `-Case Inventory` refreshes two read-only status and mount receipts. The Fixture case
 uses run-scoped Docker resources and records `PASS F-1` through `PASS F-9` and all
-32 control families (`PC-01` through `PC-32`), with exactly 47 negative variants.
+32 control families (`PC-01` through `PC-32`), with exactly 60 negative variants.
 Both shell and front door check the full roster, including duplicates. Fixture generates
 ordinary packages locally and reads production only for the two inventories. A complete
 successful census and an explicitly retired temp status may record an absent temp;
-lookup failures and contradictory live containers refuse. Empty-cache native execution
+the failed-deployment hold is also accepted when `retiredAt=null`, `retireWhenIdle=false`,
+`draining=true`, and `redirectTo=server2`. Both absent shapes require offline status
+(`available=false`, `dispatchEligible=false`, `acceptingNewWork=false`), zero `sessions`
+and `queuedTasks`, and zero or null `runnerSessions`. Inventory additionally requires a
+successful, empty whole-project `docker ps -aq` census (all services, including stopped
+containers), retained in `server2-temp-container-census.txt`; the status receipt retains
+the drain, redirect and retirement fields. PC-31 covers the hold with zero and null live
+inventory and 13 refusal variants. Rerun its isolated local controls with
+`bash scripts/fixtures/c1589-cache-inventory.sh "$PWD" controls`.
+This admits the documented `deploy-temp` retry without manually changing the hold;
+it grants no retirement or volume-removal authority. Lookup failures, unknown status,
+busy or live placeholders and remaining temp-project containers refuse. Empty-cache native execution
 is positive; disposable children mask each image pack separately for the negative cases.
 CP-45..52 model post-Compose finalizer probes for registered consumers, helpers,
 work/mask/cache volumes and the fixture network. CP-53 models work/mask creation

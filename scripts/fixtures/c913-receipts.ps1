@@ -53,18 +53,18 @@ function global:pwsh {
         $files['smoke-summary.txt'] = "C849_SMOKE runner=server2 uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK`n"
     }
     if ($Case -eq 'runner-cache-fixture') {
-        $files['fixture-summary.txt'] = "source-sha=$sha`nimage-id=sha256:$('b'*64)`ninventories=2`ngroups=9`ncontrols=32`nexpected-red=32`nvariants=47`nexpected-red-variants=47`nproduction-mutations=0`n"
+        $files['fixture-summary.txt'] = "source-sha=$sha`nimage-id=sha256:$('b'*64)`ninventories=2`ngroups=9`ncontrols=32`nexpected-red=32`nvariants=60`nexpected-red-variants=60`nproduction-mutations=0`n"
         $groups = @(1..9 | ForEach-Object { "PASS F-$_" })
         $controls = @(1..32 | ForEach-Object { 'CONTROL PC-{0:d2} expected-red observed=ExpectedRefusal' -f $_ })
         $variants = @(foreach ($n in 1..32) {
-            $count = switch ($n) { { $_ -in 13,14,29,30 } { 2 } { $_ -in 15,18,27,31 } { 3 } 28 { 4 } default { 1 } }
+            $count = switch ($n) { { $_ -in 13,14,29,30 } { 2 } { $_ -in 15,18,27 } { 3 } 28 { 4 } 31 { 16 } default { 1 } }
             foreach ($v in 1..$count) { 'PC-{0:d2}.{1:d2} expected-red observed=ExpectedRefusal' -f $n,$v }
         })
         switch ($global:c913Fault) {
             'group-duplicate' { $groups[8] = $groups[0] }
             'family-duplicate' { $controls[31] = $controls[0] }
-            'variant-duplicate' { $variants[46] = $variants[0] }
-            'variant-missing' { $variants = $variants[0..45] }
+            'variant-duplicate' { $variants[59] = $variants[0] }
+            'variant-missing' { $variants = $variants[0..58] }
             'toxic' { $files['fixture-summary.txt'] += "package=DO_NOT_EXPORT_C913`n" }
         }
         $files['fixture-groups.txt'] = ($groups -join "`n") + "`n"
@@ -132,7 +132,7 @@ try {
     try { $text=Invoke-Front Seed; $accepted=$true } catch { $text=$_.Exception.Message }
     Check (-not $accepted) reuse-smoke-not-claimed
     $global:c913Reuse=$false; $global:c913Fault='none'
-    Check ((Invoke-Front Fixture) -cmatch 'controls=32 expectedRed=32 variants=47') fixture-exact-roster
+    Check ((Invoke-Front Fixture) -cmatch 'controls=32 expectedRed=32 variants=60') fixture-exact-roster
     foreach ($fault in @('group-duplicate','family-duplicate','variant-duplicate','variant-missing','toxic')) {
         $global:c913Fault=$fault; $accepted=$false
         try { $text=Invoke-Front Fixture; $accepted=$true } catch { $text=$_.Exception.Message }

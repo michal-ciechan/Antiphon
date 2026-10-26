@@ -4881,13 +4881,39 @@ c849_fixture_inventory_fault() (
     docker() {
         case "$1:${2:-}" in
             ps:*) [ "$fault" != census ] || return 1
-                [[ "$*" == *"project=$TEMP_PROJECT"* ]] || printf '%064d\n' 1 ;;
+                if [[ "$*" == *"project=$TEMP_PROJECT"* ]]; then
+                    if [[ "$*" != *'service=session-runner'* ]]; then
+                        case "$fault" in
+                            hold-census) return 1 ;;
+                            hold-partial-census) printf '%064d\n' 2; return 1 ;;
+                            hold-stopped-container) printf '%064d\n' 2 ;;
+                        esac
+                    fi
+                else printf '%064d\n' 1; fi ;;
             inspect:*) [ "$fault" != inspect ] || return 1
                 case "$3" in *'.Image'*) printf 'sha256:%064d\n' 1;; *'.State.Running'*) echo false;; *'.Mounts'*) :;; *) return 1;; esac ;;
             *) return 1 ;;
         esac
     }
     c849_status_body() {
+        local change='.'
+        if [ "$1" = server2-temp ] && [[ "$fault" == hold* ]]; then
+            case "$fault" in
+                hold) change='.runnerSessions=0' ;;
+                hold-live) change='.available=true' ;;
+                hold-eligible) change='.dispatchEligible=true' ;;
+                hold-accepting) change='.acceptingNewWork=true' ;;
+                hold-sessions) change='.sessions=1' ;;
+                hold-queued) change='.queuedTasks=1' ;;
+                hold-runner) change='.runnerSessions=1' ;;
+                hold-unknown) change='.sessions=null' ;;
+                hold-routing) change='.redirectTo="other"' ;;
+                hold-drain) change='.draining=false' ;;
+                hold-retirement) change='.retireWhenIdle=true' ;;
+            esac
+            printf '%s' '{"sessions":0,"queuedTasks":0,"runnerSessions":null,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"redirectTo":"server2","retireWhenIdle":false,"retiredAt":null}' | jq "$change"
+            return
+        fi
         printf '{"sessions":0,"queuedTasks":0,"runnerSessions":0,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"redirectTo":"server2","retireWhenIdle":true'
         if [ "$fault" != status ]; then printf ',"retiredAt":"2026-10-04T00:00:00Z"'; fi
         printf '}\n'
@@ -4895,6 +4921,20 @@ c849_fixture_inventory_fault() (
     write_result() { printf '%s\n' "$2"; exit "$3"; }
     case_runner_cache_inventory
 )
+
+c849_fixture_inventory_controls() {
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault census
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault inspect
+    c849_fixture_control PC-31 CacheInventoryStatusInvalid c849_fixture_inventory_fault status
+    ( c849_fixture_inventory_fault hold ) >/dev/null || write_result false FixtureInventoryHoldFailed 2
+    ( c849_fixture_inventory_fault hold-null ) >/dev/null || write_result false FixtureInventoryHoldFailed 2
+    for kind in live eligible accepting sessions queued runner routing drain retirement stopped-container; do
+        c849_fixture_control PC-31 CacheInventoryRunnerMissing c849_fixture_inventory_fault "hold-$kind"
+    done
+    c849_fixture_control PC-31 CacheInventoryStatusInvalid c849_fixture_inventory_fault hold-unknown
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault hold-census
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault hold-partial-census
+}
 
 c849_fixture_cleanup_scope() (
     local acquired_case="$CASE_DIR" trace="$SERVER2_ROOT/cleanup-trace"
@@ -4959,9 +4999,7 @@ c849_fixture_contract_controls() {
         "$SHA" "$image" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" 0 > "$C849_READY"
     c849_fixture_control PC-30 CacheSeedMarkerInvalid c849_require_ready allow-cold
     cp "$SERVER2_ROOT/marker-backup" "$C849_READY"
-    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault census
-    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault inspect
-    c849_fixture_control PC-31 CacheInventoryStatusInvalid c849_fixture_inventory_fault status
+    c849_fixture_inventory_controls
     c849_fixture_control PC-32 FixtureCleanupScopeHeld c849_fixture_cleanup_scope
 }
 
@@ -4970,7 +5008,7 @@ c849_fixture_roster() {
     : > "$expected"
     for family in $(seq -w 1 32); do
         count=1
-        case "$family" in 13|14|29|30) count=2 ;; 15|18|27|31) count=3 ;; 28) count=4 ;; esac
+        case "$family" in 13|14|29|30) count=2 ;; 15|18|27) count=3 ;; 28) count=4 ;; 31) count=16 ;; esac
         for ordinal in $(seq 1 "$count"); do printf 'PC-%s.%02d\n' "$family" "$ordinal" >> "$expected"; done
     done
     cmp -s <(sort "$expected") <(cut -d' ' -f1 "$CASE_DIR/fixture-control-variants.txt" | sort) \
@@ -5006,7 +5044,7 @@ c849_fixture_evidence_payloads() {
     local receipt="$CASE_DIR/fixture-summary.txt"
     image_id="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
         || write_result false FixtureImageMissing 2
-    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' \
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nvariants=60\nexpected-red-variants=60\nproduction-mutations=0\n' \
         "$SHA" "$image_id" "$groups" "$controls" "$controls" \
         | c849_fixture_helper_exec writer /bin/sh -c 'cat > "$1"' sh "$legal" \
         || write_result false FixtureEvidenceWriteFailed 2
@@ -5286,7 +5324,7 @@ c849_fixture() {
         write_result false FixtureEarlyReceipt 2
     fi
     c849_fixture_finalize || write_result false FixtureFinalizationFailed 2
-    printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0\n'
+    printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=60 expectedRedVariants=60 inventories=2 failures=0 productionMutations=0\n'
     write_result true '' 0
 }
 
@@ -5321,7 +5359,7 @@ case_verify_runner_caches() {
 case_runner_cache_inventory() {
     require_lane host
     command -v jq >/dev/null || write_result false CacheInventoryToolMissing 2
-    local runner project container image status running previous=''
+    local runner project container image status running temp_census previous=''
     : > "$CASE_DIR/identities.txt"
     for runner in server2 server2-temp; do
         project="$HOST_PROJECT"
@@ -5338,15 +5376,21 @@ case_runner_cache_inventory() {
             (.available | type) == "boolean" and (.dispatchEligible | type) == "boolean" and
             (.acceptingNewWork | type) == "boolean" and (.draining | type) == "boolean"' >/dev/null \
             || write_result false CacheInventoryStatusInvalid 2
-        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,draining,retiredAt,available,dispatchEligible,acceptingNewWork,buildVersion}' \
+        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,draining,redirectTo,retireWhenIdle,retiredAt,available,dispatchEligible,acceptingNewWork,buildVersion}' \
             > "$CASE_DIR/$runner-status.json" || write_result false CacheInventoryStatusInvalid 2
         if [ -z "$container" ]; then
             [ "$runner" = server2-temp ] && printf '%s' "$status" | jq -e '
-                (.retiredAt | type) == "string" and (.retiredAt | length) > 0 and
                 .sessions == 0 and .queuedTasks == 0 and (.runnerSessions == null or .runnerSessions == 0) and
                 .available == false and .dispatchEligible == false and .acceptingNewWork == false and
-                .draining == true and .retireWhenIdle == true and .redirectTo == "server2"' >/dev/null \
+                .draining == true and .redirectTo == "server2" and
+                (((.retiredAt | type) == "string" and (.retiredAt | length) > 0 and .retireWhenIdle == true) or
+                 (.retiredAt == null and .retireWhenIdle == false))' >/dev/null \
                 || write_result false CacheInventoryRunnerMissing 2
+            # Include stopped containers and every service before admitting a placeholder.
+            temp_census="$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" \
+                || write_result false CacheInventoryLookupFailed 2
+            printf '%s' "$temp_census" > "$CASE_DIR/server2-temp-container-census.txt"
+            [ -z "$temp_census" ] || write_result false CacheInventoryRunnerMissing 2
             printf 'runner=%s container=absent image=none\n' "$runner" >> "$CASE_DIR/identities.txt"
             printf 'absent\n' > "$CASE_DIR/$runner-mounts.txt"
             printf 'absent\n' > "$CASE_DIR/$runner-cache-paths.txt"

@@ -139,7 +139,7 @@ switch ($Case) {
         $summary = Read-C849Receipt 0 'fixture-summary.txt'
         $lines = @($summary -split "`n" | Where-Object { $_.Length -gt 0 })
         foreach ($line in @(('source-sha=' + $Sha), 'inventories=2', 'groups=9', 'controls=32',
-                'expected-red=32', 'variants=47', 'expected-red-variants=47', 'production-mutations=0')) {
+                'expected-red=32', 'variants=60', 'expected-red-variants=60', 'production-mutations=0')) {
             if (@($lines | Where-Object { $_ -ceq $line }).Count -ne 1) { throw "C849 fixture receipt missing $line" }
         }
         if ($lines.Count -ne 9 -or @($lines | Where-Object { $_ -cmatch '^image-id=sha256:[0-9a-f]{64}$' }).Count -ne 1) {
@@ -148,20 +148,20 @@ switch ($Case) {
         $groups = @((Read-C849Receipt 0 'fixture-groups.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
         $controls = @((Read-C849Receipt 0 'fixture-controls.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
         $variants = @((Read-C849Receipt 0 'fixture-control-variants.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
-        if ($groups.Count -ne 9 -or $controls.Count -ne 32 -or $variants.Count -ne 47) { throw 'C849 fixture roster incomplete' }
+        if ($groups.Count -ne 9 -or $controls.Count -ne 32 -or $variants.Count -ne 60) { throw 'C849 fixture roster incomplete' }
         foreach ($number in 1..9) {
             if (@($groups | Where-Object { $_ -ceq "PASS F-$number" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
         }
         foreach ($number in 1..32) {
             $family = 'PC-{0:d2}' -f $number
             if (@($controls | Where-Object { $_ -cmatch "^CONTROL $family expected-red observed=[A-Za-z][A-Za-z0-9:.-]*$" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
-            $count = switch ($number) { { $_ -in 13,14,29,30 } { 2 } { $_ -in 15,18,27,31 } { 3 } 28 { 4 } default { 1 } }
+            $count = switch ($number) { { $_ -in 13,14,29,30 } { 2 } { $_ -in 15,18,27 } { 3 } 28 { 4 } 31 { 16 } default { 1 } }
             foreach ($ordinal in 1..$count) {
                 $variant = '{0}.{1:d2}' -f $family,$ordinal
                 if (@($variants | Where-Object { $_ -cmatch "^$([regex]::Escape($variant)) expected-red observed=[A-Za-z][A-Za-z0-9:.-]*$" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
             }
         }
-        Write-Output 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0'
+        Write-Output 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=60 expectedRedVariants=60 inventories=2 failures=0 productionMutations=0'
     }
     'Seed' {
         $contract = Read-C849Contract 0
