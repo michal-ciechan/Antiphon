@@ -203,9 +203,12 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     }
 }
 
-public abstract class CheckpointTestBase
+public abstract partial class CheckpointTestBase
 {
     private CheckpointTestScope? _scope;
+
+    // The lifecycle host links this base without the main assembly's diagnostics.
+    partial void CaptureDiagnostics(IReadOnlyList<string> roots);
 
     [Before(Test)]
     public void OpenCheckpointScope() => _scope = new CheckpointTestScope();
@@ -215,7 +218,7 @@ public abstract class CheckpointTestBase
     {
         if (_scope is not null)
         {
-            CheckpointNativeDiagnostics.Capture(GetType().Name, _scope.Roots);
+            CaptureDiagnostics(_scope.Roots);
             await _scope.DisposeAsync();
         }
     }
