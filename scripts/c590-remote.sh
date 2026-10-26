@@ -4923,6 +4923,7 @@ c849_fixture_inventory_fault() (
 )
 
 c849_fixture_inventory_controls() {
+    local kind
     c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault census
     c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault inspect
     c849_fixture_control PC-31 CacheInventoryStatusInvalid c849_fixture_inventory_fault status
