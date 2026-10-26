@@ -41,6 +41,8 @@ public class ClaudeDialogObservationTests
                 ClaudeDialogState.Clear),
             ("pasted draft hint (Claude 2.1.310)", WrappedRcComposer("> [Pasted text #1 +4 lines]",
                 "  paste again to expand" + new string(' ', 92) + "/rc"), ClaudeDialogState.Clear),
+            ("wrapped /rc badge with status (Claude 2.1.310)", WrappedRcIdle.Replace("/rc", "/rc connecting…"),
+                ClaudeDialogState.Clear),
             ("prose under the composer", Idle + "\n/rc is a command", ClaudeDialogState.Unknown),
             ("working", "Reading files…\n✻ Working… (esc to interrupt)", ClaudeDialogState.Clear),
             ("stale working prose", "Earlier: esc to interrupt\nSome new unrecognized screen", ClaudeDialogState.Unknown),
