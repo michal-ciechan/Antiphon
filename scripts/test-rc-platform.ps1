@@ -426,11 +426,83 @@ function Test-C1415_SkipExclusions {
     Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 2) 'c1415-launched-skips-stay-incomplete' ($control | ConvertTo-Json -Compress)
 }
 
+function Test-LinuxSessionRunnerAdmission {
+    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    # Independent expanded roster; check it against source rather than deriving expectations
+    # from the exclusions under test. These are Linux checkpoint obligations, not Windows ones.
+    $roster = [ordered]@{
+        UnixPtyArgvAdmissionTests = [ordered]@{
+            Malformed_inputs_reach_existing_runtime_validation = 1
+            Null_exe_keeps_existing_validation_message_on_launch_routes = 2
+            Nul_request_is_refused_before_effects = 4
+            Nul_refusal_is_named_on_both_launch_routes = 2
+            Phone_home_nul_refusal_is_named = 2
+            Platform_and_backend_boundaries_keep_existing_verdicts = 4
+        }
+        AgentPinPublicationTests = [ordered]@{
+            V34_PublicationAdmission = 1; V14_PublicationReplay = 1; V14_PublicationFences = 1
+            V13_PublicationCustody = 1; V15_PublicationCleanup = 1; V14_PublicationSerialization = 1
+        }
+        AgentPinWorkspaceStoreTests = [ordered]@{
+            V32_InspectPosixPaths = 1; V13_InspectPathSafety = 1; V34_InspectProtocolAdmission = 1
+        }
+    }
+    $nodes = @()
+    foreach ($class in $roster.Keys) {
+        $source = [IO.File]::ReadAllText((Join-Path $repoRoot "tests/Antiphon.SessionRunner.Tests/$class.cs"))
+        $methods = @([regex]::Matches($source, '(?s)\[Test\]\s*(?<attrs>(?:\[Arguments\([^\r\n]*\)\]\s*)*)public async Task (?<method>\w+)\('))
+        $actual = @($methods | ForEach-Object { $_.Groups['method'].Value })
+        $countsMatch = $true
+        foreach ($method in $methods) {
+            $name = $method.Groups['method'].Value
+            $count = [Math]::Max(1, [regex]::Matches($method.Groups['attrs'].Value, '\[Arguments\(').Count)
+            if (-not $roster[$class].Contains($name) -or $roster[$class][$name] -ne $count) { $countsMatch = $false }
+        }
+        Assert-C1323 ((Same-C1323Set $actual @($roster[$class].Keys)) -and $countsMatch) "linux-runner-source-roster-$class"
+        foreach ($method in $roster[$class].Keys) {
+            for ($i = 0; $i -lt $roster[$class][$method]; $i++) {
+                $nodes += [pscustomobject]@{ Uid = "$class.$method/$i"; ClassName = "Antiphon.SessionRunner.Tests.$class"; Type = $class; Method = $method; Categories = @('Integration'); State = 'Discovered' }
+            }
+        }
+    }
+    $linuxUids = @($nodes.Uid)
+    $nodes += [pscustomobject]@{ Uid = 'portable-sibling'; ClassName = 'Antiphon.SessionRunner.Tests.PortableSiblingTests'; Type = 'PortableSiblingTests'; Method = 'Runs'; Categories = @('Integration'); State = 'Discovered' }
+    $rows = @($shipped.Object.profiles.rc.exclusions | Where-Object { $_.suite -ceq 'session-runner' -and $_.class -cin @($roster.Keys) })
+    Assert-C1323 ($rows.Count -eq 3 -and (Same-C1323Set $rows.class @($roster.Keys)) -and @($rows | Where-Object { $_.platform -cne 'windows' -or @($_.methods).Count -gt 0 -or -not $_.reason -or -not $_.owner }).Count -eq 0) 'linux-runner-three-windows-rows'
+    foreach ($platform in @('windows', 'linux')) {
+        $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'session-runner' -Platform $platform)
+        $expectedRequired = if ($platform -ceq 'windows') { @('portable-sibling') } else { @($nodes.Uid) }
+        $expectedExcluded = if ($platform -ceq 'windows') { $linuxUids } else { @() }
+        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+        Assert-C1323 ($census.Ok -and (Same-C1323Set @($census.Required.uid) $expectedRequired) -and (Same-C1323Set @($census.Excluded.uid) $expectedExcluded)) "linux-runner-$platform-census" "required=$($census.RequiredCount) excluded=$($census.ExcludedCount)"
+        Assert-C1323 (@($census.Excluded | Where-Object { -not $_.reason -or -not $_.owner }).Count -eq 0) "linux-runner-$platform-attribution"
+        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $launched = @()
+        foreach ($chunk in $chunks) {
+            if ([string]::IsNullOrWhiteSpace([string]$chunk.exactFilter)) {
+                $launched += @($nodes | Where-Object { @($chunk.classes) -ccontains $_.ClassName } | ForEach-Object Uid)
+            } else { $launched += @($chunk.nodes | ForEach-Object Uid) }
+        }
+        Assert-C1323 (Same-C1323Set $launched $expectedRequired) "linux-runner-$platform-launch-plan" ($launched -join ',')
+    }
+    # Frozen RC authority always resolves Windows, including on a Linux coordinator.
+    $authority = ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes((Join-Path $repoRoot 'tests/test-execution-policy.json')))
+    $authorityNodes = @($nodes | ForEach-Object { [pscustomobject]@{ uid = $_.Uid; class = $_.ClassName; method = $_.Method } })
+    Assert-C1323 (Same-C1323Set @(Get-ReleaseAuthorityRequiredUids $authorityNodes $authority.Exclusions 'session-runner') @('portable-sibling')) 'linux-runner-frozen-windows-authority'
+    # A skip alone is insufficient: the coverage verdict deliberately keeps it incomplete.
+    $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if ($linuxUids -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
+    $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 24) 'linux-runner-skip-alone-incomplete'
+    Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
+}
+
 try {
     switch ($Case) {
         'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
         'C1323_PlatformExecution' { Test-C1323_PlatformExecution }
         'C1415_SkipExclusions' { Test-C1415_SkipExclusions }
+        'LinuxSessionRunnerAdmission' { Test-LinuxSessionRunnerAdmission }
         default { throw "unknown case: $Case" }
     }
 } catch {
