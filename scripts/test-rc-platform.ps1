@@ -469,7 +469,7 @@ function Test-LinuxSessionRunnerAdmission {
     $linuxUids = @($nodes.Uid)
     $nodes += [pscustomobject]@{ Uid = 'portable-sibling'; ClassName = 'Antiphon.SessionRunner.Tests.PortableSiblingTests'; Type = 'PortableSiblingTests'; Method = 'Runs'; Categories = @('Integration'); State = 'Discovered' }
     $rows = @($shipped.Object.profiles.rc.exclusions | Where-Object { $_.suite -ceq 'session-runner' -and $_.class -cin @($roster.Keys) })
-    Assert-C1323 ($rows.Count -eq 3 -and (Same-C1323Set $rows.class @($roster.Keys)) -and @($rows | Where-Object { $_.platform -cne 'windows' -or @($_.methods).Count -gt 0 -or -not $_.reason -or -not $_.owner }).Count -eq 0) 'linux-runner-three-windows-rows'
+    Assert-C1323 ($rows.Count -eq 3 -and (Same-C1323Set $rows.class @($roster.Keys)) -and @($rows | Where-Object { $_.platform -cne 'windows' -or @($_.methods | Where-Object { $_ }).Count -gt 0 -or -not $_.reason -or -not $_.owner }).Count -eq 0) 'linux-runner-three-windows-rows'
     foreach ($platform in @('windows', 'linux')) {
         $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'session-runner' -Platform $platform)
         $expectedRequired = if ($platform -ceq 'windows') { @('portable-sibling') } else { @($nodes.Uid) }
