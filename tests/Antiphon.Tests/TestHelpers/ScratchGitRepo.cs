@@ -95,7 +95,12 @@ public sealed class ScratchGitRepo : IDisposable
         var hook = System.IO.Path.Combine(hooks, "pre-commit");
         var escaped = message.Replace("\"", "\\\"");
         var script = "#!/bin/sh\necho \"" + escaped + "\" >&2\nexit 1\n";
-        await File.WriteAllTextAsync(hook, script.Replace("\r\n", "\n"));
+        await WriteExecutableHookAsync(hook, script.Replace("\r\n", "\n"));
+    }
+
+    public static async Task WriteExecutableHookAsync(string hook, string script)
+    {
+        await File.WriteAllTextAsync(hook, script);
         // Linux git ignores a hook that is not executable. Windows git runs it without that bit,
         // and SetUnixFileMode is unsupported there.
         if (!OperatingSystem.IsWindows())
