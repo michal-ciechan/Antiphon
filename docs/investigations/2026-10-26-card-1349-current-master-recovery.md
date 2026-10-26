@@ -11,8 +11,11 @@ f4fd378a, recovery source c92632b2. Stale request:
 
 The requested behavior is already on current master. The prior repair is recorded
 in `docs/superpowers/plans/2026-10-20-card-1349-cherry-pick-repair.md` and
-commit `0c5c3ec3d`. The S1-S4 master commits are `a4207bf70`, `89e4c7d66`,
-`71a1809cf`, and `4e66a2c64`. The final reviewed default-observation and
+commit `0c5c3ec3d03c5d10ba927f856733c5c79b1775c3`. The S1-S4 master commits are
+`a4207bf702eca3c911c43f4f056e490db484f6ea`,
+`89e4c7d664bfa906ed614d4c0071057c64c674d6`,
+`71a1809cfec74eebf01b1e27dc25140cbff741ff`, and
+`4e66a2c64c2e70c608557ae18b8dd63da64ddab9`. The final reviewed default-observation and
 transaction-bound fixture repairs are also present.
 
 Reapplied the complete reviewed server/test delta from common ancestor
@@ -76,5 +79,67 @@ No land, tag, publish, restart or rollout is performed. Original PC-1 through
 PC-118 and variants retain their historical pending status. This recovery does
 not create new Final/Full Review approval or release qualification.
 
-Actual commands, counts, source identity, remote identity and evidence paths
-will be appended after the requested run.
+## Completed verification
+
+Tested commit: `5a978951443d5d1f91c24bb0bf637c2cd0edf309` (audit-only
+addition over the fetched master base). All server/test blobs are identical to
+base; no source edits occurred during the build or run. Subsequent changes in
+this task only append this report. Debian Linux x64, SDK 10.0.403, runtime net9.0.
+
+One build: **0 errors, 1,196 warnings, 3m29.36s**.
+`slot=granted waited=0s maxcpucount=6`, held 210s.
+
+One test driver: **437 executed, 437 passed, 0 failed, 0 skipped**;
+test-host duration **5m40.632s**, slot held 344s, admission wait 0s.
+Fresh TRX confirms exactly the intended ten classes:
+
+| Class | Executed / passed | Failed / skipped |
+|---|---:|---:|
+| AgentTaskDispatchBaseGuardTests | 96 / 96 | 0 / 0 |
+| AgentTaskPipelineStatusTests | 69 / 69 | 0 / 0 |
+| AgentTaskWorktreeBaseResolverTests | 67 / 67 | 0 / 0 |
+| DispatchBaseInspectionDiagnosticsTests | 12 / 12 | 0 / 0 |
+| DispatchBaseNotificationTests | 55 / 55 | 0 / 0 |
+| DispatcherSiblingInspectionSchedulingTests | 49 / 49 | 0 / 0 |
+| DispatchHeldAttentionTests | 11 / 11 | 0 / 0 |
+| DispatchSiblingInspectionTests | 32 / 32 | 0 / 0 |
+| RemoteWorkspacePreparerTests | 27 / 27 | 0 / 0 |
+| RemoteWorkspaceReadinessTests | 19 / 19 | 0 / 0 |
+
+All ten C1349_InspectionQueueRecovers arguments passed. The relevant saturation
+arguments took 1.728s (active limit), 1.754s (total capacity), and 2.724s
+(fairness). This does not reproduce the cited native Windows failure on Linux.
+The same class has already received later CARD-1428/CARD-1552 and path-assertion
+repairs; these were preserved. No Windows claim or unrelated repair is made.
+
+Commands (repository root, each driver individually gated):
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1349-recovery-build -SlotWaitMinutes 15 -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1349-85db/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1349-recovery-tests -SlotWaitMinutes 15 -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1349-85db/ -- --treenode-filter '/*/Antiphon.Tests.Application/(DispatchSiblingInspectionTests*)|(DispatcherSiblingInspectionSchedulingTests*)|(RemoteWorkspaceReadinessTests*)|(DispatchBaseInspectionDiagnosticsTests*)|(AgentTaskWorktreeBaseResolverTests*)|(AgentTaskDispatchBaseGuardTests*)|(RemoteWorkspacePreparerTests*)|(DispatchBaseNotificationTests*)|(DispatchHeldAttentionTests*)|(AgentTaskPipelineStatusTests*)/*' --report-trx --report-trx-filename owner-cp34.trx --results-directory /work/worktrees/task-85db4e6b/.antiphon/debug-85db4e6b/owner-cp34 --output Detailed
+```
+
+The test child inherited ANTIPHON_TEST_PHASE_ROOT pointing to the evidence
+`timing` directory, RUN_ID=debug-85db4e6b, GROUP_ID=owner-cp34, ATTEMPT=1,
+SUITE=antiphon (all metadata names use the ANTIPHON_TEST_PHASE_ prefix).
+Retained evidence root:
+`/work/worktrees/task-85db4e6b/.antiphon/debug-85db4e6b/`.
+`executed-tests.json` preserves individual argument membership, durations,
+native IDs in stdout and outcomes; `classes.json` and `run-manifest.json`
+record class counts, source/host identity and exact run times.
+`timing/cases-25989-21f55ce4a60e4f9abcc1ac93b7c29f7a.jsonl` holds available
+phase spans. Missing spans remain unknown, not zero.
+
+Evidence SHA-256:
+
+| File under evidence root | SHA-256 |
+|---|---|
+| build.log | ca33a21c020e87b5882ff7ee92307239c1b08d1176b02a32f27ed887839f334b |
+| tests.log | 19ad091463b5137e24b8d765f1e2f110f391bcf7dd06ebf6ada7d16049f296bc |
+| owner-cp34/owner-cp34.trx | 96ede836009971a04f08533f50edb0a46e2557609bf0cfecf9a61942e3af26a9 |
+
+No additional build, Unit run, whole-assembly run, retry or test mutation was
+needed. Review should bind to this branch's exact published tip and assess the
+already-present implementation with these fresh ordinary test results. The old
+NeedsResolution request does not establish that current master lacks the fix;
+the caller can retire or supersede that obsolete request after Review.
