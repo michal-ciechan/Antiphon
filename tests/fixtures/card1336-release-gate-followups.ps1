@@ -9,6 +9,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $repoRoot 'scripts/lib/c487-harness.ps1')
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 New-Item -ItemType Directory -Path $ResultsDirectory -Force | Out-Null
+Write-Host ('C1336 fixture runtime={0}; edition={1}; OS={2}; separator={3}' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition, $env:OS, [IO.Path]::DirectorySeparatorChar)
 
 function Write-C1336File($Root, $Relative, $Text) {
     $path = Join-Path $Root $Relative
@@ -256,7 +257,7 @@ if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
     foreach ($key in @('StateRoot', 'LogRoot', 'ReleaseRoot', 'CoordinationRoot', 'CheckoutRoot')) {
         $hopOk = $hopOk -and $hop.$key -ceq $sync.Args[$key]
     }
-    Assert-C487 ([bool]$hopOk) 'C1336 N hop-child'
+    Assert-C487 ([bool]$hopOk) 'C1336 N hop-child' ($hop|ConvertTo-Json -Depth 8 -Compress)
     $workloadOk = $workload -and $workload.CandidateId -ceq $expected -and $workload.ExpectedSha -ceq $fx.A -and
         $workload.RunId -ceq 'sync' -and $workload.Attempt -eq 1 -and $selected.Ok -and
         $workload.SelectionAttemptPath -ceq $selected.AttemptPath -and
@@ -266,7 +267,7 @@ if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
         $summary.selection.candidateId -ceq $expected -and $summary.selection.runId -ceq 'sync' -and
         $summary.selection.attempt -eq 1 -and $summary.sha -ceq $fx.A -and
         $summary.testsPassed -and $summary.coverageComplete -and $sync.Result.ExitCode -eq 0
-    Assert-C487 ([bool]$workloadOk) 'C1336 N workload-child'
+    Assert-C487 ([bool]$workloadOk) 'C1336 N workload-child' ($workload|ConvertTo-Json -Depth 8 -Compress)
     Assert-C487 ($sync.Result.ExitCode -eq 0 -and $sync.Terminal.exitCode -eq 0 -and
         $sync.Terminal.nativeRunId -ceq 'sync' -and $sync.Terminal.candidateId -ceq $expected -and
         $sync.Terminal.sha -ceq $fx.A -and $state.runId -ceq 'sync' -and $state.candidateId -ceq $expected -and
