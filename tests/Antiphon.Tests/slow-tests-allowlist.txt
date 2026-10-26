@@ -1,4 +1,18 @@
-# CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+## CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+## Repository entries are fully-qualified class names. Adjacent reason comments are required.
+## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
+## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
+
+# CARD-1537: real Git graph seeding and isolated PostgreSQL landing; native Windows cases take 35-83s.
+Antiphon.Tests.Application.LandNonCodeSkipTests
+
+# CARD-1308: isolated migrated PostgreSQL, retained runtime debt and verified modal/input recovery.
+Antiphon.Tests.Application.SessionRuntimeActionTemporaryBlockTests
+
+# CARD-0510: real PostgreSQL reservations, repeated admitted launches and healthy-clock boundaries.
+Antiphon.Tests.Application.StandingRestartEscalationTests
+# CARD-1322: isolated migrated PostgreSQL, real session start and fresh-context stall scans; measured 6.7-10.6s.
+Antiphon.Tests.Application.AgentSessionCancelledTurnTests
 # CARD-1032: phone-home mirror join starts a real runner and scratch git. Measured 5-12s per method.
 Antiphon.Tests.Application.PhoneHomeMirrorJoinTests
 # CARD-1065 S9: legacy reclaim pages real Git and isolated PostgreSQL, including restart and cold resume.
@@ -31,10 +45,8 @@ Antiphon.Tests.Scripts.EvidenceDiffGuardTests
 Antiphon.Tests.Scripts.EvidenceDeletionGuardTests
 # CARD-1042: real Git supplemental evidence deletion; review TRX measured one method over 5s.
 Antiphon.Tests.Scripts.EvidenceSupplementalDeletionGuardTests
-# Repository entries are fully-qualified class names. Adjacent reason comments are required.
 # CARD-0701: real pwsh comparison matrices (up to twelve child processes) and isolated SQL classifier.
 Antiphon.Tests.Scripts.MeasureSessionStateCacheScriptTests
-# Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 # CARD-0665: real Git and database removal matrix; server2 measured 18 rows over five seconds.
 Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests
 # CARD-0487: historical allowance, pty integration cost.
@@ -97,6 +109,8 @@ Antiphon.Tests.Application.SessionMessageQueueWedgedHeadTests
 Antiphon.Tests.Application.CheckNoteDeliveryHandoffTests
 # CARD-0079: owned crash workers for compaction stop/resume and legacy-note recovery.
 Antiphon.Tests.Application.CheckCompactionCrashTests
+# CARD-1494: each case boots an owned crash-worker child host (10-25 s) and proves disposal ends it.
+Antiphon.Tests.TestHelpers.CheckCompactionWorkerLifetimeTests
 # CARD-0487: historical allowance, API error recovery.
 Antiphon.Tests.Application.ApiErrorRecoveryServiceTests
 # CARD-0487: historical allowance, workspace hook runner.
@@ -113,6 +127,8 @@ Antiphon.Tests.Application.AgentTaskLandConcurrencyTests
 Antiphon.Tests.Application.AgentTaskLandVerifierTests
 # CARD-0475: retained real checkpoint recovery matrix.
 Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
+# CARD-1514 S3: real child-process death, isolated PostgreSQL and Git worktree-registration recovery.
+Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests
 # CARD-0475: retained real cleanup safety matrix.
 Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 # CARD-0484: ChannelBridge observed cost; rebaseline after the pending fix. No timeout tuning here.
@@ -223,6 +239,8 @@ Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
 
 # CARD-0442: real Git ancestry and isolated PostgreSQL candidate selection.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
+# CARD-1480: real Git sync-debt source verification and isolated PostgreSQL candidate selection.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseSyncDebtTests
 # CARD-0442: real create, dispatch and land against scratch Git and isolated PostgreSQL.
 Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
 # CARD-0442: real create admission and source-boundary fixtures.
@@ -237,6 +255,10 @@ Antiphon.Tests.Application.ReviewEvidenceSettlementTests
 Antiphon.Tests.Application.ReviewEvidenceDeliveryTests
 # CARD-0835: source-bound executor reports with process fixtures.
 Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
+# CARD-1297: two real scratch Git commits, executor publication and output cleanup measured 5.25s in CP-1.
+Antiphon.Tests.Checkpoints.CheckpointSelectedOutputTests
+# CARD-1370: real Git/process fixtures and receipt publication contention.
+Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests
 # CARD-0835: isolated Review/land migration and resume matrix.
 Antiphon.Tests.Application.CheckpointSourceApprovalTests
 # CARD-0788: real reply settlement with isolated database and scratch Git repository.
@@ -310,6 +332,12 @@ Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests
 Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
 # CARD-1259: isolated schemas, real queue deferral/backoff and transcript retention leases.
 Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
+# CARD-1233: four inherited file callers, independent process controls and an 8 s FIFO watchdog.
+Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests
+# CARD-1233 S2: real Git source capture controls and a 30 s inherited-pipe deadline.
+Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests
+# CARD-1233 S4: both real verifier Git entry points exercise the 30 s inherited-pipe deadline.
+Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests
 
 # CARD-1349: bounded inspection integration uses isolated PostgreSQL and owned real Git graphs.
 Antiphon.Tests.Application.DispatchSiblingInspectionTests
@@ -317,3 +345,25 @@ Antiphon.Tests.Application.DispatchSiblingInspectionTests
 Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests
 # CARD-1349: committed block logs and inspection attention on isolated PostgreSQL with real Git.
 Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests
+# CARD-1233 S8: four actual fixture callers exercise cancellation and inherited-pipe custody.
+Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests
+
+# CARD-1232: isolated PostgreSQL delivery recovery, persistence cuts and scratch-Git claim rollback; cold witness measured 18.7s.
+Antiphon.Tests.Application.PreDispatchFailureDeliveryTests
+
+# CARD-1519: isolated PostgreSQL, hosted admission and owned shutdown barriers; the first control run measured 17-22s.
+Antiphon.Tests.Application.DispatcherAdmissionSchedulingTests
+
+# CARD-1472: real Git, isolated PostgreSQL and reply settlement under repository lease contention.
+Antiphon.Tests.Application.BlockedReplyReportRetentionTests
+# CARD-1475: real PostgreSQL queue delivery, verification windows and transcript receipts.
+Antiphon.Tests.Application.DeliveryUnverifiedDiagnosticTests
+# CARD-1430: real Git, isolated PostgreSQL and dispatch/SourceLanding repository lease boundaries.
+Antiphon.Tests.Application.DispatcherLeaseSpanTests
+# CARD-1420: owned PostgreSQL containers, full migration, schema dumps and snapshot restore parity.
+Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests
+
+# CARD-1539: real exclusive-fd/maps holder children, bounded diagnostics and evidence persistence.
+Antiphon.Tests.Infrastructure.FileUseCaptureTests
+# CARD-1514: real PostgreSQL clone, web host and scratch Git phase attribution.
+Antiphon.Tests.TestHelpers.TestTimingChokePointTests
