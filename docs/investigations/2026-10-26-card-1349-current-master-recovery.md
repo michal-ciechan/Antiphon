@@ -143,3 +143,9 @@ needed. Review should bind to this branch's exact published tip and assess the
 already-present implementation with these fresh ordinary test results. The old
 NeedsResolution request does not establish that current master lacks the fix;
 the caller can retire or supersede that obsolete request after Review.
+
+2026-10-26: Code task `576ca6bc-adc2-4e4a-82fc-352ff05059a4` exists only
+to carry the reviewed docs-only recovery source for CARD-1349 through original
+Code landing owner `f4fd378a`. Master already contains the fix, confirmed at
+commit `b6db2de3dd0c0bad2ba30823d01882ca6fc9388e`; this task changes no
+executable code, tests or allowlist.
