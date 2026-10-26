@@ -731,7 +731,7 @@ function Start-C578Runner {
     $psi.RedirectStandardError = $true
     $psi.WorkingDirectory = $script:RepoRoot
     foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $script:Runner,
-        '-Name', 'CP-1', '-Project', 'tests/Antiphon.Tests', '-OutputPath', 'bin-c578h/',
+        '-Name', 'CP-1', '-Project', 'tests/Antiphon.Tests', '-OutputPath', $Fx.OutputPath,
         '-Filter', '/*/*/C585SampleTests/*', '-ResultsRoot', $Fx.ResultsRoot,
         '-MinExecuted', '1', '-DotnetShim', $Fx.Shim)) { [void]$psi.ArgumentList.Add([string]$token) }
     # The fake HTTP endpoint and the slot shim prevent contact with a live runner.
