@@ -18,6 +18,7 @@ public sealed class CheckpointScriptReaderDeadlineTests : CheckpointTestBase
     [Arguments("stall")]
     [Arguments("unreadable")]
     [Arguments("tampered-beside-unreadable")]
+    [Arguments("windows-open")]
     public async Task script_reader_re_arms_its_stall_window_and_the_stamp_reports_unreadable_apart_from_tampered(string mode)
     {
         var ledgerCase = mode is "unreadable" or "tampered-beside-unreadable";
