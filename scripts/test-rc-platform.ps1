@@ -249,6 +249,9 @@ function New-C1323ExecutionFixture {
         @{ uid = $_.uid; type = ($_.class -replace '^Antiphon.E2E.', ''); className = $_.class; namespace = 'Antiphon.E2E'; method = $_.method; categories = $_.categories; state = 'Discovered' }
     })
     Write-NightlyAtomicJson "$root/nodes.json" $nodes
+    # These are synthetic nodes with seamed execution, not the costly native
+    # delivery cases sharing their names. Use the standard fallback node model.
+    Write-NightlyAtomicJson "$root/class-costs.json" @{ format = 'antiphon-nightly-class-costs-v1'; classes = @{} }
     Write-C1323File $root 'commands/npm.cmd' 'fixture launcher, never executed'
     return @{ Root = $root; Clone = $clone; Sha = $sha; Nodes = $nodes }
 }
@@ -256,6 +259,8 @@ function New-C1323ExecutionFixture {
 function Write-C1323ExecutionSeams($Fixture, $Platform) {
     $path = Join-Path $Fixture.Root "$Platform.ps1"
     $template = @'
+$script:NightlyClassCostPath = '__ROOT__/class-costs.json'
+$script:NightlyClassCostTable = $null
 $env:PATH = '__ROOT__/commands' + [IO.Path]::PathSeparator + $env:PATH
 $NightlySeams = @{
     HostPlatform = { return '__PLATFORM__' }
