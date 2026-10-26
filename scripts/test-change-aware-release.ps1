@@ -314,7 +314,7 @@ function Test-C1313_ParameterHops {
         $summaryInventory+=@{path=$file.FullName;runId=$document.runId;hasSelection=($null -ne $document.selection)};$index++
         if($document.selection){
             foreach($field in @('baselineSha','candidateSha','runId','timingRoot','baselineReceiptPath','qualificationPath','releaseIntentPath','trainManifestPath','trainDigest','selectionDigest')){
-                Write-Host ("C1313 hop-binding {0}={1}" -f $field,($document.selection.$field -ceq $bound.Selection.$field))
+                Write-Host ("C1313 hop-binding {0}={1} actual={2} expected={3}" -f $field,($document.selection.$field -ceq $bound.Selection.$field),$document.selection.$field,$bound.Selection.$field)
             }
         }
     }
@@ -354,12 +354,13 @@ function Test-C1313_ParameterHops {
     $path=$env:PATH
     try{
         $env:PATH=Join-Path $fx.Root 'no executables'
-        $refused=$true
+        $refused=$true;$capabilityResults=@()
         foreach($mode in @('Shadow','ChangeAware')){
             $r=& "$PSScriptRoot/release-cut.ps1" -ReleaseRoot $fx.Release -Ref $fx.Ref -SelectionMode $mode -PassThru
+            $capabilityResults+=@{mode=$mode;refusal=$r.refusal;exitCode=$r.exitCode;phase=$r.phase}
             if($r.refusal -cne 'selection-pwsh-required'){$refused=$false}
         }
-        Assert-Fx $refused 'pwsh-required-before-work'
+        Assert-Fx $refused 'pwsh-required-before-work' (@{runtime=$PSVersionTable.PSVersion.ToString();edition=$PSVersionTable.PSEdition;OS=$env:OS;results=$capabilityResults}|ConvertTo-Json -Depth 6 -Compress)
         $full=New-Request $fx 'Full' 'without-pwsh';$full.BaselineSha='';$r=New-ReleaseSelectionAttempt $full
         Assert-Fx ($r.Selection.effectiveMode -ceq 'Full') 'full-without-pwsh'
     }finally{$env:PATH=$path}
