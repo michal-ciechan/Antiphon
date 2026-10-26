@@ -77,8 +77,8 @@ public partial class HerdrAlwaysOnChannelParityTests
             var ptyAdapters = backend == SessionBackend.PtyHost
                 ? new[]
                 {
-                    new FakeAgentProtocolAdapter(),
-                    new FakeAgentProtocolAdapter(),
+                    new FakeAgentProtocolAdapter().WithClaudeDialogObservation(),
+                    new FakeAgentProtocolAdapter().WithClaudeDialogObservation(),
                 }
                 : Array.Empty<FakeAgentProtocolAdapter>();
 
