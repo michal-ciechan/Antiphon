@@ -189,7 +189,7 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
     }
 
     internal static int ExecutedCases(string[] names, HashSet<string> skips) =>
-        names.Length - skips.Count;
+        names.Count(name => !skips.Contains(name));
 
     private static string[] CompiledCheckpointNames() =>
         CheckpointRoster.CompiledCases(typeof(CheckpointTempUsageTests).Assembly, "Antiphon.Tests.Checkpoints")
