@@ -7,6 +7,48 @@
 # Owner: docs/testing-and-build.md (CARD-1199 source/content stamping). ASCII-only.
 param([string]$Repository, [string]$Scratch, [string]$Mode)
 $ErrorActionPreference = 'Stop'
+if ($Mode -eq 'windows-open') {
+    # Execute the embedded reader's actual Windows open method on every OS. Only
+    # its kernel call is substituted; the production flags and FileStream's
+    # handle-mode detection remain real. This does not qualify native Windows IO.
+    $scriptSource = [IO.File]::ReadAllText((Join-Path $Repository 'scripts/lib/checkpoint-file-reader.ps1'))
+    $match = [regex]::Match($scriptSource, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
+    if (-not $match.Success) { throw 'embedded reader source not found' }
+    $source = $match.Groups[1].Value.Replace('var handle = CreateFile(', 'var handle = PortableWindowsOpen.CreateFile(')
+    if ($source -ceq $match.Groups[1].Value) { throw 'Windows factory call not found' }
+    $source += @'
+
+public static class PortableWindowsOpen
+{
+    public static uint Flags;
+    public static SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template)
+    {
+        if (access != 0x80000000 || share != 7 || creation != 3) throw new InvalidOperationException("unexpected read access/share/disposition");
+        Flags = flags;
+        return File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+            (FileOptions)(flags & 0x40000000));
+    }
+}
+'@
+    Add-Type -TypeDefinition $source
+    [void][IO.Directory]::CreateDirectory($Scratch)
+    $path = Join-Path $Scratch 'windows-owner.txt'
+    [IO.File]::WriteAllText($path, '0123456789abcdef0123456789abcdef')
+    $method = [Antiphon.Checkpoints.Coverage.ConfinedFileReader].GetMethod('OpenWindows', [Reflection.BindingFlags]'Static,NonPublic')
+    $handle = $method.Invoke($null, @($path))
+    try {
+        $stream = [IO.FileStream]::new($handle, [IO.FileAccess]::Read)
+        try {
+            if (-not $stream.IsAsync) { throw 'Windows verified reader queued synchronous IO: retained FileStream.IsAsync=false' }
+            if (([Antiphon.Checkpoints.Coverage.PortableWindowsOpen]::Flags -band 0x08200000) -ne 0x08200000) { throw 'Windows no-follow/sequential flags lost' }
+            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream))
+            $expected = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($path)))
+            if ($digest -cne $expected) { throw 'retained stream returned different content' }
+            "PASS $Mode async=$($stream.IsAsync) bytes=$($stream.Length)"
+        } finally { $stream.Dispose() }
+    } finally { $handle.Dispose() }
+    exit 0
+}
 . (Join-Path $Repository 'scripts/lib/checkpoint-file-reader.ps1')
 $readerType = [Antiphon.Checkpoints.Coverage.ConfinedFileReader]
 if (-not [string]::IsNullOrEmpty($readerType.Assembly.Location)) { throw 'witness must exercise the embedded script reader, not a loaded tool assembly' }
