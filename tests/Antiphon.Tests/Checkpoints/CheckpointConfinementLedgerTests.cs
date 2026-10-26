@@ -18,6 +18,15 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     private static readonly string Sha = new('a', 40);
 
     [Test]
+    public void fixture_text_is_normalized_before_git_can_stage_it()
+    {
+        var root = TempDir();
+        Write(root, "App/App.csproj", "<Project>\r\n</Project>\r\n");
+        File.ReadAllText(Path.Combine(root, "App", "App.csproj"))
+            .ShouldBe("<Project>\n</Project>\n");
+    }
+
+    [Test]
     [Timeout(300_000)]
     public Task ignored_tree_outside_write_roots_is_stamped_before_the_slot_not_inside_it(CancellationToken cancellationToken)
     {
