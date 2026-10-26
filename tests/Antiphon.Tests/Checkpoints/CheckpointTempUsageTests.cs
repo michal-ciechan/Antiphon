@@ -112,8 +112,8 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         var evidence = result.RootElement.GetProperty("native");
         UsageLibrary.Errors(result.RootElement, "native").ShouldBeEmpty();
         evidence.GetProperty("selected").GetInt32().ShouldBe(names.Length);
-        evidence.GetProperty("executed").GetInt32().ShouldBe(names.Length - skips.Count);
-        evidence.GetProperty("skipped").GetInt32().ShouldBe(skips.Count);
+        evidence.GetProperty("executed").GetInt32().ShouldBe(ExecutedCases(names, skips));
+        evidence.GetProperty("skipped").GetInt32().ShouldBe(names.Length - ExecutedCases(names, skips));
         UsageLibrary.Errors(result.RootElement, "skipRan").ShouldContain(error => error.StartsWith("namespace skips differ", StringComparison.Ordinal));
         UsageLibrary.Errors(result.RootElement, "unexplained").ShouldContain(error => error.StartsWith("namespace skips differ", StringComparison.Ordinal));
         UsageLibrary.Errors(result.RootElement, "short").ShouldContain(error => error.StartsWith("namespace census selected=", StringComparison.Ordinal));
@@ -150,7 +150,7 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
             } | ConvertTo-Json -Depth 8
             """);
         UsageLibrary.Errors(result.RootElement, "native").ShouldBeEmpty("the current compiled checkpoint roster clears the Full census and floor");
-        result.RootElement.GetProperty("native").GetProperty("executed").GetInt32().ShouldBe(all.Length - skips.Count);
+        result.RootElement.GetProperty("native").GetProperty("executed").GetInt32().ShouldBe(ExecutedCases(all, skips));
         UsageLibrary.Errors(result.RootElement, "missingExecution").ShouldBe(["full suite omitted checkpoint executions"]);
         UsageLibrary.Errors(result.RootElement, "short").ShouldContain($"full roster checkpoint cases={names.Length - 1} expected={names.Length}");
         UsageLibrary.Errors(result.RootElement, "short").ShouldContain("full suite omitted checkpoint executions");
@@ -180,6 +180,16 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         compiled.ShouldContain((typeof(CheckpointTempUsageTests).FullName!, nameof(full_roster_excludes_explicit_cases)));
         compiled.ShouldNotContain(test => explicitClasses.Any(type => type.FullName == test.ClassName));
     }
+
+    [Test]
+    public void os_skip_count_preserves_parameterized_case_multiplicity()
+    {
+        ExecutedCases(["Skipped.method", "Skipped.method", "Ordinary.method"], ["Skipped.method"])
+            .ShouldBe(1, "each native skipped case counts, including repeated method identities");
+    }
+
+    internal static int ExecutedCases(string[] names, HashSet<string> skips) =>
+        names.Length - skips.Count;
 
     private static string[] CompiledCheckpointNames() =>
         CheckpointRoster.CompiledCases(typeof(CheckpointTempUsageTests).Assembly, "Antiphon.Tests.Checkpoints")
