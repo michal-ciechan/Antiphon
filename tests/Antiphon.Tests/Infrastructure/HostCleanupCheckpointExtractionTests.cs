@@ -154,7 +154,14 @@ public sealed class HostCleanupCheckpointExtractionTests
         Includes(toolProject, "Compile").ShouldNotContain("../../scripts/lib/CheckpointProcessRunner.cs");
         var hostProject = XDocument.Parse(DockerStackDocuments.Read("tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj"));
         Includes(hostProject, "ProjectReference").ShouldContain("../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj");
-        Includes(hostProject, "Compile").Count().ShouldBe(2);
+        Includes(hostProject, "Compile").Count().ShouldBe(4);
+        Includes(hostProject, "Compile").ShouldBe(new[]
+        {
+            "../Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
+            "../Antiphon.Tests/Checkpoints/CheckpointTempRootSweep.cs",
+            "../Shared/ReadOnlyDirectory.cs",
+            "../Shared/TestTiming.cs",
+        }, ignoreOrder: true);
     }
 
     private static IEnumerable<string> Includes(XDocument project, string name) =>
