@@ -87,18 +87,23 @@ public class AgentTaskStandingAgentDispatchTests
         // Status and the Pool* fields belong to the pool. A standing agent is in neither's gift,
         // and a dispatcher that edits them is a dispatcher fighting the supervisor.
         using var workspace = new TempWorkspace();
-        var (dispatcher, _) = CreateHarness();
-        var (agentId, sessionId) = await SeedStandingAgentAsync(workspace.Path, alwaysOn: true);
-        var before = await AgentSnapshotAsync(agentId);
-        var projectId = await SeedProjectAsync();
+        // Tick is a fleet-wide sweep. Sibling fixtures may delete shared queued parents
+        // while it is dispatching; this row-write witness owns an isolated fleet.
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var store = isolated.ConnectionString;
+        var (dispatcher, provider) = CreateHarness(connectionString: store);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId) = await SeedStandingAgentAsync(workspace.Path, alwaysOn: true, connectionString: store);
+        var before = await AgentSnapshotAsync(agentId, store);
+        var projectId = await SeedProjectAsync(store);
         var task = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: agentId, projectId: projectId);
+            workspace.Path, pinnedAgentId: agentId, projectId: projectId, connectionString: store);
 
         await dispatcher.TickAsync(CancellationToken.None);
 
-        (await ReloadTaskAsync(task.Id)).Status.ShouldBe(
+        (await ReloadTaskAsync(task.Id, store)).Status.ShouldBe(
             AgentTaskStatus.Dispatched, "the control: this really did dispatch");
-        var after = await AgentSnapshotAsync(agentId);
+        var after = await AgentSnapshotAsync(agentId, store);
         after.PersistentSessionId.ShouldBe(sessionId.ToString("D"));
         after.ShouldBe(before, "not one field of the standing agent may move");
     }
@@ -421,18 +426,18 @@ public class AgentTaskStandingAgentDispatchTests
         Guid? PoolReservedForRootTaskId, Guid? PoolProjectId, bool IsPoolDelegate, bool AlwaysOn,
         string WorkingDirectory);
 
-    private static async Task<AgentRowSnapshot> AgentSnapshotAsync(Guid agentId)
+    private static async Task<AgentRowSnapshot> AgentSnapshotAsync(Guid agentId, string? connectionString = null)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var a = await db.Agents.AsNoTracking().SingleAsync(x => x.Id == agentId);
         return new AgentRowSnapshot(
             a.PersistentSessionId, a.Status, a.PoolIdleSince, a.PoolReservedForRootTaskId,
             a.PoolProjectId, a.IsPoolDelegate, a.AlwaysOn, a.WorkingDirectory);
     }
 
-    private static async Task<AgentTask> ReloadTaskAsync(Guid taskId)
+    private static async Task<AgentTask> ReloadTaskAsync(Guid taskId, string? connectionString = null)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
     }
 
@@ -618,12 +623,13 @@ public class AgentTaskStandingAgentDispatchTests
         SessionStatus sessionStatus = SessionStatus.Running,
         AgentKind kind = AgentKind.ClaudeCode,
         Guid? tuiProfileId = null,
-        string name = "standing-specialist")
+        string name = "standing-specialist",
+        string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -660,7 +666,7 @@ public class AgentTaskStandingAgentDispatchTests
         return (agentId, sessionId);
     }
 
-    private static async Task<Guid> SeedProjectAsync()
+    private static async Task<Guid> SeedProjectAsync(string? connectionString = null)
     {
         var now = DateTime.UtcNow;
         var project = new Project
@@ -672,7 +678,7 @@ public class AgentTaskStandingAgentDispatchTests
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.Projects.Add(project);
         await db.SaveChangesAsync();
         return project.Id;
@@ -686,7 +692,8 @@ public class AgentTaskStandingAgentDispatchTests
         AgentKind agentKind = AgentKind.ClaudeCode,
         WorkspaceMode workspaceMode = WorkspaceMode.Shared,
         string? repoPath = null,
-        bool ephemeral = false)
+        bool ephemeral = false,
+        string? connectionString = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -709,7 +716,7 @@ public class AgentTaskStandingAgentDispatchTests
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow.AddSeconds(-createdSecondsAgo),
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
@@ -808,7 +815,8 @@ public class AgentTaskStandingAgentDispatchTests
             protectedValue;
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private sealed class TempWorkspace : IDisposable
     {
