@@ -35,7 +35,7 @@ public static class PortableWindowsOpen
     $path = Join-Path $Scratch 'windows-owner.txt'
     [IO.File]::WriteAllText($path, '0123456789abcdef0123456789abcdef')
     $method = [Antiphon.Checkpoints.Coverage.ConfinedFileReader].GetMethod('OpenWindows', [Reflection.BindingFlags]'Static,NonPublic')
-    $handle = $method.Invoke($null, @($path))
+    $handle = $method.Invoke($null, [object[]]@([string]$path))
     try {
         $stream = [IO.FileStream]::new($handle, [IO.FileAccess]::Read)
         try {
