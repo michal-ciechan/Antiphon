@@ -3,7 +3,7 @@ param([string]$SourceRef = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if ($SourceRef) {
-    $source = (& git -C $repo show ($SourceRef + ':scripts/lib/c487-harness.ps1')) -join "\n"
+    $source = (& git -C $repo show ($SourceRef + ':scripts/lib/c487-harness.ps1')) -join [Environment]::NewLine
     if ($LASTEXITCODE -ne 0) { throw 'source ref unavailable' }
 } else { $source = [IO.File]::ReadAllText((Join-Path $repo 'scripts/lib/c487-harness.ps1')) }
 . ([scriptblock]::Create($source))
