@@ -14,7 +14,7 @@ public static class CheckpointFileReader
     // window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the total is
     // bounded by the chunk count and not by a throughput assumption.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
-    // The handle stream is synchronous, so each read is one thread-pool hop; 256 KiB keeps a 7.5 MiB file at 30 hops.
+    // Linux handle reads use workers; 256 KiB keeps a 7.5 MiB file at 30 hops.
     public const int ReadChunk = 256 * 1024;
 
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root) =>
@@ -83,7 +83,9 @@ public static class CheckpointFileReader
         {
             if ((context.Io.Attributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
                 throw new InvalidDataException("selected file is not regular");
-            request = new(0, 0x00200000 | 0x08000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
+            // FileStream infers async mode from the retained handle. A synchronous Windows
+            // handle makes ReadAsync queue blocking I/O behind the callers waiting for it.
+            request = new(0, 0x00200000 | 0x08000000 | 0x40000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
         }
         else throw new InvalidDataException("opened-handle verification unsupported on this platform");
         using var handle = context.Io.OpenRead(path, request);
