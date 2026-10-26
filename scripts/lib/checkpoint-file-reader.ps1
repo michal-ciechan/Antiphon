@@ -24,7 +24,7 @@ public static class ConfinedFileReader
     // design): the window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the
     // total is bounded by the chunk count and not by a throughput assumption.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
-    // The handle stream is synchronous, so each read is one thread-pool hop; 256 KiB keeps a 7.5 MiB file at 30 hops.
+    // Linux handle reads use workers; 256 KiB keeps a 7.5 MiB file at 30 hops.
     public const int ReadChunk = 256 * 1024;
 
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root)
@@ -142,7 +142,9 @@ public static class ConfinedFileReader
     {
         if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
             throw new InvalidDataException("selected file is not regular");
-        var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
+        // FileStream infers async mode from the retained handle; do not queue synchronous
+        // Windows I/O behind the callers blocking on ReadAsync's three-second deadline.
+        var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000 | 0x40000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
         if (handle.IsInvalid) { handle.Dispose(); throw NativeFailure(); }
         return handle;
     }
