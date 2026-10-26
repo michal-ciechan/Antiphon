@@ -10,8 +10,7 @@ public sealed class NightlyProbeSupervisorTests
     [Test]
     public Task C1375_DeadlineKillsAndJoinsTree()
     {
-        if (!OperatingSystem.IsLinux())
-            throw new PlatformNotSupportedException("CARD-1375 native expiry qualification requires Linux.");
+        NativeLinuxGate.Require("CARD-1375 native expiry qualification requires Linux.");
 
         return ScriptHarness.RunHarnessCaseAsync("test-nightly-probe-supervisor.ps1", "C1375",
             nameof(C1375_DeadlineKillsAndJoinsTree), 9,
