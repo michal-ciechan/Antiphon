@@ -583,9 +583,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     {
         var modified = File.GetLastWriteTimeUtc(path);
         new FileInfo(path).Length.ShouldBe(content.Length);
-        // Setup Git sees the user's autocrlf config; confinement uses hardened Git.
-        // Persist the same LF bytes on both hosts before either observes the file.
-        File.WriteAllText(path, content.ReplaceLineEndings("\n"));
+        File.WriteAllText(path, content);
         File.SetLastWriteTimeUtc(path, modified);
     }
 
@@ -617,7 +615,9 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     {
         var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, content);
+        // Setup Git sees the user's autocrlf config; confinement uses hardened Git.
+        // Persist the same LF bytes on both hosts before either observes the file.
+        File.WriteAllText(path, content.ReplaceLineEndings("\n"));
     }
 
     private static void Git(string root, params string[] args) => _ = CheckpointFixtureProcess.Git(root, args);
