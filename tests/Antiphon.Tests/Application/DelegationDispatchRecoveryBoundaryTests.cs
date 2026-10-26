@@ -45,16 +45,19 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // Historical 16 + CARD-0097's routing sweep SELECT = exactly 17.
     // The blocked task is not a delivery suspect; there is no repeated recovery transition.
     [Arguments("repeated-blocked-tick", 17)]
-    // CARD-1543: share four kind-only probes within the attempt; retain both fresh body/Enter guards (71 - 4).
-    [Arguments("running-recovery-existing-brief", 67)]
-    // CARD-1543: the same four metadata reads disappear; fresh write fencing is unchanged (67 - 4).
-    [Arguments("running-recovery-missing-brief", 63)]
+    // CARD-1543 removed four kind-only probes (71 - 4). CARD-1574 adds three fresh
+    // owner/generation reads: idle-flush receipt fence, delivery receipt fence, transcript baseline.
+    [Arguments("running-recovery-existing-brief", 70)]
+    // CARD-1543 removed four probes (67 - 4). CARD-1574 adds two owner/generation reads:
+    // direct ensure's delivery receipt fence and transcript baseline; no idle flush is needed.
+    [Arguments("running-recovery-missing-brief", 65)]
     // Measured 6. The delivered session drops out of pass 1c: selects only, no write.
     [Arguments("repeated-discovery-after-delivery", 6)]
     // Measured 12. One Blocked event; under the design ceiling of 65.
     [Arguments("running-recovery-readiness-hold", 12)]
-    // CARD-1543: eliminate four queue metadata reads; retain independent watchdog and fresh write reads (67 - 4).
-    [Arguments("watchdog-first-recovery", 63)]
+    // CARD-1543 removed four probes (67 - 4). CARD-1574 adds the same two direct-ensure
+    // receipt/baseline reads; the independent watchdog and fresh body/Enter guards remain.
+    [Arguments("watchdog-first-recovery", 65)]
     // Two scans are equal. Measured 5 on the second scan. Delta 0.
     [Arguments("empty-healthy-scan", 5)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
