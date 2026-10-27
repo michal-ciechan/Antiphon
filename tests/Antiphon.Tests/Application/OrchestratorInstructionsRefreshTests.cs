@@ -187,7 +187,10 @@ public class OrchestratorInstructionsRefreshTests
                 "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
                 "defaults" => Table("RunnerRoutingSettings"),
                 "budget" => Table("HostBudgets"),
-                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal),
+                // Desktop catalogue occupancy, not SessionStateLoader's unrelated task counts.
+                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal)
+                    && sql.Contains("\"CapacityWaitRetained\"", StringComparison.Ordinal)
+                    && sql.Contains("\"RunnerId\" IS NULL", StringComparison.Ordinal),
                 _ => false,
             };
             if (fails)
@@ -818,7 +821,7 @@ public class OrchestratorInstructionsRefreshTests
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings();
-        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        var options = new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
@@ -848,7 +851,11 @@ public class OrchestratorInstructionsRefreshTests
                     sp.GetRequiredService<TimeProvider>()));
                 services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
             },
-        });
+        };
+        // The rc fixture predates the supported-dialog option and its production input gate.
+        // Set the option on the real options type when available; both versions keep all assertions.
+        typeof(BridgeQueueHarness.HarnessOptions).GetProperty("ClaudeDialogObservation")?.SetValue(options, true);
+        var harness = await BridgeQueueHarness.CreateAsync(options);
         settings.OrchestratorInstructions.Path = Path.Combine(harness.TempRoot, "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md");
         harness.AfterDispose = schema;
         return harness;

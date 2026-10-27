@@ -474,21 +474,28 @@ public class BootStallDetectionTests
     /// two option-A safe-absent arguments were struck.
     /// </summary>
     [Test]
-    // Measured 2026-10-08 on the server2 mirror. Prefix: the open-task list 1 plus the first
+    // Measured 2026-10-23 at pristine 877b9ce108: CARD-1518's post-pull task reload adds one
+    // legitimate binding-revalidation query (roster #14); exact counts include it.
+    // Prefix: the open-task list 1 plus the first
     // evaluation 8 (Grok-rules, last entry 2, Working, launch clock, boot turn 3) = 9. Gates 1/1b 2,
-    // ownership 1, A-7 key read 1 = 13. Pull (empty persist, 0 SQL) and the second evaluation 8 = 21.
-    // Writer: task lock 1, dedup read 1, session share lock 1, boot turn 3, insert 1 = 28; a refused
-    // identity stops at the task lock (22); a faulted insert is still counted (28).
+    // ownership 1, A-7 key read 1 = 13. Pull (empty persist, 0 SQL), task reload 1, second evaluation 8 = 22.
+    // Writer: task lock 1, dedup read 1, session share lock 1, boot turn 3, insert 1 = 29; a refused
+    // identity stops at the task lock (23); a faulted insert is still counted (29).
     [Arguments("young-preview", 9, 0)]
-    [Arguments("working-first-detection", 28, 1)]
+    [Arguments("working-first-detection", 29, 1)]
     [Arguments("working-repeated-episode", 13, 0)]
-    [Arguments("operator-escalation", 28, 1)]
-    [Arguments("identity-changed-before-event", 22, 1)]
-    [Arguments("event-save-fault", 28, 1)]
-    [Arguments("non-working-listed", 28, 1)]
-    [Arguments("absent-proof-refused", 28, 1)]
+    [Arguments("operator-escalation", 29, 1)]
+    [Arguments("identity-changed-before-event", 23, 1)]
+    [Arguments("event-save-fault", 29, 1)]
+    [Arguments("non-working-listed", 29, 1)]
+    [Arguments("absent-proof-refused", 29, 1)]
     public async Task C1151_Boot_branch_statement_counts(string path, int expected, int expectedPulls)
     {
+        // The rc line predates CARD-1518 and its TaskProviderWaitReader/reload pair. Keep its
+        // exact pre-feature budget too; this checks feature availability, never the measured SQL.
+        var hasBindingReload = typeof(AgentTaskDispatcher).Assembly.GetType(
+            "Antiphon.Server.Application.Services.TaskProviderWaitReader") is not null;
+        var expectedForSource = expectedPulls == 1 && !hasBindingReload ? expected - 1 : expected;
         var counter = new FullCommandCounter();
         var fault = path == "event-save-fault" ? new TelemetryFaults("insert") : null;
         var idle = path is "non-working-listed" or "absent-proof-refused";
@@ -545,7 +552,7 @@ public class BootStallDetectionTests
         Console.WriteLine($"C1151-BUDGET {path} total={total} pulls={pulls} inventory={world.Directory!.Reads}");
         Console.WriteLine(roster);
 
-        total.ShouldBe(expected, $"path {path}{Environment.NewLine}{roster}");
+        total.ShouldBe(expectedForSource, $"path {path}{Environment.NewLine}{roster}");
         pulls.ShouldBe(expectedPulls, $"path {path}: runner transcript pulls");
         world.Directory.Reads.ShouldBe(0, "the boot branch never consults runner inventory");
         world.Runner.Lists.ShouldBe(0);
@@ -607,12 +614,22 @@ public class BootStallDetectionTests
             TaskStatus = AgentTaskStatus.Dispatched,
             Brief = working ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending,
             InterruptAfterPrompt = !working,
+            // Safe cleanup requires positive absence as well as a non-Working verdict.
+            Listing = shape == "real-idle-failure-cleans-up" ? BootStallListing.None : BootStallListing.Matching,
             Interceptors = [refuse],
         });
         var before = await world.TaskAsync();
         var warningDetail = $"{BootStallPolicy.DetectedToken} c1151-v15-episode; promptAt={world.PromptAt:o};";
         await using (var seed = world.Read())
         {
+            // An unattempted Pending brief belongs to CARD-1150 recovery. This witness needs
+            // an actual failed delivery, below the attempts cap, to reach the watchdog's write.
+            if (!working)
+            {
+                var brief = await seed.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
+                brief.DeliveryAttempts = 1;
+                brief.LastDeliveryStartedAt = world.Now0.AddMinutes(-11);
+            }
             seed.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
@@ -627,6 +644,7 @@ public class BootStallDetectionTests
         var sessionBefore = await world.SessionAsync();
         await using (var scope = world.CreateScope())
         {
+            scope.ServiceProvider.GetRequiredService<AgentSessionService>().ShouldNotBeNull();
             var dispatcher = world.Prepare(scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
             if (refuse.Armed)
             {
