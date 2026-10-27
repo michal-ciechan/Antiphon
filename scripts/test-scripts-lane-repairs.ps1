@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('opaque', 'owned', 'origin', 'state')][string]$Case,
+    [ValidateSet('opaque', 'owned', 'origin', 'state', 'replaced')][string]$Case,
     [string]$HostCleanupDll
 )
 $ErrorActionPreference = 'Stop'
@@ -63,6 +63,36 @@ public static class File {
         $mover.Move($path, $fresh, $true)
         if ([ScriptsLaneWitness.File]::Moves -ne 1 -or [IO.File]::Exists($path)) { throw 'initial publication failed' }
         'PASS state: forced sharing violation, old state intact, atomic replacement retried, initial move'
+        return
+    }
+    if ($Case -eq 'replaced') {
+        [void][Reflection.Assembly]::LoadFrom($HostCleanupDll)
+        $context = [Antiphon.Checkpoints.CheckpointCleanupDefaults]::Context
+        $owned = Join-Path $root 'bin-owned'
+        $ownership = [Antiphon.Checkpoints.SafeWrite]::Under($root)
+        $reason = [Antiphon.Checkpoints.SafeWrite]::CreateFreshDirectory($owned, $ownership)
+        if ($null -ne $reason) { throw "create: $reason" }
+        [IO.File]::WriteAllText((Join-Path $owned 'payload.txt'), 'regenerable')
+        $reason = [Antiphon.Checkpoints.OwnedOutputLedger]::Seal($owned, [datetimeoffset]::UtcNow)
+        if ($null -ne $reason) { throw "seal: $reason" }
+        $copy = Join-Path $root 'bin-foreign'
+        Copy-Item -LiteralPath $owned -Destination $copy -Recurse
+        $ledger = Join-Path $copy '.checkpoint-output-ledger.json'
+        if (-not [IO.File]::Exists($ledger)) { throw 'copy dropped the ledger' }
+        $foreignInode = (& stat -c %i -- $copy).Trim()
+        if ([string]::IsNullOrWhiteSpace($foreignInode)) { throw 'foreign inode unavailable' }
+        $aside = Join-Path $root 'bin-owned-real'
+        Move-Item -LiteralPath $owned -Destination $aside
+        Move-Item -LiteralPath $copy -Destination $owned
+        [IO.Directory]::SetLastWriteTime($owned, [datetime]::Now.AddDays(-10))
+        [IO.Directory]::SetLastWriteTime($aside, [datetime]::Now.AddDays(-10))
+        & "$PSScriptRoot/cleanup-build-junk.ps1" -RepoRoot $root -SkipIfModifiedWithinMinutes 0 -CleanupContext $context
+        if (-not [IO.Directory]::Exists($owned)) { throw 'replacement directory was deleted' }
+        if (-not [IO.Directory]::Exists($aside)) { throw 'original owned directory was deleted' }
+        if ((& stat -c %i -- $owned).Trim() -ne $foreignInode) { throw 'replacement inode was not preserved' }
+        if ([IO.File]::ReadAllText((Join-Path $owned 'payload.txt')) -cne 'regenerable') { throw 'replacement payload changed' }
+        if ([IO.File]::ReadAllText((Join-Path $aside 'payload.txt')) -cne 'regenerable') { throw 'original payload changed' }
+        'PASS replaced: foreign directory survived a stale custody record'
         return
     }
     if ($Case -eq 'origin') {
