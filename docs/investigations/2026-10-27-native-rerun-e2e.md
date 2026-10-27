@@ -19,7 +19,7 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 | AgentE2ETests | 1 pass / 1 fail | 2 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | PipelineGlanceE2ETests | 0 pass / 1 fail | 1 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | BoardE2ETests | 9 pass / 1 fail | 9 pass / 1 fail | Confirmed fixture navigation defect; Diff tab never selected | See Not done, noted |
-| WorkflowDeleteTests | 4 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+| WorkflowDeleteTests | 4 pass / 2 fail | 4 pass / 2 fail | Confirmed fixture routing assumptions predate Home/Workflows split | See Not done, noted |
 | AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Pending | Pending | Not designed in Investigate |
 | DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | Pending | Pending | Not designed in Investigate |
 
@@ -50,10 +50,32 @@ The source opens the card and immediately asserts the Diff heading (`tests/Antip
 
 Classification: fixture contract drift, not a demonstrated Windows or product defect. This mechanism is deterministic; no flake claim. A pushed repair exists on `origin/feat/card-task-380013d3`, but its Board change is absent from the pinned rc source. The report does not apply or verify that repair. The manual xterm case passed in this native run; that single pass does not establish race freedom.
 
+## Confirmed: Workflow delete tests still assume the old dashboard route
+
+Fresh native `WorkflowDeleteTests-initial/results.trx` reports 4 passed / 2 failed; 179.793 seconds host duration, 260.6 seconds outer wall including 75 seconds admission. The exact error messages and full stacks for both cases are in `WorkflowDeleteTests-initial/failures.log`.
+
+```text
+Delete_workflow_via_settings_button_in_detail_page_navigates_to_dashboard
+TimeoutException: Timeout 10000ms exceeded.
+waiting for navigation to "**/" until "Load"
+  navigated to "http://127.0.0.1:62178/workflows"
+
+Delete_workflow_button_shows_confirm_and_removes_card
+TimeoutException: Timeout 10000ms exceeded.
+Call log:
+  - waiting for Locator("[role='article']").First to be visible
+```
+
+`tests/Antiphon.E2E/WorkflowDeleteTests.cs:294` waits for `/` after deleting, but `client/src/features/workflow/WorkflowDetailPage.tsx:471` explicitly navigates to `/workflows`. The failure screenshot `ui-evidence/Screenshots/Delete_workflow_via_settings_button_in_detail_page_navigates_to_dashboard/FAIL_final_073148.png` shows the Workflows page with **No workflows yet**. This supports a successful UI delete/navigation with an obsolete URL expectation; the native API delete case also passed.
+
+The other failing test navigates to the bare app root (`WorkflowDeleteTests.cs:335`) then waits for workflow cards (`:345`). `client/src/App.tsx:91` renders Home at the index; the workflow dashboard is registered under `workflows` (`:100`). This explains why the first card never appears. That test's `finally` only disposes its browser context (`WorkflowDeleteTests.cs:415`); it does not call the screenshot/DOM completion helper. Its native error and per-test server/notes logs are retained; no failure screenshot for this second method is claimed.
+
+Classification: fixture navigation drift, not an established Windows, SDK, ACL or product defect. The same two failures reproduce without source changes. No flake claim or timeout change.
+
 ## Remaining work
 
 Rebuild the native graph and frontend once, run all six classes separately, retain exact failures/TRX/screenshots, and reconstruct surviving failure mechanisms. Any flake claim requires three reruns. Performance and source-revision limitations will remain explicit.
 
 ## Not done, noted
 
-Board: the existing sibling change selects Diff before checking its content; no fix was designed or applied here.
+Board: the existing sibling change selects Diff before checking its content; WorkflowDelete: its route expectations need to follow the current Workflows route. No fix was designed or applied here.
