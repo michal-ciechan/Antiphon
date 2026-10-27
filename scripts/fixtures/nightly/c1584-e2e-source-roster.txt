@@ -1,8 +1,10 @@
-# CARD-1584 source-derived expanded roster at e5a867361937752b959c1451824ab9716fac83c0.
+# CARD-1584 source-derived expanded roster. The e5a867361937752b959c1451824ab9716fac83c0
+# census recorded 177 identities. C467_RetainedEvidenceCompletesCleanup is the later case (178).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
 Antiphon.E2E.AgentE2ETests|Agents_page_terminal_icon_context_menu_reaches_settings|
+Antiphon.E2E.AgentTaskLandDeliveryE2ETests|C467_RetainedEvidenceCompletesCleanup|
 Antiphon.E2E.AgentTaskLandDeliveryE2ETests|C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput|
 Antiphon.E2E.AgentTaskLandDeliveryE2ETests|C467_V23_BusyCallerDoesNotBlockAnotherLand|
 Antiphon.E2E.AgentTaskLandDeliveryE2ETests|C467_V24_BlockedWriterThenReleaseDeliversBothNotes|

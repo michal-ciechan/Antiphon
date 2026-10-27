@@ -1932,7 +1932,9 @@ function Test-C1584_E2EExpandedBudget {
         $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'e2e' -Platform 'windows')
         $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded $_ $exclusions -ProfileAware) })
         $reasons = New-Object System.Collections.Generic.List[string]
-        if ($nodes.Count -ne 177 -or $required.Count -ne 170) { $reasons.Add('source-census') }
+        # Exact census of the committed roster. The added identity is
+        # C467_RetainedEvidenceCompletesCleanup; Windows rc still excludes seven.
+        if ($nodes.Count -ne 178 -or $required.Count -ne 171) { $reasons.Add('source-census') }
         # Independent conservative per-expanded-case bounds. 600 s is 1.72x
         # the slowest supplied Windows observation (348.1 s), not a p95.
         $bounds = @{}
