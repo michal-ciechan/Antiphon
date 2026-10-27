@@ -1,6 +1,6 @@
 # Native E2E land-delivery cases — first half (76755674)
 
-Status: batch execution in progress, 2026-10-27. Build and compiled inventory are complete; no passing case coverage is claimed yet.
+Status: batch 1 and its failure repeat complete, batch 2 in progress, 2026-10-27. Batch 1: 10 passed / 1 failed; repeat: 1 passed / 1 failed. The residue expectation mismatch is confirmed; no fix is implemented.
 
 ## Provenance
 
@@ -21,17 +21,68 @@ Status: batch execution in progress, 2026-10-27. Build and compiled inventory ar
 - Batch 1: first nine methods (11 cases); batch 2: next nine methods (12 cases). Prefixes in the pinned TUnit OR syntax match no additional compiled methods. Actual TRX rosters will be checked before coverage is credited.
 - Memory recovered to 9,406 MiB before execution; `preflight-batch-1.json` records the immediate process/memory census. Batch 1 started at approximately 11:46 UTC, leased with zero admission wait.
 
-## Evidence collection
+## Results available so far
 
-Rebuild `client/dist`, build native E2E once, enumerate compiled class methods, sort fully qualified names and select the first `ceil(N/2)`. Execute batches of 8–10 methods, retain fresh TRX durations and exact errors, repeat each failure once, then classify supported mechanisms without modifying source.
+Fresh TRX confirms exactly the intended batch-1 roster (nine methods / 11 expanded cases). No skips or unexpected methods. The one failed method was repeated once, including both of its arguments; its companion case passed both times.
+
+| Invocation | Passed | Failed | Host seconds (TRX) | Outer seconds | Slot wait seconds |
+|---|---:|---:|---:|---:|---:|
+| batch-1 | 10 | 1 | 874.155 | 879.668 | 0 |
+| residue-repeat | 1 | 1 | 120.572 | pending final inventory | 0 |
+| batch-2 | pending | pending | pending | pending | pending |
+
+Per-case wall durations below are the unrounded TRX durations rounded to three decimals for display. These are one-run shared-host observations, not stable p95 estimates. Class prefix for every row: `Antiphon.E2E.AgentTaskLandDeliveryE2ETests.`
+
+| Method / arguments | Result | Seconds |
+|---|---|---:|
+| C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput | Passed | 111.926 |
+| C467_V23_BusyCallerDoesNotBlockAnotherLand | Passed | 103.747 |
+| C467_V24_BlockedWriterThenReleaseDeliversBothNotes | Passed | 138.202 |
+| C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt | Passed | 86.862 |
+| C467_V26_HardCrashAfterQueueInsertReusesRow | Passed | 102.583 |
+| C467_V27_LostRequestWakeupRecoversAtBoot | Passed | 86.354 |
+| C467_V28_LostFlushWakeupRecoversOnIdleCaller | Passed | 54.205 |
+| C467_V29_RealOutcomeProducerMatrix_Batch1(already-present) | Passed | 44.245 |
+| C467_V29_RealOutcomeProducerMatrix_Batch1(landed) | Passed | 59.635 |
+| C467_V29_RealOutcomeProducerMatrix_Batch2(preoperation-refusal) | Passed | 41.723 |
+| C467_V29_RealOutcomeProducerMatrix_Batch2(residue-cleanup) | Failed | 43.584 |
+| Repeat: C467_V29_RealOutcomeProducerMatrix_Batch2(preoperation-refusal) | Passed | 39.202 |
+| Repeat: C467_V29_RealOutcomeProducerMatrix_Batch2(residue-cleanup) | Failed | 80.735 |
+
+## Confirmed: residue fixture selects retained evidence
+
+Both executions fail at `tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs:211` with the same exact error (`batch-1/failures.log`, `residue-repeat/failures.log`):
+
+```text
+ShouldAssertException: terminal.Type
+    should be
+AgentTaskEventType.LandedWithResidue
+    but was
+AgentTaskEventType.Landed
+```
+
+Mechanism at the pinned RC: `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:329` writes `.antiphon/valuable.txt` containing `owned user residue`. The current retained-content default includes `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`), and `WorktreeIgnoredContentClassifier.cs:55` classifies this path as Evidence. `server/Infrastructure/Git/GuardedWorktreeRemoval.cs:122` retains that evidence before removal. Clean removal sets cleanup Complete (`server/Application/Services/AgentTaskLandingProtocol.cs:459`); Complete with no canonical-advance reason selects event Landed (`server/Application/Services/AgentTaskLandService.cs:886`). The old residue expectation at `AgentTaskLandDeliveryE2ETests.cs:213` therefore disagrees with the exercised current contract.
+
+`residue-proof.json` binds each failed TRX time interval to its unique fixture directory, original snapshot hash, event, notification, transcript prompt and retained payload. Original snapshots remain under `C:\Antiphon\scratch\76755674-rc\.antiphon\acceptance\card-0467\<root>\delivery-evidence.json`.
+
+| Attempt | Fixture root | Task | Notification | Confirmed UTC / prompt |
+|---|---|---|---|---|
+| Initial | `604c8ceb27d543e7ad990c5e491479a9` | `00219b58-c6ef-404b-96f8-cc10369ca20e` | `6054d006-726a-47ab-9388-2cdda8c98250` | 11:59:53.679845 / sequence 4 |
+| Repeat | `8e96afd54cd4472e886829e7dc311672` | `9405fb10-1185-4f58-8dfc-642cb58b432a` | `6f74ac31-987f-48d9-9ead-ed82b99ffbb6` | 12:02:56.236130 / sequence 4 |
+
+In both snapshots the terminal event is type 21 (Landed), the notification is Confirmed, and the matching stored `UserPrompt` reports `outcome=Landed`, `cleanup=Complete`, and `retained=1 files`. Each retained `valuable.txt` contains 18 bytes with SHA-256 `D3C4C32B9814B7F134582E5F3CB34F5AB69F9B08E99E5B904F8956275229038E`, matching the fixture payload. This is not evidence of file loss, failed native publication, or failed caller delivery. Classification: inherited fixture contract drift; reproduced twice, not a demonstrated flake.
+
+Screenshots are under `<evidence>/screenshots/`: `batch-1-failure-report.png`, `batch-1-failure-report-detail.png`, and the corresponding `residue-repeat-*` pair. They render the original generated TUnit HTML reports and their error details; they are **report screenshots**, not application failure screenshots. This protocol-only test creates no Playwright page. Database/transcript evidence above establishes the product behavior.
+
+The assertion stops execution before the cleanup-retry block at `AgentTaskLandDeliveryE2ETests.cs:224`; that later behavior remains unverified by these failing executions.
 
 ## Remaining work
 
-First-half execution, failure repetition/investigation, duration table and owned-output cleanup remain pending. Historical results are not fresh coverage.
+Batch 2, its duration rows, final integrity inventory and owned-output cleanup remain pending. Batch 2 started after an 8,653 MiB free-memory check. The sibling task `d594e971` had an active, separately owned E2E host at that point; it was not a leftover and was not stopped. Timings reflect shared-host load. Historical results and the other half's executions are not credited here.
 
 ## Not done, noted
 
-No fix designed or implemented.
+Fix idea only: align the residue fixture with the protected-content contract (`LandDeliveryFixture.cs:329`, `AgentTaskLandDeliveryE2ETests.cs:213`); no fix designed or implemented.
 
 --- next stage ---
 next: investigate
