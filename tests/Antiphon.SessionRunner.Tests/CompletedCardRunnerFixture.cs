@@ -58,6 +58,15 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
         Runtime = NewRuntime();
     }
 
+    internal static void OverwriteGitFile(string path, byte[] bytes)
+    {
+        // Git marks its Windows worktree gitfile Hidden. Open the existing file without
+        // FileMode.Create, which Windows refuses for that attribute. Preserve the attribute.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
+        stream.SetLength(0);
+        stream.Write(bytes);
+    }
+
     // Reflection lets the committed tests execute on the pre-slice assembly: absence of the
     // concrete production fence is an assertion failure, rather than a compilation failure.
     public void InstallGate(bool restart = false)
