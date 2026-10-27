@@ -2,6 +2,26 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
+// Native executable shim for the audit fixture: ProcessStartInfo bypasses git.cmd.
+if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "git"
+    && Environment.GetEnvironmentVariable("C1390_REAL_GIT") is { } realGit
+    && Environment.GetEnvironmentVariable("C1390_TREE_WITHOUT_NUL") is { } tree)
+{
+    if (args.FirstOrDefault() == "ls-tree")
+    {
+        await using var output = Console.OpenStandardOutput();
+        await using var input = File.OpenRead(tree);
+        await input.CopyToAsync(output);
+        await File.WriteAllTextAsync(tree + ".served", "ls-tree");
+        return 0;
+    }
+    var start = new ProcessStartInfo(realGit) { UseShellExecute = false };
+    foreach (var arg in args) start.ArgumentList.Add(arg);
+    using var git = Process.Start(start)!;
+    await git.WaitForExitAsync();
+    return git.ExitCode;
+}
+
 // Owned, unpaid native peer. Named events keep ancestry/exit cuts deterministic.
 if (!OperatingSystem.IsWindows() || args.Length != 3) return 2;
 var role = args[0];

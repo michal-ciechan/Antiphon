@@ -98,8 +98,10 @@ function Test-C1500_StatusIdentityAndObservation {
 
 function Get-C1500Inventory($Root) {
     @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
-        $hash = ''; if (-not $_.PSIsContainer) { $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
-        $_.FullName + '|' + $_.LastWriteTimeUtc.Ticks + '|' + $hash
+        # Directory metadata can refresh after setup's replacements on Windows. Keep
+        # the complete path/type census and every input file's bytes and timestamp.
+        if ($_.PSIsContainer) { $_.FullName + '|directory' }
+        else { $_.FullName + '|' + $_.LastWriteTimeUtc.Ticks + '|' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     }) -join "`n"
 }
 

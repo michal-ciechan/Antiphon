@@ -314,6 +314,10 @@ c849_lock() { :; }
 sudo() { printf 'SUDO %s\n' "$*" >> "$C1192_ROOT/order"; return 1; }
 chown() { printf '%s\n' "$*" >> "$C1192_ROOT/chown.log"; }
 export -f chown
+# Docker's /bin/sh must see the same fake ownership operation as Bash. Exported
+# Bash functions are not inherited by dash, so put the stub on the child PATH too.
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >> "$C1192_ROOT/chown.log"' > "$C1192_ROOT/bin/chown"
+chmod +x "$C1192_ROOT/bin/chown"
 
 fail() {
     printf 'C1192_FAIL %s\n' "$*"

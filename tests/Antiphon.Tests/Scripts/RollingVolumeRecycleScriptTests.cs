@@ -420,11 +420,11 @@ public sealed class RollingVolumeRecycleScriptTests
             var running = held.Run("redeploy-old");
             try {
                 var deadline = DateTime.UtcNow.AddSeconds(10);
-                while ((!File.Exists(held.TracePath) || !File.ReadAllText(held.TracePath).Contains("lock-request", StringComparison.Ordinal)) && DateTime.UtcNow < deadline)
+                while (!held.ReadTraceText().Contains("lock-request", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
                     await Task.Delay(25);
-                File.ReadAllText(held.TracePath).ShouldContain("lock-request", Case.Sensitive, "recycle-work-gates: real admission lock barrier reached");
+                held.ReadTraceText().ShouldContain("lock-request", Case.Sensitive, "recycle-work-gates: real admission lock barrier reached");
                 await Task.Delay(150);
-                File.ReadAllText(held.TracePath).ShouldNotContain("\"POST\"", Case.Sensitive, "recycle-work-gates: held rollout lock excludes POST entry");
+                held.ReadTraceText().ShouldNotContain("\"POST\"", Case.Sensitive, "recycle-work-gates: held rollout lock excludes POST entry");
             } finally { lease.Dispose(); await running; }
             (await running).Exit.ShouldBe(0);
         }
@@ -522,7 +522,7 @@ public sealed class RollingVolumeRecycleScriptTests
             else if (arm == "expires") f.Environment["C727_TEST_LAND_WAIT_MS"] = "1";
             var run = arm == "zero" ? await f.Run("redeploy-old", "-LandWaitMinutes", "0") : await f.Run("redeploy-old");
             var landReads = run.Trace.Count(t => t["path"]?.GetValue<string>() == landPath);
-            var waitLines = Regex.Matches(run.Output, "(?m)^RECYCLE_LAND_WAIT runner=server2 id=" + id + " polls=\\d+$").Count;
+            var waitLines = Regex.Matches(run.Output, "(?m)^RECYCLE_LAND_WAIT runner=server2 id=" + id + " polls=\\d+\r?$").Count;
             var receipt = C1087Receipt(run.Trace, "census-redeploy-old-server2.json");
             switch (arm)
             {
@@ -1765,6 +1765,13 @@ internal sealed class C1008WrapperFixture : IDisposable
     internal string Root { get; } = Directory.CreateTempSubdirectory("c1008-wrapper-").FullName;
     internal string StatePath => Path.Combine(Root, "state.json");
     internal string TracePath => Path.Combine(Root, "trace.jsonl");
+    internal string ReadTraceText()
+    {
+        if (!File.Exists(TracePath)) return "";
+        using var stream = new FileStream(TracePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
     internal JsonObject State { get; }
     // Extra child environment (CARD-1353: C727_TEST_LAND_WAIT_MS). Merged into Run's process after the defaults.
     internal Dictionary<string, string> Environment { get; } = new();
