@@ -655,7 +655,7 @@ public sealed class SessionQueueReceiptPlumbingTests
                 if (checkpoint is not null) await checkpoint("seeded", world);
                 await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
                     (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).StartedAt
-                        .ShouldBe((await inner.GetAsync(sessionId, CancellationToken.None)).AcceptedStartedAt);
+                        .ShouldBe((await inner.GetAsync(sessionId, CancellationToken.None)).AcceptedStartedAt.ShouldNotBeNull());
                 await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
                 using var hostLogStream = new FileStream(Path.Combine(logDirectory, "pty-hosts", "logs", $"{sessionId:N}.log"),
                     FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
