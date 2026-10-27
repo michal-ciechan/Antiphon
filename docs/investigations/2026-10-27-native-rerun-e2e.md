@@ -102,6 +102,21 @@ The historical `e2e-all-split-34.trx` failed at `tests/Antiphon.E2E/Fixtures/Lan
 
 Fresh passing-run root: `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\a316a3aafc40484794276e69730e8c5c`. Its barrier names Review task `03d3283d-0ab4-486b-a511-d62e39de9933`, queued row `199d4d46-25b9-4e1f-8f8a-140382453736` and child PID 378348. Its final snapshot contains caller UserPrompt sequence 4, header `[task 03d3283d done]`, timestamp `2026-10-27T07:45:49Z`. Repetitions will distinguish a newly stable result from the historical timing-dependent assertion; no flake frequency is inferred from one pass.
 
+`git diff 105792f7d22f origin/rc/2026-10-27 -- tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs server/Application/Services/AgentTaskLandNotificationService.cs server/Application/Services/SessionMessageQueueService.cs` is empty. The cited assertion, cut and receipt-save mechanism are unchanged from the historical failure.
+
+## Dispatch warnings: current contract mismatch and admission delay
+
+Both C508 cases have reproduced `TimeoutException: one committed mismatch dispatch intent` at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Dispatch.cs:130`. Full-class execution is still in progress. The snapshots in `dispatch-mismatch-proof.json` bind these roots and tasks:
+
+| Method | Fixture root suffix | Task | Intents / notifications |
+|---|---|---|---|
+| C508_MismatchWarningReachesCaller | `e40a314acb9b4824880bfc4872c81ca9` | `f94da36e-bc79-4d02-9755-ad2b193cec31` | 0 / 0 |
+| C508_MismatchWarningWaitsForCaller | `ed885bddff604ca884aa5e5c14215803` | `e0b2da83-d81f-4b5c-9715-3e057b0ce349` | 0 / 0 |
+
+The fixture still changes the project default from `master` to `project-default` on the lease (`LandDeliveryOptions.cs:95`), then waits for one mismatch intent. Claim-time revalidation now compares the configured fallback with the frozen inspection intent (`server/Application/Services/AgentTaskDispatcher.cs:5566`) and rolls back stale observations (`:5587`). The tick invalidates/requeues that inspection (`:982`). The current unit fixture for the very same C508 scenario explicitly expects the refreshed base and **zero** mismatch intents (`tests/Antiphon.Tests/Application/AgentTaskDispatchBaseGuardTests.cs:1395`, `:1417`). The E2E expectation no longer matches the current contract.
+
+An additional native observation prevents oversimplifying the timeout as a completed successful dispatch: the first case's read-only task-detail observation at `2026-10-27T07:51:21Z` still showed Queued, no base ref, and `WorktreeBaseSource=Unset` (`dispatch-first-observation.json`). Its lease-change witness fired at `07:50:42.5058816Z`; the task event at `07:50:52` said `waiting for Grok capacity (any alias); capacity wait b7c8a8f4 not yet granted.` The second case shows the same sequence. A focused DB witness is pending to determine the exact admission state; no permanent capacity deadlock is claimed.
+
 ## Remaining work
 
 Rebuild the native graph and frontend once, run all six classes separately, retain exact failures/TRX/screenshots, and reconstruct surviving failure mechanisms. Any flake claim requires three reruns. Performance and source-revision limitations will remain explicit.
