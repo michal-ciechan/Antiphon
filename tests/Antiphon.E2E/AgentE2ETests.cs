@@ -186,15 +186,17 @@ public class AgentE2ETests
                 new[] { "Open terminal", "Open files view", "Open board", "Edit settings" });
 
             await menu.GetByRole(AriaRole.Menuitem, new LocatorGetByRoleOptions { Name = "Edit settings" }).ClickAsync();
-            var settingsDialog = page.GetByRole(AriaRole.Dialog);
+            var settingsDialog = page.GetByRole(AriaRole.Dialog, new PageGetByRoleOptions { IncludeHidden = true });
             await Expect(settingsDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Details" }))
                 .ToBeVisibleAsync();
             await Expect(menu).ToBeHiddenAsync();
             await page.Keyboard.PressAsync("Escape");
             await Expect(settingsDialog).ToBeHiddenAsync();
+            // Wait for the closing modal's focus trap and focus return to finish before
+            // sending a shortcut to the terminal icon behind it.
+            await settingsDialog.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Detached });
 
-            await icon.FocusAsync();
-            await page.Keyboard.PressAsync("Shift+F10");
+            await icon.PressAsync("Shift+F10");
             await Expect(menu).ToBeVisibleAsync();
             await page.Keyboard.PressAsync("Escape");
             await Expect(menu).ToBeHiddenAsync();
