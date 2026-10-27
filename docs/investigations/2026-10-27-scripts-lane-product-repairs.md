@@ -96,6 +96,26 @@ Separate unresolved investigation rows remain CheckpointRecoveryWindowsTests.det
 
 Product changes require Final Review. Linux acceptance is green; native verification completeness remains open. Publish to both rc/2026-10-27 and master through normal reviewed landing; a master-only publication is not activation. No operational activation is claimed.
 
+## Publication checks
+
+The worktree is clean and all 33 recorded build outputs were removed, with every path checked
+against the successful build log before deletion. The evidence-history guard over the assigned
+base through the pushed report tip reports zero violations. No target branch was merged.
+
+`git fetch origin master rc/2026-10-27` pinned master at
+`718bd29f4a1504c64c491d607d31403fcb87dae2` and rc at the assigned base
+`9f00008facfc48e75555c08df59887019b3f8dfe`. `git merge-tree --write-tree` is clean against
+that rc tip. Against master it reports two add/add conflicts:
+
+- `.antiphon/task-af2b78c8.md`
+- `docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`
+
+The identical path/blob conflicts reproduce with the untouched assigned base instead of this
+branch, proving they are inherited rc/master report divergence. This branch is not landable to
+master as a whole without the landing owner's target-specific conflict handling. No unrelated
+report was edited to resolve them. The task fixes still need publication to both targets after
+Final Review and required native verification.
+
 ## Pushed source slices
 
 - `060c4bec5ec1a7e3e2c9252d06264829800a9771` — initial cleanup/origin red witnesses.
