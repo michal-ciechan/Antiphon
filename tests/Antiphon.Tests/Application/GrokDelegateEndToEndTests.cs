@@ -226,7 +226,8 @@ public class GrokDelegateEndToEndTests
     /// <summary>
     /// CARD-0329: the unmarked two-turn nudge contract on the same real path as the
     /// CARD-0243 capstone. Fakegrok answers the brief without a closing line; the
-    /// WhenIdle nudge is delivered; fakegrok answers immediately; settlement must
+    /// WhenIdle nudge is delivered; a controlled after-Enter transport cut makes its real reply
+    /// precede late confirmation of the nudge. Settlement must
     /// accept a reply whose <c>TurnEnd.CreatedAt</c> landed after enqueue but before
     /// the nudge row's <c>SentAt</c> (the confirmation/tailer race).
     /// </summary>
@@ -242,16 +243,17 @@ public class GrokDelegateEndToEndTests
         await using var harness = BuildHarness(
             workspace.Path, grokHome, grokExe: FakeGrokExe, fakeReportLine: false,
             configure: d => d.FinalMessageGraceSeconds = 0);
+        var nudgeCut = 0;
         harness.Runner.AfterInputAsync = async (id, input, ct) =>
         {
-            if (input != "\r") return;
+            if (input != "\r" || Volatile.Read(ref nudgeCut) != 0) return;
             await using var db = CreateContext();
             var nudge = await db.SessionQueuedMessages.AsNoTracking().FirstOrDefaultAsync(m =>
-                m.AgentSessionId == id && m.Status == QueuedMessageStatus.Pending
+                m.AgentSessionId == id && m.DeliveryVerdict == null
                 && m.Body.Contains("Your turn ended without the closing report line"), ct);
             if (nudge is null) return;
-            // Hold the submitting Enter's return until the real tailer has persisted the reply.
-            // This forces the claimed reply-before-SentAt race without changing either timestamp.
+            // The first SentAt is a pre-write claim. Lose the acknowledgement after the real
+            // reply, then let the normal late-confirm path stamp SentAt from that receipt.
             await WaitUntilAsync(async () =>
             {
                 await using var read = CreateContext();
@@ -262,9 +264,13 @@ public class GrokDelegateEndToEndTests
                 return prompt is not null && await read.TranscriptEntries.AnyAsync(t =>
                     t.AgentSessionId == id && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence, ct);
             }, TimeSpan.FromSeconds(20), () => ScreenAsync(harness, id));
+            Interlocked.Exchange(ref nudgeCut, 1);
+            throw new IOException("Owned nudge cut after recipient reply, before queue confirmation");
         };
 
         Guid sessionId = Guid.Empty;
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
         try
         {
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
@@ -288,8 +294,7 @@ public class GrokDelegateEndToEndTests
                 sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
             }
 
-            using var pump = new CancellationTokenSource();
-            var pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
+            pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
 
             var spillName = $"task-{DelegationReportFormatter.Short(queued.Id)}-brief.md";
@@ -307,6 +312,9 @@ public class GrokDelegateEndToEndTests
             await WaitUntilAsync(
                 async () =>
                 {
+                    if (Volatile.Read(ref nudgeCut) == 1)
+                        await harness.Provider.GetRequiredService<SessionMessageQueueService>()
+                            .FlushSessionAsync(sessionId, CancellationToken.None);
                     await using var db = CreateContext();
                     var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
                     return stored.Status != AgentTaskStatus.Dispatched;
@@ -316,6 +324,7 @@ public class GrokDelegateEndToEndTests
 
             pump.Cancel();
             await pumping;
+            Volatile.Read(ref nudgeCut).ShouldBe(1, "the receipt-before-confirmation ordering must be forced");
 
             await using var verify = CreateContext();
             var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
@@ -335,6 +344,7 @@ public class GrokDelegateEndToEndTests
             nudge.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
             nudge.Body.ShouldContain("Your turn ended without the closing report line");
             nudge.SentAt.ShouldNotBeNull();
+            nudge.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
 
             var replyEnd = await verify.TranscriptEntries.AsNoTracking()
                 .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
@@ -352,6 +362,8 @@ public class GrokDelegateEndToEndTests
         }
         finally
         {
+            pump.Cancel();
+            if (pumping is not null) await pumping;
             await CleanupAsync(harness, sessionId, workspace.Path, grokHome);
         }
     }
