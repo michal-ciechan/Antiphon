@@ -622,8 +622,38 @@ function Invoke-NightlyPortableProcess {
     if ($ArgumentList) {
         foreach ($arg in @($ArgumentList)) { $wrapped.Add([string]$arg) }
     }
-    $start = New-NightlyChildStartInfo -FilePath $setsidPath -ArgumentList @($wrapped.ToArray()) -WorkingDirectory $WorkingDirectory -Environment $Environment
+    # Linux parent-death owner. setsid starts a new session, so this supervisor
+    # dying does not take the group with it. Hold the write end of the child
+    # stdin pipe. A same-group watchdog blocks on that pipe and SIGKILLs the
+    # group when the write end closes, including kill -9 of this process. The
+    # workload stdin is /dev/null; the pipe is only the custody signal.
+    # Windows uses the Job Object in nightly-owned-process.cs with
+    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000): closing the job handle,
+    # including when the owner process dies, kills that tree. PR_SET_PDEATHSIG
+    # is not used; it is not a portable PowerShell launch.
+    $custodyScript = @'
+exec 3<&0
+exec 0</dev/null
+pgid=$$
+(
+while IFS= read -r _ <&3
+do
+    :
+done
+kill -KILL -"$pgid"
+) >/dev/null 2>&1 &
+exec 3<&-
+exec "$@"
+'@
+    $command = New-Object System.Collections.Generic.List[string]
+    [void]$command.Add('/bin/sh')
+    [void]$command.Add('-c')
+    [void]$command.Add($custodyScript)
+    [void]$command.Add('antiphon-custody')
+    foreach ($arg in @($wrapped.ToArray())) { [void]$command.Add([string]$arg) }
+    $start = New-NightlyChildStartInfo -FilePath $setsidPath -ArgumentList @($command.ToArray()) -WorkingDirectory $WorkingDirectory -Environment $Environment
     $start.UseShellExecute = $false
+    $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $proc = $null
