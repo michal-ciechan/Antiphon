@@ -1,15 +1,15 @@
 # E2E Linux baseline, shard 2 of 3
 
-Linux server2 baseline of `tests/Antiphon.E2E`. This is not the Windows release gate. Windows-gated classes are recorded as skip or fail, not repaired. No product or test source was changed.
+Linux server2 baseline of `tests/Antiphon.E2E`. This is not the Windows release gate. No product or test source was changed.
 
-- Candidate: `origin/rc/2026-10-27` at `9f00008facfc48e75555c08df59887019b3f8dfe` (fetched; HEAD matches).
-- Branch: `feat/card-task-f203aea8`.
-- Worktree: `/work/worktrees/task-f203aea8`.
+- Candidate: `origin/rc/2026-10-27` at `9f00008facfc48e75555c08df59887019b3f8dfe` (fetched; HEAD matched before this doc).
+- Branch: `feat/card-task-f203aea8`. Worktree: `/work/worktrees/task-f203aea8`.
 - Client bundle: `npm ci` and `npm run build` in `client/` through build slot `e2e-s2-client-dist` (exit 0). `client/dist/index.html` was absent before that build.
 - E2E build: one `dotnet build tests/Antiphon.E2E/Antiphon.E2E.csproj --property:OutputPath=bin-e2e-s2/ --property:UseAppHost=false -nodeReuse:false` through build slot `e2e-s2-build` (exit 0, 0 errors, 39 warnings). DLL: `tests/Antiphon.E2E/bin-e2e-s2/Antiphon.E2E.dll`.
-- Each class run uses that compiled output with `--no-build` and `--treenode-filter "/*/*/<ClassName>/*"` under a build slot. Cap: 25 minutes, then the class is stopped and the run continues.
-- The suite starts its own isolated session runner on a random loopback port. Production runner port 17204 was not targeted. Headed, broker, and channel-outbound opt-in variables were left unset.
-- Playwright: `playwright.ps1 install chromium` exited 0. Browser cache already had `chromium-1243` and `chromium_headless_shell-1243`. `libglib-2.0.so.0` is present on this host (`/lib/x86_64-linux-gnu/libglib-2.0.so.0`), unlike the 2026-10-17 CARD-1305 D-5 note.
+- Each class ran that output with `--no-build` and `--treenode-filter "/*/*/<ClassName>/*"` under its own build slot. No class hit the 25-minute cap.
+- The suite started its own isolated session runner on a random loopback port. Production port 17204 was not targeted. `ANTIPHON_HEADED_TESTS`, `ANTIPHON_BROKER_TESTS`, `ANTIPHON_CHANNEL_OUTBOUND_ISOLATED`, and `ANTIPHON_DISTILLER_APPLY_CANARY` stayed unset.
+- Playwright: `playwright.ps1 install chromium` exited 0. Cache already had `chromium-1243` and `chromium_headless_shell-1243`. `libglib-2.0.so.0` is present (`/lib/x86_64-linux-gnu/libglib-2.0.so.0`). The 2026-10-17 CARD-1305 D-5 missing-library failure did not reproduce for the browser classes in this shard.
+- Shard wall clock for the ten class runs: 12:39:22Z to 12:50:36Z (about 11m 14s), then two short reruns.
 
 ## Shard
 
@@ -48,25 +48,74 @@ Linux server2 baseline of `tests/Antiphon.E2E`. This is not the Windows release 
 | 28 | WorkflowOutputTests | | |
 | 29 | WorktreeRetirementDeliveryE2ETests | 5 | yes |
 
-Execution order is smallest discovered count first, then ordinal name, so a 120-minute budget records more classes before the larger browser classes. The table below stays in shard-index order.
+Classes ran smallest discovered count first, then ordinal name. The results table stays in shard-index order.
 
 ## Results
 
-Runs are in progress. Counts and wall time come from the TRX. Tests at or above 30 seconds are listed under the class.
+Counts and wall time are the TRX `Counters` and `Times` (`finish - start`). Exit 8 is the testing-platform code for every selected test skipped. Exit 2 is a failed test.
+
+Shard totals: 33 executed, 27 passed, 6 failed, 3 skipped. No timeouts.
 
 | class | executed | passed | failed | skipped | wall | notes |
 |---|---:|---:|---:|---:|---|---|
-| BoardE2ETests | | | | | | pending |
-| ChannelOutboundIsolatedTests | | | | | | pending |
-| CreatedResourceTests | | | | | | pending |
-| DirectoryAutocompleteE2ETests | | | | | | pending |
-| IsolatedSessionRunnerTeardownTests | | | | | | pending |
-| OutputDistillationApplyCanaryTests | | | | | | pending |
-| ProjectDeleteE2ETests | | | | | | pending |
-| ReleaseGateReportDeliveryTests | | | | | | pending |
-| TestClassificationGuardTests | | | | | | pending |
-| WorktreeRetirementDeliveryE2ETests | | | | | | pending |
+| BoardE2ETests | 10 | 10 | 0 | 0 | 271.5s | exit 0. Each test 3.4–9.2s. Wall is mostly shared fixture startup. |
+| ChannelOutboundIsolatedTests | 0 | 0 | 0 | 3 | 0.8s | exit 8. Opt-in skip, same message on all three. |
+| CreatedResourceTests | 3 | 3 | 0 | 0 | 0.7s | exit 0 |
+| DirectoryAutocompleteE2ETests | 1 | 1 | 0 | 0 | 60.3s | exit 0. The test itself was 6.4s. |
+| IsolatedSessionRunnerTeardownTests | 2 | 2 | 0 | 0 | 0.8s | exit 0. Isolated runner teardown passed. |
+| OutputDistillationApplyCanaryTests | 1 | 0 | 1 | 0 | 0.6s | exit 2. Opt-in gate. Rerun matched. |
+| ProjectDeleteE2ETests | 8 | 8 | 0 | 0 | 170.7s | exit 0. Each test 1.0–3.1s. |
+| ReleaseGateReportDeliveryTests | 2 | 2 | 0 | 0 | 129.1s | exit 0. One case over 30s. |
+| TestClassificationGuardTests | 1 | 1 | 0 | 0 | 0.7s | exit 0 |
+| WorktreeRetirementDeliveryE2ETests | 5 | 0 | 5 | 0 | 0.7s | exit 2. Windows gate. Rerun matched. |
+
+Tests at or above 30 seconds:
+
+| class | test | duration | outcome |
+|---|---|---:|---|
+| ReleaseGateReportDeliveryTests | C599_ReportRecovery | 64.6s | Passed |
 
 ## Failures
 
-None recorded yet.
+### OutputDistillationApplyCanaryTests
+
+`Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup` failed in 114ms.
+
+```
+InvalidOperationException: Both dedicated canary opt-ins are required.
+  at DistillerCanaryGuard.ValidateOptIns (Fixtures/DistillerCanaryApproval.cs:43)
+  at OutputDistillationApplyCanaryTests.Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup (OutputDistillationApplyCanaryTests.cs:40)
+```
+
+The class is `[Explicit]`, `[Category("Headed")]`, `[Category("OptIn")]`, and `[Category("HeadedCanary")]`. `ValidateOptIns` throws unless `ANTIPHON_HEADED_TESTS` and `ANTIPHON_DISTILLER_APPLY_CANARY` are both `1`. Those variables were unset, which is the unattended lane. The Windows assert at `OutputDistillationApplyCanaryTests.cs:46` was not reached. The class rerun failed the same way (1 failed, 0 passed). Cause: environment opt-in gate, not a flake and not a product failure observed on this run.
+
+### WorktreeRetirementDeliveryE2ETests
+
+All five cases failed the same assert. First case, `C459_AdmittedWorkspaceInputReachesRecipient(idle)`, 72ms:
+
+```
+ShouldAssertException: OperatingSystem.IsWindows()
+    should be
+True
+    but was
+False
+  at LandDeliveryFixture.InitializeAsync (Fixtures/LandDeliveryFixture.cs:59)
+  at WorktreeRetirementDeliveryE2ETests.C459_AdmittedWorkspaceInputReachesRecipient (WorktreeRetirementDeliveryE2ETests.cs:25)
+```
+
+The other four failed at the same fixture line:
+
+- `C459_AdmittedWorkspaceInputReachesRecipient(busy-then-released)`
+- `C459_AdmittedWorkspaceInputReachesRecipient(claim-first)`
+- `C459_LaunchReservationRecoveryRetainsOwnership(lost-enqueue)` (`WorktreeRetirementDeliveryE2ETests.cs:71`)
+- `C459_LaunchReservationRecoveryRetainsOwnership(unknown-start)` (`WorktreeRetirementDeliveryE2ETests.cs:71`)
+
+`tests/test-execution-policy.json` already excludes this class on Linux (CARD-1323): "Requires Windows ConPTY and native FakeGrok". A direct class filter still runs it, and the fixture asserts Windows instead of skipping. The class rerun was 5 failed, 0 passed, same assert. Cause: Windows/Linux gate, not a flake.
+
+### Skipped, not failed
+
+`ChannelOutboundIsolatedTests` (3): `Skipped: F-5 requires all three isolated opt-ins.` from `ChannelOutboundIsolatedTests.cs` `RequireOptIn`. `ANTIPHON_HEADED_TESTS`, `ANTIPHON_BROKER_TESTS`, and `ANTIPHON_CHANNEL_OUTBOUND_ISOLATED` were unset. Cause: environment opt-in (CARD-1305 D-6). Exit 8 because every selected test was skipped.
+
+## What this host ran
+
+Headless Chromium, the Postgres test container, and the isolated session runner all worked for the green classes in this shard (`BoardE2ETests`, `DirectoryAutocompleteE2ETests`, `ProjectDeleteE2ETests`, `ReleaseGateReportDeliveryTests`, `CreatedResourceTests`, `IsolatedSessionRunnerTeardownTests`, `TestClassificationGuardTests`). The two red classes are the existing Windows assert and the distiller-canary opt-in.
