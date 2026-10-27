@@ -273,7 +273,7 @@ public sealed class HostCleanupCheckpointReceiptTests
         control.Io.Count("directory-exists", control.Output).ShouldBeGreaterThan(0, label + "output-observation-entry");
         control.Io.Count("move", control.MarkdownPath).ShouldBe(1);
         control.Io.Count("move", control.JsonPath).ShouldBe(1);
-        control.Io.Count("open-read", control.MarkdownPath).ShouldBe(2, label + "positive-readback");
+        control.Io.Count("open-read", control.MarkdownPath).ShouldBe(3, label + "positive-readback");
         foreach (var variant in new[] { "markdown-write", "json-write", "markdown-readback", "json-readback" })
         {
             var f = new HostCleanupReceiptFixture(seed: false);
@@ -284,8 +284,9 @@ public sealed class HostCleanupCheckpointReceiptTests
                 var opens = 0;
                 f.Io.Before = (op, current) =>
                 {
-                    // First read belongs to SafeWrite's content record, second is required readback.
-                    if (op == "open-read" && current == path && ++opens == 2)
+                    // Publication verifies the destination, the content record reads it again,
+                    // and the third read is the required report readback.
+                    if (op == "open-read" && current == path && ++opens == 3)
                         f.Io.Put(path, f.Io.Text(path) + " ");
                 };
             }
@@ -295,7 +296,7 @@ public sealed class HostCleanupCheckpointReceiptTests
             {
                 ex.Message.ShouldBe("refused: required report receipt readback mismatching", label + variant);
                 f.Io.Count("move", path).ShouldBe(1, label + variant + ":write-succeeded");
-                f.Io.Count("open-read", path).ShouldBe(2, label + variant + ":readback-reached");
+                f.Io.Count("open-read", path).ShouldBe(3, label + variant + ":readback-reached");
             }
             else
             {
