@@ -7838,7 +7838,7 @@ c1008_recycle() {
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
-    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha=""
+    local model digest owned image id service facts name audit after code=0 detail current journal_root mount originals='{}' preserved='{}' previous_sha=""
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
     # case_deploy_parent has rewritten SOURCE_SHA12, so pin that compare to previousSha.
     # A missing or short previousSha leaves the pin unset and keeps the current-tag refusal.
@@ -7872,13 +7872,39 @@ c1008_recycle() {
     c1008_status_proof
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
         C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+        # Apply keeps the dryRun false lookup. A preview may read its own bound receipt.
+        if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview || c1008_refuse RecycleGitAuditUnknown
+        else
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+        fi
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+        # Audit a pinned preview image in memory. Do not save a journal or remove a volume.
+        # Without a pinned image the preview still reports auditPending and creates no helper.
+        if [ -n "${C994_IMAGE:-}" ]; then
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" \
+                || c1008_refuse RecycleGitAuditUnknown
+            code=0
+            audit="$(c1008_audit)" || code=$?
+            if [ "$code" != 0 ]; then
+                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+                [ -n "$detail" ] || detail='audit check=unclassified status= repo='
+                case "$code" in
+                    3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
+                    4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
+                    *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
+                esac
+            fi
+        fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
-        printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
+        if [ -n "${C994_IMAGE:-}" ]; then
+            printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=false\n' "$HOST_PROJECT"
+        else
+            printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
+        fi
         write_result true '' 0
     fi
     c1008_lock
@@ -8401,11 +8427,13 @@ c994_status_proof() {
     C994_MAIN="$(printf '%s' "$main" | jq -c '{available,dispatchEligible,acceptingNewWork,draining,retiredAt,buildVersion}')"
 }
 
-# Only bound host-owned receipts can supply an offline audit image. A preview is
-# never a lookup authority. Multiple matching receipts must carry the same digest.
+# Only bound host-owned receipts can supply an offline audit image. Apply accepts
+# only a dryRun false receipt. A dry-run recycle may read its bound preview receipt.
+# An unbound scan never treats a preview as authority. Multiple matching receipts
+# must carry the same digest.
 c994_lookup_image() {
     require_lane host
-    local operation="${1:-}" file record image='' candidate found='' root
+    local operation="${1:-}" accept_dry_run="${2:-}" file record image='' candidate found='' root allow=false
     C994_IMAGE=''; C994_ORIGINAL=''
     root="$SERVER2_ROOT/temp-container-retirement"
     [ ! -L "$root" ] || return 2
@@ -8415,6 +8443,7 @@ c994_lookup_image() {
         [[ "$operation" =~ ^c994[0-9a-f]{32}$ ]] || return 2
         [ -f "$root/$operation.json" ] || return 2
     fi
+    if [ "$accept_dry_run" = allow-preview ] && [ -n "$operation" ]; then allow=true; fi
     for file in "$root"/c994*.json; do
         [ -e "$file" ] || continue
         [ -f "$file" ] && [ ! -L "$file" ] || return 2
@@ -8432,8 +8461,8 @@ c994_lookup_image() {
             (if has("originalCleanupOperationId") then (.originalCleanupOperationId|test("^c994[0-9a-f]{32}$")) else true end)' >/dev/null || return 2
         [ "$(printf '%s' "$record" | jq -r .operationId)" = "$(basename "$file" .json)" ] || return 2
         if [ -n "$operation" ] && [ "$file" != "$root/$operation.json" ]; then continue; fi
-        if ! printf '%s' "$record" | jq -e --arg sha "$SHA" --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
-            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and .dryRun==false' >/dev/null; then
+        if ! printf '%s' "$record" | jq -e --arg sha "$SHA" --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" --argjson allow "$allow" \
+            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and (if $allow then (.dryRun==true or .dryRun==false) else .dryRun==false end)' >/dev/null; then
             [ -z "$operation" ] && continue; return 2
         fi
         candidate="$(printf '%s' "$record" | jq -r .image)"
