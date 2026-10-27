@@ -3,6 +3,8 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
+using System.Text;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -136,11 +138,20 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                 CompletedCardRunnerFixture.Git(f.Repository, "fetch", "--depth=1", "origin", "main");
                 CompletedCardRunnerFixture.Git(f.Checkout, "rev-parse", "--is-shallow-repository").Trim().ShouldBe("true"); break;
             case "other-repository":
-                File.WriteAllText(Path.Combine(f.Checkout, ".git"), "gitdir: " + Path.Combine(f.Origin, ".git") + "\n"); break;
+                CompletedCardRunnerFixture.OverwriteGitFile(Path.Combine(f.Checkout, ".git"),
+                    Encoding.UTF8.GetBytes("gitdir: " + Path.Combine(f.Origin, ".git") + "\n")); break;
             case "case-twin":
                 Directory.CreateDirectory(bin);
                 File.WriteAllText(Path.Combine(bin, "Twin"), "first");
-                File.WriteAllText(Path.Combine(bin, "twin"), "second");
+                try
+                {
+                    using var twin = new FileStream(Path.Combine(bin, "twin"), FileMode.CreateNew, FileAccess.Write);
+                    twin.Write(Encoding.UTF8.GetBytes("second"));
+                }
+                catch (IOException) when (File.Exists(Path.Combine(bin, "twin")))
+                {
+                    throw new SkipTestException("Case-twin inspection requires a case-sensitive scratch filesystem");
+                }
                 Directory.GetFiles(bin).Length.ShouldBe(2, "requires case-sensitive scratch filesystem"); break;
             default: throw new ArgumentException(shape);
         }

@@ -648,11 +648,14 @@ public sealed class SessionQueueReceiptPlumbingTests
                 {
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     var now = DateTime.UtcNow;
-                    db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = kind, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+                    db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = kind, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = spec.AcceptedStartedAt!.Value, LastSeenAt = now });
                     db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = now });
                     await db.SaveChangesAsync();
                 }
                 if (checkpoint is not null) await checkpoint("seeded", world);
+                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+                    (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).StartedAt
+                        .ShouldBe((await inner.GetAsync(sessionId, CancellationToken.None)).AcceptedStartedAt);
                 await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
                 using var hostLogStream = new FileStream(Path.Combine(logDirectory, "pty-hosts", "logs", $"{sessionId:N}.log"),
                     FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

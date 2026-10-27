@@ -55,9 +55,10 @@ public partial class HerdrAlwaysOnChannelParityTests
         TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory);
 
     [Test]
-    [Arguments(SessionBackend.Herdr)]
-    [Arguments(SessionBackend.PtyHost)]
-    public async Task AlwaysOn_channel_bound_survives_child_death_and_replies(SessionBackend backend)
+    [Arguments(SessionBackend.Herdr, AgentKind.ClaudeCode)]
+    [Arguments(SessionBackend.PtyHost, AgentKind.ClaudeCode)]
+    [Arguments(SessionBackend.Herdr, AgentKind.Grok)]
+    public async Task AlwaysOn_channel_bound_survives_child_death_and_replies(SessionBackend backend, AgentKind kind)
     {
         if (OperatingSystem.IsLinux())
             Skip.Test("CARD-0865: Linux standing/always-on channel parity awaits native recovery fixes.");
@@ -68,8 +69,12 @@ public partial class HerdrAlwaysOnChannelParityTests
         {
             if (backend == SessionBackend.Herdr)
             {
-                fake = new FakeHerdrServer();
-                fake.EchoSendTextToScreen = true;
+                fake = new FakeHerdrServer
+                {
+                    EchoSendTextToScreen = true,
+                    LaunchScriptAgentKind = kind == AgentKind.Grok ? HerdrAgentKinds.Grok : HerdrAgentKinds.Claude,
+                    GrokStartupScreen = kind == AgentKind.Grok ? GrokLinuxStartupFixture.Screen("1.0.41") : null,
+                };
                 fake.Start();
                 await fake.WaitUntilListeningAsync();
             }
@@ -83,7 +88,7 @@ public partial class HerdrAlwaysOnChannelParityTests
                 : Array.Empty<FakeAgentProtocolAdapter>();
 
             await using var harness = BuildHarness(tempRoot, backend, fake, ptyAdapters,
-                unifiedRecovery: true);
+                launchKind: kind, unifiedRecovery: true);
             foreach (var adapter in ptyAdapters)
                 adapter.RegisterOnStart = harness.Runtime;
 
@@ -103,6 +108,12 @@ public partial class HerdrAlwaysOnChannelParityTests
             await harness.Control.StartAsync(
                 agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+
+            if (backend == SessionBackend.Herdr && kind == AgentKind.ClaudeCode)
+            {
+                await RequireClaudeHerdrInputRefusedAsync(harness, await PersistedSessionId(agent.Id));
+                return;
+            }
 
             var firstSessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
             await using (var verify = CreateContext())

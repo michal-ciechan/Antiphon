@@ -253,8 +253,13 @@ internal static partial class CodexCliRemoteDeliveryFixture
         }
     }
 
-    internal static string RulesPath(string cwd, Guid sessionId) =>
-        cwd.TrimEnd('/') + "/instructions/grok/" + sessionId.ToString("N") + "/rules.md";
+    internal static string RulesPath(string cwd, Guid sessionId)
+    {
+        var separator = cwd.StartsWith(@"\\", StringComparison.Ordinal)
+            || (cwd.Length >= 3 && cwd[1] == ':' && cwd[2] == '\\') ? "\\" : "/";
+        return cwd.TrimEnd('/', '\\') + separator + "instructions" + separator + "grok"
+            + separator + sessionId.ToString("N") + separator + "rules.md";
+    }
 
     internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {

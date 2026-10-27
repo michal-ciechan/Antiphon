@@ -169,6 +169,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-grok-cwd-{sessionId:N}");
         var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-fake-grok-home-{sessionId:N}");
         Directory.CreateDirectory(cwd);
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
 
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakegrok",
@@ -205,9 +207,18 @@ public class SessionMessageQueueGrokPtyIntegrationTests
                     StartedAt = now,
                     LastSeenAt = now,
                 });
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd,
+                    StopReason = "end_turn", CreatedAt = now,
+                });
                 await db.SaveChangesAsync();
             }
 
+            // Supply the ingestion lane, as in the multiline sibling. The queue confirms the
+            // real tailer's UserPrompt rather than FakeGrok's retained screen echo.
+            pumping = PumpRunnerTranscriptAsync(client, sessionId, seedSequence: 1, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, "queued hello", MessageSendMode.Now, CancellationToken.None);
 
@@ -217,10 +228,14 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         }
         finally
         {
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            pump.Cancel();
+            if (pumping is not null) await pumping;
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
             try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
         }
@@ -353,7 +368,6 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             pump.Cancel();
             if (pumping is not null)
                 await pumping;
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -546,7 +560,6 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             pump.Cancel();
             if (pumping is not null)
                 await pumping;
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -690,7 +703,6 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             pump.Cancel();
             if (pumping is not null)
                 await pumping;
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
