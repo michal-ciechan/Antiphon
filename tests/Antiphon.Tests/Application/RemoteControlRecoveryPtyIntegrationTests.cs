@@ -91,7 +91,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         (await lane.WaitForRawAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(20)))
             .ShouldBeTrue("the child must open its management menu. Screen:\n" + lane.RawOutput());
 
-        await lane.Runtime.SendInputAsync(
+        // Explicit operator input clears the blocked dialog through the interactive entry point.
+        await lane.Runtime.SendInteractiveInputAsync(
             lane.SessionId, RemoteControlRecoveryService.EscPayload, CancellationToken.None,
             trackManualTurn: false);
         (await lane.WaitForRawAsync(s => s.Contains("RCMENU:closed"), TimeSpan.FromSeconds(20)))

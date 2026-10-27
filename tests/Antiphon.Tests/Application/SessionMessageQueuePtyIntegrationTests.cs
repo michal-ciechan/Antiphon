@@ -141,7 +141,6 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             pump.Cancel();
             if (pumping is not null) try { await pumping; } catch (OperationCanceledException) { }
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -262,7 +261,6 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             pump.Cancel();
             if (pumping is not null) try { await pumping; } catch (OperationCanceledException) { }
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -360,12 +358,15 @@ public class SessionMessageQueuePtyIntegrationTests
                 CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
 
             Guid[] pendingIds;
+            Guid alphaId, omegaId;
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
                 var pending = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ToListAsync();
                 pending.Count.ShouldBe(2);
                 pending.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
                 pendingIds = pending.Select(m => m.Id).Order().ToArray();
+                alphaId = pending.Single(m => m.Body.EndsWith("[T] batched alpha", StringComparison.Ordinal)).Id;
+                omegaId = pending.Single(m => m.Body.EndsWith("[T] batched omega", StringComparison.Ordinal)).Id;
             }
             SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBeEmpty();
             (await client.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.ShouldNotContain("SUBMITTED:");
@@ -390,8 +391,8 @@ public class SessionMessageQueuePtyIntegrationTests
                      && s.Contains("[T] batched omega"),
                 TimeSpan.FromSeconds(10));
             submitted.ShouldBeTrue("the batched body must pass verification and submit as one turn");
-            var expected = ChannelPromptFormat.BatchContextMarker + "\n[T] batched alpha\n\n"
-                + ChannelPromptFormat.BatchCurrentMarker + "\n[T] batched omega";
+            var expected = ChannelPromptFormat.BatchContextMarker + $"\n[antiphon-channel:{alphaId:N}] [T] batched alpha\n\n"
+                + ChannelPromptFormat.BatchCurrentMarker + $"\n[antiphon-channel:{omegaId:N}] [T] batched omega";
             SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe([expected]);
             (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe([expected]);
             await using var delivered = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -403,7 +404,6 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             pump.Cancel();
             if (pumping is not null) await pumping;
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -536,7 +536,6 @@ public class SessionMessageQueuePtyIntegrationTests
         {
             pump.Cancel();
             if (pumping is not null) await pumping;
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
@@ -638,7 +637,6 @@ public class SessionMessageQueuePtyIntegrationTests
         }
         finally
         {
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
         }

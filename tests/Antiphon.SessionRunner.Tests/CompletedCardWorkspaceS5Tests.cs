@@ -93,7 +93,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             CompletedCardRunnerFixture.Git(repo, "worktree", "add", "--detach", foreign, f.Sha);
             CompletedCardRunnerFixture.Git(foreign, "rev-parse", "HEAD").Trim().ShouldBe(f.Sha);
             var foreignSource = File.ReadAllBytes(Path.Combine(foreign, "source"));
-            File.WriteAllBytes(Path.Combine(f.Checkout, ".git"), File.ReadAllBytes(Path.Combine(foreign, ".git")));
+            CompletedCardRunnerFixture.OverwriteGitFile(Path.Combine(f.Checkout, ".git"), File.ReadAllBytes(Path.Combine(foreign, ".git")));
             var proofReads = 0; f.BeforeGitStart = psi => { if (psi.ArgumentList.Contains("ls-remote")) proofReads++; };
             Held(await r.Remove(), "stale_mirror_binding"); proofReads.ShouldBe(0);
             File.ReadAllBytes(Path.Combine(foreign, "source")).ShouldBe(foreignSource);
