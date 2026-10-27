@@ -15,6 +15,46 @@ function Assert-Check {
     $script:failed++
 }
 
+function Invoke-QualificationWitness {
+    param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutMilliseconds)
+    $exe = Join-Path $PSHOME 'pwsh'
+    $start = [Diagnostics.ProcessStartInfo]::new($exe)
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    [void]$start.ArgumentList.Add('-NoProfile')
+    [void]$start.ArgumentList.Add('-File')
+    [void]$start.ArgumentList.Add($ScriptPath)
+    foreach ($argument in @($Arguments)) { [void]$start.ArgumentList.Add([string]$argument) }
+    $proc = [Diagnostics.Process]::new()
+    $proc.StartInfo = $start
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    [void]$proc.Start()
+    $exited = $proc.WaitForExit($TimeoutMilliseconds)
+    $watch.Stop()
+    $stdout = ''
+    $stderr = ''
+    if ($exited) {
+        try { $stdout = [string]$proc.StandardOutput.ReadToEnd() } catch { $stdout = '' }
+        try { $stderr = [string]$proc.StandardError.ReadToEnd() } catch { $stderr = '' }
+    } else {
+        try { $proc.Kill($true) } catch { }
+        try { [void]$proc.WaitForExit(5000) } catch { }
+    }
+    $code = 1
+    if ($exited) {
+        try { $code = [int]$proc.ExitCode } catch { $code = 1 }
+    }
+    try { $proc.Dispose() } catch { }
+    return [pscustomobject]@{
+        Exited = [bool]$exited
+        ExitCode = $code
+        Seconds = $watch.Elapsed.TotalSeconds
+        StdOut = $stdout
+        StdErr = $stderr
+    }
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 $lib = Join-Path $repo 'scripts/lib'
 . (Join-Path $lib 'nightly-common.ps1')
@@ -238,6 +278,78 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
             }
         }
         Assert-Check ((-not [bool]$retained.CleanupComplete) -and $retainWatch.Elapsed.TotalSeconds -lt 12) 'linux-retained-writer-drain-is-incomplete'
+
+        # Killing the supervising PowerShell must take the setsid chunk and its grandchild with it.
+        $death = Join-Path $own 'death'
+        New-Item -ItemType Directory -Path $death -Force | Out-Null
+        $childSh = Join-Path $death 'child.sh'
+        $childBody = "echo `$`$ > `"`$1`"`nsleep 60 &`necho `$! > `"`$2`"`nwait`n"
+        [IO.File]::WriteAllText($childSh, $childBody.Replace("`r", ''))
+        $supScript = Join-Path $death 'supervisor.ps1'
+        $supBody = @'
+param([string]$Root, [string]$Lib)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Lib 'nightly-common.ps1')
+. (Join-Path $Lib 'nightly-tests-impl.ps1')
+$child = Join-Path $Root 'child.sh'
+$rootPid = Join-Path $Root 'root.pid'
+$leafPid = Join-Path $Root 'leaf.pid'
+Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @($child, $rootPid, $leafPid) -WorkingDirectory $Root -TimeoutMilliseconds 60000 -LogPath (Join-Path $Root 'out.log') | Out-Null
+'@
+        [IO.File]::WriteAllText($supScript, $supBody.Replace("`r", ''))
+        $supExe = Join-Path $PSHOME 'pwsh'
+        $supStart = [Diagnostics.ProcessStartInfo]::new($supExe)
+        $supStart.UseShellExecute = $false
+        foreach ($supArg in @('-NoProfile', '-File', $supScript, '-Root', $death, '-Lib', $lib)) {
+            [void]$supStart.ArgumentList.Add($supArg)
+        }
+        $supervisor = [Diagnostics.Process]::new()
+        $supervisor.StartInfo = $supStart
+        [void]$supervisor.Start()
+        $rootFile = Join-Path $death 'root.pid'
+        $leafFile = Join-Path $death 'leaf.pid'
+        $appeared = [Diagnostics.Stopwatch]::StartNew()
+        while ((-not (Test-Path -LiteralPath $leafFile)) -and $appeared.Elapsed.TotalSeconds -lt 8) {
+            Start-Sleep -Milliseconds 25
+        }
+        $chunkId = 0
+        $leafId = 0
+        $chunkParsed = $false
+        $leafParsed = $false
+        if (Test-Path -LiteralPath $rootFile) {
+            $chunkParsed = [int]::TryParse(([IO.File]::ReadAllText($rootFile).Trim()), [ref]$chunkId)
+        }
+        if (Test-Path -LiteralPath $leafFile) {
+            $leafParsed = [int]::TryParse(([IO.File]::ReadAllText($leafFile).Trim()), [ref]$leafId)
+        }
+        if ($supervisor.HasExited) {
+            try { $supervisor.Kill($true) } catch { }
+        } else {
+            try { $supervisor.Kill() } catch { }
+            try { [void]$supervisor.WaitForExit(5000) } catch { }
+        }
+        $reaped = $false
+        if ($chunkParsed -and $leafParsed -and $chunkId -gt 0 -and $leafId -gt 0) {
+            $reapWatch = [Diagnostics.Stopwatch]::StartNew()
+            while ($reapWatch.Elapsed.TotalSeconds -lt 2) {
+                $chunkProc = Get-Process -Id $chunkId -ErrorAction SilentlyContinue
+                $leafProc = Get-Process -Id $leafId -ErrorAction SilentlyContinue
+                $chunkAlive = ($null -ne $chunkProc -and -not $chunkProc.HasExited)
+                $leafAlive = ($null -ne $leafProc -and -not $leafProc.HasExited)
+                if ((-not $chunkAlive) -and (-not $leafAlive)) { $reaped = $true; break }
+                Start-Sleep -Milliseconds 20
+            }
+        }
+        Assert-Check ($appeared.Elapsed.TotalSeconds -lt 8 -and $chunkParsed -and $leafParsed -and $reaped) 'linux-supervisor-death-reaps-chunk-and-grandchild'
+        foreach ($ownedId in @($chunkId, $leafId)) {
+            if ($ownedId -lt 1) { continue }
+            $ownedProc = Get-Process -Id $ownedId -ErrorAction SilentlyContinue
+            if ($null -ne $ownedProc -and -not $ownedProc.HasExited) {
+                try { $ownedProc.Kill() } catch { }
+            }
+        }
+        try { if (-not $supervisor.HasExited) { $supervisor.Kill($true) } } catch { }
+        try { $supervisor.Dispose() } catch { }
     } finally {
         Remove-Item -LiteralPath $own -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -329,6 +441,157 @@ try {
     $readWatch.Stop()
     $boundedNull = ($null -ne $boundedSums -and $null -eq $boundedSums.processWaitSeconds)
     Assert-Check ($boundedError -eq '' -and $readWatch.Elapsed.TotalSeconds -lt 0.75 -and $boundedNull) 'terminal-parse-is-bounded'
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        $huge = Join-Path $boundTiming 'cases-80-huge.jsonl'
+        $hugeStream = [IO.File]::Create($huge)
+        try {
+            $chunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
+            for ($n = 0; $n -lt 100; $n++) { $hugeStream.Write($chunk, 0, $chunk.Length) }
+        } finally {
+            $hugeStream.Dispose()
+        }
+        $hugeResult = Join-Path $boundRoot 'huge.json'
+        $hugeScript = Join-Path $boundRoot 'huge.ps1'
+        $hugeBody = @'
+param([string]$Path, [string]$Result, [string]$Lib)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Lib 'nightly-common.ps1')
+. (Join-Path $Lib 'test-phase-evidence.ps1')
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$sw.Stop()
+$peak = [Diagnostics.Process]::GetCurrentProcess().PeakWorkingSet64
+$payload = [ordered]@{
+    seconds = $sw.Elapsed.TotalSeconds
+    peak = $peak
+    complete = [bool]$read.Complete
+    count = @($read.Records).Count
+}
+[IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
+'@
+        [IO.File]::WriteAllText($hugeScript, $hugeBody.Replace("`r", ''))
+        $hugeRun = Invoke-QualificationWitness -ScriptPath $hugeScript -Arguments @($huge, $hugeResult, $lib) -TimeoutMilliseconds 3000
+        $hugeOk = $false
+        if ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $hugeResult)) {
+            $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            $hugeOk = ([double]$hugeDoc.seconds -lt 0.2 -and [int64]$hugeDoc.peak -lt 256MB -and -not [bool]$hugeDoc.complete -and [int]$hugeDoc.count -eq 0)
+        }
+        Assert-Check $hugeOk 'oversized-line-stays-inside-byte-and-time-cap'
+
+        $fifoDir = Join-Path $boundTiming 'fifo-dir'
+        New-Item -ItemType Directory -Path $fifoDir -Force | Out-Null
+        $fifo = Join-Path $fifoDir 'cases-81-fifo.jsonl'
+        & mkfifo $fifo
+        $fifoOkCreated = ($LASTEXITCODE -eq 0)
+        $fifoResult = Join-Path $boundRoot 'fifo.json'
+        $fifoScript = Join-Path $boundRoot 'fifo.ps1'
+        $fifoBody = @'
+param([string]$Path, [string]$Result, [string]$Timing, [string]$Lib)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Lib 'nightly-common.ps1')
+. (Join-Path $Lib 'test-phase-evidence.ps1')
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$sums = Get-QualificationPhaseSums -TimingRoot $Timing -Chunk 'g1' -RunId 'run-fifo' -Suite 'antiphon' -Attempt '1'
+$sw.Stop()
+$waitNull = ($null -ne $sums -and $null -eq $sums.processWaitSeconds)
+$payload = [ordered]@{
+    seconds = $sw.Elapsed.TotalSeconds
+    complete = [bool]$read.Complete
+    count = @($read.Records).Count
+    waitNull = [bool]$waitNull
+}
+[IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
+'@
+        [IO.File]::WriteAllText($fifoScript, $fifoBody.Replace("`r", ''))
+        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 1500
+        $fifoOk = $false
+        if ($fifoOkCreated -and $fifoRun.Exited -and $fifoRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $fifoResult)) {
+            $fifoDoc = Get-Content -LiteralPath $fifoResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fifoOk = ([double]$fifoDoc.seconds -lt 0.2 -and -not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
+        }
+        Assert-Check $fifoOk 'fifo-cases-file-returns-inside-budget'
+
+        $denied = Join-Path $boundTiming 'cases-82-denied.jsonl'
+        [IO.File]::WriteAllText($denied, '{"recordKind":"header"}' + "`n")
+        & chmod 000 $denied
+        $deniedResult = Join-Path $boundRoot 'denied.json'
+        $deniedScript = Join-Path $boundRoot 'denied.ps1'
+        $deniedBody = @'
+param([string]$Path, [string]$Result, [string]$Lib)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Lib 'nightly-common.ps1')
+. (Join-Path $Lib 'test-phase-evidence.ps1')
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$side = Read-QualificationSidecar -Path $Path
+$sw.Stop()
+$payload = [ordered]@{
+    seconds = $sw.Elapsed.TotalSeconds
+    complete = [bool]$read.Complete
+    count = @($read.Records).Count
+    sideNull = ($null -eq $side)
+}
+[IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
+'@
+        [IO.File]::WriteAllText($deniedScript, $deniedBody.Replace("`r", ''))
+        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 1500
+        $deniedOk = $false
+        if ($deniedRun.Exited -and $deniedRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $deniedResult)) {
+            $deniedDoc = Get-Content -LiteralPath $deniedResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            $deniedOk = ([double]$deniedDoc.seconds -lt 0.2 -and -not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
+        }
+        Assert-Check $deniedOk 'unreadable-timing-file-returns-inside-budget'
+        & chmod 644 $denied
+
+        $launchRoot = Join-Path $boundRoot 'launch'
+        New-Item -ItemType Directory -Path $launchRoot -Force | Out-Null
+        $launchLog = Join-Path $launchRoot 'logs'
+        New-Item -ItemType Directory -Path $launchLog -Force | Out-Null
+        $launchFifo = Join-Path $launchLog 'antiphon-all.timing.json'
+        & mkfifo $launchFifo
+        $launchCreated = ($LASTEXITCODE -eq 0)
+        $launchMarker = Join-Path $launchRoot 'launched'
+        $launchSeam = Join-Path $launchRoot 'seam.ps1'
+        $launchSeamBody = @'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $argsText = @($ArgumentList) -join ' '
+        if ($argsText -match '--report-trx' -and $argsText -notmatch '--list-tests') {
+            [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, 'launched')
+        }
+        return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+    }
+}
+'@
+        [IO.File]::WriteAllText($launchSeam, $launchSeamBody.Replace("`r", ''))
+        $launchScript = Join-Path $launchRoot 'launch.ps1'
+        $launchBody = @'
+param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker)
+$ErrorActionPreference = 'Stop'
+$env:QTIMING_LAUNCH_MARKER = $Marker
+. (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
+. (Join-Path $Repo 'scripts/lib/nightly-policy.ps1')
+. (Join-Path $Repo 'scripts/lib/nightly-coverage.ps1')
+. (Join-Path $Repo 'scripts/lib/release-gate.ps1')
+. (Join-Path $Repo 'scripts/lib/release-selection.ps1')
+. (Join-Path $Repo 'scripts/lib/nightly-tests-impl.ps1')
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $LogRoot -TimingRoot (Join-Path $LogRoot 'timing') -Suites @('antiphon') -Profile 'nightly' -Sha 'd3fd72f941abda0fd6026f5e564d66ac410bdf47' -RunId 'fifo-launch' -Trigger 'manual' -SeamsPath $Seam -AllowSharedTree
+$sw.Stop()
+$launched = Test-Path -LiteralPath $Marker
+if ($launched -and $null -ne $result -and $sw.Elapsed.TotalSeconds -lt 12) { exit 0 }
+exit 1
+'@
+        [IO.File]::WriteAllText($launchScript, $launchBody.Replace("`r", ''))
+        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker) -TimeoutMilliseconds 12000
+        $launchOk = ($launchCreated -and $launchRun.Exited -and $launchRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $launchMarker))
+        Assert-Check $launchOk 'fifo-sidecar-does-not-delay-launch'
+    }
 } finally {
     Remove-Item -LiteralPath $boundRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
