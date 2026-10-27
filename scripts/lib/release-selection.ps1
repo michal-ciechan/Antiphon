@@ -53,7 +53,7 @@ function Get-ReleaseSelectionContract {
     if ($policy.selectionCatalog.hash -cne $catalog.catalogHash) { throw 'catalog-pin-mismatch' }
     $selectors = @{}
     foreach ($path in @('scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
-        $selectors[$path] = Get-TestSelectionDigest (Get-TestSelectionBlob $RepositoryRoot $Sha $path)
+        $selectors[$path] = Get-TestSelectionDigest (ConvertTo-TestSelectionLfText (Get-TestSelectionBlob $RepositoryRoot $Sha $path))
     }
     return [ordered]@{
         policyHash = $policy.policyHash; catalogHash = $catalog.catalogHash
