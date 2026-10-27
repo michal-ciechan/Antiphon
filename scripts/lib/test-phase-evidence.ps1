@@ -149,6 +149,8 @@ function ConvertTo-TestPhaseJsonText {
 
 function Write-TestPhaseTextAtomic {
     param([string]$Path, [string]$Text)
+    $identity = Get-TestPhasePathIdentity -Path $Path
+    if ($identity.Kind -eq 'unsupported' -or $identity.Kind -eq 'unreadable') { return }
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -156,7 +158,7 @@ function Write-TestPhaseTextAtomic {
     $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($tmp, $Text, $utf8)
-    if (Test-Path -LiteralPath $Path) {
+    if ($identity.Kind -eq 'regular') {
         $bak = $Path + '.bak'
         [System.IO.File]::Replace($tmp, $Path, $bak)
         if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue }
@@ -244,17 +246,179 @@ function Get-TestPhaseNativeIds {
     return @($ids.ToArray())
 }
 
-function Read-TestPhaseJsonlFile {
+function Initialize-TestPhaseLinuxIdentity {
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return }
+    if ('Antiphon.TestPhase.FileIdentity' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Antiphon.TestPhase {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LinuxStat {
+        public ulong Dev;
+        public ulong Ino;
+        public ulong Nlink;
+        public uint Mode;
+        public uint Uid;
+        public uint Gid;
+        public int Pad0;
+        public ulong Rdev;
+        public long Size;
+        public ulong A; public ulong B; public ulong C; public ulong D;
+        public ulong E; public ulong F; public ulong G; public ulong H;
+        public ulong I; public ulong J; public ulong K; public ulong L;
+    }
+    public static class FileIdentity {
+        [DllImport("libc", EntryPoint="lstat", SetLastError=true)]
+        public static extern int LStat(string path, out LinuxStat stat);
+        [DllImport("libc", EntryPoint="open", SetLastError=true)]
+        public static extern int Open(string path, int flags);
+        [DllImport("libc", EntryPoint="fstat", SetLastError=true)]
+        public static extern int FStat(int fd, out LinuxStat stat);
+        [DllImport("libc", EntryPoint="close", SetLastError=true)]
+        public static extern int Close(int fd);
+    }
+}
+'@
+}
+
+Initialize-TestPhaseLinuxIdentity
+
+function Get-TestPhasePathIdentity {
     param([string]$Path)
+    $missing = [pscustomobject]@{ Kind = 'missing'; Size = [int64]0 }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $missing }
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        if (-not (Test-Path -LiteralPath $Path)) { return $missing }
+        try { $attrs = [IO.File]::GetAttributes($Path) } catch {
+            return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
+        }
+        $directory = [IO.FileAttributes]::Directory
+        $reparse = [IO.FileAttributes]::ReparsePoint
+        if (($attrs -band $directory) -eq $directory) { return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]0 } }
+        if (($attrs -band $reparse) -eq $reparse) { return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]0 } }
+        $length = [int64]0
+        try { $length = [int64](Get-Item -LiteralPath $Path).Length } catch { $length = [int64]0 }
+        return [pscustomobject]@{ Kind = 'regular'; Size = $length }
+    }
+    Initialize-TestPhaseLinuxIdentity
+    if (-not ('Antiphon.TestPhase.FileIdentity' -as [type])) {
+        return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
+    }
+    $stat = New-Object Antiphon.TestPhase.LinuxStat
+    $code = [Antiphon.TestPhase.FileIdentity]::LStat($Path, [ref]$stat)
+    if ($code -ne 0) {
+        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($err -eq 2) { return $missing }
+        return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
+    }
+    $kind = ([uint32]$stat.Mode) -band 61440
+    if ($kind -eq 32768) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$stat.Size } }
+    return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]$stat.Size }
+}
+
+function Read-TestPhaseStreamBytes {
+    param($Stream, [int]$MaxBytes, [int]$DeadlineMilliseconds, $Watch)
+    $buffer = New-Object byte[] 8192
+    $ms = New-Object System.IO.MemoryStream
+    $complete = $true
+    while ($ms.Length -lt $MaxBytes) {
+        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $complete = $false; break }
+        $room = $MaxBytes - [int]$ms.Length
+        $want = 8192
+        if ($want -gt $room) { $want = $room }
+        $count = $Stream.Read($buffer, 0, $want)
+        if ($count -le 0) { break }
+        $ms.Write($buffer, 0, $count)
+    }
+    if ($complete -and $ms.Length -ge $MaxBytes) {
+        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
+            $complete = $false
+        } else {
+            $extra = $Stream.Read($buffer, 0, 1)
+            if ($extra -gt 0) { $complete = $false }
+        }
+    }
+    return [pscustomobject]@{ Bytes = $ms.ToArray(); Complete = [bool]$complete; Refused = $false; Kind = 'regular' }
+}
+
+function Read-TestPhaseBoundedBytes {
+    param(
+        [string]$Path,
+        [int]$MaxBytes = 262144,
+        [int]$DeadlineMilliseconds = 200,
+        $Watch = $null
+    )
+    $refused = [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'unreadable' }
+    if ($MaxBytes -lt 1) { $MaxBytes = 1 }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    $identity = Get-TestPhasePathIdentity -Path $Path
+    if ($identity.Kind -ne 'regular') {
+        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = [string]$identity.Kind }
+    }
+    $watch = $Watch
+    $stream = $null
+    $handle = $null
+    $fd = -1
+    try {
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $share = [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete)
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
+        } else {
+            # O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW. A FIFO open returns
+            # immediately; fstat then refuses anything that is not a regular file.
+            $fd = [Antiphon.TestPhase.FileIdentity]::Open($Path, 657408)
+            if ($fd -lt 0) { return $refused }
+            $stat = New-Object Antiphon.TestPhase.LinuxStat
+            $code = [Antiphon.TestPhase.FileIdentity]::FStat($fd, [ref]$stat)
+            if ($code -ne 0) { return $refused }
+            $kind = ([uint32]$stat.Mode) -band 61440
+            if ($kind -ne 32768) {
+                return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'unsupported' }
+            }
+            $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle ([IntPtr]$fd, $true)
+            $fd = -1
+            $stream = New-Object System.IO.FileStream ($handle, [IO.FileAccess]::Read, 8192, $false)
+        }
+        return (Read-TestPhaseStreamBytes -Stream $stream -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch)
+    } catch {
+        return $refused
+    } finally {
+        if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+        elseif ($null -ne $handle) { try { $handle.Dispose() } catch { } }
+        elseif ($fd -ge 0) { try { [void][Antiphon.TestPhase.FileIdentity]::Close($fd) } catch { } }
+    }
+}
+
+function ConvertTo-TestPhaseJsonlRecords {
+    param($Read, [int]$MaxLines = 4000, [int]$DeadlineMilliseconds = 200, $Watch = $null)
     $records = New-Object System.Collections.Generic.List[object]
     $torn = 0
     $malformed = 0
-    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
-    $reader = [System.IO.StreamReader]::new($stream)
-    try { $raw = $reader.ReadToEnd() } finally { $reader.Dispose(); $stream.Dispose() }
-    $parts = $raw.Split([string[]]@("`n"), [System.StringSplitOptions]::None)
-    for ($i = 0; $i -lt $parts.Length; $i++) {
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    if ($null -eq $Read -or [bool]$Read.Refused -or $null -eq $Read.Bytes) {
+        return [pscustomobject]@{ Records = @(); Torn = 1; Malformed = 0; Complete = $false }
+    }
+    $complete = [bool]$Read.Complete
+    if (-not $complete) { $torn = 1 }
+    $text = [Text.Encoding]::UTF8.GetString($Read.Bytes)
+    if ((-not $complete) -and (-not $text.EndsWith("`n"))) {
+        $cut = $text.LastIndexOf([char]10)
+        if ($cut -lt 0) { $text = '' }
+        else { $text = $text.Substring(0, $cut + 1) }
+    }
+    if ($MaxLines -lt 1) { $MaxLines = 1 }
+    $parts = $text.Split([string[]]@("`n"), [System.StringSplitOptions]::None)
+    $limit = $parts.Length
+    if ($limit -gt 0 -and $text.EndsWith("`n")) { $limit = $limit - 1 }
+    $lines = 0
+    for ($i = 0; $i -lt $limit; $i++) {
+        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $complete = $false; $torn = 1; break }
+        if ($lines -ge $MaxLines) { $complete = $false; $torn = 1; break }
         $line = $parts[$i].TrimEnd("`r")
+        $lines++
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $parsed = $null
         $ok = $true
@@ -264,12 +428,21 @@ function Read-TestPhaseJsonlFile {
             continue
         }
         $lastContent = $true
-        for ($j = $i + 1; $j -lt $parts.Length; $j++) {
-            if (-not [string]::IsNullOrWhiteSpace($parts[$j].TrimEnd("`r"))) { $lastContent = $false }
+        for ($j = $i + 1; $j -lt $limit; $j++) {
+            if (-not [string]::IsNullOrWhiteSpace($parts[$j].TrimEnd("`r"))) { $lastContent = $false; break }
         }
         if ($lastContent) { $torn++ } else { $malformed++ }
     }
-    return [pscustomobject]@{ Records = @($records.ToArray()); Torn = $torn; Malformed = $malformed; Path = $Path }
+    if ($lines -ge $MaxLines) { $complete = $false; if ($torn -lt 1) { $torn = 1 } }
+    return [pscustomobject]@{ Records = @($records.ToArray()); Torn = $torn; Malformed = $malformed; Complete = [bool]$complete }
+}
+
+function Read-TestPhaseJsonlFile {
+    param([string]$Path)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $watch
+    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $watch
+    return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
 }
 
 function Read-TestPhaseJsonlBounded {
@@ -279,40 +452,10 @@ function Read-TestPhaseJsonlBounded {
         [int]$MaxLines = 4000,
         [int]$DeadlineMilliseconds = 200
     )
-    $records = New-Object System.Collections.Generic.List[object]
-    $complete = $true
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
-    try {
-        $reader = [System.IO.StreamReader]::new($stream)
-        $bytes = 0
-        $lines = 0
-        while ($lines -lt $MaxLines -and $bytes -lt $MaxBytes) {
-            if ($watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
-                $complete = $false
-                break
-            }
-            $line = $reader.ReadLine()
-            if ($null -eq $line) { break }
-            $lines++
-            $bytes += [Text.Encoding]::UTF8.GetByteCount($line) + 1
-            if ($bytes -gt $MaxBytes) {
-                $complete = $false
-                break
-            }
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            $parsed = $null
-            $ok = $true
-            try { $parsed = $line | ConvertFrom-Json } catch { $ok = $false }
-            if ($ok -and $null -ne $parsed -and -not [string]::IsNullOrWhiteSpace([string]$parsed.recordKind)) {
-                $records.Add($parsed)
-            }
-        }
-        if ($lines -ge $MaxLines -or $bytes -ge $MaxBytes) { $complete = $false }
-    } finally {
-        $stream.Dispose()
-    }
-    return [pscustomobject]@{ Records = @($records.ToArray()); Complete = $complete; Path = $Path }
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch
+    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines $MaxLines -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch
+    return [pscustomobject]@{ Records = @($parsed.Records); Complete = [bool]$parsed.Complete; Path = $Path }
 }
 
 function Write-TestPhasePlannedManifest {
@@ -540,7 +683,7 @@ function Write-TestPhaseExecutedManifest {
     $topRun = [string]$RunId
     $topAttempt = [string]$Attempt
     $topSuite = [string]$Suite
-    if (Test-Path -LiteralPath $path) {
+    if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
         $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
         if ($existing.PSObject.Properties.Name -contains 'runId' -and -not [string]::IsNullOrWhiteSpace([string]$existing.runId)) { $topRun = [string]$existing.runId }
         if ($existing.PSObject.Properties.Name -contains 'attempt') { $topAttempt = [string]$existing.attempt }
@@ -648,7 +791,7 @@ function ConvertTo-TestPhaseSummaryRows {
 
     $trxGroups = @{}
     $executedPath = Join-Path $timing 'groups-executed.json'
-    if (Test-Path -LiteralPath $executedPath) {
+    if ((Get-TestPhasePathIdentity -Path $executedPath).Kind -eq 'regular') {
         $executed = [System.IO.File]::ReadAllText($executedPath) | ConvertFrom-Json
         foreach ($chunk in @($executed.chunks)) {
             if (-not [string]::IsNullOrWhiteSpace([string]$chunk.trx)) {
@@ -888,7 +1031,7 @@ function Write-TestPhaseSummaryFiles {
 function Invoke-TestPhaseRunSummary {
     param([string]$RunDirectory, [int]$Top = 50)
     $plannedPath = Join-Path (Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory) 'groups-planned.json'
-    if (-not (Test-Path -LiteralPath $plannedPath)) { return }
+    if ((Get-TestPhasePathIdentity -Path $plannedPath).Kind -ne 'regular') { return }
     try {
         $planned = [System.IO.File]::ReadAllText($plannedPath) | ConvertFrom-Json
         $report = ConvertTo-TestPhaseSummaryRows -Planned $planned -RunDirectory $RunDirectory
@@ -1129,10 +1272,12 @@ function ConvertFrom-QualificationJToken {
 
 function Read-QualificationSidecar {
     param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
-    $info = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
-    if ($null -eq $info -or [int64]$info.Length -gt 1048576) { return $null }
-    $text = [IO.File]::ReadAllText($Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $identity = Get-TestPhasePathIdentity -Path $Path
+    if ($identity.Kind -ne 'regular' -or [int64]$identity.Size -gt 1048576) { return $null }
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 1048576 -DeadlineMilliseconds 200
+    if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $null }
+    $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
     if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
         $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
         if (Test-Path -LiteralPath $dll) { Add-Type -Path $dll }
@@ -1145,6 +1290,33 @@ function Read-QualificationSidecar {
     }
     try { return ($text | ConvertFrom-Json) } catch { return $null }
 }
+
+function Initialize-TestPhaseReadWarmup {
+    # Compile the bounded reader before a measured call. A fresh process
+    # otherwise spends the read budget on the first invocation.
+    if ($script:TestPhaseReadWarmed) { return }
+    $script:TestPhaseReadWarmed = $true
+    $dir = $null
+    try {
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ('antiphon-timing-warm-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $path = Join-Path $dir 'cases-0-warm.jsonl'
+        $bytes = New-Object byte[] 262145
+        [IO.File]::WriteAllBytes($path, $bytes)
+        $null = Read-TestPhaseJsonlBounded -Path $path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+        $null = Get-QualificationPhaseSums -TimingRoot $dir -Chunk 'warm' -RunId 'warm' -Suite 'warm' -Attempt '0'
+        $side = Join-Path $dir 'side.json'
+        [System.IO.File]::WriteAllText($side, '{}')
+        $null = Read-QualificationSidecar -Path $side
+    } catch {
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($dir) -and (Test-Path -LiteralPath $dir)) {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Initialize-TestPhaseReadWarmup
 
 function Update-QualificationChunkTiming {
     param(
@@ -1168,8 +1340,19 @@ function Update-QualificationChunkTiming {
     try {
         if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Suite) -or [string]::IsNullOrWhiteSpace($Chunk)) { return }
         $path = Join-Path $LogRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
-        $prior = Read-QualificationSidecar -Path $path
         $bound = $PSBoundParameters
+        $launchPhase = ''
+        if ($bound.ContainsKey('LastPhase')) { $launchPhase = [string]$bound['LastPhase'] }
+        $launchWhy = ''
+        if ($bound.ContainsKey('Why')) { $launchWhy = [string]$bound['Why'] }
+        $launchCompleted = ''
+        if ($bound.ContainsKey('CompletedAt')) { $launchCompleted = ConvertTo-QualificationStampText $bound['CompletedAt'] }
+        # The pre-launch heartbeat must not read telemetry. A FIFO or slow
+        # sidecar here used to block the workload before its stopwatch started.
+        $prior = $null
+        if (-not ($launchPhase -eq 'run' -and [string]::IsNullOrWhiteSpace($launchWhy) -and [string]::IsNullOrWhiteSpace($launchCompleted))) {
+            $prior = Read-QualificationSidecar -Path $path
+        }
         $trx = ''
         if ($bound.ContainsKey('TrxPath')) { $trx = [string]$bound['TrxPath'] }
         elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'trx') { $trx = [string]$prior.trx }
