@@ -13,9 +13,34 @@ Task: `32365cdf`. Investigation in progress; several fixture mechanisms confirme
 
 ## Results
 
-Pending the native runs. Each class will retain its exact filter, pass/fail/skip counts, errors and stack in generated evidence. The historical digest is corroboration; raw TRX rows own the before counts.
+First-pass totals: historical **363 passed / 48 failed / 4 skipped** (415 tests); current **393 passed / 26 failed / 4 skipped** (423 tests). Four classes gained two tests each, so the totals are not identical selections. Eight classes have no current failures. Counts are P/F/S.
 
-First completed class: `SessionMessageQueuePtyIntegrationTests`, historical 3 passed / 5 failed; current 6 passed / 2 failed in 115.35s including gate/launch. Its fresh TRX is `logs/native-32365cdf/SessionMessageQueuePtyIntegrationTests-1/results.trx`.
+| Class | Historical | Native rc | Cause/classification |
+|---|---:|---:|---|
+| `SessionMessageQueuePtyIntegrationTests` | 3/5/0 | 6/2/0 | Fixture: marked batch expectation; confirmed cleanup race |
+| `SessionMessageQueueGrokPtyIntegrationTests` | 4/1/0 | 4/1/0 | Fixture: missing SessionStateStore prevents transcript ingestion |
+| `RemoteControlRecoveryPtyIntegrationTests` | 6/2/0 | 7/1/0 | Fixture: ordinary guarded Esc while dialog is Blocked |
+| `SessionQueueReceiptPlumbingTests` | 13/9/0 | 13/9/0 | Fixture: persisted start generation differs from accepted launch generation |
+| `HerdrAlwaysOnChannelParityTests` | 23/2/0 | 23/2/0 | Fixture: unsupported Herdr custody; native Claude refusal remains unresolved |
+| `DelegationBriefCeilingPtyTests` | 1/2/0 | 3/0/0 | fixed by rc/2026-10-27 |
+| `SessionRuntimeActionTests` | 27/1/0 | 27/1/0 | Timing failure at page-128 wait; isolated repeats underway |
+| `TerminalRunnerSeatReleaseTests` | 38/1/0 | 38/1/0 | Timing failure before BeforeDispatch; isolated repeats underway |
+| `DispatcherSiblingInspectionSchedulingTests` | 48/1/0 | 48/1/0 | Fixture: completed results no longer consume unfinished queue capacity |
+| `CodexCliObservationGapTests` | 6/1/0 | 6/1/0 | Fixture: mixed Windows/POSIX rules receipt path |
+| `GrokSignInRuntimeTests` | 0/1/0 | 0/1/0 | Product: incident insert awaits agent lock held by its awaiting caller |
+| `GrokDelegateEndToEndTests` | 3/3/0 | 5/1/0 | Fixture: unforced reply-before-SentAt timestamp assumption |
+| `PhoneHomeCompletedCardTransportTests` | 0/1/1 | 1/0/1 | fixed by rc/2026-10-27; Linux-only case remains skipped |
+| `ChannelOutboundRecoveryTests` | 16/2/0 | 18/0/0 | fixed by rc/2026-10-27 |
+| `AgentTaskStandingAgentDispatchTests` | 9/1/0 | 10/0/0 | fixed by rc/2026-10-27 |
+| `CardFilePrivacySyncTests` | 22/1/0 | 23/0/0 | fixed by rc/2026-10-27 |
+| `AgentTaskPipelineEndpointTests` | 3/1/0 | 3/1/0 | Fixture/environment: imports local policy 3/5/5 but expects 1/2/2 |
+| `FakeClaudeContractTests` | 48/1/0 | 51/0/0 | fixed by rc/2026-10-27 |
+| `CompletedCardWorkspaceRemovalTests` | 90/4/3 | 93/3/3 | Fixture/Windows: hidden .git overwrite and case-insensitive scratch |
+| `DaemonStartupDiagnosticsTests` | 2/6/0 | 10/0/0 | fixed by rc/2026-10-27 |
+| `GrokRulesHttpAcceptanceTests` | 0/1/0 | 0/1/0 | Intermittent shadow-copy rename denial; handle owner unconfirmed |
+| `WorkspaceSourceVerificationWireTests` | 1/1/0 | 4/0/0 | fixed by rc/2026-10-27 |
+
+“Fixed by rc/2026-10-27” is the requested label for a passing class on this rc; it does not claim a causal bisection. The first-pass runner used one exact class filter per invocation. Every row has `console.log`, `results.trx`, and `invocation.json` beneath `logs/native-32365cdf/<Class>-1/`. `first-pass.errors.log` retains every exact failing message and stack; `before.errors.log` retains the historical counterparts. No failing row is relabelled green because a later repeat passed.
 
 ## Evidence established while reruns continue
 
@@ -40,11 +65,13 @@ The current Grok end-to-end failure occurs after successful settlement: `GrokDel
 
 **Confirmed product self-blocking transaction in Grok sign-in.** The test detects sign-in (`outcome=SignIn`, 24ms) before its launch-queue wait times out. `AgentSessionService.cs:407` starts the launch-error transaction, `:416` locks the agent FOR UPDATE, `:458` awaits incident recording through a fresh scope (`:1577`), whose insert references the locked agent (`AppDbContext.cs:542`). Commit is later at `AgentSessionService.cs:480`. During isolated repeat 2, `signin-repeat2-b.db.log` at `06:03:37Z` records backend 95 idle in transaction and backend 96 inserting AgentIncidents, waiting on `transactionid` with blocker `{95}`. `signin-repeat2-locks.log` at `06:03:52Z` records PID 95 holding transaction 749 ExclusiveLock, PID 96 waiting for ShareLock on 749, and the `FK_AgentIncidents_Agents_AgentId` foreign key. The agent row is `1625fb5a-1117-4f25-bda8-93f51c84b44e`, session `06de6488-a061-4304-95ed-f001c2e21819`; the session is still Starting while the incident writer is blocked. This reconstructs the application-level await cycle, not merely a slow screen. The same test failed again; production occurrence frequency is not measured.
 
-The Grok short queue fixture records `SUBMITTED:queued hello` in retained raw output (`grok-queue-e407.ansi.log`) but Enqueue returns a no-output conflict. Unlike the multiline fixture, it starts no transcript pump and seeds no transcript entry (`SessionMessageQueueGrokPtyIntegrationTests.cs:139` versus `:331`). Native UserPrompt capture and a database snapshot are pending; raw terminal output alone is not the delivery verdict.
+**Confirmed missing ingestion dependency in the short Grok queue fixture.** Its service collection (`SessionMessageQueueGrokPtyIntegrationTests.cs:150-165`) registers AgentSessionRuntime without SessionStateStore. Nonempty transcript ingestion requires that store (`AgentSessionRuntime.cs:1262`); the exception is caught and recorded at `:1276-1280`, returning an empty persist result. Repeat 2's native JSONL records session `12e3f7b0-a491-4b1e-a090-67ad6699a770`, event `...-1`, `user_message_chunk`, text `queued hello`, `agentTimestampMs=1793081235211`, followed by a response and TurnEnd. `observe-SessionMessageQueueGrokPtyIntegrationTests-2.log` records the same Running session and zero TranscriptEntries in repeated snapshots through `06:07:34Z`. Thus the complete recipient receipt exists, but the harness cannot ingest it. The multiline fixture supplies a direct database pump at `:331`, which bypasses this missing runtime dependency. This is stronger evidence than the earlier raw `SUBMITTED` output alone.
 
 The remaining timing failures include `SessionRuntimeActionTests.cs:580` (first page not observed within 10s), `TerminalRunnerSeatReleaseTests.cs:628` (BeforeDispatch callback not entered within 10s), and Claude native standing-history recovery (`HerdrAlwaysOnChannelParityTests.StandingRecovery.cs:67`, observation-unknown). These remain unclassified until isolated repeats. The separate Herdr always-on failure also records observation-unknown: the first test expects Running at `HerdrAlwaysOnChannelParityTests.cs:107`, whereas the newer standing-recovery fixture explicitly expects guarded refusal for Claude/Herdr at `StandingRecovery.cs:61`.
 
-Pipeline HTTP still fails the Plan recommendation expectation at `AgentTaskPipelineStatusTests.cs:993`. The endpoint now uses the persisted policy when present (`AgentTaskPipelineStatusService.cs:358`), not the static recommendation fallback at `:355`. The stored policy value and its origin remain to be captured.
+**Confirmed pipeline fixture/configuration dependency.** The test expects Plan/Code/Review 1/2/2 at `AgentTaskPipelineStatusTests.cs:993-995`. The endpoint uses persisted policy (`AgentTaskPipelineStatusService.cs:358-367`). Repeat 3 captured row `8dde801a-cd8e-44cb-878d-588c44eeb6dc` in isolated database `test_8d0fec2210a64cb68f73e241d6ca0076`: scope global, revision 1, provenance Migration, import `06:11:58.2271537Z`, Plan=3, Code=5, Review=5, Investigate=3, absolute=6. These exactly match the five allowlisted numeric entries captured from local .NET user settings in `pipeline-safe-local-settings.json`; no credential values were logged. `server/Antiphon.Server.csproj:8` declares `antiphon-server` UserSecretsId; `AntiphonWebAppFactory.cs:93-130` overrides selected configuration but none of these policy keys. Startup imports the effective settings once (`DispatchConcurrencySettingsService.cs:70-82`). This is a fixture isolation issue, not evidence that the endpoint miscalculates its persisted policy.
+
+**Grok HTTP launch failure, handle owner unresolved.** The preserved `grok-http-*.log` from first pass reports `IOException: Access to ... .copying is denied` at `ShadowCopyStore.cs:63`, the staging-directory rename, before a PTY child launches. The test sees HTTP 500 at `GrokRulesHttpAcceptanceTests.cs:63`. Repeat 2 passes. The denial establishes the failed operation; it does not identify antivirus, an ACL, or a concurrent file holder. No such attribution is made.
 
 ## Not done, noted
 
