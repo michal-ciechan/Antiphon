@@ -20,7 +20,7 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 | PipelineGlanceE2ETests | 0 pass / 1 fail | 1 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | BoardE2ETests | 9 pass / 1 fail | 9 pass / 1 fail | Confirmed fixture navigation defect; Diff tab never selected | See Not done, noted |
 | WorkflowDeleteTests | 4 pass / 2 fail | 4 pass / 2 fail | Confirmed fixture routing assumptions predate Home/Workflows split | See Not done, noted |
-| AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+| AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Partial: 2 pass / 1 fail; 49 not rerun | Residue fixture confirmed; review receipt passed once, repeats pending | See Not done, noted |
 | DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | Pending | Pending | Not designed in Investigate |
 
 The single native build passed (39 warnings, zero errors, 220.67 seconds MSBuild / 222 seconds leased). `npm ci` and `npm run build` passed (106 seconds leased, 75 seconds slot wait). Source archive SHA-256: `6AA5990C26B3E5515C647BFE34BF8EBD6355C8D1A3F437C0D6525D6B0D0AC526`.
@@ -84,7 +84,7 @@ AgentTaskEventType.LandedWithResidue
 AgentTaskEventType.Landed
 ```
 
-`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:326` creates `.antiphon/valuable.txt` containing `owned user residue`; `AgentTaskLandDeliveryE2ETests.cs:213` expects `LandedWithResidue`. Current defaults retain `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`). The classifier's catch-all adds it to Evidence (`server/Application/Services/WorktreeIgnoredContentClassifier.cs:56`), and guarded removal copies evidence before reinspection/deletion (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs:120`). The product is executing the newer evidence-retention contract.
+`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:326` creates `.antiphon/valuable.txt` containing `owned user residue`; `AgentTaskLandDeliveryE2ETests.cs:213` expects `LandedWithResidue`. Current defaults retain `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`). The classifier's catch-all adds it to Evidence (`server/Application/Services/WorktreeIgnoredContentClassifier.cs:55`), and guarded removal copies evidence before reinspection/deletion (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs:120`). The product is executing the newer evidence-retention contract.
 
 Native proof is stored in `residue-proof.json`, extracted without changing the original snapshot at `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\444e140c28c042c4a7591b1f64cb23c0\delivery-evidence.json`:
 
@@ -93,6 +93,14 @@ Native proof is stored in `residue-proof.json`, extracted without changing the o
 - The native retained path is `trees/.retained/b8c053662b904df7b78ed47c178a867e/4b4184b373654d79afdbcdd552159b26/.antiphon/valuable.txt` under the fixture root. Its 18 bytes hash to `D3C4C32B9814B7F134582E5F3CB34F5AB69F9B08E99E5B904F8956275229038E`, exactly the UTF-8 hash of the fixture payload.
 
 Classification: stale fixture classification/expectation; no lost file, Windows ACL failure, or failed native publication demonstrated. The failure stops before the fixture's cleanup-retry assertions, so that later path is not covered by this run.
+
+## Review receipt: initial native rerun passes, additional repetitions pending
+
+`AgentTaskLandDeliveryE2ETests-review-initial/results.trx` reports one pass for `C488_ReviewDeliveryCrashMatrix_Batch5(prompt-before-verdict)`, 233.965 seconds host duration / 540.5 seconds outer wall (300 seconds admission). This single pass does not establish a fix.
+
+The historical `e2e-all-split-34.trx` failed at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs:269` because `note.ConfirmedAt` was `2026-10-27T03:38:38.5361780Z` rather than null. The test waits for the queue-before-verdict barrier (`:208`, `:211`), then assumes the notification remains unconfirmed (`:269`). The hook holds the queue's verdict-save path (`server/Application/Services/SessionMessageQueueService.cs:2804`; fixture `LandDeliveryOptions.cs:178`), while the notification service independently scans attempted rows for complete transcript evidence (`AgentTaskLandNotificationService.cs:258`, `:299`) and sets `ConfirmedAt` (`:355`). These are different boundaries. A complete stored UserPrompt can therefore discharge the note before the queued-message verdict is saved.
+
+Fresh passing-run root: `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\a316a3aafc40484794276e69730e8c5c`. Its barrier names Review task `03d3283d-0ab4-486b-a511-d62e39de9933`, queued row `199d4d46-25b9-4e1f-8f8a-140382453736` and child PID 378348. Its final snapshot contains caller UserPrompt sequence 4, header `[task 03d3283d done]`, timestamp `2026-10-27T07:45:49Z`. Repetitions will distinguish a newly stable result from the historical timing-dependent assertion; no flake frequency is inferred from one pass.
 
 ## Remaining work
 
