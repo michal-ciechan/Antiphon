@@ -33,6 +33,13 @@ function Get-TestSelectionDigest {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 
+function ConvertTo-TestSelectionLfText {
+    param([string]$Text)
+    # CR and CRLF become LF. Spaces, tabs and case stay, so an edit cannot pass.
+    if ($null -eq $Text) { return '' }
+    return $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
 function Get-TestSelectionCatalogHash {
     param($Catalog)
     $copy = @{}; foreach ($key in $Catalog.Keys) { if ($key -cne 'catalogHash') { $copy[$key] = $Catalog[$key] } }
@@ -169,8 +176,8 @@ function Get-TestSelection {
     $selectorFiles=@('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     $selectorBytes=@{}
     foreach($path in $selectorFiles){
-        $pinned=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $path
-        $actual=[IO.File]::ReadAllText((Join-Path (Split-Path (Split-Path $PSScriptRoot)) $path))
+        $pinned=ConvertTo-TestSelectionLfText (Get-TestSelectionBlob $RepositoryRoot $CandidateSha $path)
+        $actual=ConvertTo-TestSelectionLfText ([IO.File]::ReadAllText((Join-Path (Split-Path (Split-Path $PSScriptRoot)) $path)))
         if($pinned -cne $actual){throw 'selector-source-mismatch'}
         $selectorBytes[$path]=Get-TestSelectionDigest $pinned
     }
