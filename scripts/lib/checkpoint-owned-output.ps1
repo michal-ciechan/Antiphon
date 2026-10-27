@@ -15,22 +15,44 @@ function New-CheckpointFreshOutput {
     return Write-CheckpointSafeText (Join-Path $full '.checkpoint-output-owner.json') ([guid]::NewGuid().ToString('N')) $full
 }
 
+function Format-CheckpointInventoryRefusal {
+    param([string]$Full, [long]$Limit, [string]$Reason)
+    $size = -1L
+    try { $size = [int64]([System.IO.FileInfo]::new($Full).Length) } catch { }
+    $clean = ([string]$Reason).Replace("`r", ' ').Replace("`n", ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($clean)) { $clean = 'unreadable' }
+    return "output-inventory-failed: $Full size=$size limit=${Limit}: $clean"
+}
+
+# Hash regular output through the streaming 1 GiB content digest. Receipt reads stay at 64 MiB.
 function Seal-CheckpointFreshOutput {
     param([string]$Path)
     $entries = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     $queue = [System.Collections.Generic.Queue[string]]::new()
-    $queue.Enqueue([System.IO.Path]::GetFullPath($Path))
+    $root = [System.IO.Path]::GetFullPath($Path)
+    $queue.Enqueue($root)
+    $limit = [int64][Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ContentLimit
     while ($queue.Count -gt 0) {
         foreach ($full in [System.IO.Directory]::EnumerateFileSystemEntries($queue.Dequeue())) {
-            if ($null -ne ([System.IO.FileInfo]::new($full)).LinkTarget -or $null -ne ([System.IO.DirectoryInfo]::new($full)).LinkTarget -or ([System.IO.File]::GetAttributes($full) -band [System.IO.FileAttributes]::ReparsePoint)) { return 'output-inventory-failed' }
-            $relative = [System.IO.Path]::GetRelativePath($Path, $full).Replace('\', '/')
+            $relative = [System.IO.Path]::GetRelativePath($root, $full).Replace('\', '/')
             if ($relative -eq '.checkpoint-output-ledger.json') { continue }
+            $linked = $null -ne ([System.IO.FileInfo]::new($full)).LinkTarget -or $null -ne ([System.IO.DirectoryInfo]::new($full)).LinkTarget -or (([System.IO.File]::GetAttributes($full) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+            if ($linked) { return (Format-CheckpointInventoryRefusal $full $limit 'linked output') }
             if ([System.IO.Directory]::Exists($full)) { $entries[$relative] = 'directory'; $queue.Enqueue($full) }
             else {
-                try { $entries[$relative] = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $full))) }
-                catch { return 'output-inventory-failed' }
+                try {
+                    $digest = Get-CheckpointFileDigest $full
+                    if ($null -eq $digest -or $digest.Length -isnot [long] -or [int64]$digest.Length -lt 0 -or [int64]$digest.Length -gt $limit -or $digest.Sha256 -isnot [string] -or [string]$digest.Sha256 -cnotmatch '^[0-9A-F]{64}$') {
+                        throw [System.IO.InvalidDataException]::new('content digest invalid')
+                    }
+                    $entries[$relative] = [string]$digest.Sha256
+                } catch {
+                    $inner = $_.Exception
+                    while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+                    return (Format-CheckpointInventoryRefusal $full $limit ([string]$inner.Message))
+                }
             }
         }
     }
-    return Write-CheckpointSafeText (Join-Path $Path '.checkpoint-output-ledger.json') ($entries | ConvertTo-Json -Depth 6) $Path
+    return Write-CheckpointSafeText (Join-Path $root '.checkpoint-output-ledger.json') ($entries | ConvertTo-Json -Depth 6) $root
 }

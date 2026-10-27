@@ -1606,6 +1606,22 @@ separate bounds and custody. The scripts remain ASCII and require PS7 at runtime
 the parser-only harness requires actual Windows PowerShell 5.1 Desktop unless its
 explicit PS7 test switch is supplied. PS7 parsing is not Windows parser evidence.
 
+`Seal-CheckpointFreshOutput`, called by `run-checkpoint.ps1` after a verified build,
+inventories the fresh output the same way. Each regular file is hashed with
+`Get-CheckpointFileDigest`: streaming SHA-256, one 256 KiB chunk, the inclusive 1 GiB
+`ContentLimit`. The ledger value stays uppercase hex of those exact bytes, so a small
+file still matches a receipt-reader `SHA256.HashData` of `Read-CheckpointBytes`. The
+64 MiB cap remains the receipt and text bound only. Memory stays one chunk. Time is
+bounded by that size and the three-second stall window, which re-arms after every
+delivered chunk and does not assume a throughput. A file above the bound, or one that
+grows past the bound while it is read, is refused before a ledger is written. A
+symlink, reparse point, hard link, or non-regular file (FIFO, device) is refused too.
+The refusal names the file, the size, and the limit:
+`output-inventory-failed: <path> size=<bytes> limit=<bytes>: <reason>`.
+`scripts/test-checkpoint-output-inventory.ps1` seals a real 70 MiB file, refuses one
+byte over 1 GiB, a symlink, and a FIFO, checks growth on the same digest, and checks
+the small-file digest against the old buffered read.
+
 ## Opt-in per-test phase timing (CARD-1514)
 
 S1 and S2 record where a test spends time when a run opts in. The sole runtime enable is `ANTIPHON_TEST_PHASE_ROOT`. When that variable is unset or blank the recorder does nothing: no file, no stopwatch, no redaction, and no default path. Metadata variables are `ANTIPHON_TEST_PHASE_RUN_ID`, `ANTIPHON_TEST_PHASE_GROUP_ID`, `ANTIPHON_TEST_PHASE_ATTEMPT`, and `ANTIPHON_TEST_PHASE_SUITE`. Missing or invalid metadata disables only that recorder (`phase-metadata-missing`, `phase-root-invalid`). A failed append disables the sink with `phase-sink-failed` and leaves the test outcome unchanged. The rc profile sets the root to `<LogRoot>/timing` on the native test child only. Discovery, build, and ordinary child wrappers do not receive the variables. Ordinary CI and dev runs stay off unless the root is set.
