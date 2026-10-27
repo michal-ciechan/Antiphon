@@ -99,11 +99,13 @@ function New-C1313PolicyCandidate($Fx,$Catalog){
     [void](Invoke-C1313Git $Fx.Root @('add','--','tests/test-selection-policy.json','tests/test-execution-policy.json'))
     $tree=Invoke-C1313Git $Fx.Root @('write-tree');return Invoke-C1313Git $Fx.Root @('commit-tree',$tree,'-p',$Fx.B,'-m','policy')
 }
-function Invoke-C1313Selection($Fx,$A,$B=$Fx.B){
+function Invoke-C1313Selection($Fx,$A,$B=$Fx.B,[string]$ScriptRoot){
+    if([string]::IsNullOrWhiteSpace($ScriptRoot)){$ScriptRoot=$PSScriptRoot}
     . "$PSScriptRoot/lib/checkpoint-process-runner.ps1"
     $start=[Diagnostics.ProcessStartInfo]::new('pwsh');$start.WorkingDirectory=$repoRoot
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
-    foreach($a in @('-NoProfile','-File',"$PSScriptRoot/select-test-rosters.ps1",'-RepositoryRoot',$Fx.Root,'-BaselineSha',$B,'-CandidateSha',$A,'-Json')){$start.ArgumentList.Add($a)}
+    $selector=Join-Path $ScriptRoot 'select-test-rosters.ps1'
+    foreach($a in @('-NoProfile','-File',$selector,'-RepositoryRoot',$Fx.Root,'-BaselineSha',$B,'-CandidateSha',$A,'-Json')){$start.ArgumentList.Add($a)}
     $run=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,60000,$false)
     $doc=$null;if($run.Exit -eq 0){$doc=$run.Stdout|ConvertFrom-Json -AsHashtable}
     return @{Exit=$run.Exit;Document=$doc;Error=$run.Stderr}
@@ -358,6 +360,33 @@ function Get-C1313LfSelectorHash {
     }
     return Get-TestSelectionDigest $selectors
 }
+function New-C1313CrlfScriptRoot {
+    param([scriptblock]$Mutate)
+    $root=Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    $scripts=Join-Path $root 'scripts'
+    [void](New-Item -ItemType Directory (Join-Path $scripts 'lib') -Force)
+    $pinned=@('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
+    # Direct dot-sources plus the lib files test-selection.ps1 loads from its own directory.
+    $copied=@(
+        'scripts/select-test-rosters.ps1',
+        'scripts/lib/nightly-common.ps1',
+        'scripts/lib/nightly-policy.ps1',
+        'scripts/lib/test-selection.ps1',
+        'scripts/lib/checkpoint-process-runner.ps1',
+        'scripts/lib/checkpoint-file-reader.ps1'
+    )
+    foreach($path in $copied){
+        $lf=[IO.File]::ReadAllText((Join-Path $repoRoot $path))
+        if($lf.Contains("`r")){throw "live script is not LF: $path"}
+        $text=$lf.Replace("`n","`r`n")
+        if($Mutate -and $path -ceq 'scripts/lib/test-selection.ps1'){$text=& $Mutate $text}
+        if(-not $Mutate -and ($pinned -ccontains $path) -and (ConvertTo-TestSelectionLfText $text) -cne $lf){throw "CRLF round-trip changed $path"}
+        $dest=Join-Path $root ($path.Replace('/',[IO.Path]::DirectorySeparatorChar))
+        [IO.File]::WriteAllBytes($dest,[Text.Encoding]::UTF8.GetBytes($text))
+    }
+    [IO.File]::Copy((Join-Path $repoRoot 'scripts/lib/CheckpointProcessRunner.cs'),(Join-Path $scripts 'lib/CheckpointProcessRunner.cs'))
+    return $scripts
+}
 function Test-C1313_SelectorLineEndings {
     $fx=New-C1313GitFixture
     $crlf=New-C1313SelectorCandidate $fx { param($lf) $lf.Replace("`n","`r`n") }
@@ -384,6 +413,19 @@ function Test-C1313_SelectorLineEndings {
     $embedded=New-C1313SelectorCandidate $fx { param($lf) $lf.Insert(1,"`r") }
     $embeddedRun=Invoke-C1313Selection $fx $embedded
     Assert-C487 ($embeddedRun.Exit -eq 2 -and $embeddedRun.Error.Contains('selector-source-mismatch')) 'C1313 embedded-cr-refused' $embeddedRun.Error
+    $disk=New-C1313CrlfScriptRoot
+    $diskRoster=[IO.File]::ReadAllText((Join-Path $disk 'select-test-rosters.ps1'))
+    $diskSelector=[IO.File]::ReadAllText((Join-Path $disk 'lib/test-selection.ps1'))
+    $liveRoster=[IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/select-test-rosters.ps1'))
+    $liveSelector=[IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/lib/test-selection.ps1'))
+    Assert-C487 ($diskRoster.Contains("`r`n") -and $diskSelector.Contains("`r`n") -and (ConvertTo-TestSelectionLfText $diskRoster) -ceq $liveRoster -and (ConvertTo-TestSelectionLfText $diskSelector) -ceq $liveSelector) 'C1313 disk-selector-has-cr'
+    $diskRun=Invoke-C1313Selection $fx $fx.B $fx.B $disk
+    Assert-C487 ($diskRun.Exit -eq 0 -and $null -ne $diskRun.Document) 'C1313 crlf-disk-selector-accepted' ("exit={0} {1}" -f $diskRun.Exit,$diskRun.Error)
+    $diskHash=if($diskRun.Document){[string]$diskRun.Document.selectorHash}else{''}
+    Assert-C487 ($diskHash -ceq $expected) 'C1313 crlf-disk-selector-hash-is-lf' $diskHash
+    $edited=New-C1313CrlfScriptRoot { param($crlf) $crlf.Insert($crlf.IndexOf("`n")+1,"# c1313-disk-edit`r`n") }
+    $editedRun=Invoke-C1313Selection $fx $fx.B $fx.B $edited
+    Assert-C487 ($editedRun.Exit -eq 2 -and $editedRun.Error.Contains('selector-source-mismatch')) 'C1313 crlf-disk-selector-refused' $editedRun.Error
 }
 function Test-C1313_NewUidRemainder {
     $discovery=Get-C1313FilterDiscovery
