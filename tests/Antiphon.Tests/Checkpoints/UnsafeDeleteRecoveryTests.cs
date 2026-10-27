@@ -44,6 +44,19 @@ public sealed class UnsafeDeleteRecoveryTests
     }
 
     [Test]
+    public void anchored_delete_requires_a_nofollow_directory_and_the_recorded_identity()
+    {
+        var recorded = new FilesystemIdentity(7, 11, 13);
+        AnchoredDelete.Allowed(true, true, false, recorded, recorded, false).ShouldBeTrue();
+        AnchoredDelete.Allowed(false, true, false, recorded, recorded, false).ShouldBeFalse();
+        AnchoredDelete.Allowed(true, false, false, recorded, recorded, false).ShouldBeFalse();
+        AnchoredDelete.Allowed(true, true, true, recorded, recorded, false).ShouldBeFalse();
+        AnchoredDelete.Allowed(true, true, false, recorded, recorded, true).ShouldBeFalse();
+        AnchoredDelete.Allowed(true, true, false, recorded, new FilesystemIdentity(7, 99, 13), false).ShouldBeFalse();
+        AnchoredDelete.Allowed(true, true, false, default, default, false).ShouldBeFalse();
+    }
+
+    [Test]
     [Arguments(0x498)]
     [Arguments(0x499)]
     [Arguments(0)]
@@ -85,15 +98,23 @@ public sealed class UnsafeDeleteRecoveryTests
         public void Arm() => _armed = true;
         public override void Unlink(string path)
         {
-            if (_armed && !Swapped && string.Equals(Path.GetFileName(path), "payload.txt", StringComparison.Ordinal))
-            {
-                Swapped = true;
-                var aside = owned + ".aside";
-                Directory.Move(owned, aside);
-                Directory.CreateSymbolicLink(owned, Path.GetDirectoryName(aside) is { } parent
-                    ? Path.Combine(parent, "outside-repository") : owned);
-            }
+            SwapIfPayload(path);
             base.Unlink(path);
+        }
+        public override void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory)
+        {
+            SwapIfPayload(path);
+            base.DeleteAnchored(path, expectedEntry, directory);
+        }
+        private void SwapIfPayload(string path)
+        {
+            if (!_armed || Swapped || !string.Equals(Path.GetFileName(path), "payload.txt", StringComparison.Ordinal))
+                return;
+            Swapped = true;
+            var aside = owned + ".aside";
+            Directory.Move(owned, aside);
+            Directory.CreateSymbolicLink(owned, Path.GetDirectoryName(aside) is { } parent
+                ? Path.Combine(parent, "outside-repository") : owned);
         }
     }
 
@@ -147,6 +168,8 @@ public sealed class UnsafeDeleteRecoveryTests
         public virtual void Move(string source, string destination, bool overwrite) => _inner.Move(source, destination, overwrite);
         public virtual void Unlink(string path) => _inner.Unlink(path);
         public void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
+        public virtual void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) =>
+            _inner.DeleteAnchored(path, expectedEntry, directory);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
     }
 }

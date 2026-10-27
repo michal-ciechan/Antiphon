@@ -78,20 +78,24 @@ public sealed class CheckpointTempRootSweep
     private void WriteIndexEntry(string root)
     {
         var pending = "";
+        var armed = false;
         try
         {
             _io.CreateDirectory(IndexDirectory);
             if ((_io.Attributes(IndexDirectory) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("checkpoint index directory is linked");
             pending = IndexFile(root) + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            WriteText(pending, JsonSerializer.Serialize(Path.GetFullPath(root)));
-            _io.Move(pending, IndexFile(root), overwrite: true);
+            var text = JsonSerializer.Serialize(Path.GetFullPath(root));
+            WriteText(pending, text);
+            armed = true;
+            ReplacementPublication.Publish(_io, pending, IndexFile(root), Encoding.UTF8.GetBytes(text));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // The root's own marker is already durable enough to keep it visible to
             // inspection. Index failure must never turn a valid allocation into a failure.
-            if (pending.Length > 0)
+            // A publication that lost the destination keeps its temporary for recovery.
+            if (!armed && pending.Length > 0)
             {
                 try { _io.Unlink(pending); }
                 catch (IOException) { }
@@ -318,17 +322,24 @@ public sealed class CheckpointTempRootSweep
     private void WriteState(CursorState state)
     {
         var temp = StatePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var armed = false;
         try
         {
-            WriteText(temp, JsonSerializer.Serialize(state));
-            _io.Move(temp, StatePath, true);
+            var text = JsonSerializer.Serialize(state);
+            WriteText(temp, text);
+            armed = true;
+            ReplacementPublication.Publish(_io, temp, StatePath, Encoding.UTF8.GetBytes(text));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A reader or external handle may prevent replacement on Windows. Keep
             // the previous interval so the next sweep can retry without failing a test.
-            try { _io.Unlink(temp); }
-            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            // Do not delete a temporary whose destination was removed by the failure.
+            if (!armed)
+            {
+                try { _io.Unlink(temp); }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 

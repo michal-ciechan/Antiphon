@@ -285,6 +285,20 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
         if (Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path))) throw new IOException("directory not empty");
         Nodes.Remove(path);
     }
+    public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory)
+    {
+        Enter(directory ? "rmdir" : "unlink", path);
+        if (!Nodes.TryGetValue(path, out var node)) throw new FileNotFoundException(path);
+        var parent = Path.GetDirectoryName(path);
+        var parentOk = parent is not null && Nodes.TryGetValue(parent, out var parentNode)
+            && parentNode.Stat.Kind == "directory" && parentNode.Target is null;
+        var actual = new FilesystemIdentity(node.Stat.Device, node.Stat.Inode, node.Stat.Created);
+        if (!parentOk || node.Target is not null || !expectedEntry.SameAs(actual))
+            throw new IOException("anchored-identity-mismatch");
+        if (directory && Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path)))
+            throw new IOException("directory not empty");
+        Nodes.Remove(path);
+    }
 
     // Production canonicalizes with the host Path APIs. Match their separator aliases while
     // retaining the virtual platform's case rule; Linux fixtures on Windows use native paths too.
