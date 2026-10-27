@@ -5706,7 +5706,8 @@ public sealed partial class SessionMessageQueueService
                 m.Origin.ToString(),
                 m.DeliveryAttempts >= maxAttempts,
                 m.NoteHeader,
-                false))
+                false,
+                (string?)null))
             .ToListAsync(ct);
         var working = await ReadWorkingAsync(db, sessionId, ct);
         var reason = await ModalBlockReasonAsync(db, sessionId, ct);
