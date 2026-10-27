@@ -23,6 +23,10 @@ public sealed class TestSelectionTests
     public Task C1313_AuthorityChanges() => Run("C1313_AuthorityChanges", 2, "authority-full", "nonancestor-full");
     [Test]
     public Task C1313_DeterministicReasons() => Run("C1313_DeterministicReasons", 1, "deterministic-reasons");
+    [Test]
+    public Task C1313_SelectorLineEndings() => Run("C1313_SelectorLineEndings", 8,
+        "selector-blob-has-cr", "crlf-selector-accepted", "crlf-selector-hash-is-lf", "crlf-producer-hash-is-lf",
+        "selector-content-refused", "selector-case-refused", "selector-space-refused", "embedded-cr-refused");
     private static Task Run(string name, int rows, params string[] labels) =>
         ScriptHarness.RunHarnessCaseAsync("test-test-selection.ps1", "C1313", name, rows,
             labels.Select(label => "C1313 " + label).ToArray());
