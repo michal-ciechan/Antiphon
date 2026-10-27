@@ -86,6 +86,21 @@ public class PolledCompletionNoteShrinkTests
     }
 
     [Test]
+    public async Task a_withhold_charge_without_typing_still_shrinks()
+    {
+        await using var h = await CreateHarnessAsync();
+        var report = "a withhold charge is not typing, so the poll may still replace it";
+        await SeedAsync(h, report, DelegationNoteDigest.Compute(report), deliveryAttempts: 1, typed: false);
+
+        await FlushAsync(h);
+
+        var typed = h.Adapter.SubmittedBodies.Single();
+        typed.ShouldContain(Header);
+        typed.ShouldContain("Report withheld");
+        typed.ShouldNotContain(report);
+    }
+
+    [Test]
     public async Task a_shrunk_note_keeps_the_caller_facing_warning()
     {
         await using var h = await CreateHarnessAsync();
@@ -185,6 +200,7 @@ public class PolledCompletionNoteShrinkTests
         string report,
         string? polledDigest,
         int deliveryAttempts = 0,
+        bool typed = true,
         QueuedMessageOrigin origin = QueuedMessageOrigin.Delegation,
         string? header = null,
         string? body = null,
@@ -210,7 +226,7 @@ public class PolledCompletionNoteShrinkTests
             NoteHeader = header,
             CreatedAt = DateTime.UtcNow,
             DeliveryAttempts = deliveryAttempts,
-            LastDeliveryStartedAt = deliveryAttempts == 0 ? null : DateTime.UtcNow.AddSeconds(-5),
+            LastDeliveryStartedAt = deliveryAttempts == 0 || !typed ? null : DateTime.UtcNow.AddSeconds(-5),
         });
         await db.SaveChangesAsync();
         return new Seeded(task.Id, messageId, body);

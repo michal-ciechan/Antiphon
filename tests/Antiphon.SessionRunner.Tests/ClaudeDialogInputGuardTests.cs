@@ -10,6 +10,11 @@ public class ClaudeDialogInputGuardTests
 {
     private const string Clear = "────────────────────\n❯ \n────────────────────\n? for shortcuts";
     private const string Modal = "Do you want to proceed?\n❯ 1. Yes\n2. No\nEnter to confirm · Esc to cancel";
+    private const string Working = "Reading files…\n✻ Working… (esc to interrupt)";
+    private static string Composer(string draft) =>
+        "────────────────────\n❯ " + draft + "\n────────────────────\n? for shortcuts";
+    private static RunnerTranscriptReadiness Ready() =>
+        new("Ready", "native-file-conversation", 1, 1);
 
     [Test]
     public async Task C680_EveryWriteRechecksTheCurrentDialog()
@@ -202,6 +207,111 @@ public class ClaudeDialogInputGuardTests
         session.Child.Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task AdoptedHistoricalIdleWhileWorkingIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        adopted.Session.RenderDialogScreenForTest(Working);
+        (await adopted.SendAsync("into-working")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedScreenBecomesWorkingBeforeWriteIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        tailer.BeforeObservation = () => adopted.Session.PaintDialogScreenForTest(Working);
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("fence-race")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedTranscriptAdvancesBeforeWriteIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        tailer.BeforeObservation = () => tailer.Assistant("newer activity");
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("transcript-race")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedOperatorDraftIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        adopted.Session.RenderDialogScreenForTest(Composer("operator unsent draft"));
+        (await adopted.SendAsync("onto-draft")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedBehindTranscriptIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(new RunnerTranscriptReadiness("Behind", "native-file-conversation", 1, 2, "unread_suffix"));
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("behind")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedCompactionContinuationIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.Prompt("resume the compacted conversation");
+        tailer.CatchUp();
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("during-resume")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedEnterOnAnEmptyComposerIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("owned body text")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        (await adopted.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBe(["owned body text"]);
+    }
+
+    [Test]
+    public async Task AdoptedEnterDoesNotSubmitAnOperatorDraft()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("owned body text")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        adopted.Session.RenderDialogScreenForTest(Composer("operator unsent draft"));
+        (await adopted.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBe(["owned body text"]);
+    }
+
+    [Test]
+    public async Task KnownHistoryWorkingScreenIsStillTyped()
+    {
+        await using var known = new Fixture();
+        known.Session.RenderDialogScreenForTest(Working);
+        (await known.SendAsync("known-working")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        known.Child.Inputs.ShouldBe(["known-working"]);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));
@@ -243,7 +353,7 @@ public class ClaudeDialogInputGuardTests
 
     private sealed class Tailer(Guid id) : ITranscriptTailer
     {
-        public Action? BeforeObservation { get; init; }
+        public Action? BeforeObservation { get; set; }
         public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
         {
             BeforeObservation?.Invoke();
@@ -257,9 +367,14 @@ public class ClaudeDialogInputGuardTests
         public void Prompt(string text) => _snapshot = new(id,
             [new(id, 1, TranscriptKinds.UserPrompt, "native-prompt", null, DateTimeOffset.UtcNow,
                 "user", text, null, null, null, null, null)], 1);
-        public void EndTurn() => _snapshot = new(id,
+        public void EndTurn(RunnerTranscriptReadiness? readiness = null) => _snapshot = new(id,
             [new(id, 1, TranscriptKinds.TurnEnd, null, null, DateTimeOffset.UtcNow,
-                null, null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn)], 1);
+                null, null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn)], 1,
+            Readiness: readiness);
+        public void CatchUp() => _snapshot = _snapshot with
+        {
+            Readiness = new RunnerTranscriptReadiness("Ready", NativeBindingIdentity, _snapshot.LastSequence, _snapshot.LastSequence)
+        };
         public void Assistant(string text) => _snapshot = new(id,
             [new(id, 1, TranscriptKinds.AssistantText, null, null, DateTimeOffset.UtcNow,
                 "assistant", text, null, null, null, null, null)], 1);

@@ -161,6 +161,97 @@ public class AdoptedDialogDeliveryTests
         disabled.Items.ShouldNotContain(i => i.Kind == AttentionKind.PendingNotesAged);
     }
 
+    [Test]
+    public async Task AdoptedWorkingScreenWithHistoricalIdleIsWithheldOnce()
+    {
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync();
+        harness.Adapter.DialogAdopted = true;
+        harness.Adapter.RenderedScreenOverride = "Reading files…\n✻ Working… (esc to interrupt)";
+        await harness.InsertStoreVisibleTurnAsync("prior", "done");
+        await harness.Queue.EnqueueAsync(harness.SessionId, "working stale notice", MessageSendMode.WhenIdle, CancellationToken.None);
+        await harness.Queue.OnTurnEndAsync(harness.SessionId, CancellationToken.None);
+
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await AssertWithheldOnceAsync(harness, "Claude dialog observation unavailable: adopted session");
+    }
+
+    [Test]
+    public async Task AdoptedOperatorDraftIsNotSubmitted()
+    {
+        const string draft = "operator unsent draft";
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync();
+        harness.Adapter.DialogAdopted = true;
+        harness.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(draft: draft);
+        await harness.InsertStoreVisibleTurnAsync("prior", "done");
+        await harness.Queue.EnqueueAsync(harness.SessionId, draft, MessageSendMode.WhenIdle, CancellationToken.None);
+        await harness.Queue.OnTurnEndAsync(harness.SessionId, CancellationToken.None);
+
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await AssertWithheldOnceAsync(harness, "Claude dialog observation unavailable: adopted session");
+    }
+
+    [Test]
+    public async Task AdoptedIdleClearScreenDeliversOneCompleteUserPrompt()
+    {
+        const string body = "idle adopted notice";
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync();
+        harness.Adapter.DialogAdopted = true;
+        await harness.InsertStoreVisibleTurnAsync("prior", "done");
+        await harness.Queue.EnqueueAsync(harness.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        harness.Adapter.Inputs.Count(i => i == body).ShouldBe(1);
+        harness.Adapter.SubmittedBodies.ShouldBe([body]);
+        await AssertOneReceiptAsync(harness, body);
+    }
+
+    [Test]
+    public async Task AdoptedWithholdThenIdleDeliversOneUserPrompt()
+    {
+        const string body = "withheld then eligible notice";
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync();
+        harness.Adapter.DialogAdopted = true;
+        harness.Adapter.RenderedScreenOverride = "Reading files…\n✻ Working… (esc to interrupt)";
+        await harness.InsertStoreVisibleTurnAsync("prior", "done");
+        await harness.Queue.EnqueueAsync(harness.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+        await harness.Queue.OnTurnEndAsync(harness.SessionId, CancellationToken.None);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        await AssertWithheldOnceAsync(harness, "Claude dialog observation unavailable: adopted session");
+
+        harness.Adapter.RenderedScreenOverride = null;
+        await harness.Queue.OnTurnEndAsync(harness.SessionId, CancellationToken.None);
+
+        harness.Adapter.SubmittedBodies.ShouldBe([body]);
+        await AssertOneReceiptAsync(harness, body, attempts: 2);
+    }
+
+    private static async Task AssertWithheldOnceAsync(BridgeQueueHarness harness, string reason)
+    {
+        var queue = await harness.Queue.GetQueueAsync(harness.SessionId, CancellationToken.None);
+        queue.ModalBlockedReason.ShouldBe(reason);
+        await using var db = harness.CreateObserverContext();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == harness.SessionId);
+        row.Status.ShouldBe(QueuedMessageStatus.Pending);
+        row.DeliveryAttempts.ShouldBe(1);
+        row.LastDeliveryStartedAt.ShouldBeNull();
+        row.LastDeliveryGeneration.ShouldBeNull();
+    }
+
+    private static async Task AssertOneReceiptAsync(BridgeQueueHarness harness, string body, int attempts = 1)
+    {
+        await using var db = harness.CreateObserverContext();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == harness.SessionId);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryAttempts.ShouldBe(attempts);
+        var prompts = LandNoteReceipt.Prompts(
+            db.TranscriptEntries.AsNoTracking(), harness.SessionId, true, LandNotificationKind.Outcome,
+            row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt, 0);
+        prompts.ShouldNotBeNull();
+        (await prompts!.CountAsync()).ShouldBe(1);
+        (await LandNoteReceipt.FirstReceiptAsync(prompts, body, CancellationToken.None)).ShouldNotBeNull();
+    }
+
     private static async Task<Guid> AddSessionAsync(BridgeQueueHarness harness)
     {
         var id = Guid.NewGuid();

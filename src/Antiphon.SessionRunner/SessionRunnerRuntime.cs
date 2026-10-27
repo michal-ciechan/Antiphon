@@ -3910,6 +3910,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
+        /// <summary>Replace the rendered screen without moving the output-sequence fence.</summary>
+        internal void PaintDialogScreenForTest(string screen)
+        {
+            lock (_gate)
+            {
+                _screen = new TerminalScreen(120, 40);
+                _screen.Feed(screen.ReplaceLineEndings("\r\n"));
+            }
+        }
+
         // Supplies concrete backend state, never a qualification verdict.
         internal void SetTerminalBackendStateForTest(string status = "Running", string? pendingReason = null,
             string backend = SessionBackends.PtyHost)
