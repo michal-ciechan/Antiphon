@@ -24,9 +24,10 @@ public sealed class TestSelectionTests
     [Test]
     public Task C1313_DeterministicReasons() => Run("C1313_DeterministicReasons", 1, "deterministic-reasons");
     [Test]
-    public Task C1313_SelectorLineEndings() => Run("C1313_SelectorLineEndings", 8,
+    public Task C1313_SelectorLineEndings() => Run("C1313_SelectorLineEndings", 12,
         "selector-blob-has-cr", "crlf-selector-accepted", "crlf-selector-hash-is-lf", "crlf-producer-hash-is-lf",
-        "selector-content-refused", "selector-case-refused", "selector-space-refused", "embedded-cr-refused");
+        "selector-content-refused", "selector-case-refused", "selector-space-refused", "embedded-cr-refused",
+        "disk-selector-has-cr", "crlf-disk-selector-accepted", "crlf-disk-selector-hash-is-lf", "crlf-disk-selector-refused");
     private static Task Run(string name, int rows, params string[] labels) =>
         ScriptHarness.RunHarnessCaseAsync("test-test-selection.ps1", "C1313", name, rows,
             labels.Select(label => "C1313 " + label).ToArray());
