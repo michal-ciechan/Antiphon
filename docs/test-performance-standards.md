@@ -55,7 +55,7 @@ authorize repeating expensive work or crediting missing verification.
    `<suite>-<chunk>.timing.json` sits beside each TRX, including chunks that time out or
    produce no TRX. Fixture and process-wait seconds stay null when the JSONL has no matching
    complete record. The qualification wrapper does not take a build slot and does not distill
-   output, so those two fields stay null (`buildSlot` `not-used`). See
+   output, so those two fields stay null (`buildSlot` `not-used`). Linux supervisor-death custody is a known gap: the portable launcher was removed and Linux chunks use the Windows Job Object owner, which refuses on Linux. See
    [testing-and-build.md](testing-and-build.md#opt-in-per-test-phase-timing-card-1514).
 
 5. **R5 - Measure timeout budgets.** Per-test and per-row timeouts MUST be about 2x measured
