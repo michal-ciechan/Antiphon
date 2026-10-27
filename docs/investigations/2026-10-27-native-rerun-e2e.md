@@ -124,4 +124,22 @@ The single native build, frontend rebuild and all five whole-class runs are comp
 ## Not done, noted
 
 Board: the existing sibling change selects Diff before checking its content; WorkflowDelete: its route expectations need to follow the current Workflows route. No fix was designed or applied here.
+## Execution contract and performance limits
 
+Both delivery classes use the real Program, isolated runner and native FakeGrok (`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:23`). Initialization asserts Windows, locates ConPTY, and requires `fakegrok.exe` (`:59`–`:61`). It also rejects production runner port 17204 (`:89`) and records loaded runner identity/hash (`:140`–`:146`). These checks passed in the native executions; the reported failures occur later. No SDK, ACL, CRLF, path-length or ConPTY initialization failure was observed.
+
+Execution used this build once from the pinned export, followed by the frontend rebuild under its own gate:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label native-e2e-595bc226-build -- dotnet build tests/Antiphon.E2E --property:OutputPath=bin-595bc226/ --property:SourceRevisionId=d1d090f766451797a3bd9b30c9d2966f2f8c034c --nologo
+```
+
+Each ordinary class invocation had this shape (no source changes or rebuild between invocations):
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label <label> -- dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-595bc226/ -- --treenode-filter "/*/*/<Class>/*" --report-trx --report-trx-filename results.trx --results-directory <unique-evidence-directory>
+```
+
+The land selection substitutes exact methods `C467_V29_RealOutcomeProducerMatrix_Batch2` and `C488_ReviewDeliveryCrashMatrix_Batch5` for the final `*`. Additional diagnostic selection: `DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningReachesCaller`. All exact filters, UTC times and child exit codes are saved in per-run `run.json`; TRX files preserve every selected case and failure. `native-result-inventory.json` binds run results to SHA-256 hashes. These are native runs of the requested rc, not tests of the documentation branch's executable source.
+
+Host durations and slot waits are measured independently. The largest completed initial selection is the dispatch class at 24m23s host time; the original land class cost exceeds the entire task budget. Phase-level migration/setup/teardown breakdowns and p95 are not available from these E2E receipts; they are unknown, not zero. Shared-host contention is visible in the BUILD SLOT wait lines and is not treated as a product failure. No timeouts/assertions were widened, no failure was repaired, and no all-green claim is made.
