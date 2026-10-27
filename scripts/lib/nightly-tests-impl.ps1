@@ -1377,6 +1377,7 @@ function Invoke-AntiphonNightlyTests {
                         TrxPath = $timingTrx
                         RunId = $invocationId
                         Attempt = [string]$Attempt
+                        Terminal = $true
                     }
                     if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
                     Update-QualificationChunkTiming @timingUpdate

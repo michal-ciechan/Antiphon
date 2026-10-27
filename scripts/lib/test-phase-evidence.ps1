@@ -200,22 +200,104 @@ function Get-TestPhaseTimingDirectory {
     return (Join-Path $RunDirectory 'timing')
 }
 
+function Read-TestPhaseTrxAttribute {
+    param([string]$Attrs, [string]$Name)
+    if ([string]::IsNullOrEmpty($Attrs) -or [string]::IsNullOrEmpty($Name)) { return '' }
+    $pattern = '\b' + [regex]::Escape($Name) + '\s*=\s*"([^"]*)"'
+    $match = [regex]::Match($Attrs, $pattern)
+    if ($match.Success) { return [string]$match.Groups[1].Value }
+    $pattern = '\b' + [regex]::Escape($Name) + "\s*=\s*'([^']*)'"
+    $match = [regex]::Match($Attrs, $pattern)
+    if ($match.Success) { return [string]$match.Groups[1].Value }
+    return ''
+}
+
+function Get-TestPhaseStdOutText {
+    param([string]$Body)
+    if ([string]::IsNullOrEmpty($Body)) { return '' }
+    $open = $Body.IndexOf('<StdOut', [StringComparison]::Ordinal)
+    if ($open -lt 0) { return '' }
+    $gt = $Body.IndexOf('>', $open)
+    if ($gt -lt 0) { return '' }
+    $close = $Body.IndexOf('</StdOut>', $gt, [StringComparison]::Ordinal)
+    if ($close -lt 0) { return '' }
+    $inner = $Body.Substring($gt + 1, $close - ($gt + 1))
+    if ($inner.StartsWith('<![CDATA[', [StringComparison]::Ordinal) -and $inner.EndsWith(']]>', [StringComparison]::Ordinal) -and $inner.Length -ge 12) {
+        return $inner.Substring(9, $inner.Length - 12)
+    }
+    return $inner
+}
+
 function Read-TestPhaseTrxRows {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 200
+    )
     $rows = @()
-    if (-not (Test-Path -LiteralPath $Path)) { return $rows }
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.Load($Path)
-    foreach ($node in @($doc.GetElementsByTagName('UnitTestResult'))) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $rows }
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    $identity = Get-TestPhasePathIdentity -Path $Path
+    if ($identity.Kind -ne 'regular' -or [int64]$identity.Size -gt 262144) { return $rows }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $rows }
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+    if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $rows }
+    $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
+    $search = 0
+    while ($search -lt $text.Length) {
+        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return @() }
+        $idx = $text.IndexOf('UnitTestResult', $search, [StringComparison]::Ordinal)
+        if ($idx -lt 0) { break }
+        $lt = $text.LastIndexOf('<', $idx)
+        if ($lt -lt $search) { $search = $idx + 14; continue }
+        $between = $text.Substring($lt + 1, $idx - ($lt + 1))
+        if ($between -notmatch '^(\w+:)?$') { $search = $idx + 14; continue }
+        $i = $idx + 14
+        $inQuote = $false
+        $quote = [char]0
+        $end = -1
+        while ($i -lt $text.Length) {
+            $ch = $text[$i]
+            if ($inQuote) {
+                if ($ch -eq $quote) { $inQuote = $false }
+            } elseif ($ch -eq '"' -or $ch -eq "'") {
+                $inQuote = $true
+                $quote = $ch
+            } elseif ($ch -eq '>') {
+                $end = $i
+                break
+            }
+            $i++
+        }
+        if ($end -lt 0) { break }
+        $selfClose = ($end -gt ($lt + 1) -and $text[$end - 1] -eq '/')
+        $attrEnd = $end
+        if ($selfClose) { $attrEnd = $end - 1 }
+        $attrs = ''
+        $attrStart = $idx + 14
+        if ($attrEnd -gt $attrStart) { $attrs = $text.Substring($attrStart, $attrEnd - $attrStart) }
         $stdout = ''
-        foreach ($child in @($node.GetElementsByTagName('StdOut'))) {
-            $stdout = [string]$child.InnerText
+        if ($selfClose) {
+            $search = $end + 1
+        } else {
+            $close = $text.IndexOf('UnitTestResult', $end + 1, [StringComparison]::Ordinal)
+            $bodyEnd = $text.Length
+            if ($close -ge 0) {
+                $closeLt = $text.LastIndexOf('<', $close)
+                if ($closeLt -ge $end) { $bodyEnd = $closeLt }
+            }
+            if ($bodyEnd -gt ($end + 1)) {
+                $stdout = Get-TestPhaseStdOutText -Body $text.Substring($end + 1, $bodyEnd - ($end + 1))
+            }
+            $search = $bodyEnd
+            if ($search -le $end) { $search = $end + 1 }
         }
         $rows += [pscustomobject]@{
-            TestId = [string]$node.GetAttribute('testId')
-            Outcome = [string]$node.GetAttribute('outcome')
-            Name = [string]$node.GetAttribute('testName')
-            Duration = [string]$node.GetAttribute('duration')
+            TestId = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'testId')
+            Outcome = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'outcome')
+            Name = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'testName')
+            Duration = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'duration')
             StdOut = $stdout
             Path = $Path
         }
@@ -357,6 +439,9 @@ function Read-TestPhaseBoundedBytes {
     if ($identity.Kind -ne 'regular') {
         return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = [string]$identity.Kind }
     }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
+        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'budget' }
+    }
     $watch = $Watch
     $stream = $null
     $handle = $null
@@ -450,11 +535,12 @@ function Read-TestPhaseJsonlBounded {
         [string]$Path,
         [int]$MaxBytes = 262144,
         [int]$MaxLines = 4000,
-        [int]$DeadlineMilliseconds = 200
+        [int]$DeadlineMilliseconds = 200,
+        $Watch = $null
     )
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch
-    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines $MaxLines -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines $MaxLines -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
     return [pscustomobject]@{ Records = @($parsed.Records); Complete = [bool]$parsed.Complete; Path = $Path }
 }
 
@@ -658,8 +744,11 @@ function Write-TestPhaseExecutedManifest {
         [double]$HostWallSeconds = 0
     )
     $rows = @()
-    $trxMissing = -not (Test-Path -LiteralPath $TrxPath)
-    if (-not $trxMissing) { $rows = @(Read-TestPhaseTrxRows -Path $TrxPath) }
+    $trxIdentity = Get-TestPhasePathIdentity -Path $TrxPath
+    $trxMissing = ($trxIdentity.Kind -ne 'regular')
+    if ($trxIdentity.Kind -eq 'regular' -and [int64]$trxIdentity.Size -le 262144) {
+        $rows = @(Read-TestPhaseTrxRows -Path $TrxPath)
+    }
     $outcomes = New-Object System.Collections.Generic.List[object]
     $passed = 0
     foreach ($row in $rows) {
@@ -667,7 +756,9 @@ function Write-TestPhaseExecutedManifest {
         if ([string]$row.Outcome -eq 'Passed') { $passed++ }
     }
     $digest = ''
-    if (-not $trxMissing) { $digest = Get-NightlyFileSha256 -Path $TrxPath }
+    if ($trxIdentity.Kind -eq 'regular') {
+        try { $digest = Get-NightlyFileSha256 -Path $TrxPath } catch { $digest = '' }
+    }
     $exitCode = $null
     $coverageComplete = $null
     $testsPassed = $null
@@ -802,6 +893,7 @@ function ConvertTo-TestPhaseSummaryRows {
     $trxRows = @()
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
     foreach ($trx in $trxFiles) {
+        if ((Get-TestPhasePathIdentity -Path $trx.FullName).Kind -ne 'regular') { continue }
         foreach ($row in @(Read-TestPhaseTrxRows -Path $trx.FullName)) {
             $group = ''
             if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
@@ -1061,10 +1153,14 @@ function Get-QualificationNearestRank {
 }
 
 function Get-QualificationTrxStats {
-    param([string]$TrxPath)
-    if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) { return $null }
+    param(
+        [string]$TrxPath,
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 200
+    )
+    if ([string]::IsNullOrWhiteSpace($TrxPath)) { return $null }
     $named = @()
-    foreach ($row in @(Read-TestPhaseTrxRows -Path $TrxPath)) {
+    foreach ($row in @(Read-TestPhaseTrxRows -Path $TrxPath -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds)) {
         $seconds = $null
         try { $seconds = ([TimeSpan][string]$row.Duration).TotalSeconds } catch { $seconds = $null }
         if ($null -eq $seconds) { continue }
@@ -1176,41 +1272,94 @@ function ConvertTo-QualificationShardContribution {
     return [pscustomobject]@{ fixtures = $fixtures; processSpawn = $processSpawn; processWait = $processWait }
 }
 
+function Test-QualificationTimingDirectory {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return 'missing' }
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        if (-not (Test-Path -LiteralPath $Path)) { return 'missing' }
+        try { $attrs = [IO.File]::GetAttributes($Path) } catch { return 'unreadable' }
+        $reparse = [IO.FileAttributes]::ReparsePoint
+        $directory = [IO.FileAttributes]::Directory
+        if (($attrs -band $reparse) -eq $reparse) { return 'symlink' }
+        if (($attrs -band $directory) -eq $directory) { return 'directory' }
+        return 'other'
+    }
+    Initialize-TestPhaseLinuxIdentity
+    if (-not ('Antiphon.TestPhase.FileIdentity' -as [type])) { return 'unreadable' }
+    $stat = New-Object Antiphon.TestPhase.LinuxStat
+    $code = [Antiphon.TestPhase.FileIdentity]::LStat($Path, [ref]$stat)
+    if ($code -ne 0) {
+        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($err -eq 2) { return 'missing' }
+        return 'unreadable'
+    }
+    $kind = ([uint32]$stat.Mode) -band 61440
+    if ($kind -eq 16384) { return 'directory' }
+    if ($kind -eq 40960) { return 'symlink' }
+    if ($kind -eq 4096) { return 'fifo' }
+    return 'other'
+}
+
 function Get-QualificationPhaseSums {
     param(
         [string]$TimingRoot,
         [string]$Chunk,
         [string]$RunId = '',
         [string]$Suite = '',
-        [string]$Attempt = ''
+        [string]$Attempt = '',
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 500
     )
     $empty = [pscustomobject]@{
         fixtureSetupSeconds = $null
         fixtureTeardownSeconds = $null
         processSpawnSeconds = $null
         processWaitSeconds = $null
+        refused = $false
     }
-    if ([string]::IsNullOrWhiteSpace($TimingRoot) -or -not (Test-Path -LiteralPath $TimingRoot)) { return $empty }
+    if ([string]::IsNullOrWhiteSpace($TimingRoot)) { return $empty }
+    $listing = Test-QualificationTimingDirectory -Path $TimingRoot
+    if ($listing -eq 'missing') { return $empty }
+    if ($listing -ne 'directory') {
+        $empty.refused = $true
+        return $empty
+    }
     if (-not $script:QualificationPhaseShardCache) { $script:QualificationPhaseShardCache = @{} }
-    $budget = [Diagnostics.Stopwatch]::StartNew()
+    $ownedWatch = $false
+    if ($null -eq $Watch) {
+        $Watch = [Diagnostics.Stopwatch]::StartNew()
+        $ownedWatch = $true
+    }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     $seenFixtures = @{}
     $fixtureSetup = $null
     $fixtureTeardown = $null
     $processSpawn = $null
     $processWait = $null
-    foreach ($shard in @(Get-ChildItem -LiteralPath $TimingRoot -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)) {
-        if ($budget.ElapsedMilliseconds -ge 500) { break }
+    $refused = $false
+    $shards = @(Get-ChildItem -LiteralPath $TimingRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
+    foreach ($shard in $shards) {
+        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $refused = $true; break }
+        $shardIdentity = Get-TestPhasePathIdentity -Path $shard.FullName
+        if ($shardIdentity.Kind -ne 'regular') { $refused = $true; continue }
         $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
-        $key = ([string]$shard.FullName + '|' + [string]$shard.Length + '|' + [string]$shard.LastWriteTimeUtc.Ticks + '|' + $identity)
+        $stamp = 0L
+        try { $stamp = [int64]$shard.LastWriteTimeUtc.Ticks } catch { $stamp = 0L }
+        $key = ([string]$shard.FullName + '|' + [string]$shardIdentity.Size + '|' + [string]$stamp + '|' + $identity)
         $contribution = $null
         if ($script:QualificationPhaseShardCache.ContainsKey($key)) {
             $contribution = $script:QualificationPhaseShardCache[$key]
         } else {
-            $left = 500 - [int]$budget.ElapsedMilliseconds
-            if ($left -lt 1) { break }
+            $left = $DeadlineMilliseconds - [int]$Watch.ElapsedMilliseconds
+            if ($left -lt 1) { $refused = $true; break }
             $slice = $left
-            if ($slice -gt 200) { $slice = 200 }
-            $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $slice
+            if ($ownedWatch -and $slice -gt 200) { $slice = 200 }
+            if ($ownedWatch) {
+                $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $slice
+            } else {
+                $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+            }
+            if (-not $parsed.Complete) { $refused = $true }
             $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
             if ($parsed.Complete) { $script:QualificationPhaseShardCache[$key] = $contribution }
         }
@@ -1241,6 +1390,7 @@ function Get-QualificationPhaseSums {
     if ($null -ne $fixtureTeardown) { $empty.fixtureTeardownSeconds = [math]::Round([double]$fixtureTeardown, 3) }
     if ($null -ne $processSpawn) { $empty.processSpawnSeconds = [math]::Round([double]$processSpawn, 3) }
     if ($null -ne $processWait) { $empty.processWaitSeconds = [math]::Round([double]$processWait, 3) }
+    $empty.refused = [bool]$refused
     return $empty
 }
 
@@ -1270,14 +1420,48 @@ function ConvertFrom-QualificationJToken {
     return $null
 }
 
+function Test-QualificationSidecarDense {
+    param([string]$Text, [int]$Limit, $Watch, [int]$DeadlineMilliseconds)
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    $commas = 0
+    $colons = 0
+    $commaAt = 0
+    $colonAt = 0
+    while ($commaAt -ge 0 -and $commas -le $Limit) {
+        if ($null -ne $Watch -and $Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $true }
+        $commaAt = $Text.IndexOf(',', $commaAt, [StringComparison]::Ordinal)
+        if ($commaAt -lt 0) { break }
+        $commas++
+        $commaAt++
+    }
+    while ($colonAt -ge 0 -and $colons -le $Limit) {
+        if ($null -ne $Watch -and $Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $true }
+        $colonAt = $Text.IndexOf(':', $colonAt, [StringComparison]::Ordinal)
+        if ($colonAt -lt 0) { break }
+        $colons++
+        $colonAt++
+    }
+    return ($commas -gt $Limit -or $colons -gt $Limit)
+}
+
 function Read-QualificationSidecar {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 200
+    )
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     $identity = Get-TestPhasePathIdentity -Path $Path
-    if ($identity.Kind -ne 'regular' -or [int64]$identity.Size -gt 1048576) { return $null }
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 1048576 -DeadlineMilliseconds 200
+    if ($identity.Kind -ne 'regular' -or [int64]$identity.Size -gt 262144) { return $null }
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
     if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $null }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
+    if (Test-QualificationSidecarDense -Text $text -Limit 4000 -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds) { return $null }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
         $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
         if (Test-Path -LiteralPath $dll) { Add-Type -Path $dll }
@@ -1339,79 +1523,136 @@ function Update-QualificationChunkTiming {
     )
     try {
         if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Suite) -or [string]::IsNullOrWhiteSpace($Chunk)) { return }
-        $path = Join-Path $LogRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
+        if (-not $script:QualificationChunkMemory) { $script:QualificationChunkMemory = @{} }
+        $key = ([string]$LogRoot + '|' + [string]$Suite + '|' + [string]$Chunk)
+        $memory = $null
+        if ($script:QualificationChunkMemory.ContainsKey($key)) { $memory = $script:QualificationChunkMemory[$key] }
         $bound = $PSBoundParameters
-        $launchPhase = ''
-        if ($bound.ContainsKey('LastPhase')) { $launchPhase = [string]$bound['LastPhase'] }
-        $launchWhy = ''
-        if ($bound.ContainsKey('Why')) { $launchWhy = [string]$bound['Why'] }
-        $launchCompleted = ''
-        if ($bound.ContainsKey('CompletedAt')) { $launchCompleted = ConvertTo-QualificationStampText $bound['CompletedAt'] }
-        # The pre-launch heartbeat must not read telemetry. A FIFO or slow
-        # sidecar here used to block the workload before its stopwatch started.
-        $prior = $null
-        if (-not ($launchPhase -eq 'run' -and [string]::IsNullOrWhiteSpace($launchWhy) -and [string]::IsNullOrWhiteSpace($launchCompleted))) {
-            $prior = Read-QualificationSidecar -Path $path
+        $path = Join-Path $LogRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
+        $timingRootText = ''
+        if ($bound.ContainsKey('TimingRoot') -and -not [string]::IsNullOrWhiteSpace([string]$bound['TimingRoot'])) {
+            $timingRootText = [string]$bound['TimingRoot']
+        } elseif ($null -ne $memory -and $memory.ContainsKey('timingRoot') -and -not [string]::IsNullOrWhiteSpace([string]$memory['timingRoot'])) {
+            $timingRootText = [string]$memory['timingRoot']
+        } elseif ($bound.ContainsKey('TimingRoot')) {
+            $timingRootText = [string]$bound['TimingRoot']
         }
         $trx = ''
         if ($bound.ContainsKey('TrxPath')) { $trx = [string]$bound['TrxPath'] }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'trx') { $trx = [string]$prior.trx }
+        elseif ($null -ne $memory -and $memory.ContainsKey('trx')) { $trx = [string]$memory['trx'] }
         $whyText = ''
         if ($bound.ContainsKey('Why')) { $whyText = [string]$bound['Why'] }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'why') { $whyText = [string]$prior.why }
+        elseif ($null -ne $memory -and $memory.ContainsKey('why')) { $whyText = [string]$memory['why'] }
         $phaseText = ''
         if ($bound.ContainsKey('LastPhase')) { $phaseText = [string]$bound['LastPhase'] }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'lastPhase') { $phaseText = [string]$prior.lastPhase }
+        elseif ($null -ne $memory -and $memory.ContainsKey('lastPhase')) { $phaseText = [string]$memory['lastPhase'] }
         $startedText = ''
         if ($bound.ContainsKey('StartedAt')) { $startedText = ConvertTo-QualificationStampText $bound['StartedAt'] }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'startedAt') { $startedText = ConvertTo-QualificationStampText $prior.startedAt }
+        elseif ($null -ne $memory -and $memory.ContainsKey('startedAt')) { $startedText = [string]$memory['startedAt'] }
         $completedText = ''
         if ($bound.ContainsKey('CompletedAt')) { $completedText = ConvertTo-QualificationStampText $bound['CompletedAt'] }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'completedAt') { $completedText = ConvertTo-QualificationStampText $prior.completedAt }
+        elseif ($null -ne $memory -and $memory.ContainsKey('completedAt')) { $completedText = [string]$memory['completedAt'] }
         $queue = $null
         if ($bound.ContainsKey('QueueWaitSeconds')) { $queue = $QueueWaitSeconds }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'queueWaitSeconds') { $queue = $prior.queueWaitSeconds }
+        elseif ($null -ne $memory -and $memory.ContainsKey('queueWaitSeconds')) { $queue = $memory['queueWaitSeconds'] }
         $build = $null
         if ($bound.ContainsKey('BuildSeconds')) { $build = $BuildSeconds }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'buildSeconds') { $build = $prior.buildSeconds }
+        elseif ($null -ne $memory -and $memory.ContainsKey('buildSeconds')) { $build = $memory['buildSeconds'] }
         $discovery = $null
         if ($bound.ContainsKey('DiscoverySeconds')) { $discovery = $DiscoverySeconds }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'discoverySeconds') { $discovery = $prior.discoverySeconds }
+        elseif ($null -ne $memory -and $memory.ContainsKey('discoverySeconds')) { $discovery = $memory['discoverySeconds'] }
         $runWall = $null
         if ($bound.ContainsKey('RunWallSeconds')) { $runWall = $RunWallSeconds }
-        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'runWallSeconds') { $runWall = $prior.runWallSeconds }
+        elseif ($null -ne $memory -and $memory.ContainsKey('runWallSeconds')) { $runWall = $memory['runWallSeconds'] }
         $trxMissing = $true
-        $stats = $null
-        if (-not [string]::IsNullOrWhiteSpace($trx) -and (Test-Path -LiteralPath $trx)) {
-            $trxMissing = $false
-            $stats = Get-QualificationTrxStats -TrxPath $trx
-        }
-        $heartbeat = ($phaseText -eq 'run' -and [string]::IsNullOrWhiteSpace($whyText) -and [string]::IsNullOrWhiteSpace($completedText))
-        if ($heartbeat) {
-            $phases = [ordered]@{
-                fixtureSetupSeconds = $null
-                fixtureTeardownSeconds = $null
-                processSpawnSeconds = $null
-                processWaitSeconds = $null
+        $p50 = $null
+        $p95 = $null
+        $max = $null
+        $slow = @()
+        $count = 0
+        $phaseSetup = $null
+        $phaseTear = $null
+        $phaseSpawn = $null
+        $phaseWait = $null
+        if ($Terminal) {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $refused = $false
+            $sideIdentity = Get-TestPhasePathIdentity -Path $path
+            $priorSide = $null
+            if ($sideIdentity.Kind -eq 'missing') {
+                $priorSide = $null
+            } elseif ($sideIdentity.Kind -ne 'regular' -or [int64]$sideIdentity.Size -gt 262144) {
+                $refused = $true
+            } else {
+                $priorSide = Read-QualificationSidecar -Path $path -Watch $watch -DeadlineMilliseconds 200
+                if ($null -eq $priorSide) { $refused = $true }
             }
-        } else {
-            $phases = Get-QualificationPhaseSums -TimingRoot $TimingRoot -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
-        }
-        $p50 = $null; $p95 = $null; $max = $null; $slow = @(); $count = 0
-        if ($null -ne $prior) {
-            if ($prior.PSObject.Properties.Name -contains 'p50Seconds') { $p50 = $prior.p50Seconds }
-            if ($prior.PSObject.Properties.Name -contains 'p95Seconds') { $p95 = $prior.p95Seconds }
-            if ($prior.PSObject.Properties.Name -contains 'maxSeconds') { $max = $prior.maxSeconds }
-            if ($prior.PSObject.Properties.Name -contains 'testCount' -and $null -ne $prior.testCount) { $count = [int]$prior.testCount }
-            if ($prior.PSObject.Properties.Name -contains 'slowest' -and $null -ne $prior.slowest) { $slow = @($prior.slowest) }
-        }
-        if ($null -ne $stats) {
-            $p50 = $stats.P50; $p95 = $stats.P95; $max = $stats.Max; $slow = @($stats.Slowest); $count = [int]$stats.Count
+            if ($null -ne $priorSide -and -not $refused) {
+                if ([string]::IsNullOrWhiteSpace($startedText) -and $priorSide.PSObject.Properties.Name -contains 'startedAt') {
+                    $startedText = ConvertTo-QualificationStampText $priorSide.startedAt
+                }
+                if (-not $bound.ContainsKey('QueueWaitSeconds') -and $null -eq $queue -and $priorSide.PSObject.Properties.Name -contains 'queueWaitSeconds') { $queue = $priorSide.queueWaitSeconds }
+                if (-not $bound.ContainsKey('BuildSeconds') -and $null -eq $build -and $priorSide.PSObject.Properties.Name -contains 'buildSeconds') { $build = $priorSide.buildSeconds }
+                if (-not $bound.ContainsKey('DiscoverySeconds') -and $null -eq $discovery -and $priorSide.PSObject.Properties.Name -contains 'discoverySeconds') { $discovery = $priorSide.discoverySeconds }
+                if (-not $bound.ContainsKey('RunWallSeconds') -and $null -eq $runWall -and $priorSide.PSObject.Properties.Name -contains 'runWallSeconds') { $runWall = $priorSide.runWallSeconds }
+                if (-not $bound.ContainsKey('TrxPath') -and [string]::IsNullOrWhiteSpace($trx) -and $priorSide.PSObject.Properties.Name -contains 'trx') { $trx = [string]$priorSide.trx }
+                if (-not $bound.ContainsKey('Why') -and [string]::IsNullOrWhiteSpace($whyText) -and $priorSide.PSObject.Properties.Name -contains 'why') { $whyText = [string]$priorSide.why }
+                if (-not $bound.ContainsKey('CompletedAt') -and [string]::IsNullOrWhiteSpace($completedText) -and $priorSide.PSObject.Properties.Name -contains 'completedAt') {
+                    $completedText = ConvertTo-QualificationStampText $priorSide.completedAt
+                }
+            }
+            $stats = $null
+            if (-not [string]::IsNullOrWhiteSpace($trx)) {
+                $trxIdentity = Get-TestPhasePathIdentity -Path $trx
+                if ($trxIdentity.Kind -eq 'missing') {
+                    $trxMissing = $true
+                } elseif ($trxIdentity.Kind -ne 'regular' -or [int64]$trxIdentity.Size -gt 262144) {
+                    $refused = $true
+                    if ($trxIdentity.Kind -eq 'regular') { $trxMissing = $false }
+                } elseif ($watch.ElapsedMilliseconds -ge 200) {
+                    $trxMissing = $false
+                    $refused = $true
+                } else {
+                    $trxMissing = $false
+                    $stats = Get-QualificationTrxStats -TrxPath $trx -Watch $watch -DeadlineMilliseconds 200
+                    if ($null -eq $stats -and $watch.ElapsedMilliseconds -ge 200) { $refused = $true }
+                }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($timingRootText)) {
+                if ($watch.ElapsedMilliseconds -ge 200) {
+                    $refused = $true
+                } else {
+                    $sums = Get-QualificationPhaseSums -TimingRoot $timingRootText -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt -Watch $watch -DeadlineMilliseconds 200
+                    if ($null -ne $sums -and [bool]$sums.refused) { $refused = $true }
+                    elseif ($null -ne $sums) {
+                        $phaseSetup = $sums.fixtureSetupSeconds
+                        $phaseTear = $sums.fixtureTeardownSeconds
+                        $phaseSpawn = $sums.processSpawnSeconds
+                        $phaseWait = $sums.processWaitSeconds
+                    }
+                }
+            }
+            if ($watch.ElapsedMilliseconds -ge 200) { $refused = $true }
+            if ($refused) {
+                $phaseSetup = $null
+                $phaseTear = $null
+                $phaseSpawn = $null
+                $phaseWait = $null
+                $stats = $null
+                if ([string]::IsNullOrWhiteSpace($whyText)) { $whyText = 'timing-read-refused' }
+            }
+            if ($null -ne $stats) {
+                $p50 = $stats.P50
+                $p95 = $stats.P95
+                $max = $stats.Max
+                $slow = @($stats.Slowest)
+                $count = [int]$stats.Count
+            }
         }
         $record = [ordered]@{
             suite = [string]$Suite
             chunk = [string]$Chunk
-            timingRoot = [string]$TimingRoot
+            timingRoot = [string]$timingRootText
             trx = $trx
             trxMissing = [bool]$trxMissing
             why = $whyText
@@ -1426,25 +1667,83 @@ function Update-QualificationChunkTiming {
             discoverySeconds = $discovery
             runWallSeconds = $runWall
             distillationSeconds = $null
-            fixtureSetupSeconds = $phases.fixtureSetupSeconds
-            fixtureTeardownSeconds = $phases.fixtureTeardownSeconds
-            processSpawnSeconds = $phases.processSpawnSeconds
-            processWaitSeconds = $phases.processWaitSeconds
+            fixtureSetupSeconds = $phaseSetup
+            fixtureTeardownSeconds = $phaseTear
+            processSpawnSeconds = $phaseSpawn
+            processWaitSeconds = $phaseWait
             testCount = $count
             p50Seconds = $p50
             p95Seconds = $p95
             maxSeconds = $max
             slowest = @($slow)
         }
-        Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $record)
-        if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) {
-            $copy = Join-Path $TimingRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
+        $script:QualificationChunkMemory[$key] = @{
+            timingRoot = [string]$timingRootText
+            trx = [string]$trx
+            why = [string]$whyText
+            lastPhase = [string]$phaseText
+            startedAt = [string]$startedText
+            completedAt = [string]$completedText
+            queueWaitSeconds = $queue
+            buildSeconds = $build
+            discoverySeconds = $discovery
+            runWallSeconds = $runWall
+        }
+        $text = ConvertTo-TestPhaseJsonText -Value $record
+        Write-TestPhaseTextAtomic -Path $path -Text $text
+        if (-not [string]::IsNullOrWhiteSpace($timingRootText)) {
+            $copy = Join-Path $timingRootText ('{0}-{1}.timing.json' -f $Suite, $Chunk)
             if (([IO.Path]::GetFullPath($copy)) -ne ([IO.Path]::GetFullPath($path))) {
-                Write-TestPhaseTextAtomic -Path $copy -Text (ConvertTo-TestPhaseJsonText -Value $record)
+                Write-TestPhaseTextAtomic -Path $copy -Text $text
             }
         }
     } catch {
         # A timing sidecar must not change the suite verdict.
+    }
+}
+
+function Invoke-QualificationPostRunAggregation {
+    param(
+        [int]$ChunkExitCode,
+        [string]$ChunkResult,
+        [string]$LogRoot,
+        [string]$TimingRoot,
+        [string]$Suite,
+        [string]$Chunk,
+        [string]$TrxPath,
+        [string]$LastPhase,
+        [string]$Why,
+        $QueueWaitSeconds,
+        $BuildSeconds,
+        $DiscoverySeconds,
+        $RunWallSeconds,
+        [string]$StartedAt,
+        [string]$CompletedAt,
+        [string]$RunId = '',
+        [string]$Attempt = ''
+    )
+    $splat = @{
+        LogRoot = $LogRoot
+        TimingRoot = $TimingRoot
+        Suite = $Suite
+        Chunk = $Chunk
+        TrxPath = $TrxPath
+        LastPhase = $LastPhase
+        RunId = $RunId
+        Attempt = $Attempt
+        Terminal = $true
+    }
+    if ($PSBoundParameters.ContainsKey('Why')) { $splat.Why = $Why }
+    if ($PSBoundParameters.ContainsKey('QueueWaitSeconds')) { $splat.QueueWaitSeconds = $QueueWaitSeconds }
+    if ($PSBoundParameters.ContainsKey('BuildSeconds')) { $splat.BuildSeconds = $BuildSeconds }
+    if ($PSBoundParameters.ContainsKey('DiscoverySeconds')) { $splat.DiscoverySeconds = $DiscoverySeconds }
+    if ($PSBoundParameters.ContainsKey('RunWallSeconds')) { $splat.RunWallSeconds = $RunWallSeconds }
+    if ($PSBoundParameters.ContainsKey('StartedAt')) { $splat.StartedAt = $StartedAt }
+    if ($PSBoundParameters.ContainsKey('CompletedAt')) { $splat.CompletedAt = $CompletedAt }
+    try { Update-QualificationChunkTiming @splat } catch { }
+    return [pscustomobject]@{
+        ChunkExitCode = $ChunkExitCode
+        ChunkResult = $ChunkResult
     }
 }
 
