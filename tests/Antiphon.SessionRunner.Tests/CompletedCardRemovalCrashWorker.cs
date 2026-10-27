@@ -14,7 +14,8 @@ internal sealed class CompletedCardRemovalCrashWorker
         CompletedCardWorkspaceCommand Command, string Cut);
 
     internal static bool IsOwnedFixturePath(string root, string candidate, char directorySeparator) =>
-        candidate.StartsWith(root + directorySeparator, StringComparison.Ordinal);
+        candidate.Replace(directorySeparator, '/').StartsWith(
+            root.Replace(directorySeparator, '/') + '/', StringComparison.Ordinal);
 
     internal static string StartIdentity(Process process)
     {
