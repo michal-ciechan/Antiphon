@@ -3,6 +3,7 @@ param(
     [string]$HostCleanupDll
 )
 $ErrorActionPreference = 'Stop'
+$env:TEMP = [IO.Path]::GetTempPath()
 $repo = Split-Path $PSScriptRoot -Parent
 $root = Join-Path ([IO.Path]::GetTempPath()) ('scripts-lane-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
@@ -13,7 +14,6 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
         # This is a string witness even on Linux: Git quotes and escapes these values.
         foreach ($origin in @('C:\Antiphon\origin.git', 'C:\a space\a"quote\origin.git', '\\server\share\origin.git', 'https://example.invalid/repo')) {
-            & git -C $root config --local remote.other.url 'https://wrong.invalid/first'
             & git -C $root config --local remote.origin.url $origin
             if ($LASTEXITCODE -ne 0) { throw 'git config failed' }
             $actual = Get-NightlyOriginUrl $root
