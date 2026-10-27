@@ -83,7 +83,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         var heldWait = await db.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id, ct);
         heldWait.AdmissionCount.ShouldBe(0, "a rolled-back stale claim must not spend an admission");
         heldWait.LaunchSessionId.ShouldBeNull();
-        var grant = await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct);
+        var grant = await db.CapacityRecoveryProviderStates.AsNoTracking()
+            .SingleAsync(p => p.Kind == wait.ExecutionKind, ct);
         grant.GrantedWaitId.ShouldBe(wait.Id);
         grant.GrantedActionKey.ShouldBe(wait.ActionKey);
         grant.LastActionKey.ShouldBeNull();
@@ -97,7 +98,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         accepted.AdmissionCount.ShouldBe(1);
         accepted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
         accepted.LaunchSessionId.ShouldBe(dispatched.AgentSessionId);
-        (await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct)).GrantedWaitId.ShouldBeNull();
+        (await db.CapacityRecoveryProviderStates.AsNoTracking()
+            .SingleAsync(p => p.Kind == wait.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
         (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id
             && i.WarningKey == DispatchBaseNotificationPayload.MismatchKey, ct)).ShouldBe(0);
     }

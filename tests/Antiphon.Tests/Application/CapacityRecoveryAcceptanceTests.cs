@@ -46,7 +46,8 @@ public class CapacityRecoveryAcceptanceTests
         var restored = await db.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
         restored.AdmissionCount.ShouldBe(0);
         restored.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
-        var grant = await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync();
+        var grant = await db.CapacityRecoveryProviderStates.AsNoTracking()
+            .SingleAsync(p => p.Kind == wait.ExecutionKind);
         grant.GrantedWaitId.ShouldBe(wait.Id);
         grant.GrantedActionKey.ShouldBe(wait.ActionKey);
         grant.LastActionKey.ShouldBeNull();
