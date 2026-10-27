@@ -670,6 +670,83 @@ public sealed class RollingVolumeRecycleScriptTests
             raw.Output.ShouldContain(validator + "/" + vector + " checked");
     }
 
+    // A retire-temp preview writes a dryRun cleanup receipt, then asks the volume
+    // recycle to read that same receipt. Apply still requires a dryRun false receipt.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string operation = "C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001";
+        var image = "sha256:" + new string('b', 64);
+
+        using (var preview = new C1008HostFixture(main: false))
+        {
+            await PinDryRunCleanupReceipt(preview, image, dirty: false);
+            var run = await preview.Run("retire-temp-runner", operation, dryRun: true);
+            run.Exit.ShouldBe(0, "recycle-preview-receipt: dry-run receipt is preview authority; " + run.Output);
+            run.Output.ShouldContain("C1008_PREVIEW remove=antiphon-runner-temp_work");
+            run.Output.ShouldContain("auditPending=false");
+            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            preview.Removed.ShouldBeEmpty("recycle-preview-receipt: preview removes nothing");
+            preview.Trace.Any(a => a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+        }
+
+        using (var apply = new C1008HostFixture(main: false))
+        {
+            await PinDryRunCleanupReceipt(apply, image, dirty: false);
+            var run = await apply.Run("retire-temp-runner", operation);
+            run.Exit.ShouldBe(2, "recycle-preview-receipt: apply refuses a dry-run receipt; " + run.Output);
+            run.Output.ShouldContain("RecycleGitAuditUnknown");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            run.Output.ShouldNotContain("RecycleWorktreeDirty");
+            apply.Removed.ShouldBeEmpty("recycle-preview-receipt: a dry-run receipt removes nothing");
+            apply.Trace.Any(a => a[0] == "create").ShouldBeFalse("recycle-preview-receipt: apply does not audit a preview receipt");
+        }
+
+        using (var dirty = new C1008HostFixture(main: false))
+        {
+            await PinDryRunCleanupReceipt(dirty, image, dirty: true);
+            var run = await dirty.Run("retire-temp-runner", operation, dryRun: true);
+            run.Exit.ShouldBe(2, "recycle-preview-receipt: dirty worktree still refuses; " + run.Output);
+            run.Output.ShouldContain("RecycleWorktreeDirty");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            dirty.Removed.ShouldBeEmpty("recycle-preview-receipt: dirty preview removes nothing");
+            File.ReadAllText(Path.Combine(dirty.Root, "work/repo/dirty")).ShouldBe("unpublished-sentinel");
+        }
+    }
+
+    private static async Task PinDryRunCleanupReceipt(C1008HostFixture fixture, string image, bool dirty)
+    {
+        var cleanup = await fixture.Run("retire-temp-containers", dryRun: true);
+        cleanup.Exit.ShouldBe(0, "recycle-preview-receipt: cleanup preview; " + cleanup.Output);
+        var path = Path.Combine(fixture.Root, "server/temp-container-retirement/c99400000000000000000000000000000001.json");
+        var receipt = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+        receipt["dryRun"]!.GetValue<bool>().ShouldBeTrue("recycle-preview-receipt: witness receipt is a preview");
+        receipt["image"] = image;
+        await File.WriteAllTextAsync(path, receipt.ToJsonString());
+        if (dirty)
+        {
+            var setup = await C994ScriptProcess.Run("bash", "-c", $$"""
+                set -euo pipefail
+                git init -q --bare '{{fixture.Root}}/origin'
+                git init -q -b main '{{fixture.Root}}/work/repo'
+                git -C '{{fixture.Root}}/work/repo' config user.name Fixture
+                git -C '{{fixture.Root}}/work/repo' config user.email fixture@example.invalid
+                printf published > '{{fixture.Root}}/work/repo/sentinel'
+                git -C '{{fixture.Root}}/work/repo' add sentinel
+                git -C '{{fixture.Root}}/work/repo' commit -qm published
+                git -C '{{fixture.Root}}/work/repo' remote add origin '{{fixture.Root}}/origin'
+                git -C '{{fixture.Root}}/work/repo' push -qu origin main
+                """);
+            setup.Exit.ShouldBe(0, "recycle-preview-receipt: git setup; " + setup.Output);
+            await File.WriteAllTextAsync(Path.Combine(fixture.Root, "work/repo/dirty"), "unpublished-sentinel");
+        }
+        var trace = Path.Combine(fixture.Root, "docker-trace.jsonl");
+        if (File.Exists(trace)) File.Delete(trace);
+        fixture.ReloadDocker();
+    }
+
     [Test]
     [Arguments("present")]
     [Arguments("absent")]
