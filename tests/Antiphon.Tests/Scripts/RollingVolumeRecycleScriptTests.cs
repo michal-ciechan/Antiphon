@@ -703,7 +703,7 @@ public sealed class RollingVolumeRecycleScriptTests
             apply.Output.ShouldContain("RecycleGitAuditUnknown");
             apply.Output.ShouldNotContain("C1008_PREVIEW");
             apply.Output.ShouldNotContain("RecycleWorktreeDirty");
-            apply.Trace.Any(a => a.Length > 0 && a[0] == "create").ShouldBeFalse(
+            clean.Trace.Any(a => a.Length > 0 && a[0] == "create").ShouldBeFalse(
                 "recycle-preview-receipt: apply does not audit a preview receipt");
             clean.Removed.ShouldBeEmpty("recycle-preview-receipt: a dry-run receipt removes nothing");
 
