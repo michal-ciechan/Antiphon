@@ -1,68 +1,46 @@
 <#
 .SYNOPSIS
-    Delete regenerable alternate build outputs (any bin-*/ directory) across the repo. These
-    are created by "build while daemons lock bin/" workarounds (dotnet build
-    --property:OutputPath=bin-verify\) and are never referenced afterwards, but they bloat the
-    tree and slow MSBuild evaluation when left to accumulate. The pattern is a wildcard rather
-    than a list of known names so a new one-off output dir is covered the first time it is used.
-
-    Deliberately NOT touched:
-      - bin/ and obj/           (live build outputs; the running daemons lock them)
-      - workspace/              (live session-runner state: session logs, pty-host shadow
-                                 copies that RUNNING pty-hosts execute from, manifests)
-
-    Dirs modified in the last hour are skipped so an in-flight test run is never pulled
-    out from under itself. Uses robocopy empty-mirror for deletion so paths longer than
-    MAX_PATH cannot break it.
+    Remove old alternate build outputs only with the producing process's creation records.
+    A bin-* name, age, or disk owner marker alone grants no deletion authority. Scheduled
+    invocations have no in-memory custody and leave legacy outputs for explicit inspection.
+    Producers may invoke this script in-process with their CheckpointCleanupContext after
+    sealing completed outputs. The shared ledger refuses tracked, linked, changed or
+    unrecorded entries and deletes recorded entries without recursive wildcard removal.
 
     Recurring cleanup runs via Windmill on server2 (u/lndcobra/antiphon_build_junk_cleanup,
-    Mon 09:00 Europe/London), not a local Windows Scheduled Task - do not re-add one.
-    The Windmill job (tag "desktop") SSHes from the desktop worker container into Windows
-    and runs this file. Safe to run manually at any time.
+    Mon 09:00 Europe/London), not a local Windows Scheduled Task.
 #>
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
-    [int]$SkipIfModifiedWithinMinutes = 60
+    [int]$SkipIfModifiedWithinMinutes = 60,
+    [object]$CleanupContext = $null
 )
 
-$ErrorActionPreference = 'Continue'
-$patterns = @('bin-*')
+$ErrorActionPreference = 'Stop'
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
-
-$empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force $empty | Out-Null
-
 $removed = 0
-try {
-    foreach ($pattern in $patterns) {
-        $dirs = Get-ChildItem -Path $RepoRoot -Directory -Recurse -Filter $pattern -Depth 3 -ErrorAction SilentlyContinue
-        foreach ($d in $dirs) {
-            try {
-                if (-not (Test-Path -LiteralPath $d.FullName)) {
-                    # Already removed as a nested match of a parent directory this same run.
-                    continue
-                }
-                if ($d.LastWriteTime -gt $cutoff) {
-                    Write-Host "skip (recently modified): $($d.FullName)"
-                    continue
-                }
-                & robocopy $empty $d.FullName /MIR /NFL /NDL /NJH /NJS /W:0 /R:0 | Out-Null
-                Remove-Item -LiteralPath $d.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-                if (-not (Test-Path -LiteralPath $d.FullName)) {
-                    Write-Host "removed: $($d.FullName)"
-                    $removed++
-                } else {
-                    Write-Host "partial (locked?): $($d.FullName)"
-                }
-            } catch {
-                # A single directory failing to delete (already-removed nested match, locked
-                # file, etc.) must not abort the whole sweep - later patterns still need to run.
-                Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
+if ($null -eq $CleanupContext) {
+    Write-Host 'skip: producer creation records unavailable; outputs left in place'
+} else {
+    $ledger = [Antiphon.Checkpoints.CheckpointOutputLedger]::new($CleanupContext)
+    $dirs = Get-ChildItem -LiteralPath $RepoRoot -Directory -Recurse -Filter 'bin-*' -Depth 3
+    foreach ($d in $dirs) {
+        try {
+            if (-not (Test-Path -LiteralPath $d.FullName)) { continue }
+            if ($d.LastWriteTime -gt $cutoff) {
+                Write-Host "skip (recently modified): $($d.FullName)"
+                continue
             }
+            $reason = $ledger.Remove($d.FullName, $false)
+            if ($null -ne $reason) {
+                Write-Host "skip: $($d.FullName) - $reason"
+                continue
+            }
+            Write-Host "removed: $($d.FullName)"
+            $removed++
+        } catch {
+            Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
         }
     }
-} finally {
-    Remove-Item -LiteralPath $empty -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
 }
-
 Write-Host "cleanup-build-junk: $removed dir(s) removed."
