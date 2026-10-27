@@ -185,9 +185,8 @@ function Get-NightlyOriginUrl {
     if (-not (Test-Path -LiteralPath $config)) { return '' }
     # Let Git decode quoted/escaped config values, and select origin specifically.
     # --file reads only this clone's config; includes and global config grant no authority.
-    $result = Invoke-NightlyGit -WorkingDirectory $ClonePath -Arguments @(
-        'config', '--file', $config, '--no-includes', '--get', 'remote.origin.url')
-    if ($result.ExitCode -eq 0) { return ([string]$result.Output).TrimEnd("`r", "`n") }
+    $value = & git config --file $config --no-includes --get remote.origin.url 2>$null
+    if ($LASTEXITCODE -eq 0) { return ($value -join "`n") }
     return ''
 }
 
