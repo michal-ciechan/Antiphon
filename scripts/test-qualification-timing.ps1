@@ -643,6 +643,234 @@ $ReleaseGateSeams = @{
     Remove-Item -LiteralPath $cutRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Post-run aggregation: a FIFO TRX, a 100 MB line, an unreadable file, and a
+# symlink stay inside the budget and leave the chunk exit untouched.
+$aggDenied = ''
+$aggRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-agg-' + [guid]::NewGuid().ToString('N'))
+$aggLog = Join-Path $aggRoot 'logs'
+$aggTiming = Join-Path $aggLog 'timing'
+New-Item -ItemType Directory -Path $aggTiming -Force | Out-Null
+try {
+    $aggFifo = Join-Path $aggLog 'antiphon-g9.trx'
+    & mkfifo $aggFifo
+    $aggFifoOk = ($LASTEXITCODE -eq 0)
+    $aggHuge = Join-Path $aggTiming 'cases-80-huge.jsonl'
+    $aggStream = [IO.File]::Create($aggHuge)
+    try {
+        $aggChunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
+        for ($n = 0; $n -lt 100; $n++) { $aggStream.Write($aggChunk, 0, $aggChunk.Length) }
+    } finally { $aggStream.Dispose() }
+    $aggDenied = Join-Path $aggTiming 'cases-82-denied.jsonl'
+    [IO.File]::WriteAllText($aggDenied, '{"recordKind":"header"}' + "`n")
+    & chmod 000 $aggDenied
+    & ln -s $aggHuge (Join-Path $aggTiming 'cases-83-link.jsonl')
+    & mkfifo (Join-Path $aggTiming 'cases-81-fifo.jsonl')
+    $aggDense = New-Object System.Text.StringBuilder
+    [void]$aggDense.Append('{"v":[')
+    for ($n = 0; $n -lt 100000; $n++) { [void]$aggDense.Append('0,') }
+    [void]$aggDense.Append('0]}')
+    [IO.File]::WriteAllText((Join-Path $aggLog 'antiphon-g9.timing.json'), $aggDense.ToString())
+    $aggWatch = [Diagnostics.Stopwatch]::StartNew()
+    $agg = Invoke-QualificationPostRunAggregation -ChunkExitCode 7 -ChunkResult 'KEEP-7' -LogRoot $aggLog -TimingRoot $aggTiming -Suite 'antiphon' -Chunk 'g9' -TrxPath $aggFifo -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'agg' -Attempt '1'
+    $aggWatch.Stop()
+    $aggDoc = Get-Content -LiteralPath (Join-Path $aggLog 'antiphon-g9.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $aggPhases = ($null -eq $aggDoc.p50Seconds -and $null -eq $aggDoc.p95Seconds -and $null -eq $aggDoc.maxSeconds -and $null -eq $aggDoc.fixtureSetupSeconds -and $null -eq $aggDoc.fixtureTeardownSeconds -and $null -eq $aggDoc.processSpawnSeconds -and $null -eq $aggDoc.processWaitSeconds)
+    $aggOk = ($aggFifoOk -and $aggWatch.Elapsed.TotalSeconds -lt 0.2 -and [int]$agg.ChunkExitCode -eq 7 -and [string]$agg.ChunkResult -eq 'KEEP-7' -and [string]$aggDoc.why -eq 'timing-read-refused' -and $aggPhases -and @($aggDoc.slowest).Count -eq 0)
+    Assert-Check $aggOk 'post-run-hostile-files-keep-exit-inside-budget'
+} catch {
+    Write-Host ('FAIL post-run-hostile-files-keep-exit-inside-budget ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    if (Test-Path -LiteralPath $aggDenied) { & chmod 644 $aggDenied }
+    Remove-Item -LiteralPath $aggRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# The launch heartbeat must not open a timing file. strace records openat only.
+$openDenied = ''
+$openRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-open-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $openRoot -Force | Out-Null
+$openLog = Join-Path $openRoot 'logs'
+$openTiming = Join-Path $openLog 'timing'
+New-Item -ItemType Directory -Path $openTiming -Force | Out-Null
+$openStrace = '/tmp/strace-root/usr/bin/strace'
+if (-not (Test-Path -LiteralPath $openStrace)) {
+    $openCmd = Get-Command strace -ErrorAction SilentlyContinue
+    if ($openCmd) { $openStrace = [string]$openCmd.Source }
+}
+try {
+    $openFifoTrx = Join-Path $openLog 'antiphon-g1.trx'
+    $openSide = Join-Path $openLog 'antiphon-g1.timing.json'
+    $openHuge = Join-Path $openTiming 'cases-80-huge.jsonl'
+    $openDenied = Join-Path $openTiming 'cases-82-denied.jsonl'
+    $openLink = Join-Path $openTiming 'cases-83-link.jsonl'
+    $openFifo = Join-Path $openTiming 'cases-81-fifo.jsonl'
+    & mkfifo $openFifoTrx
+    & mkfifo $openSide
+    & mkfifo $openFifo
+    $openStream = [IO.File]::Create($openHuge)
+    try {
+        $openChunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
+        for ($n = 0; $n -lt 100; $n++) { $openStream.Write($openChunk, 0, $openChunk.Length) }
+    } finally { $openStream.Dispose() }
+    [IO.File]::WriteAllText($openDenied, '{"recordKind":"header"}' + "`n")
+    & chmod 000 $openDenied
+    & ln -s $openHuge $openLink
+    $openMarker = Join-Path $openRoot 'launched'
+    $openChild = Join-Path $openRoot 'heart.ps1'
+    $openTrace = Join-Path $openRoot 'openat.txt'
+    @'
+param([string]$Lib, [string]$Log, [string]$Timing, [string]$Trx, [string]$Marker)
+$ErrorActionPreference = "Stop"
+. (Join-Path $Lib "nightly-common.ps1")
+. (Join-Path $Lib "nightly-policy.ps1")
+. (Join-Path $Lib "nightly-coverage.ps1")
+. (Join-Path $Lib "release-gate.ps1")
+. (Join-Path $Lib "release-selection.ps1")
+. (Join-Path $Lib "nightly-tests-impl.ps1")
+Update-QualificationChunkTiming -LogRoot $Log -TimingRoot $Timing -Suite "antiphon" -Chunk "g1" -LastPhase "run" -StartedAt "2026-10-27T00:00:00.0000000Z" -QueueWaitSeconds 1 -BuildSeconds 2 -DiscoverySeconds 0 -TrxPath $Trx -RunId "open" -Attempt "1"
+[IO.File]::WriteAllText($Marker, "LAUNCHED")
+'@ | Set-Content -LiteralPath $openChild -Encoding ascii
+    $openDriver = Join-Path $openRoot 'drive.ps1'
+    @'
+param([string]$Strace, [string]$Trace, [string]$Child, [string]$Lib, [string]$Log, [string]$Timing, [string]$Trx, [string]$Marker)
+$ErrorActionPreference = "Stop"
+& $Strace -f -e trace=openat -o $Trace -- pwsh -NoProfile -File $Child $Lib $Log $Timing $Trx $Marker
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $openDriver -Encoding ascii
+    $openRun = Invoke-QualificationWitness -ScriptPath $openDriver -Arguments @($openStrace, $openTrace, $openChild, $lib, $openLog, $openTiming, $openFifoTrx, $openMarker) -TimeoutMilliseconds 20000
+    $openClean = $false
+    if ((Test-Path -LiteralPath $openTrace) -and (Test-Path -LiteralPath $openMarker)) {
+        $openText = [IO.File]::ReadAllText($openTrace)
+        $openClean = $openText.Contains('openat(')
+        foreach ($hostile in @($openFifoTrx, $openSide, $openHuge, $openDenied, $openLink, $openFifo)) {
+            if ($openText.Contains($hostile)) { $openClean = $false }
+        }
+    }
+    Assert-Check ((Test-Path -LiteralPath $openStrace) -and $openRun.Exited -and $openRun.ExitCode -eq 0 -and $openClean) 'launch-path-opens-no-timing-file'
+} catch {
+    Write-Host ('FAIL launch-path-opens-no-timing-file ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    if (Test-Path -LiteralPath $openDenied) { & chmod 644 $openDenied }
+    Remove-Item -LiteralPath $openRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Stdout, stderr, and the chunk exit stay the same with the phase environment forwarded or stripped.
+$capRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-cap-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $capRoot -Force | Out-Null
+$capSeam = Join-Path $capRoot 'seam.ps1'
+@'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $argsText = @($ArgumentList) -join " "
+        if ($argsText -notmatch "--report-trx" -or $argsText -match "--list-tests") {
+            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+        }
+        $dir = [string]$env:QTIMING_CAPTURE_DIR
+        $seqPath = Join-Path $dir "seq"
+        $seq = 0
+        if (Test-Path -LiteralPath $seqPath) { $seq = [int]([IO.File]::ReadAllText($seqPath)) }
+        [IO.File]::WriteAllText($seqPath, ([string]($seq + 1)))
+        $seen = Join-Path $dir ("seen-" + $seq)
+        $code = [int]$env:QTIMING_CHILD_EXIT
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "/bin/sh"
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        [void]$psi.ArgumentList.Add("-c")
+        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
+        if ($Environment) {
+            foreach ($key in @($Environment.Keys)) {
+                $name = [string]$key
+                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
+                $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
+            }
+        }
+        $psi.EnvironmentVariables["QTIMING_SEEN"] = $seen
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        [void]$proc.WaitForExit()
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [IO.File]::WriteAllText((Join-Path $dir ("stdout-" + $seq)), $stdout, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("stderr-" + $seq)), $stderr, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("exit-" + $seq)), ([string]$proc.ExitCode))
+        return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = $proc.Id; LogText = ($stdout + $stderr) }
+    }
+}
+'@ | Set-Content -LiteralPath $capSeam -Encoding ascii
+function Get-QualificationCapturePayload {
+    param([string]$Dir)
+    $logs = @(Get-ChildItem -LiteralPath $Dir -Recurse -Filter '*-tests.log' -File -ErrorAction SilentlyContinue | Sort-Object FullName)
+    $payloads = @()
+    foreach ($log in $logs) {
+        $text = [IO.File]::ReadAllText($log.FullName)
+        $lines = @($text -split "`n")
+        if ($lines.Count -gt 0 -and $lines[0].StartsWith('C487_INVOCATION=')) {
+            $text = ($lines[1..($lines.Count - 1)] -join "`n")
+        }
+        $payloads += $text
+    }
+    return @($payloads)
+}
+try {
+    foreach ($childExit in @(0, 1)) {
+        $env:QTIMING_CHILD_EXIT = [string]$childExit
+        $runs = @()
+        foreach ($forward in @('1', '0')) {
+            $env:QTIMING_FORWARD = $forward
+            $one = Join-Path $capRoot ('e' + $childExit + '-f' + $forward)
+            $capDir = Join-Path $one 'cap'
+            New-Item -ItemType Directory -Path $capDir -Force | Out-Null
+            $env:QTIMING_CAPTURE_DIR = $capDir
+            $ran = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot (Join-Path $one 'run') -Suites @('antiphon') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId ('cap-' + $childExit + '-' + $forward) -Trigger 'manual' -SeamsPath $capSeam -AllowSharedTree
+            $summaryPath = Join-Path (Join-Path $one 'run') 'summary.json'
+            $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $suiteExits = @()
+            foreach ($suite in @($summary.suites)) {
+                if ([string]$suite.id -eq 'antiphon' -and -not [bool]$suite.skipped) { $suiteExits += [int]$suite.exitCode }
+            }
+            $stdout = @(Get-ChildItem -LiteralPath $capDir -Filter 'stdout-*' -File | Sort-Object Name | ForEach-Object { [IO.File]::ReadAllText($_.FullName) })
+            $stderr = @(Get-ChildItem -LiteralPath $capDir -Filter 'stderr-*' -File | Sort-Object Name | ForEach-Object { [IO.File]::ReadAllText($_.FullName) })
+            $exits = @(Get-ChildItem -LiteralPath $capDir -Filter 'exit-*' -File | Sort-Object Name | ForEach-Object { [int]([IO.File]::ReadAllText($_.FullName)) })
+            $seen = @(Get-ChildItem -LiteralPath $capDir -Filter 'seen-*' -File -ErrorAction SilentlyContinue)
+            $runs += [pscustomobject]@{
+                Forward = $forward
+                Wrapper = [int]$ran.ExitCode
+                Suites = ($suiteExits -join ',')
+                StdOut = ($stdout -join '|')
+                StdErr = ($stderr -join '|')
+                Exits = ($exits -join ',')
+                Seen = @($seen).Count
+                Payload = ((Get-QualificationCapturePayload -Dir (Join-Path $one 'run')) -join '|')
+            }
+        }
+        $on = $runs[0]
+        $off = $runs[1]
+        $outParts = @($on.StdOut -split '\|')
+        $errParts = @($on.StdErr -split '\|')
+        $exitParts = @($on.Exits -split ',')
+        $suiteParts = @($on.Suites -split ',')
+        $bytesOk = ($outParts.Count -ge 1 -and @($outParts | Where-Object { $_ -ne 'QUAL-OUT' }).Count -eq 0 -and @($errParts | Where-Object { $_ -ne 'QUAL-ERR' }).Count -eq 0 -and @($exitParts | Where-Object { $_ -ne ([string]$childExit) }).Count -eq 0 -and $suiteParts.Count -eq $exitParts.Count)
+        $same = ($on.Wrapper -eq $off.Wrapper -and $on.Wrapper -eq 1 -and $on.Suites -eq $off.Suites -and $on.StdOut -eq $off.StdOut -and $on.StdErr -eq $off.StdErr -and $on.Exits -eq $off.Exits -and $on.Payload -eq $off.Payload -and $on.Seen -ge 1 -and $off.Seen -eq 0 -and $bytesOk)
+        Assert-Check $same ('capture-identity-exit-' + $childExit)
+    }
+} catch {
+    Write-Host ('FAIL capture-identity ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
+    Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
+    Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $capRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failed -gt 0) {
     Write-Host ('FAILED ' + $failed)
     exit 1
