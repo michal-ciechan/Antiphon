@@ -18,7 +18,7 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 |---|---|---|---|---|
 | AgentE2ETests | 1 pass / 1 fail | 2 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | PipelineGlanceE2ETests | 0 pass / 1 fail | 1 pass / 0 fail | Fixed by rc/2026-10-27 | None |
-| BoardE2ETests | 9 pass / 1 fail | Pending | Pending | Not designed in Investigate |
+| BoardE2ETests | 9 pass / 1 fail | 9 pass / 1 fail | Confirmed fixture navigation defect; Diff tab never selected | See Not done, noted |
 | WorkflowDeleteTests | 4 pass / 2 fail | Pending | Pending | Not designed in Investigate |
 | AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Pending | Pending | Not designed in Investigate |
 | DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | Pending | Pending | Not designed in Investigate |
@@ -29,10 +29,31 @@ Agent class: 79.9 seconds outer wall; Pipeline class: 60.4 seconds. Fresh `resul
 
 Historical cost is a scope risk: summing the original TRX durations gives 119.1 minutes for the 52 land-delivery cases and 27.8 minutes for 13 dispatch-warning cases, before the other four classes/builds/admission. The brief gives 120 minutes total. This is a Debug follow-up obligation under R1, not permission to hide missing coverage or widen timeouts. No sub-delegation is available to this delegate.
 
+Execution scope adjustment: the two originally failing land-delivery methods are selected separately (three expanded cases, including the passing companion argument). The remaining 49 cases are not native rerun coverage. All other classes use the requested whole-class filter. This prioritizes the caller's failed-test investigation within the 120-minute ceiling.
+
+## Confirmed: Board review opens Sessions, then asserts Diff
+
+Fresh native `BoardE2ETests-initial/results.trx` reports 9 passed / 1 failed, 279.809 seconds test-host duration, 525.6 seconds outer wall including 240 seconds slot wait. Failing method: `Board_user_can_review_real_worktree_diff_and_send_inline_comment`, 23.804 seconds body.
+
+Exact error excerpt (`BoardE2ETests-initial/console.log:18`):
+
+```text
+failed Board_user_can_review_real_worktree_diff_and_send_inline_comment (23s 804ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] PlaywrightException: Locator expected to be visible
+  Error: element(s) not found
+  Call log:
+    - Expect "ToBeVisibleAsync" GetByRole(AriaRole.Dialog).GetByText("Diff review") with timeout 15000ms
+    - waiting for GetByRole(AriaRole.Dialog).GetByText("Diff review")
+```
+
+The source opens the card and immediately asserts the Diff heading (`tests/Antiphon.E2E/BoardE2ETests.cs:499`, `:502`). The product selects `sessions` on desktop and has `keepMounted={false}` (`client/src/features/board/CardModal.tsx:223`); Diff content is a separate panel (`:266`). The current failure screenshot `ui-evidence/Screenshots/Board_user_can_review_real_worktree_diff_and_send_inline_comment/FAIL_final_072636.png` visibly has Sessions selected and Diff available. The corresponding `ui-evidence/Logs/BoardE2ETests/Board_user_can_review_real_worktree_diff_and_send_inline_comment/page.html` and TRX aria snapshot corroborate that state.
+
+Classification: fixture contract drift, not a demonstrated Windows or product defect. This mechanism is deterministic; no flake claim. A pushed repair exists on `origin/feat/card-task-380013d3`, but its Board change is absent from the pinned rc source. The report does not apply or verify that repair. The manual xterm case passed in this native run; that single pass does not establish race freedom.
+
 ## Remaining work
 
 Rebuild the native graph and frontend once, run all six classes separately, retain exact failures/TRX/screenshots, and reconstruct surviving failure mechanisms. Any flake claim requires three reruns. Performance and source-revision limitations will remain explicit.
 
 ## Not done, noted
 
-Fix design and implementation are deferred to the next stage under the Investigate contract.
+Board: the existing sibling change selects Diff before checking its content; no fix was designed or applied here.
