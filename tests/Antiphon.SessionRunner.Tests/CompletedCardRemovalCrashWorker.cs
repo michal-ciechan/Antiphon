@@ -13,6 +13,9 @@ internal sealed class CompletedCardRemovalCrashWorker
     internal sealed record Input(string Root, string State, string StoreId, string Repository, string Origin,
         CompletedCardWorkspaceCommand Command, string Cut);
 
+    internal static bool IsOwnedFixturePath(string root, string candidate, char directorySeparator) =>
+        candidate.StartsWith(root + directorySeparator, StringComparison.Ordinal);
+
     internal static string StartIdentity(Process process)
     {
         if (!OperatingSystem.IsLinux()) return process.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -30,8 +33,8 @@ internal sealed class CompletedCardRemovalCrashWorker
             var input = JsonSerializer.Deserialize<Input>(File.ReadAllText(inputPath))!;
             var root = Path.GetFullPath(input.Root);
             if (!Path.GetFileName(root).StartsWith("c1032-fence-", StringComparison.Ordinal)
-                || !input.Command.Binding.WorktreePath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                || !Path.GetFullPath(inputPath).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                || !IsOwnedFixturePath(root, input.Command.Binding.WorktreePath, Path.DirectorySeparatorChar)
+                || !IsOwnedFixturePath(root, Path.GetFullPath(inputPath), Path.DirectorySeparatorChar))
                 throw new IOException("worker requires its parent-owned fixture root");
             var workspace = new RunnerWorkspaceService(input.Repository, Path.Combine(root, "work"), input.Origin,
                 psi => Process.Start(psi), publishedBranch: "main");
