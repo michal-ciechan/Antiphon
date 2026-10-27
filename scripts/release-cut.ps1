@@ -107,14 +107,21 @@ $stateRoot = Join-Path $candidateRoot 'state'
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
-if ([string]::IsNullOrWhiteSpace($TimingRoot)) {
-    if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-    }
-    $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot (Join-Path $candidateRoot 'logs') -RunId $RunId)
-}
 try {
     if (-not $WhatIf) {
+        $attemptFile = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $ReleaseRoot 'candidates') $record.candidateId) 'attempts') $RunId) 'selection-attempt.json'
+        if (Test-Path -LiteralPath $attemptFile) {
+            $sealed = Get-Content -LiteralPath $attemptFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $sealedTiming = ''
+            if ($sealed.PSObject.Properties.Name -contains 'timingRoot') { $sealedTiming = [string]$sealed.timingRoot }
+            if (-not [string]::IsNullOrWhiteSpace($TimingRoot) -and ($TimingRoot -cne $sealedTiming)) { throw 'selection-attempt-conflict' }
+            $TimingRoot = $sealedTiming
+        } elseif ([string]::IsNullOrWhiteSpace($TimingRoot)) {
+            if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
+                . (Join-Path $lib 'test-phase-evidence.ps1')
+            }
+            $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot (Join-Path $candidateRoot 'logs') -RunId $RunId)
+        }
         # Candidate journalling reads the remote ref; acquire its pinned object before
         # selection without changing the long-lived ref or repinning the journal.
         $fetch = Invoke-ReleaseGateGit -WorkingDirectory $checkout -Arguments @('fetch','origin',$record.sha)
