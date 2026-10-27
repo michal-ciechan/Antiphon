@@ -173,7 +173,9 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
                 || options.Cut == "queue" && boundary == "queue-inserted"
                 || options.Cut == "receipt" && boundary == "receipt-before-save"
                 || options.Cut == "attempt" && boundary == "queue-before-typing"
-                || options.Cut == "verdict" && boundary == "queue-before-verdict";
+                // Transcript confirmation is independent of the queue verdict save. Hold both
+                // saves so the crash cut observes the prompt before either verdict is committed.
+                || options.Cut == "verdict" && boundary is "queue-before-verdict" or "receipt-before-save";
             blocked |= options.Cut == "dispatch-claim" && boundary is "dispatch-warning-claim-committed" or "dispatch-warning-before-materialize"
                 || options.Cut == "dispatch-projection" && boundary == "dispatch-warning-before-commit"
                 || options.Cut == "pre-enqueue" && boundary == "before-enqueue"
