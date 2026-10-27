@@ -411,7 +411,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // deadlocks that observer (40P01) and drops this not-ready error (CARD-1190).
             await _db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").AsNoTracking().SingleAsync(CancellationToken.None);
-            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
+            // Serialize status/pointer writers and deletion, while allowing the independent
+            // incident writer's FK KEY SHARE lock. FOR UPDATE makes that awaited insert wait
+            // for this transaction, which cannot commit until the incident writer returns.
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR NO KEY UPDATE")
                 .AsNoTracking().SingleOrDefaultAsync(CancellationToken.None);
             // Cleanup's exit observer has its own context. Re-read before merging typed
             // evidence so an unrelated catch cannot overwrite its proven timeout.
