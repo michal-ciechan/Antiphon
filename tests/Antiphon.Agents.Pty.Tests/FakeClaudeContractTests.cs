@@ -916,6 +916,58 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
+    // Portable companion to the native CRLF case above. Force Windows input and split ANSI
+    // output on every character; this witnesses the shared SendLineAsync path, not ConPTY.
+    [Test]
+    [Arguments("\r\n")]
+    [Arguments("\r")]
+    public async Task Windows_line_endings_and_split_ANSI_echo_keep_Enter_separate(string lineEnding)
+    {
+        const string normalized = "HEAD work on card CARD-0001\n\nDescription:\nreview the doc and TAIL write the spec";
+        var body = normalized.Replace("\n", lineEnding) + lineEnding;
+        var screen = new TerminalScreen(120, 30);
+        screen.Feed("Fake Claude ready\r\n");
+        var before = screen.GetText();
+        var writes = new List<string>();
+        var echoReads = 0;
+
+        var outcome = await EchoGatedLineSender.SendAsync(
+            body,
+            _ =>
+            {
+                if (writes.Count > 0)
+                {
+                    echoReads++;
+                    var echo = echoReads == 1
+                        ? "\x1b[2J\x1b[H\x1b[32mHEAD work on card CARD-0001"
+                        : "\r\n\r\nDescription:\r\nreview the doc and TAIL write the spec\x1b[0m";
+                    foreach (var character in echo)
+                        screen.Feed(character.ToString());
+                    ComposerDeliveryEvidence.BodyConsumed(before, screen.GetText(), normalized)
+                        .ShouldBe(echoReads == 2, "the head alone cannot release Enter");
+                }
+                return Task.FromResult(screen.GetText());
+            },
+            (text, _) =>
+            {
+                if (text == "\r")
+                    echoReads.ShouldBe(2, "Enter must wait for the rendered tail");
+                writes.Add(text);
+                return Task.CompletedTask;
+            },
+            new SendLineGateOptions(TimeSpan.Zero, TimeSpan.FromSeconds(1), TimeSpan.Zero),
+            CancellationToken.None);
+
+        outcome.ShouldBe(SendLineGateOutcome.EvidenceSeen);
+        writes.ShouldBe(new[]
+        {
+            "\x1b[200~HEAD work on card CARD-0001\n\nDescription:\nreview the doc and TAIL write the spec\x1b[201~",
+            "\r",
+        });
+        screen.GetText().ShouldContain("TAIL write the spec");
+        screen.GetText().ShouldNotContain("\x1b");
+    }
+
     /// <summary>
     /// CARD-0128 S2a mechanism pin. Before the production gate, the 20ms writer-side pause and CR
     /// both reached this deaf fake before it read stdin; on wake they drained as one burst and the
