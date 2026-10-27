@@ -1281,7 +1281,8 @@ public sealed partial class SessionMessageQueueService
     public async Task<bool> CancelPendingIfUntypedAsync(Guid sessionId, Guid messageId, CancellationToken ct) =>
         await CancelUnderLockAsync(
             sessionId, messageId,
-            m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct) == true;
+            m => m.Status == QueuedMessageStatus.Pending
+                && m.LastDeliveryStartedAt == null && m.LastDeliveryGeneration == null, ct) == true;
 
     /// <summary>
     /// CARD-0354: after boot successfully arms remote-control (or finds the bridge already live),
@@ -1310,7 +1311,7 @@ public sealed partial class SessionMessageQueueService
             foreach (var message in pending)
             {
                 if (message.MaintenanceKind == RemoteControlMaintenanceKind.AutomaticArm
-                    && message.DeliveryAttempts == 0
+                    && message.LastDeliveryStartedAt == null && message.LastDeliveryGeneration == null
                     && message.MaintenanceResult is RemoteControlArmResult.Requested
                         or null)
                 {
@@ -1323,7 +1324,7 @@ public sealed partial class SessionMessageQueueService
 
                 if (message.MaintenanceKind != RemoteControlMaintenanceKind.None)
                     continue;
-                if (message.DeliveryAttempts != 0)
+                if (message.LastDeliveryStartedAt != null || message.LastDeliveryGeneration != null)
                     continue;
                 if (message.Origin is QueuedMessageOrigin.Ui or QueuedMessageOrigin.Channel)
                     continue;
@@ -2062,6 +2063,9 @@ public sealed partial class SessionMessageQueueService
     // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
     // Null generation is reserved for pre-migration rows: only a launch after their typing
     // proves the old composer gone. Missing evidence must never authorize cancellation.
+    private static bool TypedIntoComposer(SessionQueuedMessage message) =>
+        message.LastDeliveryStartedAt != null || message.LastDeliveryGeneration != null;
+
     private static bool DeliveryGenerationChanged(SessionQueuedMessage message, DateTime currentGeneration) =>
         message.LastDeliveryGeneration is { } generation
             ? !SessionGeneration.Equal(generation, currentGeneration)
@@ -2089,7 +2093,7 @@ public sealed partial class SessionMessageQueueService
         var deliverableIds = deliverable.Select(m => m.Id).ToHashSet();
         var heldBack = pending
             .Where(m => !deliverableIds.Contains(m.Id))
-            .Where(m => (m.DeliveryAttempts > 0 || (IsCodexPointer(kind, m) && m.LastDeliveryStartedAt != null))
+            .Where(m => (TypedIntoComposer(m) || (IsCodexPointer(kind, m) && m.LastDeliveryStartedAt != null))
                 && !DeliveryGenerationChanged(m, sessionGeneration))
             .ToList();
         if (heldBack.Count == 0)
@@ -2128,7 +2132,7 @@ public sealed partial class SessionMessageQueueService
     {
         var canceled = await db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Canceled
-                && (m.DeliveryAttempts > 0 || m.LastDeliveryStartedAt != null) && m.SentAt == null)
+                && (m.LastDeliveryStartedAt != null || m.LastDeliveryGeneration != null) && m.SentAt == null)
             // Stored timestamps have the same microsecond precision as the normalized token.
             // Keep legacy rows without generation evidence, but bound known old generations.
             .Where(m => m.LastDeliveryGeneration == generation
@@ -2184,7 +2188,7 @@ public sealed partial class SessionMessageQueueService
             if (!tasks.TryGetValue(message.ExecutionTaskId!.Value, out var task)
                 || !AgentTaskService.IsSettled(task.Status))
                 continue;
-            var untyped = message.DeliveryAttempts == 0;
+            var untyped = message.LastDeliveryStartedAt == null && message.LastDeliveryGeneration == null;
             if (!untyped && !DeliveryGenerationChanged(message, currentGeneration))
                 continue;
 
@@ -2205,7 +2209,8 @@ public sealed partial class SessionMessageQueueService
         IEnumerable<SessionQueuedMessage> messages, CancellationToken ct)
     {
         var expired = messages.Where(m => m.Status == QueuedMessageStatus.Pending
-            && m.ExecutionDeadlineAt <= UtcNow() && m.DeliveryAttempts == 0
+            && m.ExecutionDeadlineAt <= UtcNow()
+            && m.LastDeliveryStartedAt == null && m.LastDeliveryGeneration == null
             && m.ExecutionTaskId != null).ToList();
         foreach (var message in expired)
         {
@@ -2529,7 +2534,7 @@ public sealed partial class SessionMessageQueueService
         {
             foreach (var message in pending.Where(m =>
                          m.Origin == QueuedMessageOrigin.Delegation
-                         && m.DeliveryAttempts == 0
+                         && m.LastDeliveryStartedAt == null && m.LastDeliveryGeneration == null
                          && m.SourceTaskId is not null
                          && m.ContentDigest is not null).ToList())
             {
@@ -2684,9 +2689,9 @@ public sealed partial class SessionMessageQueueService
         if (await RecoverPointerAsync(db, sessionId, run, ceilings, sessionKind, ct) is { } pointerRecovery)
             return pointerRecovery;
 
-        if (run.Any(m => m.DeliveryAttempts > 0)
+        if (run.Any(TypedIntoComposer)
             && run.Where(m => m.DeliveryAttempts > 0)
-                .All(m => !DeliveryGenerationChanged(m, sessionGeneration)))
+                .All(m => TypedIntoComposer(m) && !DeliveryGenerationChanged(m, sessionGeneration)))
         {
             if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } retrySnap)
             {

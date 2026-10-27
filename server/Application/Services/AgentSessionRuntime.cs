@@ -2156,7 +2156,7 @@ public sealed partial class AgentSessionRuntime
         var observation = await ObserveDialogAsync(sessionId, ct);
         var generation = SessionGeneration.Normalize(session.StartedAt);
         var idle = await TranscriptIdleQuery.IsConfirmedIdleAsync(db, sessionId, ct);
-        if (DialogDeliveryAdmission.Decide(observation, sessionId, generation, idle, session.SessionBackend) is { } withhold)
+        if (DialogDeliveryAdmission.Decide(observation, sessionId, generation, idle, session.SessionBackend, input) is { } withhold)
             throw new ProviderDialogInputRefusedException(withhold.Code);
         var request = DialogDeliveryAdmission.ConditionalRequest(observation!, generation, input);
         ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));

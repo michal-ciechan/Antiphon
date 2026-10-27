@@ -1500,10 +1500,17 @@ accepted generation, session object, runtime epoch, output sequence and input
 revision under the launch gate and screen monitor, after asynchronous reads.
 Visible dialogs refuse, including a blocked screen on an adopted session.
 Absent, unsupported, or uncertain input history holds as Unknown. An adopted
-pty-host session whose classified screen is Clear and whose transcript is
-confirmed idle (the last row is TurnEnd with stop_reason end_turn, and no tool
-call is still open) may receive ordinary automated input. Maintenance intents
-still require known input history. A null snapshot, an accepted-generation
+pty-host session may receive an ordinary body only when the live screen shows an
+empty idle composer, and may receive Enter only when that composer holds the
+body this generation already typed. The bound transcript must be caught up and
+confirmed idle: the last row is TurnEnd with stop_reason end_turn, no tool call
+is still open, and the reader status is Ready. A visible working spinner refuses
+even when an older TurnEnd remains. The write fence re-reads the screen and the
+transcript immediately before bytes, under the generation, epoch, sequence and
+revision checks. A copied idle flag is not authority. Absence of a newer
+transcript row is not idle. Known-history Clear, including a working spinner, is
+unchanged. An operator draft is neither appended to nor submitted. Maintenance
+intents still require known input history. A null snapshot, an accepted-generation
 mismatch, uncertain input, and an unreadable screen stay withheld. Each backend
 write attempt advances input revision before I/O, including explicit interactive
 input and a failed write. No raw-input fallback is permitted for an unsupported
@@ -1512,8 +1519,9 @@ guarded peer.
 Queue and expectation admission retain pending work without an attempt when a
 real dialog, a remote-control menu, or a missing snapshot vetoes before typing.
 A durable non-dialog withhold counts one delivery attempt so a receipt has a
-floor, and does not park the note. A body already written retains its existing
-composer hold
+floor, does not stamp a typing time, and does not park the note. Cancellation,
+shrinking, and Enter-only recovery still treat that row as untyped. A body already
+written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
 Explicit authenticated terminal input uses the named interactive entry point.

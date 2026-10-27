@@ -9,7 +9,9 @@ public sealed record ProviderDialogObservation(
     string? Kind = null, bool? CanCancel = null, bool InputHistoryKnown = false,
     SubmittedInputProof? SubmittedInput = null,
     bool Adopted = false, bool InputUncertain = false,
-    ProviderDialogState ScreenState = ProviderDialogState.Unknown)
+    ProviderDialogState ScreenState = ProviderDialogState.Unknown,
+    bool CurrentIdleComposer = false, bool ScreenWorking = false,
+    bool ComposerHoldsAutomatedBody = false)
 {
     public const string Capability = "claudeDialogGuardV1";
 }

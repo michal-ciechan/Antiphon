@@ -26,11 +26,11 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// One floor for a durable withhold. Real dialogs, a remote-control menu, and a missing
-    /// snapshot stay at zero attempts. Rows already attempted are left alone.
+    /// snapshot stay at zero attempts. Rows already attempted are left alone. The charge is
+    /// not a typing time: cancellation, shrinking, and Enter-only recovery still see it as untyped.
     /// </summary>
     private async Task ChargeDurableWithholdAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var now = UtcNow();
         var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
         long? floor = baseline.Observable ? baseline.MaxSequence : null;
         await db.SessionQueuedMessages
@@ -39,7 +39,6 @@ public sealed partial class SessionMessageQueueService
                 && m.DeliveryAttempts == 0)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(m => m.DeliveryAttempts, 1)
-                .SetProperty(m => m.LastDeliveryStartedAt, now)
                 .SetProperty(m => m.LastDeliveryBaselineSequence, floor), ct);
     }
 }

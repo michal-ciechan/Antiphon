@@ -394,7 +394,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     {
         ct.ThrowIfCancellationRequested();
         if (!DialogGuardEnabled) return Task.FromResult<ProviderDialogObservation?>(null);
-        var observed = ClaudeDialogObservation.Observe(SnapshotRenderedScreen());
+        var screen = SnapshotRenderedScreen();
+        var observed = ClaudeDialogObservation.Observe(screen);
         var classified = observed.State switch
         {
             ClaudeDialogState.Clear => ProviderDialogState.Clear,
@@ -402,10 +403,24 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             _ => ProviderDialogState.Unknown
         };
         var historyKnown = !DialogAdopted && !DialogInputUncertain;
+        var working = ClaudeScreen.IsWorking(screen);
+        var emptyIdle = !working && ClaudeScreen.TryReadComposer(screen, out var composer)
+            && ClaudeScreen.ComposerContentIsEmpty(composer);
         return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
             SnapshotSequence, _dialogInputRevision, historyKnown ? classified : ProviderDialogState.Unknown,
             observed.Kind.ToString(), observed.CanCancel, historyKnown, null,
-            DialogAdopted, DialogInputUncertain, classified));
+            DialogAdopted, DialogInputUncertain, classified,
+            emptyIdle, working, ComposerOwnsAutomatedBody(screen)));
+    }
+
+    private bool ComposerOwnsAutomatedBody(string screen)
+    {
+        var owned = StripBracketedPasteMarkers(_composer.ToString());
+        if (owned.Length == 0 || ClaudeScreen.IsWorking(screen)) return false;
+        if (!ClaudeScreen.TryReadComposer(screen, out var content) || ClaudeScreen.ComposerContentIsEmpty(content))
+            return false;
+        return ComposerDeliveryEvidence.WholeBodyEquals(owned, content)
+            || ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(content, owned);
     }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];
@@ -447,15 +462,31 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 return new(Guid.Empty, ConditionalInputOutcomes.StaleObservation);
             var screen = SnapshotRenderedScreen();
             var state = ClaudeDialogObservation.Observe(screen).State;
-            var allowed = request.DialogIntent switch
+            if (DialogAdopted && request.DialogIntent == ClaudeDialogInputIntent.None)
             {
-                ClaudeDialogInputIntent.None => state == ClaudeDialogState.Clear,
-                ClaudeDialogInputIntent.UnsafeDeleteNo => request.Input == "2" && ClaudeDialogActions.IsUnsafeDeleteApproval(screen),
-                ClaudeDialogInputIntent.RemoteControlDismiss => request.Input == "\u001b" && ClaudeRemoteControlMenu.AllowsDismiss(screen),
-                _ => false
-            };
-            if (!allowed) return new(Guid.Empty, state == ClaudeDialogState.Unknown
-                ? ConditionalInputOutcomes.ObservationUnknown : ConditionalInputOutcomes.ModalBlocked);
+                if (DialogInputUncertain || state == ClaudeDialogState.Unknown || ClaudeScreen.IsWorking(screen))
+                    return new(Guid.Empty, ConditionalInputOutcomes.ObservationUnknown);
+                if (state == ClaudeDialogState.Blocked)
+                    return new(Guid.Empty, ConditionalInputOutcomes.ModalBlocked);
+                var submit = request.Input is "\r" or "\n";
+                var empty = ClaudeScreen.TryReadComposer(screen, out var content)
+                    && ClaudeScreen.ComposerContentIsEmpty(content);
+                var allowedAdopted = !submit && empty || submit && ComposerOwnsAutomatedBody(screen);
+                if (!allowedAdopted)
+                    return new(Guid.Empty, ConditionalInputOutcomes.ObservationUnknown);
+            }
+            else
+            {
+                var allowed = request.DialogIntent switch
+                {
+                    ClaudeDialogInputIntent.None => state == ClaudeDialogState.Clear,
+                    ClaudeDialogInputIntent.UnsafeDeleteNo => request.Input == "2" && ClaudeDialogActions.IsUnsafeDeleteApproval(screen),
+                    ClaudeDialogInputIntent.RemoteControlDismiss => request.Input == "\u001b" && ClaudeRemoteControlMenu.AllowsDismiss(screen),
+                    _ => false
+                };
+                if (!allowed) return new(Guid.Empty, state == ClaudeDialogState.Unknown
+                    ? ConditionalInputOutcomes.ObservationUnknown : ConditionalInputOutcomes.ModalBlocked);
+            }
         }
 
         ConditionalInputs.Add(request.Input);

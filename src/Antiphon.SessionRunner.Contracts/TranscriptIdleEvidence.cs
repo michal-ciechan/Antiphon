@@ -9,9 +9,12 @@ public static class TranscriptIdleEvidence
 {
     public readonly record struct ToolRow(long Sequence, string Kind, string? ToolUseId, string? ToolName);
 
-    public static bool FromSnapshot(RunnerTranscriptDto? snapshot)
+    public static bool FromSnapshot(RunnerTranscriptDto? snapshot, bool requireCaughtUp = false)
     {
         if (snapshot is null || snapshot.Entries.Count == 0) return false;
+        // CARD-1259: a missing newer row is not idle while the reader is behind or unknown.
+        if (requireCaughtUp && !string.Equals(snapshot.Readiness?.Status, "Ready", StringComparison.Ordinal))
+            return false;
         RunnerTranscriptEvent? last = null;
         var tools = new List<ToolRow>();
         foreach (var entry in snapshot.Entries)

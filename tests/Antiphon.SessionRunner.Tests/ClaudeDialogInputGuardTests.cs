@@ -151,7 +151,7 @@ public class ClaudeDialogInputGuardTests
     {
         await using var adopted = new Fixture(adopted: true);
         var tailer = new Tailer(adopted.Id);
-        tailer.EndTurn();
+        tailer.EndTurn(Ready());
         adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
         (await adopted.SendAsync("adopted-idle-notice")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         adopted.Child.Inputs.ShouldBe(["adopted-idle-notice"]);
@@ -301,6 +301,20 @@ public class ClaudeDialogInputGuardTests
         adopted.Session.RenderDialogScreenForTest(Composer("operator unsent draft"));
         (await adopted.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         adopted.Child.Inputs.ShouldBe(["owned body text"]);
+    }
+
+    [Test]
+    public async Task AdoptedEnterSubmitsTheOwnedComposer()
+    {
+        const string body = "owned body text";
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn(Ready());
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync(body)).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        adopted.Session.RenderDialogScreenForTest(Composer(body));
+        (await adopted.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        adopted.Child.Inputs.ShouldBe([body, "\r"]);
     }
 
     [Test]

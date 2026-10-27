@@ -388,7 +388,11 @@ public partial class AttentionServiceTests
         await scenario.AddAgentAsync(persistentSession: session);
         var message = await scenario.AddQueuedMessageAsync(session, "still in the normal queue", attempts: 1);
 
-        (await ItemsForAsync(scenario)).ShouldNotContain(i => i.MessageId == message);
+        var items = (await ItemsForAsync(scenario)).Where(i => i.MessageId == message).ToList();
+        items.ShouldNotContain(i => i.Kind == AttentionKind.ParkedMessage);
+        var aged = items.ShouldHaveSingleItem();
+        aged.Kind.ShouldBe(AttentionKind.PendingNotesAged);
+        aged.Severity.ShouldBe(AlertSeverity.Warning);
     }
 
     // ---- 3. DeadSession -------------------------------------------------------------------------

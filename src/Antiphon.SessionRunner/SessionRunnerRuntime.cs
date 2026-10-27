@@ -1609,11 +1609,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, outcome, session.AcceptedStartedAt, session.LastSequence);
             }
 
-            // Snapshot the tailer before the screen lock. A later output advance fails the sequence fence.
-            var transcriptIdle = request.RequireClaudeDialogClear && session.TranscriptConfirmedIdle();
             void Fence()
             {
                 // Called under the session screen monitor at the last boundary before I/O.
+                // Screen and transcript are read here, not from a value captured before preparation.
                 // The launch gate alone does not freeze output, readiness or transcript reads.
                 string? refusal = !_sessions.TryGetValue(sessionId, out var current)
                     || !ReferenceEquals(session, current) ? ConditionalInputOutcomes.StaleObservation
@@ -1622,7 +1621,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     : session.HasExited ? ConditionalInputOutcomes.Exited
                     : session.TerminalReleaseInProgress ? ReleaseInProgressInputOutcome
                     : session.LastSequence != request.ExpectedLastSequence ? ConditionalInputOutcomes.StaleObservation
-                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch, transcriptIdle) : null;
+                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch) : null;
                 if (refusal is not null) throw new DialogInputRefusedException(refusal);
             }
             InputAuthorization authorization;
@@ -2514,12 +2513,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private ProviderDialogObservation ObserveDialog(Guid runtimeEpoch, TimeProvider? clock = null)
         {
-            // A sequence belongs to this object only. Cache parsing, never write authority.
-            if (_dialogSequence != _lastSequence || _dialogObservation is null)
-            {
-                _dialogObservation = ClaudeDialogObservation.Observe(_screen?.GetScreenText());
-                _dialogSequence = _lastSequence;
-            }
+            // Re-read every time. A same-sequence repaint and a transcript-only advance are
+            // write authority; the output sequence does not move for either.
+            var screen = _screen?.GetScreenText();
+            _dialogObservation = ClaudeDialogObservation.Observe(screen);
+            _dialogSequence = _lastSequence;
             var classified = _dialogObservation.State switch
             {
                 ClaudeDialogState.Clear => ProviderDialogState.Clear,
@@ -2536,7 +2534,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 known && _terminalInputWriters == 0 && !_terminalComposerPending);
             return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
                 state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof,
-                _adopted, _terminalInputUncertain, classified);
+                _adopted, _terminalInputUncertain, classified,
+                AdoptedComposerEvidence.IsEmptyIdleComposer(screen),
+                AdoptedComposerEvidence.IsWorking(screen),
+                ComposerHoldsOwnedBody(screen));
+        }
+
+        private bool ComposerHoldsOwnedBody(string? screen)
+        {
+            if (!_terminalComposerPending || string.IsNullOrEmpty(_ownedComposerBody) || string.IsNullOrEmpty(screen))
+                return false;
+            if (ClaudeScreen.IsWorking(screen)) return false;
+            if (!ClaudeScreen.TryReadComposer(screen, out var content) || ClaudeScreen.ComposerContentIsEmpty(content))
+                return false;
+            return ComposerDeliveryEvidence.WholeBodyEquals(_ownedComposerBody, content)
+                || ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(content, _ownedComposerBody);
+        }
+
+        private bool AdoptedTranscriptCurrentlyIdle()
+        {
+            var tailer = _tailer;
+            if (tailer is null) return false;
+            if (string.IsNullOrEmpty(tailer.BoundTranscriptPath) && string.IsNullOrEmpty(tailer.NativeBindingIdentity))
+                return false;
+            return TranscriptIdleEvidence.FromSnapshot(tailer.Snapshot(), requireCaughtUp: true);
         }
 
         internal bool TranscriptConfirmedIdle()
@@ -2546,7 +2567,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return TranscriptIdleEvidence.FromSnapshot(tailer?.Snapshot());
         }
 
-        internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch, bool transcriptIdle = false)
+        internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch)
         {
             if (request.ExpectedRuntimeEpoch != runtimeEpoch || request.ExpectedInputRevision != _inputRevision)
                 return ConditionalInputOutcomes.StaleObservation;
@@ -2571,12 +2592,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (observation.InputHistoryKnown && observation.State == ProviderDialogState.Clear)
                 return null;
             if (observation.Adopted && !observation.InputUncertain
+                && _backend == SessionBackends.PtyHost
                 && observation.ScreenState == ProviderDialogState.Clear
-                && transcriptIdle && _backend == SessionBackends.PtyHost)
-                return null;
+                && !observation.ScreenWorking
+                && AdoptedTranscriptCurrentlyIdle())
+            {
+                var submit = request.Input is "\r" or "\n";
+                if (!submit && observation.CurrentIdleComposer) return null;
+                if (submit && observation.ComposerHoldsAutomatedBody) return null;
+            }
             return ConditionalInputOutcomes.ObservationUnknown;
         }
         private bool _terminalComposerPending;
+        private string? _ownedComposerBody;
         private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();
         private long _deliveryEvidenceVersion;
         private bool _deliveryDisposed;
@@ -2622,6 +2650,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 ClearDeliveryEvidence();
                 _submittedInput.Clear();
+                _ownedComposerBody = null;
+                _terminalComposerPending = false;
                 _dialogObservation = null;
                 _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
             }
@@ -4043,13 +4073,29 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             (_tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0))
                 with { AcceptedStartedAt = _acceptedStartedAt };
 
+        private static string StripBracketedPaste(string input) =>
+            input.Replace("\u001b[200~", "", StringComparison.Ordinal)
+                .Replace("\u001b[201~", "", StringComparison.Ordinal);
+
         public async Task WriteAsync(string input, CancellationToken ct, Action? beforeBackendWrite = null)
         {
             lock (_gate) _terminalInputWriters++;
             try
             {
                 await WriteCoreAsync(input, ct, beforeBackendWrite);
-                lock (_gate) _terminalComposerPending = input != "\r";
+                lock (_gate)
+                {
+                    if (input is "\r" or "\n")
+                    {
+                        _terminalComposerPending = false;
+                        _ownedComposerBody = null;
+                    }
+                    else
+                    {
+                        _terminalComposerPending = true;
+                        _ownedComposerBody = StripBracketedPaste(input);
+                    }
+                }
             }
             catch (DialogInputRefusedException) { throw; }
             catch
@@ -4058,6 +4104,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     _terminalInputUncertain = true;
                     _submittedInput.Clear();
+                    _ownedComposerBody = null;
                 }
                 throw;
             }

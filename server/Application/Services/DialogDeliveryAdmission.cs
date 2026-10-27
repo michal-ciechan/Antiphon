@@ -24,7 +24,7 @@ internal static class DialogDeliveryAdmission
 
     public static DialogWithhold? Decide(
         ProviderDialogObservation? observation, Guid sessionId, DateTime generation,
-        bool transcriptIdle, SessionBackend backend)
+        bool transcriptIdle, SessionBackend backend, string? input = null)
     {
         if (observation is null || observation.SessionId != sessionId || observation.RuntimeEpoch == Guid.Empty)
             return new(SnapshotUnavailable, ConditionalInputOutcomes.ObservationUnknown, false);
@@ -38,9 +38,17 @@ internal static class DialogDeliveryAdmission
             return null;
         if (observation.ScreenState == ProviderDialogState.Unknown)
             return new(ScreenUnknown, ConditionalInputOutcomes.ObservationUnknown, true);
-        if (observation.Adopted && observation.ScreenState == ProviderDialogState.Clear
+        if (observation.Adopted && !observation.InputUncertain
+            && observation.ScreenState == ProviderDialogState.Clear
+            && !observation.ScreenWorking
             && transcriptIdle && backend == SessionBackend.PtyHost)
-            return null;
+        {
+            var submit = input is "\r" or "\n";
+            var eligible = input is null
+                ? observation.CurrentIdleComposer || observation.ComposerHoldsAutomatedBody
+                : submit ? observation.ComposerHoldsAutomatedBody : observation.CurrentIdleComposer;
+            if (eligible) return null;
+        }
         if (observation.Adopted)
             return new(AdoptedSession, ConditionalInputOutcomes.ObservationUnknown, true);
         return new(ObservationUnavailable, ConditionalInputOutcomes.ObservationUnknown, true);
