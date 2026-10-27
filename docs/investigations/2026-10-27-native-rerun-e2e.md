@@ -1,6 +1,6 @@
 # Native Windows E2E rerun investigation — 595bc226
 
-Status: investigation in progress, 2026-10-27. No product or test changes.
+Status: investigation complete for all nine historical failure cases, 2026-10-27. Six still fail natively; Agents and Pipeline pass, and the review case passes four times. Five classes were rerun fully; 49 land-delivery cases were not rerun within the 120-minute budget. No product or test changes.
 
 ## Provenance and scope
 
@@ -8,20 +8,20 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 - Requested source: fetched `origin/rc/2026-10-27`, `d1d090f766451797a3bd9b30c9d2966f2f8c034c`.
 - The assigned branch is not descended from that rc tip. E2E/client files match; the only runtime source difference is `src/Antiphon.Agents.Pty/ClaudeScreen.cs`. Branch switching, merging and source edits are outside this investigation. Therefore execution uses an exact `git archive` of the requested rc tip at `C:\Antiphon\scratch\595bc226-rc`, with explicit build source revision metadata; the report stays on the assigned branch.
 - Local evidence: `C:\Antiphon\worktrees\card-task-595bc226\.antiphon\native-595bc226` (gitignored). Historical evidence is read-only under `C:\Antiphon\releases\candidates\rc-2026-10-25-105792f7d22f\logs\2026-10-26-0946-8f055f87`.
-- Final historical digest fetched from `origin/feat/card-task-7e719c57`, `docs/investigations/2026-10-27-rc-8f055f87-final-run-digest.md`.
+- Final historical digest fetched from `origin/feat/card-task-7e719c57` at `c7ad9e901c6be169fb5a0f43be8e210211e9081b`, `docs/investigations/2026-10-27-rc-8f055f87-final-run-digest.md`.
 - Initial host check: Windows, SDK `10.0.300`, 8,274 MiB available / 32,709 MiB total; no native qualification lock. A visible `Antiphon.Tests` process belongs to active task fb80be16, not this task or abandoned qualification; left untouched.
-- Byte-for-byte verification at `2026-10-27T08:21:32Z` checked all 9,063 archived files with zero differences (`source-verification.json`).
+- Byte-for-byte verification at `2026-10-27T08:54:05Z` checked all 9,063 archived files with zero differences (`source-verification.json`).
 - Every driver uses `scripts/build-slot.ps1`; E2E fixture owns random-loopback server/runner and test Postgres. No live service restart, publish, tag or promotion is authorized or performed.
 
 ## Native results
 
-| Class | Historical result | Native rc result | Cause / classification | Proposed fix |
+| Class | Historical result | Native rc initial result | Cause / classification | Proposed fix |
 |---|---|---|---|---|
 | AgentE2ETests | 1 pass / 1 fail | 2 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | PipelineGlanceE2ETests | 0 pass / 1 fail | 1 pass / 0 fail | Fixed by rc/2026-10-27 | None |
 | BoardE2ETests | 9 pass / 1 fail | 9 pass / 1 fail | Confirmed fixture navigation defect; Diff tab never selected | See Not done, noted |
 | WorkflowDeleteTests | 4 pass / 2 fail | 4 pass / 2 fail | Confirmed fixture routing assumptions predate Home/Workflows split | See Not done, noted |
-| AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Partial: 2 pass / 1 fail; 49 not rerun | Residue fixture confirmed; review receipt passed once, repeats pending | See Not done, noted |
+| AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Partial: 2 pass / 1 fail; 49 not rerun | Residue fixture confirmed; historical review receipt race reconstructed, 4/4 current runs pass | See Not done, noted |
 | DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | 11 pass / 2 fail | Confirmed stale warning expectation plus product admission delay | See Not done, noted |
 
 The single native build passed (39 warnings, zero errors, 220.67 seconds MSBuild / 222 seconds leased). `npm ci` and `npm run build` passed (106 seconds leased, 75 seconds slot wait). Source archive SHA-256: `6AA5990C26B3E5515C647BFE34BF8EBD6355C8D1A3F437C0D6525D6B0D0AC526`.
@@ -49,7 +49,7 @@ failed Board_user_can_review_real_worktree_diff_and_send_inline_comment (23s 804
 
 The source opens the card and immediately asserts the Diff heading (`tests/Antiphon.E2E/BoardE2ETests.cs:499`, `:502`). The product selects `sessions` on desktop and has `keepMounted={false}` (`client/src/features/board/CardModal.tsx:223`); Diff content is a separate panel (`:266`). The current failure screenshot `ui-evidence/Screenshots/Board_user_can_review_real_worktree_diff_and_send_inline_comment/FAIL_final_072636.png` visibly has Sessions selected and Diff available. The corresponding `ui-evidence/Logs/BoardE2ETests/Board_user_can_review_real_worktree_diff_and_send_inline_comment/page.html` and TRX aria snapshot corroborate that state.
 
-Classification: fixture contract drift, not a demonstrated Windows or product defect. This mechanism is deterministic; no flake claim. A pushed repair exists on `origin/feat/card-task-380013d3`, but its Board change is absent from the pinned rc source. The report does not apply or verify that repair. The manual xterm case passed in this native run; that single pass does not establish race freedom.
+Classification: fixture contract drift, not a demonstrated Windows or product defect. This mechanism is deterministic; no flake claim. A pushed repair exists on `origin/feat/card-task-380013d3` at `03d62fedb18a36c573b8b508ad2fe21f26985f48`, but its Board change is absent from the pinned rc source. The report does not apply or verify that repair. The manual xterm case passed in this native run; that single pass does not establish race freedom.
 
 ## Confirmed: Workflow delete tests still assume the old dashboard route
 
@@ -85,7 +85,7 @@ AgentTaskEventType.LandedWithResidue
 AgentTaskEventType.Landed
 ```
 
-`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:326` creates `.antiphon/valuable.txt` containing `owned user residue`; `AgentTaskLandDeliveryE2ETests.cs:213` expects `LandedWithResidue`. Current defaults retain `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`). The classifier's catch-all adds it to Evidence (`server/Application/Services/WorktreeIgnoredContentClassifier.cs:55`), and guarded removal copies evidence before reinspection/deletion (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs:120`). The product is executing the newer evidence-retention contract.
+`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:329` creates `.antiphon/valuable.txt` containing `owned user residue`; `AgentTaskLandDeliveryE2ETests.cs:213` expects `LandedWithResidue`. Current defaults retain `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`). The classifier's catch-all adds it to Evidence (`server/Application/Services/WorktreeIgnoredContentClassifier.cs:55`), and guarded removal copies evidence before reinspection/deletion (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs:122`). The product is executing the newer evidence-retention contract.
 
 Native proof is stored in `residue-proof.json`, extracted without changing the original snapshot at `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\444e140c28c042c4a7591b1f64cb23c0\delivery-evidence.json`:
 
@@ -95,15 +95,25 @@ Native proof is stored in `residue-proof.json`, extracted without changing the o
 
 Classification: stale fixture classification/expectation; no lost file, Windows ACL failure, or failed native publication demonstrated. The failure stops before the fixture's cleanup-retry assertions, so that later path is not covered by this run.
 
-## Review receipt: initial native rerun passes, additional repetitions pending
+## Confirmed historical review fixture race; four current native passes
 
 `AgentTaskLandDeliveryE2ETests-review-initial/results.trx` reports one pass for `C488_ReviewDeliveryCrashMatrix_Batch5(prompt-before-verdict)`, 233.965 seconds host duration / 540.5 seconds outer wall (300 seconds admission). This single pass does not establish a fix.
 
-The historical `e2e-all-split-34.trx` failed at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs:269` because `note.ConfirmedAt` was `2026-10-27T03:38:38.5361780Z` rather than null. The test waits for the queue-before-verdict barrier (`:208`, `:211`), then assumes the notification remains unconfirmed (`:269`). The hook holds the queue's verdict-save path (`server/Application/Services/SessionMessageQueueService.cs:2804`; fixture `LandDeliveryOptions.cs:178`), while the notification service independently scans attempted rows for complete transcript evidence (`AgentTaskLandNotificationService.cs:258`, `:299`) and sets `ConfirmedAt` (`:355`). These are different boundaries. A complete stored UserPrompt can therefore discharge the note before the queued-message verdict is saved.
+The historical `e2e-all-split-34.trx` failed at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs:269` because `note.ConfirmedAt` was `2026-10-27T03:38:38.5361780Z` rather than null. The test waits for the queue-before-verdict barrier (`:207`, `:211`), then assumes the notification remains unconfirmed (`:269`). The hook holds the queue's verdict-save path (`server/Application/Services/SessionMessageQueueService.cs:2804`; fixture `LandDeliveryOptions.cs:176`), while the notification service independently scans attempted rows for complete transcript evidence (`AgentTaskLandNotificationService.cs:254`, `:300`, `:315`) and sets `ConfirmedAt` (`:355`). These are different boundaries. A complete stored UserPrompt can therefore discharge the note before the queued-message verdict is saved.
 
-Fresh passing-run root: `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\a316a3aafc40484794276e69730e8c5c`. Its barrier names Review task `03d3283d-0ab4-486b-a511-d62e39de9933`, queued row `199d4d46-25b9-4e1f-8f8a-140382453736` and child PID 378348. Its final snapshot contains caller UserPrompt sequence 4, header `[task 03d3283d done]`, timestamp `2026-10-27T07:45:49Z`. Repetitions will distinguish a newly stable result from the historical timing-dependent assertion; no flake frequency is inferred from one pass.
+Fresh passing-run root: `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\a316a3aafc40484794276e69730e8c5c`. Its barrier names Review task `03d3283d-0ab4-486b-a511-d62e39de9933`, queued row `199d4d46-25b9-4e1f-8f8a-140382453736` and child PID 378348. Its final snapshot contains caller UserPrompt sequence 4, header `[task 03d3283d done]`, timestamp `2026-10-27T07:45:49Z`. The three additional repetitions below all pass. This does not establish that the historical timing-dependent assertion was repaired or quantify its failure frequency.
 
 `git diff 105792f7d22f origin/rc/2026-10-27 -- tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs server/Application/Services/AgentTaskLandNotificationService.cs server/Application/Services/SessionMessageQueueService.cs` is empty. The cited assertion, cut and receipt-save mechanism are unchanged from the historical failure.
+
+Three additional isolated invocations of the exact review method completed under one gate lease, with fresh fixture/server/runner state per run. The wrapper waited for the C508 diagnostic to exit, so no two E2E hosts from this task overlapped. `review-repeat-driver.log` records 571 seconds of slot wait and 669 seconds held for the serial batch.
+
+| Attempt | Native result | Driver wall seconds | Fixture root suffix |
+|---|---|---:|---|
+| review-repeat-1 | 1 pass / 0 fail | 225.9 | `eabae6dbcd2b432485c0ba2bd3d784e9` |
+| review-repeat-2 | 1 pass / 0 fail | 224.3 | `515563ae5ee04d11ae39cb72c2e08c04` |
+| review-repeat-3 | 1 pass / 0 fail | 214.3 | `99f76ba4988549caa81451c042906947` |
+
+`review-transcript-proof.json` binds all four native roots to their queue-before-verdict barrier, snapshot SHA-256, Review task ID, and exactly one caller UserPrompt at sequence 4 containing that task's completion header and `review-evidence=`. The original historical assertion records a non-null confirmation timestamp, while the only current receipt writer shown above is independent of the queue barrier. This confirms the fixture's unsynchronized assumption by reconstruction; the precise historical worker interleaving and original full transcript were not recovered. The race itself was **not reproduced on the current rc** in these four runs, and no current fix is claimed.
 
 ## Dispatch warnings: current contract mismatch and admission delay
 
@@ -134,13 +144,21 @@ The diagnostic rerun uses fixture root `b15312266469483abc65742e20e727f2`. `capa
 | Warning intents | Zero |
 
 Classification: **fixture contract drift** explains the impossible expected mismatch notification; **product control-flow integration delay** explains why the real E2E task remains queued instead of dispatching on the next fresh inspection. This is not evidence of an unavailable Grok provider or Windows transport failure. Default stalled-admission recovery cannot become eligible until approximately **08:41:56.910534Z**, plus its scan scheduling; this run does not prove its eventual outcome.
-## Remaining work
 
-The single native build, frontend rebuild and all five whole-class runs are complete; the land class used the explicitly narrowed three-case selection. Initial total: 35 selected cases, 29 passed / 6 failed. Remaining: three review-race repetitions, a focused read-only capacity DB witness, final evidence inventory and owned-output cleanup.
+## Coverage and remaining uncertainties
+
+Initial selection: **35 cases, 29 passed / 6 failed**. Additional diagnostics: **three review passes and one repeated C508 failure**. Total: **39 executions, 32 passed / 7 failed**, with all nine historically failing cases included. The focused C508 rerun reproduced its original error (176.197 seconds host, 1,579.0 seconds outer wall, including 1,397 seconds slot wait) and produced both DB observations above.
+
+- The 49 other land-delivery cases were not rerun; their historical 50-pass class result is not fresh coverage. The failed residue argument did not reach its later cleanup-retry assertions.
+- The review race is reconstructed from stored historical assertion evidence and unchanged receipt/barrier code; the four current passes do not reproduce the adverse scheduling order or prove a fix.
+- Admission state and the subsequent queued tick are confirmed. Recovery after the 120-second default stale-admission threshold, permanent deadlock, and exhaustion behavior were not observed.
+- The second Workflow failure has no screenshot because its completion hook does not capture one. Its error and routing mechanism are still evidenced.
+- Results bind the pinned rc SHA above, not a moving later rc tip. No independent AV/ACL/path forensic probe was needed or performed; those are not demonstrated causes of these failures.
 
 ## Not done, noted
 
-Board: the existing sibling change selects Diff before checking its content; WorkflowDelete: its route expectations need to follow the current Workflows route. No fix was designed or applied here.
+Fix ideas only: select the Board Diff tab; align Workflow routes; use actual protected residue in the residue fixture; align C508 with reinspection semantics; reconcile the review assertion with independent transcript confirmation; address capacity admission consumed before a stale claim rollback. No fix was designed or implemented.
+
 ## Execution contract and performance limits
 
 Both delivery classes use the real Program, isolated runner and native FakeGrok (`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:23`). Initialization asserts Windows, locates ConPTY, and requires `fakegrok.exe` (`:59`–`:61`). It also rejects production runner port 17204 (`:89`) and records loaded runner identity/hash (`:140`–`:146`). These checks passed in the native executions; the reported failures occur later. No SDK, ACL, CRLF, path-length or ConPTY initialization failure was observed.
@@ -159,4 +177,26 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label <label> -- dotnet run --proj
 
 The land selection substitutes exact methods `C467_V29_RealOutcomeProducerMatrix_Batch2` and `C488_ReviewDeliveryCrashMatrix_Batch5` for the final `*`. Additional diagnostic selection: `DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningReachesCaller`. All exact filters, UTC times and child exit codes are saved in per-run `run.json`; TRX files preserve every selected case and failure. `native-result-inventory.json` binds run results to SHA-256 hashes. These are native runs of the requested rc, not tests of the documentation branch's executable source.
 
-Host durations and slot waits are measured independently. The largest completed initial selection is the dispatch class at 24m23s host time; the original land class cost exceeds the entire task budget. Phase-level migration/setup/teardown breakdowns and p95 are not available from these E2E receipts; they are unknown, not zero. Shared-host contention is visible in the BUILD SLOT wait lines and is not treated as a product failure. No timeouts/assertions were widened, no failure was repaired, and no all-green claim is made.
+Host durations and slot waits are measured independently. The largest completed initial selection is the dispatch class at 24m23s host time; the original land class cost exceeds the entire task budget. Retained server logs contain LIVE_TIMING migration/setup/startup measurements; `phase-excerpts.txt` preserves original file:line entries and `phase-summary.json` summarizes deduplicated samples. For example the initial review fixture reports 31.824 seconds migration within 33.946 seconds setup (`a316a3aafc40484794276e69730e8c5c/server-logs/antiphon-20261027.log:240`, `:245`). Phase durations overlap and must not be added. Separate teardown/body phase timing remains unknown; TRX captures the overall case duration. These shared-host samples do not establish a stable production p95. Shared-host contention is visible in the BUILD SLOT wait lines and is not treated as a product failure. No timeouts/assertions were widened, no failure was repaired, and no all-green claim is made.
+Observed phase summary (63 deduplicated host/fixture samples, including restarts; these are not 63 independent test cases):
+
+| Phase | Median seconds | Empirical p95 seconds | Maximum seconds |
+|---|---:|---:|---:|
+| Database migration | 7.135 | 29.593 | 32.169 |
+| Fixture setup, including migration | 8.350 | 31.739 | 34.771 |
+| Host start | 2.099 | 3.302 | 3.528 |
+
+## Final integrity and cleanup
+
+- Final archive comparison at **08:54:05Z**: all **9,063** source files match the pinned rc archive, zero differences. No tracked screenshot baseline changed.
+- All foreground test/observer processes were awaited. Before deleting outputs, process inventory found zero executables running from the owned source export. All **16** `bin-595bc226` directories were resolved and checked beneath that export, then deleted; zero remain (`cleanup-receipt.json`, completed **08:55:27Z**).
+- TRX records identify **50** native Testcontainers containers created by these runs; Docker inventory finds zero remaining (`container-cleanup-receipt.json`). Foreign task processes/containers and the live AppHost/runner were left alone.
+- Source export, original snapshots, exact errors/stacks, TRX, screenshots, phase excerpts and selected DB/transcript evidence remain at the local paths above. `evidence-hashes.json` and `native-result-inventory.json` bind the retained result files. Generated evidence is gitignored; the only tracked deliverable is this report.
+- The caller's standing authority covered execution and evidence collection; no further approval was needed. No product/test fix, deployment, tag, promotion or live restart was performed.
+
+Confirmed mechanisms are ready for Plan. Remaining uncertainty is explicit above; no source repair or green verification of a repair is claimed.
+
+--- next stage ---
+next: plan
+handoff: Plan the confirmed Board/Workflow/residue/C508 fixture contract updates, the reconstructed review receipt race, and the product admission delay after stale claim rollback; retain the 49-case coverage gap and unobserved eventual recovery as explicit limits.
+artifact: docs/investigations/2026-10-27-native-rerun-e2e.md
