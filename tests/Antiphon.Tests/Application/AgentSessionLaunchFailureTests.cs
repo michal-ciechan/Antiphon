@@ -94,7 +94,7 @@ public class AgentSessionLaunchFailureTests
             DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
             CancellationToken cancellationToken = default)
         {
-            if (!command.CommandText.StartsWith("SELECT * FROM \"Agents\"", StringComparison.Ordinal)
+            if (!command.CommandText.Contains("SELECT * FROM \"Agents\"", StringComparison.Ordinal)
                 || !command.CommandText.Contains("FOR ", StringComparison.Ordinal))
                 return result;
 
