@@ -168,7 +168,7 @@ public sealed partial class LandGraphEvaluationTests
         if (variant == "sdk-doc-glob")
         {
             // The installed SDK's default None glob reaches docs from a root project.
-            // The pre-check admits it; a synthetic prior record must not bypass evaluation.
+            // The pre-check admits it; synthetic provenance must not bypass evaluation.
             await File.WriteAllTextAsync(repo.Full(project), SdkProject(""));
             await AuditRepo.GitAsync(repo.Root, "add", project);
             await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
@@ -178,27 +178,34 @@ public sealed partial class LandGraphEvaluationTests
             pre.ExitCode.ShouldBe(0, pre.Text);
             record[0] = (await File.ReadAllLinesAsync(repo.Full(ManifestFile)))[0];
         }
-        record[1] = record[1] == "10.0.402" ? "10.0.403" : "10.0.402";
-        await File.WriteAllLinesAsync(repo.Full(EvaluationFile), record);
-        var manifest = await File.ReadAllBytesAsync(repo.Full(ManifestFile));
-        var evaluation = await File.ReadAllBytesAsync(repo.Full(EvaluationFile));
-        var pins = await File.ReadAllBytesAsync(repo.Full(PinsFile));
+        var hostSdk = record[1];
+        var differentSdk = hostSdk == "10.0.402" ? "10.0.403" : "10.0.402";
         if (variant == "missing-tool")
             File.Delete(repo.Full("tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll"));
 
-        var check = await RunScriptAsync(repo.Root, "-Check");
-        check.ExitCode.ShouldBe(variant == "approved" ? 0 : 1, check.Text);
-        if (variant == "approved") check.Lines.ShouldContain("approved", check.Text);
-        if (variant == "missing-tool") check.Text.ShouldContain("built evaluator missing:");
-        if (variant == "sdk-doc-glob")
+        // Provenance equal to the host must not bypass evaluation either.
+        foreach (var recordedSdk in new[] { differentSdk, hostSdk })
         {
-            check.PathText.ShouldContain("Microsoft.NET.Sdk.DefaultItems.props");
-            check.PathText.ShouldContain("docs/guide.md");
-            check.Text.ShouldContain("land graph evaluation refused (exit 1)");
+            record[1] = recordedSdk;
+            await File.WriteAllLinesAsync(repo.Full(EvaluationFile), record);
+            var manifest = await File.ReadAllBytesAsync(repo.Full(ManifestFile));
+            var evaluation = await File.ReadAllBytesAsync(repo.Full(EvaluationFile));
+            var pins = await File.ReadAllBytesAsync(repo.Full(PinsFile));
+
+            var check = await RunScriptAsync(repo.Root, "-Check");
+            check.ExitCode.ShouldBe(variant == "approved" ? 0 : 1, $"recorded SDK {recordedSdk}: " + check.Text);
+            if (variant == "approved") check.Lines.ShouldContain("approved", check.Text);
+            if (variant == "missing-tool") check.Text.ShouldContain("built evaluator missing:");
+            if (variant == "sdk-doc-glob")
+            {
+                check.PathText.ShouldContain("Microsoft.NET.Sdk.DefaultItems.props");
+                check.PathText.ShouldContain("docs/guide.md");
+                check.Text.ShouldContain("land graph evaluation refused (exit 1)");
+            }
+            (await File.ReadAllBytesAsync(repo.Full(ManifestFile))).ShouldBe(manifest);
+            (await File.ReadAllBytesAsync(repo.Full(EvaluationFile))).ShouldBe(evaluation);
+            (await File.ReadAllBytesAsync(repo.Full(PinsFile))).ShouldBe(pins);
         }
-        (await File.ReadAllBytesAsync(repo.Full(ManifestFile))).ShouldBe(manifest);
-        (await File.ReadAllBytesAsync(repo.Full(EvaluationFile))).ShouldBe(evaluation);
-        (await File.ReadAllBytesAsync(repo.Full(PinsFile))).ShouldBe(pins);
     }
 
     [Test]
