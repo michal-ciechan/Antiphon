@@ -68,9 +68,31 @@ Call log:
 
 `tests/Antiphon.E2E/WorkflowDeleteTests.cs:294` waits for `/` after deleting, but `client/src/features/workflow/WorkflowDetailPage.tsx:471` explicitly navigates to `/workflows`. The failure screenshot `ui-evidence/Screenshots/Delete_workflow_via_settings_button_in_detail_page_navigates_to_dashboard/FAIL_final_073148.png` shows the Workflows page with **No workflows yet**. This supports a successful UI delete/navigation with an obsolete URL expectation; the native API delete case also passed.
 
-The other failing test navigates to the bare app root (`WorkflowDeleteTests.cs:335`) then waits for workflow cards (`:345`). `client/src/App.tsx:91` renders Home at the index; the workflow dashboard is registered under `workflows` (`:100`). This explains why the first card never appears. That test's `finally` only disposes its browser context (`WorkflowDeleteTests.cs:415`); it does not call the screenshot/DOM completion helper. Its native error and per-test server/notes logs are retained; no failure screenshot for this second method is claimed.
+The other failing test navigates to the bare app root (`WorkflowDeleteTests.cs:335`) then waits for workflow cards (`:345`). `client/src/App.tsx:91` renders Home at the index; the workflow dashboard is registered under `workflows` (`:100`). This explains why the first card never appears. That test's `finally` only disposes its browser context (`WorkflowDeleteTests.cs:409`); it does not call the screenshot/DOM completion helper. Its native error and per-test server/notes logs are retained; no failure screenshot for this second method is claimed.
 
 Classification: fixture navigation drift, not an established Windows, SDK, ACL or product defect. The same two failures reproduce without source changes. No flake claim or timeout change.
+
+## Confirmed: the residue fixture now selects retained evidence
+
+`AgentTaskLandDeliveryE2ETests-residue-initial/results.trx`: two selected arguments, one pass (`preoperation-refusal`), one failure (`residue-cleanup`), 135.015 seconds test-host duration / 245.7 seconds outer wall. Error:
+
+```text
+ShouldAssertException: terminal.Type
+    should be
+AgentTaskEventType.LandedWithResidue
+    but was
+AgentTaskEventType.Landed
+```
+
+`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:326` creates `.antiphon/valuable.txt` containing `owned user residue`; `AgentTaskLandDeliveryE2ETests.cs:213` expects `LandedWithResidue`. Current defaults retain `**/.antiphon/**` (`server/Application/Settings/WorktreeCleanupSettings.cs:26`). The classifier's catch-all adds it to Evidence (`server/Application/Services/WorktreeIgnoredContentClassifier.cs:56`), and guarded removal copies evidence before reinspection/deletion (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs:120`). The product is executing the newer evidence-retention contract.
+
+Native proof is stored in `residue-proof.json`, extracted without changing the original snapshot at `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\card-0467\444e140c28c042c4a7591b1f64cb23c0\delivery-evidence.json`:
+
+- Task `b8c05366-2b90-4df7-b78e-d47c178a867e`, operation `4631785c-1f26-4140-be2a-a2b3b3490008`, terminal event `8b47caa3-42da-40cd-97b6-9d40290a465b` has type 21 (`Landed`).
+- Notification `cf979bbe-b711-4acf-b2c0-7e87cecb2cd2` points at that event, is Confirmed, and names confirming prompt sequence 4. That stored `UserPrompt` reports `outcome=Landed`, `cleanup=Complete`, and `retained=1 files`.
+- The native retained path is `trees/.retained/b8c053662b904df7b78ed47c178a867e/4b4184b373654d79afdbcdd552159b26/.antiphon/valuable.txt` under the fixture root. Its 18 bytes hash to `D3C4C32B9814B7F134582E5F3CB34F5AB69F9B08E99E5B904F8956275229038E`, exactly the UTF-8 hash of the fixture payload.
+
+Classification: stale fixture classification/expectation; no lost file, Windows ACL failure, or failed native publication demonstrated. The failure stops before the fixture's cleanup-retry assertions, so that later path is not covered by this run.
 
 ## Remaining work
 
