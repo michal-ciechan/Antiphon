@@ -46,6 +46,81 @@ namespace Antiphon.Tests.Application;
 public class AgentSessionLaunchFailureTests
 {
     [Test]
+    [Arguments(AgentKind.Grok)]
+    [Arguments(AgentKind.ClaudeCode)]
+    public async Task Sign_in_failure_records_incident_without_waiting_on_its_own_agent_lock(AgentKind kind)
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"signin-lock-{Guid.NewGuid():N}");
+        const string reason = "Provider sign-in required; run login";
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ReadyResult = false,
+            LaunchBlock = new(AgentLaunchBlockKind.ProviderSignInRequired, reason, home),
+        };
+        var lockWitness = new SignInAgentLockWitness();
+        // Bound the old code's cross-connection FK wait. Its incident writer times out,
+        // leaving no incident even though the caller owns the blocking agent lock.
+        await using var fixture = await LaunchFixture.CreateAsync(adapter,
+            configureDb: options => options.AddInterceptors(lockWitness)
+                .UseNpgsql(npgsql => npgsql.CommandTimeout(2)));
+        await using var db = LaunchFixture.CreateContext();
+        await db.AgentSessions.Where(s => s.Id == fixture.SessionId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.AgentKind, kind));
+
+        await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.LaunchInteractiveAsync());
+
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.LaunchBlock.ShouldBe(SessionLaunchBlock.ProviderSignInRequired);
+        session.FailureReason.ShouldBe(reason);
+        (await db.Agents.SingleAsync(a => a.Id == fixture.AgentId)).Status.ShouldBe(AgentStatus.Failed);
+        adapter.Prompts.ShouldBeEmpty();
+        adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        lockWitness.Observed.ShouldBeTrue("failure handling must still exclude agent writers and deletion");
+        var incident = await db.AgentIncidents.SingleOrDefaultAsync(i =>
+            i.AgentId == fixture.AgentId && i.SessionId == fixture.SessionId
+            && i.Kind == AgentIncidentKind.ProviderSignInRequired);
+        incident.ShouldNotBeNull("the sign-in incident must persist before failure handling returns");
+        incident.FailureReason.ShouldBe(GrokSignInIncident.EpisodeKey(home));
+        (await db.Alerts.CountAsync(a => a.AgentId == fixture.AgentId
+            && a.SessionId == fixture.SessionId && a.Severity == AlertSeverity.Critical)).ShouldBe(1);
+    }
+
+    private sealed class SignInAgentLockWitness : DbCommandInterceptor
+    {
+        public bool Observed { get; private set; }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!command.CommandText.Contains("SELECT * FROM \"Agents\"", StringComparison.Ordinal)
+                || !command.CommandText.Contains("FOR ", StringComparison.Ordinal))
+                return result;
+
+            var owner = (NpgsqlConnection)command.Connection!;
+            await using var competing = owner.CloneWith(owner.ConnectionString);
+            await competing.OpenAsync(cancellationToken);
+            await using (var timeout = new NpgsqlCommand("SET lock_timeout = '100ms'", competing))
+                await timeout.ExecuteNonQueryAsync(cancellationToken);
+            foreach (var sql in new[]
+            {
+                "UPDATE \"Agents\" SET \"UpdatedAt\" = \"UpdatedAt\" WHERE \"Id\" = @id",
+                "DELETE FROM \"Agents\" WHERE \"Id\" = @id",
+            })
+            {
+                await using var writer = new NpgsqlCommand(sql, competing);
+                writer.Parameters.AddWithValue("id", command.Parameters[0].Value!);
+                var blocked = await Should.ThrowAsync<PostgresException>(
+                    () => writer.ExecuteNonQueryAsync(cancellationToken));
+                blocked.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+            }
+            Observed = true;
+            return result;
+        }
+    }
+
+    [Test]
     public Task Interactive_effort_dialog_block_persists_reason_and_cleanup() => VerifyEffortBlockAsync(false);
 
     [Test]
