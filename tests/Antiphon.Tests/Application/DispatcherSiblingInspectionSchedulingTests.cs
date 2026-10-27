@@ -295,7 +295,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             await seed.SaveChangesAsync();
             await f.RestartAsync();
         }
-        f.Git.Block = scenario is "dedup" or "active limit" or "total capacity" or "shutdown";
+        f.Git.Block = scenario is "dedup" or "active limit" or "total capacity" or "fairness" or "shutdown";
         f.Git.Fail = scenario == "error";
         await f.TickAsync().WaitAsync(TimeSpan.FromSeconds(10));
         if (f.Git.Block)
@@ -373,12 +373,13 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         }
         if (scenario == "fairness")
         {
-            await f.TickAsync(); // consumes the original 32 holds; the full queue cannot admit #33 yet
-            f.Queue.Outstanding.ShouldBe(0);
-            // CARD-1428 D-6: the capacity is in-flight work; hold the workers so the tick sees it full.
-            f.Git.Block = true;
+            // Completed results free in-flight capacity: admit #33 before consuming the 32 holds.
+            f.Git.HoldNextWave();
             await f.TickAsync();
             f.Queue.Attempted(ids.Last()).ShouldBeTrue("the unattempted task must precede held requeues");
+            f.Queue.Outstanding.ShouldBe(1);
+            f.Queue.InFlight.ShouldBe(1);
+            await f.TickAsync();
             f.Queue.InFlight.ShouldBe(32);
             f.Git.Block = false; f.Git.Release.TrySetResult();
             await WaitForSaturatedQueueAsync(f, "fairness requeue");
