@@ -200,6 +200,9 @@ public class AgentTaskLandDeliveryE2ETests
     public Task C467_V29_RealOutcomeProducerMatrix_Batch3(string outcome) =>
         C467_V29_RealOutcomeProducerMatrix(outcome);
 
+    [Test]
+    public Task C467_RetainedEvidenceCompletesCleanup() => C467_V29_RealOutcomeProducerMatrix("retained-evidence");
+
     private async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.ArrangeOutcomeAsync(outcome);
@@ -220,10 +223,20 @@ public class AgentTaskLandDeliveryE2ETests
                 (await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Status.ShouldBe(AgentTaskStatus.Blocked);
             }
         }
-        if (outcome is "landed" or "already-present" or "residue-cleanup") await f.AssertRemoteAsync();
+        if (outcome is "landed" or "already-present" or "residue-cleanup" or "retained-evidence") await f.AssertRemoteAsync();
+        if (outcome == "retained-evidence")
+        {
+            Directory.Exists(f.Source).ShouldBeFalse();
+            var retained = Directory.GetFiles(Path.Combine(f.Root, "trees", ".retained", f.TaskId.ToString("N")),
+                "valuable.txt", SearchOption.AllDirectories);
+            retained.ShouldHaveSingleItem();
+            (await File.ReadAllTextAsync(retained[0])).ShouldBe("owned user residue");
+            note.Body.ShouldContain("cleanup=Complete");
+            note.Body.ShouldContain("retained=1 files");
+        }
         if (outcome == "residue-cleanup")
         {
-            File.Delete(Path.Combine(f.Source, ".antiphon", "valuable.txt"));
+            File.Delete(Path.Combine(f.Source, ".antiphon", "deliverables", "valuable.txt"));
             var retry = await f.RequestAsync(initial: false);
             var cleanup = await f.ReceiptAsync(requestId: retry);
             cleanup.Id.ShouldNotBe(note.Id); cleanup.ContentDigest.ShouldNotBe(note.ContentDigest);
