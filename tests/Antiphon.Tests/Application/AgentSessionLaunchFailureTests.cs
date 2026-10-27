@@ -98,7 +98,8 @@ public class AgentSessionLaunchFailureTests
                 || !command.CommandText.Contains("FOR ", StringComparison.Ordinal))
                 return result;
 
-            await using var competing = new NpgsqlConnection(command.Connection!.ConnectionString);
+            var owner = (NpgsqlConnection)command.Connection!;
+            await using var competing = owner.CloneWith(owner.ConnectionString);
             await competing.OpenAsync(cancellationToken);
             await using (var timeout = new NpgsqlCommand("SET lock_timeout = '100ms'", competing))
                 await timeout.ExecuteNonQueryAsync(cancellationToken);
