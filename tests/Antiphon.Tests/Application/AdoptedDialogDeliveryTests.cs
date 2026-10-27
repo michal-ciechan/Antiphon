@@ -52,7 +52,9 @@ public class AdoptedDialogDeliveryTests
         harness.Adapter.Inputs.ShouldBeEmpty();
         var queue = await harness.Queue.GetQueueAsync(harness.SessionId, CancellationToken.None);
         queue.ModalBlockedReason.ShouldBe("Claude dialog blocks input");
-        queue.Messages.ShouldHaveSingleItem().DeliveryAttempts.ShouldBe(0);
+        var held = queue.Messages.ShouldHaveSingleItem();
+        held.DeliveryAttempts.ShouldBe(0);
+        held.WithholdReason.ShouldBe("Claude dialog blocks input");
     }
 
     [Test]

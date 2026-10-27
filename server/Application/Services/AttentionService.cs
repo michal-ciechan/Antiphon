@@ -252,6 +252,7 @@ public sealed partial class AttentionService
         items.AddRange(await BuildTaskInputUnreadableItemsAsync(open.Concat(blocked).ToList(), ct));
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildPendingNotesAgedItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
         items.AddRange(await BuildDispatchHeldItemsAsync(now, ct));
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
@@ -1815,6 +1816,44 @@ public sealed partial class AttentionService
                 [AttentionAction.SendNow, AttentionAction.CancelMessage]));
         }
 
+        return items;
+    }
+
+    private async Task<List<AttentionItemDto>> BuildPendingNotesAgedItemsAsync(DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        var ageSeconds = _supervision.DeliveryVerification.PendingNoteAlertAgeSeconds;
+        if (ageSeconds <= 0) return items;
+        var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
+        var cutoff = now - TimeSpan.FromSeconds(ageSeconds);
+        var pending = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Status == QueuedMessageStatus.Pending
+                && m.DeliveryAttempts < maxAttempts
+                && m.CreatedAt < cutoff)
+            .Select(m => new { m.Id, m.AgentSessionId, m.CreatedAt })
+            .ToListAsync(ct);
+        if (pending.Count == 0) return items;
+
+        var owners = await ResolveSessionOwnersAsync(pending.Select(m => m.AgentSessionId).Distinct().ToList(), ct);
+        foreach (var group in pending.GroupBy(m => m.AgentSessionId))
+        {
+            var oldest = group.OrderBy(m => m.CreatedAt).ThenBy(m => m.Id).First();
+            var owner = owners.GetValueOrDefault(group.Key);
+            var name = owner?.AgentName ?? $"session {group.Key.ToString("N")[..8]}";
+            items.Add(new AttentionItemDto(
+                AttentionKind.PendingNotesAged,
+                AlertSeverity.Warning,
+                null,
+                group.Key,
+                owner?.AgentId,
+                oldest.Id,
+                $"{group.Count()} pending note(s) withheld from {name} for over {ageSeconds}s",
+                $"{group.Count()} pending note(s) older than {ageSeconds}s are withheld from delivery.",
+                "The session queue names the withhold. Detection only; nothing was flushed or sent.",
+                oldest.CreatedAt,
+                null,
+                [AttentionAction.OpenDrawer, AttentionAction.SendNow]));
+        }
         return items;
     }
 

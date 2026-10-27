@@ -43,7 +43,8 @@ public sealed record QueuedMessageDto(
     string Origin = "Ui",
     bool Parked = false,
     string? NoteHeader = null,
-    bool ModalBlocked = false);
+    bool ModalBlocked = false,
+    string? WithholdReason = null);
 
 /// <summary>
 /// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.

@@ -1484,12 +1484,16 @@ public sealed partial class SessionMessageQueueService
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
 
-            if (await IsModalBlockedAsync(sessionId, ct))
+            if (await ReadDialogWithholdAsync(db, sessionId, ct) is { } sendNowWithhold)
+            {
+                if (sendNowWithhold.ChargeAttempt)
+                    await ChargeDurableWithholdAsync(db, sessionId, ct);
                 return await GetQueueAsync(sessionId, ct) with
                 {
                     ModalBlocked = true,
-                    ModalBlockedReason = await ModalBlockReasonAsync(db, sessionId, ct),
+                    ModalBlockedReason = sendNowWithhold.Text,
                 };
+            }
 
             // Same late-confirm as the automatic paths: a previously attempted message whose body
             // is already in the transcript went in, and re-typing it here would put it in twice.
@@ -2336,8 +2340,12 @@ public sealed partial class SessionMessageQueueService
             return TemporaryBlock();
         }
 
-        if (await IsModalBlockedLockedAsync(db, sessionId, ct))
+        if (await ReadDialogWithholdAsync(db, sessionId, ct) is { } flushWithhold)
+        {
+            if (flushWithhold.ChargeAttempt)
+                await ChargeDurableWithholdAsync(db, sessionId, ct);
             return TemporaryBlock();
+        }
 
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
         if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null))
@@ -5705,7 +5713,7 @@ public sealed partial class SessionMessageQueueService
         var modalBlocked = reason is not null;
 
         var dtos = modalBlocked
-            ? messages.Select(m => m with { ModalBlocked = true }).ToList()
+            ? messages.Select(m => m with { ModalBlocked = true, WithholdReason = reason }).ToList()
             : messages;
         return new SessionQueueDto(
             sessionId,
@@ -5725,25 +5733,8 @@ public sealed partial class SessionMessageQueueService
     internal async Task<bool> IsModalBlockedLockedAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
         await ModalBlockReasonAsync(db, sessionId, ct) is not null;
 
-    private async Task<string?> ModalBlockReasonAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
-    {
-        var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (session is null)
-            return null;
-        var generation = SessionGeneration.Normalize(session.StartedAt);
-        if (await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
-            e => e.SessionId == sessionId
-                && e.AcceptedStartedAt == generation
-                && e.ResolvedAt == null, ct)) return "Remote Control menu blocks input";
-        if (session.AgentKind != AgentKind.ClaudeCode) return null;
-        var observation = await _runtime.ObserveDialogAsync(sessionId, ct);
-        return ProviderDialogObservationService.Refusal(observation, sessionId, generation) switch
-        {
-            null => null,
-            ConditionalInputOutcomes.ModalBlocked => "Claude dialog blocks input",
-            _ => "Claude dialog observation unavailable"
-        };
-    }
+    private async Task<string?> ModalBlockReasonAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        (await ReadDialogWithholdAsync(db, sessionId, ct))?.Text;
 
     private async Task<AgentSession> RequireSessionAsync(Guid sessionId, CancellationToken ct)
     {

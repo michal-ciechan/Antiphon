@@ -84,6 +84,8 @@ export interface QueuedMessageDto {
   noteHeader?: string | null
   /** CARD-0514: this row is held because a remote-control menu is open. */
   modalBlocked?: boolean
+  /** Same text as the queue withhold, repeated on the pending row. */
+  withholdReason?: string | null
 }
 
 /** CARD-0180 S3: how a Mode:Now delivery was confirmed. */

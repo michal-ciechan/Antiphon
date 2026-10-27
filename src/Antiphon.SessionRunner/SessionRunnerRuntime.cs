@@ -1609,6 +1609,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, outcome, session.AcceptedStartedAt, session.LastSequence);
             }
 
+            // Snapshot the tailer before the screen lock. A later output advance fails the sequence fence.
+            var transcriptIdle = request.RequireClaudeDialogClear && session.TranscriptConfirmedIdle();
             void Fence()
             {
                 // Called under the session screen monitor at the last boundary before I/O.
@@ -1620,7 +1622,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     : session.HasExited ? ConditionalInputOutcomes.Exited
                     : session.TerminalReleaseInProgress ? ReleaseInProgressInputOutcome
                     : session.LastSequence != request.ExpectedLastSequence ? ConditionalInputOutcomes.StaleObservation
-                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch) : null;
+                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch, transcriptIdle) : null;
                 if (refusal is not null) throw new DialogInputRefusedException(refusal);
             }
             InputAuthorization authorization;
@@ -2518,13 +2520,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _dialogObservation = ClaudeDialogObservation.Observe(_screen?.GetScreenText());
                 _dialogSequence = _lastSequence;
             }
-            var known = !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost;
-            var state = known ? _dialogObservation.State switch
+            var classified = _dialogObservation.State switch
             {
                 ClaudeDialogState.Clear => ProviderDialogState.Clear,
                 ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
                 _ => ProviderDialogState.Unknown
-            } : ProviderDialogState.Unknown;
+            };
+            var known = !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost;
+            var state = known ? classified : ProviderDialogState.Unknown;
             if (clock is not null)
                 _submittedInput.ObserveEmpty(_screen?.GetScreenText() ?? "", _inputRevision,
                     clock.GetUtcNow(), known && _terminalInputWriters == 0);
@@ -2532,10 +2535,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _submittedInput.HasSubmittedCapture ? _tailer?.Snapshot() : null,
                 known && _terminalInputWriters == 0 && !_terminalComposerPending);
             return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
-                state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof);
+                state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof,
+                _adopted, _terminalInputUncertain, classified);
         }
 
-        internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch)
+        internal bool TranscriptConfirmedIdle()
+        {
+            ITranscriptTailer? tailer;
+            lock (_gate) tailer = _tailer;
+            return TranscriptIdleEvidence.FromSnapshot(tailer?.Snapshot());
+        }
+
+        internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch, bool transcriptIdle = false)
         {
             if (request.ExpectedRuntimeEpoch != runtimeEpoch || request.ExpectedInputRevision != _inputRevision)
                 return ConditionalInputOutcomes.StaleObservation;
@@ -2555,12 +2566,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 };
                 return allowed ? null : ConditionalInputOutcomes.ModalBlocked;
             }
-            return observation.State switch
-            {
-                ProviderDialogState.Clear => null,
-                ProviderDialogState.Blocked => ConditionalInputOutcomes.ModalBlocked,
-                _ => ConditionalInputOutcomes.ObservationUnknown
-            };
+            if (observation.State == ProviderDialogState.Blocked || observation.ScreenState == ProviderDialogState.Blocked)
+                return ConditionalInputOutcomes.ModalBlocked;
+            if (observation.InputHistoryKnown && observation.State == ProviderDialogState.Clear)
+                return null;
+            if (observation.Adopted && !observation.InputUncertain
+                && observation.ScreenState == ProviderDialogState.Clear
+                && transcriptIdle && _backend == SessionBackends.PtyHost)
+                return null;
+            return ConditionalInputOutcomes.ObservationUnknown;
         }
         private bool _terminalComposerPending;
         private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();

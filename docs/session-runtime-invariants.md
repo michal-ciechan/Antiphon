@@ -1498,13 +1498,22 @@ Automated Claude bodies, Enter, retries and maintenance keys use a fresh runner
 snapshot and `claudeDialogGuardV1`. The conditional backend boundary compares the
 accepted generation, session object, runtime epoch, output sequence and input
 revision under the launch gate and screen monitor, after asynchronous reads.
-Visible dialogs refuse; absent, unsupported, adopted or uncertain input history
-holds as Unknown. Each backend write attempt advances input revision before I/O,
-including explicit interactive input and a failed write. No raw-input fallback is
-permitted for an unsupported guarded peer.
+Visible dialogs refuse, including a blocked screen on an adopted session.
+Absent, unsupported, or uncertain input history holds as Unknown. An adopted
+pty-host session whose classified screen is Clear and whose transcript is
+confirmed idle (the last row is TurnEnd with stop_reason end_turn, and no tool
+call is still open) may receive ordinary automated input. Maintenance intents
+still require known input history. A null snapshot, an accepted-generation
+mismatch, uncertain input, and an unreadable screen stay withheld. Each backend
+write attempt advances input revision before I/O, including explicit interactive
+input and a failed write. No raw-input fallback is permitted for an unsupported
+guarded peer.
 
-Queue and expectation admission retain pending work without an attempt when the
-veto precedes typing. A body already written retains its existing composer hold
+Queue and expectation admission retain pending work without an attempt when a
+real dialog, a remote-control menu, or a missing snapshot vetoes before typing.
+A durable non-dialog withhold counts one delivery attempt so a receipt has a
+floor, and does not park the note. A body already written retains its existing
+composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
 Explicit authenticated terminal input uses the named interactive entry point.

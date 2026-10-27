@@ -859,8 +859,9 @@ runner rollout on the rc line, with loaded SHAs and `window-v1` verified directl
 ### Claude dialog observation and guarded input (CARD-0680)
 
 Runner snapshots optionally carry `dialog`: runtime epoch, accepted generation,
-output sequence, input revision, Clear/Blocked/Unknown, kind/cancel metadata and
-optional submitted-input evidence. Missing metadata means unsupported/Unknown.
+output sequence, input revision, Clear/Blocked/Unknown, the classified
+`screenState`, `adopted`, `inputUncertain`, kind/cancel metadata and optional
+submitted-input evidence. Missing metadata means unsupported/Unknown.
 The server reads this on demand with a cancellable two-second deadline; it keeps
 no cached Clear authority. Snapshot reads do not mutate queue state or send keys.
 
@@ -870,8 +871,11 @@ Refusals include `modal-blocked`, `observation-unknown`, `stale-observation`,
 `generation-mismatch` and `unsupported`; none authorizes raw fallback. An unknown
 transport acknowledgement is uncertain, not a zero-byte refusal. The interactive
 session input endpoint remains intentional input and advances the same revision.
-`SessionQueueDto.modalBlockedReason` distinguishes an observed Claude dialog from
-unavailable evidence. Resolve dialogs interactively or through separately
+`SessionQueueDto.modalBlockedReason` names the withhold: an observed Claude dialog,
+a missing snapshot, an accepted-generation mismatch, uncertain input, an adopted
+session that is not transcript-idle, an unreadable screen, or other unavailable
+evidence. Each pending row repeats that text as `withholdReason`. Resolve dialogs
+interactively or through separately
 qualified owner actions; do not force Enter, clear holds by age, or release a seat.
 
 ### Provider input waits (CARD-1518)

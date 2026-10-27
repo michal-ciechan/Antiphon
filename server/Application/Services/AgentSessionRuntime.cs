@@ -2154,8 +2154,11 @@ public sealed partial class AgentSessionRuntime
             return;
         }
         var observation = await ObserveDialogAsync(sessionId, ct);
-        var request = ProviderDialogObservationService.Request(observation, sessionId,
-            SessionGeneration.Normalize(session.StartedAt), input);
+        var generation = SessionGeneration.Normalize(session.StartedAt);
+        var idle = await TranscriptIdleQuery.IsConfirmedIdleAsync(db, sessionId, ct);
+        if (DialogDeliveryAdmission.Decide(observation, sessionId, generation, idle, session.SessionBackend) is { } withhold)
+            throw new ProviderDialogInputRefusedException(withhold.Code);
+        var request = DialogDeliveryAdmission.ConditionalRequest(observation!, generation, input);
         ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));
         var submitted = RecordTerminalInput(sessionId, input);
         if (submitted && trackManualTurn) TryStartManualTurnTracking(sessionId, observation!.OutputSequence);
