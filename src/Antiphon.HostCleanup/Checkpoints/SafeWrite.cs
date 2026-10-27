@@ -85,7 +85,16 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     public const string Marker = "antiphon-checkpoints";
 
     // The context owns append-only creation records; disk ledgers never populate them.
-    private void RecordContent(string path) => context.Registry.RecordContent(path, Describe(path));
+    private void RecordContent(string path)
+    {
+        context.Registry.RecordContent(path, Describe(path));
+        context.Registry.RecordIdentity(path, FilesystemIdentityReader.Read(Io, path));
+    }
+    private void Remember(string path)
+    {
+        context.Registry.RecordCreated(path);
+        context.Registry.RecordIdentity(path, FilesystemIdentityReader.Read(Io, path));
+    }
     private string Describe(string path)
     {
         if (Io.DirectoryExists(path)) return "directory";
@@ -107,7 +116,11 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
                 var before = OutputCustody.Stat(context, full);
                 if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
                 var record = Describe(full);
-                if (OutputCustody.Stat(context, full) == before) context.Registry.RecordContent(full, record);
+                if (OutputCustody.Stat(context, full) == before)
+                {
+                    context.Registry.RecordContent(full, record);
+                    context.Registry.RecordIdentity(full, FilesystemIdentityReader.Read(Io, full));
+                }
                 return;
             }
             catch (IOException) when (attempt < 2) { }
@@ -118,9 +131,15 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     }
     public DateTimeOffset? FreshRootCreated(string path) =>
         context.Registry.FreshRoot(path);
+    public bool MatchesIdentity(string path)
+    {
+        if (context.Registry.Identity(path) is not { } expected) return false;
+        return expected.SameAs(FilesystemIdentityReader.Read(Io, path));
+    }
     public bool MatchesCreation(string path)
     {
         if (context.Registry.Content(path) is not { } recorded) return false;
+        if (!MatchesIdentity(path)) return false;
         if (Io.DirectoryExists(path)) return recorded == "directory";
         return recorded == Describe(path);
     }
@@ -179,21 +198,24 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         var temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var payload = System.Text.Encoding.UTF8.GetBytes(content);
+        var armed = false;
         try
         {
-            Io.WriteBytes(temporary, System.Text.Encoding.UTF8.GetBytes(content));
-            context.Registry.RecordCreated(temporary);
+            Io.WriteBytes(temporary, payload);
+            Remember(temporary);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
-            Io.Move(temporary, full, overwrite: true);
-            context.Registry.RecordCreated(full);
+            armed = true;
+            ReplacementPublication.Publish(Io, temporary, full, payload);
+            Remember(full);
             RecordContent(full);
             return null;
         }
         finally
         {
-            if (Io.FileExists(temporary))
+            if (!armed && Io.FileExists(temporary))
             {
                 try { Io.Unlink(temporary); } catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
@@ -216,21 +238,24 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         var temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var payload = content.ToArray();
+        var armed = false;
         try
         {
-            Io.WriteBytes(temporary, content.ToArray());
-            context.Registry.RecordCreated(temporary);
+            Io.WriteBytes(temporary, payload);
+            Remember(temporary);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
-            Io.Move(temporary, full, overwrite: true);
-            context.Registry.RecordCreated(full);
+            armed = true;
+            ReplacementPublication.Publish(Io, temporary, full, payload);
+            Remember(full);
             RecordContent(full);
             return null;
         }
         finally
         {
-            if (Io.FileExists(temporary))
+            if (!armed && Io.FileExists(temporary))
             {
                 try { Io.Unlink(temporary); } catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
@@ -249,7 +274,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (!Io.FileExists(full))
             return Text(path, content, ownership);
         Io.AppendText(full, content);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         RecordContent(full);
         return null;
     }
@@ -269,7 +294,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         Io.Copy(source, full, overwrite: true);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         RecordContent(full);
         return null;
     }
@@ -280,10 +305,19 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (reason is not null)
             return reason;
         var full = Canonical(destination)!;
-        Io.Move(source, full, overwrite: true);
-        context.Registry.RecordCreated(full);
+        ReplacementPublication.Publish(Io, source, full, ReadNoFollow(source));
+        Remember(full);
         RecordContent(full);
         return null;
+    }
+
+    private byte[] ReadNoFollow(string path)
+    {
+        using var handle = Io.OpenRead(path, new CheckpointReadOpen(0x20000, 0x00200000));
+        using var stream = handle.OpenStream();
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        return memory.ToArray();
     }
 
     public string? CreateDirectory(string path, WriteOwnership ownership)
@@ -302,7 +336,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (reason is not null)
             return reason;
         Io.CreateDirectory(full);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         RecordContent(full);
         return null;
     }
@@ -318,7 +352,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (reason is not null) return reason;
         if (OutputCustody.Stat(context, full) is { IsDirectory: true } made && made.Owner == Io.Owner && (made.Mode & 0x3F) == 0)
             context.Registry.RecordFreshRoot(full, made.Changed);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         RecordContent(full);
         return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
     }
@@ -339,7 +373,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         return null;
     }
 
@@ -362,7 +396,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.Append, FileAccess.Write, share);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         return null;
     }
 
@@ -384,7 +418,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        context.Registry.RecordCreated(full);
+        Remember(full);
         return null;
     }
 

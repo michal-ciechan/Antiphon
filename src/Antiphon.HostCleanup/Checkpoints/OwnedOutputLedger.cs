@@ -71,6 +71,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             if (preflight is not null) return preflight;
             if (!Io.FileExists(Path.Combine(root, Ledger))) return "output-ledger-missing";
             if (!SafeWrite.WasCreated(root)) return "output-memory-authority-missing; left in place: " + root + "; remove it manually";
+            if (!SafeWrite.MatchesIdentity(root)) return "output-identity-mismatch; left in place: " + root;
             var actual = Inventory(root);
             foreach (var path in actual.Keys.Append(Ledger))
                 if (!SafeWrite.MatchesCreation(Path.Combine(root, path)))
@@ -83,25 +84,31 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
 
     public string? Remove(string root, bool dryRun = false)
     {
-            var refusal = Check(root);
-            if (refusal is not null || dryRun) return refusal;
-            // No recursive deletion: an unrecorded late addition keeps its directory alive.
-            var entries = Inventory(root).Keys.Append(Ledger).OrderByDescending(path => path.Count(c => c == '/')).ToList();
-            foreach (var relative in entries.Where(path => !Io.DirectoryExists(Path.Combine(root, path))))
-            {
-                var full = Path.Combine(root, relative);
-                var linked = SafeWrite.Preflight(root, [full]);
-                if (linked is not null || !SafeWrite.MatchesCreation(full)) return "left in place: " + full;
-                Io.Unlink(full);
-            }
-            foreach (var relative in entries.Where(path => Io.DirectoryExists(Path.Combine(root, path))))
-            {
-                var full = Path.Combine(root, relative);
-                if (SafeWrite.Preflight(root, [full]) is not null || !SafeWrite.MatchesCreation(full)) return "left in place: " + full;
-                Io.RemoveDirectory(full, recursive: false);
-            }
-            Io.RemoveDirectory(root, recursive: false);
-            return null;
+        var refusal = Check(root);
+        if (refusal is not null || dryRun) return refusal;
+        // No recursive deletion: an unrecorded late addition keeps its directory alive.
+        var entries = Inventory(root).Keys.Append(Ledger).OrderByDescending(path => path.Count(c => c == '/')).ToList();
+        foreach (var relative in entries.Where(path => !Io.DirectoryExists(Path.Combine(root, path))))
+        {
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: false);
+            if (stopped is not null) return stopped;
+        }
+        foreach (var relative in entries.Where(path => Io.DirectoryExists(Path.Combine(root, path))))
+        {
+            var stopped = DeleteRecorded(root, Path.Combine(root, relative), directory: true);
+            if (stopped is not null) return stopped;
+        }
+        return DeleteRecorded(root, root, directory: true);
+    }
+
+    private string? DeleteRecorded(string root, string full, bool directory)
+    {
+        if (SafeWrite.Preflight(root, [full]) is not null || !SafeWrite.MatchesCreation(full))
+            return "left in place: " + full;
+        if (context.Registry.Identity(full) is not { } expected)
+            return "left in place: " + full;
+        Io.DeleteAnchored(full, expected, directory);
+        return null;
     }
 
     private Dictionary<string, string> Inventory(string root)

@@ -5,6 +5,45 @@ public enum CheckpointPlatform { Linux, Windows, Other }
 // Observations only. Custody, admission and receipt interpretation belong to callers.
 public readonly record struct CheckpointStat(string Kind, ulong Device, ulong Inode, long Size,
     long Modified, long Changed, ushort Mode = 0, uint Links = 0, uint Owner = 0, long Created = 0);
+
+// Volume is the Linux device id or the Windows volume serial. FileId is the inode or
+// file index. Created is the birth time in Unix nanoseconds, or zero when the filesystem
+// has none. A zero FileId is not a bound identity.
+public readonly record struct FilesystemIdentity(ulong Volume, ulong FileId, long Created)
+{
+    public bool IsBound => FileId != 0;
+    public bool SameAs(FilesystemIdentity other) =>
+        IsBound && Volume == other.Volume && FileId == other.FileId && Created == other.Created;
+}
+
+public static class FilesystemIdentityReader
+{
+    public static FilesystemIdentity Read(ICheckpointCleanupIo io, string path)
+    {
+        try
+        {
+            var stat = io.Platform == CheckpointPlatform.Windows ? io.CustodyStat(path) : io.Stat(path);
+            if (stat.Kind is not ("file" or "directory") || stat.Inode == 0) return default;
+            return new FilesystemIdentity(stat.Device, stat.Inode, stat.Created);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                   or FileNotFoundException or DirectoryNotFoundException)
+        {
+            return default;
+        }
+    }
+}
+
+// The parent handle must already have been opened without following a reparse point.
+// A junction or symlink at that path, or an entry whose identity is no longer the one
+// recorded for it, is not deleted. Native Windows junction execution is not this decision.
+public static class AnchoredDelete
+{
+    public static bool Allowed(bool parentOpenedWithoutFollow, bool parentIsDirectory, bool parentIsReparse,
+        FilesystemIdentity expectedEntry, FilesystemIdentity entryThroughParent, bool entryIsReparse) =>
+        parentOpenedWithoutFollow && parentIsDirectory && !parentIsReparse && !entryIsReparse
+        && expectedEntry.SameAs(entryThroughParent);
+}
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
 public readonly record struct CheckpointReadOpen(int UnixFlags, uint WindowsFlags);
 public sealed record CheckpointGitRequest(string Executable, string WorkingDirectory,
@@ -58,5 +97,8 @@ public interface ICheckpointCleanupIo
     void Move(string source, string destination, bool overwrite);
     void Unlink(string path);
     void RemoveDirectory(string path, bool recursive);
+    // Open the parent without following reparse points, require expectedEntry, then delete
+    // the final name relative to that directory handle.
+    void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory);
     string? EnvironmentVariable(string name);
 }

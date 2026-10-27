@@ -310,6 +310,8 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public void Copy(string source, string destination, bool overwrite) => _inner.Copy(source, destination, overwrite);
         public void Unlink(string path) => _inner.Unlink(path);
         public void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
+        public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) =>
+            _inner.DeleteAnchored(path, expectedEntry, directory);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
     }
 }
