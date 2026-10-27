@@ -547,6 +547,9 @@ export const AgentCard = memo(function AgentCard({
               // Handled here, so a browser that also synthesises contextmenu from these keys
               // does not open the menu twice.
               event.preventDefault()
+              // Menu treats keydown outside its anchor as dismissal. Do not let the
+              // opening shortcut reach that listener and immediately close the menu.
+              event.stopPropagation()
               setCardMenu(iconAnchor())
             }
           }}
