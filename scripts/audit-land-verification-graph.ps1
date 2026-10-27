@@ -20,6 +20,7 @@ $EvaluationRelative = 'server/Application/Services/LandVerificationBuildGraph.ev
 $PinsRelative = 'server/Application/Services/LandVerificationBuildGraph.pins.txt'
 $ManifestPath = Join-Path $RepoRoot $ManifestRelative
 $EvaluationPath = Join-Path $RepoRoot $EvaluationRelative
+$StableSdkPattern = '\A[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.[1-9][0-9]{2,}\z'
 
 function ConvertTo-NativeArgument([string]$Value) {
     # ProcessStartInfo.Arguments is also available on Windows PowerShell 5.1.
@@ -71,6 +72,27 @@ function Get-GitValue([string[]]$Arguments) {
     return $run.Text.Trim()
 }
 
+function Assert-SelectableSdk([string]$Version) {
+    $candidate = $null
+    if ($Version -cnotmatch $StableSdkPattern -or -not [version]::TryParse($Version, [ref]$candidate)) {
+        throw 'evaluation record has invalid SDK provenance'
+    }
+    # Admit stable SDK releases under the committed policy only. A new policy or
+    # a prerelease pin needs explicit qualification rather than a permissive fallback.
+    $policy = (Get-GitValue @('show', 'HEAD:global.json') | ConvertFrom-Json).sdk
+    $minimum = $null
+    if ($policy.version -cnotmatch $StableSdkPattern -or
+        -not [version]::TryParse($policy.version, [ref]$minimum) -or
+        $policy.rollForward -cne 'latestMinor') {
+        throw 'SDK provenance requires a stable pin with rollForward latestMinor'
+    }
+    # latestMinor can advance minor, feature band and patch, but never major or
+    # select a version below the pin (including an earlier patch in its band).
+    if ($candidate.Major -ne $minimum.Major -or $candidate -lt $minimum) {
+        throw 'evaluation record SDK provenance is outside committed roll-forward policy'
+    }
+}
+
 function Assert-HeadSource([string]$Head) {
     if ((Get-GitValue @('rev-parse', 'HEAD')) -cne $Head) { throw 'HEAD changed during audit' }
     # Evaluation reads disk, while the pre-check hashes HEAD. Bind the two.
@@ -109,7 +131,7 @@ try {
     $pins = Get-GitValue @('rev-parse', ('HEAD:' + $PinsRelative))
     if ($pins -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw 'pins blob SHA is invalid' }
     $sdkRun = Invoke-AuditChild 'dotnet' @('--version')
-    if ($sdkRun.Code -ne 0 -or $sdkRun.Text.Trim() -notmatch '^\d+\.\d+\.\d+[^\s]*$') {
+    if ($sdkRun.Code -ne 0 -or $sdkRun.Text.Trim() -cnotmatch $StableSdkPattern) {
         throw ('SDK resolution failed: ' + $sdkRun.Text.Trim())
     }
     $sdk = $sdkRun.Text.Trim()
@@ -142,7 +164,7 @@ try {
         # global.json is part of the exact graph digest and owns SDK selection/roll-forward.
         # Keep the author's SDK identity as provenance: legitimate checking hosts can resolve
         # different SDKs under that committed policy without invalidating this approval.
-        if ($record[1] -cnotmatch '^\d+\.\d+\.\d+[^\s]*$') { throw 'evaluation record has invalid SDK provenance' }
+        Assert-SelectableSdk $record[1]
         Assert-HeadSource $head
     }
 } catch {
