@@ -1617,6 +1617,29 @@ separate bounds and custody. The scripts remain ASCII and require PS7 at runtime
 the parser-only harness requires actual Windows PowerShell 5.1 Desktop unless its
 explicit PS7 test switch is supplied. PS7 parsing is not Windows parser evidence.
 
+### Fresh-output inventory (CARD-1573)
+
+`Seal-CheckpointFreshOutput`, called by `run-checkpoint.ps1` after a verified build, inventories the fresh output with `Get-CheckpointFileDigest`. That wrapper calls `ConfinedFileReader.Digest`: streaming SHA-256, 256 KiB chunks, the inclusive 1 GiB `ContentLimit`. The compiled facade in `tools/Antiphon.Checkpoints/Coverage/ConfinedFileReader.cs` forwards `Digest` to `CheckpointFileReader`, which is the library owner of the verified read. The embedded reader in `scripts/lib/checkpoint-file-reader.ps1` implements the same `Digest` method and is compiled only when that facade is not already loaded. Source stamps and this seal call `Digest`, `ReadBytes`, and `ContentLimit`. Those members are the shared surface; a seal-only method on one facade would make a healthy stamp fail when the tool assembly is already loaded. `scripts/test-checkpoint-compiled-facade.ps1` loads the compiled assembly and then runs the real `scripts/lib/checkpoint-file-reader.ps1` caller.
+
+The ledger value is the uppercase hex of those bytes. A small file still matches a receipt-reader `SHA256.HashData` of `Read-CheckpointBytes`. The 64 MiB cap remains the receipt and text bound. Memory stays one chunk. The three-second stall window re-arms after every delivered chunk.
+
+After every regular file has been hashed, and before the ledger is written, the seal hashes that path again. The second digest is the content fingerprint. The ledger is written only when the length and SHA-256 still match. A replacement that reuses the original inode and preserves size and mtime changes the fingerprint and is refused with `changed while sealing`, and no ledger is written. A file above 1 GiB, or one that grows past the bound while it is read, is refused before a ledger is written. A symlink, reparse point, or non-regular file is refused too. The refusal names the file, the size, and the limit: `output-inventory-failed: <path> size=<bytes> limit=<bytes>: <reason>`. `scripts/test-checkpoint-output-inventory.ps1` seals a real 70 MiB file, refuses one byte over 1 GiB, a symlink, and a FIFO, and refuses the inode-reuse replacement.
+
+A writer that restores the original bytes before the fingerprint, and a writer that changes the file after the ledger write, are outside this seal.
+
+### Unit lane checkpoint shards (CARD-1573)
+
+A Full Final receipt for the Unit lane is a set of checkpoint rows that share one build. The selection `/*/*/*/*[Category=Unit]` on `tests/Antiphon.Tests` remains the local and nightly definition of that lane. Its wall time is past 30 minutes, so one row exhausts the default execution allowance from `RowTimeout.DeriveTotalMinutes` (`max(30, 2 * sum(EstimatedMinutes) + 10)` when `--total-timeout` is omitted). An `EstimatedMinutes` above 15 makes `DeriveRowMinutes` return more than 45, and `PlanTableImporter` warns above `RowTimeoutAdvisoryMinutes` (45).
+
+Each shard row:
+
+- Names `tests/Antiphon.Tests`, the same `OutputPath=bin-<id>/` (forward slash), and the same `After` group. The tool builds once, seals that fresh output once, and later rows reuse the build. The seal above is what lets that build record `buildSource=verified` for `Antiphon.Tests.dll`.
+- Sets `EstimatedMinutes` to at most 15, so the derived row timeout stays on the 45-minute advisory.
+- Uses a [combined class filter](#combined-class-filters-card-0403): `/*/Antiphon.Tests.<Namespace>/(ClassA*)|(ClassB*)/*`. Every class in the row carries `[Category("Unit")]` on the class. A class with another category stays in its own non-Unit row. The shard rows partition the Unit classes, each class in one row.
+- Is split again when a measurement would put `EstimatedMinutes` above 15.
+
+Set `--total-timeout` to at least the derived execution allowance for the whole shard set. A checkpoint run that executes every shard row has run the Unit lane, and that receipt can record `ordinaryScopeCompleted=Full`.
+
 ## Opt-in per-test phase timing (CARD-1514)
 
 S1 and S2 record where a test spends time when a run opts in. The sole runtime enable is `ANTIPHON_TEST_PHASE_ROOT`. When that variable is unset or blank the recorder does nothing: no file, no stopwatch, no redaction, and no default path. Metadata variables are `ANTIPHON_TEST_PHASE_RUN_ID`, `ANTIPHON_TEST_PHASE_GROUP_ID`, `ANTIPHON_TEST_PHASE_ATTEMPT`, and `ANTIPHON_TEST_PHASE_SUITE`. Missing or invalid metadata disables only that recorder (`phase-metadata-missing`, `phase-root-invalid`). A failed append disables the sink with `phase-sink-failed` and leaves the test outcome unchanged. Discovery, npm, lint, dotnet build, and ordinary child wrappers do not receive the variables. Ordinary CI and dev runs stay off unless the root is set.
