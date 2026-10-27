@@ -10,6 +10,7 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 - Local evidence: `C:\Antiphon\worktrees\card-task-595bc226\.antiphon\native-595bc226` (gitignored). Historical evidence is read-only under `C:\Antiphon\releases\candidates\rc-2026-10-25-105792f7d22f\logs\2026-10-26-0946-8f055f87`.
 - Final historical digest fetched from `origin/feat/card-task-7e719c57`, `docs/investigations/2026-10-27-rc-8f055f87-final-run-digest.md`.
 - Initial host check: Windows, SDK `10.0.300`, 8,274 MiB available / 32,709 MiB total; no native qualification lock. A visible `Antiphon.Tests` process belongs to active task fb80be16, not this task or abandoned qualification; left untouched.
+- Byte-for-byte verification at `2026-10-27T08:21:32Z` checked all 9,063 archived files with zero differences (`source-verification.json`).
 - Every driver uses `scripts/build-slot.ps1`; E2E fixture owns random-loopback server/runner and test Postgres. No live service restart, publish, tag or promotion is authorized or performed.
 
 ## Native results
@@ -117,6 +118,7 @@ The fixture still changes the project default from `master` to `project-default`
 
 An additional native observation prevents oversimplifying the timeout as a completed successful dispatch: the first case's read-only task-detail observation at `2026-10-27T07:51:21Z` still showed Queued, no base ref, and `WorktreeBaseSource=Unset` (`dispatch-first-observation.json`). Its lease-change witness fired at `07:50:42.5058816Z`; the task event at `07:50:52` said `waiting for Grok capacity (any alias); capacity wait b7c8a8f4 not yet granted.` The second case shows the same sequence. A focused DB witness is pending to determine the exact admission state; no permanent capacity deadlock is claimed.
 
+Admission hypothesis awaiting DB confirmation: `AgentTaskDispatcher.cs:960` redeems an unfinished capacity wait before `DispatchOneAsync`. `CapacityRecoveryService.cs:287` marks it Admitted, clears the provider grant (`:295`), and commits (`:300`). A subsequent stale-inspection rollback is in the separate claim transaction. On the following tick, Admitted is still an unfinished wait (`AgentTaskDispatcher.cs:1747`), but redemption requires the now-cleared grant (`:1771`). Stalled admission recovery exists (`CapacityRecoveryService.cs:1161`, `:1198`): its default threshold is two 60-second admission intervals (`CapacityRecoveryPolicy.cs:89`; `SupervisionSettings.cs:72`; `server/appsettings.json:263`). That would delay a new attempt beyond this fixture's 120-second observation window. The resolving witness is a Queued task plus its Admitted wait, null launch receipt, cleared provider grant and changed project default in the same owned test DB. Permanent deadlock or eventual recovery is not established.
 ## Remaining work
 
 The single native build, frontend rebuild and all five whole-class runs are complete; the land class used the explicitly narrowed three-case selection. Initial total: 35 selected cases, 29 passed / 6 failed. Remaining: three review-race repetitions, a focused read-only capacity DB witness, final evidence inventory and owned-output cleanup.
