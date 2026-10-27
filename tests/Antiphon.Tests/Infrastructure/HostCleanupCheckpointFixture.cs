@@ -271,20 +271,6 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
     public void AppendText(string path, string text) { Enter("append", path); Put(path, Text(path) + text); }
     public void Copy(string source, string destination, bool overwrite) { Enter("copy", destination); Put(destination, Nodes[source].Bytes.ToArray()); }
     public void Move(string source, string destination, bool overwrite) { Enter("move", destination); Nodes[destination] = Nodes[source]; Nodes.Remove(source); }
-    public void Unlink(string path) { Enter("unlink", path); Nodes.Remove(path); }
-    public void RemoveDirectory(string path, bool recursive)
-    {
-        Enter("rmdir", path);
-        if (recursive)
-        {
-            RecursiveIntents++;
-            var comparer = (FixturePathComparer)Nodes.Comparer;
-            foreach (var entry in Nodes.Keys.Where(p => comparer.IsChild(p, path)).ToArray())
-                Nodes.Remove(entry);
-        }
-        if (Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path))) throw new IOException("directory not empty");
-        Nodes.Remove(path);
-    }
     public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory)
     {
         Enter(directory ? "rmdir" : "unlink", path);
@@ -297,6 +283,20 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
             throw new IOException("anchored-identity-mismatch");
         if (directory && Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path)))
             throw new IOException("directory not empty");
+        Nodes.Remove(path);
+    }
+    public void Unlink(string path) { Enter("unlink", path); Nodes.Remove(path); }
+    public void RemoveDirectory(string path, bool recursive)
+    {
+        Enter("rmdir", path);
+        if (recursive)
+        {
+            RecursiveIntents++;
+            var comparer = (FixturePathComparer)Nodes.Comparer;
+            foreach (var entry in Nodes.Keys.Where(p => comparer.IsChild(p, path)).ToArray())
+                Nodes.Remove(entry);
+        }
+        if (Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path))) throw new IOException("directory not empty");
         Nodes.Remove(path);
     }
 
