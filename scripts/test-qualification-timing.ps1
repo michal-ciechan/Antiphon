@@ -246,6 +246,9 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     } finally {
         Remove-Item -LiteralPath $own -Recurse -Force -ErrorAction SilentlyContinue
     }
+    if ($linuxRefusal -ne 'Nightly native custody requires Windows.') {
+        Write-Host ('linux-refusal=[' + $linuxRefusal + ']')
+    }
     Assert-Check ($linuxRefusal -eq 'Nightly native custody requires Windows.') 'linux-supervisor-death-custody-is-a-known-gap'
 }
 
