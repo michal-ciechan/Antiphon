@@ -15,8 +15,42 @@ public class DaemonStartupDiagnosticsTests
     [Test, Arguments("pwsh.exe"), Arguments("powershell.exe")]
     public async Task Nonrunner_without_build_keeps_its_launch_behavior(string shell) => await Exercise(shell, false, 1, false);
 
+    [Test, Arguments(false), Arguments(true)]
+    public async Task Build_stub_survives_the_build_slot_process_boundary(bool failFirst)
+    {
+        using var f = new RestartFixture();
+        var slot = RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "build-slot.ps1"));
+        var script = $$"""
+            {{BuildPrelude(f, failFirst)}}
+            & pwsh -NoProfile -File '{{slot}}' -Label daemon-build -- dotnet build fixture-only -c Debug --nologo
+            if ($LASTEXITCODE -ne {{(failFirst ? 17 : 0)}}) { throw "first build exit: $LASTEXITCODE" }
+            & pwsh -NoProfile -File '{{slot}}' -Label daemon-build -- dotnet build fixture-only -c Debug --nologo
+            if ($LASTEXITCODE -ne 0) { throw "second build exit: $LASTEXITCODE" }
+            """;
+        var result = await f.Script(script, OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh");
+        result.Exit.ShouldBe(0, result.Output);
+        File.ReadAllLines(Path.Combine(f.Root, "builds.txt")).Length.ShouldBe(2);
+        result.Output.ShouldContain("synthetic build output");
+    }
+
+    private static string BuildPrelude(RestartFixture f, bool failFirst) => $$"""
+        $env:C589_SLOT_SHIM='{{RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "fixtures", "c589-slot-shim.ps1"))}}'
+        $env:C589_SLOT_SCRIPT='unlimited'
+        $env:C589_SLOT_LOG='{{RestartFixture.Quote(Path.Combine(f.Root, "slots.txt"))}}'
+        $global:buildCalls=0
+        function dotnet {
+            $global:buildCalls++
+            [IO.File]::AppendAllText('{{RestartFixture.Quote(Path.Combine(f.Root, "builds.txt"))}}', "build`n")
+            'synthetic build output'
+            $global:LASTEXITCODE=0
+            if ({{(failFirst ? "$true" : "$false")}} -and $global:buildCalls -eq 1) { $global:LASTEXITCODE=17 }
+        }
+        """;
+
     private async Task Exercise(string shell, bool failFirst, int runs, bool build)
     {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("Requires cmd.exe and native Windows PowerShell engines; run the portable build-slot witness on Linux.");
         using var f = new RestartFixture();
         var state = Path.Combine(f.Root, "svc.state"); var log = Path.Combine(f.Root, "svc.log"); var service = Path.Combine(f.Root, "svc.cmd");
         File.WriteAllText(state, "running");
@@ -24,15 +58,8 @@ public class DaemonStartupDiagnosticsTests
             (runs == 2 ? $"if exist \"{f.Root}\\once\" (echo stopped> \"{state}\") else (echo once> \"{f.Root}\\once\")\r\n" : $"echo stopped> \"{state}\"\r\n"));
         var daemon = RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "run-daemon.ps1"));
         var script = $$"""
-            $global:buildCalls=0
+            {{BuildPrelude(f, failFirst)}}
             $env:ANTIPHON_STARTUP_ATTEMPT='driver-sentinel'
-            function dotnet {
-                $global:buildCalls++
-                [IO.File]::AppendAllText('{{RestartFixture.Quote(Path.Combine(f.Root, "builds.txt"))}}', "build`n")
-                'synthetic build output'
-                $global:LASTEXITCODE=0
-                if ({{(failFirst ? "$true" : "$false")}} -and $global:buildCalls -eq 1) { $global:LASTEXITCODE=17 }
-            }
             & '{{daemon}}' -Name '{{(build ? "session-runner" : "generic")}}' -WorkDir '{{RestartFixture.Quote(f.Root)}}' -Exe '{{RestartFixture.Quote(service)}}' -LogFile '{{RestartFixture.Quote(log)}}' -ServicePidFile '{{RestartFixture.Quote(Path.Combine(f.Root, "svc.pid"))}}' -StateFile '{{RestartFixture.Quote(state)}}' {{(build ? "-BuildProjectDir 'fixture-only'" : "")}}
             if($env:ANTIPHON_STARTUP_ATTEMPT -ne 'driver-sentinel') { throw 'parent environment changed' }
             """;
