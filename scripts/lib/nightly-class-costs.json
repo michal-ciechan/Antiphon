@@ -207,10 +207,10 @@
       "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
     "Antiphon.E2E.AgentTaskLandDeliveryE2ETests": {
-      "nodes": 52,
-      "seconds": 31200,
+      "nodes": 53,
+      "seconds": 31800,
       "basis": "observed-bound",
-      "source": "CARD-1584: Windows rc run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee. Single watchdog-truncated run: 51 completed landing cases summed 7147.9 s; slowest completed supplied case C488_ReviewToLandReceiptMatrix(idle, spill) 348.1 s. Provisional bound 600 s PER EXPANDED CASE (1.72x slowest), including unobserved siblings; not a complete-class wall measurement or p95. Matrices retain every argument in methods of at most two rows. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+      "source": "CARD-1584: Windows rc run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee. Single watchdog-truncated run: 51 completed landing cases summed 7147.9 s; slowest completed supplied case C488_ReviewToLandReceiptMatrix(idle, spill) 348.1 s. Provisional bound 600 s PER EXPANDED CASE (1.72x slowest), including unobserved siblings; not a complete-class wall measurement or p95. Matrices retain every argument in methods of at most two rows. C467_RetainedEvidenceCompletesCleanup uses that same 600 s default: no separate Windows timing exists for it. This row is 53 expanded cases / 31800 s. Original denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
     "Antiphon.E2E.BoardE2ETests": {
       "nodes": 10,

@@ -234,7 +234,7 @@ native selection and census. Linux `rc` execution is a platform diagnostic:
 selected case passes. It cannot advance candidate or master green files or earn
 release/readiness credit. Unknown host platforms refuse before build/test commands.
 
-All **69** LandDelivery cases remain required on Windows: 52 in
+All **70** LandDelivery cases remain required on Windows: 53 in
 `AgentTaskLandDeliveryE2ETests`, 12 in `DispatchBaseWarningDeliveryE2ETests`, and 5 in
 `WorktreeRetirementDeliveryE2ETests`. Their three CARD-1323 exclusions apply only to
 Linux because their fixture requires Windows ConPTY/native FakeGrok. These counts
