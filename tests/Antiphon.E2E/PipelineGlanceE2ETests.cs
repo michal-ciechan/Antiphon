@@ -100,7 +100,7 @@ public class PipelineGlanceE2ETests
     {
         using var scope = _app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var now = new DateTime(2026, 9, 27, 12, 0, 0, DateTimeKind.Utc);
+        var now = _app.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
         var projectId = Guid.NewGuid(); var boardId = Guid.NewGuid();
         var backlogColumn = Guid.NewGuid(); var reviewColumn = Guid.NewGuid();
         db.Projects.Add(new Project { Id = projectId, Name = "C557 glance", GitRepositoryUrl = "https://example.test/c557.git", CreatedAt = now, UpdatedAt = now });
