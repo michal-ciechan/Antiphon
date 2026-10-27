@@ -16,12 +16,18 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 
 | Class | Historical result | Native rc result | Cause / classification | Proposed fix |
 |---|---|---|---|---|
-| AgentE2ETests | Failure | Pending | Pending | Not designed in Investigate |
-| PipelineGlanceE2ETests | Failure | Pending | Pending | Not designed in Investigate |
-| BoardE2ETests | Failure | Pending | Pending | Not designed in Investigate |
-| WorkflowDeleteTests | 2 failed | Pending | Pending | Not designed in Investigate |
-| AgentTaskLandDeliveryE2ETests | 2 failed | Pending | Pending | Not designed in Investigate |
-| DispatchBaseWarningDeliveryE2ETests | 2 failed | Pending | Pending | Not designed in Investigate |
+| AgentE2ETests | 1 pass / 1 fail | 2 pass / 0 fail | Fixed by rc/2026-10-27 | None |
+| PipelineGlanceE2ETests | 0 pass / 1 fail | 1 pass / 0 fail | Fixed by rc/2026-10-27 | None |
+| BoardE2ETests | 9 pass / 1 fail | Pending | Pending | Not designed in Investigate |
+| WorkflowDeleteTests | 4 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+| AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+| DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+
+The single native build passed (39 warnings, zero errors, 220.67 seconds MSBuild / 222 seconds leased). `npm ci` and `npm run build` passed (106 seconds leased, 75 seconds slot wait). Source archive SHA-256: `6AA5990C26B3E5515C647BFE34BF8EBD6355C8D1A3F437C0D6525D6B0D0AC526`.
+
+Agent class: 79.9 seconds outer wall; Pipeline class: 60.4 seconds. Fresh `results.trx`, `console.log`, and `run.json` live under `<evidence>/<Class>-initial/`. Screenshots are retained under the export's `tests/Antiphon.E2E/TestOutput/Screenshots` pending collection.
+
+Historical cost is a scope risk: summing the original TRX durations gives 119.1 minutes for the 52 land-delivery cases and 27.8 minutes for 13 dispatch-warning cases, before the other four classes/builds/admission. The brief gives 120 minutes total. This is a Debug follow-up obligation under R1, not permission to hide missing coverage or widen timeouts. No sub-delegation is available to this delegate.
 
 ## Remaining work
 
