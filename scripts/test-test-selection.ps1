@@ -330,6 +330,61 @@ function Test-C1313_CoverageRefusal {
         Assert-C487 (-not $r.Ok -and $r.Reasons -ccontains $fault) ('C1313 '+$fault) ($r.Reasons -join ',')
     }
 }
+function New-C1313SelectorCandidate {
+    param($Fx, [scriptblock]$Mutate)
+    [void](Invoke-C1313Git $Fx.Root @('read-tree',$Fx.B))
+    foreach($path in @('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')){
+        $lf=[IO.File]::ReadAllText((Join-Path $repoRoot $path))
+        if($lf.Contains("`r")){throw "live selector is not LF: $path"}
+        $text=& $Mutate $lf
+        $bytesPath=Join-Path $ResultsDirectory ('selector-' + [guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllBytes($bytesPath, [Text.Encoding]::UTF8.GetBytes($text))
+        $blob=Invoke-C1313Git $Fx.Root @('hash-object','-w','--no-filters','--',$bytesPath)
+        [void](Invoke-C1313Git $Fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$path"))
+        Remove-Item -LiteralPath $bytesPath -Force
+    }
+    $globalBytes=Join-Path $ResultsDirectory ('global-' + [guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllBytes($globalBytes, [IO.File]::ReadAllBytes((Join-Path $repoRoot 'global.json')))
+    $globalBlob=Invoke-C1313Git $Fx.Root @('hash-object','-w','--no-filters','--',$globalBytes)
+    [void](Invoke-C1313Git $Fx.Root @('update-index','--add','--cacheinfo',"100644,$globalBlob,global.json"))
+    Remove-Item -LiteralPath $globalBytes -Force
+    $tree=Invoke-C1313Git $Fx.Root @('write-tree')
+    return Invoke-C1313Git $Fx.Root @('commit-tree',$tree,'-p',$Fx.B,'-m','selector bytes')
+}
+function Get-C1313LfSelectorHash {
+    $selectors=@{}
+    foreach($path in @('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')){
+        $selectors[$path]=Get-TestSelectionDigest ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
+    }
+    return Get-TestSelectionDigest $selectors
+}
+function Test-C1313_SelectorLineEndings {
+    $fx=New-C1313GitFixture
+    $crlf=New-C1313SelectorCandidate $fx { param($lf) $lf.Replace("`n","`r`n") }
+    $roster=Get-TestSelectionBlob $fx.Root $crlf 'scripts/select-test-rosters.ps1'
+    $selector=Get-TestSelectionBlob $fx.Root $crlf 'scripts/lib/test-selection.ps1'
+    Assert-C487 ($roster.Contains("`r`n") -and $selector.Contains("`r`n")) 'C1313 selector-blob-has-cr'
+    $expected=Get-C1313LfSelectorHash
+    $accepted=Invoke-C1313Selection $fx $crlf
+    Assert-C487 ($accepted.Exit -eq 0 -and $null -ne $accepted.Document) 'C1313 crlf-selector-accepted' $accepted.Error
+    $actualHash=if($accepted.Document){[string]$accepted.Document.selectorHash}else{''}
+    Assert-C487 ($actualHash -ceq $expected) 'C1313 crlf-selector-hash-is-lf' $actualHash
+    . "$PSScriptRoot/lib/release-selection.ps1"
+    $producer=Get-ReleaseSelectionContract $fx.Root $crlf 'rc'
+    Assert-C487 ([string]$producer.selectorHash -ceq $expected) 'C1313 crlf-producer-hash-is-lf' $producer.selectorHash
+    $content=New-C1313SelectorCandidate $fx { param($lf) ('X' + $lf.Replace("`n","`r`n")) }
+    $contentRun=Invoke-C1313Selection $fx $content
+    Assert-C487 ($contentRun.Exit -eq 2 -and $contentRun.Error.Contains('selector-source-mismatch')) 'C1313 selector-content-refused' $contentRun.Error
+    $case=New-C1313SelectorCandidate $fx { param($lf) $lf.Replace('param','PARAM').Replace("`n","`r`n") }
+    $caseRun=Invoke-C1313Selection $fx $case
+    Assert-C487 ($caseRun.Exit -eq 2 -and $caseRun.Error.Contains('selector-source-mismatch')) 'C1313 selector-case-refused' $caseRun.Error
+    $space=New-C1313SelectorCandidate $fx { param($lf) ($lf.Substring(0,1) + ' ' + $lf.Substring(1)).Replace("`n","`r`n") }
+    $spaceRun=Invoke-C1313Selection $fx $space
+    Assert-C487 ($spaceRun.Exit -eq 2 -and $spaceRun.Error.Contains('selector-source-mismatch')) 'C1313 selector-space-refused' $spaceRun.Error
+    $embedded=New-C1313SelectorCandidate $fx { param($lf) $lf.Insert(1,"`r") }
+    $embeddedRun=Invoke-C1313Selection $fx $embedded
+    Assert-C487 ($embeddedRun.Exit -eq 2 -and $embeddedRun.Error.Contains('selector-source-mismatch')) 'C1313 embedded-cr-refused' $embeddedRun.Error
+}
 function Test-C1313_NewUidRemainder {
     $discovery=Get-C1313FilterDiscovery
     $members=@(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'})
