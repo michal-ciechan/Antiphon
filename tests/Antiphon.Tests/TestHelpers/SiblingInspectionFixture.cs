@@ -11,6 +11,7 @@ using Antiphon.Tests.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using Shouldly;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -88,7 +89,14 @@ internal sealed class InspectionGit : LandingGit
     public ConcurrentQueue<string[]> Calls { get; } = new();
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource TwoEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public void HoldNextWave()
+    {
+        Blocked.ShouldBe(0, "join the preceding wave before replacing its barrier");
+        Release.Task.IsCompleted.ShouldBeTrue();
+        Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Block = true;
+    }
     public bool Block { get; set; }
     public bool Fail { get; set; }
     public int Blocked => Volatile.Read(ref _blocked);

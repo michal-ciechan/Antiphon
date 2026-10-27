@@ -178,7 +178,8 @@ public class GrokSignInRuntimeTests
                 npgsql.SetPostgresVersion(16, 0);
             }));
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton<TimeProvider>(clock);
+        // Ready-wait and launch timers run in real time; only the dispatcher grace is advanced.
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton(Options.Create(new SupervisionSettings
         {
@@ -240,7 +241,7 @@ public class GrokSignInRuntimeTests
         services.AddSingleton(deadSessions);
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentSessionService>();
-        services.AddScoped<AgentTaskDispatcher>();
+        services.AddScoped(sp => ActivatorUtilities.CreateInstance<AgentTaskDispatcher>(sp, clock));
         services.AddSingleton(sp => new PtyDeliveryProfile(
             sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<ILogger<PtyDeliveryProfile>>(),
