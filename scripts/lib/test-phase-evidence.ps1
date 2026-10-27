@@ -47,8 +47,8 @@ function Enable-TestPhaseExecutionEnvironment {
         Remove-TestPhaseVariables -Environment $Environment
         return $Environment
     }
-    $root = $explicit
-    if ([string]::IsNullOrWhiteSpace($root)) { $root = $TimingRoot }
+    $root = $TimingRoot
+    if ([string]::IsNullOrWhiteSpace($root)) { $root = $explicit }
     if ([string]::IsNullOrWhiteSpace($root)) {
         $root = Join-Path $LogRoot 'timing'
     }
@@ -270,6 +270,49 @@ function Read-TestPhaseJsonlFile {
         if ($lastContent) { $torn++ } else { $malformed++ }
     }
     return [pscustomobject]@{ Records = @($records.ToArray()); Torn = $torn; Malformed = $malformed; Path = $Path }
+}
+
+function Read-TestPhaseJsonlBounded {
+    param(
+        [string]$Path,
+        [int]$MaxBytes = 262144,
+        [int]$MaxLines = 4000,
+        [int]$DeadlineMilliseconds = 200
+    )
+    $records = New-Object System.Collections.Generic.List[object]
+    $complete = $true
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    try {
+        $reader = [System.IO.StreamReader]::new($stream)
+        $bytes = 0
+        $lines = 0
+        while ($lines -lt $MaxLines -and $bytes -lt $MaxBytes) {
+            if ($watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
+                $complete = $false
+                break
+            }
+            $line = $reader.ReadLine()
+            if ($null -eq $line) { break }
+            $lines++
+            $bytes += [Text.Encoding]::UTF8.GetByteCount($line) + 1
+            if ($bytes -gt $MaxBytes) {
+                $complete = $false
+                break
+            }
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $parsed = $null
+            $ok = $true
+            try { $parsed = $line | ConvertFrom-Json } catch { $ok = $false }
+            if ($ok -and $null -ne $parsed -and -not [string]::IsNullOrWhiteSpace([string]$parsed.recordKind)) {
+                $records.Add($parsed)
+            }
+        }
+        if ($lines -ge $MaxLines -or $bytes -ge $MaxBytes) { $complete = $false }
+    } finally {
+        $stream.Dispose()
+    }
+    return [pscustomobject]@{ Records = @($records.ToArray()); Complete = $complete; Path = $Path }
 }
 
 function Write-TestPhasePlannedManifest {
@@ -900,47 +943,162 @@ function Get-QualificationTrxStats {
     }
 }
 
+function Get-QualificationSpanSeconds {
+    param($Phase)
+    if ($null -eq $Phase) { return $null }
+    $start = 0.0
+    $end = 0.0
+    try { $start = [double]$Phase.startOffsetMs } catch { return $null }
+    try { $end = [double]$Phase.endOffsetMs } catch { $end = $start }
+    if ($end -lt $start) { $end = $start }
+    return (($end - $start) / 1000.0)
+}
+
+function ConvertTo-QualificationShardContribution {
+    param(
+        $Records,
+        [string]$FileName,
+        [string]$Chunk,
+        [string]$RunId,
+        [string]$Suite,
+        [string]$Attempt
+    )
+    $empty = [pscustomobject]@{ fixtures = @{}; processSpawn = $null; processWait = $null }
+    $header = $null
+    foreach ($rec in @($Records)) {
+        if ([string]$rec.recordKind -eq 'header') { $header = $rec; break }
+    }
+    if ($null -eq $header) { return $empty }
+    if ([string]$header.groupId -ne [string]$Chunk) { return $empty }
+    if ([string]$header.runId -ne [string]$RunId) { return $empty }
+    if ([string]$header.suite -ne [string]$Suite) { return $empty }
+    if ([string]$header.attempt -ne [string]$Attempt) { return $empty }
+    $filePid = ''
+    $fileNonce = ''
+    if ($FileName -match '^cases-(\d+)-([^.]+)\.jsonl$') {
+        $filePid = [string]$Matches[1]
+        $fileNonce = [string]$Matches[2]
+    } else {
+        return $empty
+    }
+    $headerPid = ''
+    if ($header.PSObject.Properties.Name -contains 'pid' -and $null -ne $header.pid -and -not [string]::IsNullOrWhiteSpace([string]$header.pid)) {
+        $headerPid = [string]$header.pid
+    }
+    $headerNonce = ''
+    if ($header.PSObject.Properties.Name -contains 'nonce' -and $null -ne $header.nonce -and -not [string]::IsNullOrWhiteSpace([string]$header.nonce)) {
+        $headerNonce = [string]$header.nonce
+    }
+    if ($headerPid -ne '' -and $headerPid -ne $filePid) { return $empty }
+    if ($headerNonce -ne '' -and $headerNonce -ne $fileNonce) { return $empty }
+    $fixtures = @{}
+    $processSpawn = $null
+    $processWait = $null
+    foreach ($rec in @($Records)) {
+        $kind = [string]$rec.recordKind
+        if ($kind -eq 'fixture') {
+            $fid = ''
+            if ($rec.PSObject.Properties.Name -contains 'fixtureId') { $fid = [string]$rec.fixtureId }
+            if ([string]::IsNullOrWhiteSpace($fid)) { $fid = [guid]::NewGuid().ToString('N') }
+            if ($fixtures.ContainsKey($fid)) { continue }
+            $bucket = @{ setup = $null; teardown = $null }
+            foreach ($phase in @($rec.phases)) {
+                $seconds = Get-QualificationSpanSeconds -Phase $phase
+                if ($null -eq $seconds) { continue }
+                $name = [string]$phase.phase
+                if ($name -eq 'fixture-setup') {
+                    if ($null -eq $bucket.setup) { $bucket.setup = 0.0 }
+                    $bucket.setup = [double]$bucket.setup + [double]$seconds
+                } elseif ($name -eq 'fixture-teardown') {
+                    if ($null -eq $bucket.teardown) { $bucket.teardown = 0.0 }
+                    $bucket.teardown = [double]$bucket.teardown + [double]$seconds
+                }
+            }
+            $fixtures[$fid] = $bucket
+        } elseif ($kind -eq 'complete') {
+            foreach ($phase in @($rec.phases)) {
+                $seconds = Get-QualificationSpanSeconds -Phase $phase
+                if ($null -eq $seconds) { continue }
+                $name = [string]$phase.phase
+                if ($name -eq 'process-spawn') {
+                    if ($null -eq $processSpawn) { $processSpawn = 0.0 }
+                    $processSpawn = [double]$processSpawn + [double]$seconds
+                } elseif ($name -eq 'process-wait') {
+                    if ($null -eq $processWait) { $processWait = 0.0 }
+                    $processWait = [double]$processWait + [double]$seconds
+                }
+            }
+        }
+    }
+    return [pscustomobject]@{ fixtures = $fixtures; processSpawn = $processSpawn; processWait = $processWait }
+}
+
 function Get-QualificationPhaseSums {
-    param([string]$TimingRoot, [string]$Chunk)
-    $empty = [ordered]@{
+    param(
+        [string]$TimingRoot,
+        [string]$Chunk,
+        [string]$RunId = '',
+        [string]$Suite = '',
+        [string]$Attempt = ''
+    )
+    $empty = [pscustomobject]@{
         fixtureSetupSeconds = $null
         fixtureTeardownSeconds = $null
         processSpawnSeconds = $null
         processWaitSeconds = $null
     }
     if ([string]::IsNullOrWhiteSpace($TimingRoot) -or -not (Test-Path -LiteralPath $TimingRoot)) { return $empty }
-    $sums = @{ 'fixture-setup' = 0.0; 'fixture-teardown' = 0.0; 'process-spawn' = 0.0; 'process-wait' = 0.0 }
-    $seen = $false
+    if (-not $script:QualificationPhaseShardCache) { $script:QualificationPhaseShardCache = @{} }
+    $budget = [Diagnostics.Stopwatch]::StartNew()
+    $seenFixtures = @{}
+    $fixtureSetup = $null
+    $fixtureTeardown = $null
+    $processSpawn = $null
+    $processWait = $null
     foreach ($shard in @(Get-ChildItem -LiteralPath $TimingRoot -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)) {
-        $parsed = Read-TestPhaseJsonlFile -Path $shard.FullName
-        $group = ''
-        foreach ($rec in @($parsed.Records)) {
-            if ([string]$rec.recordKind -eq 'header') { $group = [string]$rec.groupId }
+        if ($budget.ElapsedMilliseconds -ge 500) { break }
+        $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
+        $key = ([string]$shard.FullName + '|' + [string]$shard.Length + '|' + [string]$shard.LastWriteTimeUtc.Ticks + '|' + $identity)
+        $contribution = $null
+        if ($script:QualificationPhaseShardCache.ContainsKey($key)) {
+            $contribution = $script:QualificationPhaseShardCache[$key]
+        } else {
+            $left = 500 - [int]$budget.ElapsedMilliseconds
+            if ($left -lt 1) { break }
+            $slice = $left
+            if ($slice -gt 200) { $slice = 200 }
+            $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $slice
+            $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
+            if ($parsed.Complete) { $script:QualificationPhaseShardCache[$key] = $contribution }
         }
-        if ($group -ne [string]$Chunk) { continue }
-        foreach ($rec in @($parsed.Records)) {
-            if ([string]$rec.recordKind -ne 'complete') { continue }
-            $seen = $true
-            foreach ($phase in @($rec.phases)) {
-                if ($null -eq $phase) { continue }
-                $name = [string]$phase.phase
-                if (-not $sums.ContainsKey($name)) { continue }
-                $start = 0.0
-                $end = 0.0
-                try { $start = [double]$phase.startOffsetMs } catch { $start = 0.0 }
-                try { $end = [double]$phase.endOffsetMs } catch { $end = $start }
-                if ($end -lt $start) { $end = $start }
-                $sums[$name] += (($end - $start) / 1000.0)
+        if ($null -eq $contribution) { continue }
+        foreach ($fid in @($contribution.fixtures.Keys)) {
+            if ($seenFixtures.ContainsKey([string]$fid)) { continue }
+            $seenFixtures[[string]$fid] = $true
+            $bucket = $contribution.fixtures[$fid]
+            if ($null -ne $bucket.setup) {
+                if ($null -eq $fixtureSetup) { $fixtureSetup = 0.0 }
+                $fixtureSetup = [double]$fixtureSetup + [double]$bucket.setup
+            }
+            if ($null -ne $bucket.teardown) {
+                if ($null -eq $fixtureTeardown) { $fixtureTeardown = 0.0 }
+                $fixtureTeardown = [double]$fixtureTeardown + [double]$bucket.teardown
             }
         }
+        if ($null -ne $contribution.processSpawn) {
+            if ($null -eq $processSpawn) { $processSpawn = 0.0 }
+            $processSpawn = [double]$processSpawn + [double]$contribution.processSpawn
+        }
+        if ($null -ne $contribution.processWait) {
+            if ($null -eq $processWait) { $processWait = 0.0 }
+            $processWait = [double]$processWait + [double]$contribution.processWait
+        }
     }
-    if (-not $seen) { return $empty }
-    return [ordered]@{
-        fixtureSetupSeconds = [math]::Round([double]$sums['fixture-setup'], 3)
-        fixtureTeardownSeconds = [math]::Round([double]$sums['fixture-teardown'], 3)
-        processSpawnSeconds = [math]::Round([double]$sums['process-spawn'], 3)
-        processWaitSeconds = [math]::Round([double]$sums['process-wait'], 3)
-    }
+    if ($null -ne $fixtureSetup) { $empty.fixtureSetupSeconds = [math]::Round([double]$fixtureSetup, 3) }
+    if ($null -ne $fixtureTeardown) { $empty.fixtureTeardownSeconds = [math]::Round([double]$fixtureTeardown, 3) }
+    if ($null -ne $processSpawn) { $empty.processSpawnSeconds = [math]::Round([double]$processSpawn, 3) }
+    if ($null -ne $processWait) { $empty.processWaitSeconds = [math]::Round([double]$processWait, 3) }
+    return $empty
 }
 
 function ConvertTo-QualificationStampText {
@@ -972,6 +1130,8 @@ function ConvertFrom-QualificationJToken {
 function Read-QualificationSidecar {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $info = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($null -eq $info -or [int64]$info.Length -gt 1048576) { return $null }
     $text = [IO.File]::ReadAllText($Path)
     if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
         $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
@@ -1001,6 +1161,8 @@ function Update-QualificationChunkTiming {
         $RunWallSeconds,
         [string]$StartedAt,
         [string]$CompletedAt,
+        [string]$RunId = '',
+        [string]$Attempt = '',
         [switch]$Terminal
     )
     try {
@@ -1041,7 +1203,17 @@ function Update-QualificationChunkTiming {
             $trxMissing = $false
             $stats = Get-QualificationTrxStats -TrxPath $trx
         }
-        $phases = Get-QualificationPhaseSums -TimingRoot $TimingRoot -Chunk $Chunk
+        $heartbeat = ($phaseText -eq 'run' -and [string]::IsNullOrWhiteSpace($whyText) -and [string]::IsNullOrWhiteSpace($completedText))
+        if ($heartbeat) {
+            $phases = [ordered]@{
+                fixtureSetupSeconds = $null
+                fixtureTeardownSeconds = $null
+                processSpawnSeconds = $null
+                processWaitSeconds = $null
+            }
+        } else {
+            $phases = Get-QualificationPhaseSums -TimingRoot $TimingRoot -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
+        }
         $p50 = $null; $p95 = $null; $max = $null; $slow = @(); $count = 0
         if ($null -ne $prior) {
             if ($prior.PSObject.Properties.Name -contains 'p50Seconds') { $p50 = $prior.p50Seconds }
