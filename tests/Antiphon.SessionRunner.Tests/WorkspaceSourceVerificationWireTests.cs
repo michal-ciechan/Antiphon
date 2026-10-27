@@ -270,7 +270,9 @@ public sealed class WorkspaceSourceVerificationWireTests
         result.Reason.ShouldBe(reason, guard);
         result.Identity.ShouldBeNull(guard);
     }
-    private static string ExpectedRepositoryIdentity(string common, bool windows) => Digest(windows ? common.ToUpperInvariant() : common);
+    // Git emits forward slashes even on Windows; the runner hashes the native absolute path.
+    private static string ExpectedRepositoryIdentity(string common, bool windows) =>
+        Digest(windows ? common.Replace('/', '\\').ToUpperInvariant() : common);
     private static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static void AssertNoPush(SeatWorld world, string guard) => world.Source.Commands.ShouldNotContain(c => c[0] == "push", guard);
