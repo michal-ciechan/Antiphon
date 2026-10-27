@@ -1,0 +1,32 @@
+# Windows terminal/receipt failure analysis — task 9d3dc152
+
+## Result and evidence identity
+
+No single Windows terminal defect explains this selection. The dominant Claude failures are stale fixture contracts for CARD-0680: unreadable fake screens, mismatched launch/database generations, and a receipt forwarding wrapper that omitted conditional input. The fairness assertion separately assumes completed results still occupy in-flight capacity. Grok submission, the remote-control disposal exception and the poison-page timeout need separate attribution; the digest alone does not prove their lower-level cause.
+
+Read-only investigation; no product or test source changed. Assigned source is `718bd29f4a1504c64c491d607d31403fcb87dae2`, branch `feat/card-task-9d3dc152`; fetched `origin/rc/2026-10-27` is `d1d090f766451797a3bd9b30c9d2966f2f8c034c`. The branch contract forbids rebasing/switching, so source remains the assigned tip. Windows qualification source was `105792f7d22f297746cdb338976f52e424b76fa7`, run `8f055f87452d4c76998604df0b522db5`. Both digest branches were fetched: early digest `9d7bd87b67c786b28f50920c68cfd0611ab630a5`, final digest `c7ad9e901c6be169fb5a0f43be8e210211e9081b`. Failure identifiers below use their common F001–F037 catalog. No desktop access or desktop test was attempted.
+
+## Confirmed fixture mechanisms
+
+- `SessionMessageQueuePtyIntegrationTests` (5): F007/F012 report `submitted=False`; F008 lacks `SWALLOWED-ENTER:`; F011 records `[]`; F013 sees zero swallowed Enters. Candidate fixtures launch the default append-only fake and independently seed `StartedAt`. `SessionMessageQueueService.cs:5730` requires a current Claude dialog observation; `ProviderDialogObservationService.cs:26` rejects unknown/mismatched generation; `AgentSessionRuntime.cs:2155` repeats that fence for each body/Enter. The guard can prevent all terminal bytes, which accounts for these outcomes without a ConPTY write defect. Current fixes add `WithNativeClaudeDialog()` and bind database `StartedAt` to its normalized generation.
+- `DelegationBriefCeilingPtyTests` (2): F035/F036 raw output contains only ready/CLIP banners. Same missing composer/generation fixture contract, before the clipping oracle can run. Current `Harness.StartAsync` uses the same repair.
+- `SessionQueueReceiptPlumbingTests` (9): F015 explicitly reports `Pending`, `DeliveryAttempts=0`, `ModalBlocked=True`. Expected transport exceptions in the other receipt rows never occur because the input guard prevents those writes. Candidate `ForwardingClient` also inherits the interface default `SendConditionalInputAsync => Unsupported`; it never reaches its raw-input fault hooks. Current forwarding repair routes conditional body and Enter through the same hooks, but `PtyWorld.StartAsync` still seeds `StartedAt=now` independently at line 651. Minimal remaining repair: set it to `spec.AcceptedStartedAt!.Value`.
+- `HerdrAlwaysOnChannelParityTests` (2): F005 is Pending instead of Sent; its adapter now opts into dialog observation. F006 explicitly records `Automated Claude input withheld: observation-unknown:None::NonQualifying`. Its Herdr fake still echoes unframed text, has Codex/Grok startup screens but no Claude composer setup, and Ctrl+U leaves an empty string. Add an opt-in readable Claude composer model to that fake, preserving it across probe/type/clear operations; leave the default unknown observation intact for refusal tests.
+- `RemoteControlRecoveryPtyIntegrationTests`: F010 has no persisted work prompt; its shared lane lacked readable Claude chrome, now configured. F009 is a distinct cleanup exception (`capture session=... manifest=...`), and its innermost cause is absent from the digest. Do not relabel that disposal failure as fixed by a composer change.
+
+The named native Claude/Grok/remote tests explicitly skip off Windows, and the Herdr parity method explicitly skips Linux. A Linux exit 0 for those selections is not native pass evidence. The earlier portable rerun report uses a different source and qualifies neither Windows candidate nor current native fixes.
+
+## Separate scheduling mechanisms
+
+`DispatcherSiblingInspectionSchedulingTests.C1349_InspectionQueueRecovers(fairness)` F001 expects Outstanding 0 but observes 1 at line 377. The unblocked first tick races real Git throughput: Linux can complete enough work to admit all 33 requests; Windows can leave only 32 admitted. After those finish, completed results consume zero in-flight capacity (`SiblingInspectionResults.Begin` checks `InFlightUnlocked`, line 63). The next dispatcher tick visits never-attempted #33 first (`AgentTaskDispatcher.cs:665`), admits it, then invalidates the other 32 held results (`:898`). One outstanding entry is correct. The test comment that the full queue cannot admit #33 is obsolete. Repair the fixture with barriers controlling initial 32 in-flight inspections, then assert #33 admission at the next tick and retain the capacity/fairness assertions under explicit worker gates. Do not change product capacity back to counting completed results.
+
+`SessionRuntimeActionTests` poison-page F003 times out at line 580 waiting for callback `page-128`, before the second-page fairness assertion. Four workers deliberately hold three other sessions while one executes 128 actions. `SessionRuntimeActionCoordinator.cs:149` drains sequentially, and `:251–261` persists every routing phase separately. This is a fixed ten-second throughput assumption, not proof of a lost continuation. Native phase timing and last completed action are needed to distinguish slow progress from a retained failed action. Do not widen its timeout or change production page size based on the digest alone.
+
+## Verification status
+
+Portable witness execution is pending in this report slice. Native closure remains incomplete. Existing witness methods in `WindowsDeliveryFixtureWitnessTests` distinguish unreadable screen, mismatched generation and valid guard input, and exercise conditional body/Enter fault forwarding; they do not cover the receipt world's still-mismatched database setup or Herdr's full launch path.
+
+--- next stage ---
+next: code
+handoff: Complete receipt-world generation and Herdr composer fixture repairs; make fairness scheduling deterministic; use the separately running Windows tasks for exact native closure and capture the unresolved Grok, poison-page and cleanup diagnostics.
+artifact: docs/investigations/2026-10-27-windows-terminal-receipt-static-analysis.md
