@@ -60,7 +60,10 @@ if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) 
         $dead = Get-Content -LiteralPath $side -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-Check ([string]$dead.lastPhase -eq 'timeout') 'timeout-keeps-last-phase'
         Assert-Check ([string]$dead.why -eq 'timeout') 'timeout-why'
-        Assert-Check ([string]$dead.startedAt -eq '2026-10-27T00:00:00.0000000Z') 'timeout-keeps-start'
+        $keptStart = [string]$dead.startedAt
+        if ($dead.startedAt -is [datetime]) { $keptStart = $dead.startedAt.ToUniversalTime().ToString('o') }
+        Assert-Check ($keptStart -eq '2026-10-27T00:00:00.0000000Z') 'timeout-keeps-start'
+        Assert-Check ([IO.File]::ReadAllText($side).Contains('2026-10-27T00:00:00.0000000Z')) 'timeout-keeps-start-text'
         Assert-Check ([bool]$dead.trxMissing) 'timeout-without-trx'
 
         $trx = Join-Path $log 'antiphon-g2.trx'

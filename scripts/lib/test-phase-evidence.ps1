@@ -36,16 +36,19 @@ function Enable-TestPhaseExecutionEnvironment {
         [string]$GroupId,
         [string]$Attempt,
         [string]$Suite,
-        [string]$Profile
+        [string]$Profile,
+        [string]$TimingRoot = ''
     )
     if ($null -eq $Environment) { $Environment = @{} }
     $explicit = [Environment]::GetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT')
-    $enable = ($Profile -eq 'rc') -or (-not [string]::IsNullOrWhiteSpace($explicit))
+    $qualification = ($Profile -eq 'rc') -or ($Profile -eq 'nightly')
+    $enable = $qualification -or (-not [string]::IsNullOrWhiteSpace($explicit)) -or (-not [string]::IsNullOrWhiteSpace($TimingRoot))
     if (-not $enable) {
         Remove-TestPhaseVariables -Environment $Environment
         return $Environment
     }
     $root = $explicit
+    if ([string]::IsNullOrWhiteSpace($root)) { $root = $TimingRoot }
     if ([string]::IsNullOrWhiteSpace($root)) {
         $root = Join-Path $LogRoot 'timing'
     }
@@ -189,6 +192,9 @@ function Get-TestPhaseClassBasisMap {
 
 function Get-TestPhaseTimingDirectory {
     param([string]$RunDirectory)
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:QualificationTimingRoot)) {
+        return [string]$script:QualificationTimingRoot
+    }
     return (Join-Path $RunDirectory 'timing')
 }
 
@@ -846,5 +852,283 @@ function Invoke-TestPhaseRunSummary {
         Write-TestPhaseSummaryFiles -Planned $planned -Report $report -RunDirectory $RunDirectory -Top $Top
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $RunDirectory -Code 'phase-summary-failed'
+    }
+}
+
+function Resolve-QualificationTimingRoot {
+    param([string]$TimingRoot, [string]$LogRoot, [string]$RunId)
+    if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { return [string]$TimingRoot }
+    if ([string]::IsNullOrWhiteSpace($LogRoot)) { return '' }
+    if (-not [string]::IsNullOrWhiteSpace($RunId)) { return (Join-Path $LogRoot ('timing-' + $RunId)) }
+    return (Join-Path $LogRoot 'timing')
+}
+
+function Get-QualificationNearestRank {
+    param($Sorted, [double]$Fraction)
+    $values = @($Sorted)
+    $n = $values.Count
+    if ($n -lt 1) { return $null }
+    $rank = [int][math]::Ceiling($Fraction * $n)
+    if ($rank -lt 1) { $rank = 1 }
+    if ($rank -gt $n) { $rank = $n }
+    return [math]::Round([double]$values[$rank - 1], 3)
+}
+
+function Get-QualificationTrxStats {
+    param([string]$TrxPath)
+    if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) { return $null }
+    $named = @()
+    foreach ($row in @(Read-TestPhaseTrxRows -Path $TrxPath)) {
+        $seconds = $null
+        try { $seconds = ([TimeSpan][string]$row.Duration).TotalSeconds } catch { $seconds = $null }
+        if ($null -eq $seconds) { continue }
+        $named += [pscustomobject]@{ name = [string]$row.Name; seconds = [math]::Round([double]$seconds, 3) }
+    }
+    if ($named.Count -lt 1) { return $null }
+    $sorted = @($named | ForEach-Object { [double]$_.seconds } | Sort-Object)
+    $slow = @($named | Sort-Object { -1 * [double]$_.seconds }, { [string]$_.name } | Select-Object -First 20)
+    $slowRows = @()
+    foreach ($row in $slow) {
+        $slowRows += [ordered]@{ name = [string]$row.name; seconds = [math]::Round([double]$row.seconds, 3) }
+    }
+    return [pscustomobject]@{
+        P50 = (Get-QualificationNearestRank -Sorted $sorted -Fraction 0.50)
+        P95 = (Get-QualificationNearestRank -Sorted $sorted -Fraction 0.95)
+        Max = [math]::Round([double]$sorted[$sorted.Count - 1], 3)
+        Slowest = @($slowRows)
+        Count = $sorted.Count
+    }
+}
+
+function Get-QualificationPhaseSums {
+    param([string]$TimingRoot, [string]$Chunk)
+    $empty = [ordered]@{
+        fixtureSetupSeconds = $null
+        fixtureTeardownSeconds = $null
+        processSpawnSeconds = $null
+        processWaitSeconds = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($TimingRoot) -or -not (Test-Path -LiteralPath $TimingRoot)) { return $empty }
+    $sums = @{ 'fixture-setup' = 0.0; 'fixture-teardown' = 0.0; 'process-spawn' = 0.0; 'process-wait' = 0.0 }
+    $seen = $false
+    foreach ($shard in @(Get-ChildItem -LiteralPath $TimingRoot -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)) {
+        $parsed = Read-TestPhaseJsonlFile -Path $shard.FullName
+        $group = ''
+        foreach ($rec in @($parsed.Records)) {
+            if ([string]$rec.recordKind -eq 'header') { $group = [string]$rec.groupId }
+        }
+        if ($group -ne [string]$Chunk) { continue }
+        foreach ($rec in @($parsed.Records)) {
+            if ([string]$rec.recordKind -ne 'complete') { continue }
+            $seen = $true
+            foreach ($phase in @($rec.phases)) {
+                if ($null -eq $phase) { continue }
+                $name = [string]$phase.phase
+                if (-not $sums.ContainsKey($name)) { continue }
+                $start = 0.0
+                $end = 0.0
+                try { $start = [double]$phase.startOffsetMs } catch { $start = 0.0 }
+                try { $end = [double]$phase.endOffsetMs } catch { $end = $start }
+                if ($end -lt $start) { $end = $start }
+                $sums[$name] += (($end - $start) / 1000.0)
+            }
+        }
+    }
+    if (-not $seen) { return $empty }
+    return [ordered]@{
+        fixtureSetupSeconds = [math]::Round([double]$sums['fixture-setup'], 3)
+        fixtureTeardownSeconds = [math]::Round([double]$sums['fixture-teardown'], 3)
+        processSpawnSeconds = [math]::Round([double]$sums['process-spawn'], 3)
+        processWaitSeconds = [math]::Round([double]$sums['process-wait'], 3)
+    }
+}
+
+function ConvertTo-QualificationStampText {
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [datetime]) { return ([datetime]$Value).ToUniversalTime().ToString('o') }
+    return [string]$Value
+}
+
+function ConvertFrom-QualificationJToken {
+    param($Token)
+    if ($null -eq $Token) { return $null }
+    if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
+        $map = [ordered]@{}
+        foreach ($prop in $Token.Properties()) {
+            $map[[string]$prop.Name] = ConvertFrom-QualificationJToken -Token $prop.Value
+        }
+        return [pscustomobject]$map
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $Token) { $items.Add((ConvertFrom-QualificationJToken -Token $item)) }
+        return ,@($items.ToArray())
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JValue]) { return $Token.Value }
+    return $null
+}
+
+function Read-QualificationSidecar {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = [IO.File]::ReadAllText($Path)
+    if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
+        $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
+        if (Test-Path -LiteralPath $dll) { Add-Type -Path $dll }
+    }
+    if ('Newtonsoft.Json.JsonConvert' -as [type]) {
+        $settings = New-Object Newtonsoft.Json.JsonSerializerSettings
+        $settings.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
+        $token = [Newtonsoft.Json.JsonConvert]::DeserializeObject($text, $settings)
+        return (ConvertFrom-QualificationJToken -Token $token)
+    }
+    try { return ($text | ConvertFrom-Json) } catch { return $null }
+}
+
+function Update-QualificationChunkTiming {
+    param(
+        [string]$LogRoot,
+        [string]$TimingRoot,
+        [string]$Suite,
+        [string]$Chunk,
+        [string]$TrxPath,
+        [string]$LastPhase,
+        [string]$Why,
+        $QueueWaitSeconds,
+        $BuildSeconds,
+        $DiscoverySeconds,
+        $RunWallSeconds,
+        [string]$StartedAt,
+        [string]$CompletedAt,
+        [switch]$Terminal
+    )
+    try {
+        if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Suite) -or [string]::IsNullOrWhiteSpace($Chunk)) { return }
+        $path = Join-Path $LogRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
+        $prior = Read-QualificationSidecar -Path $path
+        $bound = $PSBoundParameters
+        $trx = ''
+        if ($bound.ContainsKey('TrxPath')) { $trx = [string]$bound['TrxPath'] }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'trx') { $trx = [string]$prior.trx }
+        $whyText = ''
+        if ($bound.ContainsKey('Why')) { $whyText = [string]$bound['Why'] }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'why') { $whyText = [string]$prior.why }
+        $phaseText = ''
+        if ($bound.ContainsKey('LastPhase')) { $phaseText = [string]$bound['LastPhase'] }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'lastPhase') { $phaseText = [string]$prior.lastPhase }
+        $startedText = ''
+        if ($bound.ContainsKey('StartedAt')) { $startedText = ConvertTo-QualificationStampText $bound['StartedAt'] }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'startedAt') { $startedText = ConvertTo-QualificationStampText $prior.startedAt }
+        $completedText = ''
+        if ($bound.ContainsKey('CompletedAt')) { $completedText = ConvertTo-QualificationStampText $bound['CompletedAt'] }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'completedAt') { $completedText = ConvertTo-QualificationStampText $prior.completedAt }
+        $queue = $null
+        if ($bound.ContainsKey('QueueWaitSeconds')) { $queue = $QueueWaitSeconds }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'queueWaitSeconds') { $queue = $prior.queueWaitSeconds }
+        $build = $null
+        if ($bound.ContainsKey('BuildSeconds')) { $build = $BuildSeconds }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'buildSeconds') { $build = $prior.buildSeconds }
+        $discovery = $null
+        if ($bound.ContainsKey('DiscoverySeconds')) { $discovery = $DiscoverySeconds }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'discoverySeconds') { $discovery = $prior.discoverySeconds }
+        $runWall = $null
+        if ($bound.ContainsKey('RunWallSeconds')) { $runWall = $RunWallSeconds }
+        elseif ($null -ne $prior -and $prior.PSObject.Properties.Name -contains 'runWallSeconds') { $runWall = $prior.runWallSeconds }
+        $trxMissing = $true
+        $stats = $null
+        if (-not [string]::IsNullOrWhiteSpace($trx) -and (Test-Path -LiteralPath $trx)) {
+            $trxMissing = $false
+            $stats = Get-QualificationTrxStats -TrxPath $trx
+        }
+        $phases = Get-QualificationPhaseSums -TimingRoot $TimingRoot -Chunk $Chunk
+        $p50 = $null; $p95 = $null; $max = $null; $slow = @(); $count = 0
+        if ($null -ne $prior) {
+            if ($prior.PSObject.Properties.Name -contains 'p50Seconds') { $p50 = $prior.p50Seconds }
+            if ($prior.PSObject.Properties.Name -contains 'p95Seconds') { $p95 = $prior.p95Seconds }
+            if ($prior.PSObject.Properties.Name -contains 'maxSeconds') { $max = $prior.maxSeconds }
+            if ($prior.PSObject.Properties.Name -contains 'testCount' -and $null -ne $prior.testCount) { $count = [int]$prior.testCount }
+            if ($prior.PSObject.Properties.Name -contains 'slowest' -and $null -ne $prior.slowest) { $slow = @($prior.slowest) }
+        }
+        if ($null -ne $stats) {
+            $p50 = $stats.P50; $p95 = $stats.P95; $max = $stats.Max; $slow = @($stats.Slowest); $count = [int]$stats.Count
+        }
+        $record = [ordered]@{
+            suite = [string]$Suite
+            chunk = [string]$Chunk
+            timingRoot = [string]$TimingRoot
+            trx = $trx
+            trxMissing = [bool]$trxMissing
+            why = $whyText
+            lastPhase = $phaseText
+            lastPhaseUtc = (Get-NightlyUtcNow).ToString('o')
+            startedAt = $startedText
+            completedAt = $completedText
+            queueWaitSeconds = $queue
+            buildSeconds = $build
+            buildSlotWaitSeconds = $null
+            buildSlot = 'not-used'
+            discoverySeconds = $discovery
+            runWallSeconds = $runWall
+            distillationSeconds = $null
+            fixtureSetupSeconds = $phases.fixtureSetupSeconds
+            fixtureTeardownSeconds = $phases.fixtureTeardownSeconds
+            processSpawnSeconds = $phases.processSpawnSeconds
+            processWaitSeconds = $phases.processWaitSeconds
+            testCount = $count
+            p50Seconds = $p50
+            p95Seconds = $p95
+            maxSeconds = $max
+            slowest = @($slow)
+        }
+        Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $record)
+        if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) {
+            $copy = Join-Path $TimingRoot ('{0}-{1}.timing.json' -f $Suite, $Chunk)
+            if (([IO.Path]::GetFullPath($copy)) -ne ([IO.Path]::GetFullPath($path))) {
+                Write-TestPhaseTextAtomic -Path $copy -Text (ConvertTo-TestPhaseJsonText -Value $record)
+            }
+        }
+    } catch {
+        # A timing sidecar must not change the suite verdict.
+    }
+}
+
+function Get-QualificationTimingReport {
+    param([string]$LogRoot, [string]$TimingRoot)
+    $chunks = @()
+    if (-not [string]::IsNullOrWhiteSpace($LogRoot) -and (Test-Path -LiteralPath $LogRoot)) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.timing.json' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $row = Read-QualificationSidecar -Path $file.FullName
+                if ($null -ne $row) { $chunks += $row }
+            } catch { }
+        }
+    }
+    $bySuite = @{}
+    foreach ($row in $chunks) {
+        $suite = [string]$row.suite
+        if ([string]::IsNullOrWhiteSpace($suite)) { continue }
+        if (-not $bySuite.ContainsKey($suite)) {
+            $bySuite[$suite] = [ordered]@{ suite = $suite; startedAt = ''; completedAt = ''; lastPhase = ''; lastPhaseUtc = '' }
+        }
+        $bag = $bySuite[$suite]
+        $start = [string]$row.startedAt
+        if (-not [string]::IsNullOrWhiteSpace($start) -and ([string]::IsNullOrWhiteSpace([string]$bag.startedAt) -or $start -lt [string]$bag.startedAt)) {
+            $bag.startedAt = $start
+        }
+        $end = [string]$row.completedAt
+        if (-not [string]::IsNullOrWhiteSpace($end) -and $end -gt [string]$bag.completedAt) { $bag.completedAt = $end }
+        $utc = [string]$row.lastPhaseUtc
+        if (-not [string]::IsNullOrWhiteSpace($utc) -and $utc -gt [string]$bag.lastPhaseUtc) {
+            $bag.lastPhaseUtc = $utc
+            $bag.lastPhase = [string]$row.lastPhase
+        }
+    }
+    $timeline = @()
+    foreach ($key in @($bySuite.Keys | Sort-Object)) { $timeline += $bySuite[$key] }
+    return [pscustomobject]@{
+        TimingRoot = [string]$TimingRoot
+        Chunks = @($chunks)
+        Timeline = @($timeline)
     }
 }

@@ -142,6 +142,12 @@ function Invoke-AntiphonNightlyRunCore {
     $Profile = $Profile.Trim().ToLowerInvariant()
     $paths = Get-NightlyStatePaths -StateRoot $StateRoot
     if ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = $paths.Logs }
+    if ([string]::IsNullOrWhiteSpace($TimingRoot) -and [string]::IsNullOrWhiteSpace($SelectionAttemptPath)) {
+        if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
+            . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+        }
+        $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot $LogRoot -RunId $RunId)
+    }
 
     $startedAt = Get-NightlyUtcNow
     # CARD-0545 D-10: the London calendar date of the run start is the run's due-day identity.
@@ -487,6 +493,10 @@ function Invoke-AntiphonNightlyRunCore {
                         $pwshArgs += '-SeamsPath'
                         $pwshArgs += $SeamsPath
                     }
+                    if (-not [string]::IsNullOrWhiteSpace([string]$TimingRoot) -and ($pwshArgs -notcontains '-TimingRoot')) {
+                        $pwshArgs += '-TimingRoot'
+                        $pwshArgs += [string]$TimingRoot
+                    }
                     $hop = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $pwshArgs -WorkingDirectory $CheckoutRoot
                     $hopped = $true
                     $exitCode = [int]$hop.ExitCode
@@ -577,6 +587,10 @@ function Invoke-AntiphonNightlyRunCore {
             $testArgs += '-Attempt'; $testArgs += [string]$Attempt
             $testArgs += '-ReleaseRoot'; $testArgs += $ReleaseRoot
             $testArgs += '-CandidateId'; $testArgs += $CandidateId
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$TimingRoot) -and ($testArgs -notcontains '-TimingRoot')) {
+            $testArgs += '-TimingRoot'
+            $testArgs += [string]$TimingRoot
         }
         if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
             $testArgs += '-ExpectedSha'

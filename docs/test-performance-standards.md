@@ -48,6 +48,15 @@ authorize repeating expensive work or crediting missing verification.
    `docs/superpowers/plans/2026-10-23-test-timing-instrumentation-plan.md`; CARD-1514 names its
    implementation plan `docs/superpowers/plans/2026-10-23-card-1514-test-timing-instrumentation-plan.md`.
    Link these when landed; neither exists at this document's initial source revision.
+   The next Windows nightly or rc qualification emits, from the run directory alone:
+   `summary.json` `timingRoot`; `timingChunks` (queue wait, build, discovery, run wall,
+   per-test p50/p95/max, slowest 20, `lastPhase`, `lastPhaseUtc`, `why`); and `suiteTimeline`
+   (per-suite start and end UTC). Per-test JSONL lives under that timing root. A sidecar
+   `<suite>-<chunk>.timing.json` sits beside each TRX, including chunks that time out or
+   produce no TRX. Fixture and process-wait seconds stay null when the JSONL has no matching
+   complete record. The qualification wrapper does not take a build slot and does not distill
+   output, so those two fields stay null (`buildSlot` `not-used`). See
+   [testing-and-build.md](testing-and-build.md#opt-in-per-test-phase-timing-card-1514).
 
 5. **R5 - Measure timeout budgets.** Per-test and per-row timeouts MUST be about 2x measured
    p95 duration, not generous by default: a 40-second test gets at most approximately two minutes.
