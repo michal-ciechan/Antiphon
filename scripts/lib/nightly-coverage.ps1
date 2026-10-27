@@ -604,13 +604,21 @@ function Invoke-NightlyProduceDiscovery {
         [string]$LogPath,
         [string]$WorkingDirectory,
         [hashtable]$Environment = $null,
-        [int]$TimeoutMilliseconds = 600000
+        [int]$TimeoutMilliseconds = 600000,
+        [string[]]$ArgumentPrefix = @(),
+        [string]$AssemblyPath = ''
     )
     if ([string]::IsNullOrWhiteSpace($ExePath)) { throw 'missing assembly exe' }
     if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'missing discovery output' }
     if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
     New-Item -ItemType Directory -Path $DiagnosticDirectory -Force | Out-Null
-    $args = @(
+    $launchArgs = @()
+    if ($ArgumentPrefix) {
+        foreach ($prefixArg in @($ArgumentPrefix)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$prefixArg)) { $launchArgs += [string]$prefixArg }
+        }
+    }
+    $launchArgs += @(
         '--list-tests',
         '--no-progress',
         '--no-ansi',
@@ -618,7 +626,7 @@ function Invoke-NightlyProduceDiscovery {
         '--diagnostic-output-directory',
         $DiagnosticDirectory
     )
-    $run = Invoke-NightlyOwnedProcess -FilePath $ExePath -ArgumentList $args `
+    $run = Invoke-NightlyOwnedProcess -FilePath $ExePath -ArgumentList $launchArgs `
         -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
         -Environment $Environment -LogPath $LogPath
     if ([bool]$run.TimedOut) { throw 'discovery list-tests timed out' }
@@ -629,7 +637,9 @@ function Invoke-NightlyProduceDiscovery {
     $parsed = ConvertFrom-NightlyDiagnosticLog -Path $diagPath -Kind discovery
     $nodes = @($parsed.Nodes)
     if ($nodes.Count -eq 0) { throw 'empty discovery' }
-    $hash = Get-NightlyAssemblyHash -ExePath $ExePath
+    $hashSource = $ExePath
+    if (-not [string]::IsNullOrWhiteSpace($AssemblyPath)) { $hashSource = $AssemblyPath }
+    $hash = Get-NightlyAssemblyHash -ExePath $hashSource
     $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash $hash
     Write-NightlyDiscoveryDocument -Path $OutputPath -Document $doc
     return $doc
