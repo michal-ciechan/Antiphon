@@ -107,20 +107,98 @@ public sealed partial class LandGraphEvaluationTests
         var replacement = await RunScriptAsync(repo.Root, "-Update");
         replacement.ExitCode.ShouldBe(0, replacement.Text);
         (await File.ReadAllLinesAsync(repo.Full(EvaluationFile))).ShouldBe(original);
-        foreach (var variant in new[] { "valid", "missing", "digest", "sdk", "pins", "extra-line" })
+        foreach (var variant in new[] { "valid", "missing", "digest", "sdk", "sdk-suffix", "malformed-sdk", "pins", "extra-line", "missing-line" })
         {
             var lines = original.ToArray();
             if (variant == "digest") lines[0] = new string('0', 64);
             if (variant == "sdk") lines[1] = "0.0.0";
+            if (variant == "sdk-suffix") lines[1] = "10.0.402-not-a-host";
+            if (variant == "malformed-sdk") lines[1] = "malformed-sdk";
             if (variant == "pins") lines[2] = new string('0', 40);
             if (variant == "extra-line") lines = [.. lines, "unexpected"];
+            if (variant == "missing-line") lines = lines[..2];
             await File.WriteAllLinesAsync(repo.Full(EvaluationFile), lines);
             if (variant == "missing") File.Delete(repo.Full(EvaluationFile));
             var check = await RunScriptAsync(repo.Root, "-Check");
             check.ExitCode.ShouldBe(variant == "valid" ? 0 : 1, variant + ": " + check.Text);
         }
-        var real = await RunScriptAsync(RepoRoot(), "-Check");
+        var real = await RunScriptAsync(RepoRoot(), "-Check", extra: ["-ToolPath", ToolDll()]);
         real.ExitCode.ShouldBe(0, real.Text);
+    }
+
+    [Test]
+    [Arguments("0.0.0")]
+    [Arguments("10.0.402-not-a-host")]
+    [Arguments("10.0.203")]
+    [Arguments("9.0.999")]
+    [Arguments("11.0.100")]
+    [Arguments("10.00.402")]
+    [Arguments("10.0.0402")]
+    [Arguments("10.0.402-preview.1")]
+    [Timeout(60_000)]
+    public async Task CheckRefusesSdkOutsideCommittedPolicy(string recordedSdk)
+    {
+        await using var repo = await ScriptRepoAsync(new() { ["App/App.csproj"] = SdkProject("") });
+        var update = await RunScriptAsync(repo.Root, "-Update");
+        update.ExitCode.ShouldBe(0, update.Text);
+        var record = await File.ReadAllLinesAsync(repo.Full(EvaluationFile));
+        record[1] = recordedSdk;
+        await File.WriteAllLinesAsync(repo.Full(EvaluationFile), record);
+        var check = await RunScriptAsync(repo.Root, "-Check");
+        check.ExitCode.ShouldBe(1, check.Text);
+        check.Text.ShouldContain("SDK provenance");
+    }
+
+    [Test]
+    [Arguments("approved")]
+    [Arguments("missing-tool")]
+    [Arguments("sdk-doc-glob")]
+    [Timeout(60_000)]
+    public async Task CheckDifferentSdkRequiresEvaluation(string variant)
+    {
+        var project = variant == "sdk-doc-glob" ? "App.csproj" : "App/App.csproj";
+        await using var repo = await ScriptRepoAsync(new()
+        {
+            [project] = SdkProject("<PropertyGroup><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup>"),
+            ["docs/guide.md"] = "# SDK default item witness",
+        });
+        var update = await RunScriptAsync(repo.Root, "-Update");
+        update.ExitCode.ShouldBe(0, update.Text);
+        var record = await File.ReadAllLinesAsync(repo.Full(EvaluationFile));
+        if (variant == "sdk-doc-glob")
+        {
+            // The installed SDK's default None glob reaches docs from a root project.
+            // The pre-check admits it; a synthetic prior record must not bypass evaluation.
+            await File.WriteAllTextAsync(repo.Full(project), SdkProject(""));
+            await AuditRepo.GitAsync(repo.Root, "add", project);
+            await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
+                "commit", "-qm", "SDK default docs glob");
+            var pre = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
+                "-ManifestPath", repo.Full(ManifestFile));
+            pre.ExitCode.ShouldBe(0, pre.Text);
+            record[0] = (await File.ReadAllLinesAsync(repo.Full(ManifestFile)))[0];
+        }
+        record[1] = record[1] == "10.0.402" ? "10.0.403" : "10.0.402";
+        await File.WriteAllLinesAsync(repo.Full(EvaluationFile), record);
+        var manifest = await File.ReadAllBytesAsync(repo.Full(ManifestFile));
+        var evaluation = await File.ReadAllBytesAsync(repo.Full(EvaluationFile));
+        var pins = await File.ReadAllBytesAsync(repo.Full(PinsFile));
+        if (variant == "missing-tool")
+            File.Delete(repo.Full("tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll"));
+
+        var check = await RunScriptAsync(repo.Root, "-Check");
+        check.ExitCode.ShouldBe(variant == "approved" ? 0 : 1, check.Text);
+        if (variant == "approved") check.Lines.ShouldContain("approved", check.Text);
+        if (variant == "missing-tool") check.Text.ShouldContain("built evaluator missing:");
+        if (variant == "sdk-doc-glob")
+        {
+            check.PathText.ShouldContain("Microsoft.NET.Sdk.DefaultItems.props");
+            check.PathText.ShouldContain("docs/guide.md");
+            check.Text.ShouldContain("land graph evaluation refused (exit 1)");
+        }
+        (await File.ReadAllBytesAsync(repo.Full(ManifestFile))).ShouldBe(manifest);
+        (await File.ReadAllBytesAsync(repo.Full(EvaluationFile))).ShouldBe(evaluation);
+        (await File.ReadAllBytesAsync(repo.Full(PinsFile))).ShouldBe(pins);
     }
 
     [Test]
@@ -207,7 +285,7 @@ public sealed partial class LandGraphEvaluationTests
         }
     }
 
-    private static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
+    internal static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
     {
         files[PinsFile] = "";
         files["scripts/audit-land-verification-graph.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/audit-land-verification-graph.ps1"));
@@ -221,7 +299,7 @@ public sealed partial class LandGraphEvaluationTests
         return repo;
     }
 
-    private static async Task<ToolRun> RunScriptAsync(string root, string mode,
+    internal static async Task<ToolRun> RunScriptAsync(string root, string mode,
         string script = "audit-land-verification-graph.ps1", params string[] extra)
     {
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -232,8 +310,8 @@ public sealed partial class LandGraphEvaluationTests
         var command = "Set-StrictMode -Version Latest; & " + Quote(Path.Combine(root, "scripts", script)) + " " + mode;
         if (extra.Length != 0)
         {
-            if (extra.Length != 2 || extra[0] != "-ManifestPath") throw new ArgumentException("unsupported script arguments");
-            command += " -ManifestPath " + Quote(extra[1]);
+            if (extra.Length != 2 || extra[0] is not ("-ManifestPath" or "-ToolPath")) throw new ArgumentException("unsupported script arguments");
+            command += " " + extra[0] + " " + Quote(extra[1]);
         }
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
