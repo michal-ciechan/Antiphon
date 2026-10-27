@@ -1,7 +1,9 @@
 #requires -Version 7.0
 # Fresh-output inventory witnesses. Seal-CheckpointFreshOutput must stream a regular
 # file through the 1 GiB content digest, keep the uppercase SHA-256 ledger value, and
-# refuse an over-bound file, a symlink, and a file that grows past the bound.
+# refuse an over-bound file, a symlink, a file that grows past the bound, and a file
+# replaced, appended, truncated, or swapped for another file of the same size while
+# the hash is open.
 # ASCII-only. Owner: docs/testing-and-build.md (checkpoint runner tool).
 param([string]$Root)
 $ErrorActionPreference = 'Stop'
@@ -152,6 +154,112 @@ Assert-Inventory ($null -ne $growthFailure -and $growthFailure.Message.Contains(
 Assert-Inventory ($growthStream.Delivered -eq ($growthLimit + 1L) -and $growthStream.MaxRead -le 262144) 'growth-stops-at-one-extra-byte' "delivered=$($growthStream.Delivered) max=$($growthStream.MaxRead)"
 $sealText = ${function:Seal-CheckpointFreshOutput}.ToString()
 Assert-Inventory ($sealText.Contains('Get-CheckpointFileDigest') -and -not $sealText.Contains('Read-CheckpointBytes')) 'seal-uses-streaming-digest'
+
+# Real rename/append/truncate while the production seal holds the file open. Linux waits
+# until /proc/self/fd names that path; Windows waits 25ms into a multi-megabyte read.
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+public static class InventorySealRace
+{
+    [DllImport("libc", EntryPoint = "readlink", SetLastError = true)]
+    private static extern nint ReadLink(string path, byte[] buffer, nuint size);
+    public static int Seen;
+    public static int Mutated;
+    public static string Mode = "";
+    public static string Payload = "";
+    public static string Swap = "";
+    public static void Reset(string mode, string payload, string swap)
+    {
+        Seen = 0;
+        Mutated = 0;
+        Mode = mode;
+        Payload = payload;
+        Swap = swap;
+    }
+    public static void Go()
+    {
+        if (!WaitForOpen(Payload, Environment.TickCount64 + 20000)) return;
+        Seen = 1;
+        if (Mode == "replace" || Mode == "swap") File.Move(Swap, Payload, true);
+        else if (Mode == "append")
+        {
+            using var extra = new FileStream(Payload, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            extra.Write(new byte[1024]);
+        }
+        else if (Mode == "truncate")
+        {
+            using var extra = new FileStream(Payload, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            extra.SetLength(1024);
+        }
+        Mutated = 1;
+    }
+    public static System.Threading.Tasks.Task Start() => System.Threading.Tasks.Task.Run((Action)Go);
+    private static bool WaitForOpen(string path, long deadline)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            var want = Encoding.UTF8.GetBytes(path);
+            var buffer = new byte[4096];
+            while (Environment.TickCount64 < deadline)
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries("/proc/self/fd"))
+                {
+                    var count = ReadLink(entry, buffer, (nuint)buffer.Length);
+                    if (count < want.Length || count >= buffer.Length) continue;
+                    if (!buffer.AsSpan(0, want.Length).SequenceEqual(want)) continue;
+                    if (count != want.Length && buffer[want.Length] != (byte)' ') continue;
+                    return true;
+                }
+            }
+            return false;
+        }
+        var before = File.GetLastAccessTimeUtc(path);
+        var start = Environment.TickCount64;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (File.GetLastAccessTimeUtc(path) != before) return true;
+            if (Environment.TickCount64 - start >= 25) return true;
+            Thread.Sleep(1);
+        }
+        return false;
+    }
+}
+'@
+function New-RacePayload {
+    param([string]$Path, [int]$Megabytes, [byte]$Fill)
+    $buf = [byte[]]::new(1MB)
+    [Array]::Fill($buf, $Fill)
+    $stream = [IO.File]::Create($Path)
+    try { for ($n = 0; $n -lt $Megabytes; $n++) { $stream.Write($buf, 0, $buf.Length) } } finally { $stream.Dispose() }
+}
+function Invoke-SealingRace {
+    param([string]$Label, [string]$Mode, [byte]$Fill, [byte]$SwapFill = 0)
+    $dir = New-InventoryRoot $Label
+    $payload = Join-Path $dir 'payload.bin'
+    $swap = Join-Path $Root ($Label + '-swap.bin')
+    # Windows has no /proc fd wait, so the file must still be hashing after the 25ms delay.
+    $megabytes = if ($IsWindows) { 64 } else { 8 }
+    New-RacePayload $payload $megabytes $Fill
+    if ($Mode -eq 'replace') { [IO.File]::WriteAllBytes($swap, [byte[]]@(11, 22, 33, 44, 55, 66, 77, 88, 99, 111, 122)) }
+    elseif ($Mode -eq 'swap') { New-RacePayload $swap $megabytes $SwapFill }
+    [InventorySealRace]::Reset($Mode, $payload, $swap)
+    $task = [InventorySealRace]::Start()
+    $seal = Seal-CheckpointFreshOutput $dir
+    $task.Wait()
+    if ([InventorySealRace]::Seen -ne 1 -or [InventorySealRace]::Mutated -ne 1) {
+        throw "$Label mutation did not run while the file was open seen=$([InventorySealRace]::Seen) mutated=$([InventorySealRace]::Mutated)"
+    }
+    Assert-Inventory ($seal -like "output-inventory-failed: $payload size=* limit=${limit}:*changed while sealing*") "$Label-refused" ([string]$seal)
+    Assert-Inventory (-not [IO.File]::Exists((Join-Path $dir '.checkpoint-output-ledger.json'))) "$Label-no-ledger"
+}
+Invoke-SealingRace 'replaced' 'replace' 1
+Invoke-SealingRace 'appended' 'append' 2
+Invoke-SealingRace 'truncated' 'truncate' 3
+Invoke-SealingRace 'swapped-same-size' 'swap' 4 9
 
 if ($script:Failures.Count -gt 0) { throw ($script:Failures -join [Environment]::NewLine) }
 Write-Host 'C378 inventory PASS'
