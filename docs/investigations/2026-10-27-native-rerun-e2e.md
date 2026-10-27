@@ -21,11 +21,11 @@ Status: investigation in progress, 2026-10-27. No product or test changes.
 | BoardE2ETests | 9 pass / 1 fail | 9 pass / 1 fail | Confirmed fixture navigation defect; Diff tab never selected | See Not done, noted |
 | WorkflowDeleteTests | 4 pass / 2 fail | 4 pass / 2 fail | Confirmed fixture routing assumptions predate Home/Workflows split | See Not done, noted |
 | AgentTaskLandDeliveryE2ETests | 50 pass / 2 fail | Partial: 2 pass / 1 fail; 49 not rerun | Residue fixture confirmed; review receipt passed once, repeats pending | See Not done, noted |
-| DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | Pending | Pending | Not designed in Investigate |
+| DispatchBaseWarningDeliveryE2ETests | 11 pass / 2 fail | 11 pass / 2 fail | Confirmed stale warning expectation; composed admission state under investigation | See Not done, noted |
 
 The single native build passed (39 warnings, zero errors, 220.67 seconds MSBuild / 222 seconds leased). `npm ci` and `npm run build` passed (106 seconds leased, 75 seconds slot wait). Source archive SHA-256: `6AA5990C26B3E5515C647BFE34BF8EBD6355C8D1A3F437C0D6525D6B0D0AC526`.
 
-Agent class: 79.9 seconds outer wall; Pipeline class: 60.4 seconds. Fresh `results.trx`, `console.log`, and `run.json` live under `<evidence>/<Class>-initial/`. Screenshots are retained under the export's `tests/Antiphon.E2E/TestOutput/Screenshots` pending collection.
+Agent class: 79.9 seconds outer wall; Pipeline class: 60.4 seconds. Fresh `results.trx`, `console.log`, and `run.json` live under `<evidence>/<Class>-initial/`. Failure screenshots and DOM logs are copied under `<evidence>/ui-evidence/`; originals remain in the export's test output.
 
 Historical cost is a scope risk: summing the original TRX durations gives 119.1 minutes for the 52 land-delivery cases and 27.8 minutes for 13 dispatch-warning cases, before the other four classes/builds/admission. The brief gives 120 minutes total. This is a Debug follow-up obligation under R1, not permission to hide missing coverage or widen timeouts. No sub-delegation is available to this delegate.
 
@@ -106,7 +106,7 @@ Fresh passing-run root: `C:\Antiphon\scratch\595bc226-rc\.antiphon\acceptance\ca
 
 ## Dispatch warnings: current contract mismatch and admission delay
 
-Both C508 cases have reproduced `TimeoutException: one committed mismatch dispatch intent` at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Dispatch.cs:130`. Full-class execution is still in progress. The snapshots in `dispatch-mismatch-proof.json` bind these roots and tasks:
+Both C508 cases have reproduced `TimeoutException: one committed mismatch dispatch intent` at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Dispatch.cs:130`. The whole class completed: 11 passed / 2 failed, 1,463.087 seconds host duration / 1,576.9 seconds outer wall including 105 seconds slot wait. The exact errors and stacks are in `DispatchBaseWarningDeliveryE2ETests-initial/failures.log`. The snapshots in `dispatch-mismatch-proof.json` bind these roots and tasks:
 
 | Method | Fixture root suffix | Task | Intents / notifications |
 |---|---|---|---|
@@ -119,8 +119,9 @@ An additional native observation prevents oversimplifying the timeout as a compl
 
 ## Remaining work
 
-Rebuild the native graph and frontend once, run all six classes separately, retain exact failures/TRX/screenshots, and reconstruct surviving failure mechanisms. Any flake claim requires three reruns. Performance and source-revision limitations will remain explicit.
+The single native build, frontend rebuild and all five whole-class runs are complete; the land class used the explicitly narrowed three-case selection. Initial total: 35 selected cases, 29 passed / 6 failed. Remaining: three review-race repetitions, a focused read-only capacity DB witness, final evidence inventory and owned-output cleanup.
 
 ## Not done, noted
 
 Board: the existing sibling change selects Diff before checking its content; WorkflowDelete: its route expectations need to follow the current Workflows route. No fix was designed or applied here.
+
