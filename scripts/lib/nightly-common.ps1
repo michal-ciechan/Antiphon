@@ -183,9 +183,11 @@ function Get-NightlyOriginUrl {
     param([string]$ClonePath)
     $config = Join-Path $ClonePath (Join-Path '.git' 'config')
     if (-not (Test-Path -LiteralPath $config)) { return '' }
-    $text = Get-Content -LiteralPath $config -Raw -ErrorAction SilentlyContinue
-    $m = [regex]::Match([string]$text, '(?im)^\s*url\s*=\s*(.+)$')
-    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    # Let Git decode quoted/escaped config values, and select origin specifically.
+    # --file reads only this clone's config; includes and global config grant no authority.
+    $result = Invoke-NightlyGit -WorkingDirectory $ClonePath -Arguments @(
+        'config', '--file', $config, '--no-includes', '--get', 'remote.origin.url')
+    if ($result.ExitCode -eq 0) { return ([string]$result.Output).TrimEnd("`r", "`n") }
     return ''
 }
 
