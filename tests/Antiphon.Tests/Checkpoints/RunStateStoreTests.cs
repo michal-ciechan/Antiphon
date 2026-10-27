@@ -39,14 +39,20 @@ public sealed class RunStateStoreTests : CheckpointTestBase
                     Interlocked.Increment(ref failures);
             }
         });
-        for (var i = 1; i <= 300; i++)
+        try
         {
-            store.Write(path, new RunState { RunId = i.ToString(), Marker = new string('x', i * 20), Phase = "running" });
-            if (i % 4 == 0)
-                await Task.Yield();
+            for (var i = 1; i <= 300; i++)
+            {
+                store.Write(path, new RunState { RunId = i.ToString(), Marker = new string('x', i * 20), Phase = "running" });
+                if (i % 4 == 0)
+                    await Task.Yield();
+            }
         }
-        Volatile.Write(ref stop, true);
-        await reader;
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            await reader;
+        }
         failures.ShouldBe(0);
         reads.ShouldBeGreaterThan(0);
         Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
