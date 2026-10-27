@@ -33,19 +33,27 @@ public class DaemonStartupDiagnosticsTests
         result.Output.ShouldContain("synthetic build output");
     }
 
-    private static string BuildPrelude(RestartFixture f, bool failFirst) => $$"""
-        $env:C589_SLOT_SHIM='{{RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "fixtures", "c589-slot-shim.ps1"))}}'
-        $env:C589_SLOT_SCRIPT='unlimited'
-        $env:C589_SLOT_LOG='{{RestartFixture.Quote(Path.Combine(f.Root, "slots.txt"))}}'
-        $global:buildCalls=0
-        function dotnet {
-            $global:buildCalls++
-            [IO.File]::AppendAllText('{{RestartFixture.Quote(Path.Combine(f.Root, "builds.txt"))}}', "build`n")
+    private static string BuildPrelude(RestartFixture f, bool failFirst)
+    {
+        var stub = Path.Combine(f.Root, "build-command.ps1");
+        var calls = RestartFixture.Quote(Path.Combine(f.Root, "builds.txt"));
+        // build-slot runs the command in a child shell, which cannot inherit a function mock.
+        File.WriteAllText(stub, $$"""
+            $ErrorActionPreference='Stop'
+            if ($args[0] -ne 'dotnet' -or $args[1] -ne 'build' -or $args[2] -ne 'fixture-only') { throw 'unexpected build command' }
+            [IO.File]::AppendAllText('{{calls}}', "build`n")
             'synthetic build output'
-            $global:LASTEXITCODE=0
-            if ({{(failFirst ? "$true" : "$false")}} -and $global:buildCalls -eq 1) { $global:LASTEXITCODE=17 }
-        }
-        """;
+            if ({{(failFirst ? "$true" : "$false")}} -and [IO.File]::ReadAllLines('{{calls}}').Length -eq 1) { exit 17 }
+            exit 0
+            """);
+        // The test driver already holds the host slot; these nested fixture builds stay offline.
+        return $$"""
+            $env:C589_SLOT_SHIM='{{RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "fixtures", "c589-slot-shim.ps1"))}}'
+            $env:C589_SLOT_SCRIPT='unlimited'
+            $env:C589_SLOT_LOG='{{RestartFixture.Quote(Path.Combine(f.Root, "slots.txt"))}}'
+            $env:C589_COMMAND_SHIM='{{RestartFixture.Quote(stub)}}'
+            """;
+    }
 
     private async Task Exercise(string shell, bool failFirst, int runs, bool build)
     {
