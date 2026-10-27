@@ -61,25 +61,73 @@ public static class ConfinedFileReader
         return content.ToArray();
     }
 
+    public sealed class SealedContent
+    {
+        public long Length { get; }
+        public string Sha256 { get; }
+        public ulong Volume { get; }
+        public ulong FileId { get; }
+        public long WriteSeconds { get; }
+        public uint WriteSubseconds { get; }
+        public ulong Links { get; }
+        internal static SealedContent Create(long length, string sha256, ulong volume, ulong fileId, long writeSeconds, uint writeSubseconds, ulong links) =>
+            new(length, sha256, volume, fileId, writeSeconds, writeSubseconds, links);
+        private SealedContent(long length, string sha256, ulong volume, ulong fileId, long writeSeconds, uint writeSubseconds, ulong links)
+        {
+            Length = length;
+            Sha256 = sha256;
+            Volume = volume;
+            FileId = fileId;
+            WriteSeconds = writeSeconds;
+            WriteSubseconds = writeSubseconds;
+            Links = links;
+        }
+    }
+
     public static (long Length, string Sha256) Digest(string root, string path, long limit, CancellationToken cancellationToken = default) =>
         Digest(root, path, limit, null, cancellationToken, null, null);
 
     public static (long Length, string Sha256) Digest(string root, string path, long limit, Action? afterVerification,
         CancellationToken cancellationToken, TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
     {
+        var sealedContent = Hash(root, path, limit, afterVerification, cancellationToken, time, openStream);
+        return (sealedContent.Length, sealedContent.Sha256);
+    }
+
+    // Identity travels with the digest so a seal can refuse a path that changes after hashing and before the ledger write.
+    public static SealedContent ReadSealed(string root, string path, long limit, CancellationToken cancellationToken = default) =>
+        Hash(root, path, limit, null, cancellationToken, null, null);
+
+    public static void RequireSame(string root, string path, ulong volume, ulong fileId, ulong size, long writeSeconds, uint writeSubseconds, ulong links)
+    {
+        HandleFacts current;
+        try { current = InspectPath(path); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        { throw new InvalidDataException("changed while sealing"); }
+        if (current.Volume != volume || current.FileId != fileId || current.Size != size
+            || current.WriteSeconds != writeSeconds || current.WriteSubseconds != writeSubseconds
+            || current.Links != links || current.Links != 1 || !current.Regular
+            || Refusal(current.Regular, current.Links, Path.GetFullPath(path), root) is not null)
+            throw new InvalidDataException("changed while sealing");
+    }
+
+    private static SealedContent Hash(string root, string path, long limit, Action? afterVerification,
+        CancellationToken cancellationToken, TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
+    {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long total = 0;
-        Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span =>
+        var facts = Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span =>
         {
             hash.AppendData(span);
             total += span.Length;
         });
-        return (total, Convert.ToHexString(hash.GetHashAndReset()));
+        if (total != (long)facts.Size) throw new InvalidDataException("changed while sealing");
+        return SealedContent.Create(total, Convert.ToHexString(hash.GetHashAndReset()), facts.Volume, facts.FileId, facts.WriteSeconds, facts.WriteSubseconds, facts.Links);
     }
 
     private delegate void ContentSink(ReadOnlySpan<byte> bytes);
 
-    private static void Consume(string root, string path, long limit, Action? afterVerification, CancellationToken cancellationToken,
+    private static HandleFacts Consume(string root, string path, long limit, Action? afterVerification, CancellationToken cancellationToken,
         TimeProvider? time, Func<SafeFileHandle, Stream>? openStream, ContentSink sink)
     {
         using var stall = new CancellationTokenSource(StallDeadline, time ?? TimeProvider.System);
@@ -112,9 +160,47 @@ public static class ConfinedFileReader
             // Only the retained handle can prove that an EOF stall still represents a complete read.
             if (total == (long)metadata.Size &&
                 (OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle)).Size == metadata.Size)
-                return;
+                return EnsureStable(root, handle, path, metadata, total);
             throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
         }
+        // A normal EOF still has the handle open on the bytes just hashed. The path may already name a different file.
+        return EnsureStable(root, handle, path, metadata, total);
+    }
+
+    private static HandleFacts EnsureStable(string root, SafeFileHandle handle, string path, HandleFacts before, long total)
+    {
+        HandleFacts held;
+        HandleFacts current;
+        try
+        {
+            held = OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle);
+            current = InspectPath(path);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        {
+            throw new InvalidDataException("changed while sealing");
+        }
+        if (total != (long)before.Size || held.Links != 1 || !held.Regular || !SameIdentity(before, held) || !SameIdentity(held, current)
+            || Refusal(current.Regular, current.Links, Path.GetFullPath(path), root) is not null)
+            throw new InvalidDataException("changed while sealing");
+        return current;
+    }
+
+    private static bool SameIdentity(HandleFacts left, HandleFacts right) =>
+        left.Regular == right.Regular && left.Links == right.Links && left.Size == right.Size
+        && left.Volume == right.Volume && left.FileId == right.FileId
+        && left.WriteSeconds == right.WriteSeconds && left.WriteSubseconds == right.WriteSubseconds;
+
+    private static HandleFacts InspectPath(string path)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            if (Statx(-100, path, 0x100, StatxRequest, out var stat) != 0 || (stat.Mask & StatxRequired) != StatxRequired)
+                throw new InvalidDataException("changed while sealing");
+            return FromLinux(stat, Path.GetFullPath(path));
+        }
+        using var opened = OpenWindows(path);
+        return InspectWindows(opened);
     }
 
     private static SafeFileHandle OpenLinux(string path)
@@ -128,14 +214,14 @@ public static class ConfinedFileReader
         return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
     }
 
-    private static (bool Regular, ulong Links, ulong Size, string Path) InspectLinux(SafeFileHandle handle)
+    private static HandleFacts InspectLinux(SafeFileHandle handle)
     {
         var fd = handle.DangerousGetHandle().ToInt32();
-        if (Statx(fd, "", 0x1000, 0x205, out var stat) != 0 || (stat.Mask & 0x205) != 0x205) throw NativeFailure();
+        if (Statx(fd, "", 0x1000, StatxRequest, out var stat) != 0 || (stat.Mask & StatxRequired) != StatxRequired) throw NativeFailure();
         var buffer = new byte[32768];
         var count = ReadLink("/proc/self/fd/" + fd, buffer, (nuint)buffer.Length);
         if (count <= 0 || count >= buffer.Length) throw NativeFailure();
-        return ((stat.Mode & 0xF000) == 0x8000, stat.Links, stat.Size, Encoding.UTF8.GetString(buffer, 0, (int)count));
+        return FromLinux(stat, Encoding.UTF8.GetString(buffer, 0, (int)count));
     }
 
     private static SafeFileHandle OpenWindows(string path)
@@ -149,7 +235,7 @@ public static class ConfinedFileReader
         return handle;
     }
 
-    private static (bool Regular, ulong Links, ulong Size, string Path) InspectWindows(SafeFileHandle handle)
+    private static HandleFacts InspectWindows(SafeFileHandle handle)
     {
         if (!GetFileInformationByHandle(handle, out var info)) throw NativeFailure();
         var path = new StringBuilder(32768);
@@ -158,19 +244,59 @@ public static class ConfinedFileReader
         var final = path.ToString();
         if (final.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) final = @"\\" + final[8..];
         else if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
-        return (GetFileType(handle) == 1 && (info.Attributes & (0x10u | 0x400u)) == 0, info.Links,
-            ((ulong)info.SizeHigh << 32) | info.SizeLow, final);
+        var write = ((ulong)(uint)info.Write.dwHighDateTime << 32) | (uint)info.Write.dwLowDateTime;
+        return new HandleFacts
+        {
+            Regular = GetFileType(handle) == 1 && (info.Attributes & (0x10u | 0x400u)) == 0,
+            Links = info.Links,
+            Size = ((ulong)info.SizeHigh << 32) | info.SizeLow,
+            Path = final,
+            Volume = info.Volume,
+            FileId = ((ulong)info.IndexHigh << 32) | info.IndexLow,
+            WriteSeconds = unchecked((long)write),
+            WriteSubseconds = 0
+        };
     }
 
     private static IOException NativeFailure() => new("opened-handle verification failed: errno=" + Marshal.GetLastPInvokeError());
 
+    private struct HandleFacts
+    {
+        public bool Regular;
+        public ulong Links;
+        public ulong Size;
+        public string Path;
+        public ulong Volume;
+        public ulong FileId;
+        public long WriteSeconds;
+        public uint WriteSubseconds;
+    }
+    // STATX_BASIC_STATS, and TYPE | NLINK | MTIME | INO | SIZE. Device id is unconditional.
+    private const uint StatxRequest = 0x7ff;
+    private const uint StatxRequired = 0x345;
+    private static HandleFacts FromLinux(LinuxStatx stat, string path) => new()
+    {
+        Regular = (stat.Mode & 0xF000) == 0x8000,
+        Links = stat.Links,
+        Size = stat.Size,
+        Path = path,
+        Volume = ((ulong)stat.DevMajor << 32) | stat.DevMinor,
+        FileId = stat.Ino,
+        WriteSeconds = stat.MtimeSec,
+        WriteSubseconds = stat.MtimeNsec
+    };
     [StructLayout(LayoutKind.Explicit, Size = 256)]
     private struct LinuxStatx
     {
         [FieldOffset(0)] public uint Mask;
         [FieldOffset(16)] public uint Links;
         [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Ino;
         [FieldOffset(40)] public ulong Size;
+        [FieldOffset(112)] public long MtimeSec;
+        [FieldOffset(120)] public uint MtimeNsec;
+        [FieldOffset(136)] public uint DevMajor;
+        [FieldOffset(140)] public uint DevMinor;
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct WindowsInfo
@@ -198,8 +324,16 @@ function Read-CheckpointBytes {
 function Get-CheckpointFileDigest {
     param([string]$Path)
     $full = [IO.Path]::GetFullPath($Path)
-    $digest = [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::Digest([IO.Path]::GetDirectoryName($full), $full, [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ContentLimit, [Threading.CancellationToken]::None)
-    return [pscustomobject]@{ Length = [long]$digest.Item1; Sha256 = [string]$digest.Item2 }
+    $sealed = [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ReadSealed([IO.Path]::GetDirectoryName($full), $full, [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ContentLimit, [Threading.CancellationToken]::None)
+    return [pscustomobject]@{
+        Length = [long]$sealed.Length
+        Sha256 = [string]$sealed.Sha256
+        Volume = [uint64]$sealed.Volume
+        FileId = [uint64]$sealed.FileId
+        WriteSeconds = [long]$sealed.WriteSeconds
+        WriteSubseconds = [uint32]$sealed.WriteSubseconds
+        Links = [uint64]$sealed.Links
+    }
 }
 function Read-CheckpointText {
     param([string]$Path)

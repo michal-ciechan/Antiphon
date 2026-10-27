@@ -1598,7 +1598,7 @@ receipt/text consumers remain on `Read-CheckpointBytes`. Both embedded consumers
 share the verified-handle consumption loop. As in CARD-1369's .NET reader, an EOF
 stall succeeds only after reinspection of that same handle proves its size is
 unchanged and every initially inspected byte arrived. Growth, shrink, failed
-reinspection and caller cancellation cannot certify complete content. The loaded
+reinspection and caller cancellation cannot certify complete content. A normal EOF also refuses when the retained handle and the path disagree on volume, file id, size, last-write time, or link count, or when the streamed length differs (`changed while sealing`). The loaded
 tool's compatibility facade forwards digest calls to the same .NET implementation.
 `CheckpointLargeStampTests` and `CheckpointLargeStampScriptTests` cover real 70 MiB
 files, a one-byte edit at 69 MiB with restored mtime, independent full hashes,
@@ -1614,13 +1614,13 @@ file still matches a receipt-reader `SHA256.HashData` of `Read-CheckpointBytes`.
 64 MiB cap remains the receipt and text bound only. Memory stays one chunk. Time is
 bounded by that size and the three-second stall window, which re-arms after every
 delivered chunk and does not assume a throughput. A file above the bound, or one that
-grows past the bound while it is read, is refused before a ledger is written. A
+grows past the bound while it is read, is refused before a ledger is written. After EOF, and again before the ledger is written, the open handle must still be the same regular single-link file as the path: the same volume and file id (Linux device and inode, Windows volume serial and file index), the same size, the same last-write time, and the same link count, and the number of bytes hashed must equal that size. A rename-over, an append, a truncate, or a same-size swap refuses with `changed while sealing` and writes no ledger. A
 symlink, reparse point, hard link, or non-regular file (FIFO, device) is refused too.
 The refusal names the file, the size, and the limit:
 `output-inventory-failed: <path> size=<bytes> limit=<bytes>: <reason>`.
 `scripts/test-checkpoint-output-inventory.ps1` seals a real 70 MiB file, refuses one
-byte over 1 GiB, a symlink, and a FIFO, checks growth on the same digest, and checks
-the small-file digest against the old buffered read.
+byte over 1 GiB, a symlink, and a FIFO, checks growth on the same digest, checks
+the small-file digest against the old buffered read, and refuses a file replaced, appended, truncated, or swapped for another file of the same size while the hash is open.
 
 ## Opt-in per-test phase timing (CARD-1514)
 
