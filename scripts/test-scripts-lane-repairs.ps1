@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('opaque', 'owned', 'origin')][string]$Case,
+    [ValidateSet('opaque', 'owned', 'origin', 'state')][string]$Case,
     [string]$HostCleanupDll
 )
 $ErrorActionPreference = 'Stop'
@@ -8,6 +8,63 @@ $repo = Split-Path $PSScriptRoot -Parent
 $root = Join-Path ([IO.Path]::GetTempPath()) ('scripts-lane-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 try {
+    if ($Case -eq 'state') {
+        $source = [IO.File]::ReadAllText("$repo/src/Antiphon.HostCleanup/Checkpoints/CheckpointNativeIo.cs")
+        $start = $source.IndexOf('    public void Move(')
+        $end = $source.IndexOf('    public void Unlink(', $start)
+        if ($start -lt 0 -or $end -lt 0) { throw 'native Move method not found' }
+        $method = $source.Substring($start, $end - $start)
+        # Compile the exact product method. Only the OS/native File facade is modeled:
+        # overwrite-move refuses an open destination; Replace sees a sharing violation once.
+        Add-Type -TypeDefinition @"
+using System;
+using System.IO;
+namespace ScriptsLaneWitness {
+public sealed class NativeMove {
+$method
+}
+public static class OperatingSystem { public static bool IsWindows() => true; }
+public static class File {
+    public static int Moves, Replaces;
+    public static bool Exists(string path) => System.IO.File.Exists(path);
+    public static void Move(string source, string destination, bool overwrite) {
+        Moves++;
+        if (Exists(destination)) throw new UnauthorizedAccessException("modeled Windows replacement contention");
+        System.IO.File.Move(source, destination, overwrite);
+    }
+    public static void Replace(string source, string destination, string backup) {
+        Replaces++;
+        if (System.IO.File.ReadAllText(destination) != "complete old state") throw new Exception("old state damaged");
+        if (Replaces == 1) throw new IOException("forced sharing violation", unchecked((int)0x80070020));
+        System.IO.File.Replace(source, destination, backup);
+    }
+}
+}
+"@
+        $path = Join-Path $root 'state.json'
+        $tmp = Join-Path $root 'state.tmp'
+        [IO.File]::WriteAllText($path, 'complete old state')
+        [IO.File]::WriteAllText($tmp, 'complete new state')
+        $mover = [ScriptsLaneWitness.NativeMove]::new()
+        $caught = 0
+        for ($attempt = 0; $attempt -lt 6; $attempt++) {
+            try { $mover.Move($tmp, $path, $true); break }
+            catch {
+                $caught++
+                if ([IO.File]::ReadAllText($path) -cne 'complete old state') { throw 'partial state during contention' }
+                if (-not [IO.File]::Exists($tmp)) { throw 'temporary lost during contention' }
+                if ($attempt -eq 5) { throw }
+            }
+        }
+        if ($caught -ne 1 -or [ScriptsLaneWitness.File]::Replaces -ne 2 -or [ScriptsLaneWitness.File]::Moves -ne 0) { throw 'atomic replacement/retry path mismatch' }
+        if ([IO.File]::ReadAllText($path) -cne 'complete new state' -or [IO.File]::Exists($tmp)) { throw 'replacement incomplete' }
+        # A new destination must still use Move; Replace requires an existing file.
+        $fresh = Join-Path $root 'fresh.json'
+        $mover.Move($path, $fresh, $true)
+        if ([ScriptsLaneWitness.File]::Moves -ne 1 -or [IO.File]::Exists($path)) { throw 'initial publication failed' }
+        'PASS state: forced sharing violation, old state intact, atomic replacement retried, initial move'
+        return
+    }
     if ($Case -eq 'origin') {
         . "$PSScriptRoot/lib/nightly-common.ps1"
         & git init --quiet $root
