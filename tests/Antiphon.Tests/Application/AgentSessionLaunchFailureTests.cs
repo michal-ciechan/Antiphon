@@ -57,10 +57,12 @@ public class AgentSessionLaunchFailureTests
             ReadyResult = false,
             LaunchBlock = new(AgentLaunchBlockKind.ProviderSignInRequired, reason, home),
         };
+        var lockWitness = new SignInAgentLockWitness();
         // Bound the old code's cross-connection FK wait. Its incident writer times out,
         // leaving no incident even though the caller owns the blocking agent lock.
         await using var fixture = await LaunchFixture.CreateAsync(adapter,
-            configureDb: options => options.UseNpgsql(npgsql => npgsql.CommandTimeout(2)));
+            configureDb: options => options.AddInterceptors(lockWitness)
+                .UseNpgsql(npgsql => npgsql.CommandTimeout(2)));
         await using var db = LaunchFixture.CreateContext();
         await db.AgentSessions.Where(s => s.Id == fixture.SessionId)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.AgentKind, kind));
@@ -74,6 +76,7 @@ public class AgentSessionLaunchFailureTests
         (await db.Agents.SingleAsync(a => a.Id == fixture.AgentId)).Status.ShouldBe(AgentStatus.Failed);
         adapter.Prompts.ShouldBeEmpty();
         adapter.Lifecycle.ShouldBe(["KillGeneration", "Dispose"]);
+        lockWitness.Observed.ShouldBeTrue("failure handling must still exclude agent writers and deletion");
         var incident = await db.AgentIncidents.SingleOrDefaultAsync(i =>
             i.AgentId == fixture.AgentId && i.SessionId == fixture.SessionId
             && i.Kind == AgentIncidentKind.ProviderSignInRequired);
@@ -81,6 +84,39 @@ public class AgentSessionLaunchFailureTests
         incident.FailureReason.ShouldBe(GrokSignInIncident.EpisodeKey(home));
         (await db.Alerts.CountAsync(a => a.AgentId == fixture.AgentId
             && a.SessionId == fixture.SessionId && a.Severity == AlertSeverity.Critical)).ShouldBe(1);
+    }
+
+    private sealed class SignInAgentLockWitness : DbCommandInterceptor
+    {
+        public bool Observed { get; private set; }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!command.CommandText.StartsWith("SELECT * FROM \"Agents\"", StringComparison.Ordinal)
+                || !command.CommandText.Contains("FOR ", StringComparison.Ordinal))
+                return result;
+
+            await using var competing = new NpgsqlConnection(command.Connection!.ConnectionString);
+            await competing.OpenAsync(cancellationToken);
+            await using (var timeout = new NpgsqlCommand("SET lock_timeout = '100ms'", competing))
+                await timeout.ExecuteNonQueryAsync(cancellationToken);
+            foreach (var sql in new[]
+            {
+                "UPDATE \"Agents\" SET \"UpdatedAt\" = \"UpdatedAt\" WHERE \"Id\" = @id",
+                "DELETE FROM \"Agents\" WHERE \"Id\" = @id",
+            })
+            {
+                await using var writer = new NpgsqlCommand(sql, competing);
+                writer.Parameters.AddWithValue("id", command.Parameters[0].Value!);
+                var blocked = await Should.ThrowAsync<PostgresException>(
+                    () => writer.ExecuteNonQueryAsync(cancellationToken));
+                blocked.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+            }
+            Observed = true;
+            return result;
+        }
     }
 
     [Test]
