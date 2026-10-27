@@ -12,6 +12,24 @@ public sealed class ScriptHarnessProcessContractTests
     private const string Valid = "PASS C806 C806 fixture passed\nC487 HARNESS EXIT CODE: 0\nC487: 1 passed, 0 failed, 1 rows\n";
 
     [Test]
+    public void Windows_resolution_skips_alias_before_installed_executable()
+    {
+        var root = Directory.CreateTempSubdirectory("pwsh-resolution-").FullName;
+        try
+        {
+            var alias = Directory.CreateDirectory(Path.Combine(root, "WindowsApps", "PowerShell")).FullName;
+            var installed = Directory.CreateDirectory(Path.Combine(root, "installed")).FullName;
+            File.WriteAllText(Path.Combine(alias, "pwsh.exe"), "alias fixture; never execute");
+            var executable = Path.Combine(installed, "pwsh.exe");
+            File.WriteAllText(executable, "installed fixture; never execute");
+            ScriptHarnessProcessFixture.ResolveInstalledPowerShell(alias + Path.PathSeparator + installed)
+                .ShouldBe(executable);
+            Should.Throw<FileNotFoundException>(() => ScriptHarnessProcessFixture.ResolveInstalledPowerShell(alias));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
     public void Default_options_keep_existing_budgets()
     {
         ScriptHarnessOptions.Default.ExecutionBudget.ShouldBe(TimeSpan.FromSeconds(300));
