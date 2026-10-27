@@ -50,17 +50,17 @@ Host: server2 Linux (Debian 12, linux-x64). This is a baseline, not the Windows 
 
 ## Results
 
-Class runs are in progress. Counts below are filled in as each class finishes. Wall time is the TRX `Times` start-to-finish span. Tests at or over 30 seconds are listed under the class.
+Counts are from each class TRX. Wall time is the TRX `Times` start-to-finish span. A class with failures is rerun once. Exit 8 is the testing-platform code for a run whose tests were all skipped. No finished class had a test at or over 30 seconds. WorkflowOutputTests, ContractSnapshotTests, and AgentTaskLandDeliveryE2ETests are still running.
 
 | class | executed | passed | failed | skipped | wall | notes |
 |---|---:|---:|---:|---:|---|---|
-| AgentTaskLandDeliveryE2ETests | | | | | | pending |
-| ChannelE2ETests | | | | | | pending |
+| AgentTaskLandDeliveryE2ETests | | | | | | pending, 25 minute cap |
+| ChannelE2ETests | 1 | 1 | 0 | 0 | 55s | pass |
 | ContractSnapshotTests | | | | | | pending |
-| DelegationSequencingE2ETests | | | | | | pending |
-| DispatchConcurrencySettingsE2ETests | | | | | | pending |
-| OrchestratorE2ETests | | | | | | pending |
-| PipelineGlanceE2ETests | | | | | | pending |
-| ReleaseGateIsolationTests | | | | | | pending |
-| SmokeE2ETests | | | | | | pending |
-| WorkflowOutputTests | | | | | | pending |
+| DelegationSequencingE2ETests | 0 | 0 | 0 | 1 | 1s | Windows gate. Skip: Headed tests require Windows ConPTY. Exit 8. |
+| DispatchConcurrencySettingsE2ETests | 1 | 1 | 0 | 0 | 57s | pass |
+| OrchestratorE2ETests | 1 | 1 | 0 | 0 | 52s | pass |
+| PipelineGlanceE2ETests | 1 | 1 | 0 | 0 | 55s | pass |
+| ReleaseGateIsolationTests | 3 | 3 | 0 | 0 | 80s | pass |
+| SmokeE2ETests | 2 | 2 | 0 | 0 | 66s | pass, browser to API to DB |
+| WorkflowOutputTests | | | | | | running |
