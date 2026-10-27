@@ -20,6 +20,12 @@ function Read-NightlyTrxIdentities {
     if (-not (Test-Path -LiteralPath $TrxPath)) {
         throw ('missing TRX {0}' -f $TrxPath)
     }
+    if (Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue) {
+        $trxIdentity = Get-TestPhasePathIdentity -Path $TrxPath
+        if ($trxIdentity.Kind -ne 'regular') {
+            throw ('refused TRX {0}' -f $TrxPath)
+        }
+    }
     try {
         [xml]$doc = Get-Content -Raw -LiteralPath $TrxPath
     } catch {
@@ -1208,6 +1214,17 @@ function ConvertTo-NightlyNativeSuiteVerdict {
             testsPassed = $false
             reasons = @('missing-trx')
             rows = @()
+        }
+    }
+    if (Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue) {
+        $trxIdentity = Get-TestPhasePathIdentity -Path $TrxPath
+        if ($trxIdentity.Kind -ne 'regular') {
+            return [pscustomobject]@{
+                coverageComplete = $false
+                testsPassed = $false
+                reasons = @('refused-trx')
+                rows = @()
+            }
         }
     }
     $fresh = Test-NightlyFreshEvidence -Path $TrxPath -RunDirectory $RunDirectory -NotBeforeUtc $NotBeforeUtc -InvocationId ''
