@@ -67,7 +67,7 @@ export function PipelineStagesPanel() {
   const empty = isPipelineEmpty(data)
 
   return (
-    <Box maw={560} mx="auto" style={{ overflowX: 'hidden' }}>
+    <Box w="100%" maw={560} mx="auto" style={{ overflowX: 'hidden' }}>
       <Text size="sm" c="dimmed" px={4} data-testid="pipeline-strip">
         {fleetStrip(data)}
       </Text>
