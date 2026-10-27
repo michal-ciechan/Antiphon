@@ -7609,6 +7609,97 @@ c1008_audit() {
     printf '%s' "$output" | sort
 }
 
+# Pinned preview audit. Same publication rules as c1008_audit, but the work volume
+# is bind-mounted read-only in a private mount namespace. No helper is created,
+# started or removed, and nothing on the volume is written.
+c1008_audit_readonly() {
+    local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp
+    local facts tmp_facts image output program needle replacement config_needle config_replacement
+    local mount target tmp_target='' cap resolve_status=0 private code=0
+    facts="$(c1008_volume "$work")" || return 2
+    if [ "$facts" = null ]; then
+        [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
+        return 2
+    fi
+    mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+    target="$(sudo -n readlink -e -- "$mount" 2>/dev/null)" || return 2
+    [ "$target" = "$mount" ] && [ -d "$target" ] && [ "$target" != / ] || return 2
+    tmp_facts="$(c1008_volume "$tmp")" || return 2
+    if [ "$tmp_facts" != null ]; then
+        mount="$(printf '%s' "$tmp_facts" | jq -r .Mountpoint)"
+        tmp_target="$(sudo -n readlink -e -- "$mount" 2>/dev/null)" || return 2
+        [ "$tmp_target" = "$mount" ] && [ -d "$tmp_target" ] && [ "$tmp_target" != / ] || return 2
+    fi
+    image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
+    if [ -z "$image" ]; then
+        image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
+            || return 2
+    fi
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+    [ "$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)" = "$image" ] || return 2
+    cap="$(c1008_resolve_audit_cap)" || resolve_status=$?
+    if [ "$resolve_status" != 0 ]; then
+        printf '%s\n' "$cap"
+        return 2
+    fi
+    program="$(c1008_git_program)"
+    needle='path_of readlink -e /work || fail $?'
+    replacement='path_of readlink -e -- "${C1008_AUDIT_WORK:?}" || fail $?'
+    case "$program" in *"$needle"*) ;; *) printf 'audit check=program status=2 repo=.\nRecycleGitAuditUnknown\n'; return 2 ;; esac
+    program="${program/"$needle"/$replacement}"
+    config_needle='export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false'
+    config_replacement='export GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_2=safe.directory GIT_CONFIG_VALUE_2="*"'
+    case "$program" in *"$config_needle"*) ;; *) printf 'audit check=program status=2 repo=.\nRecycleGitAuditUnknown\n'; return 2 ;; esac
+    program="${program/"$config_needle"/$config_replacement}"
+    private="$(mktemp -d /tmp/c1008-audit-ro-XXXXXXXX)" || return 2
+    printf '%s\n' "$program" > "$private/program.sh" || { rm -rf -- "$private"; return 2; }
+    chmod a+r "$private/program.sh" || { rm -rf -- "$private"; return 2; }
+    export C1008_AUDIT_PRIVATE="$private" C1008_AUDIT_WORK="$target" C1008_AUDIT_TMP="$tmp_target" C1008_AUDIT_TIMEOUT_SECONDS="$cap"
+    code=0
+    output="$(c1008_audit_readonly_execute)" || code=$?
+    rm -rf -- "$private"
+    if [ "$code" != 0 ]; then
+        printf '%s\n' "$output"
+        case "$output" in *RecycleUnpublishedWork*) return 3 ;; *RecycleWorktreeDirty*) return 4 ;; *) return 2 ;; esac
+    fi
+    printf '%s' "$output" | sort
+}
+
+c1008_audit_readonly_execute() {
+    local ns
+    ns=$(cat <<'C1008_AUDIT_NS'
+set -euo pipefail
+mkdir -p -- "$C1008_AUDIT_PRIVATE/work"
+mount --bind "$C1008_AUDIT_WORK" "$C1008_AUDIT_PRIVATE/work"
+mount -o remount,bind,ro "$C1008_AUDIT_PRIVATE/work"
+export C1008_AUDIT_WORK="$C1008_AUDIT_PRIVATE/work"
+if [ -n "${C1008_AUDIT_TMP:-}" ]; then
+    mkdir -p -- "$C1008_AUDIT_PRIVATE/runner-tmp"
+    mount --bind "$C1008_AUDIT_TMP" "$C1008_AUDIT_PRIVATE/runner-tmp"
+    mount -o remount,bind,ro "$C1008_AUDIT_PRIVATE/runner-tmp"
+    export C1008_TMP_MOUNT="$C1008_AUDIT_PRIVATE/runner-tmp"
+fi
+export C1008_AUDIT_TIMEOUT_SECONDS="${C1008_AUDIT_TIMEOUT_SECONDS:?}"
+if [ "${C1008_AUDIT_DROP:-0}" = 1 ]; then
+    exec setpriv --reuid=1654 --regid=1654 --clear-groups -- bash "$C1008_AUDIT_PRIVATE/program.sh"
+fi
+bash "$C1008_AUDIT_PRIVATE/program.sh"
+C1008_AUDIT_NS
+)
+    if [ "$(id -u)" = 1654 ]; then
+        unshare --user --map-root-user --mount bash -c "$ns"
+    else
+        sudo -n env \
+            "C1008_AUDIT_PRIVATE=$C1008_AUDIT_PRIVATE" \
+            "C1008_AUDIT_WORK=$C1008_AUDIT_WORK" \
+            "C1008_AUDIT_TMP=${C1008_AUDIT_TMP:-}" \
+            "C1008_AUDIT_TIMEOUT_SECONDS=$C1008_AUDIT_TIMEOUT_SECONDS" \
+            C1008_AUDIT_DROP=1 \
+            unshare --mount bash -c "$ns"
+    fi
+}
+
 c1008_audit_checked() {
     local audit code=0 work_state detail
     work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
@@ -7882,13 +7973,13 @@ c1008_recycle() {
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
-        # Audit a pinned preview image in memory. Do not save a journal or remove a volume.
+        # Audit a pinned preview image without a helper. Do not save a journal or remove a volume.
         # Without a pinned image the preview still reports auditPending and creates no helper.
         if [ -n "${C994_IMAGE:-}" ]; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" \
                 || c1008_refuse RecycleGitAuditUnknown
             code=0
-            audit="$(c1008_audit)" || code=$?
+            audit="$(c1008_audit_readonly)" || code=$?
             if [ "$code" != 0 ]; then
                 detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo='
