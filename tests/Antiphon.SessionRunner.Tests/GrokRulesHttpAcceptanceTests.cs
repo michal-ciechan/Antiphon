@@ -60,8 +60,9 @@ public sealed class GrokRulesHttpAcceptanceTests
                 ["/d", "/q", "/k", "prompt $G"], new Dictionary<string,string> { ["GROK_HOME"] = Path.Combine(root, "home") },
                 root, 120, 30, TranscriptFormat: TranscriptFormats.Grok, GrokRulesPayload: new(body, 1, Guid.NewGuid()));
             using var started = await http.PostAsJsonAsync("/sessions", request, ct);
-            started.StatusCode.ShouldBe(HttpStatusCode.Created);
             var launchJson = await started.Content.ReadAsStringAsync(ct);
+            await File.WriteAllTextAsync(Path.Combine(artifacts, "launch-response.json"), launchJson, ct);
+            started.StatusCode.ShouldBe(HttpStatusCode.Created, launchJson);
             launchJson.ShouldNotContain(sentinel);
             var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var launched = JsonSerializer.Deserialize<RunnerSessionDto>(launchJson, options)!;

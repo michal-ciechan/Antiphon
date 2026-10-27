@@ -242,6 +242,27 @@ public class GrokDelegateEndToEndTests
         await using var harness = BuildHarness(
             workspace.Path, grokHome, grokExe: FakeGrokExe, fakeReportLine: false,
             configure: d => d.FinalMessageGraceSeconds = 0);
+        harness.Runner.AfterInputAsync = async (id, input, ct) =>
+        {
+            if (input != "\r") return;
+            await using var db = CreateContext();
+            var nudge = await db.SessionQueuedMessages.AsNoTracking().FirstOrDefaultAsync(m =>
+                m.AgentSessionId == id && m.Status == QueuedMessageStatus.Pending
+                && m.Body.Contains("Your turn ended without the closing report line"), ct);
+            if (nudge is null) return;
+            // Hold the submitting Enter's return until the real tailer has persisted the reply.
+            // This forces the claimed reply-before-SentAt race without changing either timestamp.
+            await WaitUntilAsync(async () =>
+            {
+                await using var read = CreateContext();
+                var prompt = await read.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == id && t.Kind == TranscriptKinds.UserPrompt
+                        && t.Sequence > (nudge.LastDeliveryBaselineSequence ?? 0)
+                        && t.Text == nudge.Body).OrderByDescending(t => t.Sequence).FirstOrDefaultAsync(ct);
+                return prompt is not null && await read.TranscriptEntries.AnyAsync(t =>
+                    t.AgentSessionId == id && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence, ct);
+            }, TimeSpan.FromSeconds(20), () => ScreenAsync(harness, id));
+        };
 
         Guid sessionId = Guid.Empty;
         try
@@ -1189,6 +1210,7 @@ internal sealed class RecordingRunnerClient : ISessionRunnerClient, IAsyncDispos
     private readonly object _gate = new();
 
     public RecordingRunnerClient(DirectSessionRunnerClient inner) => _inner = inner;
+    public Func<Guid, string, CancellationToken, Task>? AfterInputAsync { get; set; }
 
     public AgentLaunchSpec? SpecFor(Guid sessionId)
     {
@@ -1222,8 +1244,11 @@ internal sealed class RecordingRunnerClient : ISessionRunnerClient, IAsyncDispos
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
         _inner.GetTranscriptAsync(sessionId, ct);
 
-    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-        _inner.SendInputAsync(sessionId, input, ct);
+    public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+    {
+        await _inner.SendInputAsync(sessionId, input, ct);
+        if (AfterInputAsync is { } after) await after(sessionId, input, ct);
+    }
 
     public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>

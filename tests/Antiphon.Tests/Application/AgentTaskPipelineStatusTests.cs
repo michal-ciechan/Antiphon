@@ -1160,4 +1160,19 @@ public class AgentTaskPipelineEndpointTests
     }
 }
 
-public sealed class AgentTaskPipelineWebAppFactory : AntiphonWebAppFactory;
+public sealed class AgentTaskPipelineWebAppFactory : AntiphonWebAppFactory
+{
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureAppConfiguration((_, configuration) =>
+        {
+            var defaults = new DelegationSettings();
+            var policy = defaults.RolePolicy.ToDictionary(
+                p => $"Delegation:RolePolicy:{p.Key}:RecommendedInFlight",
+                p => p.Value.RecommendedInFlight?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            policy["Delegation:MaxOpenTasks"] = defaults.MaxOpenTasks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Microsoft.Extensions.Configuration.MemoryConfigurationBuilderExtensions.AddInMemoryCollection(configuration, policy);
+        });
+    }
+}
