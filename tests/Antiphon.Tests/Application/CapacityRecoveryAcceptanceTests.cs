@@ -20,6 +20,42 @@ namespace Antiphon.Tests.Application;
 public class CapacityRecoveryAcceptanceTests
 {
     [Test]
+    public async Task Dispatch_redemption_rolls_back_with_the_claim_and_does_not_leak_tracked_changes()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _, provider) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var services = provider;
+        var taskId = Guid.NewGuid();
+        var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema,
+            CapacityRecoveryTestSupport.Registration($"task:{taskId:N}", CapacityWaitConsumerKind.QueuedTask,
+                taskId: taskId, holdAlreadyCleared: true), CancellationToken.None);
+        (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        await using (var claim = await db.Database.BeginTransactionAsync())
+        {
+            var redemption = await service.RedeemOnAsync(db, wait.Id, wait.ActionKey,
+                wait.ExecutionKind, CapacityRedemptionPath.Dispatch, null, CancellationToken.None);
+            redemption.Ok.ShouldBeTrue();
+            redemption.AdmissionCount.ShouldBe(1);
+            await claim.RollbackAsync();
+        }
+
+        // Dispatch can save a hold/failure through this same context after abandoning a claim.
+        (await db.AgentTasks.SingleAsync(t => t.Id == taskId)).Title = "unrelated post-rollback write";
+        await db.SaveChangesAsync();
+        var restored = await db.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
+        restored.AdmissionCount.ShouldBe(0);
+        restored.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+        var grant = await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync();
+        grant.GrantedWaitId.ShouldBe(wait.Id);
+        grant.GrantedActionKey.ShouldBe(wait.ActionKey);
+        grant.LastActionKey.ShouldBeNull();
+        grant.NextAdmissionAt.ShouldBeNull();
+        (await service.RedeemAsync(wait.Id, wait.ActionKey, wait.ExecutionKind,
+            CapacityRedemptionPath.Dispatch, CancellationToken.None)).AdmissionCount.ShouldBe(1);
+    }
+
+    [Test]
     public async Task Card0412_V09_oldest_blocked_gets_the_only_grant()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

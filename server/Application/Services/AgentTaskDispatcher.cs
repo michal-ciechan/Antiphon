@@ -958,7 +958,7 @@ public sealed partial class AgentTaskDispatcher
             {
                 if (_capacityRecovery is { IsEnabled: true }
                     && await FindUnfinishedCapacityWaitAsync(task, ct) is { } wait
-                    && !await TryRedeemCapacityWaitAsync(task, wait, CapacityRedemptionPath.Dispatch, ct))
+                    && !await HasCapacityGrantAsync(wait, ct))
                 {
                     skippedCapacityWait++;
                     if (task.CapacityWaitId != wait.Id)
@@ -1764,17 +1764,22 @@ public sealed partial class AgentTaskDispatcher
     private async Task<bool> TryRedeemCapacityWaitAsync(
         AgentTask task, CapacityRecoveryWait wait, CapacityRedemptionPath path, CancellationToken ct)
     {
-        if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
-            return false;
-        var provider = await _db.Set<CapacityRecoveryProviderState>().AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
-        if (provider is null
-            || provider.GrantedWaitId != wait.Id
-            || provider.GrantedActionKey != wait.ActionKey)
+        if (!await HasCapacityGrantAsync(wait, ct))
             return false;
         var result = await _capacityRecovery!.RedeemAsync(
             wait.Id, wait.ActionKey, wait.ExecutionKind, path, ct);
         return result.Ok;
+    }
+
+    private async Task<bool> HasCapacityGrantAsync(CapacityRecoveryWait wait, CancellationToken ct)
+    {
+        if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
+            return false;
+        var provider = await _db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
+        return provider is not null
+            && provider.GrantedWaitId == wait.Id
+            && provider.GrantedActionKey == wait.ActionKey;
     }
 
     private async Task<int> ResumeRoutingBlockedAsync(CancellationToken ct)
@@ -5587,6 +5592,19 @@ public sealed partial class AgentTaskDispatcher
                 await transaction.RollbackAsync(ct);
                 return DispatchOneResult.SiblingObservationStale;
             }
+        }
+
+        // Only a validated, locked claim may consume capacity. Keep redemption in this
+        // transaction so later claim rollbacks also restore the grant and admission count.
+        if (_capacityRecovery is { IsEnabled: true }
+            && await FindUnfinishedCapacityWaitAsync(claimed, ct) is { } capacityWait
+            && !(await _capacityRecovery.RedeemOnAsync(_db, capacityWait.Id, capacityWait.ActionKey,
+                capacityWait.ExecutionKind, CapacityRedemptionPath.Dispatch, null, ct)).Ok)
+        {
+            // Refusals (including exhaustion/deferral) have their own durable wait outcome;
+            // no launch work has been staged yet.
+            await transaction.CommitAsync(ct);
+            return DispatchOneResult.NotClaimed;
         }
 
         if (claimed.ReleasedSeatAnswerId is not null

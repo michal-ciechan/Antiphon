@@ -245,6 +245,23 @@ public sealed class CapacityRecoveryService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var result = await RedeemOnAsync(db, waitId, actionKey, kind, path, refusalReason, ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
+    /// <summary>Redeem with the dispatch claim so a refused claim cannot spend the grant.</summary>
+    internal async Task<CapacityRedemption> RedeemOnAsync(
+        AppDbContext db,
+        Guid waitId,
+        string actionKey,
+        AgentKind kind,
+        CapacityRedemptionPath path,
+        string? refusalReason,
+        CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Capacity redemption requires a transaction.");
         await TakeProviderLockAsync(db, kind, ct);
         var now = UtcNow();
         var state = await db.Set<CapacityRecoveryProviderState>()
@@ -253,52 +270,63 @@ public sealed class CapacityRecoveryService
         if (state is null || wait is null)
             return CapacityRedemption.Refused("missing-grant");
 
-        CapacityRedemption result;
-        if (!IsEnabled)
-            result = await DeferRedemptionAsync(db, wait, state, "feature-disabled", now, ct);
-        else if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
-            return CapacityRedemption.Refused("grant-mismatch");
-        else if (state.NextAdmissionAt is { } due && due > now)
-            result = await DeferRedemptionAsync(db, wait, state, "clock-not-due", now, ct);
-        else if (!string.IsNullOrWhiteSpace(refusalReason))
-            result = await DeferRedemptionAsync(db, wait, state, refusalReason, now, ct);
-        else
+        // A prior claim may have rolled back after SaveChanges accepted its tracked values.
+        await db.Entry(state).ReloadAsync(ct);
+        await db.Entry(wait).ReloadAsync(ct);
+        try
         {
-            var revalidation = wait.NeedsRevalidationGrant;
-            if (!revalidation)
+            CapacityRedemption result;
+            if (!IsEnabled)
+                result = await DeferRedemptionAsync(db, wait, state, "feature-disabled", now, ct);
+            else if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
+                return CapacityRedemption.Refused("grant-mismatch");
+            else if (state.NextAdmissionAt is { } due && due > now)
+                result = await DeferRedemptionAsync(db, wait, state, "clock-not-due", now, ct);
+            else if (!string.IsNullOrWhiteSpace(refusalReason))
+                result = await DeferRedemptionAsync(db, wait, state, refusalReason, now, ct);
+            else
             {
-                if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+                var revalidation = wait.NeedsRevalidationGrant;
+                if (!revalidation)
                 {
-                    wait.State = CapacityRecoveryWaitState.Exhausted;
-                    wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
-                    wait.OutcomeReason = "max-episode-attempts";
-                    ClearGrant(state, now);
-                    wait.UpdatedAt = now;
-                    wait.Version++;
-                    await db.SaveChangesAsync(ct);
-                    await tx.CommitAsync(ct);
-                    return CapacityRedemption.Refused("exhausted");
+                    if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+                    {
+                        wait.State = CapacityRecoveryWaitState.Exhausted;
+                        wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+                        wait.OutcomeReason = "max-episode-attempts";
+                        ClearGrant(state, now);
+                        wait.UpdatedAt = now;
+                        wait.Version++;
+                        await db.SaveChangesAsync(ct);
+                        return CapacityRedemption.Refused("exhausted");
+                    }
+
+                    wait.AdmissionCount++;
                 }
 
-                wait.AdmissionCount++;
+                wait.NeedsRevalidationGrant = false;
+                wait.State = CapacityRecoveryWaitState.Admitted;
+                wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
+                wait.OutcomeReason = path.ToString();
+                wait.UpdatedAt = now;
+                wait.Version++;
+                state.LastActionKey = actionKey;
+                state.LastActionAt = now;
+                state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+                ClearGrant(state, now);
+                await db.SaveChangesAsync(ct);
+                result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
             }
 
-            wait.NeedsRevalidationGrant = false;
-            wait.State = CapacityRecoveryWaitState.Admitted;
-            wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
-            wait.OutcomeReason = path.ToString();
-            wait.UpdatedAt = now;
-            wait.Version++;
-            state.LastActionKey = actionKey;
-            state.LastActionAt = now;
-            state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
-            ClearGrant(state, now);
-            await db.SaveChangesAsync(ct);
-            result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+            return result;
         }
-
-        await tx.CommitAsync(ct);
-        return result;
+        finally
+        {
+            // The caller may roll back and then save unrelated task/hold evidence through this
+            // context. Neither successful nor failed redemption changes may escape that claim.
+            db.Entry(wait).State = EntityState.Detached;
+            db.Entry(state).State = EntityState.Detached;
+        }
     }
 
     public async Task<CapacityRecoveryWait> EnsureWaitAsync(CapacityWaitRegistration registration, CancellationToken ct)
