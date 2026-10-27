@@ -927,7 +927,7 @@ public class FakeClaudeContractTests
         var body = normalized.Replace("\n", lineEnding) + lineEnding;
         var screen = new TerminalScreen(120, 30);
         screen.Feed("Fake Claude ready\r\n");
-        var before = screen.GetText();
+        var before = screen.GetScreenText();
         var writes = new List<string>();
         var echoReads = 0;
 
@@ -943,10 +943,10 @@ public class FakeClaudeContractTests
                         : "\r\n\r\nDescription:\r\nreview the doc and TAIL write the spec\x1b[0m";
                     foreach (var character in echo)
                         screen.Feed(character.ToString());
-                    ComposerDeliveryEvidence.BodyConsumed(before, screen.GetText(), normalized)
+                    ComposerDeliveryEvidence.BodyConsumed(before, screen.GetScreenText(), normalized)
                         .ShouldBe(echoReads == 2, "the head alone cannot release Enter");
                 }
-                return Task.FromResult(screen.GetText());
+                return Task.FromResult(screen.GetScreenText());
             },
             (text, _) =>
             {
@@ -964,8 +964,8 @@ public class FakeClaudeContractTests
             "\x1b[200~HEAD work on card CARD-0001\n\nDescription:\nreview the doc and TAIL write the spec\x1b[201~",
             "\r",
         });
-        screen.GetText().ShouldContain("TAIL write the spec");
-        screen.GetText().ShouldNotContain("\x1b");
+        screen.GetScreenText().ShouldContain("TAIL write the spec");
+        screen.GetScreenText().ShouldNotContain("\x1b");
     }
 
     /// <summary>
