@@ -86,10 +86,20 @@ if ($Mode -eq 'stamp') {
     if (-not $deleted.Detail.Contains('TAMPERED empty.bin')) { throw 'missing deleted path' }
 } elseif ($Mode -eq 'reader') {
     # Reuse only the manual-clock helper declaration, not another test's execution or oracle.
+    # The deadline script's first Add-Type argument is the variable $source. Select the single
+    # here-string that declares class PacedClock by that exact name.
     $helperAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Repository 'scripts/test-checkpoint-reader-deadline.ps1'), [ref]$tokens, [ref]$errors)
-    $addType = $helperAst.Find({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type' }, $false)
-    if ($null -eq $addType) { throw 'manual clock declaration missing' }
-    $helperSource = $addType.CommandElements[2].Value
+    if ($errors.Count) { throw 'manual clock parse failed' }
+    $name = 'PacedClock'
+    $declarations = @($helperAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        $node.StringConstantType -eq [Management.Automation.Language.StringConstantType]::SingleQuotedHereString -and
+        [regex]::IsMatch($node.Value, "(?m)^public sealed class $name : TimeProvider\r?$")
+    }, $false))
+    if ($declarations.Count -eq 0) { throw 'manual clock declaration missing' }
+    if ($declarations.Count -ne 1) { throw "manual clock declaration count=$($declarations.Count)" }
+    $helperSource = $declarations[0].Value
     $helperSource += @'
 
 public sealed class LargeZeroStream : Stream
