@@ -15,6 +15,7 @@ public sealed class ScriptsLaneRepairTests
     [Arguments("owned")]
     [Arguments("origin")]
     [Arguments("state")]
+    [Arguments("replaced")]
     public void Portable_scripts_lane_witness(string scenario)
     {
         var start = new ProcessStartInfo(OperatingSystem.IsWindows()
