@@ -50,17 +50,56 @@ Host: server2 Linux (Debian 12, linux-x64). This is a baseline, not the Windows 
 
 ## Results
 
-Counts are from each class TRX. Wall time is the TRX `Times` start-to-finish span. A class with failures is rerun once. Exit 8 is the testing-platform code for a run whose tests were all skipped. No finished class had a test at or over 30 seconds. WorkflowOutputTests, ContractSnapshotTests, and AgentTaskLandDeliveryE2ETests are still running.
+Counts are from each class TRX. Wall time is the TRX `Times` start-to-finish span. No class hit the 25 minute cap. A failing class was rerun once. Exit 8 is the testing-platform code for a run whose tests were all skipped.
+
+Shard total, first pass: 70 executed, 17 passed, 53 failed, 1 skipped. Both reds repeated on the rerun.
 
 | class | executed | passed | failed | skipped | wall | notes |
 |---|---:|---:|---:|---:|---|---|
-| AgentTaskLandDeliveryE2ETests | | | | | | pending, 25 minute cap |
+| AgentTaskLandDeliveryE2ETests | 52 | 0 | 52 | 0 | 1s | Windows gate. Same 52/52 on rerun (wall 1s). |
 | ChannelE2ETests | 1 | 1 | 0 | 0 | 55s | pass |
-| ContractSnapshotTests | | | | | | pending |
+| ContractSnapshotTests | 5 | 4 | 1 | 0 | 94s | fixture path. Rerun 4/1, wall 70s. |
 | DelegationSequencingE2ETests | 0 | 0 | 0 | 1 | 1s | Windows gate. Skip: Headed tests require Windows ConPTY. Exit 8. |
 | DispatchConcurrencySettingsE2ETests | 1 | 1 | 0 | 0 | 57s | pass |
 | OrchestratorE2ETests | 1 | 1 | 0 | 0 | 52s | pass |
 | PipelineGlanceE2ETests | 1 | 1 | 0 | 0 | 55s | pass |
 | ReleaseGateIsolationTests | 3 | 3 | 0 | 0 | 80s | pass |
 | SmokeE2ETests | 2 | 2 | 0 | 0 | 66s | pass, browser to API to DB |
-| WorkflowOutputTests | | | | | | running |
+| WorkflowOutputTests | 4 | 4 | 0 | 0 | 131s | pass |
+
+Tests at or over 30 seconds:
+
+| test | duration |
+|---|---|
+| ContractSnapshotTests.Agent_files_review_threads_and_content_contracts | 70.8s first pass, 48.5s rerun |
+
+No other test in this shard reached 30 seconds.
+
+## Failures
+
+### AgentTaskLandDeliveryE2ETests — Windows/Linux gate, stable
+
+All 52 tests failed on both passes with the same assertion, before the fixture did any git or host work:
+
+`ShouldAssertException: OperatingSystem.IsWindows() should be True but was False`
+
+The assertion is `LandDeliveryFixture.InitializeAsync` at `tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs:59`. It is not a `SkipTestException`. The class is not a Linux product failure. Rerun was 52 failed again, wall 1s.
+
+### ContractSnapshotTests.Agent_files_review_threads_and_content_contracts — fixture, stable
+
+The other four tests in the class passed on both runs. This one failed in `SnapshotAsync` (`ContractSnapshotTests.cs:1353`), called for `GET /api/sessions/{id}/transcript` against `client/src/test/fixtures/contract/session-transcript.json` (`ContractSnapshotTests.cs:175`).
+
+Shouldly: `Normalize(existing)` (the committed fixture) was not `Normalize(pretty)` (this run). The first differing field is `entries[2].toolInput`. The live Linux value uses a forward slash. The fixture stores a Windows backslash:
+
+- live: `{"file_path":"<workspace>/README.md"}`
+- fixture: `{"file_path":"<workspace>\\README.md"}`
+
+The test builds that string with `Path.Combine(workspace, "README.md")` (`ContractSnapshotTests.cs:91` and `:103`) and the scrubber replaces only the workspace root, so the separator that remains is the host's. Two runs failed the same way. The other snapshots in this test matched their fixtures.
+
+### DelegationSequencingE2ETests — Windows/Linux gate, skip
+
+`An_orchestrator_runs_two_delegates_in_sequence_and_the_second_sees_the_firsts_work` was not executed. TRX `DebugTrace`: `Skipped: Headed tests require Windows ConPTY` (`ClaudeHarness.SkipIfNotEligible`). Exit 8.
+
+## What ran on Linux
+
+Smoke, channel, dispatch-concurrency settings, orchestrator, pipeline glance, release-gate isolation, and workflow output all passed against the isolated session-runner, Testcontainers Postgres, and Playwright Chromium. The browser smoke reached the API and the database. No production runner was used.
