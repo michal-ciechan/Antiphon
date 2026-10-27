@@ -13,6 +13,16 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class WorkspaceSourceVerificationWireTests
 {
     [Test]
+    [Arguments("C:/runner/repo/.git", "C:\\runner\\repo\\.git")]
+    [Arguments("//runner/share/repo/.git", "\\\\runner\\share\\repo\\.git")]
+    public void C1065_WindowsGitCommonDirectoryIdentityUsesNativeSeparators(string gitPath, string nativePath)
+    {
+        ExpectedRepositoryIdentity(gitPath, windows: true).ShouldBe(Digest(nativePath.ToUpperInvariant()));
+        ExpectedRepositoryIdentity(nativePath, windows: true).ShouldBe(Digest(nativePath.ToUpperInvariant()));
+        ExpectedRepositoryIdentity(gitPath, windows: false).ShouldBe(Digest(gitPath), "Unix identity retains forward slashes and case");
+    }
+
+    [Test]
     public async Task C1065_RepositoryIdentityReadIsBoundToSessionCheckout()
     {
         ((int)PhoneHomeOperation.WorkspaceRepositoryIdentity).ShouldBe(37);
@@ -30,7 +40,7 @@ public sealed class WorkspaceSourceVerificationWireTests
             read.Outcome.ShouldBe(WorkspaceRepositoryIdentityOutcome.Read, "V-28 all-valid control");
             var identity = read.Identity.ShouldNotBeNull();
             var common = (await world.Source.GitAsync(world.Source.Mirror, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
-            identity.RepositoryIdentity.ShouldBe(Digest(OperatingSystem.IsWindows() ? common.ToUpperInvariant() : common));
+            identity.RepositoryIdentity.ShouldBe(ExpectedRepositoryIdentity(common, OperatingSystem.IsWindows()));
             identity.EndpointFingerprint.ShouldBe(Digest(world.Source.Origin), "G-207 runner-observed endpoint");
             identity.EndpointRepository.ShouldBe(world.Source.Origin);
             identity.FullRef.ShouldBe(World.FullRef);
@@ -260,6 +270,7 @@ public sealed class WorkspaceSourceVerificationWireTests
         result.Reason.ShouldBe(reason, guard);
         result.Identity.ShouldBeNull(guard);
     }
+    private static string ExpectedRepositoryIdentity(string common, bool windows) => Digest(windows ? common.ToUpperInvariant() : common);
     private static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static void AssertNoPush(SeatWorld world, string guard) => world.Source.Commands.ShouldNotContain(c => c[0] == "push", guard);
