@@ -2416,12 +2416,15 @@ and plain properties outside the explicit reviewed set. Every evaluation element
 a reviewed environment knob (including OS) needs an exact pin on its own attributes and
 direct text, even in an inactive branch. Only MSBuildThisFileDirectory and
 MSBuildProjectDirectory are admitted without these pins. The recorder and canary remain additional checks. `-Check` validates the
-pre-check and exact digest/pins record, without invoking the evaluator. The record's
-SDK line retains the author-time evaluator identity as provenance and must be
-well-formed; it does not require the checking host to resolve that exact SDK.
-The hashed `global.json` owns SDK selection and roll-forward, so legitimate hosts
-can select different installed SDKs under the same committed policy. Updating the
-record still requires successful real evaluation and records the SDK used. This policy
+pre-check and exact digest/pins record. The record's SDK line retains the author-time
+evaluator identity as provenance and must name a canonical stable SDK release selectable
+by the hashed `global.json` (currently a stable pin with `rollForward: latestMinor`;
+other policies and prerelease pins refuse until explicitly qualified). When the checking
+host resolves a different SDK, `-Check` requires a built evaluator (`-ToolPath` or the
+documented default path) and successful real evaluation under that host's SDK before
+accepting. This catches docs reached by the other SDK's imports, items or globs, without
+rewriting any approval records. Updating the record still requires successful real
+evaluation and records the SDK used. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.
 
 A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with

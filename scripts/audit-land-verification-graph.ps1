@@ -1,7 +1,7 @@
 # CARD-1483 S5: author-time approval of the land build graph.
 # -Update requires the emulation pre-check AND real MSBuild evaluation, with no restore.
-# -Check verifies the pre-check, manifest and digest/pins evaluation record; it does not evaluate.
-# The recorded SDK is evaluator provenance, not an exact SDK requirement for the checking host.
+# -Check verifies the pre-check, manifest and digest/pins record, and evaluates on SDK mismatch.
+# The recorded SDK must be a stable release selectable by the committed latestMinor policy.
 # CARD-1528: -Update also refuses unobserved filesystem/unsupported evaluation functions.
 # CARD-1540: timestamp metadata and unreviewed environment properties refuse; knob reads need exact pins.
 # Land itself only compares the definition digest; it never runs this evaluator.
@@ -102,6 +102,16 @@ function Assert-HeadSource([string]$Head) {
     if ($run.Code -ne 0) { throw 'source differs from HEAD; commit source and pins before auditing' }
 }
 
+function Assert-EvaluatedGraph([string]$EvaluatorPath) {
+    if ([string]::IsNullOrEmpty($EvaluatorPath)) {
+        $EvaluatorPath = Join-Path $RepoRoot 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
+    }
+    if (-not [System.IO.File]::Exists($EvaluatorPath)) { throw ('built evaluator missing: ' + $EvaluatorPath) }
+    $evaluation = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln')
+    if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }
+    if ($evaluation.Code -ne 0) { throw ('land graph evaluation refused (exit ' + $evaluation.Code + ')') }
+}
+
 function Publish-Record([string]$Source, [string]$Destination) {
     if ([System.IO.File]::Exists($Destination)) {
         [System.IO.File]::Replace($Source, $Destination, [NullString]::Value)
@@ -141,13 +151,7 @@ try {
     $expected = @($manifest[0], $sdk, $pins)
 
     if ($Update) {
-        if ([string]::IsNullOrEmpty($ToolPath)) {
-            $ToolPath = Join-Path $RepoRoot 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
-        }
-        if (-not [System.IO.File]::Exists($ToolPath)) { throw ('built evaluator missing: ' + $ToolPath) }
-        $evaluation = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($ToolPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln')
-        if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }
-        if ($evaluation.Code -ne 0) { throw ('land graph evaluation refused (exit ' + $evaluation.Code + ')') }
+        Assert-EvaluatedGraph $ToolPath
         Assert-HeadSource $head
         $temporaryEvaluation = Join-Path $RecordDirectory ('.land-evaluation-' + [Guid]::NewGuid().ToString('N'))
         [System.IO.File]::WriteAllText($temporaryEvaluation, ($expected -join "`n") + "`n", [System.Text.Encoding]::ASCII)
@@ -162,9 +166,10 @@ try {
             if ($record[$i] -cne $expected[$i]) { throw ('evaluation record mismatch: ' + @('digest', 'SDK', 'pins SHA')[$i]) }
         }
         # global.json is part of the exact graph digest and owns SDK selection/roll-forward.
-        # Keep the author's SDK identity as provenance: legitimate checking hosts can resolve
-        # different SDKs under that committed policy without invalidating this approval.
+        # A different permitted SDK needs its own evaluation: its trusted SDK tree
+        # can introduce imports, items or globs absent from the author's SDK.
         Assert-SelectableSdk $record[1]
+        if ($record[1] -cne $sdk) { Assert-EvaluatedGraph $ToolPath }
         Assert-HeadSource $head
     }
 } catch {
