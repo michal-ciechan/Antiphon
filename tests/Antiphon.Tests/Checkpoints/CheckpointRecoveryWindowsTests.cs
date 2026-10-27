@@ -13,28 +13,6 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
 {
     [Test]
-    public void recovery_fixture_records_tool_custody_before_cleanup()
-    {
-        // Portable witness for the setup used by the native death/cleanup rows.
-        var run = Run("sentinel", "live");
-        File.ReadAllText(Path.Combine(run, "tool", "sentinel")).ShouldBe("live");
-        CheckpointFixtures.MarkRun(run, alive: false);
-        var result = new ToolCopyCleanup().Remove(run);
-        result.Outcome.ShouldBe("Removed", result.ToString());
-        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
-    }
-
-    [Test]
-    public async Task completed_recovery_fixture_has_a_valid_receipt()
-    {
-        var run = Run();
-        CheckpointFixtures.MarkRun(run, alive: false);
-        WriteCompletion(run, int.MaxValue);
-        (await WaitAsync(run, TimeSpan.FromSeconds(1))).ShouldBe(0);
-        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
-    }
-
-    [Test]
     public async Task native_identity_keeps_live_then_removes_dead()
     {
         if (!Windows()) return;
@@ -382,9 +360,11 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         catch (InvalidOperationException) { }
     }
 
-    private string Run(string? name = null, string content = "")
+    private string Run(string? name = null, string content = "") => CreateRun(TempDir(), name, content);
+
+    internal static string CreateRun(string root, string? name = null, string content = "")
     {
-        var run = Path.Combine(TempDir(), "run-" + Guid.NewGuid().ToString("N"));
+        var run = Path.Combine(root, "run-" + Guid.NewGuid().ToString("N"));
         var tool = Path.Combine(run, "tool");
         Directory.CreateDirectory(run);
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
@@ -402,7 +382,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         return result;
     }
 
-    private static void WriteCompletion(string run, int executorPid)
+    internal static void WriteCompletion(string run, int executorPid)
     {
         var source = new SourceEvidence();
         SafeWrite.Require(new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
@@ -411,7 +391,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         { Source = source, RunId = Path.GetFileName(run), ExitCode = 0, Verdict = "GREEN" });
     }
 
-    private static async Task<int> WaitAsync(string run, TimeSpan timeout)
+    internal static async Task<int> WaitAsync(string run, TimeSpan timeout)
     {
         var output = new StringWriter();
         var exit = await new WaitCommand().WaitAsync(run, timeout, TimeSpan.FromSeconds(1), output, CancellationToken.None);
@@ -448,4 +428,33 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         Sweep(sandbox).Register(root);
         return root;
     }
+}
+
+// Portable setup witnesses must not inherit the native Windows class skip roster.
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class CheckpointRecoveryFixtureTests : CheckpointTestBase
+{
+    [Test]
+    public void recovery_fixture_records_tool_custody_before_cleanup()
+    {
+        // Portable witness for the setup used by the native death/cleanup rows.
+        var run = CheckpointRecoveryWindowsTests.CreateRun(TempDir(), "sentinel", "live");
+        File.ReadAllText(Path.Combine(run, "tool", "sentinel")).ShouldBe("live");
+        CheckpointFixtures.MarkRun(run, alive: false);
+        var result = new ToolCopyCleanup().Remove(run);
+        result.Outcome.ShouldBe("Removed", result.ToString());
+        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task completed_recovery_fixture_has_a_valid_receipt()
+    {
+        var run = CheckpointRecoveryWindowsTests.CreateRun(TempDir());
+        CheckpointFixtures.MarkRun(run, alive: false);
+        CheckpointRecoveryWindowsTests.WriteCompletion(run, int.MaxValue);
+        (await CheckpointRecoveryWindowsTests.WaitAsync(run, TimeSpan.FromSeconds(1))).ShouldBe(0);
+        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
+    }
+
 }
