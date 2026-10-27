@@ -218,7 +218,10 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
                     Attributes = 0x40,
                 };
                 uint options = 0x20 | 0x00200000 | (directory ? 0x1u : 0x40u);
-                var status = NtCreateFile(out var handle, 0x10000, ref attributes, out _, IntPtr.Zero, 0, 7, 1, options, IntPtr.Zero, 0);
+                // DELETE | SYNCHRONIZE | FILE_READ_ATTRIBUTES: synchronous opens require
+                // SYNCHRONIZE, and identity verification reads attributes through this handle.
+                const uint access = 0x00110080;
+                var status = NtCreateFile(out var handle, access, ref attributes, out _, IntPtr.Zero, 0, 7, 1, options, IntPtr.Zero, 0);
                 if (status < 0) throw new IOException("anchored-entry-open-failed: status=0x" + status.ToString("X8"));
                 return new SafeFileHandle(handle, ownsHandle: true);
             }
@@ -608,6 +611,14 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         public IntPtr SecurityQualityOfService;
     }
     [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatusBlock
+    {
+        // Native IO_STATUS_BLOCK begins with an NTSTATUS/PVOID union, followed by
+        // ULONG_PTR Information: two pointer-sized fields on both x86 and x64.
+        public IntPtr StatusOrPointer;
+        public UIntPtr Information;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     private struct SecurityAttributes
     {
         public int Length;
@@ -626,7 +637,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
     [DllImport("libc", EntryPoint = "open", SetLastError = true)] private static extern int OpenNative(string path, int flags);
     [DllImport("libc", EntryPoint = "close", SetLastError = true)] private static extern int CloseNative(int fd);
     [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)] private static extern int UnlinkAt(int dirfd, string pathname, int flags);
-    [DllImport("ntdll.dll")] private static extern int NtCreateFile(out IntPtr handle, uint access, ref ObjectAttributes attributes, out IntPtr ioStatus, IntPtr allocation, uint fileAttributes, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
+    [DllImport("ntdll.dll")] private static extern int NtCreateFile(out IntPtr handle, uint access, ref ObjectAttributes attributes, out IoStatusBlock ioStatus, IntPtr allocation, uint fileAttributes, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int fileInformationClass, ref FileDisposition information, int size);
     [DllImport("libc", EntryPoint = "readlink", SetLastError = true)] private static extern nint ReadLink(string path, byte[] buffer, nuint size);
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool MakeWindows(string path, IntPtr security);
