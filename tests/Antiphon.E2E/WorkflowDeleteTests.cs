@@ -291,14 +291,14 @@ public class WorkflowDeleteTests
             await confirmButton.ClickAsync();
 
             // Wait for navigation back to dashboard
-            await page.WaitForURLAsync("**/", new Microsoft.Playwright.PageWaitForURLOptions { Timeout = 10_000 });
+            await page.WaitForURLAsync("**/workflows", new Microsoft.Playwright.PageWaitForURLOptions { Timeout = 10_000 });
             await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
             // Screenshot: landed on dashboard
             await PlaywrightFixture.CapturePageAsync(page, "04_dashboard_after_delete");
 
             // Assert we're on the dashboard (no longer on the detail page)
-            page.Url.ShouldNotContain($"/workflows/{workflowId}");
+            page.Url.ShouldNotContain($"/workflow/{workflowId}");
 
             // Assert the workflow no longer exists via API
             var getResponse = await _appFixture.HttpClient.GetAsync($"/api/workflows/{workflowId}");
@@ -332,7 +332,7 @@ public class WorkflowDeleteTests
         try
         {
             // Navigate to the dashboard
-            var response = await page.GotoAsync(_appFixture.PlaywrightAddress);
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/workflows");
             response.ShouldNotBeNull();
             response!.Status.ShouldBeLessThan(500);
 
