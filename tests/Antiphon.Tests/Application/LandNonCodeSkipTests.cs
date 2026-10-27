@@ -321,38 +321,24 @@ public sealed class LandNonCodeSkipTests
     [Arguments("missing-line", "three lines")]
     public async Task EvaluationRecordPreservesSdkProvenanceWithoutBindingTheCheckingHost(string variant, string? refusal)
     {
-        var root = await InitAuditTreeAsync(new Dictionary<string, string>
+        await using var repo = await LandGraphEvaluationTests.ScriptRepoAsync(new()
         {
-            ["server/App.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
-            ["server/Application/Services/LandVerificationBuildGraph.pins.txt"] = "# fixture pins\n",
+            ["App/App.csproj"] = """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>""",
         });
-        await root.RunAsync(async () =>
-        {
-            var generated = await RunAuditAsync(root, "en-US", "-Update");
-            generated.Code.ShouldBe(0, generated.Stdout + generated.Stderr);
-            // The existing lightweight fixtures run the pre-check. Exercise the real approval checker here,
-            // with an explicit synthetic approval record, without building/evaluating another project.
-            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
-                Path.Combine(root, "scripts", "audit-land-verification-precheck.ps1"));
-            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
-                Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"), overwrite: true);
-            await GitAsync(root, "add", "--", "scripts");
-            await GitAsync(root, "commit", "-m", "real approval checker");
-            var manifest = await File.ReadAllLinesAsync(AuditManifest(root));
-            var pins = Encoding.UTF8.GetString(await GitBytesAsync(root, "rev-parse",
-                "HEAD:server/Application/Services/LandVerificationBuildGraph.pins.txt")).Trim();
-            var record = new[] { manifest[0], refusal is null ? variant : "10.0.300", pins };
-            if (variant == "malformed-sdk") record[1] = variant;
-            if (variant == "digest") record[0] = new string('0', 64);
-            if (variant == "pins") record[2] = new string('0', 40);
-            if (variant == "missing-line") record = record[..2];
-            await File.WriteAllLinesAsync(Path.Combine(root, "server", "Application", "Services",
-                "LandVerificationBuildGraph.evaluation.txt"), record);
+        var generated = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Update");
+        generated.ExitCode.ShouldBe(0, generated.Text);
+        var recordPath = repo.Full("server/Application/Services/LandVerificationBuildGraph.evaluation.txt");
+        var record = await File.ReadAllLinesAsync(recordPath);
+        record[1] = refusal is null ? variant : record[1];
+        if (variant == "malformed-sdk") record[1] = variant;
+        if (variant == "digest") record[0] = new string('0', 64);
+        if (variant == "pins") record[2] = new string('0', 40);
+        if (variant == "missing-line") record = record[..2];
+        await File.WriteAllLinesAsync(recordPath, record);
 
-            var checkedRecord = await RunAuditAsync(root, "en-US", "-Check");
-            checkedRecord.Code.ShouldBe(refusal is null ? 0 : 1, checkedRecord.Stdout + checkedRecord.Stderr);
-            if (refusal is not null) (checkedRecord.Stdout + checkedRecord.Stderr).ShouldContain(refusal);
-        });
+        var checkedRecord = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Check");
+        checkedRecord.ExitCode.ShouldBe(refusal is null ? 0 : 1, checkedRecord.Text);
+        if (refusal is not null) checkedRecord.Text.ShouldContain(refusal);
     }
 
     [Test]
@@ -402,6 +388,8 @@ public sealed class LandNonCodeSkipTests
         start.ArgumentList.Add("-File");
         start.ArgumentList.Add(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
         start.ArgumentList.Add("-Check");
+        start.ArgumentList.Add("-ToolPath");
+        start.ArgumentList.Add(LandGraphEvaluationTests.ToolDll());
         using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
         var stdout = await process.StandardOutput.ReadToEndAsync();
         var stderr = await process.StandardError.ReadToEndAsync();
