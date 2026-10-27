@@ -33,7 +33,9 @@ function New-NightlyChildStartInfo {
 function Start-NightlyNativeOwner {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory,
           [int]$TimeoutMilliseconds, [hashtable]$Environment, [string]$LogPath,
-          [Antiphon.Nightly.NativeProcessHooks]$Hooks = $null)
+          $Hooks = $null)
+    # NativeProcessHooks is Add-Type'd only on Win32NT. A typed parameter is
+    # resolved before this body and would hide the Linux refusal below.
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Nightly native custody requires Windows.' }
     $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $executable = $command.Source
