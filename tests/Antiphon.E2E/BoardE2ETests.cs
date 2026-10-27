@@ -269,13 +269,24 @@ public class BoardE2ETests
 
             await terminal.ClickAsync();
             var marker = $"MANUAL_XTERM_{suffix}";
-            var command =
-                $"powershell -NoProfile -Command \"1..8 | ForEach-Object {{ Write-Output '{marker}_'$_; Start-Sleep -Milliseconds 500 }}\"";
-            await page.Keyboard.InsertTextAsync(command);
+            var command = OperatingSystem.IsWindows()
+                ? $"powershell -NoProfile -Command \"1..8 | ForEach-Object {{ Write-Output '{marker}_'$_; Start-Sleep -Milliseconds 500 }}\""
+                : $"for i in 1 2 3 4 5 6 7 8; do echo {marker}_$i; sleep 0.5; done";
+            bool IsInputResponse(IResponse apiResponse, string input) =>
+                apiResponse.Url.Contains($"/api/sessions/{sessionId}/input", StringComparison.Ordinal)
+                && apiResponse.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase)
+                && JsonSerializer.Deserialize<JsonElement>(apiResponse.Request.PostData!)
+                    .GetProperty("input").GetString() == input;
+
+            // xterm sends text and Enter in separate HTTP requests. Wait for the text to reach
+            // the server before submitting, and match Enter's response rather than either POST.
+            var textResponse = await page.RunAndWaitForResponseAsync(
+                () => page.Keyboard.InsertTextAsync(command),
+                apiResponse => IsInputResponse(apiResponse, command));
+            textResponse.Status.ShouldBeLessThan(300);
             var inputResponse = await page.RunAndWaitForResponseAsync(
                 () => page.Keyboard.PressAsync("Enter"),
-                apiResponse => apiResponse.Url.Contains($"/api/sessions/{sessionId}/input", StringComparison.Ordinal)
-                    && apiResponse.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
+                apiResponse => IsInputResponse(apiResponse, "\r"));
             inputResponse.Status.ShouldBeLessThan(300);
 
             var orchestratorResponse = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/orchestrator");
@@ -499,6 +510,7 @@ public class BoardE2ETests
             await card.ClickAsync();
 
             var dialog = page.GetByRole(AriaRole.Dialog);
+            await dialog.GetByRole(AriaRole.Tab, new LocatorGetByRoleOptions { Name = "Diff", Exact = true }).ClickAsync();
             await Expect(dialog.GetByText("Diff review")).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
             {
                 Timeout = 15_000
