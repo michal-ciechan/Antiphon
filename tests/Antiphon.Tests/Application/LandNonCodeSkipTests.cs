@@ -2618,13 +2618,10 @@ public sealed class LandNonCodeSkipTests
             var realGit = WhichGit();
             if (OperatingSystem.IsWindows())
             {
-                await File.WriteAllTextAsync(Path.Combine(bin, "git.cmd"),
-                    "@echo off\r\n" +
-                    "if /I \"%~1\"==\"ls-tree\" (\r\n" +
-                    "  pwsh -NoProfile -NonInteractive -Command \"$b=[System.IO.File]::ReadAllBytes('" + stripped.Replace("'", "''") + "'); [Console]::OpenStandardOutput().Write($b,0,$b.Length)\"\r\n" +
-                    "  exit /b 0\r\n" +
-                    ")\r\n" +
-                    "\"" + realGit + "\" %*\r\n");
+                var helper = Path.Combine(AppContext.BaseDirectory, "custody-child");
+                foreach (var file in Directory.GetFiles(helper))
+                    File.Copy(file, Path.Combine(bin, Path.GetFileName(file)));
+                File.Copy(Path.Combine(helper, "Antiphon.CustodyTestChild.exe"), Path.Combine(bin, "git.exe"));
             }
             else
             {
@@ -2632,18 +2629,21 @@ public sealed class LandNonCodeSkipTests
                     "#!/bin/sh\n" +
                     "if [ \"$1\" = \"ls-tree\" ]; then\n" +
                     "  cat \"" + stripped + "\"\n" +
+                    "  printf ls-tree > \"" + stripped + ".served\"\n" +
                     "  exit 0\n" +
                     "fi\n" +
                     "exec \"" + realGit + "\" \"$@\"\n");
                 File.SetUnixFileMode(Path.Combine(bin, "git"), UnixFileMode.UserRead | UnixFileMode.UserExecute);
             }
             var path = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
-            var ran = await RunAuditAsync(root, "en-US", new Dictionary<string, string?> { ["PATH"] = path }, "-Check");
+            var ran = await RunAuditAsync(root, "en-US", new Dictionary<string, string?>
+            { ["PATH"] = path, ["C1390_REAL_GIT"] = realGit, ["C1390_TREE_WITHOUT_NUL"] = stripped }, "-Check");
             Console.WriteLine($"C1390_MISSING_NUL platform={Environment.OSVersion.Platform}; git={realGit}; " +
-                $"shim={Path.Combine(bin, OperatingSystem.IsWindows() ? "git.cmd" : "git")}; " +
+                $"shim={Path.Combine(bin, OperatingSystem.IsWindows() ? "git.exe" : "git")}; " +
                 $"tree-bytes={tree.Length}; supplied-bytes={tree.Length - 1}; audit-exit={ran.Code}");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
             ran.Stderr.ShouldContain("missing its trailing NUL");
+            File.ReadAllText(stripped + ".served").ShouldBe("ls-tree", "the malformed bytes must reach the real parser");
         });
     }
 
@@ -2861,7 +2861,8 @@ public sealed class LandNonCodeSkipTests
         foreach (var (mode, path, content) in entries ?? [])
         {
             var oid = await GitHashObjectAsync(root, content);
-            await GitAsync(root, "update-index", "--add", "--cacheinfo", mode + "," + oid + "," + path);
+            // This index-only fixture deliberately holds paths Win32 cannot materialize.
+            await GitAsync(root, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", mode + "," + oid + "," + path);
         }
         await GitAsync(root, "commit", "-m", "fixture");
         return root;

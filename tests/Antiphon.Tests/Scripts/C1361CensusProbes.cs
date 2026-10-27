@@ -827,6 +827,15 @@ internal static class C1361CensusProbes
 
     private static async Task<(int Exit, string Output)> Run(string program, string body, string root)
     {
+        if (program == "bash" && OperatingSystem.IsWindows())
+        {
+            // Reuse the WSL lane; Windows paths and bash.exe's implicit WSL argv do
+            // not name the same files. All embedded scratch paths are shell quoted.
+            var quoted = root.Replace("'", "'\\''");
+            var input = "census_root=$(wslpath -u '" + quoted + "') || exit 97\n" +
+                body.Replace(root, "'\"$census_root\"'", StringComparison.Ordinal);
+            return RemoteScriptContractTests.LinuxShellResult(input);
+        }
         var file = Path.Combine(root, program == "pwsh" ? "probe.ps1" : "probe.sh"); File.WriteAllText(file, body);
         var psi = new ProcessStartInfo(program) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (program == "pwsh") { psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-File"); }

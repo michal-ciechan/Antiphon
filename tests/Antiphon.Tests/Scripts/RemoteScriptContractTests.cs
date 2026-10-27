@@ -8840,6 +8840,9 @@ public sealed class RemoteScriptContractTests
     // symlink's target mode, a restart's ordering), not text. On Windows the Linux shell is WSL:
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
     internal static string LinuxShell(string script, string? repositoryVariable = null)
+        => LinuxShellResult(script, repositoryVariable).Output;
+
+    internal static (int Exit, string Output) LinuxShellResult(string script, string? repositoryVariable = null)
     {
         if (ForceNoLinuxPwsh.Value)
             throw new InvalidOperationException("A Linux script block ran before the CARD-0905 pwsh skip.");
@@ -8884,7 +8887,7 @@ public sealed class RemoteScriptContractTests
         var output = stdout.Result;
         Console.WriteLine(output);
         Console.WriteLine(stderr.Result);
-        return output;
+        return (process.ExitCode, output);
     }
 
     private static void Refuses(IReadOnlyList<string> commands, string probe, string diagnosis)

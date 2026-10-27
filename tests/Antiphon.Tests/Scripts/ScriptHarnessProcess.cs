@@ -190,6 +190,7 @@ internal static class ScriptHarnessProcess
 
     internal static string ResolvePowerShell()
     {
+        if (OperatingSystem.IsWindows()) return ScriptHarnessProcessFixture.ResolveInstalledPowerShell();
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         var name = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))

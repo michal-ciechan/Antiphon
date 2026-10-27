@@ -167,8 +167,9 @@ public sealed class CardRelationshipScriptTests
         var run = await RunAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049");
 
         run.ExitCode.ShouldNotBe(0);
-        run.Stderr.ShouldContain("Relationship route unavailable");
-        run.Stderr.ShouldContain("code relationship_route_missing");
+        var error = System.Text.RegularExpressions.Regex.Replace(run.Stderr, @"\s+", " ");
+        error.ShouldContain("Relationship route unavailable");
+        error.ShouldContain("code relationship_route_missing");
         run.Stdout.ShouldBeEmpty();
         stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
         {

@@ -16,7 +16,8 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     public void recovery_fixture_records_tool_custody_before_cleanup()
     {
         // Portable witness for the setup used by the native death/cleanup rows.
-        var run = Run();
+        var run = Run("sentinel", "live");
+        File.ReadAllText(Path.Combine(run, "tool", "sentinel")).ShouldBe("live");
         CheckpointFixtures.MarkRun(run, alive: false);
         var result = new ToolCopyCleanup().Remove(run);
         result.Outcome.ShouldBe("Removed", result.ToString());
@@ -24,16 +25,25 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task completed_recovery_fixture_has_a_valid_receipt()
+    {
+        var run = Run();
+        CheckpointFixtures.MarkRun(run, alive: false);
+        WriteCompletion(run, int.MaxValue);
+        (await WaitAsync(run, TimeSpan.FromSeconds(1))).ShouldBe(0);
+        Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task native_identity_keeps_live_then_removes_dead()
     {
         if (!Windows()) return;
-        var run = Run();
+        var run = Run("sentinel", "live");
         using var child = Hold();
         try
         {
             Own(run, child, "launched");
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            WriteTool(run, "sentinel", "live");
             var deletes = 0;
             var cleanup = new ToolCopyCleanup(beforeDelete: _ => deletes++);
             Remove(run, cleanup).Outcome.ShouldBe("Retained");
@@ -87,8 +97,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         {
             Own(run, child, "launched");
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
-            new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
-            { RunId = Path.GetFileName(run), Phase = "done", ExecutorPid = child.Id, ExitCode = 0 });
+            WriteCompletion(run, child.Id);
             (await WaitAsync(run, TimeSpan.FromMilliseconds(25))).ShouldBe(ExitCodes.StillRunning);
             Directory.Exists(Path.Combine(run, "tool")).ShouldBeTrue();
             await Stop(child);
@@ -102,12 +111,11 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     public async Task starter_death_before_launch_reclaims_partial_copy()
     {
         if (!Windows()) return;
-        var run = Run();
+        var run = Run("partial", "copy began");
         using var starter = Hold();
         try
         {
             Own(run, starter, "preparing");
-            WriteTool(run, "partial", "copy began");
             Remove(run).Outcome.ShouldBe("Retained");
             await Stop(starter);
             Remove(run).Outcome.ShouldBe("Removed");
@@ -222,13 +230,12 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     public async Task launch_unknown_survives_until_late_ack()
     {
         if (!Windows()) return;
-        var run = Run();
+        var run = Run("sentinel", "unknown");
         using var child = Hold();
         try
         {
             Own(run, child, "launch-attempted", includeLaunch: false);
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            WriteTool(run, "sentinel", "unknown");
             Remove(run).Outcome.ShouldBe("Retained");
             File.ReadAllText(sentinel).ShouldBe("unknown");
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
@@ -243,10 +250,9 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     public void locked_tool_delete_is_reported_then_retried()
     {
         if (!Windows()) return;
-        var run = Run();
+        var run = Run("locked.bin", "lock");
         CheckpointFixtures.MarkRun(run, alive: false);
         var path = Path.Combine(run, "tool", "locked.bin");
-        WriteTool(run, "locked.bin", "lock");
         using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             Remove(run).Outcome.ShouldBe("Failed");
@@ -376,21 +382,16 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         catch (InvalidOperationException) { }
     }
 
-    private string Run()
+    private string Run(string? name = null, string content = "")
     {
         var run = Path.Combine(TempDir(), "run-" + Guid.NewGuid().ToString("N"));
         var tool = Path.Combine(run, "tool");
         Directory.CreateDirectory(run);
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
+        if (name is not null)
+            SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, name), content, SafeWrite.Under(tool)));
         SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         return run;
-    }
-
-    private static void WriteTool(string run, string name, string content)
-    {
-        var tool = Path.Combine(run, "tool");
-        SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, name), content, SafeWrite.Under(tool)));
-        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
     }
 
     private static CleanupReceipt Remove(string run, ToolCopyCleanup? cleanup = null)
@@ -399,6 +400,15 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         Console.WriteLine(result);
         if (result.Outcome is "Failed" or "Refused") FixtureFileDiagnostics.Write(result.Path);
         return result;
+    }
+
+    private static void WriteCompletion(string run, int executorPid)
+    {
+        var source = new SourceEvidence();
+        SafeWrite.Require(new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
+        { Source = source, RunId = Path.GetFileName(run), Phase = "done", ExecutorPid = executorPid, ExitCode = 0 }));
+        ReportWriter.WriteFiles(run, new ReportModel
+        { Source = source, RunId = Path.GetFileName(run), ExitCode = 0, Verdict = "GREEN" });
     }
 
     private static async Task<int> WaitAsync(string run, TimeSpan timeout)
