@@ -63,4 +63,31 @@ public sealed class WindowsDeliveryFixtureWitnessTests
         path.ShouldBe("/runner/task/instructions/grok/" + id.ToString("N") + "/rules.md");
         GrokRulesTransport.ValidateReceiptPath(path, id);
     }
+
+    [Test]
+    [Arguments(@"C:\fixture", @"C:\fixture\instructions\grok\")]
+    [Arguments(@"\\server\share\fixture\", @"\\server\share\fixture\instructions\grok\")]
+    public void Native_Windows_recipient_rules_receipt_preserves_its_path_grammar(string cwd, string prefix)
+    {
+        var id = Guid.NewGuid();
+        var mixed = cwd.TrimEnd('\\') + "/instructions/grok/" + id.ToString("N") + "/rules.md";
+        Should.Throw<GrokRulesTransportException>(() => GrokRulesTransport.ValidateReceiptPath(mixed, id))
+            .Reason.ShouldBe("path");
+        var path = CodexCliRemoteDeliveryFixture.RulesPath(cwd, id);
+        path.ShouldBe(prefix + id.ToString("N") + @"\rules.md");
+        GrokRulesTransport.ValidateReceiptPath(path, id);
+    }
+
+    [Test]
+    public void Clear_Claude_screen_with_unknown_Herdr_input_custody_still_refuses()
+    {
+        var id = Guid.NewGuid();
+        var generation = DateTime.UnixEpoch;
+        var guard = new ScriptedClaudeInputGuard();
+        guard.Bind(generation);
+        var observation = guard.Observe(id, 1, ClaudeDialogFixture.ComposerScreen());
+        ProviderDialogObservationService.Refusal(observation, id, generation).ShouldBeNull();
+        ProviderDialogObservationService.Refusal(observation with { InputHistoryKnown = false }, id, generation)
+            .ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+    }
 }
