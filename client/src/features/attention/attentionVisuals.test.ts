@@ -40,6 +40,7 @@ const ALL_KINDS: AttentionKind[] = [
   'UncorrelatedReport',
   'PastExpectedIdle',
   'ProviderInputWait',
+  'PendingNotesAged',
   'ChecksSpent',
   'SessionDisagreement',
   'RecentCriticalIncident',

@@ -344,6 +344,13 @@ public sealed class DeliveryVerificationSettings
     public int StrandedAgeSeconds { get; set; } = 60;
 
     /// <summary>
+    /// Attention when the oldest pending note on a destination, still under
+    /// <c>MaxDeliveryAttempts</c>, is older than this many seconds. Zero or negative
+    /// disables the row. Detection only: the projection does not flush or send.
+    /// </summary>
+    public int PendingNoteAlertAgeSeconds { get; set; } = 900;
+
+    /// <summary>
     /// CARD-0055 kill switch. With it off, a delivery is Delivered as soon as the output sequence
     /// advances after Enter — which any redraw satisfies, including the composer re-rendering the
     /// text it is STILL HOLDING. That is how a note sat unsubmitted for 104 minutes and how a

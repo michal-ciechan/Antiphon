@@ -384,6 +384,10 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public DateTime? AcceptedStartedAt { get; set; }
     public bool DialogGuardEnabled { get; set; }
+    /// <summary>Reports an adopted session: guarded state stays Unknown while <see cref="ProviderDialogObservation.ScreenState"/> keeps the classified screen.</summary>
+    public bool DialogAdopted { get; set; }
+    /// <summary>A write may have landed bytes. Delivery stays withheld even when the screen is Clear.</summary>
+    public bool DialogInputUncertain { get; set; }
     private readonly Guid _dialogEpoch = Guid.NewGuid();
     private long _dialogInputRevision;
     public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
@@ -391,13 +395,17 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         ct.ThrowIfCancellationRequested();
         if (!DialogGuardEnabled) return Task.FromResult<ProviderDialogObservation?>(null);
         var observed = ClaudeDialogObservation.Observe(SnapshotRenderedScreen());
+        var classified = observed.State switch
+        {
+            ClaudeDialogState.Clear => ProviderDialogState.Clear,
+            ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
+            _ => ProviderDialogState.Unknown
+        };
+        var historyKnown = !DialogAdopted && !DialogInputUncertain;
         return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
-            SnapshotSequence, _dialogInputRevision, observed.State switch
-            {
-                ClaudeDialogState.Clear => ProviderDialogState.Clear,
-                ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
-                _ => ProviderDialogState.Unknown
-            }, observed.Kind.ToString(), observed.CanCancel, true));
+            SnapshotSequence, _dialogInputRevision, historyKnown ? classified : ProviderDialogState.Unknown,
+            observed.Kind.ToString(), observed.CanCancel, historyKnown, null,
+            DialogAdopted, DialogInputUncertain, classified));
     }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];

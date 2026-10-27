@@ -381,6 +381,13 @@ public enum AttentionKind
     /// </summary>
     SlotOrphan = 59,
     ProviderInputWait = 60,
+
+    /// <summary>
+    /// Pending notes on one destination are older than
+    /// <c>DeliveryVerification.PendingNoteAlertAgeSeconds</c> and still under
+    /// <c>MaxDeliveryAttempts</c>. One Warning row per session. Detection only.
+    /// </summary>
+    PendingNotesAged = 61,
 }
 
 /// <summary>

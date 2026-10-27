@@ -141,6 +141,67 @@ public class ClaudeDialogInputGuardTests
         (await single.Runtime.GetSnapshotAsync(single.Id, CancellationToken.None)).Dialog!.SubmittedInput.ShouldBeNull();
     }
 
+    [Test]
+    public async Task AdoptedIdleClearScreenIsTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn();
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("adopted-idle-notice")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        adopted.Child.Inputs.ShouldBe(["adopted-idle-notice"]);
+    }
+
+    [Test]
+    public async Task AdoptedBlockedScreenStaysModalBlocked()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.EndTurn();
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        adopted.Session.RenderDialogScreenForTest(Modal);
+        (await adopted.SendAsync("into-dialog")).Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task AdoptedMidTurnIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.Assistant("still working");
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        (await adopted.SendAsync("mid-turn")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task UnknownScreenWithoutIdleTranscriptIsNotTyped()
+    {
+        await using var adopted = new Fixture(adopted: true);
+        var tailer = new Tailer(adopted.Id);
+        tailer.Assistant("partial turn");
+        adopted.Session.BindChildForTest(adopted.Child, tailer, adopted.Generation);
+        adopted.Session.RenderDialogScreenForTest("partial");
+        (await adopted.SendAsync("unreadable")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task UncertainInputStaysWithheldWhenTheTranscriptIsIdle()
+    {
+        await using var session = new Fixture();
+        session.Child.Fail = true;
+        await Should.ThrowAsync<IOException>(() => session.Runtime.SendInputAsync(session.Id, "failed", CancellationToken.None));
+        session.Child.Fail = false;
+        var tailer = new Tailer(session.Id);
+        tailer.EndTurn();
+        session.Session.BindChildForTest(session.Child, tailer, session.Generation);
+        session.Session.RenderDialogScreenForTest(Clear);
+        (await session.SendAsync("after-uncertain")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        session.Child.Inputs.ShouldBeEmpty();
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));
@@ -196,6 +257,12 @@ public class ClaudeDialogInputGuardTests
         public void Prompt(string text) => _snapshot = new(id,
             [new(id, 1, TranscriptKinds.UserPrompt, "native-prompt", null, DateTimeOffset.UtcNow,
                 "user", text, null, null, null, null, null)], 1);
+        public void EndTurn() => _snapshot = new(id,
+            [new(id, 1, TranscriptKinds.TurnEnd, null, null, DateTimeOffset.UtcNow,
+                null, null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn)], 1);
+        public void Assistant(string text) => _snapshot = new(id,
+            [new(id, 1, TranscriptKinds.AssistantText, null, null, DateTimeOffset.UtcNow,
+                "assistant", text, null, null, null, null, null)], 1);
         public RunnerTranscriptDto Snapshot() => _snapshot;
         public void Start() { }
         public void NotifyChildExited() { }
