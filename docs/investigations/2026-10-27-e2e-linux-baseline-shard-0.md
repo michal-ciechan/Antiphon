@@ -83,17 +83,96 @@ on the built DLL with `--no-build`.
 
 ## Status
 
-Class runs are in progress. The table below is filled as each class returns.
+All ten shard classes ran. None hit the 25-minute cap. Totals: 41 executed,
+27 passed, 14 failed, 2 skipped. The 14 failures are the Windows delivery
+gate and the headed canary opt-in. The app, browser, and CLI classes passed
+on the isolated stack.
 
-## Classes
+Wall time is the TRX `Times` finish minus start, in seconds. Skipped is the
+TRX `notExecuted` count. TUnit records those rows as `NotExecuted` with a
+skip trace.
 
 | # | class | executed | passed | failed | skipped | wall | notes |
 |---|-------|----------|--------|--------|---------|------|-------|
+| 0 | AgentE2ETests | 2 | 2 | 0 | 0 | 82.901 | passed |
+| 3 | CardCliE2ETests | 10 | 10 | 0 | 0 | 274.797 | passed |
+| 6 | ChromiumRuntimeSmokeTests | 1 | 1 | 0 | 0 | 2.085 | passed |
+| 9 | DelegationPipelineE2ETests | 0 | 0 | 0 | 2 | 0.664 | Windows headed skip |
+| 12 | DispatchBaseWarningDeliveryE2ETests | 13 | 0 | 13 | 0 | 1.182 | Windows gate; rerun matched |
+| 15 | PtyBackendEnvGuardTests | 1 | 1 | 0 | 0 | 0.500 | passed |
+| 18 | OutputDistillationApplyCanaryTests | 1 | 0 | 1 | 0 | 0.872 | opt-in gate; rerun matched |
+| 21 | ProjectDeleteE2ETests | 8 | 8 | 0 | 0 | 189.283 | passed |
+| 24 | ScheduleCliE2ETests | 1 | 1 | 0 | 0 | 49.464 | passed |
+| 27 | WorkflowOutputTests | 4 | 4 | 0 | 0 | 102.640 | passed |
+
+Class wall includes per-test Postgres and app startup. That startup is outside
+the case `duration` attribute. Sum of class walls is 704.388 seconds.
 
 ## Failures
 
-None recorded yet.
+### DispatchBaseWarningDeliveryE2ETests
+
+All 13 cases failed in the first run (TRX wall 0.854s) and again on the rerun
+(TRX wall 1.182s). Same error every time:
+
+`ShouldAssertException: OperatingSystem.IsWindows() should be True but was False`
+
+The assertion is the first line of `LandDeliveryFixture.InitializeAsync`
+(`tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs`). The app and the
+isolated runner are not started. Cause: Windows/Linux gate. The rc profile
+already excludes this class on Linux (CARD-1323: Windows ConPTY and native
+FakeGrok). A direct run fails instead of skipping. Not a product defect and
+not a flake.
+
+Cases: `C540_CollapsedWarningsReachIdleCaller`,
+`C508_MismatchWarningReachesCaller`, `C508_MismatchWarningWaitsForCaller`,
+`C540_CollapsedWarningsWaitForBusyCaller`,
+`C540_ClaimCrashRecoversCollapsedWarnings`,
+`C540_ProjectionCrashRecoversOriginalPairs`,
+`C540_PreEnqueueCrashRecoversWarnings`,
+`C540_PreEnqueueWaitSurvivesSlowMaterialization`,
+`C540_EnqueueFailureRetriesWarnings`, `C540_QueueInsertCrashReusesRows`,
+`C540_PreTypingCrashRecoversWarnings`, `C540_PostPromptCrashDoesNotRetype`,
+`C540_ReceiptCrashDoesNotRetype`.
+
+### OutputDistillationApplyCanaryTests
+
+`Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup` failed
+in the first run (case 0.083s, class wall 0.773s) and on the rerun (case
+0.040s, class wall 0.872s):
+
+`InvalidOperationException: Both dedicated canary opt-ins are required.`
+
+`DistillerCanaryGuard.ValidateOptIns` throws unless `ANTIPHON_HEADED_TESTS`
+and `ANTIPHON_DISTILLER_APPLY_CANARY` are both `1`. This run cleared both,
+which is what an automated E2E child is required to do. The Windows assertion
+later in the test was not reached. Cause: environment / opt-in gate. The rc
+profile already excludes the class (CARD-0599, headed canary). Not a product
+defect and not a flake.
+
+### DelegationPipelineE2ETests
+
+Not a failure. Both cases were skipped (`exit 8`): `Skipped: Headed tests
+require Windows ConPTY`. The rc profile excludes the class for the same
+headed-provider reason (CARD-0599). This is the skip shape the two red
+classes do not use.
 
 ## Tests over 30 seconds
 
-None recorded yet.
+None. The longest case duration is 12.629s
+(`CardCliE2ETests.The_cli_reopens_a_closed_card_by_its_identifier`). Next are
+`AgentE2ETests.Agents_page_creates_agent_and_assigns_card_to_queue` at
+11.916s and
+`CardCliE2ETests.The_cli_creates_reads_edits_moves_and_closes_a_card_by_its_identifier`
+at 11.783s.
+
+## What Linux ran
+
+Chromium headless rendered local content. Postgres `16-alpine` was already
+present and the passing classes booted the disposable database, the prebuilt
+`client/dist`, and the suite's own loopback runner. Agent pages, card CLI,
+schedule CLI, workflow output, and project delete passed. Production port
+17204 was not used.
+
+`AgentE2ETests` rewrites `docs/screenshots/agents/01-agent-queue-foundation.png`
+on success. That tracked file was restored and is not part of this commit.
