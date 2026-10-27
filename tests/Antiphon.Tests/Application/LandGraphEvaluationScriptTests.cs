@@ -159,7 +159,7 @@ public sealed partial class LandGraphEvaluationTests
         var project = variant == "sdk-doc-glob" ? "App.csproj" : "App/App.csproj";
         await using var repo = await ScriptRepoAsync(new()
         {
-            [project] = SdkProject("<PropertyGroup><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup>"),
+            [project] = variant == "sdk-doc-glob" ? "<Project />" : SdkProject(""),
             ["docs/guide.md"] = "# SDK default item witness",
         });
         var update = await RunScriptAsync(repo.Root, "-Update");
