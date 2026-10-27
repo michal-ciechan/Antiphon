@@ -2419,10 +2419,10 @@ MSBuildProjectDirectory are admitted without these pins. The recorder and canary
 pre-check and exact digest/pins record. The record's SDK line retains the author-time
 evaluator identity as provenance and must name a canonical stable SDK release selectable
 by the hashed `global.json` (currently a stable pin with `rollForward: latestMinor`;
-other policies and prerelease pins refuse until explicitly qualified). When the checking
-host resolves a different SDK, `-Check` requires a built evaluator (`-ToolPath` or the
-documented default path) and successful real evaluation under that host's SDK before
-accepting. This catches docs reached by the other SDK's imports, items or globs, without
+other policies and prerelease pins refuse until explicitly qualified). `-Check` always
+requires a built evaluator (`-ToolPath` or the documented default path) and successful
+real evaluation under the checking host's SDK before accepting, even when the recorded
+SDK matches that host. This catches docs reached by SDK imports, items or globs, without
 rewriting any approval records. Updating the record still requires successful real
 evaluation and records the SDK used. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.

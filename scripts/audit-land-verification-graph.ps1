@@ -1,6 +1,6 @@
 # CARD-1483 S5: author-time approval of the land build graph.
 # -Update requires the emulation pre-check AND real MSBuild evaluation, with no restore.
-# -Check verifies the pre-check, manifest and digest/pins record, and evaluates on SDK mismatch.
+# -Check verifies the pre-check, manifest and digest/pins record, and always evaluates.
 # The recorded SDK must be a stable release selectable by the committed latestMinor policy.
 # CARD-1528: -Update also refuses unobserved filesystem/unsupported evaluation functions.
 # CARD-1540: timestamp metadata and unreviewed environment properties refuse; knob reads need exact pins.
@@ -166,10 +166,10 @@ try {
             if ($record[$i] -cne $expected[$i]) { throw ('evaluation record mismatch: ' + @('digest', 'SDK', 'pins SHA')[$i]) }
         }
         # global.json is part of the exact graph digest and owns SDK selection/roll-forward.
-        # A different permitted SDK needs its own evaluation: its trusted SDK tree
-        # can introduce imports, items or globs absent from the author's SDK.
+        # SDK provenance never replaces evaluation: even a host-equal record must
+        # not approve imports, items or globs without checking the actual graph.
         Assert-SelectableSdk $record[1]
-        if ($record[1] -cne $sdk) { Assert-EvaluatedGraph $ToolPath }
+        Assert-EvaluatedGraph $ToolPath
         Assert-HeadSource $head
     }
 } catch {
