@@ -270,7 +270,8 @@ public class CapacityRecoveryTaskTests
 
     internal static ServiceProvider CreateDispatcherProvider(
         string connectionString, IInterceptor? interceptor = null, TimeProvider? timeProvider = null,
-        DeliveryVerificationSettings? deliveryVerification = null)
+        DeliveryVerificationSettings? deliveryVerification = null,
+        Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -324,6 +325,7 @@ public class CapacityRecoveryTaskTests
         services.AddScoped<RoutingPinService>();
         services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
+        configure?.Invoke(services);
         return services.BuildServiceProvider();
     }
 
