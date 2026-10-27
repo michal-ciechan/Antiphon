@@ -76,6 +76,7 @@ public sealed class ReapedProcStatIdentityTests
         public void Move(string source, string destination, bool overwrite) => throw Unused();
         public void Unlink(string path) => throw Unused();
         public void RemoveDirectory(string path, bool recursive) => throw Unused();
+        public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) => throw Unused();
         public string? EnvironmentVariable(string name) => throw Unused();
     }
 }

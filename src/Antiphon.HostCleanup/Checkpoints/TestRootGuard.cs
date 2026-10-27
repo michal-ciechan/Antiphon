@@ -85,17 +85,22 @@ public static class TestRootGuard
             != JsonSerializer.Serialize(current))
             throw new IOException("refused: root-marker-changed");
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        SafeWrite.Require(write.Text(temporary, JsonSerializer.Serialize(expected), write.Under(root)));
+        var payload = JsonSerializer.Serialize(expected);
+        SafeWrite.Require(write.Text(temporary, payload, write.Under(root)));
+        var armed = false;
         try
         {
             SafeWrite.Require(write.Preflight(root, [path]));
             if (!ReceiptFile.ReadBytes(context, path, cancellationToken).SequenceEqual(previous))
                 throw new IOException("refused: root-marker-changed");
-            context.Io.Move(temporary, path, overwrite: true);
+            armed = true;
+            ReplacementPublication.Publish(context.Io, temporary, path, System.Text.Encoding.UTF8.GetBytes(payload));
         }
         finally
         {
-            if (context.Io.FileExists(temporary)) new CheckpointDelete(context).DeleteCreatedFile(temporary);
+            // Publish keeps the temporary when the destination is missing. A refusal
+            // before publication still removes the unused temporary.
+            if (!armed && context.Io.FileExists(temporary)) new CheckpointDelete(context).DeleteCreatedFile(temporary);
         }
     }
 

@@ -62,7 +62,9 @@ public sealed class RunStateStore
             return true;
         if (failure is not IOException)
             return false;
-        if (failure.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021))
+        // 1175/1176/1177 are ReplaceFileW outcomes that can drop or rename the destination.
+        if (failure.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021)
+            or unchecked((int)0x80070497) or unchecked((int)0x80070498) or unchecked((int)0x80070499))
             return true;
         // ReceiptFile retains the typed native failure when adding path context.
         return failure.InnerException is { } inner && IsContention(inner);

@@ -94,13 +94,151 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         // MoveFileEx replacement can deny a destination even when readers share deletion.
         // ReplaceFile publishes the complete temporary while existing readers retain the old
         // file. Keep first publication on Move, and let the caller retry sharing violations.
+        // ReplaceFileW with a backup keeps the previous generation when error 1176 or 1177
+        // would otherwise drop the destination. Linux rename stays a single Move.
         if (OperatingSystem.IsWindows() && overwrite && File.Exists(destination))
-            File.Replace(source, destination, null);
-        else
-            File.Move(source, destination, overwrite);
+        {
+            var backup = destination + "." + Guid.NewGuid().ToString("N") + ".bak";
+            try
+            {
+                File.Replace(source, destination, backup);
+                if (!File.Exists(destination))
+                    throw new IOException("replacement-unverified", unchecked((int)0x80070498));
+            }
+            catch (IOException)
+            {
+                if (!File.Exists(destination) && File.Exists(backup))
+                {
+                    try { File.Move(backup, destination, overwrite: false); }
+                    catch (IOException) { }
+                }
+                else if (File.Exists(backup))
+                {
+                    try { File.Delete(backup); }
+                    catch (IOException) { }
+                }
+                throw;
+            }
+            if (File.Exists(backup))
+            {
+                try { File.Delete(backup); }
+                catch (IOException) { }
+            }
+            return;
+        }
+        File.Move(source, destination, overwrite);
     }
     public void Unlink(string path) => File.Delete(path);
     public void RemoveDirectory(string path, bool recursive) => Directory.Delete(path, recursive);
+    public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory)
+    {
+        if (OperatingSystem.IsLinux()) DeleteAnchoredLinux(path, expectedEntry, directory);
+        else if (OperatingSystem.IsWindows()) DeleteAnchoredWindows(path, expectedEntry, directory);
+        else throw new IOException("anchored-delete-unavailable");
+    }
+
+    private void DeleteAnchoredLinux(string path, FilesystemIdentity expectedEntry, bool directory)
+    {
+        var parent = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name) || name.IndexOfAny(['/', '\\']) >= 0)
+            throw new IOException("anchored-path-unsafe");
+        // O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC. A swapped symlink fails here and is not deleted.
+        var fd = OpenNative(parent, 0x10000 | 0x20000 | 0x80000);
+        if (fd < 0) throw new IOException("anchored-open-failed: errno=" + Marshal.GetLastPInvokeError());
+        try
+        {
+            if (Statx(fd, "", 0x1000, 0x3CF, out var parentStat) != 0 || (parentStat.Mask & 0x3CF) != 0x3CF)
+                throw new IOException("anchored-parent-stat-failed: errno=" + Marshal.GetLastPInvokeError());
+            if (Statx(fd, name, 0x100, 0x3CF | 0x800, out var entry) != 0 || (entry.Mask & 0x3CF) != 0x3CF)
+                throw new IOException("anchored-entry-stat-failed: errno=" + Marshal.GetLastPInvokeError());
+            var entryIdentity = IdentityFromLinux(entry);
+            var entryKind = entry.Mode & 0xF000;
+            if (!AnchoredDelete.Allowed(true, (parentStat.Mode & 0xF000) == 0x4000, false, expectedEntry, entryIdentity, entryKind == 0xA000))
+                throw new IOException("anchored-identity-mismatch");
+            if (UnlinkAt(fd, name, directory ? 0x200 : 0) != 0)
+                throw new IOException("anchored-unlink-failed: errno=" + Marshal.GetLastPInvokeError());
+        }
+        finally { _ = CloseNative(fd); }
+    }
+
+    private void DeleteAnchoredWindows(string path, FilesystemIdentity expectedEntry, bool directory)
+    {
+        var parent = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name) || name.IndexOfAny(['/', '\\']) >= 0)
+            throw new IOException("anchored-path-unsafe");
+        const uint flags = 0x02000000 | 0x00200000;
+        var parentHandle = CreateFile(parent, 0x80000000, 7, IntPtr.Zero, 3, flags, IntPtr.Zero);
+        if (parentHandle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            parentHandle.Dispose();
+            throw new IOException("anchored-open-failed: win32=" + error);
+        }
+        using (parentHandle)
+        {
+            if (!GetFileInformationByHandle(parentHandle, out var parentInfo))
+                throw new IOException("anchored-parent-stat-failed");
+            using var child = OpenRelative(parentHandle, name, directory);
+            if (!GetFileInformationByHandle(child, out var info)
+                || !GetFileInformationByHandleEx(child, FileBasicInformation, out var basic, (uint)Marshal.SizeOf<FileBasicInfo>()))
+                throw new IOException("anchored-entry-stat-failed");
+            var entry = new FilesystemIdentity(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow, FileTimeToUnixNs(basic.CreationTime));
+            if (!AnchoredDelete.Allowed(true, (parentInfo.Attributes & 0x10u) != 0, (parentInfo.Attributes & 0x400u) != 0,
+                    expectedEntry, entry, (info.Attributes & 0x400u) != 0))
+                throw new IOException("anchored-identity-mismatch");
+            var disposition = new FileDisposition { DeleteFile = true };
+            if (!SetFileInformationByHandle(child, 4, ref disposition, Marshal.SizeOf<FileDisposition>()))
+                throw new IOException("anchored-unlink-failed: win32=" + Marshal.GetLastPInvokeError());
+        }
+    }
+
+    private static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, bool directory)
+    {
+        var buffer = Marshal.StringToHGlobalUni(name);
+        var unicode = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+        try
+        {
+            Marshal.StructureToPtr(new UnicodeString
+            {
+                Length = (ushort)(name.Length * 2),
+                MaximumLength = (ushort)((name.Length + 1) * 2),
+                Buffer = buffer,
+            }, unicode, false);
+            var added = false;
+            parent.DangerousAddRef(ref added);
+            try
+            {
+                var attributes = new ObjectAttributes
+                {
+                    Length = Marshal.SizeOf<ObjectAttributes>(),
+                    RootDirectory = parent.DangerousGetHandle(),
+                    ObjectName = unicode,
+                    Attributes = 0x40,
+                };
+                uint options = 0x20 | 0x00200000 | (directory ? 0x1u : 0x40u);
+                var status = NtCreateFile(out var handle, 0x10000, ref attributes, out _, IntPtr.Zero, 0, 7, 1, options, IntPtr.Zero, 0);
+                if (status < 0) throw new IOException("anchored-entry-open-failed: status=0x" + status.ToString("X8"));
+                return new SafeFileHandle(handle, ownsHandle: true);
+            }
+            finally
+            {
+                if (added) parent.DangerousRelease();
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(unicode);
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static FilesystemIdentity IdentityFromLinux(LinuxStatx stat)
+    {
+        var created = (stat.Mask & 0x800) != 0 ? stat.BtimeSec * 1_000_000_000 + stat.BtimeNsec : 0;
+        return new FilesystemIdentity(((ulong)stat.DevMajor << 32) | stat.DevMinor, stat.Inode, created);
+    }
     public string? EnvironmentVariable(string name) => Environment.GetEnvironmentVariable(name);
 
     public int CreateExclusiveDirectory(string path)
@@ -195,7 +333,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
                 if (!ownerOnly)
                     mode = (ushort)(mode | 0x3F);
                 var size = (long)(((ulong)info.SizeHigh << 32) | info.SizeLow);
-                return new(kind, 0, inode, kind == "file" ? size : 0, FileTimeToUnixNs(info.Write), changed, mode, info.Links, owner,
+                return new(kind, info.Volume, inode, kind == "file" ? size : 0, FileTimeToUnixNs(info.Write), changed, mode, info.Links, owner,
                     FileTimeToUnixNs(basic.CreationTime));
             }
         }
@@ -346,13 +484,14 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
             {
                 // TYPE MODE NLINK UID MTIME CTIME INO SIZE, with no followed symlinks.
                 const uint mask = 0x3CF;
-                if (Statx(-100, path, 0x100, mask, out var stat) != 0)
+                if (Statx(-100, path, 0x100, mask | 0x800, out var stat) != 0)
                     return new(Marshal.GetLastPInvokeError() is 2 or 20 ? "absent" : "unknown", 0, 0, 0, 0, 0);
                 if ((stat.Mask & mask) != mask) return new("unknown", 0, 0, 0, 0, 0);
                 var kind = (stat.Mode & 0xF000) switch { 0x8000 => "file", 0x4000 => "directory", 0xA000 => "symlink", _ => "other" };
+                var created = (stat.Mask & 0x800) != 0 ? stat.BtimeSec * 1_000_000_000 + stat.BtimeNsec : 0;
                 return new(kind, ((ulong)stat.DevMajor << 32) | stat.DevMinor, stat.Inode, (long)stat.Size,
                     stat.MtimeSec * 1_000_000_000 + stat.MtimeNsec, stat.CtimeSec * 1_000_000_000 + stat.CtimeNsec,
-                    stat.Mode, stat.Links, stat.Uid);
+                    stat.Mode, stat.Links, stat.Uid, created);
             }
             catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
         }
@@ -423,6 +562,8 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         [FieldOffset(28)] public ushort Mode;
         [FieldOffset(32)] public ulong Inode;
         [FieldOffset(40)] public ulong Size;
+        [FieldOffset(80)] public long BtimeSec;
+        [FieldOffset(88)] public uint BtimeNsec;
         [FieldOffset(96)] public long CtimeSec;
         [FieldOffset(104)] public uint CtimeNsec;
         [FieldOffset(112)] public long MtimeSec;
@@ -444,6 +585,29 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         public uint FileAttributes;
     }
     [StructLayout(LayoutKind.Sequential)]
+    private struct FileDisposition
+    {
+        [MarshalAs(UnmanagedType.U1)]
+        public bool DeleteFile;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ObjectAttributes
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public uint Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     private struct SecurityAttributes
     {
         public int Length;
@@ -460,6 +624,10 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
     [DllImport("libc", EntryPoint = "geteuid")] private static extern uint GetEuid();
     [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)] private static extern int MakeUnix(string path, uint mode);
     [DllImport("libc", EntryPoint = "open", SetLastError = true)] private static extern int OpenNative(string path, int flags);
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)] private static extern int CloseNative(int fd);
+    [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)] private static extern int UnlinkAt(int dirfd, string pathname, int flags);
+    [DllImport("ntdll.dll")] private static extern int NtCreateFile(out IntPtr handle, uint access, ref ObjectAttributes attributes, out IntPtr ioStatus, IntPtr allocation, uint fileAttributes, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int fileInformationClass, ref FileDisposition information, int size);
     [DllImport("libc", EntryPoint = "readlink", SetLastError = true)] private static extern nint ReadLink(string path, byte[] buffer, nuint size);
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool MakeWindows(string path, IntPtr security);
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);

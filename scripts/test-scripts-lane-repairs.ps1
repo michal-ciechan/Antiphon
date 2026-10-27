@@ -32,6 +32,7 @@ public static class File {
         if (Exists(destination)) throw new UnauthorizedAccessException("modeled Windows replacement contention");
         System.IO.File.Move(source, destination, overwrite);
     }
+    public static void Delete(string path) => System.IO.File.Delete(path);
     public static void Replace(string source, string destination, string backup) {
         Replaces++;
         if (System.IO.File.ReadAllText(destination) != "complete old state") throw new Exception("old state damaged");
