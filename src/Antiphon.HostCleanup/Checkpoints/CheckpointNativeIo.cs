@@ -89,7 +89,16 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
     public void WriteBytes(string path, ReadOnlySpan<byte> bytes) => File.WriteAllBytes(path, bytes.ToArray());
     public void AppendText(string path, string text) => File.AppendAllText(path, text);
     public void Copy(string source, string destination, bool overwrite) => File.Copy(source, destination, overwrite);
-    public void Move(string source, string destination, bool overwrite) => File.Move(source, destination, overwrite);
+    public void Move(string source, string destination, bool overwrite)
+    {
+        // MoveFileEx replacement can deny a destination even when readers share deletion.
+        // ReplaceFile publishes the complete temporary while existing readers retain the old
+        // file. Keep first publication on Move, and let the caller retry sharing violations.
+        if (OperatingSystem.IsWindows() && overwrite && File.Exists(destination))
+            File.Replace(source, destination, null);
+        else
+            File.Move(source, destination, overwrite);
+    }
     public void Unlink(string path) => File.Delete(path);
     public void RemoveDirectory(string path, bool recursive) => Directory.Delete(path, recursive);
     public string? EnvironmentVariable(string name) => Environment.GetEnvironmentVariable(name);
