@@ -323,10 +323,14 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     public async Task ArrangeOutcomeAsync(string outcome)
     {
         if (outcome == "already-present") await GitAsync(Source, "push", "origin", "HEAD:refs/heads/master");
-        if (outcome == "residue-cleanup")
+        if (outcome is "residue-cleanup" or "retained-evidence")
         {
-            Directory.CreateDirectory(Path.Combine(Source, ".antiphon"));
-            await File.WriteAllTextAsync(Path.Combine(Source, ".antiphon", "valuable.txt"), "owned user residue");
+            // Ordinary .antiphon spill is retained evidence. Deliverables remain protected
+            // and exercise the residue/retry contract without overriding cleanup policy.
+            var directory = outcome == "residue-cleanup"
+                ? Path.Combine(Source, ".antiphon", "deliverables") : Path.Combine(Source, ".antiphon");
+            Directory.CreateDirectory(directory);
+            await File.WriteAllTextAsync(Path.Combine(directory, "valuable.txt"), "owned user residue");
         }
         if (outcome == "preoperation-refusal")
         {
