@@ -785,6 +785,8 @@ public sealed partial class AgentTaskDispatcher
                     var rewalk = ComplexityRoutingService.IsListGoverned(task) && _complexityRouting is not null
                         ? await TryRewalkQueuedChainAsync(task, alias, ct)
                         : RewalkOutcome.None;
+                    if (rewalk == RewalkOutcome.ClaimLost)
+                        continue;
                     if (rewalk == RewalkOutcome.Rerouted)
                     {
                         // Kind/level updated; fall through to spawn.
@@ -1678,12 +1680,54 @@ public sealed partial class AgentTaskDispatcher
             return RewalkOutcome.BlockedRunnerKind;
         }
 
+        // Provider locks, then the task row. The claim uses that same order. Joining a
+        // transaction that already holds the task would invert it.
+        if (_db.Database.CurrentTransaction is not null)
+            throw new InvalidOperationException(
+                "Queued reroute locks capacity providers before the task row.");
+        await using var rerouteTx = await _db.Database.BeginTransactionAsync(ct);
+        if (_capacityRecovery is not null)
+        {
+            var consumerKey = $"task:{task.Id:N}";
+            var kinds = await _db.CapacityRecoveryWaits.AsNoTracking()
+                .Where(w => w.TaskId == task.Id || w.ConsumerKey == consumerKey)
+                .Select(w => w.ExecutionKind)
+                .Distinct()
+                .ToListAsync(ct);
+            if (!kinds.Contains(task.AgentKind))
+                kinds.Add(task.AgentKind);
+            foreach (var kind in kinds.OrderBy(k => k))
+                await _capacityRecovery.LockProviderAsync(_db, kind, ct);
+        }
+
+        var locked = await _db.AgentTasks.FromSqlInterpolated(
+                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
+            .FirstOrDefaultAsync(ct);
+        if (locked is null)
+        {
+            await rerouteTx.RollbackAsync(ct);
+            return RewalkOutcome.ClaimLost;
+        }
+
+        await _db.Entry(locked).ReloadAsync(ct);
+        if (locked.Status != AgentTaskStatus.Queued)
+        {
+            await rerouteTx.RollbackAsync(ct);
+            return RewalkOutcome.ClaimLost;
+        }
+
+        if (chosen.Kind == locked.AgentKind && chosen.Level == locked.ModelLevel)
+        {
+            await rerouteTx.RollbackAsync(ct);
+            return RewalkOutcome.None;
+        }
+
         var from = currentAlias;
-        task.AgentKind = chosen.Kind;
-        task.ModelLevel = chosen.Level;
+        locked.AgentKind = chosen.Kind;
+        locked.ModelLevel = chosen.Level;
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
-                _db, task.Id, "rerouted-at-dispatch", ct, (chosen.Kind, chosen.Alias));
+                _db, locked.Id, "rerouted-at-dispatch", ct, (chosen.Kind, chosen.Alias));
         var index = 0;
         for (var i = 0; i < walk.Outcomes.Count; i++)
         {
@@ -1697,7 +1741,7 @@ public sealed partial class AgentTaskDispatcher
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
-            AgentTaskId = task.Id,
+            AgentTaskId = locked.Id,
             Type = AgentTaskEventType.Rerouted,
             ModelLevel = chosen.Level,
             Detail =
@@ -1705,9 +1749,10 @@ public sealed partial class AgentTaskDispatcher
             At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
+        await rerouteTx.CommitAsync(ct);
         _logger.LogInformation(
             "Task {ShortId} rerouted at dispatch: {From} → {To}",
-            DelegationReportFormatter.Short(task.Id), from, chosen.Alias);
+            DelegationReportFormatter.Short(locked.Id), from, chosen.Alias);
         return RewalkOutcome.Rerouted;
     }
 
@@ -5533,12 +5578,60 @@ public sealed partial class AgentTaskDispatcher
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        if (task.SpecialistInputPolicyJson is not null && task.AgentId is Guid physicalId)
+        // Counted-task guard, then the capacity provider, then the owner row. The queued
+        // reroute takes the provider lock before it updates the task; taking the task row
+        // first deadlocks that reroute (40P01) and the tick then fails the task.
+        Guid? reservedWaitId = null;
+        string? reservedActionKey = null;
+        AgentKind? reservedKind = null;
+        async Task CommitClaimWithoutLaunchAsync(CancellationToken token)
         {
-            // Same admission order as the specialized producer: counted-task lane, logical
-            // owner, then task. Routing/identity edits cannot slip between claim and dispatch.
+            if (reservedWaitId is Guid waitId && reservedKind is AgentKind kind && _capacityRecovery is not null)
+            {
+                reservedWaitId = null;
+                await _capacityRecovery.AbandonUnspentGrantOnAsync(
+                    _db, waitId, kind, "claim-not-launched", token);
+            }
+
+            await transaction.CommitAsync(token);
+        }
+
+        async Task<bool> ConsumeReservedAdmissionAsync()
+        {
+            if (reservedWaitId is not Guid waitId
+                || reservedActionKey is not string actionKey
+                || reservedKind is not AgentKind kind
+                || _capacityRecovery is null)
+                return true;
+            var spent = await _capacityRecovery.RedeemOnAsync(
+                _db, waitId, actionKey, kind, CapacityRedemptionPath.Dispatch, null, ct, consume: true);
+            if (!spent.Ok)
+                return false;
+            reservedWaitId = null;
+            return true;
+        }
+
+        Guid? specialistPhysicalId = task.SpecialistInputPolicyJson is not null && task.AgentId is Guid physicalId
+            ? physicalId
+            : null;
+        if (specialistPhysicalId is not null)
+        {
+            // Same admission order as the specialized producer: counted-task lane, provider,
+            // logical owner, then task.
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(hashtext('antiphon.capacity.counted-tasks'))", ct);
-            var ownerId = await _db.Agents.AsNoTracking().Where(a => a.Id == physicalId)
+        }
+
+        AgentKind? providerLockedKind = null;
+        if (_capacityRecovery is { IsEnabled: true }
+            && await FindUnfinishedCapacityWaitAsync(task, ct) is { } preLockWait)
+        {
+            await _capacityRecovery.LockProviderAsync(_db, preLockWait.ExecutionKind, ct);
+            providerLockedKind = preLockWait.ExecutionKind;
+        }
+
+        if (specialistPhysicalId is Guid ownerSource)
+        {
+            var ownerId = await _db.Agents.AsNoTracking().Where(a => a.Id == ownerSource)
                 .Select(a => a.StandingSpecialistOwnerId).SingleOrDefaultAsync(ct);
             if (ownerId is Guid owner)
                 await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {owner} FOR UPDATE")
@@ -5594,17 +5687,31 @@ public sealed partial class AgentTaskDispatcher
             }
         }
 
-        // Only a validated, locked claim may consume capacity. Keep redemption in this
-        // transaction so later claim rollbacks also restore the grant and admission count.
+        // Validate under the provider lock already taken. Spending waits for the launch
+        // commit: preparation and other non-launch commits keep the grant. A wait that
+        // appears only after the task lock, or a kind change under it, is retried so the
+        // next tick locks the provider first.
         if (_capacityRecovery is { IsEnabled: true }
-            && await FindUnfinishedCapacityWaitAsync(claimed, ct) is { } capacityWait
-            && !(await _capacityRecovery.RedeemOnAsync(_db, capacityWait.Id, capacityWait.ActionKey,
-                capacityWait.ExecutionKind, CapacityRedemptionPath.Dispatch, null, ct)).Ok)
+            && await FindUnfinishedCapacityWaitAsync(claimed, ct) is { } capacityWait)
         {
-            // Refusals (including exhaustion/deferral) have their own durable wait outcome;
-            // no launch work has been staged yet.
-            await transaction.CommitAsync(ct);
-            return DispatchOneResult.NotClaimed;
+            if (providerLockedKind != capacityWait.ExecutionKind)
+            {
+                await transaction.RollbackAsync(ct);
+                return DispatchOneResult.NotClaimed;
+            }
+
+            var reserved = await _capacityRecovery.RedeemOnAsync(
+                _db, capacityWait.Id, capacityWait.ActionKey, capacityWait.ExecutionKind,
+                CapacityRedemptionPath.Dispatch, null, ct, consume: false);
+            if (!reserved.Ok)
+            {
+                await transaction.CommitAsync(ct);
+                return DispatchOneResult.NotClaimed;
+            }
+
+            reservedWaitId = capacityWait.Id;
+            reservedActionKey = capacityWait.ActionKey;
+            reservedKind = capacityWait.ExecutionKind;
         }
 
         if (claimed.ReleasedSeatAnswerId is not null
@@ -5626,7 +5733,7 @@ public sealed partial class AgentTaskDispatcher
                 await FailAsync(claimed,
                     "workspace_existing_agent_conflict: explicit Worktree is pinned to an existing agent and was not launched.",
                     ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5653,7 +5760,7 @@ public sealed partial class AgentTaskDispatcher
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
-            await transaction.CommitAsync(ct);
+            await CommitClaimWithoutLaunchAsync(ct);
             // CARD-0664 D-2: the claim admitted a Launch row above; the Canceled status is committed now.
             await ReleaseTaskConsumersAsync(claimed);
             return DispatchOneResult.NotClaimed;
@@ -5667,7 +5774,7 @@ public sealed partial class AgentTaskDispatcher
             && await InterimHoldReasonAsync(claimed, ct) is { } interimHold)
         {
             await BlockAsync(claimed, interimHold, ct);
-            await transaction.CommitAsync(ct);
+            await CommitClaimWithoutLaunchAsync(ct);
             LogCommittedBlock(claimed);
             await _eventBus.PublishToAllAsync(
                 "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
@@ -5709,7 +5816,7 @@ public sealed partial class AgentTaskDispatcher
                 if (reuseGate.Block)
                 {
                     await BlockAsync(claimed, reuseGate.Detail, ct);
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(ct);
                     LogCommittedBlock(claimed);
                     return DispatchOneResult.NotClaimed;
                 }
@@ -5721,6 +5828,13 @@ public sealed partial class AgentTaskDispatcher
             switch (await TryReuseWarmAgentAsync(claimed, now, ct))
             {
                 case ReuseOutcome.Reused:
+                    if (!await ConsumeReservedAdmissionAsync())
+                    {
+                        await transaction.RollbackAsync(ct);
+                        _db.ChangeTracker.Clear();
+                        return DispatchOneResult.NotClaimed;
+                    }
+
                     await _db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
                     // The raw token is discarded only after the reuse commit. A hold or a lost
@@ -5732,7 +5846,7 @@ public sealed partial class AgentTaskDispatcher
                     return DispatchOneResult.Dispatched;
 
                 case ReuseOutcome.Expired:
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(ct);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
                 case ReuseOutcome.WaitForAgent:
@@ -5765,9 +5879,9 @@ public sealed partial class AgentTaskDispatcher
             && _agentRegistry.Settings.GrokCredentialProbeEnabled
             && (string.IsNullOrWhiteSpace(claimed.RunnerId)
                 ? await TryFailGrokCredentialProbeAsync(claimed, program,
-                    token => transaction.CommitAsync(token), ct)
+                    CommitClaimWithoutLaunchAsync, ct)
                 : await TryFailRunnerGrokCredentialProbeAsync(claimed, grokAuth,
-                    token => transaction.CommitAsync(token), ct)))
+                    CommitClaimWithoutLaunchAsync, ct)))
         {
             return DispatchOneResult.NotClaimed;
         }
@@ -5775,7 +5889,7 @@ public sealed partial class AgentTaskDispatcher
         if (claimed.RunnerId is not null && program.Kind == AgentKind.ClaudeCode
             && _phoneHome?.ClaudeAuthProbeEnabled == true
             && await TryFailClaudeCredentialProbeAsync(claimed, claudeAuth,
-                token => transaction.CommitAsync(token), ct))
+                CommitClaimWithoutLaunchAsync, ct))
         {
             return DispatchOneResult.NotClaimed;
         }
@@ -5791,7 +5905,7 @@ public sealed partial class AgentTaskDispatcher
             if (prep.FailureReason is not null)
             {
                 await FailAsync(claimed, prep.FailureReason, ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5834,7 +5948,7 @@ public sealed partial class AgentTaskDispatcher
                             : "")
                         + "Resolve histories then retry, or cancel and recreate with -BaseTask <previewed task> "
                         + "/ -StartRef <previewed sha> / -FreshWorktree.", ct);
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(ct);
                     LogCommittedBlock(claimed, selected.TotalCandidates, selected.InspectedCandidates, selected.GitCommands);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
@@ -5918,7 +6032,7 @@ public sealed partial class AgentTaskDispatcher
             if (capture.FailureReason is not null)
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -6115,6 +6229,13 @@ public sealed partial class AgentTaskDispatcher
 
         if (await RefuseParallelAsync(claimed, ct))
             return await FinishParallelHoldAsync(claimed, ct);
+        if (!await ConsumeReservedAdmissionAsync())
+        {
+            await transaction.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            return DispatchOneResult.NotClaimed;
+        }
+
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -7587,6 +7708,8 @@ public sealed partial class AgentTaskDispatcher
         None = 0,
         Rerouted = 1,
         BlockedRunnerKind = 2,
+        /// <summary>The task left the queue under the row lock. The caller must not write a hold.</summary>
+        ClaimLost = 3,
     }
 
     /// <summary>

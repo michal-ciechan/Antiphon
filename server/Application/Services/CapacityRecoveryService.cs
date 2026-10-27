@@ -258,7 +258,8 @@ public sealed class CapacityRecoveryService
         AgentKind kind,
         CapacityRedemptionPath path,
         string? refusalReason,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool consume = true)
     {
         if (db.Database.CurrentTransaction is null)
             throw new InvalidOperationException("Capacity redemption requires a transaction.");
@@ -287,35 +288,42 @@ public sealed class CapacityRecoveryService
             else
             {
                 var revalidation = wait.NeedsRevalidationGrant;
-                if (!revalidation)
+                if (!revalidation
+                    && CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
                 {
-                    if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
-                    {
-                        wait.State = CapacityRecoveryWaitState.Exhausted;
-                        wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
-                        wait.OutcomeReason = "max-episode-attempts";
-                        ClearGrant(state, now);
-                        wait.UpdatedAt = now;
-                        wait.Version++;
-                        await db.SaveChangesAsync(ct);
-                        return CapacityRedemption.Refused("exhausted");
-                    }
-
-                    wait.AdmissionCount++;
+                    wait.State = CapacityRecoveryWaitState.Exhausted;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+                    wait.OutcomeReason = "max-episode-attempts";
+                    ClearGrant(state, now);
+                    wait.UpdatedAt = now;
+                    wait.Version++;
+                    await db.SaveChangesAsync(ct);
+                    return CapacityRedemption.Refused("exhausted");
                 }
 
-                wait.NeedsRevalidationGrant = false;
-                wait.State = CapacityRecoveryWaitState.Admitted;
-                wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
-                wait.OutcomeReason = path.ToString();
-                wait.UpdatedAt = now;
-                wait.Version++;
-                state.LastActionKey = actionKey;
-                state.LastActionAt = now;
-                state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
-                ClearGrant(state, now);
-                await db.SaveChangesAsync(ct);
-                result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+                // Validation without consume leaves the grant for the launch commit. A
+                // preparation-only commit must not spend the admission.
+                if (!consume)
+                {
+                    result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+                }
+                else
+                {
+                    if (!revalidation)
+                        wait.AdmissionCount++;
+                    wait.NeedsRevalidationGrant = false;
+                    wait.State = CapacityRecoveryWaitState.Admitted;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
+                    wait.OutcomeReason = path.ToString();
+                    wait.UpdatedAt = now;
+                    wait.Version++;
+                    state.LastActionKey = actionKey;
+                    state.LastActionAt = now;
+                    state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+                    ClearGrant(state, now);
+                    await db.SaveChangesAsync(ct);
+                    result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+                }
             }
 
             return result;
@@ -327,6 +335,43 @@ public sealed class CapacityRecoveryService
             db.Entry(wait).State = EntityState.Detached;
             db.Entry(state).State = EntityState.Detached;
         }
+    }
+
+    /// <summary>
+    /// Drop a reserved grant the claim did not launch. AdmissionCount stays put, and the
+    /// wait is canceled so a blocked or failed owner does not pin the provider.
+    /// </summary>
+    internal async Task AbandonUnspentGrantOnAsync(
+        AppDbContext db, Guid waitId, AgentKind kind, string reason, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Capacity grant release requires a transaction.");
+        await TakeProviderLockAsync(db, kind, ct);
+        var now = UtcNow();
+        var state = await db.Set<CapacityRecoveryProviderState>().FirstOrDefaultAsync(s => s.Kind == kind, ct);
+        if (state is not null)
+            await db.Entry(state).ReloadAsync(ct);
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (wait is not null)
+        {
+            await db.Entry(wait).ReloadAsync(ct);
+            if (!IsFinished(wait))
+            {
+                wait.State = CapacityRecoveryWaitState.Canceled;
+                wait.Outcome = nameof(CapacityRecoveryWaitState.Canceled);
+                wait.OutcomeReason = reason;
+                wait.Version++;
+                wait.UpdatedAt = now;
+            }
+        }
+
+        if (state?.GrantedWaitId == waitId)
+            ClearGrant(state, now);
+        await db.SaveChangesAsync(ct);
+        if (wait is not null)
+            db.Entry(wait).State = EntityState.Detached;
+        if (state is not null)
+            db.Entry(state).State = EntityState.Detached;
     }
 
     public async Task<CapacityRecoveryWait> EnsureWaitAsync(CapacityWaitRegistration registration, CancellationToken ct)
@@ -1178,7 +1223,16 @@ public sealed class CapacityRecoveryService
     /// <summary>
     /// Transaction-scoped advisory lock. Callers must hold an explicit EF transaction;
     /// PostgreSQL otherwise treats the SELECT as its own xact and drops the lock immediately.
+    /// Same-transaction re-lock is a no-op. Global order: counted-task guard, this provider
+    /// lock, then the consumer owner row (agent, task, or session).
     /// </summary>
+    internal Task LockProviderAsync(AppDbContext db, AgentKind kind, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Capacity provider lock requires a transaction.");
+        return TakeProviderLockAsync(db, kind, ct);
+    }
+
     private static Task TakeProviderLockAsync(AppDbContext db, AgentKind kind, CancellationToken ct) =>
         db.Database.ExecuteSqlRawAsync(
             $"SELECT pg_advisory_xact_lock(hashtext('antiphon.capacity.kind.{kind}'))",
