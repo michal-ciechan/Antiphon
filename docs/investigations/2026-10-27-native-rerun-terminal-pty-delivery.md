@@ -1,6 +1,6 @@
 # Native Windows rerun: terminal, PTY and delivery
 
-Task: `32365cdf`. Investigation in progress; no green claim or confirmed root cause yet.
+Task: `32365cdf`. Investigation in progress; several fixture mechanisms confirmed; no green claim.
 
 ## Provenance
 
@@ -34,7 +34,17 @@ Additional first-pass outcomes so far: brief ceiling 3 passed / 0 failed (fixed 
 
 ## Remaining uncertainties
 
-All native outcomes and root causes are still open. CARD-0680 and CRLF/ConPTY are hypotheses from the brief, not findings.
+The first pass is still running. Additional completed classes are phone-home transport (1 passed, 1 Linux-only skip), channel outbound recovery (18 passed), standing-agent dispatch (10 passed), card-file privacy (23 passed), and FakeClaude contracts (51 passed): fixed by rc/2026-10-27 in this native selection. This label records the current result, not a bisection establishing which commit changed it.
+
+The current Grok end-to-end failure occurs after successful settlement: `GrokDelegateEndToEndTests.cs:327` requires `replyEnd.CreatedAt <= nudge.SentAt`, while the captured row values are `nudge.CreatedAt=2026-10-27T05:43:50.3045040Z`, `nudge.SentAt=05:43:50.3397560Z`, `boundary.CreatedAt=05:43:51.7031540Z`, `seq=10`, `nudgedSeq=7`, task prefix `2e0af3b9`. All preceding status/result assertions passed. The fixture does not force this particular ordering; isolated repetitions are pending. Its historical timeout is not the current failure signature.
+
+The Grok sign-in test detects sign-in (`outcome=SignIn`, 24ms) before its launch-queue wait times out. A source-reconstructed product hypothesis is a self-blocking transaction: `AgentSessionService.cs:407` starts the launch-error transaction, `:416` locks the agent FOR UPDATE, `:458` awaits incident recording through a fresh scope (`:1577`), whose insert references the locked agent (`AppDbContext.cs:542`). Commit is later at `AgentSessionService.cs:480`. Live PostgreSQL blocking evidence is pending; the timeout alone does not confirm it.
+
+The Grok short queue fixture records `SUBMITTED:queued hello` in retained raw output (`grok-queue-e407.ansi.log`) but Enqueue returns a no-output conflict. Unlike the multiline fixture, it starts no transcript pump and seeds no transcript entry (`SessionMessageQueueGrokPtyIntegrationTests.cs:139` versus `:331`). Native UserPrompt capture and a database snapshot are pending; raw terminal output alone is not the delivery verdict.
+
+The remaining timing failures include `SessionRuntimeActionTests.cs:580` (first page not observed within 10s), `TerminalRunnerSeatReleaseTests.cs:628` (BeforeDispatch callback not entered within 10s), and Claude native standing-history recovery (`HerdrAlwaysOnChannelParityTests.StandingRecovery.cs:67`, observation-unknown). These remain unclassified until isolated repeats. The separate Herdr always-on failure also records observation-unknown: the first test expects Running at `HerdrAlwaysOnChannelParityTests.cs:107`, whereas the newer standing-recovery fixture explicitly expects guarded refusal for Claude/Herdr at `StandingRecovery.cs:61`.
+
+Pipeline HTTP still fails the Plan recommendation expectation at `AgentTaskPipelineStatusTests.cs:993`. The endpoint now uses the persisted policy when present (`AgentTaskPipelineStatusService.cs:358`), not the static recommendation fallback at `:355`. The stored policy value and its origin remain to be captured.
 
 ## Not done, noted
 
