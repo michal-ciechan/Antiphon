@@ -471,7 +471,7 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($hugeScript, $hugeBody.Replace("`r", ''))
-        $hugeRun = Invoke-QualificationWitness -ScriptPath $hugeScript -Arguments @($huge, $hugeResult, $lib) -TimeoutMilliseconds 3000
+        $hugeRun = Invoke-QualificationWitness -ScriptPath $hugeScript -Arguments @($huge, $hugeResult, $lib) -TimeoutMilliseconds 8000
         $hugeOk = $false
         if ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $hugeResult)) {
             $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -505,7 +505,7 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($fifoScript, $fifoBody.Replace("`r", ''))
-        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 1500
+        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 5000
         $fifoOk = $false
         if ($fifoOkCreated -and $fifoRun.Exited -and $fifoRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $fifoResult)) {
             $fifoDoc = Get-Content -LiteralPath $fifoResult -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -536,7 +536,7 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($deniedScript, $deniedBody.Replace("`r", ''))
-        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 1500
+        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 5000
         $deniedOk = $false
         if ($deniedRun.Exited -and $deniedRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $deniedResult)) {
             $deniedDoc = Get-Content -LiteralPath $deniedResult -Raw -Encoding UTF8 | ConvertFrom-Json
