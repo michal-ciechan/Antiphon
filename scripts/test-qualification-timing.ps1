@@ -232,127 +232,21 @@ try {
     Remove-Item -LiteralPath $wrap -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# F1: Linux process-group custody. A root that exits must not report cleanup
-# while a descendant is alive, a timeout must join the group, and a writer
-# that left the group must fail the drain without hanging.
-# The wrapper above installs a StartProcess seam. Real custody must not use it.
+# Linux supervisor-death custody is a known gap. The portable setsid launcher
+# is gone. An unseamed Linux launch uses the Windows Job Object owner and refuses.
 $script:NightlySeams = $null
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     $own = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-own-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $own -Force | Out-Null
+    $linuxRefusal = ''
     try {
-        $pidFile = Join-Path $own 'child.pid'
-        $ownWatch = [Diagnostics.Stopwatch]::StartNew()
-        $owned = Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @('-c', 'sleep 30 >/dev/null 2>&1 & echo $! > "$1"', 'owned', $pidFile) -WorkingDirectory $own -TimeoutMilliseconds 2000 -LogPath (Join-Path $own 'root.log')
-        $ownWatch.Stop()
-        $childAlive = $false
-        if (Test-Path -LiteralPath $pidFile) {
-            $childId = 0
-            if ([int]::TryParse(([IO.File]::ReadAllText($pidFile).Trim()), [ref]$childId)) {
-                $child = Get-Process -Id $childId -ErrorAction SilentlyContinue
-                $childAlive = ($null -ne $child -and -not $child.HasExited)
-                if ($childAlive) { try { $child.Kill() } catch { } }
-            }
-        }
-        Assert-Check ((-not $childAlive) -and [bool]$owned.CleanupComplete -and -not [bool]$owned.TimedOut -and $ownWatch.Elapsed.TotalSeconds -lt 10) 'linux-root-exit-joins-descendants'
-
-        $timeWatch = [Diagnostics.Stopwatch]::StartNew()
-        $timed = Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @('-c', 'sleep 30 & wait') -WorkingDirectory $own -TimeoutMilliseconds 400 -LogPath (Join-Path $own 'timeout.log')
-        $timeWatch.Stop()
-        Assert-Check ([bool]$timed.TimedOut -and [bool]$timed.CleanupComplete -and [bool]$timed.ChildrenExited -and $timeWatch.Elapsed.TotalSeconds -lt 12) 'linux-timeout-joins-group'
-
-        $holder = Join-Path $own 'holder.pid'
-        $retain = Join-Path $own 'retain.sh'
-        $retainBody = "#!/bin/sh`nsetsid sh -c 'echo `$`$ > ""$holder""; exec sleep 30' &`necho ROOT-DONE`nexit 0`n"
-        [IO.File]::WriteAllText($retain, $retainBody.Replace("`r", ''))
-        $retainWatch = [Diagnostics.Stopwatch]::StartNew()
-        $retained = Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @($retain) -WorkingDirectory $own -TimeoutMilliseconds 2000 -LogPath (Join-Path $own 'retain.log')
-        $retainWatch.Stop()
-        $holderAlive = $false
-        if (Test-Path -LiteralPath $holder) {
-            $holderId = 0
-            if ([int]::TryParse(([IO.File]::ReadAllText($holder).Trim()), [ref]$holderId)) {
-                $holderProc = Get-Process -Id $holderId -ErrorAction SilentlyContinue
-                $holderAlive = ($null -ne $holderProc -and -not $holderProc.HasExited)
-                if ($holderAlive) { try { $holderProc.Kill() } catch { } }
-            }
-        }
-        Assert-Check ((-not [bool]$retained.CleanupComplete) -and $retainWatch.Elapsed.TotalSeconds -lt 12) 'linux-retained-writer-drain-is-incomplete'
-
-        # Killing the supervising PowerShell must take the setsid chunk and its grandchild with it.
-        $death = Join-Path $own 'death'
-        New-Item -ItemType Directory -Path $death -Force | Out-Null
-        $childSh = Join-Path $death 'child.sh'
-        $childBody = "echo `$`$ > `"`$1`"`nsleep 60 &`necho `$! > `"`$2`"`nwait`n"
-        [IO.File]::WriteAllText($childSh, $childBody.Replace("`r", ''))
-        $supScript = Join-Path $death 'supervisor.ps1'
-        $supBody = @'
-param([string]$Root, [string]$Lib)
-$ErrorActionPreference = 'Stop'
-. (Join-Path $Lib 'nightly-common.ps1')
-. (Join-Path $Lib 'nightly-tests-impl.ps1')
-$child = Join-Path $Root 'child.sh'
-$rootPid = Join-Path $Root 'root.pid'
-$leafPid = Join-Path $Root 'leaf.pid'
-Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @($child, $rootPid, $leafPid) -WorkingDirectory $Root -TimeoutMilliseconds 60000 -LogPath (Join-Path $Root 'out.log') | Out-Null
-'@
-        [IO.File]::WriteAllText($supScript, $supBody.Replace("`r", ''))
-        $supExe = Join-Path $PSHOME 'pwsh'
-        $supStart = [Diagnostics.ProcessStartInfo]::new($supExe)
-        $supStart.UseShellExecute = $false
-        foreach ($supArg in @('-NoProfile', '-File', $supScript, '-Root', $death, '-Lib', $lib)) {
-            [void]$supStart.ArgumentList.Add($supArg)
-        }
-        $supervisor = [Diagnostics.Process]::new()
-        $supervisor.StartInfo = $supStart
-        [void]$supervisor.Start()
-        $rootFile = Join-Path $death 'root.pid'
-        $leafFile = Join-Path $death 'leaf.pid'
-        $appeared = [Diagnostics.Stopwatch]::StartNew()
-        while ((-not (Test-Path -LiteralPath $leafFile)) -and $appeared.Elapsed.TotalSeconds -lt 8) {
-            Start-Sleep -Milliseconds 25
-        }
-        $chunkId = 0
-        $leafId = 0
-        $chunkParsed = $false
-        $leafParsed = $false
-        if (Test-Path -LiteralPath $rootFile) {
-            $chunkParsed = [int]::TryParse(([IO.File]::ReadAllText($rootFile).Trim()), [ref]$chunkId)
-        }
-        if (Test-Path -LiteralPath $leafFile) {
-            $leafParsed = [int]::TryParse(([IO.File]::ReadAllText($leafFile).Trim()), [ref]$leafId)
-        }
-        if ($supervisor.HasExited) {
-            try { $supervisor.Kill($true) } catch { }
-        } else {
-            try { $supervisor.Kill() } catch { }
-            try { [void]$supervisor.WaitForExit(5000) } catch { }
-        }
-        $reaped = $false
-        if ($chunkParsed -and $leafParsed -and $chunkId -gt 0 -and $leafId -gt 0) {
-            $reapWatch = [Diagnostics.Stopwatch]::StartNew()
-            while ($reapWatch.Elapsed.TotalSeconds -lt 2) {
-                $chunkProc = Get-Process -Id $chunkId -ErrorAction SilentlyContinue
-                $leafProc = Get-Process -Id $leafId -ErrorAction SilentlyContinue
-                $chunkAlive = ($null -ne $chunkProc -and -not $chunkProc.HasExited)
-                $leafAlive = ($null -ne $leafProc -and -not $leafProc.HasExited)
-                if ((-not $chunkAlive) -and (-not $leafAlive)) { $reaped = $true; break }
-                Start-Sleep -Milliseconds 20
-            }
-        }
-        Assert-Check ($appeared.Elapsed.TotalSeconds -lt 8 -and $chunkParsed -and $leafParsed -and $reaped) 'linux-supervisor-death-reaps-chunk-and-grandchild'
-        foreach ($ownedId in @($chunkId, $leafId)) {
-            if ($ownedId -lt 1) { continue }
-            $ownedProc = Get-Process -Id $ownedId -ErrorAction SilentlyContinue
-            if ($null -ne $ownedProc -and -not $ownedProc.HasExited) {
-                try { $ownedProc.Kill() } catch { }
-            }
-        }
-        try { if (-not $supervisor.HasExited) { $supervisor.Kill($true) } } catch { }
-        try { $supervisor.Dispose() } catch { }
+        Invoke-NightlyOwnedProcess -FilePath '/bin/sh' -ArgumentList @('-c', 'echo refused') -WorkingDirectory $own -TimeoutMilliseconds 2000 -LogPath (Join-Path $own 'refused.log') | Out-Null
+    } catch {
+        $linuxRefusal = [string]$_.Exception.Message
     } finally {
         Remove-Item -LiteralPath $own -Recurse -Force -ErrorAction SilentlyContinue
     }
+    Assert-Check ($linuxRefusal -eq 'Nightly native custody requires Windows.') 'linux-supervisor-death-custody-is-a-known-gap'
 }
 
 # F4: one explicit timing root overrides an inherited phase root.
