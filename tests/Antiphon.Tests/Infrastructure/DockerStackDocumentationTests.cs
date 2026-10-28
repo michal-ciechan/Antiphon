@@ -102,12 +102,14 @@ public sealed class DockerStackDocumentationTests
             "the exact-advertisement comparison is gone");
         section.ShouldContain("audited whether or not its checkout still exists");
         section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
-        section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
-        // CARD-1594: antiphon-evidence/ is the third common-dir agent directory.
-        // It is walked. review-evidence/ is not, and that bound is the cap.
+        section.ShouldContain("`antiphon/` (the never-unlinked `landing.lock` lease file, reviews and verification evidence) is product state, not repository state");
+        // CARD-1594: antiphon-evidence/ and review-evidence/ are both walked for Git state.
+        // Plain files and directories stay allowed. File content is never read.
         section.ShouldContain("`antiphon-evidence/` is allowed only in the common directory");
         section.ShouldContain("`antiphon/` is safe because it is product state");
-        section.ShouldContain("`review-evidence/` is safe because it is agent evidence rather than repository state");
+        section.ShouldContain("`review-evidence/` is agent evidence rather than repository state");
+        section.ShouldContain("It is walked for Git state with the same rules as `antiphon-evidence/`");
+        section.ShouldContain("The audit never reads file content, so a patch or notes there are deleted with the volume");
         section.ShouldContain("A symlink, any other file type, a regular file with a second hard link, or an entry the audit cannot read refuses `RecycleGitAuditUnknown` (`gitdir-entry`)");
         section.ShouldContain("There is no depth, file-count or size cap");
         section.ShouldContain("an executable bit on a regular file is allowed");
