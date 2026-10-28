@@ -26,4 +26,13 @@ public static class LoadTimeoutBounds
     /// 2× a ~22s loaded estimate.
     /// </summary>
     public static readonly TimeSpan PhoneHomeSignalWait = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Success bound for <c>SessionRuntimeActionTests</c>. The page yield and the
+    /// other hooks that must run were 5s or 10s. Five Linux runs of the 28 rows
+    /// under eight CPU burners peaked at 33.953s (poison-page). 2× that max is
+    /// 68s; 70s accepts a page yield 20s late. A hook that never runs fails when
+    /// this cap elapses.
+    /// </summary>
+    public static readonly TimeSpan SessionRuntimeActionWait = TimeSpan.FromSeconds(70);
 }
