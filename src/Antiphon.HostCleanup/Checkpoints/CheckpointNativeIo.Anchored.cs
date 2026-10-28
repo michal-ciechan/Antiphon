@@ -99,6 +99,9 @@ public sealed partial class CheckpointNativeIo
                     throw new AnchoredHardLinkException();
                 if (FTruncate(file, length) != 0)
                     throw new IOException("anchored-truncate-failed: errno=" + Marshal.GetLastPInvokeError());
+                // Preserve durable truncation. A crash must not restore the reclaimed bytes.
+                if (Fsync(file) != 0)
+                    throw new IOException("anchored-truncate-failed: errno=" + Marshal.GetLastPInvokeError());
             }
             finally { _ = CloseNative(file); }
         }
@@ -219,6 +222,7 @@ public sealed partial class CheckpointNativeIo
                 throw new AnchoredHardLinkException();
             stream = new FileStream(child, FileAccess.ReadWrite);
             stream.SetLength(length);
+            stream.Flush(true);
         }
         finally
         {
@@ -314,4 +318,7 @@ public sealed partial class CheckpointNativeIo
 
     [DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)]
     private static extern int FTruncate(int fd, long length);
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static extern int Fsync(int fd);
 }
