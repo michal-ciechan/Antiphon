@@ -8459,7 +8459,13 @@ public sealed partial class AgentTaskDispatcher
         await LockPhysicalAgentAsync(agent.Id, ct);
         await _db.Entry(agent).ReloadAsync(ct);
         if (!StillWarm(agent, session))
-            return claimed.AgentId == agent.Id ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
+        {
+            // A pin whose session is still live is busy, which is the base wait. A stop ends
+            // that session, and base then spawns; a pool pick always spawns.
+            if (claimed.AgentId == agent.Id && await LiveSessionIdOfAsync(agent, ct) is not null)
+                return ReuseOutcome.WaitForAgent;
+            return ReuseOutcome.SpawnFresh;
+        }
 
         agent.Status = AgentStatus.Running;
         agent.PoolIdleSince = null;
