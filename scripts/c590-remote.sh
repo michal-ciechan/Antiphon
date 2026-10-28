@@ -7770,10 +7770,15 @@ c1008_audit_readonly() {
     done
     if [[ "${c1008_preview_owned_id:-}" =~ ^[0-9a-f]{64}$ ]]; then
         c1008_preview_watch_id="$c1008_preview_owned_id"
+        # The sleeper is a child. TERM has to stop that child too: a surviving
+        # sleep keeps the caller's stderr pipe open for the rest of the budget.
         (
-            sleep "$cap"
+            trap 'kill "${inner:-}" 2>/dev/null || true; exit 0' TERM INT HUP
+            sleep "$cap" &
+            inner=$!
+            wait "$inner" || exit 0
             docker kill "$c1008_preview_watch_id" >/dev/null 2>&1 || true
-        ) &
+        ) >/dev/null 2>&1 &
         c1008_preview_watch_pid=$!
     fi
     wait "$c1008_preview_run_pid" || code=$?
