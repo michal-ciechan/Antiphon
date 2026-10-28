@@ -266,7 +266,10 @@ public sealed partial class CheckpointNativeIo
             throw new IOException("anchored-path-unsafe");
         using var parent = OpenNoFollowChainWindows(directory);
         // Share 0 matches the base FileShare.None truncate open.
-        var child = OpenChild(parent, name, 0x40 | 0x00200000 | 0x20, 0xC0000000, share: 0);
+        // GENERIC_READ|GENERIC_WRITE|SYNCHRONIZE. Base FileAccess.Write went through
+        // CreateFile, which maps SYNCHRONIZE in. GENERIC_READ stays so this handle
+        // can read size and link count. FILE_SYNCHRONOUS_IO_NONALERT needs SYNCHRONIZE.
+        var child = OpenChild(parent, name, 0x40 | 0x00200000 | 0x20, 0xC0000000 | 0x00100000, share: 0);
         FileStream? stream = null;
         try
         {
@@ -308,7 +311,10 @@ public sealed partial class CheckpointNativeIo
             {
                 if (component is "." or ".." || !AnchoredDelete.EntryNameSafe(windows: true, component))
                     throw new IOException("anchored-path-unsafe");
-                var next = OpenChild(handle, component, 0x1 | 0x00200000 | 0x20, 0x80000000);
+                // GENERIC_READ | SYNCHRONIZE. Base opened this directory with CreateFile
+                // GENERIC_READ, which maps SYNCHRONIZE in before NtCreateFile.
+                // FILE_SYNCHRONOUS_IO_NONALERT requires that bit on the raw mask.
+                var next = OpenChild(handle, component, 0x1 | 0x00200000 | 0x20, 0x80000000 | 0x00100000);
                 if (!DirectoryHandle(next))
                 {
                     next.Dispose();
