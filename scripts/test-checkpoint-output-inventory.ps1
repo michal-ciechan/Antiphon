@@ -215,17 +215,26 @@ $linkDir = New-InventoryRoot 'link'
 $linkTarget = Join-Path $linkDir 'target.bin'
 [IO.File]::WriteAllBytes($linkTarget, [byte[]]@(1, 2, 3))
 $link = Join-Path $linkDir 'link.bin'
-[void][IO.File]::CreateSymbolicLink($link, $linkTarget)
-$linkSeal = Seal-CheckpointFreshOutput $linkDir
-Assert-Inventory ($linkSeal -like 'output-inventory-failed: *link.bin size=* limit=*:*linked output*') 'symlink-refused' ([string]$linkSeal)
+try {
+    [void][IO.File]::CreateSymbolicLink($link, $linkTarget)
+    $linkSeal = Seal-CheckpointFreshOutput $linkDir
+    Assert-Inventory ($linkSeal -like 'output-inventory-failed: *link.bin size=* limit=*:*linked output*') 'symlink-refused' ([string]$linkSeal)
+} finally {
+    # The checkpoint fixture refuses to delete a root that still contains a reparse point.
+    if ([IO.File]::Exists($link)) { [IO.File]::Delete($link) }
+}
 
 if ($IsLinux) {
     $fifoDir = New-InventoryRoot 'fifo'
     $fifo = Join-Path $fifoDir 'device.fifo'
-    & mkfifo -- $fifo
-    if ($LASTEXITCODE) { throw 'mkfifo failed' }
-    $fifoSeal = Seal-CheckpointFreshOutput $fifoDir
-    Assert-Inventory ($fifoSeal -like "output-inventory-failed: $fifo size=* limit=${limit}:*not regular*") 'fifo-refused' ([string]$fifoSeal)
+    try {
+        & mkfifo -- $fifo
+        if ($LASTEXITCODE) { throw 'mkfifo failed' }
+        $fifoSeal = Seal-CheckpointFreshOutput $fifoDir
+        Assert-Inventory ($fifoSeal -like "output-inventory-failed: $fifo size=* limit=${limit}:*not regular*") 'fifo-refused' ([string]$fifoSeal)
+    } finally {
+        if (Test-Path -LiteralPath $fifo) { Remove-Item -LiteralPath $fifo -Force }
+    }
 }
 
 Add-Type -TypeDefinition @'
