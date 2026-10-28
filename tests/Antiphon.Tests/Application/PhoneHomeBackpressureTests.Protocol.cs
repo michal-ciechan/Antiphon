@@ -36,7 +36,7 @@ public partial class PhoneHomeBackpressureTests
             await p.BarrierAsync();
             p.Events.Count.ShouldBe(2);
             p.Update(7, 3, bytes); // beyond the two reserved sends
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventWindowInvalid);
             p.Service.WaitingForEventCredit.ShouldBeFalse();
             p.Service.EventPressure.PendingEvents.ShouldBe(0);
@@ -53,7 +53,7 @@ public partial class PhoneHomeBackpressureTests
             await using var p = new ProtocolRunner(new(1, 1, 4096));
             p.Socket.Enqueue(new(PhoneHomeFrameKind.EventWindow, 7, Guid.Empty,
                 Payload: JsonDocument.Parse(invalid).RootElement.Clone()));
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventWindowInvalid);
         }
         await using (var p = new ProtocolRunner(new(1, 2, 4096)))
@@ -65,7 +65,7 @@ public partial class PhoneHomeBackpressureTests
             p.Update(7, 1, bytes);
             await p.BarrierAsync();
             p.Update(7, 0, bytes);
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventWindowInvalid);
         }
         foreach (var variant in new[] { "bytes-beyond-sent", "bytes-backwards", "same-count-changed-bytes" })
@@ -79,13 +79,13 @@ public partial class PhoneHomeBackpressureTests
             await p.BarrierAsync();
             p.Update(7, variant == "same-count-changed-bytes" ? 1 : 2,
                 variant == "bytes-beyond-sent" ? totalBytes + 1 : variant == "bytes-backwards" ? firstBytes - 1 : firstBytes + 1);
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventWindowInvalid, variant);
         }
         await using (var p = new ProtocolRunner(new(1, 8, 100)))
         {
             p.Output(id, 1, new string('x', 101));
-            var error = await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(TimeSpan.FromSeconds(5)));
+            var error = await Should.ThrowAsync<PhoneHomeTransportException>(() => p.Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait));
             error.Code.ShouldBe(PhoneHomeProblemTypes.EventWindowTooSmall);
             error.Message.ShouldContain("UTF-8 bytes");
             p.Events.ShouldBeEmpty();
@@ -165,11 +165,11 @@ public partial class PhoneHomeBackpressureTests
         {
             for (var i = 0; i < 2; i++) socket.Enqueue(new(PhoneHomeFrameKind.Event, 11, Guid.Empty,
                 EventName: "unknown", Payload: JsonSerializer.SerializeToElement(new { value = i })));
-            var first = await live.Events.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            var second = await live.Events.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            var first = await live.Events.ReadAsync().AsTask().WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
+            var second = await live.Events.ReadAsync().AsTask().WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             var hold = socket.HoldNextSend();
             first.Release();
-            await hold.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await hold.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             second.Release();
             first.Release(); // lease idempotence must not grant a third credit
             hold.Release.TrySetResult();
@@ -226,7 +226,7 @@ public partial class PhoneHomeBackpressureTests
         public async Task StopAsync()
         {
             _stop.Cancel();
-            try { await Loop.WaitAsync(TimeSpan.FromSeconds(5)); } catch (OperationCanceledException) { }
+            try { await Loop.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait); } catch (OperationCanceledException) { }
         }
         public async ValueTask DisposeAsync()
         {

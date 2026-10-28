@@ -26,7 +26,7 @@ public partial class PhoneHomeBackpressureTests
         await PhoneHomeHostedRunner.UntilAsync(() => h.Service.WaitingForEventCredit, "bytes bind even with seven count credits available");
         h.Live.PendingEventBytes.ShouldBe(bytes);
         h.RecoveryHold.TrySetResult();
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.DispatchEligible, "catch-up List/transcript RPCs finish with exhausted event credit");
         h.Live.PendingEvents.ShouldBe(1);
         (await new PhoneHomeRunnerClient(h.Live).ListAsync(CancellationToken.None)).Count.ShouldBe(1);
@@ -54,7 +54,7 @@ public partial class PhoneHomeBackpressureTests
         {
             socket.EnqueueJson(raw.Replace("\"epoch\":3", "\"epoch\":2"));
             socket.EnqueueJson(raw);
-            var item = await live.Events.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            var item = await live.Events.ReadAsync().AsTask().WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             item.PayloadBytes.ShouldBe(17, "raw non-ASCII JSON has 17 UTF-8 bytes, not 14 UTF-16 units");
             live.PendingEventBytes.ShouldBe(17);
             item.Release(); item.Release();
@@ -69,7 +69,7 @@ public partial class PhoneHomeBackpressureTests
                 "exactly 90 percent warns once");
             for (var i = 0; i < 9; i++) (await live.Events.ReadAsync()).Release();
             for (var i = 0; i < 11; i++) socket.EnqueueJson(raw);
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => receive.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => receive.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventOverflow);
             live.OverflowAt!.Dimension.ShouldBe("count");
             live.OverflowAt.At.PendingEvents.ShouldBe(10);
@@ -130,7 +130,7 @@ public partial class PhoneHomeBackpressureTests
         h.Commands.Capabilities().Features.ShouldContain(PhoneHomeEventWindowOptions.Capability);
         h.Live.EventWindow.ShouldBeNull();
         h.Output(h.SessionId, 1, "held");
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         h.Output(h.SessionId, 2, "full");
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 2, "legacy server budget full");
         h.Output(h.SessionId, 3, "legacy overflow");
@@ -144,23 +144,23 @@ public partial class PhoneHomeBackpressureTests
     {
         await using var h = await PhoneHomeHostedRunner.CreateAsync(observeCompletion: false);
         h.Output(h.SessionId, 1, "held");
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         for (var i = 2; i <= 4; i++) h.Output(h.SessionId, i, "fill");
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 4, "desktop window full");
         h.Commands.HoldList = true;
         var rpc = new PhoneHomeRunnerClient(h.Live).ListAsync(CancellationToken.None);
         try
         {
-            await h.Commands.ListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await h.Commands.ListEntered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             h.Transcript(h.SessionId, 5, "durable-overload", "retained UserPrompt");
             await PhoneHomeHostedRunner.UntilAsync(() => h.Service.WaitingForEventCredit, "durable event waits at sender");
             for (var i = 6; i <= 12; i++) h.Output(h.SessionId, i, "bounded");
             h.Service.EventPressure.PendingEvents.ShouldBe(8);
             h.Output(h.SessionId, 13, "one beyond the runner budget");
-            (await Should.ThrowAsync<PhoneHomeTransportException>(async () => await rpc.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(async () => await rpc.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.ConnectionClosedInFlight);
             h.Commands.ReleaseList.Set();
-            (await Should.ThrowAsync<PhoneHomeTransportException>(() => h.Connection.WaitAsync(TimeSpan.FromSeconds(5))))
+            (await Should.ThrowAsync<PhoneHomeTransportException>(() => h.Connection.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)))
                 .Code.ShouldBe(PhoneHomeProblemTypes.EventOverflow);
             h.Logs.Entries.ShouldContain(e => Equals(e["Loop"], "events") && Equals(e["Overflow"], "true"));
             h.Live.DispatchEligible.ShouldBeFalse();
