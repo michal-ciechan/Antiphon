@@ -1419,6 +1419,9 @@ function ConvertTo-TestPhaseSummaryRows {
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
     if (Test-Path -LiteralPath $timing) {
         $shards = @(Get-ChildItem -LiteralPath $timing -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
+        foreach ($chunkDir in @(Get-ChildItem -LiteralPath $timing -Directory -Filter 'chunk-*' -ErrorAction SilentlyContinue)) {
+            $shards += @(Get-ChildItem -LiteralPath $chunkDir.FullName -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
+        }
     }
     $completes = @{}
     $starts = @{}
@@ -2067,42 +2070,33 @@ function Get-QualificationPhaseSums {
     $processSpawn = $null
     $processWait = $null
     $refused = $false
-    # Owner files name this chunk's journals. Another chunk's journal is not opened.
-    # A journal with no owner file is legacy: only its first record is read to attribute it.
-    $entries = @(Get-ChildItem -LiteralPath $TimingRoot -Force -ErrorAction SilentlyContinue)
+    # The directory name is the hash of this chunk, run, attempt, and suite.
+    # Listing it does not enumerate another chunk or an earlier attempt.
+    # A sidecar for a different identity does not hide a journal. A journal
+    # with no matching sidecar is attributed from its first record.
+    $folderName = Get-QualificationChunkDirectoryName -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite
+    $folder = Join-Path $TimingRoot $folderName
+    $folderKind = Test-QualificationTimingDirectory -Path $folder
+    if ($folderKind -eq 'missing') { return $empty }
+    if ($folderKind -ne 'directory') {
+        $empty.refused = $true
+        return $empty
+    }
+    $entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)
     $shards = @($entries | Where-Object { $_.Name -like 'cases-*.jsonl' })
-    $ourToken = ConvertTo-QualificationGroupToken -Chunk $Chunk
+    $ourToken = ConvertTo-QualificationChunkIdentity -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite
     $ownedNames = @{}
-    $foreignNames = @{}
     foreach ($entry in $entries) {
         if ([string]$entry.Name -notlike 'own-*.txt') { continue }
         $owner = ConvertFrom-QualificationOwnerName -Name $entry.Name
         if ($null -eq $owner) { continue }
         if (-not [string]::IsNullOrEmpty($ourToken) -and $owner.Token -eq $ourToken) {
             $ownedNames[$owner.Journal] = $true
-            if ($foreignNames.ContainsKey($owner.Journal)) { $foreignNames.Remove($owner.Journal) }
-        } elseif (-not $ownedNames.ContainsKey($owner.Journal)) {
-            $foreignNames[$owner.Journal] = $true
         }
     }
     foreach ($shard in $shards) {
         if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $refused = $true; break }
         $name = [string]$shard.Name
-        $indexedForeign = $foreignNames.ContainsKey($name)
-        if ($indexedForeign) {
-            $stamp = 0L
-            try { $stamp = [int64]$shard.LastWriteTimeUtc.Ticks } catch { $stamp = 0L }
-            $size = 0L
-            try { $size = [int64]$shard.Length } catch { $size = 0L }
-            $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
-            $key = ([string]$shard.FullName + '|' + [string]$size + '|' + [string]$stamp + '|' + $identity)
-            if ($script:QualificationPhaseShardCache.ContainsKey($key)) {
-                $contribution = $script:QualificationPhaseShardCache[$key]
-            } else {
-                $contribution = New-QualificationEmptyContribution
-                $script:QualificationPhaseShardCache[$key] = $contribution
-            }
-        } else {
         $shardIdentity = Get-TestPhasePathIdentity -Path $shard.FullName
         if ($shardIdentity.Kind -ne 'regular') { $refused = $true; continue }
         $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
@@ -2131,16 +2125,15 @@ function Get-QualificationPhaseSums {
                 $contribution = New-QualificationEmptyContribution
                 $script:QualificationPhaseShardCache[$key] = $contribution
             } else {
-            if ($ownedWatch) {
-                $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $slice
-            } else {
-                $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+                if ($ownedWatch) {
+                    $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $slice
+                } else {
+                    $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+                }
+                if (-not $parsed.Complete) { $refused = $true }
+                $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
+                if ($parsed.Complete) { $script:QualificationPhaseShardCache[$key] = $contribution }
             }
-            if (-not $parsed.Complete) { $refused = $true }
-            $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
-            if ($parsed.Complete) { $script:QualificationPhaseShardCache[$key] = $contribution }
-            }
-        }
         }
         if ($null -eq $contribution) { continue }
         foreach ($fid in @($contribution.fixtures.Keys)) {
@@ -2268,7 +2261,9 @@ function Initialize-TestPhaseReadWarmup {
         [IO.File]::WriteAllBytes($path, $bytes)
         $null = Read-TestPhaseJsonlBounded -Path $path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
         $null = Read-QualificationTimingJsonl -Path $path -DeadlineMilliseconds 200
-        $good = Join-Path $dir 'cases-1-warm.jsonl'
+        $warmDir = Join-Path $dir (Get-QualificationChunkDirectoryName -Chunk 'warm' -RunId 'warm' -Attempt '0' -Suite 'warm')
+        New-Item -ItemType Directory -Path $warmDir -Force | Out-Null
+        $good = Join-Path $warmDir 'cases-1-warm.jsonl'
         [System.IO.File]::WriteAllText($good, '{"recordKind":"header","pid":1,"nonce":"warm","runId":"warm","groupId":"warm","attempt":"0","suite":"warm"}' + "`n")
         $null = Read-QualificationTimingJsonl -Path $good -DeadlineMilliseconds 200
         $trx = Join-Path $dir 'warm.trx'

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using TUnit.Core;
 
@@ -243,6 +244,33 @@ public sealed class TestTimingSession : IDisposable
         return sb.ToString();
     }
 
+    // Same text as ConvertTo-QualificationIdentityText: length-prefixed chunk,
+    // run id, attempt, and suite, separated by LF.
+    public static string IdentityToken(string? groupId, string? runId, string? attempt, string? suite)
+    {
+        var text = IdentityText(groupId, runId, attempt, suite);
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+        var sb = new StringBuilder(hash.Length * 2);
+        for (var i = 0; i < hash.Length; i++)
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
+    }
+
+    public static string ChunkDirectory(string root, string? groupId, string? runId, string? attempt, string? suite) =>
+        Path.Combine(root, "chunk-" + IdentityToken(groupId, runId, attempt, suite));
+
+    private static string IdentityText(string? groupId, string? runId, string? attempt, string? suite)
+    {
+        groupId ??= "";
+        runId ??= "";
+        attempt ??= "";
+        suite ??= "";
+        return groupId.Length.ToString(CultureInfo.InvariantCulture) + ":" + groupId + "\n"
+            + runId.Length.ToString(CultureInfo.InvariantCulture) + ":" + runId + "\n"
+            + attempt.Length.ToString(CultureInfo.InvariantCulture) + ":" + attempt + "\n"
+            + suite.Length.ToString(CultureInfo.InvariantCulture) + ":" + suite;
+    }
+
     public static TestTimingSession TryOpen(TestTimingConfig config)
     {
         if (string.IsNullOrWhiteSpace(config.Root))
@@ -266,8 +294,10 @@ public sealed class TestTimingSession : IDisposable
         TestTimingSession? session = null;
         try
         {
-            Directory.CreateDirectory(config.Root);
-            var path = Path.Combine(config.Root, "cases-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".jsonl");
+            var folder = ChunkDirectory(config.Root, config.GroupId, config.RunId, config.Attempt, config.Suite);
+            Directory.CreateDirectory(folder);
+            var journalName = "cases-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".jsonl";
+            var path = Path.Combine(folder, journalName);
             var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096);
             session = new TestTimingSession(true, null, path, clock) { _writer = new StreamWriter(stream, new UTF8Encoding(false)) };
             var assembly = string.IsNullOrWhiteSpace(config.AssemblyId)
@@ -275,12 +305,16 @@ public sealed class TestTimingSession : IDisposable
                 : config.AssemblyId!;
             session.WriteLine(session.HeaderJson(pid, nonce, assembly, config));
             var ownerPath = Path.Combine(
-                config.Root,
-                "own-" + GroupToken(config.GroupId) + "-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".txt");
-            File.WriteAllText(
-                ownerPath,
-                "cases-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".jsonl\n",
-                new UTF8Encoding(false));
+                folder,
+                "own-" + IdentityToken(config.GroupId, config.RunId, config.Attempt, config.Suite) + "-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".txt");
+            try
+            {
+                File.WriteAllText(ownerPath, journalName + "\n", new UTF8Encoding(false));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The journal stays open. The reader attributes a missing sidecar from its header.
+            }
             var opened = session;
             session = null;
             return opened;
