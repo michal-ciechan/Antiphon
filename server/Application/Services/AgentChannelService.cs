@@ -64,7 +64,8 @@ public sealed class AgentChannelService
         RouteMentionAsync(sourceSessionId, mention, Guid.NewGuid(), ct);
 
     internal async Task<bool> RouteMentionAsync(
-        Guid sourceSessionId, AgentMention mention, Guid occurrenceId, CancellationToken ct)
+        Guid sourceSessionId, AgentMention mention, Guid occurrenceId, CancellationToken ct,
+        Action? onDurable = null)
     {
         Record(sourceSessionId, MentionRouteDiagnostics.RouteStarted, $"target={mention.Target}");
         var source = await _db.AgentSessions
@@ -120,6 +121,9 @@ public sealed class AgentChannelService
         var queue = _queue ?? throw new InvalidOperationException("Mention routing requires the session queue.");
         var messageId = await queue.EnqueueMentionAsync(target.Id, FormatInput(source, message), occurrenceId, ct);
         Record(sourceSessionId, MentionRouteDiagnostics.Queued, $"target={target.Id:N} queue={messageId:N}");
+        // The row is the acceptance point. Release the source observer before flush: a single
+        // event consumer delivering the target would otherwise deadlock on this session.
+        onDurable?.Invoke();
         // Acceptance is durable. Activity and prompt transport cannot undo it or mint another row.
         try
         {
