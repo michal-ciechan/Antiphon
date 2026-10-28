@@ -296,6 +296,30 @@ public class AgentTaskDeadSessionReconciliationTests
     }
 
     [Test]
+    public async Task a_running_runner_on_the_first_sweep_does_not_spend_the_grace_advance()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)");
+        var harness = scenario.Harness();
+
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        harness.Clock.Advance(TimeSpan.FromMinutes(5));
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "gate 2 forgets the stamp, so the advance does not fail the task");
+        harness.FirstSeen.IsTracking(task.Id).ShouldBeFalse();
+
+        harness.Runner.Gone.Add(task.SessionId);
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("the pty-host exited (code 1)");
+    }
+
+    [Test]
     public async Task an_unreachable_runner_settles_nothing_and_throws_nothing()
     {
         await using var scenario = new Scenario();
