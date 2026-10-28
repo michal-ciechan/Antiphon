@@ -103,7 +103,12 @@ const previewRun = () => {
     'mount --bind /dev/null "$C1008_SIM_STAGE/dev/null"',
     'mount --bind /dev/urandom "$C1008_SIM_STAGE/dev/urandom"',
     'mount --bind /dev/zero "$C1008_SIM_STAGE/dev/zero"',
-    'mount --bind /var/tmp "$C1008_SIM_STAGE/var/tmp"',
+    // Scratch /tmp is a private tmpfs. The fixture root is bind-mounted afterwards
+    // at its own path, so a fixture under /tmp stays visible above that tmpfs.
+    'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/tmp"',
+    '[ -n "${C1008_FIXTURE_ROOT:-}" ] && [ "$C1008_FIXTURE_ROOT" != / ]',
+    'mkdir -p -- "$C1008_SIM_STAGE$C1008_FIXTURE_ROOT"',
+    'mount --bind -- "$C1008_FIXTURE_ROOT" "$C1008_SIM_STAGE$C1008_FIXTURE_ROOT"',
     'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_STAGE$C1008_SIM_WORK"',
     'mount -o remount,bind,ro -- "$C1008_SIM_STAGE$C1008_SIM_WORK"',
     'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_STAGE/work"',
@@ -115,7 +120,6 @@ const previewRun = () => {
     '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_STAGE/runner-tmp"',
     '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE/runner-tmp"',
     'fi',
-    'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/tmp"',
     'exec unshare --user --map-root-user -- chroot "$C1008_SIM_STAGE" /bin/bash -c "$C1008_SIM_PROGRAM"',
   ].join('\n');
   let run;
