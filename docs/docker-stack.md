@@ -427,13 +427,24 @@ auto-removed, pinned-image helper on apply's network. A container that can write
 a volume, a rollout stop or rm, a volume rm, and a recycle journal are not part
 of a preview. The preview prints `auditPending=false` and grants no apply
 authority when it binds an image. That image comes from a cleanup receipt for
-this project, project id, and retirement stamp. A receipt for the current source
-SHA is preferred when it carries a `sha256` image; otherwise the newest
-completed, non-dry-run receipt from another source SHA is used. The image must
-still be present on the host (`docker image inspect` by id). A missing image
-refuses `RecycleGitAuditUnknown` and starts no helper. A matching receipt whose
-image is empty also refuses, rather than printing `auditPending=true` and
-exiting 0. When no receipt matches, the preview prints
+this project, project id, and the normalized retirement stamp. A receipt for the
+current source SHA is preferred when it carries a `sha256` image and is not a
+dry-run, unless the caller named that dry-run for a preview. Two current-SHA
+images that differ refuse. Otherwise the lookup uses completed, non-dry-run
+receipts from another source SHA, including across run IDs. Partial, preview,
+refused, pending, and dry-run receipts from another SHA do not count. Those
+other-SHA receipts must carry the same `sha256` image; if two of them differ,
+the lookup refuses `RecycleGitAuditUnknown` instead of taking the newest. When
+they agree, the newest file (mtime, then operation id) is the one recorded. A
+receipt for a different project, project id, or retirement is ignored. It does
+not refuse. A named cleanup operation whose own file is a different project or
+retirement still refuses `RecycleGitAuditUnknown` and does not borrow a sibling.
+The image must still be present on the host (`docker image inspect` by id). A
+missing image refuses `RecycleGitAuditUnknown` and starts no helper. An empty
+image on a matching receipt refuses only when no other receipt binds an image,
+rather than printing `auditPending=true` and exiting 0. A pending receipt is
+not an empty match. Container cleanup does not use this refusal. When no
+receipt matches, the preview prints
 `C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`, prints
 `auditPending=true`, does not audit, and starts no container. Apply prints that
 same warning. It still audits with `antiphon-server2/session-testing:<sha12>`
@@ -506,18 +517,31 @@ all-state Docker ownership and production mount topology under the rollout lock.
 Only exited runner/state-init IDs are removed, using `docker rm -- <full-id>`
 without force or a volume flag. A live container refuses `TempContainerStillRunning`;
 wait for normal shutdown and rerun. This does not stop, kill or sweep containers.
-A non-retiring failed-deploy hold uses the abandonment procedure above.
+A completed receipt from an earlier retirement is ignored, and an absent temp's
+completed receipt has an empty image. A later container cleanup still succeeds.
+The empty-image refusal belongs to the volume-gate audit below, and only when
+no other receipt binds an image. A non-retiring failed-deploy hold uses the
+abandonment procedure above.
 
 After retaining the matching cleanup receipt, the wrapper re-reads status and
 requires fresh host absence before the independent C1008 volume gate. Explicit
 null live inventory is accepted only for a retired, offline, absent temp with
 zero bound/queued work. The pinned original image supplies the offline UID-1654 publication audit. A
 receipt matches on project, project id, and the retirement stamp. The current
-source SHA is preferred when that receipt carries an image; otherwise the newest
-completed, non-dry-run receipt from another source SHA is used, including across
-run IDs. The image must be present on the host or the gate refuses. An empty
-image on a matching receipt refuses rather than skipping the audit. Unpublished
-or dirty work preserves the volumes. When no receipt matches, the gate warns
+source SHA is preferred when that receipt carries a `sha256` image and is not a
+dry-run, unless the caller named that dry-run for a preview. Two current-SHA
+images that differ refuse. Otherwise completed, non-dry-run receipts from
+another source SHA are used, including across run IDs. Partial, preview,
+refused, pending, and dry-run receipts from another SHA do not count. If two of
+those other-SHA receipts carry different images, the gate refuses
+`RecycleGitAuditUnknown` instead of taking the newest. When they agree, the
+newest file (mtime, then operation id) is recorded. A receipt for a different
+project, project id, or retirement is ignored. It does not refuse. A named
+cleanup operation whose own file is a different retirement still refuses. The
+image must be present on the host or the gate refuses `RecycleGitAuditUnknown`
+and starts no helper. An empty image on a matching receipt refuses only when no
+other receipt binds an image. A pending receipt is not an empty match.
+Unpublished or dirty work preserves the volumes. When no receipt matches, the gate warns
 `C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`. Apply then uses the
 current SHA `antiphon-server2/session-testing:<sha12>` image when that image
 exists, and refuses when it does not. Container removal retains all four private
