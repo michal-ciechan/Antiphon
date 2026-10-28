@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -577,6 +578,72 @@ public sealed class LandingGitTests
         (await git.RunAsync(repo.Path, ["push", "origin", "master"], ct)).Succeeded.ShouldBeTrue();
     }
 
+    // CARD-1076. Windows qualification 28bbb58e: the 2s push budget did not return until 30.5s,
+    // the pre-push sleeper's own lifetime. Kill(entireProcessTree) does not reach a grandchild
+    // that has been reparented, and ReadToEndAsync then waits until that grandchild closes the
+    // redirected pipe. This stand-in is that shape on Linux.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_BudgetKillDoesNotWaitOutADetachedPipeHolder(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX double-fork witness; the in-tree pre-push sleeper is C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-pipe");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var script = Path.Combine(repo.Path, "holder.sh");
+        await File.WriteAllTextAsync(script, DetachedPipeHolderGit.Script(pidFile), ct);
+        var git = new DetachedPipeHolderGit(script);
+        TimeoutException? thrown = null;
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            thrown = await Should.ThrowAsync<TimeoutException>(async () => await git.RunAsync(repo.Path,
+                ["push", "origin", "master"], new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct));
+            watch.Stop();
+            Console.WriteLine($"C1076_PIPE elapsed={watch.Elapsed} error={thrown}");
+            thrown.Message.ShouldBe("git_timeout");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+            var holder = int.Parse(File.ReadAllText(pidFile).Trim());
+            HolderAlive(holder).ShouldBeTrue(
+                "the reparented grandchild still holds stdout; waiting for pipe EOF would run out its sleep");
+            var common = await git.CommonDirectoryAsync(repo.Path, ct);
+            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty();
+        }
+        finally
+        {
+            watch.Stop();
+            KillHolder(pidFile);
+        }
+    }
+
+    private static bool HolderAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static void KillHolder(string pidFile)
+    {
+        try
+        {
+            if (!File.Exists(pidFile)) return;
+            if (!int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid) || pid <= 0) return;
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited) process.Kill();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        { }
+    }
+
     // CARD-1076 V-2. The live push journal names the task and purpose, then the owner deletes it on exit.
     [Test]
     [Timeout(30_000)]
@@ -673,6 +740,37 @@ public sealed class LandingGitTests
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         return hook;
+    }
+
+    /// <summary>A push stand-in whose grandchild is reparented to init and keeps stdout open.</summary>
+    private sealed class DetachedPipeHolderGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile) =>
+            "#!/bin/sh\n" +
+            "(\n" +
+            "trap '' HUP\n" +
+            "sh -c 'trap \"\" HUP; echo $$ > \"" + pidFile + "\"; exec sleep 20' </dev/null &\n" +
+            ") &\n" +
+            "sleep 20\n" +
+            "exit 0\n";
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "push")
+                return base.StartProcess(start);
+            var standIn = new ProcessStartInfo("/bin/sh")
+            {
+                WorkingDirectory = start.WorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+            standIn.ArgumentList.Add(scriptPath);
+            return Process.Start(standIn);
+        }
     }
 
     private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
