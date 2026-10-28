@@ -172,6 +172,8 @@ const previewRun = () => {
     'mount --bind /dev/null "$C1008_SIM_STAGE/dev/null"',
     'mount --bind /dev/urandom "$C1008_SIM_STAGE/dev/urandom"',
     'mount --bind /dev/zero "$C1008_SIM_STAGE/dev/zero"',
+    // A real helper image has /dev/fd. Process substitution in the audit uses it.
+    'ln -s /proc/self/fd "$C1008_SIM_STAGE/dev/fd"',
     // Scratch /tmp is a private tmpfs. The fixture root is bind-mounted afterwards
     // at its own path, so a fixture under /tmp stays visible above that tmpfs.
     'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/tmp"',
