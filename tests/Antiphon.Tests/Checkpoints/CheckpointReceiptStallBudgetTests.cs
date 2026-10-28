@@ -8,21 +8,19 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// CARD-1599: the Linux receipt reader treats a slow answer as a stall once the
-// controlled clock passes 3s, even when the bytes then arrive. The loaded-host
-// budget is 6s (twice the 3s censor of those refusals). A read that never
-// returns bytes is still refused at that budget.
+// CARD-1601 replaces CARD-1599's six-second scheduling stopgap with a dedicated I/O thread,
+// a three-second silence window, and a separate overall cap. Pool witnesses run in children.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
 {
-    private static readonly TimeSpan LoadedHostBudget = TimeSpan.FromSeconds(6);
-    private static readonly TimeSpan SlowAnswer = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan LoadedHostBudget = CheckpointFileReader.StallDeadline;
+    private static readonly TimeSpan SlowAnswer = TimeSpan.FromSeconds(2);
 
     [Test]
-    public void slow_but_progressing_read_past_three_seconds_completes()
+    public void read_progress_rearms_silence_window_past_three_seconds()
     {
-        // red: one chunk that answers at 4s is refused as read-stalled (0 of 85) by the 3s window.
+        // The data read and EOF each answer within 2s; their 4s total exceeds one stall window.
         var f = new HostCleanupCheckpointFixture();
         f.Io.Platform.ShouldBe(CheckpointPlatform.Linux);
         var payload = Receipt(85);
@@ -47,7 +45,7 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         var refused = Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.Payload));
 
         refused.Message.ShouldContain("receipt-read-refused", Case.Sensitive);
-        refused.Message.ShouldContain("read-stalled: 0 of 85 bytes; no progress within 6s", Case.Sensitive);
+        refused.Message.ShouldContain("read-stalled: 0 of 85 bytes; no progress within 3s", Case.Sensitive);
         refused.InnerException.ShouldBeOfType<IOException>();
     }
 
@@ -157,7 +155,7 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         {
             clock.Advance(budget);
             cancellationToken.ThrowIfCancellationRequested();
-            throw new InvalidOperationException("a silent read must be refused when the stall budget elapses");
+            return ValueTask.FromResult(0); // the reader must check elapsed time before accepting EOF
         }
     }
 }

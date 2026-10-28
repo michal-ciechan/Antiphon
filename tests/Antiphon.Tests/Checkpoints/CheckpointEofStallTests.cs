@@ -198,8 +198,8 @@ public sealed class CheckpointEofStallTests
             stream.Stalls.ShouldBe(1);
             stream.StalledOffset.ShouldBe(OriginalSize);
             stream.ElapsedInsideRead.ShouldBe(CheckpointFileReader.StallDeadline);
-            stream.TimerFiredInsideRead.ShouldBeTrue();
-            stream.TokenCancelledInsideRead.ShouldBeTrue();
+            stream.TimerFiredInsideRead.ShouldBeFalse("deadline supervision does not use a pool timer");
+            // The reader checks the monotonic clock again when this synchronous answer returns.
             ReferenceEquals(Files.Io.Nodes[Path], Node).ShouldBeTrue("the append/shrink changes the retained node, not the path");
             (Node.Stat.Device, Node.Stat.Inode).ShouldBe(_identity);
             Files.Io.Count("open-read", Path).ShouldBe(1);
@@ -239,7 +239,7 @@ public sealed class CheckpointEofStallTests
             TokenCancelledInsideRead = cancellationToken.IsCancellationRequested;
             // Complete the operation synchronously, with cancellation and no bytes or pending task.
             cancellationToken.ThrowIfCancellationRequested();
-            throw new InvalidOperationException("the EOF stall did not cancel its read");
+            return ValueTask.FromResult(0);
         }
     }
 }
