@@ -81,15 +81,34 @@ public sealed class ExecutorLogWriter : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        Task disposed;
         lock (_admit)
         {
             if (_disposed is not null)
+                disposed = _disposed;
+            else
+            {
+                var item = new LogItem(LogKind.Dispose, line: null, CancellationToken.None, gate: null);
+                _closed = true;
+                _queue.Add(item);
+                _disposed = item.Done.Task;
                 return new ValueTask(_disposed);
-            var item = new LogItem(LogKind.Dispose, line: null, CancellationToken.None, gate: null);
-            _closed = true;
-            _queue.Add(item);
-            _disposed = item.Done.Task;
-            return new ValueTask(_disposed);
+            }
+        }
+
+        // The first caller owns a sink fault. A repeat joins that one disposal and completes.
+        return new ValueTask(JoinWithoutFault(disposed));
+    }
+
+    private static async Task JoinWithoutFault(Task disposed)
+    {
+        try
+        {
+            await disposed.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Observed by the first DisposeAsync.
         }
     }
 
