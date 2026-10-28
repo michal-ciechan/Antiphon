@@ -68,6 +68,30 @@ public sealed class RetiredTempContainerHostTests
         }
     }
 
+    // An earlier retirement stays on disk. It is not this cleanup, and it must not refuse it.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C994_Older_retirement_receipt_does_not_block_cleanup() {
+        using var f=Fixture();
+        (await Cleanup(f)).Exit.ShouldBe(0,"c994-older-retirement: seed");
+        var olderOp="c99400000000000000000000000000000009";
+        var receipt=Receipt(f);
+        receipt["operationId"]=olderOp;
+        receipt["retiredAt"]="2026-10-02T09:30:00.000000000Z";
+        receipt["image"]="sha256:"+new string('b',64);
+        receipt["outcome"]="completed";
+        receipt.AsObject().Remove("originalCleanupOperationId");
+        var dir=Path.Combine(f.Root,"server/temp-container-retirement");
+        File.Delete(Path.Combine(dir,"c99400000000000000000000000000000001.json"));
+        File.WriteAllText(Path.Combine(dir,olderOp+".json"),receipt.ToJsonString());
+        f.ReloadDocker();
+        var run=await Cleanup(f);
+        run.Exit.ShouldBe(0,"c994-older-retirement: "+run.Output);
+        run.Output.ShouldNotContain("TempContainerReceiptUnavailable");
+        Receipt(f)["image"]!.GetValue<string>().ShouldBe("","c994-older-retirement: the older image is not this cleanup");
+        Receipt(f).AsObject().ContainsKey("originalCleanupOperationId").ShouldBeFalse("c994-older-retirement: no borrowed operation");
+        NoMutation(f,"c994-older-retirement");
+    }
+
     // Typed predicates are batched so later guards cannot mask a missing conjunct.
     private static async Task StatusVectors(string label,bool main) {
         using var f=Fixture();var valid=f.Statuses[main?"server2":"server2-temp"]!.AsObject();var cases=new JsonArray();var expected=new Dictionary<string,bool>();
