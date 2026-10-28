@@ -39,6 +39,15 @@ public sealed class CheckpointTempRootSweep
         public DateTimeOffset LastSweep { get; set; }
     }
 
+    private readonly record struct BoundedDelete(long Bytes, bool Complete, ulong RootDevice, ulong RootInode,
+        ulong LockDevice, ulong LockInode, ulong MarkerDevice, ulong MarkerInode)
+    {
+        public static BoundedDelete Stopped(long bytes) => new(bytes, false, 0, 0, 0, 0, 0, 0);
+    }
+
+    private readonly record struct ListedFile(string Path, long Length, ulong Device, ulong Inode);
+    private readonly record struct ListedName(string Path, ulong Device, ulong Inode);
+
     private readonly string _temp;
     private readonly ProcessIdentityProbe _probe;
     private readonly CheckpointSweepOptions _options;
@@ -176,15 +185,21 @@ public sealed class CheckpointTempRootSweep
             var allowance = _options.MaxBytes - receipt.ReclaimedBytes;
             try
             {
-                var (bytes, complete) = DeleteBounded(root, allowance, started);
-                receipt.ReclaimedBytes += bytes;
-                if (complete)
+                var deleted = DeleteBounded(root, allowance, started);
+                receipt.ReclaimedBytes += deleted.Bytes;
+                if (deleted.Complete)
                 {
+                    if (deleted.RootInode != 0)
+                    {
+                        var now = _io.Stat(root);
+                        if (now.Kind != "directory" || now.Device != deleted.RootDevice || now.Inode != deleted.RootInode)
+                            throw new IOException("anchored-identity-changed");
+                    }
                     rootGate.Dispose();
                     // The same nofollow walk as the payload. Kernel 4.15 has no openat2.
-                    UnlinkEntry(Path.Combine(root, TestRootGuard.LockName), directory: false);
-                    UnlinkEntry(Path.Combine(root, TestRootGuard.MarkerName), directory: false);
-                    UnlinkEntry(root, directory: true);
+                    UnlinkEntry(Path.Combine(root, TestRootGuard.LockName), false, deleted.LockDevice, deleted.LockInode);
+                    UnlinkEntry(Path.Combine(root, TestRootGuard.MarkerName), false, deleted.MarkerDevice, deleted.MarkerInode);
+                    UnlinkEntry(root, true, deleted.RootDevice, deleted.RootInode);
                     Unregister(root);
                     receipt.CompletedRoots++;
                     receipt.EligibleRemaining--;
@@ -209,8 +224,8 @@ public sealed class CheckpointTempRootSweep
         if (Elapsed(started) >= _options.MaxDuration) return "time-budget";
         if (!IsCandidate(root)) return "name-or-depth";
         if (!_io.DirectoryExists(root)) return "absent";
-        if (!ContainedCleanup.SafeAncestors(root, _context) || !AnchoredInventory(root))
-            return "inventory-incomplete-or-linked";
+        if (!ContainedCleanup.SafeAncestors(root, _context)) return "inventory-incomplete-or-linked";
+        if (AnchoredInventory(root) is { } inventory) return inventory;
         var marker = ReadMarker(root);
         if (marker is null) return "marker-invalid";
         if (_clock() - marker.CreatedAt < _options.Grace) return "grace";
@@ -234,34 +249,36 @@ public sealed class CheckpointTempRootSweep
         return null;
     }
 
-    private (long Bytes, bool Complete) DeleteBounded(string root, long allowance, long started)
+    private BoundedDelete DeleteBounded(string root, long allowance, long started)
     {
-        if (allowance <= 0) return (0, false);
-        var files = new List<(string Path, long Length)>();
-        var directories = new List<string>();
-        var specials = new List<string>();
-        CollectAnchored(root, files, directories, specials);
+        if (allowance <= 0) return BoundedDelete.Stopped(0);
+        var rootStat = _io.Stat(root);
+        var rootDevice = rootStat.Device;
+        var files = new List<ListedFile>();
+        var directories = new List<ListedName>();
+        var specials = new List<ListedName>();
+        CollectAnchored(root, rootDevice, files, directories, specials);
         var bytes = 0L;
         var removed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var special in specials)
         {
-            if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
-            UnlinkEntry(special, directory: false);
-            removed.Add(special);
+            if (Elapsed(started) >= _options.MaxDuration) return BoundedDelete.Stopped(bytes);
+            UnlinkEntry(special.Path, false, special.Device, special.Inode);
+            removed.Add(special.Path);
         }
         foreach (var file in files
             .OrderBy(file => Path.GetFileName(file.Path) == TestRootGuard.MarkerName ? 2
                 : Path.GetFileName(file.Path) is RunOwnershipStore.FileName or "executor-ownership.json" ? 1 : 0)
             .ThenBy(file => file.Path, StringComparer.Ordinal))
         {
-            if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
+            if (Elapsed(started) >= _options.MaxDuration) return BoundedDelete.Stopped(bytes);
             var name = Path.GetFileName(file.Path);
             if (name == TestRootGuard.MarkerName || name is RunOwnershipStore.FileName or "executor-ownership.json"
                 or TestRootGuard.LockName or TestRootGuard.RunsName)
                 continue;
             var length = file.Length;
             var left = allowance - bytes;
-            if (left <= 0) return (bytes, false);
+            if (left <= 0) return BoundedDelete.Stopped(bytes);
             if (length > left)
             {
                 var directory = Path.GetDirectoryName(file.Path);
@@ -273,32 +290,48 @@ public sealed class CheckpointTempRootSweep
                 catch (AnchoredHardLinkException)
                 {
                     // The other name keeps the bytes, so this name is removed and not counted.
-                    UnlinkEntry(file.Path, directory: false);
+                    UnlinkEntry(file.Path, false, file.Device, file.Inode);
                     removed.Add(file.Path);
                     continue;
                 }
-                return (bytes + left, false);
+                return BoundedDelete.Stopped(bytes + left);
             }
-            UnlinkEntry(file.Path, directory: false);
+            UnlinkEntry(file.Path, false, file.Device, file.Inode);
             removed.Add(file.Path);
             bytes += length;
         }
         // Critical custody is retained until ordinary payload removal has finished.
-        if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
+        if (Elapsed(started) >= _options.MaxDuration) return BoundedDelete.Stopped(bytes);
+        ulong lockDevice = 0, lockInode = 0, markerDevice = 0, markerInode = 0;
         foreach (var file in files)
         {
+            var name = Path.GetFileName(file.Path);
+            if (name == TestRootGuard.LockName) { lockDevice = file.Device; lockInode = file.Inode; }
+            else if (name == TestRootGuard.MarkerName) { markerDevice = file.Device; markerInode = file.Inode; }
             if (removed.Contains(file.Path)) continue;
-            if (Path.GetFileName(file.Path) is TestRootGuard.MarkerName or TestRootGuard.LockName) continue;
-            UnlinkEntry(file.Path, directory: false);
+            if (name is TestRootGuard.MarkerName or TestRootGuard.LockName) continue;
+            UnlinkEntry(file.Path, false, file.Device, file.Inode);
         }
-        foreach (var directory in directories.OrderByDescending(path => path.Length))
-            UnlinkEntry(directory, directory: true);
-        return (bytes, true);
+        foreach (var directory in directories.OrderByDescending(path => path.Path.Length))
+            UnlinkEntry(directory.Path, true, directory.Device, directory.Inode);
+        return new BoundedDelete(bytes, true, rootDevice, rootStat.Inode, lockDevice, lockInode, markerDevice, markerInode);
     }
 
     // Symlink, FIFO and socket names are leaves. A directory symlink is not entered.
-    private bool AnchoredInventory(string root)
+    // A child whose device differs from the root is a mount and is not entered.
+    private string? AnchoredInventory(string root)
     {
+        ulong rootDevice;
+        try
+        {
+            var stat = _io.Stat(root);
+            if (stat.Kind != "directory") return "inventory-incomplete-or-linked";
+            rootDevice = stat.Device;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "inventory-incomplete-or-linked";
+        }
         var count = 0;
         var pending = new Stack<string>();
         pending.Push(root);
@@ -306,20 +339,28 @@ public sealed class CheckpointTempRootSweep
         {
             while (pending.TryPop(out var directory))
             {
-                if (++count > _options.MaxDescendantEntries) return false;
+                if (++count > _options.MaxDescendantEntries) return "inventory-incomplete-or-linked";
                 foreach (var child in _io.ListAnchored(directory))
                 {
-                    if (child.Kind == "directory") pending.Push(Path.Combine(directory, child.Name));
-                    else if (++count > _options.MaxDescendantEntries) return false;
+                    if (child.Kind == "directory")
+                    {
+                        if (rootDevice != 0 && child.Device != 0 && child.Device != rootDevice)
+                            return "mount-boundary";
+                        pending.Push(Path.Combine(directory, child.Name));
+                    }
+                    else if (++count > _options.MaxDescendantEntries) return "inventory-incomplete-or-linked";
                 }
             }
-            return true;
+            return null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "inventory-incomplete-or-linked";
+        }
     }
 
-    private void CollectAnchored(string root, List<(string Path, long Length)> files, List<string> directories,
-        List<string> specials)
+    private void CollectAnchored(string root, ulong rootDevice, List<ListedFile> files, List<ListedName> directories,
+        List<ListedName> specials)
     {
         var pending = new Stack<string>();
         pending.Push(root);
@@ -330,22 +371,24 @@ public sealed class CheckpointTempRootSweep
                 var path = Path.Combine(directory, child.Name);
                 if (child.Kind == "directory")
                 {
-                    directories.Add(path);
+                    if (rootDevice != 0 && child.Device != 0 && child.Device != rootDevice)
+                        throw new IOException("anchored-mount-boundary");
+                    directories.Add(new ListedName(path, child.Device, child.Inode));
                     pending.Push(path);
                 }
-                else if (child.Kind == "file") files.Add((path, child.Size));
-                else specials.Add(path);
+                else if (child.Kind == "file") files.Add(new ListedFile(path, child.Size, child.Device, child.Inode));
+                else specials.Add(new ListedName(path, child.Device, child.Inode));
             }
         }
     }
 
-    private void UnlinkEntry(string path, bool directory)
+    private void UnlinkEntry(string path, bool directory, ulong device = 0, ulong inode = 0)
     {
         var parent = Path.GetDirectoryName(path);
         var name = Path.GetFileName(path);
         if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name))
             throw new IOException("anchored-path-unsafe");
-        _io.UnlinkAnchored(parent, name, directory);
+        _io.UnlinkAnchored(parent, name, directory, device, inode);
     }
 
     private bool IsCandidate(string path)

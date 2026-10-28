@@ -171,8 +171,8 @@ public sealed class UnsafeDeleteRecoveryTests
         public virtual void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) =>
             _inner.DeleteAnchored(path, expectedEntry, directory);
         public virtual IReadOnlyList<AnchoredChild> ListAnchored(string directory) => _inner.ListAnchored(directory);
-        public virtual void UnlinkAnchored(string directory, string name, bool directoryEntry) =>
-            _inner.UnlinkAnchored(directory, name, directoryEntry);
+        public virtual void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0) =>
+            _inner.UnlinkAnchored(directory, name, directoryEntry, device, inode);
         public virtual void TruncateAnchored(string directory, string name, long length) =>
             _inner.TruncateAnchored(directory, name, length);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);

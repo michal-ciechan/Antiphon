@@ -13,10 +13,10 @@ public sealed partial class CheckpointNativeIo
         throw new IOException("anchored-delete-unavailable");
     }
 
-    public void UnlinkAnchored(string directory, string name, bool directoryEntry)
+    public void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0)
     {
-        if (OperatingSystem.IsLinux()) UnlinkAnchoredLinux(directory, name, directoryEntry);
-        else if (OperatingSystem.IsWindows()) UnlinkAnchoredWindows(directory, name, directoryEntry);
+        if (OperatingSystem.IsLinux()) UnlinkAnchoredLinux(directory, name, directoryEntry, device, inode);
+        else if (OperatingSystem.IsWindows()) UnlinkAnchoredWindows(directory, name, directoryEntry, device, inode);
         else throw new IOException("anchored-delete-unavailable");
     }
 
@@ -47,17 +47,20 @@ public sealed partial class CheckpointNativeIo
             var children = new List<AnchoredChild>(names.Count);
             foreach (var name in names)
             {
-                if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0 || (stat.Mask & 0x3CF) != 0x3CF)
-                    throw new IOException("anchored-entry-stat-failed: errno=" + Marshal.GetLastPInvokeError());
+                if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0)
+                    throw AnchoredFailure("anchored-entry-stat-failed", Marshal.GetLastPInvokeError());
+                if ((stat.Mask & 0x3CF) != 0x3CF)
+                    throw new IOException("anchored-entry-stat-failed");
                 var kind = KindFromMode(stat.Mode);
-                children.Add(new AnchoredChild(name, kind, kind == "file" ? CheckedSize(stat.Size) : 0));
+                children.Add(new AnchoredChild(name, kind, kind == "file" ? CheckedSize(stat.Size) : 0,
+                    LinuxDevice(stat), stat.Inode));
             }
             return children;
         }
         finally { _ = CloseNative(fd); }
     }
 
-    private void UnlinkAnchoredLinux(string directory, string name, bool directoryEntry)
+    private void UnlinkAnchoredLinux(string directory, string name, bool directoryEntry, ulong device, ulong inode)
     {
         if (!AnchoredDelete.EntryNameSafe(windows: false, name) || name is "." or "..")
             throw new IOException("anchored-path-unsafe");
@@ -65,13 +68,26 @@ public sealed partial class CheckpointNativeIo
         try
         {
             // AT_SYMLINK_NOFOLLOW. FIFO, socket and symlink names are not opened.
-            if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0 || (stat.Mask & 0x3CF) != 0x3CF)
-                throw new IOException("anchored-entry-stat-failed: errno=" + Marshal.GetLastPInvokeError());
+            if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0)
+            {
+                var errno = Marshal.GetLastPInvokeError();
+                // File.Delete tolerated a name that vanished after it was listed.
+                if (!directoryEntry && errno == 2) return;
+                throw AnchoredFailure("anchored-entry-stat-failed", errno);
+            }
+            if ((stat.Mask & 0x3CF) != 0x3CF)
+                throw new IOException("anchored-entry-stat-failed");
+            if (inode != 0 && (LinuxDevice(stat) != device || stat.Inode != inode))
+                throw new IOException("anchored-identity-changed");
             var isDirectory = (stat.Mode & 0xF000) == 0x4000;
             if (directoryEntry != isDirectory)
                 throw new IOException(directoryEntry ? "anchored-not-directory" : "anchored-not-leaf");
             if (UnlinkAt(fd, name, directoryEntry ? 0x200 : 0) != 0)
-                throw new IOException("anchored-unlink-failed: errno=" + Marshal.GetLastPInvokeError());
+            {
+                var errno = Marshal.GetLastPInvokeError();
+                if (!directoryEntry && errno == 2) return;
+                throw AnchoredFailure("anchored-unlink-failed", errno);
+            }
         }
         finally { _ = CloseNative(fd); }
     }
@@ -83,13 +99,15 @@ public sealed partial class CheckpointNativeIo
         var fd = OpenNoFollowChain(directory);
         try
         {
-            if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0 || (stat.Mask & 0x3CF) != 0x3CF)
-                throw new IOException("anchored-entry-stat-failed: errno=" + Marshal.GetLastPInvokeError());
+            if (Statx(fd, name, 0x100, 0x3CF, out var stat) != 0)
+                throw AnchoredFailure("anchored-entry-stat-failed", Marshal.GetLastPInvokeError());
+            if ((stat.Mask & 0x3CF) != 0x3CF)
+                throw new IOException("anchored-entry-stat-failed");
             if ((stat.Mode & 0xF000) != 0x8000 || length > CheckedSize(stat.Size))
                 throw new IOException("anchored-not-file");
             // O_WRONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC. A raced FIFO must not block.
             var file = OpenAt(fd, name, 1 | 0x20000 | 0x800 | 0x80000);
-            if (file < 0) throw new IOException("anchored-open-failed: errno=" + Marshal.GetLastPInvokeError());
+            if (file < 0) throw AnchoredFailure("anchored-open-failed", Marshal.GetLastPInvokeError());
             try
             {
                 if (Statx(file, "", 0x1000, 0x3CF, out var opened) != 0 || (opened.Mode & 0xF000) != 0x8000)
@@ -98,10 +116,10 @@ public sealed partial class CheckpointNativeIo
                 if ((opened.Mask & 0x4) == 0 || opened.Links != 1)
                     throw new AnchoredHardLinkException();
                 if (FTruncate(file, length) != 0)
-                    throw new IOException("anchored-truncate-failed: errno=" + Marshal.GetLastPInvokeError());
+                    throw AnchoredFailure("anchored-truncate-failed", Marshal.GetLastPInvokeError());
                 // Preserve durable truncation. A crash must not restore the reclaimed bytes.
                 if (Fsync(file) != 0)
-                    throw new IOException("anchored-truncate-failed: errno=" + Marshal.GetLastPInvokeError());
+                    throw AnchoredFailure("anchored-truncate-failed", Marshal.GetLastPInvokeError());
             }
             finally { _ = CloseNative(file); }
         }
@@ -113,7 +131,7 @@ public sealed partial class CheckpointNativeIo
         if (directory.Length == 0 || directory[0] != '/')
             throw new IOException("anchored-path-unsafe");
         var fd = OpenAt(-100, "/", LinuxDirectoryNoFollow);
-        if (fd < 0) throw new IOException("anchored-open-failed: errno=" + Marshal.GetLastPInvokeError());
+        if (fd < 0) throw AnchoredFailure("anchored-open-failed", Marshal.GetLastPInvokeError());
         try
         {
             foreach (var component in directory.Split('/', StringSplitOptions.RemoveEmptyEntries))
@@ -121,7 +139,7 @@ public sealed partial class CheckpointNativeIo
                 if (component is "." or ".." || !AnchoredDelete.EntryNameSafe(windows: false, component))
                     throw new IOException("anchored-path-unsafe");
                 var next = OpenAt(fd, component, LinuxDirectoryNoFollow);
-                if (next < 0) throw new IOException("anchored-open-failed: errno=" + Marshal.GetLastPInvokeError());
+                if (next < 0) throw AnchoredFailure("anchored-open-failed", Marshal.GetLastPInvokeError());
                 if (Statx(next, "", 0x1000, 0x3CF, out var stat) != 0 || (stat.Mode & 0xF000) != 0x4000)
                 {
                     _ = CloseNative(next);
@@ -152,6 +170,29 @@ public sealed partial class CheckpointNativeIo
     private static long CheckedSize(ulong size) =>
         size > long.MaxValue ? throw new IOException("anchored-entry-stat-failed") : (long)size;
 
+    private static ulong LinuxDevice(LinuxStatx stat) => ((ulong)stat.DevMajor << 32) | stat.DevMinor;
+
+    // EPERM, EACCES and EROFS are what File.Delete reports as UnauthorizedAccessException.
+    private static Exception AnchoredFailure(string what, int errno) =>
+        errno is 1 or 13 or 30
+            ? new UnauthorizedAccessException(what + ": errno=" + errno)
+            : new IOException(what + ": errno=" + errno);
+
+    private static Exception AnchoredWin32(string what, int error) =>
+        error == 5
+            ? new UnauthorizedAccessException(what + ": win32=" + error)
+            : new IOException(what + ": win32=" + error);
+
+    private static Exception AnchoredNtStatus(int status)
+    {
+        var message = "anchored-entry-open-failed: status=0x" + status.ToString("X8");
+        var code = unchecked((uint)status);
+        // OBJECT_NAME_NOT_FOUND, OBJECT_PATH_NOT_FOUND, ACCESS_DENIED, CANNOT_DELETE.
+        if (code is 0xC0000034u or 0xC000003Au) return new FileNotFoundException(message);
+        if (code is 0xC0000022u or 0xC0000121u) return new UnauthorizedAccessException(message);
+        return new IOException(message);
+    }
+
     private IReadOnlyList<AnchoredChild> ListAnchoredWindows(string directory)
     {
         using var handle = OpenNoFollowChainWindows(directory);
@@ -181,7 +222,7 @@ public sealed partial class CheckpointNativeIo
         return children;
     }
 
-    private void UnlinkAnchoredWindows(string directory, string name, bool directoryEntry)
+    private void UnlinkAnchoredWindows(string directory, string name, bool directoryEntry, ulong device, ulong inode)
     {
         if (!AnchoredDelete.EntryNameSafe(windows: true, name) || name is "." or "..")
             throw new IOException("anchored-path-unsafe");
@@ -189,19 +230,34 @@ public sealed partial class CheckpointNativeIo
         // OPEN_REPARSE_POINT, and FILE_DIRECTORY_FILE only for a real directory.
         // A leaf omits FILE_NON_DIRECTORY_FILE so the reparse entry itself is removed.
         uint options = 0x20 | 0x00200000 | (directoryEntry ? 0x1u : 0u);
-        using var child = OpenChild(parent, name, options, 0x00110080);
-        if (!GetFileInformationByHandle(child, out var info))
-            throw new IOException("anchored-entry-stat-failed: win32=" + Marshal.GetLastPInvokeError());
-        var reparse = (info.Attributes & 0x400u) != 0;
-        var isDirectory = (info.Attributes & 0x10u) != 0 && !reparse;
-        if (directoryEntry)
+        SafeFileHandle child;
+        try { child = OpenChild(parent, name, options, 0x00110080); }
+        catch (FileNotFoundException) when (!directoryEntry) { return; }
+        using (child)
         {
-            if (!isDirectory) throw new IOException("anchored-not-directory");
+            if (!GetFileInformationByHandle(child, out var info))
+                throw AnchoredWin32("anchored-entry-stat-failed", Marshal.GetLastPInvokeError());
+            if (inode != 0)
+            {
+                var index = ((ulong)info.IndexHigh << 32) | info.IndexLow;
+                if (info.Volume != device || index != inode)
+                    throw new IOException("anchored-identity-changed");
+            }
+            var reparse = (info.Attributes & 0x400u) != 0;
+            var isDirectory = (info.Attributes & 0x10u) != 0 && !reparse;
+            if (directoryEntry)
+            {
+                if (!isDirectory) throw new IOException("anchored-not-directory");
+            }
+            else if (isDirectory) throw new IOException("anchored-not-leaf");
+            var disposition = new FileDisposition { DeleteFile = true };
+            if (!SetFileInformationByHandle(child, 4, ref disposition, Marshal.SizeOf<FileDisposition>()))
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (!directoryEntry && error is 2 or 3) return;
+                throw AnchoredWin32("anchored-unlink-failed", error);
+            }
         }
-        else if (isDirectory) throw new IOException("anchored-not-leaf");
-        var disposition = new FileDisposition { DeleteFile = true };
-        if (!SetFileInformationByHandle(child, 4, ref disposition, Marshal.SizeOf<FileDisposition>()))
-            throw new IOException("anchored-unlink-failed: win32=" + Marshal.GetLastPInvokeError());
     }
 
     private void TruncateAnchoredWindows(string directory, string name, long length)
@@ -243,7 +299,7 @@ public sealed partial class CheckpointNativeIo
         {
             var error = Marshal.GetLastPInvokeError();
             handle.Dispose();
-            throw new IOException("anchored-open-failed: win32=" + error);
+            throw AnchoredWin32("anchored-open-failed", error);
         }
         try
         {
@@ -299,7 +355,7 @@ public sealed partial class CheckpointNativeIo
                     Attributes = 0x40,
                 };
                 var status = NtCreateFile(out var handle, access, ref attributes, out _, IntPtr.Zero, 0, share, 1, options, IntPtr.Zero, 0);
-                if (status < 0) throw new IOException("anchored-entry-open-failed: status=0x" + status.ToString("X8"));
+                if (status < 0) throw AnchoredNtStatus(status);
                 return new SafeFileHandle(handle, ownsHandle: true);
             }
             finally

@@ -145,6 +145,50 @@ public sealed class TempRootSweepAnchoredDeleteTests
         finally { RemoveScratch(sandbox); }
     }
 
+    // A real mount needs root. The listed device is rewritten so the walk stops
+    // before MarkDeleting and the marker stays with the root.
+    [Test]
+    public void mounted_child_keeps_the_root_and_its_marker()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("the mount-boundary witness needs a non-zero Linux device id");
+        var sandbox = Scratch();
+        try
+        {
+            var root = Candidate(sandbox);
+            var nested = Path.Combine(root, "nested");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(nested, "payload.txt"), "still-here");
+            var context = new CheckpointCleanupContext(new MountBoundaryIo(), new CheckpointNativeGitRunner());
+            var receipt = Sweep(context, sandbox).SweepOnce();
+            receipt.CompletedRoots.ShouldBe(0, "skips " + Format(receipt));
+            receipt.Skips.GetValueOrDefault("mount-boundary").ShouldBe(1, "skips " + Format(receipt));
+            Directory.Exists(root).ShouldBeTrue();
+            File.Exists(Path.Combine(root, TestRootGuard.MarkerName)).ShouldBeTrue();
+            File.ReadAllText(Path.Combine(nested, "payload.txt")).ShouldBe("still-here");
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    // The leaf is removed after it was listed and before unlinkat. Base File.Delete
+    // treated that race as success and still reclaimed the root.
+    [Test]
+    public void a_leaf_that_vanishes_mid_delete_still_reclaims_the_root()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("the vanish witness uses Linux ENOENT from unlinkat");
+        var sandbox = Scratch();
+        try
+        {
+            var root = Candidate(sandbox);
+            File.WriteAllText(Path.Combine(root, "payload.txt"), "gone");
+            var context = new CheckpointCleanupContext(new VanishingLeafIo(), new CheckpointNativeGitRunner());
+            var receipt = Sweep(context, sandbox).SweepOnce();
+            receipt.CompletedRoots.ShouldBe(1, "skips " + Format(receipt));
+            Directory.Exists(root).ShouldBeFalse();
+            File.Exists(Path.Combine(root, "payload.txt")).ShouldBeFalse();
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
     [DllImport("libc", EntryPoint = "link", SetLastError = true)]
     private static extern int Link(string oldPath, string newPath);
 
@@ -170,10 +214,10 @@ public sealed class TempRootSweepAnchoredDeleteTests
             base.DeleteAnchored(path, expectedEntry, directory);
         }
 
-        public override void UnlinkAnchored(string directory, string name, bool directoryEntry)
+        public override void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0)
         {
             Swap(Path.Combine(directory, name));
-            base.UnlinkAnchored(directory, name, directoryEntry);
+            base.UnlinkAnchored(directory, name, directoryEntry, device, inode);
         }
 
         public override void TruncateAnchored(string directory, string name, long length)
@@ -190,6 +234,39 @@ public sealed class TempRootSweepAnchoredDeleteTests
             Swapped = true;
             Directory.Move(parent, parent + ".aside");
             Directory.CreateSymbolicLink(parent, foreign);
+        }
+    }
+
+    private sealed class MountBoundaryIo : ForwardingNativeIo
+    {
+        public override IReadOnlyList<AnchoredChild> ListAnchored(string directory)
+        {
+            var children = base.ListAnchored(directory);
+            var rewritten = new AnchoredChild[children.Count];
+            for (var i = 0; i < children.Count; i++)
+            {
+                var child = children[i];
+                if (child.Kind == "directory")
+                {
+                    var device = child.Device == 0 ? 2UL : child.Device + 1;
+                    child = child with { Device = device };
+                }
+                rewritten[i] = child;
+            }
+            return rewritten;
+        }
+    }
+
+    private sealed class VanishingLeafIo : ForwardingNativeIo
+    {
+        public override void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0)
+        {
+            if (!directoryEntry && name == "payload.txt")
+            {
+                var path = Path.Combine(directory, name);
+                if (File.Exists(path)) File.Delete(path);
+            }
+            base.UnlinkAnchored(directory, name, directoryEntry, device, inode);
         }
     }
 
