@@ -34,6 +34,9 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
 {
+    // 2x the 16.1s upper CARD-1137 pre-hook stall (six runs, 5.4-16.1s).
+    // Provisional: that range is not a p95.
+    private static readonly TimeSpan BeforeDispatchWallCap = TimeSpan.FromSeconds(32);
     [Test]
     [Arguments(false, "Working")]
     [Arguments(true, "Working")]
@@ -602,8 +605,11 @@ public class TerminalRunnerSeatReleaseTests
         { cut.CutCommit(); return Task.CompletedTask; }
     }
 
+    // Above the 32s wall cap so that cap reports before TUnit cancels.
+    // No per-method p95: group 32 serial mean is 917s/39 (run 79b742de, may-understate).
     [Test]
-    public async Task Answer_racing_release_preserves_one_owner()
+    [Timeout(120_000)]
+    public async Task Answer_racing_release_preserves_one_owner(CancellationToken cancellationToken)
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
         await f.PreparePublishedBlockedSourceAsync();
@@ -626,10 +632,11 @@ public class TerminalRunnerSeatReleaseTests
         Task answer = Task.CompletedTask;
         try
         {
-            // BeforeDispatch is the signal. The budget is on a test clock this test does not
-            // advance, so a loaded host cannot expire the wait before the boundary.
+            // The 10s budget stays on the test clock. 32s wall is 2x the 16.1s
+            // CARD-1137 pre-hook stall (six runs, 5.4-16.1s; not a p95).
             var boundaryClock = new FakeTimeProvider();
-            await WaitForBeforeDispatchAsync(entered.Task, boundaryClock, TimeSpan.FromSeconds(10));
+            await WaitForBeforeDispatchAsync(entered.Task, boundaryClock, TimeSpan.FromSeconds(10),
+                BeforeDispatchWallCap, cancellationToken);
             answer = f.TryAnswerAsync("race answer");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "answer cannot mutate while release owns the queue gate");
         }
@@ -686,14 +693,24 @@ public class TerminalRunnerSeatReleaseTests
         await Should.ThrowAsync<TimeoutException>(wait);
     }
 
-    private static async Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget)
+    private static async Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget,
+        TimeSpan? wallCap = null, CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(budget, clock);
+        using var logical = new CancellationTokenSource(budget, clock);
+        using var wall = new CancellationTokenSource(wallCap ?? System.Threading.Timeout.InfiniteTimeSpan);
+        using var clocks = CancellationTokenSource.CreateLinkedTokenSource(logical.Token, wall.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(clocks.Token, cancellationToken);
         try
         {
-            await signal.WaitAsync(timeout.Token);
+            await signal.WaitAsync(linked.Token);
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        catch (OperationCanceledException) when (wall.IsCancellationRequested && wallCap is not null
+            && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"BeforeDispatch was not signaled before the {wallCap} wall cap.");
+        }
+        catch (OperationCanceledException) when (logical.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException("BeforeDispatch was not signaled before the test-clock budget elapsed.");
         }

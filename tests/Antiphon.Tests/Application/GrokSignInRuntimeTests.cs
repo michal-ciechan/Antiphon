@@ -38,7 +38,13 @@ public class GrokSignInRuntimeTests
 
     private const string ModernBackend = "modern";
 
+    // 2x the 32s stored serial duration (nightly-class-costs.json, run 8f055f87,
+    // n=1, may-understate, not a p95). The method timeout is above the two
+    // sequential 64s caps so each cap can report before TUnit cancels.
+    private static readonly TimeSpan SignInWallCap = TimeSpan.FromSeconds(64);
+
     [Test]
+    [Timeout(160_000)]
     public async Task A_sign_in_mode_fakegrok_pool_task_never_types_the_brief(CancellationToken cancellationToken)
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
@@ -106,9 +112,22 @@ public class GrokSignInRuntimeTests
                 sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
             }
 
-            // The 30s budget is on the same fake clock as the grace advance. This test does not
-            // advance it until the launch is idle, so ConPTY teardown is not a wall-clock cap.
-            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), cancellationToken, clock);
+            // The 30s budget stays on the test clock. 64s wall is 2x the 32s stored
+            // serial duration (run 8f055f87, n=1, may-understate, not a p95).
+            using (var idleWall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                idleWall.CancelAfter(SignInWallCap);
+                try
+                {
+                    await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), idleWall.Token, clock);
+                }
+                catch (OperationCanceledException) when (idleWall.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException(
+                        $"launch idle exceeded the {SignInWallCap.TotalSeconds:0}s wall cap before the test clock elapsed.");
+                }
+            }
 
             await using (var live = CreateContext())
             {
@@ -138,8 +157,14 @@ public class GrokSignInRuntimeTests
                 if (await RunnerListsRunningAsync(runner, sessionId))
                 {
                     await dispatcher.TickAsync(cancellationToken);
+                    var runningDeadline = TimeProvider.System.GetUtcNow() + SignInWallCap;
                     while (await RunnerListsRunningAsync(runner, sessionId))
+                    {
+                        if (TimeProvider.System.GetUtcNow() >= runningDeadline)
+                            throw new TimeoutException(
+                                $"runner stayed Running for {SignInWallCap.TotalSeconds:0}s wall time.");
                         await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+                    }
                 }
 
                 await dispatcher.TickAsync(cancellationToken);
