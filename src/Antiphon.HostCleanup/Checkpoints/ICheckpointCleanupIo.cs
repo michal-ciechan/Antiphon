@@ -50,6 +50,7 @@ public static class AnchoredDelete
         && name.IndexOfAny(['/', '\\']) < 0
         && (!windows || !name.Contains(':'));
 }
+public readonly record struct AnchoredChild(string Name, string Kind, long Size);
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
 public readonly record struct CheckpointReadOpen(int UnixFlags, uint WindowsFlags);
 public sealed record CheckpointGitRequest(string Executable, string WorkingDirectory,
@@ -106,5 +107,13 @@ public interface ICheckpointCleanupIo
     // Open the parent without following reparse points, require expectedEntry, then delete
     // the final name relative to that directory handle.
     void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory);
+    // One name observed without following it. Kind is file, directory, symlink, fifo,
+    // socket, or other. Size is the byte length of a regular file and zero otherwise.
+    IReadOnlyList<AnchoredChild> ListAnchored(string directory);
+    // Unlink this name through an ancestor-safe nofollow walk of directory.
+    // Symlink, FIFO and socket names are removed without being opened.
+    void UnlinkAnchored(string directory, string name, bool directoryEntry);
+    // Shrink a regular file through the same walk. A symlink or FIFO is refused.
+    void TruncateAnchored(string directory, string name, long length);
     string? EnvironmentVariable(string name);
 }

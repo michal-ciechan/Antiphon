@@ -9,8 +9,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 // Parent-swap witnesses for created-file and tool-copy deletes. Those sites pass the
-// recorded identity to DeleteAnchored. The temp-root sweep stays on the base path delete
-// (CARD-1596 round 2). An ancestor swap there is deferred, not a passing claim.
+// recorded identity to DeleteAnchored. The temp-root sweep uses the ancestor-safe
+// walk in ListAnchored/UnlinkAnchored (CARD-1596).
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AnchoredPathDeleteWitnessTests
@@ -359,5 +359,10 @@ internal class ForwardingNativeIo : ICheckpointCleanupIo
     public virtual void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
     public virtual void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) =>
         _inner.DeleteAnchored(path, expectedEntry, directory);
+    public virtual IReadOnlyList<AnchoredChild> ListAnchored(string directory) => _inner.ListAnchored(directory);
+    public virtual void UnlinkAnchored(string directory, string name, bool directoryEntry) =>
+        _inner.UnlinkAnchored(directory, name, directoryEntry);
+    public virtual void TruncateAnchored(string directory, string name, long length) =>
+        _inner.TruncateAnchored(directory, name, length);
     public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
 }
