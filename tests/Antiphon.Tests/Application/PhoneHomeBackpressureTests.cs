@@ -6,7 +6,6 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -67,30 +66,12 @@ public partial class PhoneHomeBackpressureTests
                 .Select(e => JsonSerializer.SerializeToElement(e.Payload)).ToArray();
             deltas.Select(e => e.GetProperty("sequence").GetInt64()).ShouldBe(new long[] { 1, 2, 3, 4, 7 });
             deltas.Select(e => e.GetProperty("text").GetString()).ShouldBe(chunks.Concat(new[] { "last" }));
-            var published = string.Join(", ", h.Bus.Recipient.PublishedEvents.Select(e => e.EventName));
-            string mentionEvidence = "";
-            var mentionOk = false;
-            using (var mentionWait = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            await PhoneHomeHostedRunner.UntilAsync(async () =>
             {
-                while (!mentionOk && !mentionWait.IsCancellationRequested)
-                {
-                    await using var db = h.Db();
-                    var rows = await db.SessionQueuedMessages.AsNoTracking().OrderBy(m => m.Sequence).ToListAsync();
-                    var sessions = await db.AgentSessions.AsNoTracking()
-                        .Select(s => new { s.Id, s.DefinitionName, s.Status }).ToListAsync();
-                    var hello = rows.Count(m => m.AgentSessionId == h.Bridge.SessionId
-                        && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains("hello"));
-                    var stages = h.Bridge.Provider.GetRequiredService<MentionRouteDiagnostics>().Format(h.SessionId);
-                    mentionEvidence =
-                        $"helloCount={hello} socket={h.Live.SocketOpen} eligible={h.Live.DispatchEligible} pending={h.Live.PendingEvents} disconnect={h.Live.LastDisconnectReason} published=[{published}] sessions=[{string.Join("; ", sessions.Select(s => $"{s.Id:N}/{s.DefinitionName}/{s.Status}"))}] rows=[{string.Join("; ", rows.Select(m => $"{m.AgentSessionId:N}/seq={m.Sequence}/{m.Origin}/{m.Body}"))}] stages:{Environment.NewLine}{stages}";
-                    if (hello == 1)
-                        mentionOk = true;
-                    else
-                        try { await Task.Delay(10, mentionWait.Token); } catch (OperationCanceledException) { }
-                }
-            }
-            Console.WriteLine("MENTION-EVIDENCE " + mentionEvidence);
-            mentionOk.ShouldBeTrue("the split mention reaches the real recipient queue exactly once: " + mentionEvidence);
+                await using var db = h.Db();
+                return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.Bridge.SessionId
+                    && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains("hello")) == 1;
+            }, "the split mention reaches the real recipient queue exactly once");
         }
         finally
         {
