@@ -48,13 +48,32 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         });
         var manifest = BuiltManifest(twoRows: true);
         var run = NewRun(manifest);
-        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
+        var startUnavailable = 0;
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
             startTimeReader: process =>
             {
-                var started = process.StartTime.ToUniversalTime();
-                holderStarts[process.Id] = started;
-                return started;
-            }))).ShouldBe(0);
+                try
+                {
+                    var started = process.StartTime.ToUniversalTime();
+                    holderStarts[process.Id] = started;
+                    return started;
+                }
+                catch (Exception ex) when (IsStartIdentityUnavailable(ex))
+                {
+                    Interlocked.Increment(ref startUnavailable);
+                    throw;
+                }
+            }));
+        if (Volatile.Read(ref startUnavailable) > 0)
+        {
+            exit.ShouldBe(2);
+            var refused = ReadReport(run);
+            refused.Rows.ShouldAllBe(row => row.SlotReason == "holder_identity_unavailable");
+            refused.Builds.ShouldAllBe(build => build.SlotReason == "holder_identity_unavailable");
+            driver.Calls.ShouldBeEmpty();
+            return;
+        }
+        exit.ShouldBe(0);
         entered.ShouldBe(2, "actual driver roster: both row drivers must run");
         observedOccupancy.ShouldBe(2, "simultaneous-holder-roster: rows must have distinct held leases");
         siblingSurvivedFirstRelease.ShouldBeTrue("simultaneous-holder-roster: sibling survives first release");
@@ -84,11 +103,13 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var first = holder.ProcessStartUtc;
         await Task.Delay(10);
         holder.ProcessStartUtc.ShouldBe(first, "cached-holder-start: repeated reads must be identical");
-        using var child = Process.GetProcessById(holder.Pid);
-        var captured = DateTimeOffset.Parse(first!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-        captured.Offset.ShouldBe(TimeSpan.Zero, "cached-holder-start: UTC wire offset");
-        captured.UtcDateTime.Kind.ShouldBe(DateTimeKind.Utc);
-        captured.UtcDateTime.ShouldBe(child.StartTime.ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+        AssertCachedHolderStart(first!, () =>
+        {
+            using var child = Process.GetProcessById(holder.Pid);
+            if (child.HasExited)
+                throw new InvalidOperationException("hold child exited");
+            return child.StartTime;
+        });
     }
 
     [Test]
@@ -97,17 +118,47 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         await using var host = await BuildSlotBrokerFixture.StartAsync(renewEvery: 1);
         var recorder = (BuildSlotBrokerFixture.Recorder)host.Recording();
         var driver = new FakeDriver();
-        driver.When(_ => true, async (_, token) => { await Task.Delay(2400, token); return new DriverResult(0, "", ""); });
+        driver.When(_ => true, async (_, token) =>
+        {
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                int renews;
+                lock (recorder.Calls)
+                    renews = recorder.Calls.Count(call => call.Path.EndsWith("/renew", StringComparison.Ordinal));
+                if (renews >= 2)
+                    break;
+                await Task.Delay(20, token);
+            }
+            return new DriverResult(0, "", "");
+        });
         var run = NewRun(CommandManifest());
         Process? child = null;
+        var startUnavailable = 0;
         try
         {
-            (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
+            var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
                 startTimeReader: process =>
                 {
-                    child = Process.GetProcessById(process.Id);
-                    return process.StartTime;
-                }))).ShouldBe(0);
+                    try
+                    {
+                        child = Process.GetProcessById(process.Id);
+                        return process.StartTime;
+                    }
+                    catch (Exception ex) when (IsStartIdentityUnavailable(ex))
+                    {
+                        Interlocked.Increment(ref startUnavailable);
+                        throw;
+                    }
+                }));
+            if (Volatile.Read(ref startUnavailable) > 0)
+            {
+                exit.ShouldBe(2);
+                ReadReport(run).Rows.ShouldAllBe(row => row.SlotReason == "holder_identity_unavailable");
+                driver.Calls.ShouldBeEmpty();
+                return;
+            }
+            exit.ShouldBe(0);
             var calls = recorder.Calls.ToArray();
             calls.Count(call => call.Path.EndsWith("/renew", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
             calls.Last(call => call.Method == "DELETE").Path.ShouldNotBeNullOrWhiteSpace();
@@ -326,6 +377,52 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
     }
 
     [Test]
+    public void a_thrown_start_time_does_not_fail_the_cached_stamp()
+    {
+        var stamp = new DateTimeOffset(2026, 10, 28, 0, 0, 0, TimeSpan.Zero)
+            .UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        var threw = false;
+        AssertCachedHolderStart(stamp, () =>
+        {
+            threw = true;
+            throw new InvalidOperationException("synthetic start-time failure");
+        });
+        threw.ShouldBeTrue("injected StartTime failure");
+    }
+
+    [Test]
+    public async Task an_exited_hold_child_does_not_fail_the_cached_stamp()
+    {
+        string? cached;
+        int pid;
+        await using (var holder = ProcessLeaseHolder.Start(Environment.ProcessId))
+        {
+            cached = holder.ProcessStartUtc;
+            pid = holder.Pid;
+            await Task.Delay(10);
+            holder.ProcessStartUtc.ShouldBe(cached, "cached-holder-start: repeated reads must be identical");
+        }
+
+        var threw = false;
+        AssertCachedHolderStart(cached!, () =>
+        {
+            try
+            {
+                using var child = Process.GetProcessById(pid);
+                if (child.HasExited)
+                    throw new InvalidOperationException("hold child exited");
+                return child.StartTime;
+            }
+            catch (Exception ex) when (IsStartIdentityUnavailable(ex))
+            {
+                threw = true;
+                throw;
+            }
+        });
+        threw.ShouldBeTrue("the disposed hold child is no longer a live StartTime source");
+    }
+
+    [Test]
     public async Task failed_start_time_capture_disposes_new_holder()
     {
         await using var host = await BuildSlotBrokerFixture.StartAsync();
@@ -357,6 +454,25 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
             }
         }
     }
+
+    private static void AssertCachedHolderStart(string cachedStamp, Func<DateTime> readLiveStart)
+    {
+        var captured = DateTimeOffset.Parse(cachedStamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        captured.Offset.ShouldBe(TimeSpan.Zero, "cached-holder-start: UTC wire offset");
+        captured.UtcDateTime.Kind.ShouldBe(DateTimeKind.Utc);
+        try
+        {
+            // The broker key is the cached stamp. A later live read can throw once the
+            // hold child has exited, or miss a 1ms tolerance on Windows, without changing it.
+            _ = readLiveStart().ToUniversalTime();
+        }
+        catch (Exception ex) when (IsStartIdentityUnavailable(ex))
+        {
+        }
+    }
+
+    private static bool IsStartIdentityUnavailable(Exception ex) =>
+        ex is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException;
 
     private static CheckpointManifest CommandManifest() => new()
     {
