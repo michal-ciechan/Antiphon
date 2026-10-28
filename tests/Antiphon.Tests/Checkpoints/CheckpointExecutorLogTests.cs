@@ -10,18 +10,19 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointExecutorLogTests : CheckpointTestBase
 {
     [Test]
-    public async Task concurrent_callbacks_append_each_line_once_without_overlap()
+    [Timeout(60_000)]
+    public async Task concurrent_callbacks_append_each_line_once_without_overlap(CancellationToken cancellationToken)
     {
         var sink = new GatedSink { GateFirstAppend = true };
         await using var writer = new ExecutorLogWriter(sink);
         var first = writer.AppendAsync("BUILD SLOT grant id=A");
-        await sink.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await sink.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         var second = writer.AppendAsync("BUILD SLOT release id=B");
         sink.ActiveWrites.ShouldBe(1);
         sink.Overlaps.ShouldBe(0);
         sink.OpenFirst();
         await Task.WhenAll(first, second);
-        await writer.FlushAsync();
+        await writer.FlushAsync(cancellationToken);
         sink.Lines.Count.ShouldBe(2);
         sink.Lines.Count(line => line.EndsWith("BUILD SLOT grant id=A", StringComparison.Ordinal)).ShouldBe(1);
         sink.Lines.Count(line => line.EndsWith("BUILD SLOT release id=B", StringComparison.Ordinal)).ShouldBe(1);
@@ -30,11 +31,11 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         var callbackSink = new GatedSink { GateFirstAppend = true };
         await using var callbackWriter = new ExecutorLogWriter(callbackSink);
         var producerA = Task.Run(() => callbackWriter.Note("BUILD SLOT grant id=callback-A"));
-        await callbackSink.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await callbackSink.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         var producerB = Task.Run(() => callbackWriter.Note("BUILD SLOT release id=callback-B"));
         callbackSink.OpenFirst();
         await Task.WhenAll(producerA, producerB);
-        await callbackWriter.FlushAsync();
+        await callbackWriter.FlushAsync(cancellationToken);
         callbackSink.Lines.Count.ShouldBe(2);
         callbackSink.Lines.Count(line => line.EndsWith("id=callback-A", StringComparison.Ordinal)).ShouldBe(1);
         callbackSink.Lines.Count(line => line.EndsWith("id=callback-B", StringComparison.Ordinal)).ShouldBe(1);
