@@ -60,7 +60,15 @@ public sealed class RunnerContractMapper
             transcript.TerminalComplete, transcript.AcceptedStartedAt,
             transcript.Readiness is { } readiness
                 ? new SessionRunnerTranscriptReadiness(readiness.Status, readiness.BindingId,
-                    readiness.ParsedThrough, readiness.ObservedLength, readiness.Reason) : null);
+                    readiness.ParsedThrough, readiness.ObservedLength, readiness.Reason) : null,
+            CodexTokenCountAt: MapCodexTokenCount(transcript.CodexTokenCountAt));
+
+    /// <summary>
+    /// Codex <c>token_count</c> time as a UTC PostgreSQL timestamp. Null stays null:
+    /// a runner that omits the field is reporting an unknown heartbeat, not a cleared one.
+    /// </summary>
+    public static DateTime? MapCodexTokenCount(DateTimeOffset? at) =>
+        at is { } value ? SessionGeneration.Normalize(value.UtcDateTime) : null;
 
     public static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
         new(

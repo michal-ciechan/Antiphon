@@ -53,10 +53,12 @@ namespace Antiphon.SessionRunner;
 /// That is the existing idle-not-report boundary: the queue flushes and the task stays
 /// Working. <c>IsApiError</c> stays unset; an API failure remains <c>task_complete.error</c>.</item>
 /// <item><c>token_count</c> → per-turn usage, consumed once at either <c>task_complete</c> or
-/// <c>turn_aborted</c> and stamped on that boundary's <c>TurnEnd</c>. Without new counts since
-/// the previous boundary the usage fields stay null (see <see cref="TurnUsage"/> for why usage
-/// is a delta and not the row's own numbers). Late counts and overlapping replacement-turn row
-/// ordering remain unmeasured; accounting follows the most recent observed snapshot.</item>
+/// <c>turn_aborted</c> and stamped on that boundary's <c>TurnEnd</c>. The row's own timestamp
+/// is retained on <see cref="LastTokenCountAt"/> (newest only) and no <see cref="TranscriptPart"/>
+/// is emitted, so the heartbeat is not a transcript row and not a delivery verdict. Without new
+/// counts since the previous boundary the usage fields stay null (see <see cref="TurnUsage"/> for
+/// why usage is a delta and not the row's own numbers). Late counts and overlapping replacement-turn
+/// row ordering remain unmeasured; accounting follows the most recent observed snapshot.</item>
 /// </list>
 ///
 /// <para>Skipped, lossy by design like the other two normalizers: <c>session_meta</c>,
@@ -187,7 +189,7 @@ public sealed class CodexTranscriptNormalizer
                 "agent_message" => FromFlatAgent(payload, uuid, ts),
                 "agent_reasoning" => FromFlatReasoning(payload, uuid, ts),
                 "item_completed" => FromThreadItem(payload, uuid, ts),
-                "token_count" => AbsorbTokenCount(payload),
+                "token_count" => AbsorbTokenCount(payload, ts),
                 "task_complete" => FromTaskComplete(payload, uuid, ts),
                 "turn_aborted" => FromTurnAborted(payload, uuid, ts),
                 _ => [],
@@ -302,8 +304,12 @@ public sealed class CodexTranscriptNormalizer
 
     // ------------------------------------------------------------------------- usage + turn end
 
-    private List<TranscriptPart> AbsorbTokenCount(JsonElement payload)
+    private List<TranscriptPart> AbsorbTokenCount(JsonElement payload, DateTimeOffset? ts)
     {
+        // The heartbeat is the row, not a successful usage parse. An older stamp must not walk it back.
+        if (ts is DateTimeOffset at && (LastTokenCountAt is null || at > LastTokenCountAt))
+            LastTokenCountAt = at;
+
         if (!payload.TryGetProperty("info", out var info) || info.ValueKind != JsonValueKind.Object)
             return [];
         if (!info.TryGetProperty("total_token_usage", out var total) || total.ValueKind != JsonValueKind.Object)
