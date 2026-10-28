@@ -876,15 +876,22 @@ session input endpoint remains intentional input and advances the same revision.
 a missing snapshot, an accepted-generation mismatch, uncertain input, an adopted
 session, an unreadable screen, or other unavailable evidence. Each pending row
 repeats that text as `withholdReason`. A real dialog, a remote-control menu, and
-a missing snapshot leave `deliveryAttempts` at 0. The other withholds record one
-attempt and then stop, so a later flush does not spin the count. Resolve dialogs
-interactively or through separately qualified owner actions; do not force Enter,
-clear holds by age, or release a seat.
+a missing snapshot leave `deliveryAttempts` at 0 and do not write a withhold
+record. The other withholds write `withholdCount`, `firstWithheldAt`,
+`lastWithheldAt`, and `lastWithholdReason` and leave `deliveryAttempts`,
+`lastDeliveryStartedAt`, and `lastDeliveryBaselineSequence` unset. The same
+reason does not write again. A later durable withhold with a different reason
+advances `withholdCount` and `lastWithheldAt` once and keeps `firstWithheldAt`.
+Moving the note to another session clears that record. The record stays after
+the withhold ends, so a note that remains pending for another reason can still
+show the old withhold. Resolve dialogs interactively or through separately
+qualified owner actions; do not force Enter, clear holds by age, or release a seat.
 
 `GET /api/sessions/{id}/pending-notes?since={sequence}&limit={n}` returns pending
 notes with sequence greater than `since`, oldest first, at most 100 rows (default
-50). `nextSince` is the last sequence on the page, or `since` when the page is
-empty. The route is a read: it does not flush, charge an attempt, or type. A
+50). The page stops at 256 KiB of body bytes after the first note. `nextSince`
+is the last sequence on the page, or `since` when the page is empty. The route
+is a read: it does not flush, record a withhold, charge an attempt, or type. A
 missing session is 404. Use it to fetch withheld notices without sending input.
 
 ### Provider input waits (CARD-1518)

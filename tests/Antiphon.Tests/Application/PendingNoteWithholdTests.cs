@@ -15,9 +15,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1591. A withheld Claude note is named and recorded once, apart from delivery
-/// attempts, and readable without typing. Adopted idle, an operator draft, a dialog, and
-/// Working still write no bytes.
+/// CARD-1591. A withheld Claude note is named apart from delivery attempts and is
+/// readable without typing. The first withhold writes the record; a later different
+/// reason advances it once. Adopted idle, an operator draft, a dialog, and Working
+/// still write no bytes.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
@@ -77,8 +78,10 @@ public class PendingNoteWithholdTests
             harness, "dialog notice", DialogDeliveryAdmission.BlocksInput, 0, ct);
         await harness.Queue.OnTurnEndAsync(harness.SessionId, ct);
         (await ReloadAsync(harness, dialog.Id, ct)).WithholdCount.ShouldBe(0);
-        (await ReloadAsync(harness, adopted.Id, ct)).WithholdCount.ShouldBe(1);
-        (await ReloadAsync(harness, adopted.Id, ct)).DeliveryAttempts.ShouldBe(0);
+        var adoptedAfter = await ReloadAsync(harness, adopted.Id, ct);
+        adoptedAfter.WithholdCount.ShouldBe(4);
+        adoptedAfter.LastWithholdReason.ShouldBe(DialogDeliveryAdmission.ScreenUnknown);
+        adoptedAfter.DeliveryAttempts.ShouldBe(0);
 
         harness.Adapter.DialogGuardEnabled = false;
         harness.Adapter.DialogAdopted = false;
@@ -99,13 +102,14 @@ public class PendingNoteWithholdTests
         page.NextSince.ShouldBe(page.Notes[0].Sequence);
         page.Notes[0].Body.ShouldBe("adopted notice");
         page.Notes[0].DeliveryAttempts.ShouldBe(0);
-        page.Notes[0].WithholdCount.ShouldBe(1);
-        page.Notes[0].LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
+        page.Notes[0].WithholdCount.ShouldBe(4);
+        page.Notes[0].LastWithholdReason.ShouldBe(DialogDeliveryAdmission.ScreenUnknown);
         page.Notes[0].FirstWithheldAt.ShouldNotBeNull();
+        page.Notes[0].LastWithheldAt.ShouldNotBeNull();
         var rest = await harness.Queue.ListPendingNotesAsync(harness.SessionId, page.NextSince, 50, ct);
         rest.Notes.ShouldNotContain(n => n.Sequence == page.Notes[0].Sequence);
         rest.Notes.ShouldContain(n => n.Body == "dialog notice" && n.DeliveryAttempts == 0 && n.WithholdCount == 0);
-        rest.Notes.ShouldContain(n => n.Body == "uncertain notice" && n.DeliveryAttempts == 0 && n.WithholdCount == 1);
+        rest.Notes.ShouldContain(n => n.Body == "uncertain notice" && n.DeliveryAttempts == 0 && n.WithholdCount == 3);
         var wide = await harness.Queue.ListPendingNotesAsync(harness.SessionId, -1, 0, ct);
         wide.Since.ShouldBe(0);
         wide.Notes.Count.ShouldBeGreaterThan(1);
