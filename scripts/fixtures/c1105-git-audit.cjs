@@ -257,6 +257,15 @@ const commonAdmin = /^audit check=gitdir-entry status=0 repo=repo admin=repo\/\.
 function mirrorStamp(text) {
     put(linked() + 'antiphon-mirror-owner.json', text ?? '{"taskId":"d3c62283-34af-4c7a-b79a-16e068fde52e","creationGeneration":"695a5dab-0e8d-4efb-89ae-d4deb96d8045","preparationId":"148c04fe-58ac-4f89-b082-652dd77c4eca"}\n');
 }
+// CARD-1594. The tree a delegate wrote under the common git directory: logs, TRX,
+// HTML and timing JSONL. One file is executable. review-evidence/ does not forbid that.
+function evidenceTree() {
+    put('antiphon-evidence/task-x/build.log', 'build log\n');
+    put('antiphon-evidence/task-x/tests.trx', '<TestRun/>\n');
+    put('antiphon-evidence/task-x/report.html', '<html></html>\n');
+    put('antiphon-evidence/task-x/out/timing.jsonl', '{"ms":1}\n');
+    fs.chmodSync(gd('antiphon-evidence/task-x/build.log'), 0o755);
+}
 function otherAuditUid() {
     const bin = path.join(root, 'fake-bin');
     fs.mkdirSync(bin);
@@ -570,6 +579,24 @@ const hidden = {
     'mirror-owner-hardlink': [K, () => { mirrorStamp(); fs.linkSync(gd('worktrees/linked/antiphon-mirror-owner.json'), path.join(work, 'stamp-alias')); }, linkedAdmin],
     'mirror-owner-other-uid': [K, () => { mirrorStamp(); otherAuditUid(); }, linkedAdmin],
     'mirror-owner-common': [K, () => put('antiphon-mirror-owner.json', '{}'), commonAdmin],
+    // CARD-1594. Outside the hidden-location table: not an object store. The pass
+    // tree is agent files. Each refusal starts from that tree and adds one defect.
+    'antiphon-evidence': [P, evidenceTree],
+    'antiphon-evidence-symlink': [K, () => { evidenceTree(); fs.symlinkSync('build.log', gd('antiphon-evidence/task-x/linked.log')); }, commonAdmin],
+    'antiphon-evidence-symlink-root': [K, () => { evidenceTree(); fs.renameSync(gd('antiphon-evidence'), path.join(work, 'evidence-real')); fs.symlinkSync(path.join(work, 'evidence-real'), gd('antiphon-evidence')); }, commonAdmin],
+    'antiphon-evidence-git': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/nested/.git/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
+    'antiphon-evidence-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/refs/heads/master', head() + '\n'); }, commonAdmin],
+    'antiphon-evidence-objects': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/objects/pack/pack-x', 'pack'); }, commonAdmin],
+    'antiphon-evidence-head': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
+    'antiphon-evidence-packed-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, commonAdmin],
+    'antiphon-evidence-odd': [K, () => { evidenceTree(); run('mkfifo', [gd('antiphon-evidence/task-x/pipe')]); }, commonAdmin],
+    'antiphon-evidence-unreadable': [K, () => { evidenceTree(); const secret = gd('antiphon-evidence/task-x/secret.log'); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, commonAdmin],
+    'antiphon-evidence-hardlink': [K, () => { evidenceTree(); const outside = path.join(work, 'outside-evidence'); fs.writeFileSync(outside, 'outside\n'); fs.linkSync(outside, gd('antiphon-evidence/task-x/alias.log')); }, commonAdmin],
+    'antiphon-evidence-dot': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/.hidden', 'x'); }, commonAdmin],
+    'antiphon-evidence-linked': [K, () => put(linked() + 'antiphon-evidence/task-x/build.log', 'log'), linkedAdmin],
+    // review-evidence/ and antiphon/ are not walked: an interior symlink still passes.
+    'review-evidence-symlink': [P, () => { put('review-evidence/4a14585d/review.md', 'evidence'); fs.symlinkSync('review.md', gd('review-evidence/4a14585d/linked.md')); }],
+    'antiphon-symlink': [P, () => { put('antiphon/landing.lock', ''); fs.symlinkSync('landing.lock', gd('antiphon/linked.lock')); }],
 };
 try {
     setup(); helper();
