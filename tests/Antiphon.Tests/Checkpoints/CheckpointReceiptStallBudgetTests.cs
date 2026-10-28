@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.Infrastructure;
@@ -12,7 +13,8 @@ namespace Antiphon.Tests.Checkpoints;
 // budget is 6s (twice the 3s censor of those refusals). A read that never
 // returns bytes is still refused at that budget.
 [Category("Unit")]
-public sealed class CheckpointReceiptStallBudgetTests
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
 {
     private static readonly TimeSpan LoadedHostBudget = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan SlowAnswer = TimeSpan.FromSeconds(4);
@@ -47,6 +49,48 @@ public sealed class CheckpointReceiptStallBudgetTests
         refused.Message.ShouldContain("receipt-read-refused", Case.Sensitive);
         refused.Message.ShouldContain("read-stalled: 0 of 85 bytes; no progress within 6s", Case.Sensitive);
         refused.InnerException.ShouldBeOfType<IOException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task healthy_receipts_complete_with_every_pool_worker_occupied(bool embedded)
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("Linux scheduling witness; no native Windows qualification");
+        var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-pool-saturation.ps1"),
+                     "-Repository", CheckpointFixtures.RepoRoot, "-Scratch", TempDir(), "-Assembly", typeof(CheckpointFileReader).Assembly.Location })
+            psi.ArgumentList.Add(arg);
+        if (embedded) psi.ArgumentList.Add("-Embedded");
+        using var child = Process.Start(psi)!;
+        RegisterCheckpointChild(child);
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try { await child.WaitForExitAsync(safety.Token); }
+        catch (OperationCanceledException) { child.Kill(true); await child.WaitForExitAsync(); throw; }
+        child.ExitCode.ShouldBe(0, await stdout + await stderr);
+    }
+
+    [Test]
+    public void one_byte_trickle_is_refused_by_an_overall_deadline()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var bytes = Receipt(256);
+        f.Io.Put(f.Payload, bytes);
+        f.Io.StreamFactory = () => new Trickle(bytes, f.Clock);
+        var refusal = Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.Payload));
+        refusal.Message.ShouldContain("read-deadline-exceeded");
+        (f.Clock.GetUtcNow() - DateTimeOffset.Parse("2026-09-25T00:00:00Z")).ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(31));
+    }
+
+    private sealed class Trickle(byte[] bytes, ControlledTimeProvider clock) : MemoryStream(bytes, false)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            return base.ReadAsync(buffer[..1], cancellationToken);
+        }
     }
 
     private static byte[] Receipt(int size)
