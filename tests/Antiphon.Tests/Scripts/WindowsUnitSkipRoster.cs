@@ -179,6 +179,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Documentation_and_transport_pins_match", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Refusal_receipts_do_not_leak_secrets", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Retired_absent_null_is_accepted", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleCensusChurnTests", "C1099_Fixture_census_skips_a_vanished_foreign_container", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RetiredTempContainerHostTests", "C1105_Temp_cleanup_uses_previous_generation", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Previous_generation_roster_is_derived_from_its_compose", 1, ExistingReason),
