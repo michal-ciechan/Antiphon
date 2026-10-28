@@ -240,10 +240,10 @@ public sealed class ExpectationObservationAdapterTests
         first.NextNoteQueueCursorId.ShouldNotBeNull();
         probe.Queries.ShouldBeGreaterThan(0);
         probe.Queries.ShouldBeLessThan(historySize);
-        probe.PageLimits.ShouldNotBeEmpty(probe.Describe());
-        probe.PageLimits.ShouldContain(101, probe.Describe());
-        foreach (var limit in probe.PageLimits)
-            limit.ShouldBeLessThanOrEqualTo(101, probe.Describe());
+        probe.OutboxPageLimits.Count.ShouldBe(1, probe.Describe());
+        probe.OutboxPageLimits.Single().ShouldBe(101, probe.Describe());
+        probe.QueuePageLimits.Count.ShouldBe(1, probe.Describe());
+        probe.QueuePageLimits.Single().ShouldBe(101, probe.Describe());
 
         var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
         await using (var scanDb = world.Db())
@@ -417,19 +417,21 @@ public sealed class ExpectationObservationAdapterTests
     }
 
     /// <summary>
-    /// Counts reader commands and the LIMIT/FETCH page size on the note tables.
-    /// The page size is 101 (100 plus the incomplete-page probe) for every history size.
+    /// Counts reader commands and the LIMIT/FETCH page size on each note table.
+    /// Each of the outbox and queue page queries must carry its own 101
+    /// (100 plus the incomplete-page probe), for every history size.
     /// </summary>
     private sealed class NoteReadProbe : DbCommandInterceptor
     {
         public int Queries { get; private set; }
-        public List<int> PageLimits { get; } = [];
+        public List<int> OutboxPageLimits { get; } = [];
+        public List<int> QueuePageLimits { get; } = [];
         private readonly List<string> _sql = [];
 
         public string Describe()
         {
             var sample = string.Join(" || ", _sql.Take(8).Select(sql => sql.Length <= 240 ? sql : sql[..240]));
-            return $"queries={Queries} limits=[{string.Join(",", PageLimits)}] sql={sample}";
+            return $"queries={Queries} outbox=[{string.Join(",", OutboxPageLimits)}] queue=[{string.Join(",", QueuePageLimits)}] sql={sample}";
         }
 
         public override InterceptionResult<DbDataReader> ReaderExecuting(
@@ -453,19 +455,20 @@ public sealed class ExpectationObservationAdapterTests
             var text = command.CommandText ?? "";
             if (_sql.Count < 12)
                 _sql.Add(text.Replace('\n', ' ').Replace('\r', ' '));
-            if (!text.Contains("SessionQueuedMessages", StringComparison.Ordinal)
-                && !text.Contains("AgentTaskLandNotifications", StringComparison.Ordinal))
+            var outbox = text.Contains("AgentTaskLandNotifications", StringComparison.Ordinal);
+            var queue = text.Contains("SessionQueuedMessages", StringComparison.Ordinal);
+            if (!outbox && !queue)
                 return;
             if (TryReadLimit(text, "LIMIT", out var literal, out var name)
                 || TryReadLimit(text, "FETCH", out literal, out name))
-                Add(command, literal, name);
+                Add(command, literal, name, outbox, queue);
         }
 
-        private void Add(DbCommand command, int? literal, string? name)
+        private void Add(DbCommand command, int? literal, string? name, bool outbox, bool queue)
         {
             if (literal is int limit)
             {
-                PageLimits.Add(limit);
+                Record(limit, outbox, queue);
                 return;
             }
             if (name is null)
@@ -477,10 +480,18 @@ public sealed class ExpectationObservationAdapterTests
                 if (!string.Equals(actual, wanted, StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (parameter.Value is int number)
-                    PageLimits.Add(number);
+                    Record(number, outbox, queue);
                 else if (parameter.Value is long wide && wide is >= 0 and <= int.MaxValue)
-                    PageLimits.Add((int)wide);
+                    Record((int)wide, outbox, queue);
             }
+        }
+
+        private void Record(int limit, bool outbox, bool queue)
+        {
+            if (outbox)
+                OutboxPageLimits.Add(limit);
+            if (queue)
+                QueuePageLimits.Add(limit);
         }
 
         private static bool TryReadLimit(string text, string keyword, out int? literal, out string? name)

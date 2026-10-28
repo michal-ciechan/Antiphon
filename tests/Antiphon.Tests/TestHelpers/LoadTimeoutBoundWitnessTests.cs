@@ -91,7 +91,7 @@ public sealed class LoadTimeoutBoundWitnessTests
         var late = WaitHookAsync(lateHook.Task, LoadTimeoutBounds.PhoneHomeSignalWait, lateClock);
         lateClock.Advance(TimeSpan.FromSeconds(6));
         await Task.Delay(TimeSpan.FromMilliseconds(500));
-        late.IsCompleted.ShouldBeFalse("6s is past the old 5s bound and inside the 45s cap");
+        late.IsCompleted.ShouldBeFalse("6s is past the old 5s bound and inside the 20s cap");
         lateHook.TrySetResult();
         await late.WaitAsync(TimeSpan.FromSeconds(2));
 
