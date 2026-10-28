@@ -584,7 +584,8 @@ public class AgentSupervisionTests
         SupervisionSettings? supervision = null, ISessionRunnerClient? runner = null,
         bool includeModelAvailability = false, string definitionKind = "Raw",
         Action<DbContextOptionsBuilder>? configureDb = null,
-        string? connectionString = null, TimeProvider? supervisorTimeProvider = null)
+        string? connectionString = null, TimeProvider? supervisorTimeProvider = null,
+        Action<IServiceCollection>? configure = null)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var supervisorLog = new List<string>();
@@ -674,6 +675,7 @@ public class AgentSupervisionTests
         // failures invisibly in tests).
         services.AddSingleton<Microsoft.Extensions.Logging.ILogger<AgentSupervisorService>>(
             new ListLogger<AgentSupervisorService>(supervisorLog));
+        configure?.Invoke(services);
 
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
