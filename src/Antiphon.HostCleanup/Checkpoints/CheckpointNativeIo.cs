@@ -10,7 +10,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.HostCleanup.Checkpoints;
 
-public sealed class CheckpointNativeIo : ICheckpointCleanupIo
+public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
 {
     public int CurrentProcessId => Environment.ProcessId;
     public string MachineName => Environment.MachineName;

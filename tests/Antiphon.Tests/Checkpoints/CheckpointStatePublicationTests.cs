@@ -312,6 +312,11 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
         public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) =>
             _inner.DeleteAnchored(path, expectedEntry, directory);
+        public IReadOnlyList<AnchoredChild> ListAnchored(string directory) => _inner.ListAnchored(directory);
+        public void UnlinkAnchored(string directory, string name, bool directoryEntry) =>
+            _inner.UnlinkAnchored(directory, name, directoryEntry);
+        public void TruncateAnchored(string directory, string name, long length) =>
+            _inner.TruncateAnchored(directory, name, length);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
     }
 }

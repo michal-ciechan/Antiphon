@@ -8,9 +8,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// CARD-1596: the temp-root sweep still unlinks by path. A parent swapped for a
-// symlink during that unlink is followed, and a FIFO or socket has to be removed
-// as the directory entry itself. Every path stays under one fresh temp fixture.
+// CARD-1596: a parent swapped for a symlink during the sweep must not delete
+// outside the root. FIFO, socket and symlink entries are removed as themselves.
+// Every path stays under one fresh temp fixture.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TempRootSweepAnchoredDeleteTests
@@ -106,6 +106,18 @@ public sealed class TempRootSweepAnchoredDeleteTests
         {
             Swap(path);
             base.DeleteAnchored(path, expectedEntry, directory);
+        }
+
+        public override void UnlinkAnchored(string directory, string name, bool directoryEntry)
+        {
+            Swap(Path.Combine(directory, name));
+            base.UnlinkAnchored(directory, name, directoryEntry);
+        }
+
+        public override void TruncateAnchored(string directory, string name, long length)
+        {
+            Swap(Path.Combine(directory, name));
+            base.TruncateAnchored(directory, name, length);
         }
 
         private void Swap(string path)
