@@ -100,9 +100,19 @@ public sealed class GrokRulesResumeMigrationTests
             GrokRulesReceipt? currentReceipt = null;
             if (desired is not null)
             {
+                // Create() unblocks this test before PrepareLaunchAsync saves. A resume row
+                // already has the previous generation, so non-null is not the new stamp.
                 var untilPrepared = DateTime.UtcNow.AddSeconds(15);
-                while (!await db.AgentSessions.AnyAsync(s => s.Id == id && s.GrokRulesGeneration != null)
-                    && DateTime.UtcNow < untilPrepared) await Task.Delay(20);
+                Guid? stamped = null;
+                while (DateTime.UtcNow < untilPrepared)
+                {
+                    stamped = await db.AgentSessions.AsNoTracking().Where(s => s.Id == id)
+                        .Select(s => s.GrokRulesGeneration).SingleAsync();
+                    if (stamped is not null && (oldReceipt is null || stamped.Value != oldReceipt.Generation)) break;
+                    await Task.Delay(20);
+                }
+                if (stamped is null || (oldReceipt is not null && stamped.Value == oldReceipt.Generation))
+                    throw new TimeoutException("standing start did not stamp a new rules generation within the 15s wall cap.");
                 var current = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id);
                 var composition = InstructionBundleComposer.Compose([], null, desired);
                 currentReceipt = await store.WriteAsync(id, new(composition.Text, 1, current.GrokRulesGeneration!.Value), CancellationToken.None);
