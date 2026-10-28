@@ -381,6 +381,74 @@ public partial class CapacityAdmissionLifecycleTests
     }
 
     [Test]
+    [Arguments("retried")]
+    [Arguments("dispatched")]
+    [Timeout(120_000)]
+    public async Task C1593_one_commit_fault_after_requeue_anchor_stays_queued(string anchor, CancellationToken ct)
+    {
+        // An old marker before the latest Dispatched or Retried event must not count.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedSharedAsync(schema.ConnectionString, workspace.Path, anchor, DateTime.UtcNow, ct);
+        var seededAt = DateTime.UtcNow;
+        await using (var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            seed.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = AgentTaskEventType.Warning,
+                Detail = AgentTaskDispatcher.NonPostgresCommitFaultMarker,
+                At = seededAt.AddMinutes(-10),
+            });
+            seed.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = anchor == "retried" ? AgentTaskEventType.Retried : AgentTaskEventType.Dispatched,
+                Detail = anchor,
+                At = seededAt.AddMinutes(-5),
+            });
+            await seed.SaveChangesAsync(ct);
+        }
+
+        var commitFault = new NonPostgresCommitFault();
+        await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
+            schema.ConnectionString, commitFault);
+        var wait = await GrantAsync(provider, task.Id, ct);
+        Exception? tickError = null;
+        AgentTaskDispatcher.TickResult? tick = null;
+        try
+        {
+            await using var scope = provider.CreateAsyncScope();
+            tick = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            tickError = ex;
+        }
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        var admitted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id, ct);
+        var detail =
+            $"anchor={anchor} tick={tick?.Failures}/{tick?.Dispatched} error={tickError?.GetType().Name}: {tickError?.Message}";
+        stored.Status.ShouldBe(AgentTaskStatus.Queued, detail);
+        stored.FailureReason.ShouldBeNull(detail);
+        stored.AgentSessionId.ShouldBeNull();
+        admitted.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+        admitted.AdmissionCount.ShouldBe(0);
+        (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+            .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBe(wait.Id);
+        (tick?.Failures ?? 0).ShouldBe(0, detail);
+        tickError.ShouldBeNull(detail);
+        commitFault.Throws.ShouldBe(1, detail);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Warning
+            && e.Detail == AgentTaskDispatcher.NonPostgresCommitFaultMarker, ct)).ShouldBe(2, detail);
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task C1593_warm_reuse_lost_commit_ack_delivers_the_brief(CancellationToken ct)
     {
