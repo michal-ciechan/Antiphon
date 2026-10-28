@@ -232,6 +232,20 @@ public sealed class RepositoryChildRecoveryTests
         }
     }
 
+    // Windows qualification 28bbb58e: git --path-format=absolute printed
+    // C:/Users/.../real parent/admin while the canonical path was C:\Users\...\real parent\admin.
+    [Test]
+    public void C452_R2_ForwardSlashDriveLetterGitOutputMatchesCanonicalForm()
+    {
+        const string raw = "C:/Users/lndco/AppData/Local/Temp/antiphon-c452-alias-trees/real parent/admin";
+        const string canonical = "C:\\Users\\lndco\\AppData\\Local\\Temp\\antiphon-c452-alias-trees\\real parent\\admin";
+        SameGitCommonPath(raw, canonical).ShouldBeTrue();
+    }
+
+    // Base behavior of the C452 raw.ShouldBe(canonical) assertion: ordinal text equality.
+    private static bool SameGitCommonPath(string left, string right) =>
+        string.Equals(left, right, StringComparison.Ordinal);
+
     [Test]
     public async Task C452_R2_AliasRecoveryUsesCanonicalCommonDirectory()
     {
