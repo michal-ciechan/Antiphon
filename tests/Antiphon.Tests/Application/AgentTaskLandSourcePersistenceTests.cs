@@ -17,8 +17,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[ParallelLimiter<LoadTimeoutParallelLimit>]
+// Above the 23s wall cap and the 8.51s Linux max row. ceil(35/4)*120s = 1080s.
+[Timeout(120_000)]
 public sealed class AgentTaskLandSourcePersistenceTests
 {
+    // 23s is 2x the 11.29s cost-file mean (395s/35). It raises the 10s monitor bound.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(23);
+
     [Test]
     [Arguments(0)]
     [Arguments(300)]
@@ -196,7 +202,8 @@ public sealed class AgentTaskLandSourcePersistenceTests
         async Task RunMonitorAsync()
         {
             monitor = SweepMonitorAsync(h);
-            await monitor.WaitAsync(TimeSpan.FromSeconds(10));
+            await LoadTimeoutWait.UntilSignaledAsync(
+                monitor, clock: null, budget: null, wallCap: LoadWallCap, label: "land monitor");
         }
         // CARD-0688 D-2: the resolver's first source read is the branch show-ref, not a worktree inspection.
         h.Git.BeforeCommand = hook == "inspection"

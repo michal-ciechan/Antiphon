@@ -441,7 +441,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             var service = SessionReconciliationServiceTests.BuildService(
                 db, Harness.Provider.GetRequiredService<ISessionRunnerClient>(), Harness.EventBus, ownership: queue);
             await service.ScanAsync(CancellationToken.None);
-            await queue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            await WaitForLaunchIdleAsync(queue);
         }
 
         public ValueTask DisposeAsync() => Harness.DisposeAsync();

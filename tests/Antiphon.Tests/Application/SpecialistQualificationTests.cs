@@ -20,8 +20,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[ParallelLimiter<LoadTimeoutParallelLimit>]
+// Above the 18s wall cap and the 36.65s Linux max row. ceil(15/4)*180s = 720s.
+[Timeout(180_000)]
 public class SpecialistQualificationTests
 {
+    // 18s is 2x the 8.67s cost-file mean (130s/15). It raises the 10s check bound.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(18);
+
     private sealed class SyntheticEvidence : ISpecialistExecutionEvidenceReader
     {
         public bool Unavailable { get; set; }
@@ -252,7 +258,9 @@ public class SpecialistQualificationTests
             });
             if (blockerId is Guid blocker)
             {
-                (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Outcome.ShouldBe(SpecialistRunOutcome.Busy);
+                (await LoadTimeoutWait.UntilSignaledAsync(
+                    pending, clock: null, budget: null, wallCap: LoadWallCap, label: "specialist check"))
+                    .Outcome.ShouldBe(SpecialistRunOutcome.Busy);
                 await using var scope = h.Provider.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 (await db.SpecialistAttempts.CountAsync(a => a.RequestId == db.SpecialistRequests
@@ -278,7 +286,9 @@ public class SpecialistQualificationTests
                 await using (var dispatch = h.Provider.CreateAsyncScope())
                     await dispatch.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
                 await h.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(h.SessionId, CancellationToken.None);
-                (await recovery.WaitAsync(TimeSpan.FromSeconds(10))).Outcome.ShouldBe(SpecialistRunOutcome.Succeeded);
+                (await LoadTimeoutWait.UntilSignaledAsync(
+                    recovery, clock: null, budget: null, wallCap: LoadWallCap, label: "specialist check"))
+                    .Outcome.ShouldBe(SpecialistRunOutcome.Succeeded);
                 await healthService.ReconcileOwnerAsync(h.AgentId, CancellationToken.None);
                 health.Status.ShouldBe(StandingSpecialistHealthStatus.Healthy);
                 health.StarvedSince.ShouldBeNull();
@@ -318,7 +328,8 @@ public class SpecialistQualificationTests
                     await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
                 await h.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(nextSession, CancellationToken.None);
             }
-            var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            var result = await LoadTimeoutWait.UntilSignaledAsync(
+                pending, clock: null, budget: null, wallCap: LoadWallCap, label: "specialist check");
             if (change is not null && change != "fallback")
             {
                 result.Outcome.ShouldNotBe(SpecialistRunOutcome.Succeeded);

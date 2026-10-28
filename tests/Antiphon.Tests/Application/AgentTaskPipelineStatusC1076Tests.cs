@@ -186,14 +186,22 @@ public partial class AgentTaskPipelineStatusTests
             preparer.TryBegin(pushing.Id, "server2").ShouldBeTrue();
             // InFlight.Phase defaults to Pushing before the gate is acquired. The blocked push
             // call is the signal that this task holds the turn.
-            await git.PushEntered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await LoadTimeoutWait.UntilSignaledAsync(
+                git.PushEntered.Task, clock: null, budget: null, wallCap: LoadWallCap, label: "push entered");
             preparer.Progress(pushing.Id)?.Phase.ShouldBe(RemotePrepPhase.Pushing);
 
             preparer.TryBegin(waiting.Id, "server2").ShouldBeTrue();
-            var waiterSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-            while (DateTime.UtcNow < waiterSeen
-                && preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
-                await Task.Delay(20);
+            using (var waiter = LoadTimeoutWait.Open(clock: null, budget: null, wallCap: LoadWallCap, label: "push waiter"))
+            {
+                try
+                {
+                    while (preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
+                        await Task.Delay(20, waiter.Token);
+                }
+                catch (OperationCanceledException) when (waiter.WallElapsed)
+                {
+                }
+            }
             // Two tasks: the waiter names the task holding the turn.
             preparer.Progress(waiting.Id)?.BehindTaskId.ShouldBe(pushing.Id);
 
@@ -205,7 +213,9 @@ public partial class AgentTaskPipelineStatusTests
         finally
         {
             git.PushHold.TrySetResult();
-            await preparer.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            await LoadTimeoutWait.UntilSignaledAsync(
+                ct => preparer.WhenIdleAsync().WaitAsync(ct),
+                clock: null, budget: null, wallCap: LoadWallCap, label: "remote prep idle");
         }
     }
 
@@ -251,12 +261,20 @@ public partial class AgentTaskPipelineStatusTests
         try
         {
             preparer.TryBegin(pushing.Id, "server2").ShouldBeTrue();
-            await git.PushEntered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await LoadTimeoutWait.UntilSignaledAsync(
+                git.PushEntered.Task, clock: null, budget: null, wallCap: LoadWallCap, label: "push entered");
             preparer.TryBegin(waiting.Id, "server2").ShouldBeTrue();
-            var waiterSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-            while (DateTime.UtcNow < waiterSeen
-                && preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
-                await Task.Delay(20);
+            using (var waiter = LoadTimeoutWait.Open(clock: null, budget: null, wallCap: LoadWallCap, label: "push waiter"))
+            {
+                try
+                {
+                    while (preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
+                        await Task.Delay(20, waiter.Token);
+                }
+                catch (OperationCanceledException) when (waiter.WallElapsed)
+                {
+                }
+            }
             preparer.Progress(waiting.Id)?.BehindTaskId.ShouldBe(pushing.Id);
 
             var shifted = 0;
@@ -274,7 +292,9 @@ public partial class AgentTaskPipelineStatusTests
         finally
         {
             git.PushHold.TrySetResult();
-            await preparer.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            await LoadTimeoutWait.UntilSignaledAsync(
+                ct => preparer.WhenIdleAsync().WaitAsync(ct),
+                clock: null, budget: null, wallCap: LoadWallCap, label: "remote prep idle");
         }
     }
 

@@ -15,8 +15,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[ParallelLimiter<LoadTimeoutParallelLimit>]
+// Above the 64s catch-up cap and the 59.50s Linux max row.
+[Timeout(180_000)]
 public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
 {
+    // 64s is 2x the 32s cost-file mean (160s/5). The positive catch-up bound only.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(64);
+
     [Test]
     public async Task C1056_Stranded_sweep_finds_delivered_spill_without_pending()
     {
@@ -107,8 +113,9 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
             var completed = false;
             try
             {
-                using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try { completed = await f.H.Runtime.CatchUpTranscriptAsync(f.H.SessionId, budget.Token); }
+                using var gate = LoadTimeoutWait.Open(
+                    clock: null, budget: null, wallCap: LoadWallCap, label: "delivered spill catch-up");
+                try { completed = await f.H.Runtime.CatchUpTranscriptAsync(f.H.SessionId, gate.Token); }
                 catch (OperationCanceledException) { }
             }
             finally { sem.Release(); }
@@ -144,6 +151,8 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
             var canceled = false;
             try
             {
+                // Expected cancel while this test holds the session lock. Raising it to
+                // LoadWallCap would wait out 64s on each of the three entries.
                 using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 try { await f.H.Queue.FlushIfIdleAsync(f.H.SessionId, budget.Token); }
                 catch (OperationCanceledException) { canceled = budget.IsCancellationRequested; }
