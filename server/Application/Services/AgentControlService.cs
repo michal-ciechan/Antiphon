@@ -856,8 +856,10 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 {
                     await reservation.CommitAsync(ct);
                 }
-                catch (Exception commitEx)
+                catch (Exception commitEx) when (capacityAdmission is not null)
                 {
+                    // An ungated start has no consume to reconcile. A throw after its commit
+                    // still counts as a failed admission, which the streak pin requires.
                     await RecoverLostCommitAsync(commitEx, accepted, acceptedGeneration, resume);
                     return;
                 }
