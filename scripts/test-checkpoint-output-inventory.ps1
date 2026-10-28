@@ -4,13 +4,20 @@
 # refuses an over-bound file, a symlink, a FIFO, and a file replaced after the hash
 # with the same inode, size, and mtime.
 # ASCII-only. Owner: docs/testing-and-build.md (checkpoint runner tool).
-param([string]$Root)
+param([string]$Root, [switch]$HideStat)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Join-Path ([IO.Path]::GetTempPath()) ('inventory-' + [guid]::NewGuid().ToString('N')) }
 $Root = [IO.Path]::GetFullPath($Root)
 [void][IO.Directory]::CreateDirectory($Root)
+if ($HideStat) {
+    # Witness seam: drop stat (and every other external command) from PATH.
+    # The Linux-only cases must skip instead of calling stat. Until they do, this fails.
+    $hiddenPath = Join-Path $Root 'path-without-stat'
+    [void][IO.Directory]::CreateDirectory($hiddenPath)
+    $env:PATH = $hiddenPath
+}
 . (Join-Path $Repository 'scripts/lib/checkpoint-owned-output.ps1')
 if (-not [string]::IsNullOrEmpty([Antiphon.Checkpoints.Coverage.ConfinedFileReader].Assembly.Location)) { throw 'embedded reader required' }
 $tokens = $null; $errors = $null
