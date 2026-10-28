@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -247,6 +248,7 @@ public partial class CapacityAdmissionLifecycleTests
     [Arguments("pre-lock-deadlock-victim")]
     [Arguments("lost-commit-ack")]
     [Arguments("deterministic-consume-failure")]
+    [Arguments("commit-server-error")]
     [Timeout(120_000)]
     public async Task C1593_consume_failure_leaves_the_task_queued(string mode, CancellationToken ct)
     {
@@ -270,6 +272,7 @@ public partial class CapacityAdmissionLifecycleTests
         IInterceptor interceptor = mode switch
         {
             "deterministic-consume-failure" => new StartAcceptedSaveFault("XX000"),
+            "commit-server-error" => new CommitServerError(),
             "lost-commit-ack" => new LostCommitAck(),
             "pre-lock-deadlock-victim" => new AgentRowDeadlock(warmAgent!.Value),
             _ => new StartAcceptedSaveFault("40P01"),
@@ -325,6 +328,62 @@ public partial class CapacityAdmissionLifecycleTests
         admitted.AdmissionCount.ShouldBe(0);
         (await verify.CapacityRecoveryProviderStates.AsNoTracking()
             .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1593_warm_reuse_lost_commit_ack_delivers_the_brief(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        const string goal = "Warm lost-ack brief must be queued.";
+        var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.Medium, goal);
+        await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
+            schema.ConnectionString, new LostCommitAck(),
+            configure: services => services.AddDispatchConcurrencyAdmission());
+        var wait = await GrantAsync(provider, task.Id, ct);
+        await using var adapter = new FakeAgentProtocolAdapter();
+        await adapter.EnableClaudeDialogObservationAsync(schema.ConnectionString, sessionId);
+        provider.GetRequiredService<AgentSessionRuntime>().Register(sessionId, adapter);
+        await using var launch = provider.CreateAsyncScope();
+        var launched = await launch.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        launched.Dispatched.ShouldBe(1);
+        launched.Failures.ShouldBe(0);
+        await AssertConsumedAsync(schema.ConnectionString, task.Id, wait.Id, sessionId, ct);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var queued = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == sessionId && m.ExecutionTaskId == task.Id, ct);
+        queued.Body.ShouldContain(goal);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1593_release_leaves_a_start_accepted_receipt(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.Medium, "release receipt");
+        await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
+            schema.ConnectionString, configure: services => services.AddDispatchConcurrencyAdmission());
+        var wait = await GrantAsync(provider, task.Id, ct);
+        await using var launch = provider.CreateAsyncScope();
+        var launched = await launch.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        launched.Dispatched.ShouldBe(1);
+        launched.Failures.ShouldBe(0);
+        await provider.GetRequiredService<CapacityRecoveryService>()
+            .ReleaseClaimReservationAsync(task.Id, AgentKind.ClaudeCode, "claim-consume-failed", ct);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var admitted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id, ct);
+        admitted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+        admitted.LaunchSessionId.ShouldBe(sessionId);
+        admitted.AdmissionCount.ShouldBe(1);
+        admitted.OutcomeReason.ShouldNotBe("claim-consume-failed");
     }
 
     internal static async Task<CapacityRecoveryWait> GrantAsync(
@@ -589,6 +648,32 @@ public partial class CapacityAdmissionLifecycleTests
                     new PostgresException("injected", "ERROR", "ERROR", sqlState));
             }
 
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class CommitServerError : ISaveChangesInterceptor, IDbTransactionInterceptor
+    {
+        private int _claim;
+        private int _thrown;
+
+        public ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            var db = eventData.Context;
+            if (db is not null && db.ChangeTracker.Entries<AgentTask>().Any(e =>
+                    e.State == EntityState.Modified && e.Entity.Status == AgentTaskStatus.Dispatched))
+                Interlocked.Exchange(ref _claim, 1);
+            return ValueTask.FromResult(result);
+        }
+
+        public ValueTask<InterceptionResult> TransactionCommittingAsync(
+            System.Data.Common.DbTransaction transaction, TransactionEventData eventData,
+            InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _claim) == 1 && Interlocked.CompareExchange(ref _thrown, 1, 0) == 0)
+                throw new PostgresException("injected commit server error", "ERROR", "ERROR", "XX000");
             return ValueTask.FromResult(result);
         }
     }

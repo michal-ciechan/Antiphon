@@ -215,8 +215,23 @@ public partial class AgentTaskDispatchBaseGuardTests
         (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == w.Task.Id)).ShouldBe(0);
         (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == w.Task.Id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
         var task = await check.AgentTasks.SingleAsync(t => t.Id == w.Task.Id);
-        task.Status.ShouldBe(cancellation ? AgentTaskStatus.Queued : AgentTaskStatus.Failed); task.AgentSessionId.ShouldBeNull();
+        // afterSave is the commit IOException: class 3 keeps the task queued. A throw before
+        // SaveChanges stays class 4 and fails the task. Cancellation never fails it.
+        task.Status.ShouldBe(cancellation || afterSave ? AgentTaskStatus.Queued : AgentTaskStatus.Failed);
+        task.AgentSessionId.ShouldBeNull();
         (await check.AgentSessions.CountAsync()).ShouldBe(1, "only the original caller remains");
+        if (!afterSave || cancellation)
+            return;
+
+        await using var nextScope = provider.CreateAsyncScope();
+        var next = await nextScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+            .TickInspectedAsync(CancellationToken.None);
+        next.Failures.ShouldBe(0);
+        next.Dispatched.ShouldBe(1);
+        await using var after = w.Fresh();
+        (await after.AgentTasks.SingleAsync(t => t.Id == w.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await after.AgentTaskEvents.CountAsync(e => e.AgentTaskId == w.Task.Id
+            && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
     }
 
     // Review F1: rollback cleanup detached the tick's other queued rows, so a second claim failure
@@ -238,8 +253,39 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var scope = provider.CreateAsyncScope();
         var tick = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
         (afterSave ? interceptor.FiredFor : boundary.FiredFor).ShouldBe(new[] { w.Task.Id, second.Id }, ignoreOrder: true);
-        tick.Failures.ShouldBe(2); tick.Dispatched.ShouldBe(0);
         await using var check = w.Fresh();
+        if (afterSave)
+        {
+            tick.Failures.ShouldBe(0);
+            tick.Dispatched.ShouldBe(0);
+            foreach (var id in new[] { w.Task.Id, second.Id })
+            {
+                var held = await check.AgentTasks.SingleAsync(t => t.Id == id);
+                held.Status.ShouldBe(AgentTaskStatus.Queued, $"task {id} stays eligible after the commit fault");
+                held.AgentSessionId.ShouldBeNull();
+                held.FailureReason.ShouldBeNull();
+                (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+                (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+                (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == id)).ShouldBe(0);
+            }
+
+            await using var nextScope = provider.CreateAsyncScope();
+            var next = await nextScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .TickInspectedAsync(CancellationToken.None);
+            next.Failures.ShouldBe(0);
+            next.Dispatched.ShouldBe(2);
+            await using var after = w.Fresh();
+            foreach (var id in new[] { w.Task.Id, second.Id })
+            {
+                var launched = await after.AgentTasks.SingleAsync(t => t.Id == id);
+                launched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                (await after.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+            }
+
+            return;
+        }
+
+        tick.Failures.ShouldBe(2); tick.Dispatched.ShouldBe(0);
         foreach (var id in new[] { w.Task.Id, second.Id })
         {
             var task = await check.AgentTasks.SingleAsync(t => t.Id == id);

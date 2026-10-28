@@ -9,6 +9,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.TestHelpers.WallRerouteFixture;
@@ -94,17 +95,44 @@ public class ReceiptFailureDeliveryTests
             }, CancellationToken.None);
             waitId = wait.Id;
             (await capacity.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
-            using var scope = producer.CreateScope();
-            var result = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
-            result.Dispatched.ShouldBe(1);
-            result.Failures.ShouldBe(0);
+            using (var scope = producer.CreateScope())
+            {
+                var refused = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+                refused.Dispatched.ShouldBe(0);
+                refused.Failures.ShouldBe(0);
+            }
+
+            fault.ReceiptThrows.ShouldBe(1);
+            fault.QueueThrows.ShouldBe(0);
+            await using (var pending = CreateContext(schema))
+            {
+                var queued = await pending.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+                queued.Status.ShouldBe(AgentTaskStatus.Queued);
+                queued.FailureReason.ShouldBeNull();
+                queued.AgentSessionId.ShouldBeNull();
+                var reservation = await pending.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == waitId);
+                reservation.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+                reservation.AdmissionCount.ShouldBe(0);
+                reservation.LaunchSessionId.ShouldBeNull();
+                (await pending.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == task.Id)).ShouldBe(0);
+            }
+
+            using (var scope = producer.CreateScope())
+            {
+                var result = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+                result.Dispatched.ShouldBe(1);
+                result.Failures.ShouldBe(0);
+            }
+
             fault.QueueThrows.ShouldBe(1);
             fault.ReceiptThrows.ShouldBe(1);
         }
         await using var verify = CreateContext(schema);
         (await verify.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == task.Id)).ShouldBe(0);
-        (await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == waitId))
-            .State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        var accepted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == waitId);
+        accepted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+        accepted.AdmissionCount.ShouldBe(1);
+        accepted.LaunchSessionId.ShouldBe(sessionId);
         (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
             .Status.ShouldBe(AgentTaskStatus.Dispatched);
 
@@ -404,6 +432,28 @@ public class ReceiptFailureDeliveryTests
             (await capacity.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
             using (var scope = provider.CreateScope())
             {
+                var refused = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                    .TickAsync(CancellationToken.None);
+                refused.Dispatched.ShouldBe(0);
+                refused.Failures.ShouldBe(0);
+            }
+
+            fault.ReceiptThrows.ShouldBe(1);
+            await using (var pending = CreateContext(schema))
+            {
+                var stored = await pending.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+                stored.Status.ShouldBe(AgentTaskStatus.Queued);
+                stored.AgentSessionId.ShouldBeNull();
+                stored.FailureReason.ShouldBeNull();
+                var reservation = await pending.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
+                reservation.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+                reservation.AdmissionCount.ShouldBe(0);
+                reservation.LaunchSessionId.ShouldBeNull();
+                (await pending.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == task.Id)).ShouldBe(0);
+            }
+
+            using (var scope = provider.CreateScope())
+            {
                 var result = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
                     .TickAsync(CancellationToken.None);
                 result.Dispatched.ShouldBe(1);
@@ -416,10 +466,10 @@ public class ReceiptFailureDeliveryTests
             var queued = await verify.SessionQueuedMessages.AsNoTracking()
                 .SingleAsync(m => m.ExecutionTaskId == task.Id);
             var admitted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
-            admitted.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
-            admitted.DispatchAttemptId.ShouldBeNull();
-            admitted.SessionId.ShouldBeNull();
-            admitted.LaunchSessionId.ShouldBeNull();
+            admitted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+            admitted.DispatchAttemptId.ShouldNotBeNull();
+            admitted.SessionId.ShouldBe(sessionId);
+            admitted.LaunchSessionId.ShouldBe(sessionId);
             admitted.AdmissionCount.ShouldBe(1);
             admitted.TaskId.ShouldBe(task.Id);
             queued.AgentSessionId.ShouldBe(sessionId);
@@ -501,7 +551,8 @@ public class ReceiptFailureDeliveryTests
             unchanged.FailureReason.ShouldBeNull();
             var finalWait = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
             finalWait.TaskId.ShouldBe(task.Id);
-            finalWait.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+            finalWait.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+            finalWait.LaunchSessionId.ShouldBe(sessionId);
             finalWait.ActionKey.ShouldBe(admitted.ActionKey);
             finalWait.ActionOrdinal.ShouldBe(admitted.ActionOrdinal);
             finalWait.AdmissionCount.ShouldBe(1);
@@ -545,7 +596,9 @@ public class ReceiptFailureDeliveryTests
             if (db.ChangeTracker.Entries<CapacityRecoveryWait>().Any(e => e.Entity.TaskId == taskId
                     && e.Entity.State == CapacityRecoveryWaitState.StartAccepted)
                 && Interlocked.CompareExchange(ref ReceiptThrows, 1, 0) == 0)
-                throw new InvalidOperationException("single-use capacity receipt save failure");
+                throw new DbUpdateException(
+                    "injected consume save failure",
+                    new PostgresException("injected", "ERROR", "ERROR", "40P01"));
 
             var queue = db.ChangeTracker.Entries<SessionQueuedMessage>()
                 .SingleOrDefault(e => e.Entity.ExecutionTaskId == taskId);
