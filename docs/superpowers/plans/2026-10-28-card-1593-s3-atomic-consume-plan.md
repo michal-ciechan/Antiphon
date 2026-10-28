@@ -494,13 +494,104 @@ S3 rows (they replace S1 L6, L16, L17 and add L26):
 
 | # | Path | Site(s) after S3 | Sequence | Conformance |
 |---|---|---|---|---|
-| L16' | Supervisor start, interactive | `AgentSupervisorService.cs:127` tx, agent (5), commit `:226-227`; `AgentControlService.cs:176` `LockAgentAsync` (autocommit); reservation `:543`: sessions `FOR UPDATE` (4) `:546-547` -> agent (5) `:548` -> supervision state, pending queue rows, session insert/edits, incidents -> save `:886` -> **7** consume -> **8** -> commit | 4 -> 5 -> (4: pending queue rows, pre-existing) -> 7 -> 8 | Rule P: the save at `:886` leaves the tracker clean, so `RejectDirtyLaunchRows` is vacuous here (review A-1). The real guarantee is that **nothing is written after the consume** on that connection before `COMMIT`, and V-S3-11 asserts it with a command interceptor. No runner or network await sits between the consume and the commit: `ListAsync` (`:527`) and composition run before `:543`, and the enqueue runs after the commit. The reservation holds the in-process queue locks (`:538-541`) while it waits on rank 7. `CapacityRecoveryService` never takes a queue lock, so that wait forms no hidden cycle. The S-4 reread is a fresh-scope leaf on rank 5. Rule X: no row lock held while waiting on 7 from another connection; 7 is taken on the reservation's own connection after its rows. The pre-existing 5 -> 4 on pending queue rows takes no rank 6/7 and is detectable (n/c) |
-| L16c | Supervisor start, card arm | `CardService.SpawnAsync` own tx; then own-scope 7 -> 8 consume | n/c, then leaf | conforms |
+| L16' | Supervisor start, interactive | `AgentSupervisorService.cs:127` tx, agent (5), commit `:226-227`; `AgentControlService.cs:177` `LockAgentAsync` (autocommit); reservation `:543`: sessions `FOR UPDATE` (4) `:546-548` -> agent (5) `:549` -> supervision state, pending queue rows, session insert/edits, incidents -> save `:887` -> **7** consume -> **8** -> commit | 4 -> 5 -> (4: pending queue rows, pre-existing) -> 7 -> 8 | Rule P: the save at `:887` leaves the tracker clean, so `RejectDirtyLaunchRows` is vacuous here (review A-1). The real guarantee is that **nothing is written after the consume** on that connection before `COMMIT`, and V-S3-11 asserts it with a command interceptor. No runner or network await sits between the consume and the commit: `ListAsync` (`:527`) and composition run before `:543`, and the enqueue runs after the commit. The reservation holds the in-process queue locks (`:538-541`) while it waits on rank 7. `CapacityRecoveryService` never takes a queue lock, so that wait forms no hidden cycle. The S-4 reread is a fresh-scope leaf on rank 5. Rule X: no row lock held while waiting on 7 from another connection; 7 is taken on the reservation's own connection after its rows. The pre-existing 5 -> 4 on pending queue rows takes no rank 6/7 and is detectable (n/c). *Cross-process (amendment 2, review A-5):* the transferred pending rows (`:822-831`) may carry a stamped key that the reconciler re-keys under rank 7 (D-S3-10). In-process the reconciler and the supervisor run serially on one hosted loop (`AgentSupervisorHostedService.cs:146-148`), so only a second server on the same database could collide. That is a detected `40P01`, which S-T handles, and Round B's D-S3-10 removes the re-key from rank 7 |
+| L16c | Supervisor start, card arm (non-reserve arm only) | `CardService.SpawnAsync` own tx; `AgentControlService.cs:326` pointer save (autocommit on `_db`, agent row only); then own-scope 7 -> 8 consume, its failure caught (S-0c) | n/c, then n/c, then leaf | conforms: the `:326` save holds no lock after it returns, so the consume waits on 7 holding nothing |
 | L16f | Supervisor S-2 release / S-3 charge | own scope, 7 -> 8 | leaf | conforms |
 | L6' | Retained return | `ReturnRetainedAsync`: counted (1) -> task `FOR UPDATE` (3) -> save -> **7** -> **8** -> commit | 1 -> 3 -> 7 -> 8 | conforms; the counted lock now spans the transaction. It serializes with L1, as intended (review A-1). With no wait, or with the feature off, the sequence is 1 -> 3 -> commit, which takes no capacity lock |
-| L17' | Queue flush | gate `RedeemGateAsync` (own scope leaf); `Sent` tx: queue rows (4, under the in-process session gate) -> `FreezeCompletionRenderingAsync` rows -> save -> **7** -> **8** -> commit | 4 -> 7 -> 8 | conforms; `RejectDirtyLaunchRows` passes (no task/agent/session dirty). `RearmStalledAdmissionsAsync` re-keys `SessionQueuedMessages` under rank 7 (`:1342` -> `:1402-1408`), but only for receipt-less waits. A stamped head has `SelectedMessageId`, so no 7 -> 4 against this 4 -> 7 forms (review A-1) |
+| L17' | Queue flush | gate `RedeemGateAsync` (own scope leaf); `Sent` tx: queue rows (4, under the in-process session gate) -> `FreezeCompletionRenderingAsync` rows -> save -> **7** -> **8** -> commit | 4 -> 7 -> 8 | **Conforms only with D-S3-10 (corrected in amendment 2, review D-4).** `RejectDirtyLaunchRows` passes (no task/agent/session dirty). The round-1 claim that "no 7 -> 4 forms" was wrong. It covered only `RearmStalledAdmissionsAsync`, which skips receipt-backed waits. The grant-**expiry** path re-keys every queue row with the old key while it holds rank 7 (`:141` -> `:157` -> `:1188` -> `:1215` -> `:1401-1407`), and it does not consult `SelectedMessageId`. The wait being consumed at the `Sent` stamp is exactly that `ActionPending` stamped wait, and D-12 allows a consume on an expired but unrevoked grant. So this 4 -> 7 meets the reconciler's 7 -> 4. PostgreSQL detects the cycle (`40P01`), but it is a rank-table violation. Round B therefore ships D-S3-10, which removes every queue write from rank 7. S1 L18 ("capacity reconcile ... conforms") inherits the same error: it is not a 7 -> 8 leaf while `PrepareNextAttemptOnAsync` writes queue rows, and it conforms again only after D-S3-10 |
 | L17e | Enter-only consume (D-S3-4) | `EnterOnlyConfirmLockedAsync` -> `ConsumeAdmittedAsync` own scope, then the Enter keystroke | 7 -> 8 leaf | conforms if the queue context holds no open transaction at that point. `renderTx` is opened only at the `Sent` save, but it is guarded by `CurrentTransaction is null` (`:2740`), so some caller may hold one. Code adds `Debug.Assert(db.Database.CurrentTransaction is null)` at the call and checks every caller of the three entry points. If any caller holds a transaction with row locks, the consume must instead run on that context (`RedeemOnAsync(db, …)`, 4 -> 7 -> 8, Rule X) and the plan must be amended |
 | L26 | Remote-prep renewal | `RemoteHoldForAsync` branch -> `RenewGrantAsync` own scope | 7 -> 8 leaf | conforms |
+
+**D-S3-10 Round B decision: no queue write under the provider lock (amendment 2, review D-4).**
+This is a decision only. The Round B amendment designs its witnesses and Code details before the
+Round B Code task is cut. Round A does not depend on it.
+
+*Chosen: option (a), re-key outside the provider lock, eagerly.*
+- `PrepareNextAttemptOnAsync` becomes capacity-only for **every** caller, which matches the
+  independent plan's invariant. It deletes the queue re-key (`CapacityRecoveryService.cs:1398-1407`).
+  The callers are:
+  - expiry: `GrantReadyAsync` `:157` -> `:1188` -> `:1215`;
+  - stall re-arm: `RearmStalledAdmissionsAsync` `:1359`;
+  - new wall: `BumpWaveOnAsync` `:827`, reached from `BumpWaveAsync` `:794` and from a
+    caller's context at `ApiErrorRecoveryService.cs:588`;
+  - `PrepareNextAttemptAsync` `:752`.
+- A new own-scope `RealignQueueKeysAsync(IReadOnlyCollection<Guid> waitIds, CancellationToken ct)`
+  takes **no advisory lock**. For each wait it runs one short transaction:
+  1. read the wait AsNoTracking (current `ActionKey` and `Version`; skip it unless unfinished);
+  2. update `SessionQueuedMessages`, setting `CapacityRecoveryActionKey = @current` and
+     `CapacityWaitVersion = @version` where the key starts with `{waitId:N}:` and differs from
+     `@current`, and no row already holds `@current`.
+
+  That is a rank-4 leaf. It matches on the deterministic key prefix (`CapacityRecoveryPolicy.cs:16-17`)
+  as well as on `CapacityWaitId`, so a row whose two fields were ever written apart is still
+  found. Base re-keyed by equality with the previous key. Because every write sets both fields
+  together (Ground truth, amendment 2), the two matches select the same rows.
+- *When it runs:*
+  - right after each provider transaction that moved an `ActionKey` commits: per kind in
+    `GrantReadyAsync` after `:234`, per candidate in `RearmStalledAdmissionsAsync` after its
+    save, and after `BumpWaveAsync`'s and `PrepareNextAttemptAsync`'s saves.
+    `ApiErrorRecoveryService.cs:588` runs on its caller's transaction. It calls the realign
+    after that caller commits, or it relies on the start-of-reconcile heal below; the Round B
+    amendment picks one after reading that caller.
+  - once at the **start** of `ReconcileAsync`, for every unfinished wait that has a stale-keyed
+    row. This heals a crash between a provider commit and its realign before any grant in that
+    pass.
+- *Why there is no stranded or duplicate key:*
+  - A wait whose key just moved is not granted in the same provider transaction. Expiry and a
+    new wall set `DueAt = now + StalledAdmissionTimeout` (`:1220`), and the grant loop skips a
+    future `DueAt` (`:195-196`).
+  - A stall re-arm's realign commits before `GrantReadyAsync` runs in the same pass.
+  - A crash leftover is healed at the start of the next pass, before its grants.
+  - So no grant of the new key, and no `ApplyCapacityHoldAsync` stamp of it
+    (`SessionMessageQueueService.cs:5557-5573`, which needs a grant), can precede the realign
+    in-process.
+  - While a row's key is stale, the flush gate refuses (no grant matches it) and the hold
+    selection (`:5579-5597`) treats it as a row whose key names no current wait, as at base for
+    any unmatched key. That is a delay, not a spend.
+  - The `NOT EXISTS` clause turns a residual multi-server collision with the unique index into a
+    logged skip instead of a `23505`.
+- *Lock result:* the reconciler then holds rank 7 only over capacity rows (a 7 -> 8 leaf, which
+  S1 L18 claimed). The realign holds only queue rows, and it waits on a `Sent` transaction's row
+  while holding nothing. The L17' cycle cannot form, and the reconciler can no longer be that
+  cycle's `40P01` victim.
+- *Witnesses (designed in the Round B amendment):*
+  - `C1593_S3_expiry_rekey_holds_no_provider_lock_while_queue_row_locked`: a test connection
+    holds the stamped head row `FOR UPDATE`, and a reconcile runs at grant age >= 120 s.
+    `GrantReadyAsync` commits without waiting. The realign backend waits on the row with no
+    `antiphon.capacity.kind.*` key in `pg_locks`, and after release the row carries the new key.
+    Red at base: the reconcile backend waits on the row while holding the provider key.
+  - `C1593_S3_reconcile_heals_stale_queue_key_before_grant`: a seeded stale-keyed row with the
+    wait already re-keyed. One `ReconcileAsync` realigns it before granting.
+
+*Where this differs from the independent plan (`origin/feat/card-task-30f56bd5` `63036f8e`, its
+D-5 and lock row "Queue rekey / expiry / new wall").* That plan also removes the queue write from
+rank 7, and that invariant is adopted. It replaces the eager re-key with a consumer-side repair
+under the queue locks, limited to never-attempted rows, and changes the semantics of attempted
+rows (late-confirm first, never overwrite attempt coordinates). This plan does not adopt that
+repair:
+1. *Unique index.* A lazily repaired stale row can collide with a null-key row that
+   `ApplyCapacityHoldAsync` (`:5561-5573`) has already stamped with the current key, which gives
+   a `23505`. Base avoids this only because its re-key is eager. The eager realign keeps that
+   property.
+2. *Transferred rows.* A standing start moves pending rows to the new session (`AgentControlService.cs:822-831`).
+   A repair scoped to the consuming session's queue locks can miss rows that moved. The realign
+   matches by wait, not by session.
+3. *Scope.* The attempted-row semantics belong with S3d's receipt rules, not with a lock-order
+   fix. The realign changes only where the base re-key runs, not what it writes.
+
+*Rejected: option (b), accept the detected `40P01`.* The rank violation would remain. Every
+victim on the reconciler side would also skip that tick's supervisor pass and later sweeps,
+because `AgentSupervisorHostedService.cs:146-148` share one `try`, and witnesses for both victims
+would only pin a defect. Giving `ReconcileAsync` its own `try` is reasonable hardening for other
+reconcile faults, but S3 does not need it after (a). It is left to the orchestrator to file.
+
+*Rejected:* re-keying in a separate transaction after the provider commit with **no**
+start-of-pass heal. A crash between the two commits would strand the row: its old key would never
+match a later grant, and a later `PrepareNextAttemptOnAsync` would compare against the new key
+only.
+
+Round B stays after Round A, master-only (D-S3-8). D-S3-10 adds files to S3d
+(`CapacityRecoveryService.cs`, and `ApiErrorRecoveryService.cs` if that caller realigns itself).
 
 **D-S3-8 Shipping (amended per the review's slicing recommendation, adopted).** There are three
 Code rounds, all on master first:
@@ -523,6 +614,7 @@ Code rounds, all on master first:
 - **Round C: S3f.**
   - Master-only, with `RemotePrepGrantHoldSeconds` **default 0 (off)**. It is never ported to rc
     in this card.
+  - *Renew or release (review 8f6e5b17 A-10, deferred).* The independent plan releases the grant at `HeldForRemotePrep` and reacquires it; this plan renews `GrantedAt`. With the cap and default 0, renewal is acceptable. The choice is made in the Round C amendment, not now.
   - It is cut after round B lands, because it touches `AgentTaskDispatcher.cs` and
     `CapacityRecoveryService.cs`, the same source area as S3c. The same-area rule defers it.
 
@@ -538,14 +630,30 @@ These are design changes, not mechanical edits, so a Review should confirm them 
 plan carries its own `## Verification design` and `### Checkpoints`, so Code can follow an
 approving Review directly.
 
+*Amendment 2.* Design review 8f6e5b17 named the open Round A decisions: D-1 to D-3 and A-2. This
+amendment settles each of them in the text:
+- the pre-check classes and the clauses that are deleted;
+- the `in-doubt` S-4 witness;
+- the card-arm placement, its throw rule and S-0c;
+- the release call sites and the S-3 class for a rethrown `standing_resume_*`.
+
+Round A (S3a + S3b) is now mechanical: `next: code` for Round A on master, followed by the Code
+Review. The Code Review must also check the three places where this amendment departs from the
+review's literal text:
+1. a pre-check `ActionKey` mismatch is S-1, not S-2 (D-S3-2);
+2. `standing_start_intent_revoked` joins the S-2 list (D-S3-5);
+3. the `in-doubt` witness enqueues the test transaction before the reservation releases (V-S3-5b).
+
+Round B needs its own plan amendment for the D-S3-10 witnesses before its Code task.
+
 ## Slices
 
 | Slice | Round | Files | Change | Tests (red first) |
 |---|---|---|---|---|
 | S3a | A | `server/Application/Services/CapacityRecoveryService.cs`, new `server/Application/Services/CapacityConsumeReceipt.cs` | D-S3-1: `receipt` parameter, `Admitted` mode, revalidation accepted, session stamp, `ConsumeAdmittedAsync`; `RedeemAsync` note | V-S3-1 |
-| S3b | A | `AgentSupervisorService.cs` (`:228-245` outer catches, `:470-527`, `:547-551`), `AgentControlService.cs` (`:150-160`, `:162`, `:291-317` card arm, `:543-887` consume and S-4), `CapacityRecoveryService.cs` (`ReleaseAgentReservationAsync`, `ChargeFailedStartAsync`) | D-S3-2, D-S3-5 | V-S3-2..V-S3-5c, V-S3-11 `supervisor-start` |
+| S3b | A | `AgentSupervisorService.cs` (`:121-245` admission holder and outer catches, `:467-527`, `:529-573` admission parameter and release call site 1), `AgentControlService.cs` (constructor `LandDeliveryBoundary`, `:150-160`, `:162`, `:320-328` card-arm consume after the pointer save, `:543-888` consume and S-4, `:602-615` pre-check), `CapacityRecoveryService.cs` (`ReleaseAgentReservationAsync`, `ChargeFailedStartAsync`, `ConsumeAdmittedAsync` stamp parameters) | D-S3-2, D-S3-5 | V-S3-2..V-S3-5c, V-S3-11 `supervisor-start` |
 | S3c | B | `AgentTaskDispatcher.cs` (`:608-652`, `:1752-1783`), `CapacityRecoveryService.cs` (`ReturnRetainedAsync`) | D-S3-3 | V-S3-6..V-S3-7, V-S3-11 `retained-return` |
-| S3d | B | `SessionMessageQueueService.cs` (`:2577-2590`, `:2684`, `:2701`, `:2737-2749`, `:3380-3431`), `SessionMessageQueueService.CodexPointers.cs` (`:124-148`) | D-S3-4 | V-S3-8..V-S3-10, V-S3-11 `queue-sent` |
+| S3d | B | `SessionMessageQueueService.cs` (`:2577-2590`, `:2684`, `:2701`, `:2737-2749`, `:3380-3431`), `SessionMessageQueueService.CodexPointers.cs` (`:124-148`), `CapacityRecoveryService.cs` (`:1398-1407`, `RealignQueueKeysAsync`, its call sites; D-S3-10), possibly `ApiErrorRecoveryService.cs` (`:588`) | D-S3-4, D-S3-10 | V-S3-8..V-S3-10, V-S3-11 `queue-sent` |
 | S3e | B (last) | `tests/Antiphon.Tests/Application/CapacityLockOrderTests.cs` | no-production-caller guard for `RedeemAsync` | V-S3-12 |
 | S3f | C | `AgentTaskDispatcher.cs` (`:949-959`), `CapacityRecoveryService.cs` (`RenewGrantAsync`), `server/Application/Settings/SupervisionSettings.cs` (`CapacityRecoverySettings.RemotePrepGrantHoldSeconds`, default 0) | D-S3-6 | V-S3-13 |
 
@@ -565,11 +673,11 @@ positive control (PC) that must turn it red. Every supervisor witness also asser
 | V-S3-1 | `CapacityAdmissionLifecycleTests/C1593_S3_revalidation_grant_is_consumable_in_a_transaction` `[Arguments("launch")]`, `("admitted")` | a revalidation grant (`Admitted`, `NeedsRevalidationGrant`, `SelectedMessageId` set) consumed inside a caller transaction is accepted without increment; `admitted` additionally asserts the row equals what `RedeemAsync` writes (state, reason, clock, grant cleared, no new receipt field) and that a rollback leaves the grant. The test commit calls the base overload (`consume: true`, `launchSessionId`) for both arguments; the fix commit switches the `admitted` argument to `receipt: Admitted` | red at base, both arguments: `not-action-pending` (`CapacityRecoveryService.cs:343-344`) |
 | V-S3-2 | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_skip_does_not_spend` `[Arguments("compaction-block")]`, `("duplicate-key")` | granted standing wait; the skip condition holds; after the tick `AdmissionCount == 0`, wait `ActionPending`, grant still the wait, no start | red at base: `AdmissionCount == 1`, grant null (`RedeemAsync` `:507` ran first) |
 | V-S3-3 | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_refusal_releases_the_wait` `[Arguments("standing_resume_delivery_pending")]`, `("capacity_recovery_suspended")`, `("herdr-hold")` | `standing_resume_delivery_pending`: `StartSupervisedFreshAsync` refuses (S-2); the wait is `Canceled`/`start-refused`, the grant is cleared, `AdmissionCount == 0` and continuity is held. `capacity_recovery_suspended` and `herdr-hold` are race exits. The supervisor already skips suspended and held agents at `AgentSupervisorService.cs:133`/`:148`, so the test sets the condition on another connection at a new test-only boundary, `capacity-supervisor-before-start`. That boundary is reached in `TryHandleCapacityWaitAsync` after the grant-match, duplicate-key and compaction checks, immediately before the start. For `capacity_recovery_suspended`, the non-reserve arm then refuses at `AgentControlService.cs:209-213` (S-2, review D-5), with the same wait outcome. For `herdr-hold`, the start throws `HeldCode` at `:197` (S-2h); the wait is `Canceled`/`start-held`, there is no backoff and the Herdr observation is recorded. In every argument the next tick reaches the ungated path (no capacity branch) | red at base: `AdmissionCount == 1`, wait `Admitted`. The boundary is not on the base path, so the two race arguments start normally at base: `Admitted`, launched |
-| V-S3-4 | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_start_and_consume_commit_together` `[Arguments("commit-visibility")]`, `("consume-revoked")` | `commit-visibility`: a `DbTransactionInterceptor` on the harness context runs at `TransactionCommittingAsync` of the transaction that inserted the new `AgentSessions` row and, from a separate connection, reads the wait: still `ActionPending`, `AdmissionCount == 0`, grant held (the spend is not visible before the start commits); after the tick `AdmissionCount == 1`, `Admitted`, `SessionId == ` the new session. `consume-revoked`: a test `LandDeliveryBoundary` point `capacity-start-before-consume` revokes the grant on another connection: no new session row, pointer unchanged, `AutomaticFreshConsumed` false, `AdmissionCount == 0`, no backoff recorded | red at base: `commit-visibility` reads `Admitted`/`AdmissionCount == 1` inside the interceptor (base committed `RedeemAsync` at `AgentSupervisorService.cs:507-508` before the start); `consume-revoked`: the boundary is not on the base path, so base launches and the "no new session row" assertion fails |
-| V-S3-4b | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_exit_without_attempt_neither_charges_nor_backs_off` `[Arguments("consume-refused-nonreserve")]`, `("transient-40P01")`, `("canceled")` | `consume-refused-nonreserve`: `CanReserve` is false, so the start goes through `_control.StartAsync` (`:531`). The `capacity-start-before-consume` boundary revokes the grant. Assert no session row, `RestartBackoffFailures` and `NextRestartAt` unchanged, `AdmissionCount == 0`, and a clean tracker. This pins the S-1 catch beside `:232` (review D-4b). `transient-40P01`: an interceptor throws `PostgresException 40P01` from the reservation's consume save. Assert that nothing commits, there is no backoff, `AdmissionCount == 0`, the grant is still the wait and the tracker is clean. The next tick (fault spent) starts once with `AdmissionCount == 1`. `canceled`: the token is canceled at the boundary. Assert that `OperationCanceledException` propagates, the reservation rolls back, there is no backoff and `AdmissionCount == 0` | red at base, all three: base spends before the start (`AdmissionCount == 1`). The first argument's boundary is not on the base path, so base launches. `transient-40P01` also records a backoff at base |
+| V-S3-4 | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_start_and_consume_commit_together` `[Arguments("commit-visibility")]`, `("consume-revoked")`, `("precheck-revoked")` | `commit-visibility`: a `DbTransactionInterceptor` on the harness context runs at `TransactionCommittingAsync` of the transaction that inserted the new `AgentSessions` row and, from a separate connection, reads the wait: still `ActionPending`, `AdmissionCount == 0`, grant held (the spend is not visible before the start commits); after the tick `AdmissionCount == 1`, `Admitted`, `SessionId == ` the new session. `consume-revoked`: a test `LandDeliveryBoundary` point `capacity-start-before-consume` revokes the grant on another connection: no new session row, pointer unchanged, `AutomaticFreshConsumed` false, `AdmissionCount == 0`, no backoff recorded. `precheck-revoked` (amendment 2, review D-1): the reserve arm (`CanReserve` true); the `capacity-start-before-precheck` boundary (immediately before `AgentControlService.cs:602`) revokes the grant on another connection (clears `GrantedWaitId`/`GrantedActionKey`, as D-12 would). Assert the start throws `capacity_consume_refused` and the tick returns `false`; the wait is **not** `Canceled` and keeps its state (`ActionPending`) and `ActionKey`; the provider grant is still the null the test wrote (no release ran); `AdmissionCount == 0`; `RestartBackoffFailures` and `NextRestartAt` unchanged; no new session row; and a clean tracker | red at base: `commit-visibility` reads `Admitted`/`AdmissionCount == 1` inside the interceptor (base committed `RedeemAsync` at `AgentSupervisorService.cs:507-508` before the start); `consume-revoked` and `precheck-revoked`: the boundaries are not on the base path, so base launches (the "no new session row" and `AdmissionCount == 0` assertions fail) |
+| V-S3-4b | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_exit_without_attempt_neither_charges_nor_backs_off` `[Arguments("consume-refused-nonreserve")]`, `("transient-40P01")`, `("canceled")` | `consume-refused-nonreserve`: `CanReserve` is false, so the start goes through `_control.StartAsync` (`:535`). The `capacity-start-before-consume` boundary revokes the grant. Assert no session row, `RestartBackoffFailures` and `NextRestartAt` unchanged, `AdmissionCount == 0`, and a clean tracker. This pins the S-1 catch beside `:232` (review D-4b). `transient-40P01`: an interceptor throws `PostgresException 40P01` from the reservation's consume save. Assert that nothing commits, there is no backoff, `AdmissionCount == 0`, the grant is still the wait and the tracker is clean. The next tick (fault spent) starts once with `AdmissionCount == 1`. `canceled`: the token is canceled at the boundary. Assert that `OperationCanceledException` propagates, the reservation rolls back, there is no backoff and `AdmissionCount == 0` | red at base, all three: base spends before the start (`AdmissionCount == 1`). The first argument's boundary is not on the base path, so base launches. `transient-40P01` also records a backoff at base |
 | V-S3-5 | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_start_throw_charges_one_attempt` | the start throws an infrastructure error (S-3) three times across re-grants: `AdmissionCount` 1, 2, 3, then `Exhausted`, then the ungated restart runs | guard (base also spends once per failed start). PC: delete the `ChargeFailedStartAsync` call -> red (`AdmissionCount == 0` after the first failure) |
-| V-S3-5b | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_lost_commit_ack_launches_once` `[Arguments("committed")]`, `("not-committed")` | `committed`: an interceptor throws from `TransactionCommittedAsync` of the reservation, after the server commit. Assert `AdmissionCount == 1`, wait `Admitted` with `SessionId` = the new session, exactly **one** launch (the fake adapter launch count, and the launch queue enqueued once with the accepted generation), and no backoff. `not-committed`: an interceptor throws `XX000` from `TransactionCommittingAsync`. Assert no session row, a backoff recorded (S-3), and `AdmissionCount == 1` from the S-3 charge with exactly one charge | `committed` is red at base: base sees the throw from `CommitAsync`, never enqueues (zero launches) and records a backoff. `not-committed` is a guard. PC: replace the S-4 `FOR UPDATE` reread with "assume committed" -> red (an enqueue for a missing row, no backoff) |
-| V-S3-5c | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_card_start_spends_after_spawn` | the agent has pending card work and its granted standing wait takes the card arm (`CardService.SpawnAsync`). Assert one spawn, `AdmissionCount == 1`, `Admitted`, `SessionId == spawn.SessionId` and the grant cleared | guard (base spends before the spawn). PC: delete the post-spawn `ConsumeAdmittedAsync` -> red (`AdmissionCount == 0`) |
+| V-S3-5b | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_lost_commit_ack_launches_once` `[Arguments("committed")]`, `("not-committed")`, `("in-doubt")` | `committed`: an interceptor throws from `TransactionCommittedAsync` of the reservation, after the server commit. Assert `AdmissionCount == 1`, wait `Admitted` with `SessionId` = the new session, exactly **one** launch (the fake adapter launch count, and the launch queue enqueued once with the accepted generation), and no backoff. `not-committed`: an interceptor throws `XX000` from `TransactionCommittingAsync`. Assert no session row, a backoff recorded (S-3), and `AdmissionCount == 1` from the S-3 charge with exactly one charge. `in-doubt` (amendment 2, review D-2): it proves that the reread **waits** under `FOR UPDATE`. Use the non-reserve resume arm (`CanReserve` false, a resumable `previous`), so the accepted session id equals the old pointer and only `StartedAt` tells the generations apart. At `TransactionCommittingAsync` of the reservation the interceptor: (1) captures the accepted session id, `acceptedGeneration` and the consume's wait values from the harness tracker; (2) starts a test transaction on its own connection that runs `SELECT … FROM "Agents" WHERE "Id" = @agent FOR UPDATE`. That statement blocks, because the reservation still holds the row (`:549`). (3) It polls `pg_stat_activity` until that backend waits on a `Lock`; (4) then it throws `XX000`, so the reservation never commits. S-4 step 1 rolls back, PostgreSQL grants the row to the test transaction first (its request was queued first), and S-4 step 2's reread queues behind it. The test transaction, standing in for the in-doubt `COMMIT`, writes the committed state: `AgentSessions.StartedAt = acceptedGeneration`, `Status = Starting`, and the wait as the consume would have left it (`Admitted`, `AdmissionCount = 1`, `SessionId`, grant cleared). It polls `pg_stat_activity` for a second backend waiting on a `Lock` for that row (the reread), or for the tick task to finish, with a 30 s deadline, and **then** commits. Assert exactly one enqueue with `acceptedGeneration`, no backoff (`RestartBackoffFailures`, `NextRestartAt` unchanged), and `AdmissionCount == 1`, the value the test wrote, unchanged by any S-3 charge | `committed` and `in-doubt` are red at base: base sees the throw from `CommitAsync`, never enqueues (zero launches) and records a backoff. `not-committed` is a guard. PCs: (1) replace the S-4 reread with "assume committed" -> `not-committed` red (an enqueue for a missing row, no backoff); (2) **drop `FOR UPDATE` from the S-4 reread** -> `in-doubt` red: the reread runs before the test transaction commits, sees the old `StartedAt`, rethrows to S-3, records a backoff and enqueues nothing. *Departure from the review's step 1:* the review had the test take the agent row and write **at** `TransactionCommittingAsync`. While the reservation still holds the row that would block the interceptor's own thread forever. Queuing the test request first and writing after the rollback keeps the same proof without a self-deadlock |
+| V-S3-5c | `CapacityRecoverySupervisionTests/C1593_S3_supervisor_card_start_spends_after_spawn` `[Arguments("spends-after-spawn")]`, `("consume-throws")` | the agent has pending card work, `CanReserve` is false, and its granted standing wait takes the card arm (`CardService.SpawnAsync`). `spends-after-spawn`: assert one spawn, `AdmissionCount == 1`, `Admitted`, `SessionId == spawn.SessionId` and the grant cleared. `consume-throws` (amendment 2, review D-3): a one-shot `DbCommandInterceptor`, registered for the consume's own scope, throws `PostgresException XX000` on the consume's wait `UPDATE`. Assert one spawn; `PersistentSessionId == spawn.SessionId` and `Status == Running`, saved; the tick returns `true`; no backoff (`RestartBackoffFailures` and `NextRestartAt` unchanged); `AdmissionCount == 0`, wait `ActionPending`, grant still the wait; and a clean tracker | `spends-after-spawn` is a guard (base spends before the spawn). PC: delete the post-spawn `ConsumeAdmittedAsync` -> red (`AdmissionCount == 0`). `consume-throws` is red at base: base spends at `:507` before the spawn and the interceptor never fires, so `AdmissionCount == 1`. Second PC, for the throw rule: delete the S-0c catch -> red (the exception reaches S-3, and the charge, with the one-shot fault spent, consumes: `AdmissionCount == 1`) |
 | V-S3-6 | `CapacityRecoveryTaskTests/C1593_retained_slot_filled_after_snapshot_does_not_spend` | local limit 1, snapshot count 0, `AfterQueuedSnapshotAsync` inserts one counted `Working` row; retained task holds the grant: `AdmissionCount == 0`, grant still held, `ActionPending`, `CapacityWaitRetained` still true | red at base: `AdmissionCount == 1`, `Admitted` (investigation item 3) |
 | V-S3-6b | `CapacityRecoveryTaskTests/C1593_retained_return_without_live_wait_resumes` `[Arguments("no-unfinished-wait")]`, `("feature-disabled")` | `no-unfinished-wait`: the retained task's wait is `Exhausted`, with a local slot free. `feature-disabled`: capacity recovery is off and the wait is `ActionPending`. In both, one tick sets `CapacityWaitRetained == false`, the task counts as active, and the wait row is byte-unchanged (no consume) | guards (base returns both without a consume, `AgentTaskDispatcher.cs:631-635`/`:1756-1757`). PC: delete `ReturnRetainedAsync`'s null/disabled branch so that it always consumes and rechecks the wait -> red (still retained) |
 | V-S3-6c | `CapacityRecoveryTaskTests/C1593_retained_remote_return_commits_flag_and_admission` | a remote retained task (`RunnerId` set; runner limit 2, occupancy 0) holds the grant. One tick sets the flag false, `AdmissionCount == 1`, `Admitted`, grant cleared, and takes no counted advisory (`localLimit: null`) | guard (base consumes for a remote return too). PC: pass `wait: null` on the remote arm -> red (`AdmissionCount == 0`) |
@@ -578,7 +686,7 @@ positive control (PC) that must turn it red. Every supervisor witness also asser
 | V-S3-8b | `CapacityRecoveryQueueTests/C1593_enter_only_confirm_spends_before_enter` `[Arguments("pending-head")]`, `("pointer-recovery")`, `("consume-revoked")` | `pending-head`: a stamped `Pending` head with `DeliveryAttempts == 1` and its body visible whole on screen, with the grant held. The flush presses Enter once (fake runtime input `"\r"`). Assert `AdmissionCount == 1`, `Admitted`, `NextAdmissionAt` advanced and the grant cleared. `pointer-recovery`: the same for a Codex pointer head through `RecoverPointerAsync` (`CompleteComposer`). `consume-revoked`: the `capacity-enter-before-consume` boundary revokes the grant. Assert that no Enter is sent, `FlushResult.Nothing`, `AdmissionCount == 0` and the message is still `Pending` | `pending-head` and `pointer-recovery` are guards (base spends at `:2586`). PC: delete the Enter-only consume -> red (`AdmissionCount == 0`, null clock, review D-2). `consume-revoked` is red at base: the boundary is not on the base path, so base presses Enter |
 | V-S3-9 | `CapacityRecoveryQueueTests/C1593_flush_sent_and_admission_commit_together` `[Arguments("commit-fault")]`, `("consume-revoked")` | `commit-fault`: interceptor throws `XX000` on the `Sent` commit: message `Pending`, nothing typed (fake runner write count 0), `AdmissionCount == 0`, grant held. `consume-revoked`: grant revoked at test boundary `capacity-queue-before-consume`: same outcome and `FlushResult.Nothing` | red at base: `commit-fault` has the spend committed before the stamp (`AdmissionCount == 1`); `consume-revoked`: the boundary is not on the base path, so base types the message (write count 1) |
 | V-S3-10 | `CapacityRecoveryQueueTests/C1593_failed_delivery_after_sent_rearms_as_revalidation` | transport throw after `Sent`: `AdmissionCount == 1`, `Admitted`, `SelectedMessageId` set, message `Pending`; after 121 s reconcile `NeedsRevalidationGrant`; regrant; redelivery consumes without increment and the message is `Sent` | red at base only on the last step (base `RedeemAsync` accepts revalidation, so this is a **guard**). PC: drop the revalidation clause from the S3a state check -> the redelivery returns `Nothing` |
-| V-S3-11 | `CapacityLockOrderTests/C1593_S3_path_blocked_on_row_holds_no_provider_lock` `[Arguments("supervisor-start")]` (S3b), `("retained-return")` (S3c), `("queue-sent")` (S3d) | a test connection holds, respectively, the agent row, the retained task row or the head queue row `FOR UPDATE`. The path's backend waits on it (`pg_stat_activity`), and `pg_locks` shows no `antiphon.capacity.kind.*` key for that pid. The lock is released and the path completes with one spend. **Amended (review A-1):** a `DbCommandInterceptor` on the path's connection records every command after the consume's provider-state `UPDATE`. The only command allowed before the transaction ends is `COMMIT`. This replaces the vacuous `RejectDirtyLaunchRows` check | guards at base (base spends earlier, on another connection). PCs: move each consume ahead of its last row write (bypassing `RejectDirtyLaunchRows`) -> red on the capacity-key assertion **and** on the nothing-after-consume assertion |
+| V-S3-11 | `CapacityLockOrderTests/C1593_S3_path_blocked_on_row_holds_no_provider_lock` `[Arguments("supervisor-start")]` (S3b), `("retained-return")` (S3c), `("queue-sent")` (S3d) | a test connection holds a row `FOR UPDATE`: for `supervisor-start`, the involved `AgentSessions` row, which is the first lock the reservation takes (`AgentControlService.cs:546-548`; amended per review A-4: holding the agent row would block at the autocommit `LockAgentAsync` `:177`, before the reservation); for `retained-return`, the retained task row; for `queue-sent`, the head queue row. The path's backend waits on it (`pg_stat_activity`), and `pg_locks` shows no `antiphon.capacity.kind.*` key for that pid. The lock is released and the path completes with one spend. **Amended (review A-1):** a `DbCommandInterceptor` on the path's connection records every command after the consume's provider-state `UPDATE`. The only command allowed before the transaction ends is `COMMIT`. This replaces the vacuous `RejectDirtyLaunchRows` check | guards at base (base spends earlier, on another connection). PCs: `supervisor-start`: move the consume to immediately after `BeginTransactionAsync` (`:543`), ahead of the session locks -> red on the capacity-key assertion (the blocked backend holds the provider key) **and** on the nothing-after-consume assertion. `retained-return` and `queue-sent`: move each consume ahead of its last row write (bypassing `RejectDirtyLaunchRows`) -> red on both assertions |
 | V-S3-12 | `CapacityLockOrderTests/C1593_S3_wrapper_has_no_production_caller` | a source scan of `server/**/*.cs` finds no `.RedeemAsync(` | red at base: three call sites. It rides round B (the last of S3b/S3c/S3d on master) |
 | V-S3-13 (round C, master) | `CapacityAdmissionLifecycleTests/C1593_remote_prep_keeps_the_grant_while_in_flight` `[Arguments("in-flight")]`, `("past-cap")`, `("default-off")` | `in-flight`: setting 600; after `HeldForRemotePrep`, advance 121 s with `IsInFlight` true, tick, then `GrantReadyAsync`. Assert the grant is still the wait and `AdmissionCount == 0`. `past-cap`: setting 60; advance past it, and the grant expires (`grant-expired`). `default-off`: no setting; at 121 s the grant expires exactly as at base | `in-flight` red at base (S1 V-4 c5a outcome). `past-cap` and `default-off` are guards. PC for `past-cap`: drop the cap check -> red. PC for `default-off`: default the setting to 600 -> red |
 
@@ -609,7 +717,7 @@ Deterministic means no sleeps. The tests use:
 - `FakeTimeProvider`;
 - `pg_stat_activity`/`pg_locks` polling with a 30 s deadline;
 - test-only `LandDeliveryBoundary` points, as S1's `capacity-consume-before`:
-  `capacity-supervisor-before-start`, `capacity-start-before-consume`,
+  `capacity-supervisor-before-start`, `capacity-start-before-precheck`, `capacity-start-before-consume`,
   `capacity-queue-before-consume` and `capacity-enter-before-consume`.
 
 ### Red witnesses (run before each product commit, not in the table)
@@ -617,8 +725,8 @@ Deterministic means no sleeps. The tests use:
 One build-slot build of the slice's test commit, then `--no-build`. Plain method segments run
 every `[Arguments]` case.
 - S3a: `/*/*/CapacityAdmissionLifecycleTests/C1593_S3_revalidation_grant_is_consumable_in_a_transaction`
-- S3b: `/*/*/CapacityRecoverySupervisionTests/(C1593_S3_supervisor_skip_does_not_spend*)|(C1593_S3_supervisor_refusal_releases_the_wait*)|(C1593_S3_supervisor_start_and_consume_commit_together*)|(C1593_S3_supervisor_exit_without_attempt*)|(C1593_S3_supervisor_lost_commit_ack*)`
-  (expect `lost_commit_ack` `committed` red and `not-committed` green).
+- S3b: `/*/*/CapacityRecoverySupervisionTests/(C1593_S3_supervisor_skip_does_not_spend*)|(C1593_S3_supervisor_refusal_releases_the_wait*)|(C1593_S3_supervisor_start_and_consume_commit_together*)|(C1593_S3_supervisor_exit_without_attempt*)|(C1593_S3_supervisor_lost_commit_ack*)|(C1593_S3_supervisor_card_start*)`
+  (expect `lost_commit_ack` `committed` and `in-doubt` red and `not-committed` green; `card_start` `consume-throws` red and `spends-after-spawn` green; every other case red).
 - S3c: `/*/*/CapacityRecoveryTaskTests/(C1593_retained_slot_filled_after_snapshot_does_not_spend*)|(C1593_retained_return_commits_flag_and_admission_together*)`
 - S3d: `/*/*/CapacityRecoveryQueueTests/(C1593_flush_exit_before_sent_does_not_spend*)|(C1593_flush_sent_and_admission_commit_together*)|(C1593_enter_only_confirm_spends_before_enter*)`
   (expect only `consume-revoked` of `enter_only` red).
@@ -626,12 +734,13 @@ every `[Arguments]` case.
 - S3f: `/*/*/CapacityAdmissionLifecycleTests/C1593_remote_prep_keeps_the_grant_while_in_flight`
   (expect `in-flight` red; `past-cap` and `default-off` green).
 
-PCs (method-scoped, each run once and restored): V-S3-5, V-S3-5b `not-committed`, V-S3-5c,
+PCs (method-scoped, each run once and restored): V-S3-5, V-S3-5b `not-committed` and `in-doubt` (drop `FOR UPDATE`), V-S3-5c `spends-after-spawn` and `consume-throws` (delete the S-0c catch),
 V-S3-6b (both arguments), V-S3-6c, V-S3-8b `pending-head` and `pointer-recovery`, V-S3-10, V-S3-11
 (one per argument, in its own slice), V-S3-13 `past-cap` and `default-off`.
 
 Suffix check for the red-witness OR filters. `C1593_S3_supervisor_start_and_consume_commit_together*`
 and `C1593_S3_supervisor_start_throw_charges_one_attempt` differ at `start_a` and `start_t`, and
+`C1593_S3_supervisor_card_start*` differs from both at `card_` (amendment 2), and
 neither is a prefix of the other. `C1593_S3_supervisor_exit_without_attempt*` and
 `C1593_S3_supervisor_lost_commit_ack*` have no sibling with the same prefix. In the Queue filter,
 `C1593_enter_only_*` matches no other method, and neither does any Task-filter prefix.
@@ -653,12 +762,12 @@ Per [test performance standards](../../test-performance-standards.md) and
   reuse `AgentSupervisionTests.BuildHarness` once per test. There is no per-test server boot.
 - **Phases recorded per row:** slot wait, build, host start, and per test the clone, act and
   assert.
-- **Budget:** 36 new results:
+- **Budget:** 39 new results (amendment 2 adds `precheck-revoked`, `in-doubt` and `consume-throws`):
 
   | Slice | New results |
   |---|---|
   | S3a | 2 |
-  | S3b | 15: V-S3-2 2, V-S3-3 3, V-S3-4 2, V-S3-4b 3, V-S3-5 1, V-S3-5b 2, V-S3-5c 1, V-S3-11 1 |
+  | S3b | 18: V-S3-2 2, V-S3-3 3, V-S3-4 3, V-S3-4b 3, V-S3-5 1, V-S3-5b 3, V-S3-5c 2, V-S3-11 1 |
   | S3c | 6: V-S3-6 1, V-S3-6b 2, V-S3-6c 1, V-S3-7 1, V-S3-11 1 |
   | S3d | 9: V-S3-8 2, V-S3-8b 3, V-S3-9 2, V-S3-10 1, V-S3-11 1 |
   | S3e | 1 |
@@ -672,7 +781,7 @@ Per [test performance standards](../../test-performance-standards.md) and
   | Run | Rows | Estimate |
   |---|---|---|
   | S3a | CP-1..CP-3 | about 29 min |
-  | S3b | CP-4..CP-6 | about 26 min |
+  | S3b | CP-4..CP-6 | about 27 min |
   | S3c | CP-7..CP-9 | about 22 min |
   | S3e | CP-10..CP-12 | about 23 min |
   | S3f | CP-13..CP-14 | about 20 min |
@@ -687,7 +796,7 @@ and `GET /api/session-runners` lists `desktop` (windows), `server2` and `server2
 There is no `-Runner` or `-Platform` pin. Each After group builds once with
 `scripts/build-slot.ps1` (`UseAppHost=false`, `--property:OutputPath=bin-c1593s3<x>/`), then runs
 `dotnet exec --no-build` on the built DLL for each row. The S1 D-11 checkpoint reader cap still
-applies, so Code reports CHECKPOINT-shaped lines with the TRX path and SHA-256.
+applies, so Code reports CHECKPOINT-shaped lines with the TRX path and SHA-256. *Re-checked in amendment 2 (review A-9):* the cap is still 67,108,864 bytes at `aa6dfd24a` (`scripts/lib/checkpoint-file-reader.ps1:196`), so there are still no sealed receipts. Per S1 D-11, the Code Review re-runs CP-1..CP-6 itself, saves its TRX under `.antiphon/`, and reports `reviewedSourceClean: false` with the reason "reader cap: sealed receipts unavailable", never `true`. Raising the cap is a separate card.
 
 Each round's Code task runs only its own rows: round A runs CP-1..CP-6, round B runs CP-7..CP-12
 and round C runs CP-13..CP-14. If the tool cannot select rows, extract that round's rows into an
@@ -698,7 +807,7 @@ ignored `.antiphon/` plan copy. The rc port of round A re-runs CP-1..CP-6 on the
 | CP-1 | S3a | `tests/Antiphon.Tests -> bin-c1593s3a/` | c1593-s3a | `/*/Antiphon.Tests.Application/(CapacityAdmissionLifecycleTests*)\|(CapacityLockOrderTests*)/*` | V-S3-1, S1 regression | 26 + 16 existing + 2 new = 44, 0 failed/skipped | 44 | 15 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-2 | S3a | CP-1 | c1593-s3a | `/*/Antiphon.Tests.Application/(WallRerouteDispatchTests*)\|(ReceiptFailureDeliveryTests*)/*` | S1 claim regression (state check widened) | 15 + 21 = 36, 0 failed/skipped | 36 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-3 | S3a | CP-1 | c1593-s3a | `/*/Antiphon.Tests.Application/AgentTaskDispatchBaseGuardTests/*` | S1 regression | 97, 0 failed/skipped | 97 | 8 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-4 | S3b | `tests/Antiphon.Tests -> bin-c1593s3b/` | c1593-s3b | `/*/Antiphon.Tests.Application/CapacityRecoverySupervisionTests/*` | V-S3-2..V-S3-5c, D8, V16-V18 | 6 existing + 14 new = 20, 0 failed/skipped | 20 | 12 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-4 | S3b | `tests/Antiphon.Tests -> bin-c1593s3b/` | c1593-s3b | `/*/Antiphon.Tests.Application/CapacityRecoverySupervisionTests/*` | V-S3-2..V-S3-5c, D8, V16-V18 | 6 existing + 17 new = 23, 0 failed/skipped | 23 | 13 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-5 | S3b | CP-4 | c1593-s3b | `/*/Antiphon.Tests.Application/(StandingRestartEscalationTests*)\|(AgentSupervisionTests*)/*` | every standing start (review D-5) | 52 + 10 = 62, 0 failed/skipped | 62 | 12 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-6 | S3b | CP-4 | c1593-s3b | `/*/Antiphon.Tests.Application/CapacityLockOrderTests/C1593_S3_path_blocked_on_row_holds_no_provider_lock` | V-S3-11 `supervisor-start` (L16') | 1, 0 failed/skipped | 1 | 2 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 | CP-7 | S3c | `tests/Antiphon.Tests -> bin-c1593s3c/` | c1593-s3c | `/*/Antiphon.Tests.Application/CapacityRecoveryTaskTests/*` | V-S3-6..V-S3-7, V19 | 6 existing + 5 new = 11, 0 failed/skipped | 11 | 12 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
@@ -751,7 +860,7 @@ Not run:
    - S-2 and S-2h release to the ungated path rather than stranding.
 2. **S-2 classification is a code list.** A new durable conflict code that is not listed falls
    into S-3 (charged, bounded by `MaxAttempts`), the base outcome. Safe direction.
-3. **The card arm under-spends in a crash window** (D-S3-2). One unpaced launch at most.
+3. **The card arm under-spends in a crash window or on a failed consume** (D-S3-2, S-0c). One unpaced launch per failure, never a strand, never a second spawn: the pointer is saved at `:326` before the consume (amendment 2).
 4. **Retained/queue overlap.** A retained task's wall wait can also be the wait a queue row is
    stamped with (`HasTerminalCapacityHoldAsync` on the same session). After S3 whichever consumer
    commits first spends. The other refuses with `grant-mismatch` and holds, as base `RedeemAsync`
@@ -781,9 +890,35 @@ Not run:
 11. **S-2h releases pacing.** When a hold clears, the restart is ungated, as after any S-2
     release. Accepted: holding the grant through a hold of unbounded length would starve every
     other waiter of that provider kind.
-12. **The Enter-only consume spends first.** A crash between the consume commit and the Enter
-    keystroke over-spends one attempt, bounded by `MaxAttempts`. The reverse order would be the
-    leak.
+12. **The Enter-only consume spends first (bound restated in amendment 2, review A-6).** A crash
+    between the consume commit and the Enter keystroke spends one admission with no turn. The
+    reverse order would be the leak. Spending before Enter is base-equivalent, because base also
+    spends at `:2586` before Enter-only.
+    - Only the first consume of a wall episode increments `AdmissionCount`. After it the wait is
+      `Admitted` with `SelectedMessageId`, so every later redelivery is a revalidation that never
+      increments, and Enter-only never charges `DeliveryAttempts` (`:3380-3477`).
+    - "Bounded by `MaxAttempts`" was therefore wrong. The count over-spends by at most one per
+      wall episode. The wall-clock cost has no attempt bound: a repeating Enter-failure cycle
+      regrants once per `StalledAdmissionTimeout` (120 s), each grant paced by the provider
+      clock, until the head leaves `Pending` (confirmed, canceled, expired, or settled by a
+      person) or the session's waits end.
+    - That is exactly base (round-1 A-3). A follow-up card can bound it with a per-message
+      Enter-only counter; S3 does not change it.
+13. **A raced `standing_automatic_fresh_ineligible` releases pacing (amendment 2).** The code
+    has two sites:
+    - durable eligibility at `AgentControlService.cs:178-180` (not AlwaysOn, a pool delegate, a
+      specialist);
+    - a racy recheck at `:595-597` (`CanReserve` turned false, or a compaction block appeared
+      after the supervisor's checks).
+
+    S-2 releases both. The racy site therefore drops pacing on a rare race, and the ungated path
+    then applies its own `CanReserve` and compaction gates. Splitting the code so that the racy
+    site is S-1 is a follow-up, not S3: it changes an existing conflict code that
+    `StandingRestartEscalationTests` pins.
+14. **The card arm's failed consume leaves the wait cycling (amendment 2, S-0c).** The wait has no
+    `SessionId` stamp, so the live card session does not progress it. The grant cycles at D-12
+    until that session dies. This is the same residual shape as Risk 9 and is bounded by the
+    session's life.
 
 ## Amendment log (review 0b34dc40)
 
@@ -802,3 +937,22 @@ Not run:
 | A-6 | S-0 bound text corrected; residual | D-S3-5, Risk 9 |
 | A-7 | V-S3-12 rides round B | D-S3-1, D-S3-8, Slices |
 | Slicing | adopted: A = S3a+S3b on master, then rc after a clean master Review; B = S3c+S3d+S3e master-only; C = S3f master-only, default 0 | D-S3-8 |
+
+## Amendment log (review 8f6e5b17)
+
+| Review item | Disposition | Where |
+|---|---|---|
+| D-1 pre-check grant race | fixed. A grant mismatch at the pre-check throws `capacity_consume_refused` (S-1). `standing_automatic_fresh_capacity_required` is kept only for no wait and a kind mismatch. `:610` and `:611-612` are deleted. *Differs from the review:* an `ActionKey` mismatch is S-1 too, because only a reconciler re-arm moves the key. New witness `precheck-revoked` | Ground truth (amendment 2), D-S3-2 pre-check, D-S3-5 S-1 row, V-S3-4 |
+| D-2 S-4 `FOR UPDATE` unwitnessed | fixed: V-S3-5b `in-doubt`, whose PC drops `FOR UPDATE`. *Differs from the review:* the test transaction queues on the agent row before the reservation rolls back, and writes after it. Taking the row at `TransactionCommittingAsync` would block the interceptor's own thread forever | V-S3-5b, red witnesses, PCs |
+| D-3 card-arm placement and throw | fixed: the consume runs after the `:326` pointer save and before `:328`; every non-cancellation exception is caught, logged, and the launch stands (new class S-0c); witness `consume-throws` | D-S3-2 card arm, D-S3-5 S-0c, L16c, V-S3-5c, Risks 3 and 14 |
+| D-4 re-key under rank 7 against the `Sent` transaction | decision (Round B): option (a). `PrepareNextAttemptOnAsync` becomes capacity-only, and an own-scope, lock-free `RealignQueueKeysAsync` runs after each provider commit and at the start of `ReconcileAsync`. The independent plan's invariant is adopted, but not its consumer-side repair (unique index, transferred rows, scope). Option (b) is rejected. L17' and the S1 L18 note are corrected | D-S3-10, L17', Slices S3d |
+| A-1 | S-2h added to the tracker rule; the no-re-grant-loop reasoning recorded | D-S3-5 tracker rule, S-2h row |
+| A-2 | release call sites named (inside `StartSupervisedRestartAsync` after `held`, the outer S-2 and S-2h catches); a `standing_resume_*` rethrown at `:569` is S-3 (base); outer S-2 list made exact (`standing_start_intent_revoked` added) | D-S3-5 catch site, release call sites |
+| A-3 | `ModelDisabledException` named in the S-3 row | D-S3-5 S-3 row |
+| A-4 | V-S3-11 `supervisor-start` holds the involved `AgentSessions` row; its PC moves the consume ahead of the session locks | V-S3-11 |
+| A-5 | cross-process note added | L16' |
+| A-6 | "bounded by `MaxAttempts`" corrected for Enter-only: at most one count per wall episode, and no attempt bound on the 120 s regrant cycle (as base) | D-S3-4, Risk 12 |
+| A-7 | S-T: a `55P03` can repeat while a foreign holder persists | D-S3-5 S-T row |
+| A-8 | lines corrected: `:236` -> `:240`, `:531` -> `:535`, `:176` -> `:177`, `:886` -> `:887`, `:806-816` -> `:808-816`, `:510-522` -> `:512-522`, `:599-611` -> `:602-615`, `:291-299` -> `:302-307`, `:319` -> `:328`, `:556-559` -> `:557-561`. *Not taken:* `AgentSupervisorService` `:127` -> `:126`. Line 127 is the `BeginTransactionAsync`; line 126 is its comment | throughout |
+| A-9 | the reader cap is re-checked and still applies; the Code Review reports `reviewedSourceClean: false` with the S1 D-11 reason | Checkpoints |
+| A-10 | deferred to the Round C amendment | D-S3-8 Round C |
