@@ -8121,7 +8121,7 @@ public sealed partial class AgentTaskDispatcher
 
     /// <summary>
     /// CARD-1593. A deterministic non-Postgres commit fault stays queued once, because the
-    /// commit may still land. The next consecutive fault for the same task fails it.
+    /// commit may still land. The next fault since the last dispatch or retry fails it.
     /// </summary>
     internal const int NonPostgresCommitFaultBound = 2;
 
@@ -8159,8 +8159,8 @@ public sealed partial class AgentTaskDispatcher
                 .FirstAsync(t => t.Id == claimed.Id, CancellationToken.None);
             // A Postgres fault whose reread is already Dispatched lost the acknowledgement
             // after the commit landed. A transient SQLSTATE may still land and stays queued.
-            // A non-Postgres fault stays queued until NonPostgresCommitFaultBound consecutive
-            // faults, then releases and fails. Any other Postgres SQLSTATE rolled back.
+            // A non-Postgres fault stays queued until NonPostgresCommitFaultBound faults
+            // since the last dispatch or retry, then releases and fails. Any other Postgres SQLSTATE rolled back.
             if (stored.Status == AgentTaskStatus.Dispatched && stored.AgentSessionId == sessionId)
             {
                 await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), CancellationToken.None);
@@ -8175,7 +8175,7 @@ public sealed partial class AgentTaskDispatcher
 
             if (!IsPostgres(ex))
             {
-                if (await NonPostgresCommitFaultsSinceDispatchAsync(claimed.Id, CancellationToken.None) + 1
+                if (await NonPostgresCommitFaultsSinceDispatchOrRetryAsync(claimed.Id, CancellationToken.None) + 1
                     >= NonPostgresCommitFaultBound)
                 {
                     await ReleaseFailedReservationAsync(claimed, CancellationToken.None);
@@ -8251,10 +8251,12 @@ public sealed partial class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
     }
 
-    private async Task<int> NonPostgresCommitFaultsSinceDispatchAsync(Guid taskId, CancellationToken ct)
+    private async Task<int> NonPostgresCommitFaultsSinceDispatchOrRetryAsync(Guid taskId, CancellationToken ct)
     {
-        var lastDispatchAt = await _db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)
+        // Dispatched or Retried. There is no Reopened task event; a card reopen does not requeue.
+        var anchorAt = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId
+                && (e.Type == AgentTaskEventType.Dispatched || e.Type == AgentTaskEventType.Retried))
             .OrderByDescending(e => e.At)
             .ThenByDescending(e => e.Id)
             .Select(e => (DateTime?)e.At)
@@ -8263,7 +8265,7 @@ public sealed partial class AgentTaskDispatcher
             e.AgentTaskId == taskId
             && e.Type == AgentTaskEventType.Warning
             && e.Detail == NonPostgresCommitFaultMarker
-            && (lastDispatchAt == null || e.At > lastDispatchAt), ct);
+            && (anchorAt == null || e.At > anchorAt), ct);
     }
 
     private async Task RecordNonPostgresCommitFaultAsync(AgentTask claimed, CancellationToken ct)

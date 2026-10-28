@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1593 S1. Consume belongs to the committed launch. A rolled-back claim keeps the
 /// grant; a committed non-launch releases it; a consume fault follows the four-class contract.
-/// A second consecutive non-Postgres commit fault fails the task and releases the grant.
+/// A second non-Postgres commit fault since the last dispatch or retry fails the task and releases the grant.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("card-1593-capacity")]
