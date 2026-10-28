@@ -20,10 +20,15 @@ public sealed class AgentReportStore(
     internal Func<CancellationToken, Task>? BeforePublishAsync { get; set; }
     internal Func<string, CancellationToken, Task>? BeforeIoAsync { get; set; }
 
+    // Hung-IO refusal for the whole store, including git custody and the write-through.
+    // Tests assign a longer value; production keeps this default.
+    internal static readonly TimeSpan DefaultIoBudget = TimeSpan.FromSeconds(2);
+    internal TimeSpan IoBudget { get; set; } = DefaultIoBudget;
+
     public async Task<AgentReportStorageResult> StoreAsync(AgentTask task, CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(TimeSpan.FromSeconds(2));
+        budget.CancelAfter(IoBudget);
         var token = budget.Token;
         var watch = Stopwatch.StartNew();
         var phase = "root";

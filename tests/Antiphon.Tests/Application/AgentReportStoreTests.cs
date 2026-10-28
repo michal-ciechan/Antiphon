@@ -1,6 +1,7 @@
 using System.Text;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -182,6 +183,11 @@ public class AgentReportStoreTests
     {
         await using var w = new ReportWorkspace(); await w.InitializeAsync();
         var task = w.Task("report"); var store = w.Store();
+        if (scenario == "budget")
+        {
+            AgentReportStore.DefaultIoBudget.ShouldBe(TimeSpan.FromSeconds(2));
+            store.IoBudget = TimeSpan.Zero;
+        }
         using var host = new CancellationTokenSource();
         store.BeforeIoAsync = async (phase, ct) =>
         {
@@ -194,7 +200,12 @@ public class AgentReportStoreTests
         };
         if (scenario == "host-cancel")
             await Should.ThrowAsync<OperationCanceledException>(() => store.StoreAsync(task, host.Token));
-        else (await store.StoreAsync(task, host.Token)).Succeeded.ShouldBeFalse();
+        else
+        {
+            var stored = await store.StoreAsync(task, host.Token);
+            stored.Succeeded.ShouldBeFalse();
+            if (scenario == "budget") stored.Reason.ShouldBe("io-budget-expired");
+        }
         if (scenario != "readback") File.Exists(w.Expected(task)).ShouldBeFalse();
         Directory.EnumerateFiles(w.Main, "*.tmp", SearchOption.AllDirectories).ShouldBeEmpty();
     }
