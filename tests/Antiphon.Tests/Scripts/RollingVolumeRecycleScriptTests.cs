@@ -1223,6 +1223,37 @@ public sealed class RollingVolumeRecycleScriptTests
         fixture.Removed.ShouldBeEmpty();
     }
 
+    // CARD-1594. antiphon-evidence/ under the common git directory is agent output.
+    // Logs, TRX, HTML and jsonl pass. A symlink, nested .git, refs or objects, a
+    // file named HEAD or packed-refs, an unreadable file, a fifo, an outside hard
+    // link, a dot-name, or the same name in a linked admin refuses gitdir-entry.
+    // review-evidence/ and antiphon/ are not walked, so an interior symlink still passes.
+    [Test]
+    [Arguments("antiphon-evidence")]
+    [Arguments("antiphon-evidence-symlink")]
+    [Arguments("antiphon-evidence-symlink-root")]
+    [Arguments("antiphon-evidence-git")]
+    [Arguments("antiphon-evidence-refs")]
+    [Arguments("antiphon-evidence-objects")]
+    [Arguments("antiphon-evidence-head")]
+    [Arguments("antiphon-evidence-packed-refs")]
+    [Arguments("antiphon-evidence-odd")]
+    [Arguments("antiphon-evidence-unreadable")]
+    [Arguments("antiphon-evidence-hardlink")]
+    [Arguments("antiphon-evidence-dot")]
+    [Arguments("antiphon-evidence-linked")]
+    [Arguments("review-evidence-symlink")]
+    [Arguments("antiphon-symlink")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1594_Antiphon_evidence_gitdir(string variant)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var output = RemoteScriptContractTests.LinuxShell(
+            "node \"$repo/scripts/fixtures/c1105-git-audit.cjs\" " + variant
+            + " \"$repo/scripts/c590-remote.sh\"\n", "repo");
+        output.ShouldContain("PASS " + variant);
+    }
+
     private const string CrossSourceSha = "f84228f2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string CrossShaImage = "sha256:4ae919704ae919704ae919704ae919704ae919704ae919704ae919704ae91970";
     private const string CrossShaOperation = "c99400000000000000000000000000000011";
