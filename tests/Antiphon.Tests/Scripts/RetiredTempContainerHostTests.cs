@@ -382,7 +382,7 @@ public sealed class RetiredTempContainerHostTests
                     esac
                     code=0;c994_lookup_image "$op" || code=$?
                     case "$variant" in
-                      matching|retained|unrelated-newest)
+                      matching|retained|unrelated-newest|foreign-source)
                         [ "$code" = 0 ] && [ "$C994_IMAGE" = sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] && [ "$C994_ORIGINAL" = c99400000000000000000000000000000001 ] || exit 3 ;;
                       fallback) [ "$code" = 0 ] && [ -z "$C994_IMAGE" ] || exit 3 ;;
                       *) [ "$code" = 2 ] || exit 3 ;;
@@ -395,7 +395,11 @@ public sealed class RetiredTempContainerHostTests
         lookup.Exit.ShouldBe(0,"c994-image-binding c994-image-retention: "+lookup.Output);
         lookup.Output.Split('\n').Where(x=>x.StartsWith("LOOKUP_CASE ")).Select(x=>x[12..]).ShouldBe(new[]{"matching","retained","fallback","corrupt","symlink","traversal","foreign-operation","foreign-source","foreign-project","foreign-projectid","foreign-stamp","conflicting","unrelated-newest"},"c994-image-binding: exact receipt roster");
         f.ReloadDocker();var file=f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json";var record=JsonNode.Parse(File.ReadAllText(file))!;record["sourceSha"]=new string('b',40);File.WriteAllText(file,record.ToJsonString());
-        var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");foreign.Exit.ShouldBe(2,"c994-image-binding: foreign source");f.Removed.ShouldBeEmpty();
+        var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
+        foreign.Exit.ShouldBe(0,"c994-image-binding: a completed receipt from another SHA still audits; "+foreign.Output);
+        foreign.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        f.Removed.ShouldBe(new[]{"antiphon-runner-temp_work","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state"});
+        f.Trace.Where(a=>a.Length>0&&a[0]=="create").Any(a=>a.Contains("sha256:"+new string('a',64))).ShouldBeTrue("c994-image-binding: apply uses the retired image");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Audit_image_is_pinned_and_required() {

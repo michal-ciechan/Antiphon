@@ -992,10 +992,14 @@ public sealed class RollingVolumeRecycleScriptTests
             ResetPreviewTrace(clean);
             var applied = await clean.Run("retire-temp-runner", boundEmpty);
             applied.Exit.ShouldBe(0, "c1594-cross-sha: apply audits with the retired image; " + applied.Output);
-            var created = AppliedCreate(clean);
-            created.ShouldContain(CrossShaImage);
-            created.ShouldContain("--user");
-            created.ShouldContain("1654:1654");
+            var created = clean.Trace.Where(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint")).ToArray();
+            created.Length.ShouldBe(2, "c1594-cross-sha: apply audits before and after removal");
+            foreach (var args in created)
+            {
+                args.ShouldContain(CrossShaImage);
+                args.ShouldContain("--user");
+                args.ShouldContain("1654:1654");
+            }
         }
 
         using (var dirty = new C1008HostFixture(main: false))
@@ -1076,8 +1080,8 @@ public sealed class RollingVolumeRecycleScriptTests
             var seed = await CaptureCleanupSeed(missing);
             ReplaceReceipts(missing, CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha,
                 image: "sha256:" + new string('b', 64)));
-            missing.Docker["fault"] = "original-image-missing";
             ResetPreviewTrace(missing);
+            missing.Docker["fault"] = "original-image-missing";
             var run = await missing.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
             run.Exit.ShouldBe(2, "c1594-cross-sha: a missing pinned image refuses; " + run.Output);
             run.Output.ShouldContain("RecycleGitAuditUnknown");
@@ -1089,15 +1093,14 @@ public sealed class RollingVolumeRecycleScriptTests
 
         using (var unpinned = new C1008HostFixture(main: false))
         {
-            ResetPreviewTrace(unpinned);
             var preview = await unpinned.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
             preview.Exit.ShouldBe(0, "c1594-cross-sha: no record stays an unpinned preview; " + preview.Output);
             preview.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             preview.Output.ShouldContain("auditPending=true");
             preview.Output.ShouldNotContain("auditPending=false");
             AssertReadonlyPreview(unpinned, CrossShaImage, audited: false);
-            unpinned.Docker["fault"] = "image-inspect-error";
             ResetPreviewTrace(unpinned);
+            unpinned.Docker["fault"] = "image-inspect-error";
             var apply = await unpinned.Run("retire-temp-runner");
             apply.Exit.ShouldBe(2, "c1594-cross-sha: unpinned apply refuses when the current image is absent; " + apply.Output);
             apply.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
@@ -1167,9 +1170,6 @@ public sealed class RollingVolumeRecycleScriptTests
             Path.Combine(fixture.Root, "server", "temp-container-retirement", operation + ".json"),
             DateTime.UtcNow.AddMinutes(5));
     }
-
-    private static string[] AppliedCreate(C1008HostFixture fixture) =>
-        fixture.Trace.Single(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint"));
 
     private const string AppliedCleanupOperation = "c99400000000000000000000000000000001";
     private const string PreviewCleanupOperation = "c99400000000000000000000000000000002";
