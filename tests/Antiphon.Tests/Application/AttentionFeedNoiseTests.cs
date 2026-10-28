@@ -248,6 +248,29 @@ public sealed class AttentionFeedNoiseTests
     }
 
     [Test]
+    public async Task C1085_Historical_land_event_whose_task_row_is_gone_is_omitted()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var goneReceipt = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        var goneRefusal = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        var kept = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        await scenario.AddLegacyLandEventAsync(goneReceipt, DateTime.UtcNow.AddHours(-1), detail: "orphan-receipt");
+        await scenario.AddLegacyLandEventAsync(
+            goneRefusal, DateTime.UtcNow.AddHours(-1), AgentTaskEventType.LandRefused, detail: "orphan-refusal");
+        var keptRefusal = await scenario.AddLegacyLandEventAsync(
+            kept, DateTime.UtcNow.AddHours(-1), AgentTaskEventType.LandRefused, detail: "kept-refusal");
+        await scenario.DeleteTaskRowLeavingEventsAsync(goneReceipt);
+        await scenario.DeleteTaskRowLeavingEventsAsync(goneRefusal);
+
+        var items = await ReadOwnedAsync(scenario);
+
+        items.ShouldNotContain(i => i.TaskId == goneReceipt || i.TaskId == goneRefusal);
+        var row = LegacyRows(items, kept).ShouldHaveSingleItem();
+        row.ConditionKey.ShouldBe($"legacy-land:{keptRefusal:N}");
+    }
+
+    [Test]
     public async Task C1085_Two_tasks_with_mixed_histories_emit_two_legacy_rows()
     {
         await using var scenario = new AttentionServiceTests.Scenario();
