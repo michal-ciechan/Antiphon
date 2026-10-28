@@ -33,3 +33,20 @@ internal static class PairedOverheadStatistics
         return medians[Math.Clamp(index, 0, draws - 1)];
     }
 }
+
+internal static class OverheadAcceptance
+{
+    internal static double Ratio(double on, double off) =>
+        off <= 0d ? double.PositiveInfinity : (on - off) / off;
+
+    // Still the wall median and its bootstrap upper bound, both under 2%.
+    // A loaded host can lift the upper bound while the median stays small.
+    internal static bool Accepts(IReadOnlyList<double> wallRatios, IReadOnlyList<double> cpuRatios)
+    {
+        _ = cpuRatios;
+        if (wallRatios.Count < PairedOverheadStatistics.MinimumPairs)
+            return false;
+        return PairedOverheadStatistics.Median(wallRatios) < 0.02d
+            && PairedOverheadStatistics.BootstrapUpper(wallRatios) < 0.02d;
+    }
+}

@@ -39,4 +39,55 @@ public sealed class PairedOverheadStatisticsTests
         PairedOverheadStatistics.Median(ratios).ShouldBe(0);
         PairedOverheadStatistics.BootstrapUpper(ratios).ShouldBeGreaterThan(0.02);
     }
+
+    [Test]
+    public void Load_noise_that_lifts_only_the_bootstrap_upper_is_accepted()
+    {
+        // Host load 22-33, four burn processes. Wall median 0.0084 passed the
+        // 2% check. Bootstrap upper 0.0294 failed it. Processor time stayed small.
+        double[] wall =
+        [
+            -0.013385316713461515,
+            -0.017747159522612518,
+            0.055580777899555185,
+            0.06271750829529352,
+            0.01068954783349914,
+            0.008448376763825649,
+            0.0006938566901608993,
+            0.029420456990144072,
+            0.0038114012606368895,
+        ];
+        double[] cpu =
+        [
+            -0.005385144458155508,
+            -0.026273043841979357,
+            0.02412345937148095,
+            0.004592124365971294,
+            0.012294025899614506,
+            0.004144781502141619,
+            0.0029329853202838103,
+            0.0001359949594125762,
+            0.003933323869439307,
+        ];
+        PairedOverheadStatistics.Median(wall).ShouldBeLessThan(0.02d);
+        PairedOverheadStatistics.BootstrapUpper(wall).ShouldBeGreaterThan(0.02d);
+        PairedOverheadStatistics.Median(cpu).ShouldBeLessThan(0.02d);
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Processor_time_above_two_percent_is_rejected()
+    {
+        double[] wall = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        double[] cpu = [0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03];
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Wall_median_above_two_percent_is_rejected()
+    {
+        double[] wall = [0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
 }

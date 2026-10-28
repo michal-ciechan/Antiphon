@@ -84,6 +84,8 @@ public static class TestTiming
         var session = Resolve();
         if (session is null || !session.Enabled)
             return Noop.Instance;
+        if (session.EventDelayMilliseconds > 0)
+            global::System.Threading.Thread.Sleep(session.EventDelayMilliseconds);
         return session.BeginPhase(phase, operation);
     }
 
@@ -229,6 +231,11 @@ public sealed class TestTimingSession : IDisposable
     }
 
     public bool Enabled => _enabled;
+
+    // Test seam. TestTiming.BeginPhase sleeps this long, in milliseconds, when this
+    // session is the installed recorder. Zero does not sleep.
+    public int EventDelayMilliseconds { get; set; }
+
     public string? FailureCode { get; private set; }
     public string? ShardPath { get; }
     public long FrequencyHz => _clock.Frequency;

@@ -204,6 +204,88 @@ public sealed class TestTimingChokePointTests
         }
     }
 
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1514T_SlowRecorderExceedsOverhead(CancellationToken cancellationToken)
+    {
+        var wall = new List<double>();
+        var cpu = new List<double>();
+        for (var pair = 0; pair < PairedOverheadStatistics.MinimumPairs; pair++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var sample = MeasureDelayedPair(pair % 2 == 0);
+            wall.Add(OverheadAcceptance.Ratio(sample.OnWallMs, sample.OffWallMs));
+            cpu.Add(OverheadAcceptance.Ratio(sample.OnCpuMs, sample.OffCpuMs));
+        }
+
+        // Eight phases per repetition, 50 ms each, against a few hundred
+        // milliseconds of work. The wall median has to clear 10% or the
+        // injection did not land on the ON arm.
+        PairedOverheadStatistics.Median(wall).ShouldBeGreaterThanOrEqualTo(0.10d);
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
+
+    private readonly record struct DelayedPair(double OffWallMs, double OnWallMs, double OffCpuMs, double OnCpuMs);
+
+    private static DelayedPair MeasureDelayedPair(bool offFirst)
+    {
+        var root = C1514Support.FreshRoot();
+        var session = OpenReal(Path.Combine(root, "timing"), "slow");
+        session.EventDelayMilliseconds = 50;
+        using var process = Process.GetCurrentProcess();
+        double offWall = 0;
+        double onWall = 0;
+        double offCpu = 0;
+        double onCpu = 0;
+        void Measure(bool enabled)
+        {
+            var cpuStart = process.TotalProcessorTime;
+            var watch = Stopwatch.StartNew();
+            if (enabled)
+            {
+                using (TestTiming.Install(session))
+                    InProcessRep();
+            }
+            else
+            {
+                InProcessRep();
+            }
+
+            watch.Stop();
+            var elapsedCpu = (process.TotalProcessorTime - cpuStart).TotalMilliseconds;
+            if (enabled)
+            {
+                onWall += watch.Elapsed.TotalMilliseconds;
+                onCpu += elapsedCpu;
+            }
+            else
+            {
+                offWall += watch.Elapsed.TotalMilliseconds;
+                offCpu += elapsedCpu;
+            }
+        }
+
+        try
+        {
+            if (offFirst)
+            {
+                Measure(false);
+                Measure(true);
+            }
+            else
+            {
+                Measure(true);
+                Measure(false);
+            }
+        }
+        finally
+        {
+            session.Dispose();
+        }
+
+        return new DelayedPair(offWall, onWall, offCpu, onCpu);
+    }
+
     // The host's background probes move pair walls by about a second. Record one
     // start and request here, then keep that process out of the paired interval.
     private static async Task RecordHostStartupAsync(CancellationToken cancellationToken)
