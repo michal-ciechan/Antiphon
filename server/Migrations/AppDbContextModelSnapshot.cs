@@ -657,6 +657,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("CardId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("CodexTokenCountAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("Cols")
                         .HasColumnType("integer");
 

@@ -35,6 +35,22 @@ public class RunnerContractMapperTranscriptEventTests
         new(Sid, BoundPath, "discovery");
 
     [Test]
+    public void Codex_token_count_maps_without_becoming_a_transcript_entry()
+    {
+        var at = DateTimeOffset.Parse("2026-10-28T16:03:58.832Z");
+        var mapped = new RunnerContractMapper().MapTranscript(
+            new RunnerTranscriptDto(Sid, [], 0, CodexTokenCountAt: at));
+        mapped.Entries.ShouldBeEmpty();
+        mapped.CodexTokenCountAt.ShouldBe(SessionGeneration.Normalize(at.UtcDateTime));
+
+        var legacy = JsonSerializer.Deserialize<RunnerTranscriptDto>(
+            "{\"sessionId\":\"11111111-2222-4333-8444-555555551219\",\"entries\":[],\"lastSequence\":0}",
+            RunnerContractMapper.Json)!;
+        new RunnerContractMapper().MapTranscript(legacy).CodexTokenCountAt.ShouldBeNull(
+            "a runner that predates the field reports no heartbeat, which is not a cleared one");
+    }
+
+    [Test]
     public void Fault_frame_round_trips_every_field()
     {
         var record = new RunnerTranscriptFaultEvent(

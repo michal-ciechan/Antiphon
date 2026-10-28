@@ -634,6 +634,43 @@ public class CodexTranscriptTailerTests
     /// worse, somebody else's rollouts).
     /// </summary>
     [Test]
+    public async Task a_token_count_heartbeat_is_on_the_snapshot_and_not_a_transcript_entry()
+    {
+        using var tree = new CodexTree();
+        var dir = Path.Combine(tree.SessionsRoot, "2026", "10", "28");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, $"rollout-2026-10-28T15-37-26-{Guid.NewGuid():D}.jsonl");
+        await File.WriteAllTextAsync(path, """
+            {"timestamp":"2026-10-28T15:37:26.000Z","type":"session_meta","payload":{"id":"hb","cwd":"/tmp/hb"}}
+            {"timestamp":"2026-10-28T15:45:43.145Z","type":"event_msg","payload":{"type":"user_message","message":"hold the clock"}}
+            {"timestamp":"2026-10-28T16:03:58.832Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1},"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}
+            """);
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, inputLog: null, knownTranscriptPath: path,
+            childStartUtc: DateTime.Parse("2026-10-28T15:37:20Z").ToUniversalTime());
+        tailer.Start();
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var snapshot = tailer.Snapshot();
+            while (DateTime.UtcNow < deadline && snapshot.CodexTokenCountAt is null)
+            {
+                await Task.Delay(50);
+                snapshot = tailer.Snapshot();
+            }
+
+            snapshot.CodexTokenCountAt.ShouldBe(DateTimeOffset.Parse("2026-10-28T16:03:58.832Z"));
+            snapshot.Entries.Select(e => e.Kind).ShouldBe([TranscriptKinds.UserPrompt]);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task ResolveSessionsRoot_prefers_the_launch_environment_then_falls_back()
     {
         var fromLaunch = CodexTranscriptTailer.ResolveSessionsRoot(

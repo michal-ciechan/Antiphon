@@ -105,7 +105,9 @@ public sealed record SessionRunnerTranscriptDto(
     long LastSequence,
     bool TerminalComplete = false,
     DateTime? AcceptedStartedAt = null,
-    SessionRunnerTranscriptReadiness? Readiness = null);
+    SessionRunnerTranscriptReadiness? Readiness = null,
+    // Codex token_count time, UTC. Null when the runner did not report one. Not a transcript entry.
+    DateTime? CodexTokenCountAt = null);
 
 /// <summary>A restarted runner re-attached to a surviving pty-host; the session never stopped.</summary>
 public sealed record SessionRunnerAdoptedEvent(

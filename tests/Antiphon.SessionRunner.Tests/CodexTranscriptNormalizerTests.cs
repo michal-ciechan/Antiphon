@@ -195,6 +195,34 @@ public class CodexTranscriptNormalizerTests
     }
 
     [Test]
+    public void token_count_keeps_its_timestamp_and_emits_no_transcript_part()
+    {
+        var normalizer = new CodexTranscriptNormalizer();
+        const string firstAt = "2026-10-28T16:03:58.832Z";
+        const string olderAt = "2026-10-28T15:45:44.870Z";
+        const string newerAt = "2026-10-28T16:09:01.372Z";
+
+        var first = normalizer.Normalize(TokenCountLine(firstAt, 10, 2));
+        first.ShouldBeEmpty("token_count is usage state, not a transcript row");
+        normalizer.LastTokenCountAt.ShouldBe(DateTimeOffset.Parse(firstAt));
+
+        var older = normalizer.Normalize(TokenCountLine(olderAt, 11, 3));
+        older.ShouldBeEmpty();
+        normalizer.LastTokenCountAt.ShouldBe(DateTimeOffset.Parse(firstAt),
+            "an older row must not walk the heartbeat backwards");
+
+        var newer = normalizer.Normalize(TokenCountLine(newerAt, 12, 4));
+        newer.ShouldBeEmpty();
+        normalizer.LastTokenCountAt.ShouldBe(DateTimeOffset.Parse(newerAt));
+    }
+
+    private static string TokenCountLine(string timestamp, int input, int output) =>
+        "{\"timestamp\":\"" + timestamp
+        + "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":"
+        + input + ",\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":" + output
+        + "},\"last_token_usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":1}}}}";
+
+    [Test]
     public void C1322_Abort_consumes_usage_once()
     {
         // Synthetic cumulative snapshots qualify boundary accounting, not native replacement

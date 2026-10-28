@@ -880,6 +880,87 @@ public class AgentTaskOverdueDeadlineTests
             "a queued-only prompt is no boot episode, so there is nothing to detect");
     }
 
+    // ---- Codex token_count heartbeat -------------------------------------------------------------
+
+    [Test]
+    public async Task a_recent_codex_token_count_keeps_a_dispatched_task_and_does_not_kill_the_session()
+    {
+        // Hermetic model wait is 50_000 minutes. 12_500 is the same 5-inside-20 ratio as a
+        // token_count five minutes old against the production 20-minute deadline. The assistant
+        // row at 51_000 is the production 21-minute silence, scaled the same way.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 70_000, status: AgentTaskStatus.Dispatched);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 52_000),
+            (TranscriptKinds.AssistantText, "still reasoning", 51_000));
+        await scenario.SetCodexTokenCountAsync(12_500);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var open = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        open.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        open.FailureReason.ShouldBeNull();
+        stopper.Killed.ShouldBeEmpty();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == scenario.SessionId)).ShouldBe(2);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Failed)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task neither_signal_for_the_scaled_model_wait_fails_without_killing_the_session()
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 70_000, status: AgentTaskStatus.Dispatched);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 52_000),
+            (TranscriptKinds.AssistantText, "silent", 51_000));
+        await scenario.SetCodexTokenCountAsync(null);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("waiting on the model");
+        failed.FailureReason.ShouldContain("NOT killed");
+        stopper.Killed.ShouldBeEmpty();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    [Arguments(AgentKind.ClaudeCode)]
+    [Arguments(AgentKind.Grok)]
+    public async Task a_non_codex_task_with_no_token_count_still_fails_the_model_wait(AgentKind kind)
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 70_000, status: AgentTaskStatus.Dispatched);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 52_000),
+            (TranscriptKinds.AssistantText, "silent", 51_000));
+        await scenario.SetCodexTokenCountAsync(null, kind);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("waiting on the model");
+        failed.FailureReason.ShouldContain($"{ModelWait}-minute deadline");
+        stopper.Killed.ShouldBeEmpty();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
@@ -1073,6 +1154,15 @@ public class AgentTaskOverdueDeadlineTests
             });
             await db.SaveChangesAsync();
             return (id, digest);
+        }
+
+        public async Task SetCodexTokenCountAsync(int? minutesAgo, AgentKind kind = AgentKind.Codex)
+        {
+            await using var db = CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == _sessionId);
+            session.AgentKind = kind;
+            session.CodexTokenCountAt = minutesAgo is int ago ? DateTime.UtcNow.AddMinutes(-ago) : null;
+            await db.SaveChangesAsync();
         }
 
         public async Task SeedPendingBriefAsync(Guid taskId)

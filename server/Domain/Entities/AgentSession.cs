@@ -51,6 +51,16 @@ public class AgentSession
     public DateTime CreatedAt { get; set; }
     public DateTime StartedAt { get; set; }
     public DateTime LastSeenAt { get; set; }
+
+    /// <summary>
+    /// Latest Codex rollout <c>token_count</c> timestamp, UTC, at PostgreSQL microsecond
+    /// precision. It is not a transcript row and not delivery evidence: transcript-confirmed
+    /// <c>UserPrompt</c> stays the only delivery verdict. The model-wait clock ages from the
+    /// later of this and the last transcript entry. Null on Claude, Grok, and any session
+    /// that has not reported a <c>token_count</c>. A missed pull leaves the previous value.
+    /// </summary>
+    public DateTime? CodexTokenCountAt { get; set; }
+
     public DateTime? EndedAt { get; set; }
     public int? ExitCode { get; set; }
     public string? FailureReason { get; set; }
