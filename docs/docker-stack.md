@@ -398,14 +398,19 @@ The receipt records `repositories` and `partial` on success. On refusal `auditFa
 
 Preview each destructive phase with `-DryRun`; `all` is not a preview phase. A
 retire-temp preview bound to a cleanup receipt runs the same publication audit as
-apply, without a helper container. The work volume is mounted read-only at `/work`,
-and `runner-tmp` when it exists is mounted read-only at the path the audit reads as
-`C1008_TMP_MOUNT`, inside a private mount namespace. Every mount alias of that
-storage (the same device and filesystem root, including the original mount path) is
-read-only. The audit refuses `RecycleGitAuditUnknown` if those volume bytes change.
-That preview prints `auditPending=false`. A preview without a pinned image prints
-`auditPending=true` and does not audit. A preview grants no apply authority. Apply
-obtains fresh proofs, stops/removes only inspected owned container IDs, and never prunes.
+apply, inside the same pinned image, so it uses that image's Git and the production
+`/work` path. Docker mounts the work volume and, when present, `runner-tmp`
+read-only (`--mount type=volume,source=<volume>,target=/work,readonly` and the
+same for `runner-tmp`). The container is `--network none`, `--cap-drop ALL`,
+`--user 1654:1654`, and `--rm`, and `timeout` kills it at the audit budget. It
+cannot remount or write either volume. That is the only container a preview may
+create: a read-only, no-network, capability-less helper that Docker removes when
+it exits. A container that can write a volume, a rollout stop or rm, a volume
+rm, and a recycle journal are not part of a preview. The preview prints
+`auditPending=false` and grants no apply authority. A preview without a pinned
+image prints `auditPending=true`, does not audit, and starts no container. Apply
+keeps its own helper, obtains fresh proofs, stops and removes only inspected
+owned container IDs, and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under

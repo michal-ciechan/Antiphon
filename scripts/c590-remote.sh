@@ -7609,69 +7609,23 @@ c1008_audit() {
     printf '%s' "$output" | sort
 }
 
-# Preview runs the apply program with no helper. /work is the production path
-# linked worktrees record, so the work volume is bound read-only there. Every
-# mount of that same device and filesystem root is remounted read-only, including
-# the original mount path a hook may still name. runner-tmp, when present, is
-# bound read-only at a private directory and named by C1008_TMP_MOUNT: the helper
-# image uses /runner-tmp, which is not a path on the host. A before/after content
-# digest refuses when any audited byte changes. Directory size is not part of the
-# digest: creating and removing a lock grows a directory and does not shrink it.
-c1008_tree_digest() {
-    local root="$1" work rel type path sum target row
-    [ -d "$root" ] && [ "$root" != / ] || return 1
-    work="$(mktemp -d /dev/shm/c1008-digest-XXXXXXXX)" || return 1
-    if ! sudo -n find "$root" -xdev -printf '%P\t%y\0' > "$work/list"; then rm -rf -- "$work"; return 1; fi
-    if ! LC_ALL=C sort -z -o "$work/sorted" "$work/list"; then rm -rf -- "$work"; return 1; fi
-    : > "$work/body" || { rm -rf -- "$work"; return 1; }
-    while IFS= read -r -d '' row || [ -n "$row" ]; do
-        [ -n "$row" ] || continue
-        rel="${row%%$'\t'*}"
-        type="${row#*$'\t'}"
-        if [ -n "$rel" ]; then path="$root/$rel"; else path="$root"; fi
-        case "$type" in
-            f)
-                sum="$(sudo -n sha256sum -- "$path")" || { rm -rf -- "$work"; return 1; }
-                printf 'f\t%s\t%s\n' "$rel" "${sum%% *}" >> "$work/body" || { rm -rf -- "$work"; return 1; }
-                ;;
-            l)
-                target="$(sudo -n readlink -- "$path")" || { rm -rf -- "$work"; return 1; }
-                printf 'l\t%s\t%s\n' "$rel" "$target" >> "$work/body" || { rm -rf -- "$work"; return 1; }
-                ;;
-            *)
-                printf '%s\t%s\n' "$type" "$rel" >> "$work/body" || { rm -rf -- "$work"; return 1; }
-                ;;
-        esac
-    done < "$work/sorted"
-    sum="$(sha256sum -- "$work/body")" || { rm -rf -- "$work"; return 1; }
-    rm -rf -- "$work" || return 1
-    printf '%s\n' "${sum%% *}"
-}
-
+# A bound retire-temp preview runs the same program as apply inside the pinned
+# image. Docker mounts both volumes read-only, drops every capability and attaches
+# no network, so a hook cannot remount or write. --rm removes the container. The
+# host does not invoke Git. A container that can write a volume is not a preview.
 c1008_audit_readonly() {
-    local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts raw canon tmp_facts image cap resolve_status=0
+    local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image cap resolve_status=0
+    local name program output code=0
+    local -a mounts=()
     facts="$(c1008_volume "$work")" || return 2
     if [ "$facts" = null ]; then
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
         return 2
     fi
-    raw="$(printf '%s' "$facts" | jq -r .Mountpoint)"
-    canon="$(sudo -n readlink -e -- "$raw" 2>/dev/null)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    [ "$canon" = "$raw" ] && [ -n "$canon" ] && [ "$canon" != / ] && [ -d "$canon" ] || {
-        printf 'audit check=readonly-private status=2 repo=.\n'
-        return 2
-    }
+    mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
     tmp_facts="$(c1008_volume "$tmp")" || return 2
-    raw=''
     if [ "$tmp_facts" != null ]; then
-        raw="$(printf '%s' "$tmp_facts" | jq -r .Mountpoint)"
-        local tmp_canon
-        tmp_canon="$(sudo -n readlink -e -- "$raw" 2>/dev/null)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-        [ "$tmp_canon" = "$raw" ] && [ -n "$tmp_canon" ] && [ "$tmp_canon" != / ] && [ "$tmp_canon" != "$canon" ] && [ -d "$tmp_canon" ] || {
-            printf 'audit check=readonly-private status=2 repo=.\n'
-            return 2
-        }
-        raw="$tmp_canon"
+        mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
     fi
     image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
     [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
@@ -7681,97 +7635,20 @@ c1008_audit_readonly() {
         printf '%s\n' "$cap"
         return 2
     fi
-    c1008_audit_readonly_execute "$canon" "$raw" "$cap"
-}
-
-c1008_audit_readonly_execute() {
-    local work_mount="$1" tmp_mount="$2" cap="$3"
-    local dir program ns tmp_target='' before tmp_before='' now output code=0 bytes=0
-    if [ ! -d /dev/shm ] || [ ! -w /dev/shm ]; then
-        printf 'audit check=readonly-private status=2 repo=.\n'
-        return 2
+    mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
+        mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
-    dir="$(mktemp -d /dev/shm/c1008-audit-ro-XXXXXXXX)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    # RETURN runs after this function's locals are destroyed when the dry-run
-    # caller captures the audit in a command substitution. The paths have to be
-    # globals, or set -u refuses the cleanup and the preview looks unaudited.
-    C1008_AUDIT_RO_DIR="$dir"
-    C1008_AUDIT_RO_TMP=''
-    trap 'trap - RETURN; rm -rf -- "${C1008_AUDIT_RO_DIR:-}" || true; [ -z "${C1008_AUDIT_RO_TMP:-}" ] || rm -rf -- "${C1008_AUDIT_RO_TMP:-}" || true; unset C1008_AUDIT_RO_DIR C1008_AUDIT_RO_TMP' RETURN
-    chmod 0755 -- "$dir" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    program="$dir/program.sh"
-    ns="$dir/ns.sh"
-    c1008_git_program > "$program" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    cat > "$ns" <<'C1008_NS_END'
-set -euo pipefail
-mount --make-rprivate /
-c1008_protect() {
-    local target="$1" spec id line n=0
-    mount --bind -- "$target" "$target"
-    spec="$(findmnt -J -l -o MAJ:MIN,FSROOT,TARGET)"
-    id="$(printf '%s' "$spec" | jq -r --arg t "$target" '[.filesystems[] | select(.target==$t) | (.["maj:min"] + "\t" + .fsroot)] | unique | if length==1 then .[0] else empty end')"
-    [ -n "$id" ]
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        mount -o remount,bind,ro -- "$line" || mount -o remount,ro -- "$line"
-        n=$((n + 1))
-    done < <(printf '%s' "$spec" | jq -r --arg id "$id" '.filesystems[] | select((.["maj:min"] + "\t" + .fsroot)==$id) | .target')
-    [ "$n" -ge 1 ]
-}
-c1008_protect "$C1008_AUDIT_WORK"
-mkdir -p /work
-mount --bind -- "$C1008_AUDIT_WORK" /work
-mount -o remount,bind,ro /work
-if [ -n "${C1008_AUDIT_TMP:-}" ]; then
-    c1008_protect "$C1008_AUDIT_TMP"
-    mkdir -p -- "$C1008_AUDIT_TMP_TARGET"
-    mount --bind -- "$C1008_AUDIT_TMP" "$C1008_AUDIT_TMP_TARGET"
-    mount -o remount,bind,ro -- "$C1008_AUDIT_TMP_TARGET"
-    export C1008_TMP_MOUNT="$C1008_AUDIT_TMP_TARGET"
-fi
-mount -t tmpfs -o mode=1777,size=2147483648 none /tmp
-if [ "${C1008_AUDIT_DROP:-}" = 1 ]; then
-    exec setpriv --reuid=1654 --regid=1654 --clear-groups -- bash "$C1008_AUDIT_PROGRAM"
-fi
-exec bash "$C1008_AUDIT_PROGRAM"
-C1008_NS_END
-    chmod 0755 -- "$program" "$ns" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    if [ -n "$tmp_mount" ]; then
-        tmp_target="$(mktemp -d /var/tmp/c1008-runner-tmp-XXXXXXXX)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-        C1008_AUDIT_RO_TMP="$tmp_target"
-        chmod 0755 -- "$tmp_target" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
-    fi
-    before="$(c1008_tree_digest "$work_mount")" || { printf 'audit check=readonly-bytes status=2 repo=.\n'; return 2; }
-    if [ -n "$tmp_mount" ]; then
-        tmp_before="$(c1008_tree_digest "$tmp_mount")" || { printf 'audit check=readonly-bytes status=2 repo=.\n'; return 2; }
-    fi
-    export C1008_AUDIT_WORK="$work_mount" C1008_AUDIT_PROGRAM="$program" C1008_AUDIT_TIMEOUT_SECONDS="$cap"
-    if [ -n "$tmp_mount" ]; then
-        export C1008_AUDIT_TMP="$tmp_mount" C1008_AUDIT_TMP_TARGET="$tmp_target"
-    else
-        unset C1008_AUDIT_TMP C1008_AUDIT_TMP_TARGET
-    fi
-    if [ "$(id -u)" = 1654 ]; then
-        unset C1008_AUDIT_DROP
-        output="$(unshare --user --map-root-user --mount bash "$ns")" || code=$?
-    elif [ "$(id -u)" = 0 ]; then
-        export C1008_AUDIT_DROP=1
-        output="$(unshare --mount bash "$ns")" || code=$?
-    else
-        local -a envp=("C1008_AUDIT_DROP=1" "C1008_AUDIT_WORK=$work_mount" "C1008_AUDIT_PROGRAM=$program" "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
-        if [ -n "$tmp_mount" ]; then envp+=("C1008_AUDIT_TMP=$tmp_mount" "C1008_AUDIT_TMP_TARGET=$tmp_target"); fi
-        if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then envp+=("C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES"); fi
-        output="$(sudo -n env "${envp[@]}" unshare --mount bash "$ns")" || code=$?
-    fi
-    now="$(c1008_tree_digest "$work_mount")" || bytes=1
-    [ "$bytes" = 0 ] && [ "$now" = "$before" ] || bytes=1
-    if [ -n "$tmp_mount" ]; then
-        now="$(c1008_tree_digest "$tmp_mount")" || bytes=1
-        [ "$bytes" = 0 ] && [ "$now" = "$tmp_before" ] || bytes=1
-    fi
-    if [ "$bytes" != 0 ]; then
-        printf 'audit check=readonly-bytes status=2 repo=.\n'
-        return 2
+    name="c1008-preview-audit-$$"
+    program="$(c1008_git_program)"
+    output="$(timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --network none --cap-drop ALL \
+        --user 1654:1654 --entrypoint /bin/bash \
+        "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" || code=$?
+    # --rm removes the helper. A name that is still inspectable after that lost
+    # the race with removal; one more rm, then a remaining container is a failure.
+    if docker inspect "$name" >/dev/null 2>&1; then
+        docker rm -- "$name" >/dev/null 2>&1 || true
+        docker inspect "$name" >/dev/null 2>&1 && return 2
     fi
     if [ "$code" != 0 ]; then
         printf '%s\n' "$output"
