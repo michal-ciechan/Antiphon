@@ -162,6 +162,32 @@ public class AbsentLaunchPolicyTests
     }
 
     [Test]
+    public void C1591_Withhold_record_is_still_never_attempted()
+    {
+        var task = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        var at = new DateTime(2026, 10, 28, 0, 0, 0, DateTimeKind.Utc);
+        var row = new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = session,
+            ExecutionTaskId = task,
+            Body = DelegationReportFormatter.TaskMarker(task) + "\nretained brief",
+            Sequence = 1,
+            CreatedAt = at,
+            Origin = QueuedMessageOrigin.Delegation,
+            WithholdCount = 2,
+            FirstWithheldAt = at,
+            LastWithheldAt = at.AddMinutes(4),
+            LastWithholdReason = "Claude dialog observation unavailable: adopted session",
+        };
+        AbsentLaunchEvidence evidence = new(task, session, AgentTaskStatus.Dispatched, at, "retained goal",
+            SessionReconciliationService.RunnerUnknownSessionReason, [row], true, true, true, true, true);
+        AbsentLaunchPolicy.IsNeverAttempted(evidence).ShouldBeTrue(
+            "a withhold never types, so the record stays inside the never-attempted hold");
+    }
+
+    [Test]
     public void C1149_Queue_columns_are_accounted_for()
     {
         // A newly mapped scalar cannot be silently accepted by the whitelist.
