@@ -3725,9 +3725,9 @@
     },
     "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests": {
       "nodes": 1,
-      "seconds": 211,
-      "basis": "measured",
-      "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-63; 1 nodes; 211 serial test-seconds; completed 1 of 1 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-39520-cd0f35f98c9a4ebeb14cb5837b02389e.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95; may-understate: 1 failed tests in this run can end early."
+      "seconds": 300,
+      "basis": "observed-bound",
+      "source": "task 6a08b84c: one real FilterHost repeat-2 build plus three stub invocations, replacing the 8f055f87 failed-early 211 s row (1 node, may-understate). Windows rc run 28bbb58e loaded desktop: the real repeat-2 results directory was created 2026-10-28T20:48:27Z and last written 2026-10-28T20:52:38Z (251 s) before the 300 s timeout cancelled the next real build. Linux at 45f907bc: cold real repeat-2 wall 78 s (buildSeconds 5.47, slot wait 15 s); warm real repeat-2 under 8 CPU burners wall 41 s (slot wait 0); stub repeat-2 wall 5 s. Provisional class bound 300 s covers that 251 s Windows invocation plus the three stubs. Not a p95. nodes stays 1, matching the frozen c1410 listing row."
     },
     "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests": {
       "nodes": 3,

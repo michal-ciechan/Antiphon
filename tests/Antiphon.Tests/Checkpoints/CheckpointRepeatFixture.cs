@@ -22,11 +22,12 @@ internal static class CheckpointRepeatFixture
     internal static string OutputDirectory(string root) =>
         Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.RepeatHost", OutputName(root));
 
-    public static string WriteTemplate(string root, int requested = 5, int? failingOrdinal = null)
+    public static string WriteTemplate(string root, int requested = 5, int? failingOrdinal = null, string[]? methods = null)
     {
+        var names = methods is { Length: > 0 } ? methods : ["alpha", "beta", "gamma"];
         var ns = XNamespace.Get("http://microsoft.com/schemas/VisualStudio/TeamTest/2010");
         var rows = from ordinal in Enumerable.Range(0, requested)
-                   from method in new[] { "alpha", "beta", "gamma" }
+                   from method in names
                    select (Ordinal: ordinal, Method: method, Outcome: failingOrdinal == ordinal && method == "alpha" ? "Failed" : "Passed");
         var cases = rows.ToList();
         var doc = new XDocument(new XElement(ns + "TestRun",
@@ -74,7 +75,7 @@ internal static class CheckpointRepeatFixture
             if ($index -lt 0) { exit 36 }
             $directory = $args[$index + 1]
             [System.IO.Directory]::CreateDirectory($directory) | Out-Null
-            $text = [System.IO.File]::ReadAllText($env:C885_TRX_TEMPLATE).Replace('__NONCE__', $env:ANTIPHON_CHECKPOINT_NONCE)
+            $text = [System.IO.File]::ReadAllText($env:C885_TRX_TEMPLATE).Replace('__NONCE__', [string]$env:ANTIPHON_CHECKPOINT_NONCE)
             [System.IO.File]::WriteAllText([System.IO.Path]::Combine($directory, 'run.trx'), $text)
             exit 0
             """);
