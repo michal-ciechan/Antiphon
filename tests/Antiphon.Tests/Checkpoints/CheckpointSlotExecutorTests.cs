@@ -382,7 +382,8 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var stamp = new DateTimeOffset(2026, 10, 28, 0, 0, 0, TimeSpan.Zero)
             .UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
         var wrong = new DateTime(2026, 10, 28, 1, 0, 0, DateTimeKind.Utc);
-        Should.Throw<ShouldAssertException>(() => AssertCachedHolderStart(stamp, () => wrong));
+        var failure = Should.Throw<ShouldAssertException>(() => AssertCachedHolderStart(stamp, () => wrong));
+        failure.Message.ShouldContain("cached-holder-start: default reader must record the live process start");
     }
 
     [Test]
@@ -471,9 +472,13 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         captured.UtcDateTime.Kind.ShouldBe(DateTimeKind.Utc);
         try
         {
-            // The broker key is the cached stamp. A later live read can throw once the
-            // hold child has exited, or miss a 1ms tolerance on Windows, without changing it.
-            _ = readLiveStart().ToUniversalTime();
+            // 1ms is the previous live comparison. The same process start is one
+            // clock tick, so a wider window can admit a reader that returns the
+            // current time after the caller's 10ms delay. Skip only when the
+            // read throws or the caller reports that the child has exited.
+            var live = readLiveStart().ToUniversalTime();
+            captured.UtcDateTime.ShouldBe(live, TimeSpan.FromMilliseconds(1),
+                "cached-holder-start: default reader must record the live process start");
         }
         catch (Exception ex) when (IsStartIdentityUnavailable(ex))
         {
