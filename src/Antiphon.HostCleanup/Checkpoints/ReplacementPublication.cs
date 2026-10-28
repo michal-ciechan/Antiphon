@@ -59,13 +59,18 @@ internal static class ReplacementPublication
         try
         {
             if (!io.FileExists(path)) return false;
-            using var handle = io.OpenRead(path, new CheckpointReadOpen(0x20000, 0x00200000));
+            // Same no-follow open as CheckpointFileReader. A synchronous Windows handle makes
+            // ReadAsync queue blocking I/O behind the callers waiting for the bytes.
+            var request = io.Platform == CheckpointPlatform.Linux
+                ? new CheckpointReadOpen(0x80000 | 0x20000 | 0x800, 0) // CLOEXEC | NOFOLLOW | NONBLOCK
+                : new CheckpointReadOpen(0, 0x00200000 | 0x08000000 | 0x40000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
+            using var handle = io.OpenRead(path, request);
             using var stream = handle.OpenStream();
             var actual = new byte[expected.Length + 1];
             var read = 0;
             while (read < actual.Length)
             {
-                var count = stream.Read(actual, read, actual.Length - read);
+                var count = stream.ReadAsync(actual.AsMemory(read, actual.Length - read)).AsTask().GetAwaiter().GetResult();
                 if (count == 0) break;
                 read += count;
             }
