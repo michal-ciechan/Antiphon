@@ -23,3 +23,15 @@ The Git origin decoder and the no-context `bin-*` refusal from task 356abafc are
 Red, on the inherited product at `18eac2c81a8454fb33950e06ece4467393f39cd2`, filter `UnsafeDeleteRecoveryTests` and `ScriptsLaneRepairTests`: 9 total, 5 failed, 4 succeeded. Failures were the parent-swap delete (foreign `payload.txt` removed), replacement loss for 1176, 1177, and an injected interruption, and the `replaced` cleanup case (`replacement directory was deleted`). The four older script cases passed.
 
 Green, after the product fix and the receipt-count update, one build-slot build (`UseAppHost=false`, `OutputPath=bin-debug74632d02/`, 0 errors, 1198 pre-existing warnings) and `dotnet exec` of that output: 82 total, 82 passed, 0 failed, 0 skipped, about 47 seconds. Classes: `UnsafeDeleteRecoveryTests`, `ScriptsLaneRepairTests`, `HostCleanupCheckpointCustodyTests`, `HostCleanupCheckpointExtractionTests`, `RunStateStoreTests`, `CheckpointTempRootSweepTests`, `HostCleanupCheckpointAuthorityTests`, `ReapedProcStatIdentityTests`, `HostCleanupCheckpointReceiptTests`, `CheckpointStatePublicationTests`. The first green attempt failed one receipt count (open-read 2 vs 3) before that expectation was updated; it was not relabeled. `VirtualCheckpointIo.DeleteAnchored` sits beside `Move` so it does not overlap master's path-comparer insertion in that fixture.
+
+## CARD-1596 round 2
+
+The temp-root sweep is not converted. Payload, lock, marker, and root deletes are the path deletes from `rc/2026-10-27` `f84228f285dd3e4ad7b5dc8260cbc9f819256f50`. Anchoring that sweep needs an ancestor-safe `openat` walk (`O_NOFOLLOW|O_DIRECTORY` on each component). The server2 kernel 4.15 has no `openat2` `RESOLVE_NO_SYMLINKS`. A FIFO or socket (`dotnet-diagnostic-*-socket`) has no bound identity, so an identity-gated delete leaves the root in `deleting`. That walk, including non-regular entries, is deferred. This section does not claim the sweep is safe against an ancestor swap.
+
+Converted sites open only the immediate parent without following links: the output ledger, a tool copy sealed with identity, and `SafeDelete.DeleteCreatedFile`. An ancestor that is another name of the same inode can still remove that name. A zero birth time matches device and inode and does not fail closed.
+
+A tool copy sealed before identity fields existed loads unbound. Removal keeps the base path checks and `Unlink` / `RemoveDirectory`, and the receipt says `legacy-unbound-record`. A bound record uses `DeleteAnchored`. A bound identity mismatch, including birth time, is refused before `tool-removal-started.json` is written, so a later attempt is not a permanent previous-removal refusal. A record with only some identities is refused the same way.
+
+`DeleteCreatedFile` stays on the first CARD-1596 conversion. `MatchesCreation` already requires a bound identity, and `RecordIdentity` ignores an unbound read, so a non-regular entry is left in place. The extra null check after `MatchesCreation` does not change that.
+
+A non-empty directory is left in place only for an exact `win32=145`, an exact `errno=39`, or the text `directory not empty`. `win32=1450` and `errno=390` still throw.

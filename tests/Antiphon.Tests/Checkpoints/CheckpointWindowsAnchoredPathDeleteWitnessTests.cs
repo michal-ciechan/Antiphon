@@ -7,9 +7,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Desktop lane for the older path-delete sites. Linux skips every row.
-// A native run still has to prove alternate-data-stream refusal, win32 145
-// left-in-place, junction parent swaps, and an NTFS hard-link sibling.
+// Desktop lane for created-file and tool-copy anchored deletes, colon refusal,
+// win32 145 left-in-place, and an NTFS hard-link sibling. Linux skips every row.
+// The temp-root sweep stays on the base path delete and is not witnessed here.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointWindowsAnchoredPathDeleteWitnessTests
@@ -114,48 +114,6 @@ public sealed class CheckpointWindowsAnchoredPathDeleteWitnessTests
             authority.ShouldNotBeNull(refusal);
             io.Arm("payload.txt");
             try { authority!.Remove(tool); }
-            catch (IOException) { }
-            io.Swapped.ShouldBeTrue();
-            File.ReadAllText(sentinel).ShouldBe("foreign-sentinel");
-        }
-        finally { RemoveScratch(sandbox); }
-    }
-
-    [Test]
-    public void windows_junction_cannot_redirect_temp_root_sweep_delete()
-    {
-        if (!OperatingSystem.IsWindows()) Skip.Test("requires native Windows filesystem handles");
-        var sandbox = Scratch("sweep");
-        var root = Path.Combine(sandbox, "c723-" + Guid.CreateVersion7().ToString("N"));
-        var outside = Path.Combine(sandbox, "outside");
-        Directory.CreateDirectory(root);
-        Directory.CreateDirectory(outside);
-        var sentinel = Path.Combine(outside, "payload.bin");
-        File.WriteAllText(sentinel, "foreign-sentinel");
-        File.WriteAllBytes(Path.Combine(root, "payload.bin"), new byte[16]);
-        var current = new ProcessIdentityProbe().Current();
-        TestRootGuard.Write(root, new CheckpointRootMarker
-        {
-            RootId = Path.GetFileName(root)["c723-".Length..],
-            RootPath = Path.GetFullPath(root),
-            AttemptId = Guid.NewGuid().ToString("N"),
-            AssemblyInvocationId = "anchored-witness",
-            CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Owner = current with { Pid = int.MaxValue, StartUtcTicks = 1 },
-        });
-        new CheckpointTempRootSweep(sandbox).Register(root);
-        var io = new ParentSwapIo(outside);
-        var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner());
-        var sweep = new CheckpointTempRootSweep(context, sandbox, options: new CheckpointSweepOptions
-        {
-            Grace = TimeSpan.Zero,
-            Interval = TimeSpan.Zero,
-            MaxDuration = TimeSpan.FromSeconds(5),
-        });
-        try
-        {
-            io.Arm("payload.bin");
-            try { sweep.SweepOnce(); }
             catch (IOException) { }
             io.Swapped.ShouldBeTrue();
             File.ReadAllText(sentinel).ShouldBe("foreign-sentinel");

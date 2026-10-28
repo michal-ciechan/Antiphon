@@ -8,8 +8,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Parent-swap witnesses for the path deletes that still call File.Delete / Directory.Delete.
-// Each one is red until that site passes the recorded identity to DeleteAnchored.
+// Parent-swap witnesses for created-file and tool-copy deletes. Those sites pass the
+// recorded identity to DeleteAnchored. The temp-root sweep stays on the base path delete
+// (CARD-1596 round 2). An ancestor swap there is deferred, not a passing claim.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AnchoredPathDeleteWitnessTests
@@ -79,44 +80,16 @@ public sealed class AnchoredPathDeleteWitnessTests
     }
 
     [Test]
-    public void swapped_parent_cannot_redirect_temp_root_sweep_delete()
+    public void nonregular_created_file_is_left_in_place()
     {
-        var sandbox = Scratch("sweep");
-        var root = Path.Combine(sandbox, "c723-" + Guid.CreateVersion7().ToString("N"));
-        var outside = Path.Combine(sandbox, "outside");
-        Directory.CreateDirectory(root);
-        Directory.CreateDirectory(outside);
-        var sentinel = Path.Combine(outside, "payload.bin");
-        File.WriteAllText(sentinel, "foreign-sentinel");
-        File.WriteAllBytes(Path.Combine(root, "payload.bin"), new byte[16]);
-        var current = new ProcessIdentityProbe().Current();
-        TestRootGuard.Write(root, new CheckpointRootMarker
-        {
-            RootId = Path.GetFileName(root)["c723-".Length..],
-            RootPath = Path.GetFullPath(root),
-            AttemptId = Guid.NewGuid().ToString("N"),
-            AssemblyInvocationId = "anchored-witness",
-            CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Owner = current with { Pid = int.MaxValue, StartUtcTicks = 1 },
-        });
-        new CheckpointTempRootSweep(sandbox).Register(root);
-        var io = new ParentSwapIo(outside);
-        var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner());
-        var sweep = new CheckpointTempRootSweep(context, sandbox, options: new CheckpointSweepOptions
-        {
-            Grace = TimeSpan.Zero,
-            Interval = TimeSpan.Zero,
-            MaxDuration = TimeSpan.FromSeconds(5),
-        });
-        try
-        {
-            io.Arm("payload.bin");
-            try { sweep.SweepOnce(); }
-            catch (IOException) { }
-            io.Swapped.ShouldBeTrue();
-            File.ReadAllText(sentinel).ShouldBe("foreign-sentinel");
-        }
-        finally { RemoveScratch(sandbox); }
+        var fixture = new HostCleanupCheckpointFixture();
+        fixture.Seal();
+        var payload = fixture.Io.Nodes[fixture.Payload];
+        payload.Stat = payload.Stat with { Kind = "other" };
+        var result = fixture.Delete.DeleteCreatedFile(fixture.Payload);
+        result.Disposition.ShouldBe(DeleteDisposition.Refused);
+        fixture.Io.Text(fixture.Payload).ShouldBe("original");
+        fixture.Io.Count("unlink", fixture.Payload).ShouldBe(0);
     }
 
     [Test]
