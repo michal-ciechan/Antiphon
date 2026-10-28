@@ -469,6 +469,11 @@ assertion is the red-at-base witness; do not settle for asserting only a new fie
 
 Lock tests use two independent DB connections, captured backend PIDs, `pg_stat_activity` and
 `pg_locks`, and explicit barriers. Compute advisory key classid/objid on the same database.
+For VL, let any non-consuming pre-gate finish before the competing connection takes the
+provider key. Pause at the final acceptance boundary, then hold the provider and release
+the path; assert the backend of the consumer transaction, not a preflight gate connection.
+At base, intercept the old own-scope consuming redemption as the attempted acceptance and
+observe its missing consumer locks. The witness must distinguish these two phases explicitly.
 Bound all waits; no wall-clock sleeps to manufacture races. Include opposite-direction
 stop/session lock overlap in supervisor resume, concurrent terminal cancellation in retained
 return, and new-wall/reconciler overlap in queue tests. New scoped guards carry post-land
