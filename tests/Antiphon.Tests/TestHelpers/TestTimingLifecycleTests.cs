@@ -31,7 +31,7 @@ public sealed class TestTimingLifecycleTests
         on.Failed.ShouldBe(2, "staged child executes");
         on.Skipped.ShouldBe(0, "staged child executes");
 
-        var shard = Directory.GetFiles(Path.Combine(onRoot, "timing"), "cases-*.jsonl");
+        var shard = Directory.GetFiles(Path.Combine(onRoot, "timing"), "cases-*.jsonl", SearchOption.AllDirectories);
         shard.Length.ShouldBe(1, "missing complete timing rows");
         var completes = Completes(shard[0]);
         completes.Count.ShouldBe(7, "missing complete timing rows");
