@@ -128,7 +128,7 @@ public sealed class C1307CancellationTests
         try
         {
             await stream.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            f.Files.Clock.Advance(TimeSpan.FromSeconds(3));
+            f.Files.Clock.Advance(CheckpointFileReader.StallDeadline);
             (await command.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(2);
             caller.IsCancellationRequested.ShouldBeFalse();
             output.ToString().ShouldContain("state-receipt-unreadable");

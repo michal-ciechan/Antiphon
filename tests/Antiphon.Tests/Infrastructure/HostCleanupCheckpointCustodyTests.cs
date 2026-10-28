@@ -233,7 +233,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         try
         {
             await stream.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (callerCancellation) source.Cancel(); else f.Clock.Advance(TimeSpan.FromSeconds(3));
+            if (callerCancellation) source.Cancel(); else f.Clock.Advance(CheckpointFileReader.StallDeadline);
             await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(2)));
             read.IsCompleted.ShouldBeTrue(callerCancellation ? "C987.Entry_change_during_read_is_not_adopted.cancellation:completed-before-release" : "C987.Entry_change_during_read_is_not_adopted.read-deadline:completed-before-release");
             var exception = await Should.ThrowAsync<IOException>(async () => await read);
@@ -264,7 +264,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         };
         var adopt = Task.Run(() => stalled.Write.AdoptCreated(stalled.Payload, stalled.Window));
         await first.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        stalled.Clock.Advance(TimeSpan.FromSeconds(3));
+        stalled.Clock.Advance(CheckpointFileReader.StallDeadline);
         await adopt.WaitAsync(TimeSpan.FromSeconds(5));
         stalled.Write.MatchesCreation(stalled.Payload).ShouldBeTrue("CARD-1318 a stalled receipt read is adopted on the retry");
     }

@@ -10,10 +10,11 @@ public static class CheckpointFileReader
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
     public const long ContentLimit = 1L << 30; // Content stamps stream; receipt reads keep their 64 MiB bound.
-    // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused. CARD-1358: the
-    // window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the total is
-    // bounded by the chunk count and not by a throughput assumption.
-    public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
+    // A read that delivers nothing for this long is refused. The window bounds the open, the inspection and each
+    // chunk, and every delivered chunk re-arms it, so the total is bounded by the chunk count. CARD-1599: 6s is
+    // twice the 3s censor of loaded-host refusals. A 440-read sample on this host (six classes, four CPU burners)
+    // was p50 0.203 ms, p95 0.460 ms, max 274 ms, which is inside the old window; the budget stays above that censor.
+    public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(6);
     // Linux handle reads use workers; 256 KiB keeps a 7.5 MiB file at 30 hops.
     public const int ReadChunk = 256 * 1024;
 
