@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -228,7 +229,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
         { Source = receiptSource, RunId = Path.GetFileName(run), Phase = "done", ExitCode = exitCode, ExecutorPid = int.MaxValue });
         var output = new StringWriter();
-        (await new WaitCommand().WaitAsync(run, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
+        (await new WaitCommand().WaitAsync(run, LoadTimeoutBounds.CheckpointPositiveWait, TimeSpan.FromSeconds(1),
             output, CancellationToken.None)).ShouldBe(exitCode);
         Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
         Hash(report).ShouldBe(hash);
