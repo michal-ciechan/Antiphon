@@ -254,6 +254,11 @@ function volumeScale(count, files) {
 // the work volume. A linked admin is worktrees/<id>; the common directory is .git.
 const linkedAdmin = /^audit check=gitdir-entry status=0 repo=repo admin=repo\/\.git\/worktrees\/linked$/m;
 const commonAdmin = /^audit check=gitdir-entry status=0 repo=repo admin=repo\/\.git$/m;
+// Evidence-walk refusals keep check=gitdir-entry and append the entry relative to the admin.
+function evidenceEntry(rel) {
+    const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('^audit check=gitdir-entry status=0 repo=repo admin=repo/\\.git entry=' + escaped + '$', 'm');
+}
 function mirrorStamp(text) {
     put(linked() + 'antiphon-mirror-owner.json', text ?? '{"taskId":"d3c62283-34af-4c7a-b79a-16e068fde52e","creationGeneration":"695a5dab-0e8d-4efb-89ae-d4deb96d8045","preparationId":"148c04fe-58ac-4f89-b082-652dd77c4eca"}\n');
 }
@@ -590,21 +595,21 @@ const hidden = {
     // CARD-1594. Outside the hidden-location table: not an object store. The pass
     // tree is agent files. Each refusal starts from that tree and adds one defect.
     'antiphon-evidence': [P, evidenceTree],
-    'antiphon-evidence-symlink': [K, () => { evidenceTree(); fs.symlinkSync('build.log', gd('antiphon-evidence/task-x/linked.log')); }, commonAdmin],
-    'antiphon-evidence-symlink-root': [K, () => { evidenceTree(); fs.renameSync(gd('antiphon-evidence'), path.join(work, 'evidence-real')); fs.symlinkSync(path.join(work, 'evidence-real'), gd('antiphon-evidence')); }, commonAdmin],
-    'antiphon-evidence-git': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/nested/.git/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
-    'antiphon-evidence-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/refs/heads/master', head() + '\n'); }, commonAdmin],
-    'antiphon-evidence-objects': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/objects/pack/pack-x', 'pack'); }, commonAdmin],
-    'antiphon-evidence-head': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
-    'antiphon-evidence-packed-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, commonAdmin],
-    'antiphon-evidence-odd': [K, () => { evidenceTree(); run('mkfifo', [gd('antiphon-evidence/task-x/pipe')]); }, commonAdmin],
-    'antiphon-evidence-unreadable': [K, () => { evidenceTree(); const secret = gd('antiphon-evidence/task-x/secret.log'); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, commonAdmin],
-    'antiphon-evidence-hardlink': [K, () => { evidenceTree(); const outside = path.join(work, 'outside-evidence'); fs.writeFileSync(outside, 'outside\n'); fs.linkSync(outside, gd('antiphon-evidence/task-x/alias.log')); }, commonAdmin],
-    'antiphon-evidence-dot': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/.hidden', 'x'); }, commonAdmin],
+    'antiphon-evidence-symlink': [K, () => { evidenceTree(); fs.symlinkSync('build.log', gd('antiphon-evidence/task-x/linked.log')); }, evidenceEntry('antiphon-evidence/task-x/linked.log')],
+    'antiphon-evidence-symlink-root': [K, () => { evidenceTree(); fs.renameSync(gd('antiphon-evidence'), path.join(work, 'evidence-real')); fs.symlinkSync(path.join(work, 'evidence-real'), gd('antiphon-evidence')); }, evidenceEntry('antiphon-evidence')],
+    'antiphon-evidence-git': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/nested/.git/HEAD', 'ref: refs/heads/master\n'); }, evidenceEntry('antiphon-evidence/task-x/nested/.git')],
+    'antiphon-evidence-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/refs/heads/master', head() + '\n'); }, evidenceEntry('antiphon-evidence/task-x/refs')],
+    'antiphon-evidence-objects': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/objects/pack/pack-x', 'pack'); }, evidenceEntry('antiphon-evidence/task-x/objects')],
+    'antiphon-evidence-head': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/HEAD', 'ref: refs/heads/master\n'); }, evidenceEntry('antiphon-evidence/task-x/HEAD')],
+    'antiphon-evidence-packed-refs': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, evidenceEntry('antiphon-evidence/task-x/packed-refs')],
+    'antiphon-evidence-odd': [K, () => { evidenceTree(); run('mkfifo', [gd('antiphon-evidence/task-x/pipe')]); }, evidenceEntry('antiphon-evidence/task-x/pipe')],
+    'antiphon-evidence-unreadable': [K, () => { evidenceTree(); const secret = gd('antiphon-evidence/task-x/secret.log'); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, evidenceEntry('antiphon-evidence/task-x/REDACTED')],
+    'antiphon-evidence-hardlink': [K, () => { evidenceTree(); const outside = path.join(work, 'outside-evidence'); fs.writeFileSync(outside, 'outside\n'); fs.linkSync(outside, gd('antiphon-evidence/task-x/alias.log')); }, evidenceEntry('antiphon-evidence/task-x/alias.log')],
+    'antiphon-evidence-dot': [P, () => { evidenceTree(); put('antiphon-evidence/task-x/.antiphon/x.md', 'notes\n'); }],
     'antiphon-evidence-linked': [K, () => put(linked() + 'antiphon-evidence/task-x/build.log', 'log'), linkedAdmin],
-    // review-evidence/ is walked like antiphon-evidence/. Plain reports pass.
-    // A repository, a Git state name, or a non-plain entry refuses gitdir-entry.
-    // antiphon/ is not walked: an interior symlink still passes.
+    // review-evidence/ is walked like antiphon-evidence/. Plain reports pass,
+    // including ordinary dot-names. A repository or a non-plain entry refuses
+    // gitdir-entry and names that entry. antiphon/ is not walked.
     'review-evidence-reports': [P, reviewReports],
     'review-evidence-repo': [K, () => {
         reviewReports();
@@ -618,7 +623,7 @@ const hidden = {
         run('git', ['-C', nested, 'commit', '-qm', 'unpublished']);
         const oid = run('git', ['-C', nested, 'rev-parse', 'HEAD']);
         assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', oid], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'the hidden commit is not in the audited repository');
-    }, commonAdmin],
+    }, evidenceEntry('review-evidence/x/repo/.git')],
     'review-evidence-bare': [K, () => {
         reviewReports();
         const bare = gd('review-evidence/x/bare.git');
@@ -627,17 +632,35 @@ const hidden = {
         const oid = run('git', ['-C', bare, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', tree, '-m', 'unpublished']);
         run('git', ['-C', bare, 'update-ref', 'refs/heads/master', oid]);
         assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', oid], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'the bare commit is not in the audited repository');
-    }, commonAdmin],
-    'review-evidence-gitfile': [K, () => { reviewReports(); put('review-evidence/x/repo/.git', 'gitdir: /work/repo/.git\n'); }, commonAdmin],
-    'review-evidence-symlink': [K, () => { reviewReports(); fs.symlinkSync('review.md', gd('review-evidence/4a14585d/linked.md')); }, commonAdmin],
-    'review-evidence-head': [K, () => { reviewReports(); put('review-evidence/x/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
-    'review-evidence-refs': [K, () => { reviewReports(); put('review-evidence/x/refs/heads/master', head() + '\n'); }, commonAdmin],
-    'review-evidence-objects': [K, () => { reviewReports(); put('review-evidence/x/objects/pack/pack-x', 'pack'); }, commonAdmin],
-    'review-evidence-packed-refs': [K, () => { reviewReports(); put('review-evidence/x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, commonAdmin],
-    'review-evidence-odd': [K, () => { reviewReports(); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); run('mkfifo', [gd('review-evidence/x/pipe')]); }, commonAdmin],
-    'review-evidence-unreadable': [K, () => { reviewReports(); const secret = gd('review-evidence/x/secret.md'); fs.mkdirSync(path.dirname(secret), {recursive: true}); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, commonAdmin],
-    'review-evidence-hardlink': [K, () => { reviewReports(); const outside = path.join(work, 'outside-review'); fs.writeFileSync(outside, 'outside\n'); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); fs.linkSync(outside, gd('review-evidence/x/alias.md')); }, commonAdmin],
-    'review-evidence-dot': [K, () => { reviewReports(); put('review-evidence/x/.hidden', 'x'); }, commonAdmin],
+    }, evidenceEntry('review-evidence/x/bare.git/HEAD')],
+    'review-evidence-gitfile': [K, () => { reviewReports(); put('review-evidence/x/repo/.git', 'gitdir: /work/repo/.git\n'); }, evidenceEntry('review-evidence/x/repo/.git')],
+    'review-evidence-deep': [K, () => {
+        reviewReports();
+        const nested = gd('review-evidence/d01/d02/d03/d04/d05/d06/d07/d08/d09/d10/d11');
+        fs.mkdirSync(nested, {recursive: true});
+        run('git', ['init', '-q', '-b', 'master', nested]);
+    }, evidenceEntry('review-evidence/d01/d02/d03/d04/d05/d06/d07/d08/d09/d10/d11/.git')],
+    'review-evidence-reftable': [K, () => { reviewReports(); put('review-evidence/x/reftable/tables.list', ''); }, evidenceEntry('review-evidence/x/reftable')],
+    'review-evidence-commondir': [K, () => { reviewReports(); put('review-evidence/x/commondir', '../\n'); }, evidenceEntry('review-evidence/x/commondir')],
+    'review-evidence-newline': [K, () => { reviewReports(); put('review-evidence/x/has\nnewline.md', 'x'); }, evidenceEntry('?')],
+    'review-evidence-symlink': [K, () => { reviewReports(); fs.symlinkSync('review.md', gd('review-evidence/4a14585d/linked.md')); }, evidenceEntry('review-evidence/4a14585d/linked.md')],
+    'review-evidence-head': [K, () => { reviewReports(); put('review-evidence/x/HEAD', 'ref: refs/heads/master\n'); }, evidenceEntry('review-evidence/x/HEAD')],
+    'review-evidence-refs': [K, () => { reviewReports(); put('review-evidence/x/refs/heads/master', head() + '\n'); }, evidenceEntry('review-evidence/x/refs')],
+    'review-evidence-objects': [K, () => { reviewReports(); put('review-evidence/x/objects/pack/pack-x', 'pack'); }, evidenceEntry('review-evidence/x/objects')],
+    'review-evidence-packed-refs': [K, () => { reviewReports(); put('review-evidence/x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, evidenceEntry('review-evidence/x/packed-refs')],
+    'review-evidence-odd': [K, () => { reviewReports(); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); run('mkfifo', [gd('review-evidence/x/pipe')]); }, evidenceEntry('review-evidence/x/pipe')],
+    'review-evidence-unreadable': [K, () => { reviewReports(); const secret = gd('review-evidence/x/secret.md'); fs.mkdirSync(path.dirname(secret), {recursive: true}); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, evidenceEntry('review-evidence/x/REDACTED')],
+    'review-evidence-hardlink': [K, () => { reviewReports(); const outside = path.join(work, 'outside-review'); fs.writeFileSync(outside, 'outside\n'); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); fs.linkSync(outside, gd('review-evidence/x/alias.md')); }, evidenceEntry('review-evidence/x/alias.md')],
+    'review-evidence-dot': [P, () => { reviewReports(); put('review-evidence/x/.gitignore', 'ignored\n'); }],
+    'review-evidence-config': [P, () => { reviewReports(); put('review-evidence/x/config', 'plain\n'); }],
+    'review-evidence-index': [P, () => { reviewReports(); put('review-evidence/x/index', 'plain\n'); }],
+    'review-evidence-hooks': [P, () => { reviewReports(); put('review-evidence/x/hooks/post-commit', '#!/bin/sh\n'); }],
+    'review-evidence-info': [P, () => { reviewReports(); put('review-evidence/x/info/readme.md', 'notes\n'); }],
+    'review-evidence-description': [P, () => { reviewReports(); put('review-evidence/x/description', 'notes\n'); }],
+    'review-evidence-modules': [P, () => { reviewReports(); put('review-evidence/x/modules/a.md', 'notes\n'); }],
+    'review-evidence-lock': [P, () => { reviewReports(); put('review-evidence/x/yarn.lock', 'lock\n'); }],
+    'review-evidence-antiphon': [P, () => { reviewReports(); put('review-evidence/x/.antiphon/x.md', 'notes\n'); }],
+    'review-evidence-backup': [P, () => { reviewReports(); put('review-evidence/x/report.md~', 'backup\n'); }],
     'antiphon-symlink': [P, () => { put('antiphon/landing.lock', ''); fs.symlinkSync('landing.lock', gd('antiphon/linked.lock')); }],
 };
 try {
