@@ -3573,7 +3573,7 @@ public sealed class AgentTaskService
         var attempt = task.Attempt;
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
-            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, ct);
+            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, task.AgentId, ct);
             await _db.Entry(task).ReloadAsync(ct);
             if (task.ConcurrencyToken != revision || task.Attempt != attempt || task.Status != AgentTaskStatus.Blocked)
                 throw new ConflictException("The task changed before answer acceptance.", "answer_revision_changed");
@@ -3629,7 +3629,8 @@ public sealed class AgentTaskService
         return true;
     }
 
-    private async Task LockReleasedAnswerAsync(Guid taskId, Guid releaseId, Guid sessionId, CancellationToken ct)
+    private async Task LockReleasedAnswerAsync(
+        Guid taskId, Guid releaseId, Guid sessionId, Guid? agentId, CancellationToken ct)
     {
         await _db.Database.ExecuteSqlInterpolatedAsync($"""
             SELECT "Id" FROM "AgentTasks" WHERE "Id" = {taskId} FOR UPDATE
@@ -3640,6 +3641,12 @@ public sealed class AgentTaskService
         await _db.Database.ExecuteSqlInterpolatedAsync($"""
             SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE
             """, ct);
+        if (agentId is Guid id)
+        {
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                SELECT "Id" FROM "Agents" WHERE "Id" = {id} FOR UPDATE
+                """, ct);
+        }
     }
 
     internal enum RemotePoolParkReply { None, Admitted, ReleaseMismatch }
@@ -3763,7 +3770,7 @@ public sealed class AgentTaskService
         await AdmitWorkspaceAsync(task, ct);
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
-            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, ct);
+            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, task.AgentId, ct);
             await _db.Entry(task).ReloadAsync(ct);
             // ConcurrencyToken is an application revision, not an EF concurrency token.
             // Compare it and the accepted answer while holding the actual task row lock.

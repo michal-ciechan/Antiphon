@@ -23,17 +23,20 @@ public sealed class CapacityRecoveryService
     private readonly TimeProvider _time;
     private readonly SupervisionSettings _supervision;
     private readonly ILogger<CapacityRecoveryService> _logger;
+    private readonly LandDeliveryBoundary? _landBoundary;
 
     public CapacityRecoveryService(
         IServiceScopeFactory scopeFactory,
         TimeProvider time,
         IOptions<SupervisionSettings> settings,
-        ILogger<CapacityRecoveryService> logger)
+        ILogger<CapacityRecoveryService> logger,
+        LandDeliveryBoundary? landBoundary = null)
     {
         _scopeFactory = scopeFactory;
         _time = time;
         _supervision = settings.Value;
         _logger = logger;
+        _landBoundary = landBoundary;
     }
 
     public CapacityRecoverySettings Settings => _supervision.CapacityRecovery;
@@ -301,6 +304,159 @@ public sealed class CapacityRecoveryService
         return result;
     }
 
+    /// <summary>
+    /// Redeem on the caller's transaction. <paramref name="consume"/> false is the pre-claim gate:
+    /// a valid grant is left untouched and durable refusals are written for the caller to commit.
+    /// <paramref name="consume"/> true spends the grant and writes the launch receipt. It never
+    /// commits and it never refuses an expired-but-unrevoked grant (D-12).
+    /// </summary>
+    public async Task<CapacityRedemption> RedeemOnAsync(
+        AppDbContext db,
+        Guid waitId,
+        string actionKey,
+        AgentKind kind,
+        CapacityRedemptionPath path,
+        CancellationToken ct,
+        bool consume,
+        Guid? launchSessionId = null)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Capacity redemption requires an ambient transaction.");
+        if (consume)
+        {
+            RejectDirtyLaunchRows(db);
+            if (launchSessionId is not Guid)
+                throw new InvalidOperationException("Capacity consume requires the launch session.");
+        }
+
+        await TakeProviderLockAsync(db, kind, ct);
+        var now = UtcNow();
+        var state = await db.Set<CapacityRecoveryProviderState>()
+            .FirstOrDefaultAsync(s => s.Kind == kind, ct);
+        if (state is not null)
+            await db.Entry(state).ReloadAsync(ct);
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (wait is not null)
+            await db.Entry(wait).ReloadAsync(ct);
+        if (state is null || wait is null)
+            return CapacityRedemption.Refused("missing-grant");
+        if (wait.State != CapacityRecoveryWaitState.ActionPending)
+            return CapacityRedemption.Refused("not-action-pending");
+        if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
+            return CapacityRedemption.Refused("grant-mismatch");
+        if (!IsEnabled)
+            return consume
+                ? CapacityRedemption.Refused("feature-disabled")
+                : await DeferRedemptionAsync(db, wait, state, "feature-disabled", now, ct);
+        if (state.NextAdmissionAt is { } due && due > now)
+            return consume
+                ? CapacityRedemption.Refused("clock-not-due")
+                : await DeferRedemptionAsync(db, wait, state, "clock-not-due", now, ct);
+
+        var revalidation = wait.NeedsRevalidationGrant;
+        if (!revalidation && CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+        {
+            if (consume)
+                return CapacityRedemption.Refused("exhausted");
+            wait.State = CapacityRecoveryWaitState.Exhausted;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+            wait.OutcomeReason = "max-episode-attempts";
+            ClearGrant(state, now);
+            wait.UpdatedAt = now;
+            wait.Version++;
+            await db.SaveChangesAsync(ct);
+            return CapacityRedemption.Refused("exhausted");
+        }
+
+        if (!consume)
+            return CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+
+        if (!revalidation)
+            wait.AdmissionCount++;
+        wait.NeedsRevalidationGrant = false;
+        wait.SessionId = wait.LaunchSessionId = launchSessionId;
+        wait.DispatchAttemptId = Guid.NewGuid();
+        wait.State = CapacityRecoveryWaitState.StartAccepted;
+        wait.Outcome = nameof(CapacityRecoveryWaitState.StartAccepted);
+        wait.OutcomeReason = path.ToString();
+        wait.UpdatedAt = now;
+        wait.Version++;
+        state.LastActionKey = actionKey;
+        state.LastActionAt = now;
+        state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+        ClearGrant(state, now);
+        await db.SaveChangesAsync(ct);
+        return CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+    }
+
+    /// <summary>Pre-claim gate. Own scope, so a durable refusal commits without the dispatcher's rows.</summary>
+    public async Task<CapacityRedemption> RedeemGateAsync(
+        Guid waitId, string actionKey, AgentKind kind, CapacityRedemptionPath path, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var result = await RedeemOnAsync(db, waitId, actionKey, kind, path, ct, consume: false);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
+    /// <summary>
+    /// Cancel the claim's unfinished wait and clear its grant. AdmissionCount stays put.
+    /// Caller holds the transaction; this does not commit.
+    /// </summary>
+    public async Task ReleaseClaimReservationOnAsync(
+        AppDbContext db, Guid taskId, AgentKind kind, string reason, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Capacity release requires an ambient transaction.");
+        await TakeProviderLockAsync(db, kind, ct);
+        var now = UtcNow();
+        var state = await db.Set<CapacityRecoveryProviderState>()
+            .FirstOrDefaultAsync(s => s.Kind == kind, ct);
+        if (state is not null)
+            await db.Entry(state).ReloadAsync(ct);
+        var key = $"task:{taskId:N}";
+        var waits = await Unfinished(db.Set<CapacityRecoveryWait>())
+            .Where(w => (w.TaskId == taskId || w.ConsumerKey == key) && w.ExecutionKind == kind)
+            .ToListAsync(ct);
+        foreach (var wait in waits)
+        {
+            await db.Entry(wait).ReloadAsync(ct);
+            if (IsFinished(wait))
+                continue;
+            wait.State = CapacityRecoveryWaitState.Canceled;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Canceled);
+            wait.OutcomeReason = reason;
+            wait.Version++;
+            wait.UpdatedAt = now;
+            if (state?.GrantedWaitId == wait.Id)
+                ClearGrant(state, now);
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Class-4 backstop: a 7-8 leaf on a fresh context after the claim has been abandoned.</summary>
+    public async Task ReleaseClaimReservationAsync(
+        Guid taskId, AgentKind kind, string reason, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await ReleaseClaimReservationOnAsync(db, taskId, kind, reason, ct);
+        await tx.CommitAsync(ct);
+    }
+
+    private static void RejectDirtyLaunchRows(AppDbContext db)
+    {
+        var dirty = db.ChangeTracker.Entries().Any(entry =>
+            entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted
+            && entry.Entity is AgentTask or Agent or AgentSession);
+        if (dirty)
+            throw new InvalidOperationException("capacity consume with dirty task/agent/session rows");
+    }
+
     public async Task<CapacityRecoveryWait> EnsureWaitAsync(CapacityWaitRegistration registration, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -345,6 +501,8 @@ public sealed class CapacityRecoveryService
             try
             {
                 await TakeProviderLockAsync(db, kind, ct);
+                if (_landBoundary is not null)
+                    await _landBoundary.ReachedAsync("capacity-supersede-after-lock", taskId, Guid.Empty, ct);
                 var waits = await Unfinished(matching).Where(w => w.ExecutionKind == kind).ToListAsync(ct);
                 var state = await db.CapacityRecoveryProviderStates.FirstOrDefaultAsync(s => s.Kind == kind, ct);
                 if (state is not null)

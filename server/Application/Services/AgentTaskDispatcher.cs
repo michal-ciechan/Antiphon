@@ -11,6 +11,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -630,7 +631,7 @@ public sealed partial class AgentTaskDispatcher
                         continue;
                 }
                 if (_capacityRecovery.IsEnabled
-                    && !await TryRedeemCapacityWaitAsync(retained, CapacityRedemptionPath.Dispatch, ct))
+                    && !await TryRedeemCapacityWaitAsync(retained, CapacityRedemptionPath.Dispatch, ct, consume: true))
                     continue;
                 if (string.IsNullOrEmpty(runnerId)
                     && !await _capacityRecovery.TryClaimCountedSlotAsync(
@@ -792,6 +793,10 @@ public sealed partial class AgentTaskDispatcher
                     else if (rewalk == RewalkOutcome.BlockedRunnerKind)
                     {
                         blockedRoutingExhausted++;
+                        continue;
+                    }
+                    else if (rewalk == RewalkOutcome.ClaimLost)
+                    {
                         continue;
                     }
                     else if (ComplexityRoutingService.IsListGoverned(task)
@@ -958,7 +963,7 @@ public sealed partial class AgentTaskDispatcher
             {
                 if (_capacityRecovery is { IsEnabled: true }
                     && await FindUnfinishedCapacityWaitAsync(task, ct) is { } wait
-                    && !await TryRedeemCapacityWaitAsync(task, wait, CapacityRedemptionPath.Dispatch, ct))
+                    && !await TryRedeemCapacityWaitAsync(task, wait, CapacityRedemptionPath.Dispatch, ct, consume: false))
                 {
                     skippedCapacityWait++;
                     if (task.CapacityWaitId != wait.Id)
@@ -1047,27 +1052,6 @@ public sealed partial class AgentTaskDispatcher
 
                 if (outcome == DispatchOneResult.Dispatched)
                 {
-                    if (_capacityRecovery is { IsEnabled: true } && task.AgentSessionId is { } launchedSessionId)
-                    {
-                        try
-                        {
-                            await _capacityRecovery.ReceiptDispatchOnAsync(
-                                _db, task.Id, task.AgentKind, launchedSessionId, ct);
-                        }
-                        catch (Exception ex)
-                        {
-                            // Receipt persistence discards abandoned tracked changes on failure;
-                            // the durable wait stays Admitted and can re-arm.
-                            // Swallowing here is required — the generic dispatch catch would mark
-                            // an already-running session Failed with a false "before a session existed" reason.
-                            if (ex is OperationCanceledException && ct.IsCancellationRequested)
-                                throw;
-                            _logger.LogWarning(
-                                ex,
-                                "Capacity dispatch receipt failed for task {ShortId}; launched session {SessionId} is kept",
-                                DelegationReportFormatter.Short(task.Id), launchedSessionId);
-                        }
-                    }
                     dispatched++;
                     if (!AgentTaskRoles.IsSpecialist(task.Role) && string.IsNullOrEmpty(task.RunnerId))
                         dispatchedAgainstCap++;
@@ -1678,6 +1662,17 @@ public sealed partial class AgentTaskDispatcher
             return RewalkOutcome.BlockedRunnerKind;
         }
 
+        if (_db.Database.CurrentTransaction is not null)
+            throw new InvalidOperationException("Queued reroute refuses an ambient transaction.");
+        var token = task.ConcurrencyToken;
+        await using var reroute = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "AgentTasks" WHERE "Id" = {task.Id} FOR UPDATE
+            """, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.Status != AgentTaskStatus.Queued || task.ConcurrencyToken != token)
+            return RewalkOutcome.ClaimLost;
+
         var from = currentAlias;
         task.AgentKind = chosen.Kind;
         task.ModelLevel = chosen.Level;
@@ -1705,6 +1700,7 @@ public sealed partial class AgentTaskDispatcher
             At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
+        await reroute.CommitAsync(ct);
         _logger.LogInformation(
             "Task {ShortId} rerouted at dispatch: {From} → {To}",
             DelegationReportFormatter.Short(task.Id), from, chosen.Alias);
@@ -1755,14 +1751,15 @@ public sealed partial class AgentTaskDispatcher
     }
 
     private async Task<bool> TryRedeemCapacityWaitAsync(
-        AgentTask task, CapacityRedemptionPath path, CancellationToken ct)
+        AgentTask task, CapacityRedemptionPath path, CancellationToken ct, bool consume = true)
     {
         var wait = await FindUnfinishedCapacityWaitAsync(task, ct);
-        return wait is null || await TryRedeemCapacityWaitAsync(task, wait, path, ct);
+        return wait is null || await TryRedeemCapacityWaitAsync(task, wait, path, ct, consume);
     }
 
     private async Task<bool> TryRedeemCapacityWaitAsync(
-        AgentTask task, CapacityRecoveryWait wait, CapacityRedemptionPath path, CancellationToken ct)
+        AgentTask task, CapacityRecoveryWait wait, CapacityRedemptionPath path, CancellationToken ct,
+        bool consume = true)
     {
         if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
             return false;
@@ -1772,6 +1769,14 @@ public sealed partial class AgentTaskDispatcher
             || provider.GrantedWaitId != wait.Id
             || provider.GrantedActionKey != wait.ActionKey)
             return false;
+        if (!consume)
+        {
+            var gated = await _capacityRecovery!.RedeemGateAsync(
+                wait.Id, wait.ActionKey, wait.ExecutionKind, path, ct);
+            return gated.Ok;
+        }
+
+        // Retained return stays on the own-scope Admitted wrapper until S3.
         var result = await _capacityRecovery!.RedeemAsync(
             wait.Id, wait.ActionKey, wait.ExecutionKind, path, ct);
         return result.Ok;
@@ -1821,6 +1826,14 @@ public sealed partial class AgentTaskDispatcher
                 continue;
             }
 
+            await using var resume = await _db.Database.BeginTransactionAsync(ct);
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                SELECT "Id" FROM "AgentTasks" WHERE "Id" = {task.Id} FOR UPDATE
+                """, ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            if (task.Status != AgentTaskStatus.Blocked)
+                continue;
+
             if (_capacityRecovery is not null)
             {
                 await _capacityRecovery.SupersedeTaskWaitsOnAsync(
@@ -1864,11 +1877,11 @@ public sealed partial class AgentTaskDispatcher
                     $"capacity returned: requeued on {chosen.Alias} ({ComplexityRoutingService.ListEventLabel(walk)} {index}/{walk.Outcomes.Count})",
                 At = UtcNow(),
             });
+            await _db.SaveChangesAsync(ct);
+            await resume.CommitAsync(ct);
             resumed++;
         }
 
-        if (resumed > 0)
-            await _db.SaveChangesAsync(ct);
         return resumed;
     }
 
@@ -5608,7 +5621,7 @@ public sealed partial class AgentTaskDispatcher
                 await FailAsync(claimed,
                     "workspace_existing_agent_conflict: explicit Worktree is pinned to an existing agent and was not launched.",
                     ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(claimed, ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5635,7 +5648,7 @@ public sealed partial class AgentTaskDispatcher
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
-            await transaction.CommitAsync(ct);
+            await CommitClaimWithoutLaunchAsync(claimed, ct);
             // CARD-0664 D-2: the claim admitted a Launch row above; the Canceled status is committed now.
             await ReleaseTaskConsumersAsync(claimed);
             return DispatchOneResult.NotClaimed;
@@ -5649,7 +5662,7 @@ public sealed partial class AgentTaskDispatcher
             && await InterimHoldReasonAsync(claimed, ct) is { } interimHold)
         {
             await BlockAsync(claimed, interimHold, ct);
-            await transaction.CommitAsync(ct);
+            await CommitClaimWithoutLaunchAsync(claimed, ct);
             LogCommittedBlock(claimed);
             await _eventBus.PublishToAllAsync(
                 "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
@@ -5691,7 +5704,7 @@ public sealed partial class AgentTaskDispatcher
                 if (reuseGate.Block)
                 {
                     await BlockAsync(claimed, reuseGate.Detail, ct);
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(claimed, ct);
                     LogCommittedBlock(claimed);
                     return DispatchOneResult.NotClaimed;
                 }
@@ -5700,21 +5713,49 @@ public sealed partial class AgentTaskDispatcher
                 return DispatchOneResult.HeldForAgent;
             }
 
-            switch (await TryReuseWarmAgentAsync(claimed, now, ct))
+            ReuseOutcome reuse;
+            try
+            {
+                reuse = await TryReuseWarmAgentAsync(claimed, now, ct);
+            }
+            catch (Exception ex)
+            {
+                if (await FailCapacityLaunchAsync(claimed, ex, ct))
+                    return DispatchOneResult.NotClaimed;
+                throw;
+            }
+
+            switch (reuse)
             {
                 case ReuseOutcome.Reused:
-                    await _db.SaveChangesAsync(ct);
-                    await transaction.CommitAsync(ct);
+                    LaunchCommit reuseLaunch;
+                    try
+                    {
+                        await _db.SaveChangesAsync(ct);
+                        reuseLaunch = await ConsumeAndCommitLaunchAsync(
+                            claimed, claimed.AgentSessionId!.Value, ct);
+                        if (reuseLaunch == LaunchCommit.Refused)
+                            return DispatchOneResult.NotClaimed;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (await FailCapacityLaunchAsync(claimed, ex, ct))
+                            return DispatchOneResult.NotClaimed;
+                        throw;
+                    }
+
                     // The raw token is discarded only after the reuse commit. A hold or a lost
                     // commit must leave it with the still-queued task.
                     AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
+                    if (reuseLaunch == LaunchCommit.LostAck)
+                        return DispatchOneResult.Dispatched;
                     await DeliverReuseMessagesAsync(claimed, ct);
                     await _eventBus.PublishToAllAsync(
                         "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
                     return DispatchOneResult.Dispatched;
 
                 case ReuseOutcome.Expired:
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(claimed, ct);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
                 case ReuseOutcome.WaitForAgent:
@@ -5747,9 +5788,9 @@ public sealed partial class AgentTaskDispatcher
             && _agentRegistry.Settings.GrokCredentialProbeEnabled
             && (string.IsNullOrWhiteSpace(claimed.RunnerId)
                 ? await TryFailGrokCredentialProbeAsync(claimed, program,
-                    token => transaction.CommitAsync(token), ct)
+                    token => CommitClaimWithoutLaunchAsync(claimed, token), ct)
                 : await TryFailRunnerGrokCredentialProbeAsync(claimed, grokAuth,
-                    token => transaction.CommitAsync(token), ct)))
+                    token => CommitClaimWithoutLaunchAsync(claimed, token), ct)))
         {
             return DispatchOneResult.NotClaimed;
         }
@@ -5757,7 +5798,7 @@ public sealed partial class AgentTaskDispatcher
         if (claimed.RunnerId is not null && program.Kind == AgentKind.ClaudeCode
             && _phoneHome?.ClaudeAuthProbeEnabled == true
             && await TryFailClaudeCredentialProbeAsync(claimed, claudeAuth,
-                token => transaction.CommitAsync(token), ct))
+                token => CommitClaimWithoutLaunchAsync(claimed, token), ct))
         {
             return DispatchOneResult.NotClaimed;
         }
@@ -5773,7 +5814,7 @@ public sealed partial class AgentTaskDispatcher
             if (prep.FailureReason is not null)
             {
                 await FailAsync(claimed, prep.FailureReason, ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(claimed, ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5816,7 +5857,7 @@ public sealed partial class AgentTaskDispatcher
                             : "")
                         + "Resolve histories then retry, or cancel and recreate with -BaseTask <previewed task> "
                         + "/ -StartRef <previewed sha> / -FreshWorktree.", ct);
-                    await transaction.CommitAsync(ct);
+                    await CommitClaimWithoutLaunchAsync(claimed, ct);
                     LogCommittedBlock(claimed, selected.TotalCandidates, selected.InspectedCandidates, selected.GitCommands);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
@@ -5900,7 +5941,7 @@ public sealed partial class AgentTaskDispatcher
             if (capture.FailureReason is not null)
             {
                 await FailAsync(claimed, capture.FailureReason, ct);
-                await transaction.CommitAsync(ct);
+                await CommitClaimWithoutLaunchAsync(claimed, ct);
                 await ReleaseTaskConsumersAsync(claimed);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5969,8 +6010,7 @@ public sealed partial class AgentTaskDispatcher
             {
                 var state = _runners?.DrainState(remoteRunner);
                 var detail = DispatchHoldDetails.RunnerDraining(remoteRunner, state?.DrainReason, state?.RedirectTo);
-                await transaction.RollbackAsync(ct);
-                _db.ChangeTracker.Clear();
+                await AbandonClaimAsync(ct);
                 await RemoteWarnAsync(claimed, now, detail, ct);
                 return DispatchOneResult.NotClaimed;
             }
@@ -5989,8 +6029,7 @@ public sealed partial class AgentTaskDispatcher
 
             if (prepared is null)
             {
-                await transaction.RollbackAsync(ct);
-                _db.ChangeTracker.Clear();
+                await AbandonClaimAsync(ct);
                 return DispatchOneResult.NotClaimed;
             }
 
@@ -6054,8 +6093,7 @@ public sealed partial class AgentTaskDispatcher
         {
             await RemoteWarnAsync(claimed, now,
                 $"Runner '{claimed.RunnerId}' has no live store identity; the task stays Queued.", ct);
-            await transaction.RollbackAsync(ct);
-            _db.ChangeTracker.Clear();
+            await AbandonClaimAsync(ct);
             return DispatchOneResult.NotClaimed;
         }
 
@@ -6078,8 +6116,7 @@ public sealed partial class AgentTaskDispatcher
         claimed.AgentSessionId = session.Id;
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
-            await transaction.RollbackAsync(ct);
-            _db.ChangeTracker.Clear();
+            await AbandonClaimAsync(ct);
             // Rollback released the claim. A competing dispatcher may now own it, so the
             // recovery cancellation must be conditional again rather than saving a stale row.
             var canceled = await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
@@ -6095,34 +6132,40 @@ public sealed partial class AgentTaskDispatcher
             return DispatchOneResult.NotClaimed;
         }
 
-        if (await RefuseParallelAsync(claimed, ct))
-            return await FinishParallelHoldAsync(claimed, ct);
-        claimed.Status = AgentTaskStatus.Dispatched;
-        claimed.DispatchedAt = now;
-        claimed.ConcurrencyToken = Guid.NewGuid();
-        ArmFirstCheck(claimed, now);
-
-        agent.PersistentSessionId = session.Id.ToString("D");
-        agent.Status = AgentStatus.Running;
-        agent.UpdatedAt = now;
-
-        var shippedModel = ShippedModelDisplay(claimed, agent, program);
-        var finalDispatch = new AgentTaskEvent
-        {
-            Id = Guid.NewGuid(),
-            AgentTaskId = claimed.Id,
-            AgentSessionId = session.Id,
-            Type = AgentTaskEventType.Dispatched,
-            ModelLevel = claimed.ModelLevel,
-            Detail = $"Dispatched to agent '{agent.Name}' "
-                + $"({shippedModel}) in {claimed.WorkingDirectory}",
-            At = now,
-        };
-        _db.AgentTaskEvents.Add(finalDispatch);
-
         IReadOnlyList<Guid> capturedIntents = [];
+        AgentTaskEvent finalDispatch;
+        string shippedModel;
+        var launch = LaunchCommit.Committed;
         try
         {
+            // An existing agent is locked before the parallel key. A fresh insert has no row yet.
+            if (!freshAgent)
+                await LockPhysicalAgentAsync(agent.Id, ct);
+            if (await RefuseParallelAsync(claimed, ct))
+                return await FinishParallelHoldAsync(claimed, ct);
+            claimed.Status = AgentTaskStatus.Dispatched;
+            claimed.DispatchedAt = now;
+            claimed.ConcurrencyToken = Guid.NewGuid();
+            ArmFirstCheck(claimed, now);
+
+            agent.PersistentSessionId = session.Id.ToString("D");
+            agent.Status = AgentStatus.Running;
+            agent.UpdatedAt = now;
+
+            shippedModel = ShippedModelDisplay(claimed, agent, program);
+            finalDispatch = new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = claimed.Id,
+                AgentSessionId = session.Id,
+                Type = AgentTaskEventType.Dispatched,
+                ModelLevel = claimed.ModelLevel,
+                Detail = $"Dispatched to agent '{agent.Name}' "
+                    + $"({shippedModel}) in {claimed.WorkingDirectory}",
+                At = now,
+            };
+            _db.AgentTaskEvents.Add(finalDispatch);
+
             if (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
             {
                 var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision,
@@ -6148,25 +6191,22 @@ public sealed partial class AgentTaskDispatcher
             }
 
             await _db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
+            launch = await ConsumeAndCommitLaunchAsync(claimed, session.Id, ct);
+            if (launch == LaunchCommit.Refused)
+                return DispatchOneResult.NotClaimed;
         }
-        catch when (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
+        catch (Exception ex)
         {
-            // Rollback alone leaves Added entries tracked. FailAndNotifyAsync saves through this
-            // same context and would publish an abandoned claim's session/event/intents. Dispose
-            // the transaction first, then reload committed facts (also safe after a lost commit
-            // acknowledgement). Already committed intents remain immutable delivery obligations.
-            // Clear also detaches the tick's other queued rows; reacquire every loaded task
-            // instance so later failure reporting and claims mutate tracked rows, not orphans.
-            var loadedTasks = _db.ChangeTracker.Entries<AgentTask>()
-                .Where(e => e.State != EntityState.Added)
-                .Select(e => e.Entity)
-                .ToList();
-            await transaction.DisposeAsync();
-            _db.ChangeTracker.Clear();
-            foreach (var loaded in loadedTasks)
-                await _db.Entry(loaded).ReloadAsync(CancellationToken.None);
+            if (await FailCapacityLaunchAsync(claimed, ex, ct))
+                return DispatchOneResult.NotClaimed;
             throw;
+        }
+
+        if (launch == LaunchCommit.LostAck)
+        {
+            _leaseWaiters?.Clear(claimed.Id);
+            if (repositoryLease is not null) await repositoryLease.DisposeAsync();
+            return DispatchOneResult.Dispatched;
         }
 
         _leaseWaiters?.Clear(claimed.Id);
@@ -7569,6 +7609,7 @@ public sealed partial class AgentTaskDispatcher
         None = 0,
         Rerouted = 1,
         BlockedRunnerKind = 2,
+        ClaimLost = 3,
     }
 
     /// <summary>
@@ -8000,13 +8041,28 @@ public sealed partial class AgentTaskDispatcher
         return ReuseOutcome.HeldOnParallel;
     }
 
-    private async Task<DispatchOneResult> FinishParallelHoldAsync(AgentTask claimed, CancellationToken ct)
+    private static bool StillWarm(Agent agent, Guid sessionId) =>
+        agent.Status == AgentStatus.Idle
+        && agent.PoolIdleSince is not null
+        && Guid.TryParse(agent.PersistentSessionId, out var persisted)
+        && persisted == sessionId;
+
+    private Task LockPhysicalAgentAsync(Guid agentId, CancellationToken ct) =>
+        _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "Agents" WHERE "Id" = {agentId} FOR UPDATE
+            """, ct);
+
+    private Task LockSessionKeyShareAsync(Guid sessionId, CancellationToken ct) =>
+        _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR KEY SHARE
+            """, ct);
+
+    /// <summary>
+    /// Roll the claim back and reload every tracked task, agent and session in place.
+    /// A rollback that itself throws (lost commit acknowledgement) is logged and still reloaded.
+    /// </summary>
+    private async Task AbandonClaimAsync(CancellationToken ct)
     {
-        var decision = _refusedParallel
-            ?? throw new InvalidOperationException("Parallel hold is missing its decision.");
-        _refusedParallel = null;
-        var detail = FormatParallelHold(decision);
-        var taskId = claimed.Id;
         var tasks = _db.ChangeTracker.Entries<AgentTask>()
             .Where(e => e.State != EntityState.Added)
             .Select(e => e.Entity)
@@ -8019,17 +8075,177 @@ public sealed partial class AgentTaskDispatcher
             .Where(e => e.State != EntityState.Added)
             .Select(e => e.Entity)
             .ToList();
-        var transaction = _db.Database.CurrentTransaction
-            ?? throw new InvalidOperationException("Parallel hold requires the claim transaction.");
-        await transaction.RollbackAsync(ct);
-        await transaction.DisposeAsync();
+        if (_db.Database.CurrentTransaction is { } transaction)
+        {
+            try
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Capacity claim rollback failed");
+            }
+
+            try
+            {
+                await transaction.DisposeAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Capacity claim transaction dispose failed");
+            }
+        }
+
         _db.ChangeTracker.Clear();
         foreach (var tracked in tasks)
-            await _db.Entry(tracked).ReloadAsync(ct);
+            await _db.Entry(tracked).ReloadAsync(CancellationToken.None);
         foreach (var tracked in agents)
-            await _db.Entry(tracked).ReloadAsync(ct);
+            await _db.Entry(tracked).ReloadAsync(CancellationToken.None);
         foreach (var tracked in sessions)
-            await _db.Entry(tracked).ReloadAsync(ct);
+            await _db.Entry(tracked).ReloadAsync(CancellationToken.None);
+    }
+
+    private async Task CommitClaimWithoutLaunchAsync(AgentTask claimed, CancellationToken ct)
+    {
+        var transaction = _db.Database.CurrentTransaction
+            ?? throw new InvalidOperationException("A non-launch claim exit requires the claim transaction.");
+        await _db.SaveChangesAsync(ct);
+        if (_capacityRecovery is { IsEnabled: true }
+            && await FindUnfinishedCapacityWaitAsync(claimed, ct) is { } wait)
+        {
+            await _capacityRecovery.ReleaseClaimReservationOnAsync(
+                _db, claimed.Id, wait.ExecutionKind, "claim-not-launched", ct);
+        }
+
+        await transaction.CommitAsync(ct);
+    }
+
+    private async Task<LaunchCommit> ConsumeAndCommitLaunchAsync(
+        AgentTask claimed, Guid sessionId, CancellationToken ct)
+    {
+        if (_landBoundary is not null)
+            await _landBoundary.ReachedAsync("capacity-consume-before", claimed.Id, sessionId, ct);
+        if (_capacityRecovery is { IsEnabled: true }
+            && await FindUnfinishedCapacityWaitAsync(claimed, ct) is { } wait)
+        {
+            var redemption = await _capacityRecovery.RedeemOnAsync(
+                _db, wait.Id, wait.ActionKey, wait.ExecutionKind,
+                CapacityRedemptionPath.Dispatch, ct, consume: true, launchSessionId: sessionId);
+            if (!redemption.Ok)
+            {
+                await AbandonClaimAsync(ct);
+                await WarnCapacityConsumeRefusedAsync(claimed, redemption.Reason ?? "refused", ct);
+                return LaunchCommit.Refused;
+            }
+        }
+
+        var transaction = _db.Database.CurrentTransaction
+            ?? throw new InvalidOperationException("Capacity consume requires the claim transaction.");
+        try
+        {
+            await transaction.CommitAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            await AbandonClaimAsync(ct);
+            await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), ct);
+            var stored = await _db.AgentTasks.AsNoTracking()
+                .FirstAsync(t => t.Id == claimed.Id, CancellationToken.None);
+            if (stored.Status == AgentTaskStatus.Dispatched && stored.AgentSessionId == sessionId)
+                return LaunchCommit.LostAck;
+            return LaunchCommit.Refused;
+        }
+
+        return LaunchCommit.Committed;
+    }
+
+    /// <summary>
+    /// Class 2 keeps the task queued. Class 4 releases the reservation and returns false so the
+    /// caller rethrows into the tick's failure path. Cancellation abandons and rethrows.
+    /// </summary>
+    private async Task<bool> FailCapacityLaunchAsync(AgentTask claimed, Exception ex, CancellationToken ct)
+    {
+        if (ex is OperationCanceledException && ct.IsCancellationRequested)
+        {
+            await AbandonClaimAsync(ct);
+            throw ex;
+        }
+
+        await AbandonClaimAsync(ct);
+        if (IsTransientCapacity(ex))
+        {
+            await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), ct);
+            return true;
+        }
+
+        await ReleaseFailedReservationAsync(claimed, ct);
+        return false;
+    }
+
+    private async Task ReleaseFailedReservationAsync(AgentTask claimed, CancellationToken ct)
+    {
+        if (_capacityRecovery is null)
+            return;
+        try
+        {
+            await _capacityRecovery.ReleaseClaimReservationAsync(
+                claimed.Id, claimed.AgentKind, "claim-consume-failed", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Capacity reservation release failed for task {ShortId}",
+                DelegationReportFormatter.Short(claimed.Id));
+        }
+    }
+
+    private async Task WarnCapacityConsumeRefusedAsync(AgentTask claimed, string reason, CancellationToken ct)
+    {
+        var detail = $"capacity consume refused: {reason}";
+        if (await _db.AgentTaskEvents.AsNoTracking().AnyAsync(e =>
+                e.AgentTaskId == claimed.Id && e.Type == AgentTaskEventType.Warning && e.Detail == detail, ct))
+            return;
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = claimed.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = detail,
+            At = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private static bool IsTransientCapacity(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg && pg.SqlState is "40P01" or "40001" or "55P03")
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string CapacityFailureLabel(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg)
+                return pg.SqlState;
+        }
+
+        return ex.Message;
+    }
+
+    private async Task<DispatchOneResult> FinishParallelHoldAsync(AgentTask claimed, CancellationToken ct)
+    {
+        var decision = _refusedParallel
+            ?? throw new InvalidOperationException("Parallel hold is missing its decision.");
+        _refusedParallel = null;
+        var detail = FormatParallelHold(decision);
+        var taskId = claimed.Id;
+        await AbandonClaimAsync(ct);
         var previous = await _db.AgentTaskEvents.AsNoTracking()
             .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
             .OrderByDescending(e => e.At)
@@ -8050,6 +8266,13 @@ public sealed partial class AgentTaskDispatcher
         }
 
         return DispatchOneResult.HeldOnParallel;
+    }
+
+    private enum LaunchCommit
+    {
+        Committed = 0,
+        Refused = 1,
+        LostAck = 2,
     }
 
     internal enum ReuseOutcome
@@ -8229,6 +8452,15 @@ public sealed partial class AgentTaskDispatcher
             if (desired.IsEmpty && receipt is not null) return ReuseOutcome.SpawnFresh;
         }
 
+        // Previous owner, then the live session, then the agent. Recheck before any mutation
+        // so a stop that already holds the session meets this claim in the same order.
+        var previous = await LockPreviousTokenOwnerAsync(claimed, session, ct);
+        await LockSessionKeyShareAsync(session, ct);
+        await LockPhysicalAgentAsync(agent.Id, ct);
+        await _db.Entry(agent).ReloadAsync(ct);
+        if (!StillWarm(agent, session))
+            return claimed.AgentId == agent.Id ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
+
         agent.Status = AgentStatus.Running;
         agent.PoolIdleSince = null;
         agent.PoolReservedForRootTaskId = null;
@@ -8239,9 +8471,7 @@ public sealed partial class AgentTaskDispatcher
         claimed.AgentSessionId = session;
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
-        // Prior-owner row lock, then the parallel key, then the token move. Removal of the
-        // unused raw token waits until the caller commits.
-        var previous = await LockPreviousTokenOwnerAsync(claimed, session, ct);
+        // The parallel key is last. Removal of the unused raw token waits until the caller commits.
         if (await RefuseParallelAsync(claimed, ct))
             return await FinishParallelReuseAsync(claimed, ct);
         claimed.Status = AgentTaskStatus.Dispatched;
@@ -8479,6 +8709,7 @@ public sealed partial class AgentTaskDispatcher
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
+        await LockSessionKeyShareAsync(session, ct);
         if (await RefuseParallelAsync(claimed, ct))
             return await FinishParallelReuseAsync(claimed, ct);
         WarnIfStandingInheritedEnvDiffers(claimed, standing, now);
