@@ -120,9 +120,13 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
             new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
         if (!_inFlight.TryAdd(taskId, entry))
             return false;
+        StartedCount++;
         _ = Task.Run(() => RunAsync(taskId, entry), CancellationToken.None);
         return true;
     }
+
+    /// <summary>How many preparations this process actually started. A refused TryAdd does not count.</summary>
+    internal int StartedCount { get; private set; }
 
     /// <summary>CARD-0653: mirrors already asked of this runner, excluding the task being gated.</summary>
     public int InFlightCount(string runnerId, Guid exceptTaskId) =>
