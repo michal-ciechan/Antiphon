@@ -268,22 +268,37 @@ function ConvertTo-QualificationSupervisorHeartbeatJson {
     if ($null -ne $since -and -not [string]::IsNullOrWhiteSpace([string]$since)) {
         $sinceJson = '"' + (ConvertTo-QualificationHeartbeatJsonString ([string]$since)) + '"'
     }
-    $lines = @(
-        '"cpuSeconds":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'cpuSeconds'))),
-        '"bytes":' + ([int64](ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'bytes'))).ToString([Globalization.CultureInfo]::InvariantCulture),
-        '"idleMinutes":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleMinutes'))),
-        '"trx":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'trx'))),
-        '"newest":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'newest'))) + '"',
-        '"hangSuspected":' + $hangValue,
-        '"hangReason":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'hangReason'))) + '"',
-        '"suspectPids":[' + ($pidText -join ',') + ']',
-        '"idleBudgetMinutes":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleBudgetMinutes'))),
-        '"idleBudgetSource":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'idleBudgetSource'))) + '"',
-        '"idleSinceUtc":' + $sinceJson,
-        '"observedAtUtc":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'observedAtUtc'))) + '"',
-        '"hostCpu":[' + ($sampleText -join ',') + ']'
-    )
-    return '{' + ($lines -join ',') + '}'
+    $lines = New-Object System.Collections.Generic.List[string]
+    $cpuText = Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'cpuSeconds'))
+    $byteText = ([int64](ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'bytes'))).ToString([Globalization.CultureInfo]::InvariantCulture)
+    $idleText = Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleMinutes'))
+    $trxText = Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'trx'))
+    $newestText = ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'newest'))
+    $reasonText = ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'hangReason'))
+    $budgetText = Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleBudgetMinutes'))
+    $sourceText = ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'idleBudgetSource'))
+    $observedText = ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'observedAtUtc'))
+    $lines.Add('"cpuSeconds":' + $cpuText)
+    $lines.Add('"bytes":' + $byteText)
+    $lines.Add('"idleMinutes":' + $idleText)
+    $lines.Add('"trx":' + $trxText)
+    $lines.Add('"newest":"' + $newestText + '"')
+    $lines.Add('"hangSuspected":' + $hangValue)
+    $lines.Add('"hangReason":"' + $reasonText + '"')
+    $lines.Add('"suspectPids":[' + ($pidText -join ',') + ']')
+    $lines.Add('"idleBudgetMinutes":' + $budgetText)
+    $lines.Add('"idleBudgetSource":"' + $sourceText + '"')
+    $lines.Add('"idleSinceUtc":' + $sinceJson)
+    $lines.Add('"observedAtUtc":"' + $observedText + '"')
+    $lines.Add('"hostCpu":[' + ($sampleText -join ',') + ']')
+    $joined = New-Object System.Text.StringBuilder
+    [void]$joined.Append('{')
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($index -gt 0) { [void]$joined.Append(',') }
+        [void]$joined.Append($lines[$index])
+    }
+    [void]$joined.Append('}')
+    return $joined.ToString()
 }
 
 function Write-QualificationSupervisorHeartbeat {
