@@ -8649,16 +8649,17 @@ c994_status_proof() {
 # Bound host-owned receipts supply an offline audit image. A preview is never a
 # lookup authority. A current-SHA image wins. Otherwise the newest completed
 # non-dry-run receipt for this project, project id, and retirement stamp does,
-# including a receipt written at another source SHA. Two current-SHA images that
-# differ refuse. An empty matching receipt refuses only when the caller is the
-# audit lookup and nothing else binds. The chosen image must still be present
-# on the host.
+# including a receipt written at another source SHA. A receipt for a different
+# retirement is ignored. Two current-SHA images that differ refuse. An empty
+# matching receipt refuses only when the caller is the audit lookup and nothing
+# else binds. Partial, preview, refused, and dry-run receipts from another SHA
+# do not count. The chosen image must still be present on the host.
 c994_lookup_image() {
     require_lane host
     local operation="${1:-}" file record candidate='' found_id='' root allow=false audit=false
     local named_file=false match dry outcome src mtime opid inspected=''
     local same_image='' same_original='' cross_image='' cross_original='' cross_mtime=0 cross_op=''
-    local identity_mismatch=0 saw_empty=0
+    local saw_empty=0
     # allow-preview accepts a dry-run receipt only when the caller named that operation.
     # audit is the C1008 volume gate. Container cleanup does not pass it.
     [ "${2:-}" = allow-preview ] && [ -n "$operation" ] && allow=true
@@ -8693,14 +8694,14 @@ c994_lookup_image() {
         match="$(printf '%s' "$record" | jq -r --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
             'if .project==$project and .projectId==$id and .retiredAt==$stamp then "yes" else "no" end')"
         if [ "$match" != yes ]; then
-            # The named receipt is a different project or retirement. Do not borrow another file.
+            # Another retirement is history. Only the named file refuses.
             [ "$named_file" = true ] && return 2
-            identity_mismatch=1
             continue
         fi
         dry="$(printf '%s' "$record" | jq -r .dryRun)"
         outcome="$(printf '%s' "$record" | jq -r .outcome)"
         candidate="$(printf '%s' "$record" | jq -r .image)"
+        src="$(printf '%s' "$record" | jq -r .sourceSha)"
         # Naming a dry-run receipt does not authorize apply, and it does not borrow a sibling.
         if [ "$named_file" = true ] && [ "$dry" = true ] && [ "$allow" != true ]; then return 2; fi
         if [ -z "$candidate" ]; then
@@ -8708,11 +8709,12 @@ c994_lookup_image() {
             [ "$outcome" = pending ] && continue
             # An ineligible dry-run is not an empty-image match.
             if [ "$dry" = true ] && { [ "$allow" != true ] || [ "$named_file" != true ]; }; then continue; fi
+            # Partial, preview, refused, and dry-run receipts from another SHA do not count.
+            if [ "$src" != "$SHA" ] && { [ "$dry" != false ] || [ "$outcome" != completed ]; }; then continue; fi
             saw_empty=1
             continue
         fi
         found_id="$(printf '%s' "$record" | jq -r '.originalCleanupOperationId // .operationId')"
-        src="$(printf '%s' "$record" | jq -r .sourceSha)"
         if [ "$src" = "$SHA" ]; then
             if [ "$dry" = false ] || { [ "$allow" = true ] && [ "$named_file" = true ]; }; then
                 [[ "$candidate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
@@ -8758,10 +8760,9 @@ c994_lookup_image() {
         return 0
     fi
     # A settled matching receipt with no image refuses on the audit lookup only.
-    # Container cleanup keeps an empty image for an absent temp. A different
-    # retirement still refuses when nothing else matches. No receipt stays unpinned.
+    # Container cleanup keeps an empty image for an absent temp. No receipt,
+    # and a receipt for a different retirement, stays unpinned.
     if [ "$audit" = true ] && [ "$saw_empty" = 1 ]; then return 2; fi
-    if [ "$identity_mismatch" = 1 ]; then return 2; fi
     C994_LOOKUP=unpinned
     C994_IMAGE=''
     C994_ORIGINAL=''
