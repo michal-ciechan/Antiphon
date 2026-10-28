@@ -874,6 +874,178 @@ try {
     Remove-Item -LiteralPath $capRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A several-thousand-result TRX and a JSONL shard past the old 256 KiB / 4000 line
+# caps must still yield per-test stats and phase fields inside the post-exit budget.
+$wideRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-wide-' + [guid]::NewGuid().ToString('N'))
+$wideLog = Join-Path $wideRoot 'logs'
+$wideTiming = Join-Path $wideLog 'timing'
+New-Item -ItemType Directory -Path $wideTiming -Force | Out-Null
+try {
+    $wideTrx = Join-Path $wideLog 'antiphon-g5.trx'
+    $wideWriter = New-Object System.IO.StreamWriter($wideTrx, $false, (New-Object System.Text.UTF8Encoding $false))
+    try {
+        $wideWriter.WriteLine('<?xml version="1.0" encoding="utf-8"?>')
+        $wideWriter.WriteLine('<TestRun><Results>')
+        for ($i = 1; $i -le 5000; $i++) {
+            $wideName = ('T{0:D4}' -f $i)
+            $wideDur = [TimeSpan]::FromSeconds($i).ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+            $wideWriter.Write('<UnitTestResult testId="')
+            $wideWriter.Write($wideName)
+            $wideWriter.Write('" testName="')
+            $wideWriter.Write($wideName)
+            $wideWriter.Write('" duration="')
+            $wideWriter.Write($wideDur)
+            $wideWriter.Write('" outcome="Passed"')
+            if ($i -eq 2500) {
+                $wideWriter.Write('><Output><StdOut>')
+                $wideWriter.Write('ANTIPHON_TEST_PHASE_ID native-wide')
+                $wideWriter.Write(('x' * 200000))
+                $wideWriter.Write('</StdOut></Output></UnitTestResult>')
+            } else {
+                $wideWriter.Write(' />')
+            }
+            $wideWriter.WriteLine()
+        }
+        $wideWriter.WriteLine('</Results></TestRun>')
+    } finally {
+        $wideWriter.Dispose()
+    }
+    $wideBytes = [int64](Get-Item -LiteralPath $wideTrx).Length
+    $wideShard = Join-Path $wideTiming 'cases-11-abc.jsonl'
+    $shardWriter = New-Object System.IO.StreamWriter($wideShard, $false, (New-Object System.Text.UTF8Encoding $false))
+    try {
+        $shardWriter.WriteLine('{"recordKind":"header","version":1,"pid":11,"nonce":"abc","runId":"run-5k","groupId":"g5","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}')
+        $shardWriter.WriteLine('{"recordKind":"fixture","fixtureId":"fix-big","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1500}]}')
+        $pad = ('p' * 80)
+        for ($i = 0; $i -lt 4500; $i++) {
+            $shardWriter.WriteLine(('{"recordKind":"complete","testId":"n' + $i + '","pad":"' + $pad + '"}'))
+        }
+    } finally {
+        $shardWriter.Dispose()
+    }
+    $shardBytes = [int64](Get-Item -LiteralPath $wideShard).Length
+    $shardLines = 0
+    $lineReader = [IO.File]::OpenText($wideShard)
+    try {
+        while ($null -ne $lineReader.ReadLine()) { $shardLines++ }
+    } finally {
+        $lineReader.Dispose()
+    }
+    $readSw = [Diagnostics.Stopwatch]::StartNew()
+    $wideStats = Get-QualificationTrxStats -TrxPath $wideTrx
+    $readSw.Stop()
+    Write-Host ('MEASURED trx-5000-read-ms=' + [math]::Round($readSw.Elapsed.TotalMilliseconds, 1) + ' bytes=' + $wideBytes)
+    $aggSw = [Diagnostics.Stopwatch]::StartNew()
+    $wideAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 3 -ChunkResult 'KEEP-3' -LogRoot $wideLog -TimingRoot $wideTiming -Suite 'antiphon' -Chunk 'g5' -TrxPath $wideTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:05:00.0000000Z' -RunId 'run-5k' -Attempt '1'
+    $aggSw.Stop()
+    Write-Host ('MEASURED trx-5000-terminal-ms=' + [math]::Round($aggSw.Elapsed.TotalMilliseconds, 1) + ' shard-bytes=' + $shardBytes + ' shard-lines=' + $shardLines)
+    $wideDoc = Get-Content -LiteralPath (Join-Path $wideLog 'antiphon-g5.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $wideRank = ($null -ne $wideStats -and [int]$wideStats.Count -eq 5000 -and [math]::Abs([double]$wideStats.P50 - 2500) -lt 0.001 -and [math]::Abs([double]$wideStats.P95 - 4750) -lt 0.001 -and [math]::Abs([double]$wideStats.Max - 5000) -lt 0.001)
+    $wideSlow = $false
+    if ($wideRank) {
+        $top = @($wideStats.Slowest)
+        $wideSlow = ($top.Count -eq 20 -and [string]$top[0].name -eq 'T5000' -and [math]::Abs([double]$top[0].seconds - 5000) -lt 0.001)
+    }
+    $wideDocOk = ($wideBytes -gt 262144 -and $shardBytes -gt 262144 -and $shardLines -gt 4000 -and [int]$wideAgg.ChunkExitCode -eq 3 -and [string]$wideAgg.ChunkResult -eq 'KEEP-3' -and [string]$wideDoc.why -eq '' -and [int]$wideDoc.testCount -eq 5000 -and [math]::Abs([double]$wideDoc.p50Seconds - 2500) -lt 0.001 -and [math]::Abs([double]$wideDoc.p95Seconds - 4750) -lt 0.001 -and [math]::Abs([double]$wideDoc.maxSeconds - 5000) -lt 0.001 -and [math]::Abs([double]$wideDoc.fixtureSetupSeconds - 1.5) -lt 0.001 -and $readSw.Elapsed.TotalMilliseconds -lt 200 -and $aggSw.Elapsed.TotalMilliseconds -lt 200)
+    Assert-Check ($wideRank -and $wideSlow -and $wideDocOk) 'five-thousand-result-trx-streams-inside-budget'
+
+    $hugeLog = Join-Path $wideRoot 'huge-logs'
+    $hugeTiming = Join-Path $hugeLog 'timing'
+    New-Item -ItemType Directory -Path $hugeTiming -Force | Out-Null
+    $hugeTag = Join-Path $hugeLog 'antiphon-g6.trx'
+    $hugeTagWriter = New-Object System.IO.StreamWriter($hugeTag, $false, (New-Object System.Text.UTF8Encoding $false))
+    try {
+        $hugeTagWriter.Write('<TestRun><Results><UnitTestResult testName="')
+        $chunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
+        $hugeTagWriter.Flush()
+        $raw = $hugeTagWriter.BaseStream
+        for ($n = 0; $n -lt 8; $n++) { $raw.Write($chunk, 0, $chunk.Length) }
+    } finally {
+        $hugeTagWriter.Dispose()
+    }
+    $hugeSw = [Diagnostics.Stopwatch]::StartNew()
+    $hugeAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 4 -ChunkResult 'KEEP-4' -LogRoot $hugeLog -TimingRoot $hugeTiming -Suite 'antiphon' -Chunk 'g6' -TrxPath $hugeTag -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'run-huge' -Attempt '1'
+    $hugeSw.Stop()
+    $hugeDoc = Get-Content -LiteralPath (Join-Path $hugeLog 'antiphon-g6.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $hugePhases = ($null -eq $hugeDoc.p50Seconds -and $null -eq $hugeDoc.fixtureSetupSeconds -and @($hugeDoc.slowest).Count -eq 0)
+    Assert-Check ($hugeSw.Elapsed.TotalSeconds -lt 0.2 -and [int]$hugeAgg.ChunkExitCode -eq 4 -and [string]$hugeAgg.ChunkResult -eq 'KEEP-4' -and [string]$hugeDoc.why -eq 'timing-read-refused' -and $hugePhases) 'unterminated-trx-tag-stays-inside-budget'
+} catch {
+    Write-Host ('FAIL five-thousand-result-trx ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    Remove-Item -LiteralPath $wideRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# The real nightly heartbeat (the pre-launch Update-QualificationChunkTiming) must stay
+# non-terminal: a readable TRX already at the chunk path must not be parsed into the
+# sidecar before the owned process starts.
+$heartRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-heart-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $heartRoot -Force | Out-Null
+$heartLog = Join-Path $heartRoot 'logs'
+New-Item -ItemType Directory -Path $heartLog -Force | Out-Null
+$heartSeen = Join-Path $heartRoot 'seen.json'
+$heartSeam = Join-Path $heartRoot 'seam.ps1'
+try {
+    $probeTrx = @'
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun><Results>
+<UnitTestResult testId="probe" testName="HEARTBEAT-PROBE" duration="00:00:09" outcome="Passed" />
+</Results></TestRun>
+'@
+    [IO.File]::WriteAllText((Join-Path $heartLog 'antiphon-all.trx'), $probeTrx)
+    @'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $argsText = @($ArgumentList) -join " "
+        $results = ""
+        $trxName = ""
+        for ($i = 0; $i -lt @($ArgumentList).Count; $i++) {
+            if ([string]$ArgumentList[$i] -eq "--report-trx-filename") { $trxName = [string]$ArgumentList[$i + 1] }
+            if ([string]$ArgumentList[$i] -eq "--results-directory") { $results = [string]$ArgumentList[$i + 1] }
+        }
+        if ($trxName -and $results -and ($argsText -notmatch "--list-tests")) {
+            $side = Join-Path $results ([IO.Path]::GetFileNameWithoutExtension($trxName) + ".timing.json")
+            $doc = $null
+            if (Test-Path -LiteralPath $side) {
+                $doc = Get-Content -LiteralPath $side -Raw -Encoding UTF8 | ConvertFrom-Json
+            }
+            $names = @()
+            if ($null -ne $doc -and $doc.PSObject.Properties.Name -contains "slowest" -and $null -ne $doc.slowest) {
+                foreach ($row in @($doc.slowest)) { $names += [string]$row.name }
+            }
+            $payload = [ordered]@{
+                exists = [bool](Test-Path -LiteralPath $side)
+                lastPhase = $(if ($null -ne $doc) { [string]$doc.lastPhase } else { "" })
+                why = $(if ($null -ne $doc) { [string]$doc.why } else { "" })
+                testCount = $(if ($null -ne $doc -and $null -ne $doc.testCount) { [int]$doc.testCount } else { -1 })
+                p50 = $(if ($null -ne $doc) { $doc.p50Seconds } else { $null })
+                names = ($names -join ",")
+            }
+            [IO.File]::WriteAllText($env:QTIMING_HEART_SEEN, ($payload | ConvertTo-Json -Compress))
+        }
+        return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+    }
+}
+'@ | Set-Content -LiteralPath $heartSeam -Encoding ascii
+    $env:QTIMING_HEART_SEEN = $heartSeen
+    $heartRun = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $heartLog -TimingRoot (Join-Path $heartLog 'timing') -Suites @('antiphon') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'heart-beat' -Trigger 'manual' -SeamsPath $heartSeam -AllowSharedTree
+    $heartOk = $false
+    if (Test-Path -LiteralPath $heartSeen) {
+        $seen = Get-Content -LiteralPath $heartSeen -Raw -Encoding UTF8 | ConvertFrom-Json
+        $heartOk = ([bool]$seen.exists -and [string]$seen.lastPhase -eq 'run' -and [string]$seen.why -eq '' -and [int]$seen.testCount -eq 0 -and $null -eq $seen.p50 -and [string]$seen.names -notmatch 'HEARTBEAT-PROBE')
+    }
+    Assert-Check ($null -ne $heartRun -and $heartOk) 'nightly-heartbeat-stays-non-terminal'
+} catch {
+    Write-Host ('FAIL nightly-heartbeat-stays-non-terminal ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    Remove-Item Env:QTIMING_HEART_SEEN -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $heartRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failed -gt 0) {
     Write-Host ('FAILED ' + $failed)
     exit 1
