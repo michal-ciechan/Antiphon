@@ -396,11 +396,16 @@ A no-index checkout is accepted only with no content outside its top-level .git,
 
 The receipt records `repositories` and `partial` on success. On refusal `auditFailure` names the check, exit status and redacted repository path relative to the work volume; a first refusal also initializes `audit`. A saved successful `audit` is never overwritten by failure diagnostics, so unchanged publication proof can resume after connectivity recovers. The audit lines carry only local Git facts (one line per repository entry and per retained tip of each common directory), so ignored content and a moving origin leave the before/after comparison equal. An ordinary land never moves the task's source branch (schema 3 pushes the rebased target only), so a land finishing between the two audits leaves them equal as well; the one land shape that can refuse is an adoption land, which rewinds origin's task branch to the reviewed SHA so that commits past it on a runner mirror become unpublished work and the audit refuses `RecycleUnpublishedWork` (CARD-1353). `GithubTokenAbsent` stays a warning: this audit does not read the token. The token is used only for secondary receive-pack probes.
 
-Preview each destructive phase with `-DryRun`; `all` is not a preview phase. The
-preview reads inventories and prints the exact targets, preserved names and
-`auditPending=true` when an offline audit would need a helper. It grants no apply
-authority. Apply obtains fresh proofs, stops/removes only inspected owned container IDs,
-and never prunes.
+Preview each destructive phase with `-DryRun`; `all` is not a preview phase. A
+retire-temp preview bound to a cleanup receipt runs the same publication audit as
+apply, without a helper container. The work volume is mounted read-only at `/work`,
+and `runner-tmp` when it exists is mounted read-only at the path the audit reads as
+`C1008_TMP_MOUNT`, inside a private mount namespace. Every mount alias of that
+storage (the same device and filesystem root, including the original mount path) is
+read-only. The audit refuses `RecycleGitAuditUnknown` if those volume bytes change.
+That preview prints `auditPending=false`. A preview without a pinned image prints
+`auditPending=true` and does not audit. A preview grants no apply authority. Apply
+obtains fresh proofs, stops/removes only inspected owned container IDs, and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under
