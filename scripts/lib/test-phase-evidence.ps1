@@ -1419,7 +1419,13 @@ function ConvertTo-TestPhaseSummaryRows {
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
     if (Test-Path -LiteralPath $timing) {
         $shards = @(Get-ChildItem -LiteralPath $timing -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
-        foreach ($chunkDir in @(Get-ChildItem -LiteralPath $timing -Directory -Filter 'chunk-*' -ErrorAction SilentlyContinue)) {
+        foreach ($chunkDir in @(Get-ChildItem -LiteralPath $timing -Force -Filter 'chunk-*' -ErrorAction SilentlyContinue)) {
+            $kind = Test-QualificationTimingDirectory -Path $chunkDir.FullName
+            if ($kind -eq 'symlink') {
+                if (-not $quality.Contains('chunk-link-refused')) { $quality.Add('chunk-link-refused') }
+                continue
+            }
+            if ($kind -ne 'directory') { continue }
             $shards += @(Get-ChildItem -LiteralPath $chunkDir.FullName -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
         }
     }
@@ -1969,6 +1975,30 @@ function ConvertFrom-QualificationOwnerName {
     }
 }
 
+# Same budget as TestTimingSession.OwnerHashPrefixLength: the longest prefix
+# whose owner path is still 240 characters under the real candidate root.
+function Get-QualificationOwnerPrefixLength {
+    $proc = '2147483647'
+    $nonce = '0' * 32
+    $windowsRoot = 'C:\Antiphon\releases\candidates\rc-2026-10-27-' + ('0' * 12) + '\logs\timing-' + ('0' * 32)
+    $bare = $windowsRoot + '\chunk-' + ('0' * 64) + '\own--' + $proc + '-' + $nonce + '.txt'
+    $room = 240 - $bare.Length
+    if ($room -lt 1) { return 1 }
+    if ($room -gt 64) { return 64 }
+    return $room
+}
+
+function Test-QualificationOwnerToken {
+    param([string]$Token, [string]$Identity)
+    if ([string]::IsNullOrEmpty($Token) -or [string]::IsNullOrEmpty($Identity)) { return $false }
+    if ($Token -ceq $Identity) { return $true }
+    $prefix = Get-QualificationOwnerPrefixLength
+    if ($Token.Length -ne $prefix) { return $false }
+    if ($Identity.Length -lt $prefix) { return $false }
+    if ($Identity.Substring(0, $prefix) -ceq $Token) { return $true }
+    return $false
+}
+
 function New-QualificationEmptyContribution {
     return [pscustomobject]@{ fixtures = @{}; processSpawn = $null; processWait = $null }
 }
@@ -2090,7 +2120,7 @@ function Get-QualificationPhaseSums {
         if ([string]$entry.Name -notlike 'own-*.txt') { continue }
         $owner = ConvertFrom-QualificationOwnerName -Name $entry.Name
         if ($null -eq $owner) { continue }
-        if (-not [string]::IsNullOrEmpty($ourToken) -and $owner.Token -eq $ourToken) {
+        if (Test-QualificationOwnerToken -Token $owner.Token -Identity $ourToken) {
             $ownedNames[$owner.Journal] = $true
         }
     }
