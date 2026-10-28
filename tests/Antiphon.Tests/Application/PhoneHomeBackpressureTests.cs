@@ -21,12 +21,12 @@ public partial class PhoneHomeBackpressureTests
         await h.PrepareMentionAsync();
         var chunks = new[] { "first\n", "@fa", "ke hello", "\n" };
         h.Output(h.SessionId, 1, chunks[0]);
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         for (var i = 1; i < chunks.Length; i++) h.Output(h.SessionId, i + 1, chunks[i]);
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 4, "the first four include the held observer");
         h.Commands.HoldList = true;
         var rpc = new PhoneHomeRunnerClient(h.Live).ListAsync(CancellationToken.None);
-        await h.Commands.ListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Commands.ListEntered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         var nonce = "delivery-" + Guid.NewGuid().ToString("N");
         h.Transcript(h.SessionId, 5, nonce, nonce);
         h.Transcript(h.SessionId, 6, nonce + "-end", "", TranscriptKinds.TurnEnd);
@@ -49,7 +49,7 @@ public partial class PhoneHomeBackpressureTests
             var heartbeat = h.Live.LastHeartbeatUtc;
             h.Clock.Advance(TimeSpan.FromSeconds(2));
             h.Commands.ReleaseList.Set();
-            (await rpc.WaitAsync(TimeSpan.FromSeconds(5))).Count.ShouldBe(1);
+            (await rpc.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait)).Count.ShouldBe(1);
             await PhoneHomeHostedRunner.UntilAsync(() => h.Live.LastHeartbeatUtc > heartbeat,
                 "heartbeats bypass the event credit wait");
             h.Live.PendingEvents.ShouldBe(4);
@@ -88,7 +88,7 @@ public partial class PhoneHomeBackpressureTests
         await using var h = await PhoneHomeHostedRunner.CreateAsync(count: 16);
         var other = await h.AddSessionAsync();
         h.Output(h.SessionId, 1, "held-session-A");
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         h.Transcript(h.SessionId, 2, "a-behind-output", "A");
         h.Exit(h.SessionId, 3, h.Generation);
         h.Transcript(other, 1, "b-progress", "B");
@@ -154,7 +154,7 @@ public partial class PhoneHomeBackpressureTests
         await using var h = await PhoneHomeHostedRunner.CreateAsync();
         var secretText = "never-log-payload-" + Guid.NewGuid().ToString("N");
         h.Output(h.SessionId, 1, secretText);
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         h.Clock.Advance(TimeSpan.FromSeconds(2));
         await PhoneHomeHostedRunner.UntilAsync(() => h.Logs.Entries.Any(e => Equals(e["Phase"], "output.publish")),
             "a still-held output.publish phase must be attributed by supervision");
@@ -174,7 +174,7 @@ public partial class PhoneHomeBackpressureTests
         var other = await h.AddSessionAsync();
         h.Activity.Hold = true;
         h.Output(other, 1, secretText);
-        await h.Activity.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Activity.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         h.Clock.Advance(TimeSpan.FromSeconds(10));
         await PhoneHomeHostedRunner.UntilAsync(() => h.Logs.Entries.Any(e => Equals(e["Phase"], "output.activity")),
             "the independently held activity save is named while still running");

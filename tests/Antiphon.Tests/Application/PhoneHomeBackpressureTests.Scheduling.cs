@@ -79,7 +79,7 @@ public partial class PhoneHomeBackpressureTests
         {
             foreach (var id in ids) Emit(id, 1);
             Emit(ids[0], 2); Emit(ids[0], 3);
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             await PhoneHomeHostedRunner.UntilAsync(() => live.Diagnostics.Snapshot().Sessions.Sum(s => s.Events) == 7,
                 "all seven frames reached the scheduler while four observers are held");
             live.PendingEvents.ShouldBe(7, "active plus every internal queue retain the global reservation");
@@ -114,7 +114,7 @@ public partial class PhoneHomeBackpressureTests
         await using var h = await PhoneHomeHostedRunner.CreateAsync(observeCompletion: false);
         h.Bus.IgnoreCancellation = true;
         h.Output(h.SessionId, 1, "uncooperative publication");
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await h.Bus.Entered.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
         var old = h.Live;
         await old.DisposeAsync("test-replacement");
         var reconnect = h.ReconnectAsync();
@@ -126,7 +126,7 @@ public partial class PhoneHomeBackpressureTests
             h.Host.Directory.SnapshotLive()!.DispatchEligible.ShouldBeFalse();
             old.PendingEvents.ShouldBe(1, "uncooperative observer keeps its reservation until it actually returns");
             h.Bus.Release.TrySetResult();
-            await reconnect.WaitAsync(TimeSpan.FromSeconds(5));
+            await reconnect.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
             h.Live.DispatchEligible.ShouldBeTrue();
             old.PendingEvents.ShouldBe(0);
         }
