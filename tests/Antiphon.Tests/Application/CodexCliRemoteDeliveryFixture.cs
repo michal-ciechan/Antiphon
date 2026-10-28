@@ -255,10 +255,19 @@ internal static partial class CodexCliRemoteDeliveryFixture
 
     internal static string RulesPath(string cwd, Guid sessionId)
     {
-        var separator = cwd.StartsWith(@"\\", StringComparison.Ordinal)
-            || (cwd.Length >= 3 && cwd[1] == ':' && cwd[2] == '\\') ? "\\" : "/";
-        return cwd.TrimEnd('/', '\\') + separator + "instructions" + separator + "grok"
-            + separator + sessionId.ToString("N") + separator + "rules.md";
+        // RunnerWorkspaceService reports Windows mirrors with forward slashes (C:/..., //server/...).
+        // Receipt grammar is X:\ or \\server\share, which is what ValidateReceiptPath accepts.
+        var drive = cwd.Length >= 3 && char.IsAsciiLetter(cwd[0]) && cwd[1] == ':'
+            && (cwd[2] == '\\' || cwd[2] == '/');
+        var unc = cwd.StartsWith(@"\\", StringComparison.Ordinal)
+            || cwd.StartsWith("//", StringComparison.Ordinal);
+        if (drive || unc)
+        {
+            var normalized = cwd.Replace('/', '\\').TrimEnd('\\');
+            return normalized + @"\instructions\grok\" + sessionId.ToString("N") + @"\rules.md";
+        }
+
+        return cwd.TrimEnd('/', '\\') + "/instructions/grok/" + sessionId.ToString("N") + "/rules.md";
     }
 
     internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
