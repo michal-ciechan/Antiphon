@@ -327,6 +327,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
         if (!Nodes.TryGetValue(path, out var node) || node.Target is not null || node.Stat.Kind != "file")
             throw new IOException("anchored-not-file");
         if (length < 0 || length > node.Bytes.Length) throw new IOException("anchored-truncate-failed");
+        if (node.Stat.Links > 1) throw new AnchoredHardLinkException();
         var prefix = new byte[length];
         Array.Copy(node.Bytes, prefix, length);
         node.Bytes = prefix;

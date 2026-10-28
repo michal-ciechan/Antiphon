@@ -266,7 +266,17 @@ public sealed class CheckpointTempRootSweep
             {
                 var directory = Path.GetDirectoryName(file.Path);
                 if (string.IsNullOrEmpty(directory)) throw new IOException("anchored-path-unsafe");
-                _io.TruncateAnchored(directory, name, length - left);
+                try
+                {
+                    _io.TruncateAnchored(directory, name, length - left);
+                }
+                catch (AnchoredHardLinkException)
+                {
+                    // The other name keeps the bytes, so this name is removed and not counted.
+                    UnlinkEntry(file.Path, directory: false);
+                    removed.Add(file.Path);
+                    continue;
+                }
                 return (bytes + left, false);
             }
             UnlinkEntry(file.Path, directory: false);
