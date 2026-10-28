@@ -7,7 +7,9 @@ public sealed record ProviderDialogObservation(
     Guid SessionId, Guid RuntimeEpoch, DateTime? AcceptedStartedAt,
     long OutputSequence, long InputRevision, ProviderDialogState State,
     string? Kind = null, bool? CanCancel = null, bool InputHistoryKnown = false,
-    SubmittedInputProof? SubmittedInput = null)
+    SubmittedInputProof? SubmittedInput = null,
+    bool Adopted = false, bool InputUncertain = false,
+    ProviderDialogState ScreenState = ProviderDialogState.Unknown)
 {
     public const string Capability = "claudeDialogGuardV1";
 }

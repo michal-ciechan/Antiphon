@@ -384,6 +384,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public DateTime? AcceptedStartedAt { get; set; }
     public bool DialogGuardEnabled { get; set; }
+    public bool DialogAdopted { get; set; }
+    public bool DialogInputUncertain { get; set; }
     private readonly Guid _dialogEpoch = Guid.NewGuid();
     private long _dialogInputRevision;
     public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
@@ -391,13 +393,17 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         ct.ThrowIfCancellationRequested();
         if (!DialogGuardEnabled) return Task.FromResult<ProviderDialogObservation?>(null);
         var observed = ClaudeDialogObservation.Observe(SnapshotRenderedScreen());
+        var classified = observed.State switch
+        {
+            ClaudeDialogState.Clear => ProviderDialogState.Clear,
+            ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
+            _ => ProviderDialogState.Unknown
+        };
+        var known = !DialogAdopted && !DialogInputUncertain;
+        var state = known ? classified : ProviderDialogState.Unknown;
         return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
-            SnapshotSequence, _dialogInputRevision, observed.State switch
-            {
-                ClaudeDialogState.Clear => ProviderDialogState.Clear,
-                ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
-                _ => ProviderDialogState.Unknown
-            }, observed.Kind.ToString(), observed.CanCancel, true));
+            SnapshotSequence, _dialogInputRevision, state, observed.Kind.ToString(), observed.CanCancel,
+            known, null, DialogAdopted, DialogInputUncertain, classified));
     }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];

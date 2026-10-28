@@ -381,6 +381,15 @@ public enum AttentionKind
     /// </summary>
     SlotOrphan = 59,
     ProviderInputWait = 60,
+
+    /// <summary>
+    /// Pending notes on one destination are older than
+    /// <c>DeliveryVerification.PendingNoteAlertAgeSeconds</c>, still under
+    /// <c>MaxDeliveryAttempts</c>, and at least
+    /// <c>DeliveryVerification.PendingNoteAlertMinimumCount</c>. One Warning row
+    /// per session. Detection only: the projection does not flush or send.
+    /// </summary>
+    PendingNotesAged = 61,
 }
 
 /// <summary>

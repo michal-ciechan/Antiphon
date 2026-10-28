@@ -84,6 +84,8 @@ export interface QueuedMessageDto {
   noteHeader?: string | null
   /** CARD-0514: this row is held because a remote-control menu is open. */
   modalBlocked?: boolean
+  /** Current withhold text when automated delivery is held. */
+  withholdReason?: string | null
 }
 
 /** CARD-0180 S3: how a Mode:Now delivery was confirmed. */
@@ -118,6 +120,32 @@ export interface SessionFinishedPayload {
 
 export async function getSessionQueue(sessionId: string) {
   return apiGet<SessionQueueDto>(`/sessions/${sessionId}/messages`)
+}
+
+export interface PendingNoteDto {
+  id: string
+  sequence: number
+  body: string
+  createdAt: string
+  deliveryAttempts: number
+  origin: string
+  noteHeader?: string | null
+  withholdReason?: string | null
+}
+
+/** Read-only page of pending notes. `since` is an exclusive sequence cursor. */
+export interface PendingNotePageDto {
+  sessionId: string
+  since: number
+  nextSince: number
+  modalBlocked: boolean
+  withholdReason?: string | null
+  notes: PendingNoteDto[]
+}
+
+export async function getPendingNotes(sessionId: string, since = 0, limit = 50) {
+  return apiGet<PendingNotePageDto>(
+    `/sessions/${sessionId}/pending-notes?since=${since}&limit=${limit}`)
 }
 
 /** A slash-command/skill suggestion for the composer's `/` autocomplete. */

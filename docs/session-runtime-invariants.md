@@ -1503,8 +1503,14 @@ holds as Unknown. Each backend write attempt advances input revision before I/O,
 including explicit interactive input and a failed write. No raw-input fallback is
 permitted for an unsupported guarded peer.
 
-Queue and expectation admission retain pending work without an attempt when the
-veto precedes typing. A body already written retains its existing composer hold
+Queue and expectation admission still refuse the write when the veto precedes
+typing. A real blocking dialog, a remote-control menu, and a missing snapshot
+retain the pending row with no attempt. A durable observation withhold (adopted
+session, uncertain input, stale accepted generation, unreadable screen, or other
+unavailable evidence) records one delivery attempt and a transcript floor, then
+stops; later flushes do not add another attempt while that withhold holds. Adopted
+idle, an operator draft, a dialog, and a Working screen on an adopted session
+still write no bytes. A body already written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
 Explicit authenticated terminal input uses the named interactive entry point.
