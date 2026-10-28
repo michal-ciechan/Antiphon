@@ -39,7 +39,7 @@ public class GrokSignInRuntimeTests
     private const string ModernBackend = "modern";
 
     [Test]
-    public async Task A_sign_in_mode_fakegrok_pool_task_never_types_the_brief()
+    public async Task A_sign_in_mode_fakegrok_pool_task_never_types_the_brief(CancellationToken cancellationToken)
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
@@ -106,7 +106,9 @@ public class GrokSignInRuntimeTests
                 sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
             }
 
-            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            // The 30s budget is on the same fake clock as the grace advance. This test does not
+            // advance it until the launch is idle, so ConPTY teardown is not a wall-clock cap.
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), cancellationToken, clock);
 
             await using (var live = CreateContext())
             {
@@ -130,9 +132,19 @@ public class GrokSignInRuntimeTests
             using (var scope = harness.Provider.CreateScope())
             {
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-                await dispatcher.TickAsync(CancellationToken.None);
+                var runner = harness.Provider.GetRequiredService<ISessionRunnerClient>();
+                // Gate 2 forgets the grace stamp while the runner still lists the session Running.
+                // That tick must not be the observation the two-minute advance is waiting on.
+                if (await RunnerListsRunningAsync(runner, sessionId))
+                {
+                    await dispatcher.TickAsync(cancellationToken);
+                    while (await RunnerListsRunningAsync(runner, sessionId))
+                        await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+                }
+
+                await dispatcher.TickAsync(cancellationToken);
                 clock.Advance(TimeSpan.FromMinutes(2));
-                await dispatcher.TickAsync(CancellationToken.None);
+                await dispatcher.TickAsync(cancellationToken);
             }
 
             await using var verify = CreateContext();
@@ -159,6 +171,33 @@ public class GrokSignInRuntimeTests
                 && i.FailureReason == GrokSignInIncident.EpisodeKey(grokHome.Path))
                 .ExecuteDeleteAsync();
         }
+    }
+
+    [Test]
+    public async Task idle_budget_follows_the_test_clock_while_a_launch_is_incomplete()
+    {
+        var clock = new FakeTimeProvider();
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var wait = AgentSessionLaunchQueue.WaitForPendingAsync(
+                () => [blocked.Task], TimeSpan.FromSeconds(30), CancellationToken.None, clock);
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var finished = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            finished.ShouldBe(wait, "idle budget must follow the test clock");
+            await Should.ThrowAsync<OperationCanceledException>(wait);
+        }
+        finally
+        {
+            blocked.TrySetResult();
+        }
+    }
+
+    private static async Task<bool> RunnerListsRunningAsync(ISessionRunnerClient runner, Guid sessionId)
+    {
+        var listed = await runner.ListAsync(CancellationToken.None);
+        return listed.Any(session => session.SessionId == sessionId
+            && string.Equals(session.Status, "Running", StringComparison.OrdinalIgnoreCase));
     }
 
     private static Harness BuildHarness(
