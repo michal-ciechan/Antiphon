@@ -445,6 +445,11 @@ public class PendingNoteWithholdTests
                 .SetProperty(m => m.LastWithheldAt, opened), ct)).ShouldBe(1);
         }
 
+        var backed = await ReloadAsync(harness, id, ct);
+        backed.FirstWithheldAt.ShouldNotBeNull();
+        backed.LastWithheldAt.ShouldBe(backed.FirstWithheldAt);
+        opened = backed.FirstWithheldAt!.Value;
+
         harness.Adapter.DialogAdopted = false;
         harness.Adapter.DialogInputUncertain = true;
         await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
