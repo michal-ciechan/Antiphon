@@ -32,11 +32,13 @@ namespace Antiphon.Tests.Application;
 // this class and the other protected call-site classes beyond a small exact allow-list (no type
 // classification), and EntityScalarSnapshotTests proves the snapshot covers every scalar property.
 [Category("Integration")]
+[ParallelLimiter<TerminalSeatReleaseLimit>]
 public class TerminalRunnerSeatReleaseTests
 {
-    // 2x the 16.1s upper CARD-1137 pre-hook stall (six runs, 5.4-16.1s).
-    // Provisional: that range is not a p95.
-    private static readonly TimeSpan BeforeDispatchWallCap = TimeSpan.FromSeconds(32);
+    // 2x the 61.2s p95 from run 28bbb58e (39 rows, one millisecond: min 6.8,
+    // p50 17.4, p95 61.2, max 94.8, class wall 108.9s). 2x that max is 189.6s,
+    // the upper bound. 122s covers the 94.8s max and the 48.8s failed wait.
+    private static readonly TimeSpan BeforeDispatchWallCap = TimeSpan.FromSeconds(122);
     [Test]
     [Arguments(false, "Working")]
     [Arguments(true, "Working")]
@@ -605,10 +607,10 @@ public class TerminalRunnerSeatReleaseTests
         { cut.CutCommit(); return Task.CompletedTask; }
     }
 
-    // Above the 32s wall cap so that cap reports before TUnit cancels.
-    // No per-method p95: group 32 serial mean is 917s/39 (run 79b742de, may-understate).
+    // Above the 122s wall cap so that cap reports before TUnit cancels, and
+    // under the 189.6s (2x max) bound. A hung row costs 180s.
     [Test]
-    [Timeout(120_000)]
+    [Timeout(180_000)]
     public async Task Answer_racing_release_preserves_one_owner(CancellationToken cancellationToken)
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
@@ -632,8 +634,8 @@ public class TerminalRunnerSeatReleaseTests
         Task answer = Task.CompletedTask;
         try
         {
-            // The 10s budget stays on the test clock. 32s wall is 2x the 16.1s
-            // CARD-1137 pre-hook stall (six runs, 5.4-16.1s; not a p95).
+            // The 10s budget stays on the test clock. 122s wall is 2x the 61.2s
+            // p95 from run 28bbb58e, under the 189.6s (2x max) bound.
             var boundaryClock = new FakeTimeProvider();
             await WaitForBeforeDispatchAsync(entered.Task, boundaryClock, TimeSpan.FromSeconds(10),
                 BeforeDispatchWallCap, cancellationToken);
