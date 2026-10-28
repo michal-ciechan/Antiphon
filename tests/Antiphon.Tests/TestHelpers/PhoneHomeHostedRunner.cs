@@ -179,14 +179,14 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
 
     public static async Task UntilAsync(Func<bool> condition, string because)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(LoadTimeoutBounds.PhoneHomeSignalWait);
         while (!condition() && !timeout.IsCancellationRequested)
             try { await Task.Delay(10, timeout.Token); } catch (OperationCanceledException) { }
         condition().ShouldBeTrue(because);
     }
     public static async Task UntilAsync(Func<Task<bool>> condition, string because)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(LoadTimeoutBounds.PhoneHomeSignalWait);
         while (!await condition() && !timeout.IsCancellationRequested)
             try { await Task.Delay(10, timeout.Token); } catch (OperationCanceledException) { }
         (await condition()).ShouldBeTrue(because);
