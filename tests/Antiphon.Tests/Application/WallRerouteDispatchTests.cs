@@ -7,6 +7,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.TestHelpers.WallRerouteFixture;
@@ -268,7 +269,7 @@ public class WallRerouteDispatchTests
     }
 
     [Test]
-    public async Task Receipt_throw_after_launch_leaves_the_task_dispatched()
+    public async Task Receipt_throw_in_the_claim_commit_leaves_the_task_queued()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
@@ -279,25 +280,38 @@ public class WallRerouteDispatchTests
             $"task:{task.Id:N}", CapacityWaitConsumerKind.QueuedTask, taskId: task.Id,
             holdAlreadyCleared: true), CancellationToken.None);
         (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
-        var fault = new ThrowOnReceiptSave();
+        var fault = new ThrowOnReceiptSave("40P01");
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString, fault)
             .TickAsync(CancellationToken.None);
         fault.Throws.ShouldBe(1);
-        result.Dispatched.ShouldBe(1);
+        result.Dispatched.ShouldBe(0);
         result.Failures.ShouldBe(0);
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        stored.AgentSessionId.ShouldNotBeNull();
+        stored.Status.ShouldBe(AgentTaskStatus.Queued);
+        stored.AgentSessionId.ShouldBeNull();
         stored.FailureReason.ShouldBeNull();
         var leftover = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
-        leftover.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        leftover.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+        leftover.AdmissionCount.ShouldBe(0);
         leftover.SessionId.ShouldBeNull();
         leftover.LaunchSessionId.ShouldBeNull();
+        (await verify.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode))
+            .GrantedWaitId.ShouldBe(wait.Id);
+
+        var launched = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString)
+            .TickAsync(CancellationToken.None);
+        launched.Dispatched.ShouldBe(1);
+        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var accepted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id);
+        accepted.AdmissionCount.ShouldBe(1);
+        accepted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+        accepted.LaunchSessionId.ShouldBe(dispatched.AgentSessionId);
     }
 
     [Test]
-    public async Task Failed_receipt_cannot_resurrect_a_concurrently_superseded_wait()
+    public async Task Failed_consume_cannot_resurrect_a_concurrently_superseded_wait()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
@@ -308,11 +322,11 @@ public class WallRerouteDispatchTests
             $"task:{task.Id:N}", CapacityWaitConsumerKind.QueuedTask, taskId: task.Id,
             holdAlreadyCleared: true), CancellationToken.None);
         (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
-        var fault = new ThrowOnReceiptSave();
+        var fault = new ThrowOnReceiptSave("40P01");
         var result = await CapacityRecoveryTaskTests.CreateDispatcher(schema.ConnectionString, fault)
             .TickAsync(CancellationToken.None);
         fault.Throws.ShouldBe(1);
-        result.Dispatched.ShouldBe(1);
+        result.Dispatched.ShouldBe(0);
         result.Failures.ShouldBe(0);
         var dispatcherDb = fault.Context!;
         dispatcherDb.Database.CurrentTransaction.ShouldBeNull();
@@ -342,7 +356,7 @@ public class WallRerouteDispatchTests
         stored.DispatchAttemptId.ShouldBeNull();
         (await concurrent.AgentTaskEvents.CountAsync(e => e.Id == warningId)).ShouldBe(1);
         (await concurrent.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
-            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+            .Status.ShouldBe(AgentTaskStatus.Queued);
         fault.Throws.ShouldBe(1, "the receipt fault must be single-use, including subsequent saves");
     }
 
@@ -408,8 +422,12 @@ public class WallRerouteDispatchTests
         }
     }
 
-    private sealed class ThrowOnReceiptSave : SaveChangesInterceptor
+    internal sealed class ThrowOnReceiptSave : SaveChangesInterceptor
     {
+        private readonly string _sqlState;
+
+        public ThrowOnReceiptSave(string sqlState = "40P01") => _sqlState = sqlState;
+
         public int Throws;
         public AppDbContext? Context;
 
@@ -422,7 +440,9 @@ public class WallRerouteDispatchTests
                 && Interlocked.CompareExchange(ref Throws, 1, 0) == 0)
             {
                 Context = db;
-                throw new InvalidOperationException("injected receipt save failure");
+                throw new DbUpdateException(
+                    "injected receipt save failure",
+                    new PostgresException("injected", "ERROR", "ERROR", _sqlState));
             }
 
             return ValueTask.FromResult(result);
