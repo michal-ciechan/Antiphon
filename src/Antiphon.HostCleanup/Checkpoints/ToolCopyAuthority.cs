@@ -119,6 +119,31 @@ internal sealed class ToolCopyAuthority
         { return "tool-authority-inventory-unreadable"; }
     }
 
+    // A seal from a build that predates identity fields has none. Those copies keep the
+    // path checks and deletes. A seal that stored identity uses the anchored delete.
+    public bool LegacyUnbound =>
+        !_record.RootIdentity.IsBound && _record.Entries.TrueForAll(entry => !entry.Identity.IsBound);
+
+    // Identity refusals belong here, before any removal marker. A marker written first
+    // makes every later attempt a permanent previous-removal refusal.
+    public string? AdmitRemoval(string root)
+    {
+        if (!RunOwnershipStore.SamePath(root, _record.ToolDirectory, _context)) return "tool-authority-root-mismatch";
+        var refusal = Check();
+        if (refusal is not null) return refusal;
+        if (LegacyUnbound) return null;
+        if (!_record.RootIdentity.IsBound || _record.Entries.Exists(entry => !entry.Identity.IsBound))
+            return "tool-authority-entry-mismatch";
+        if (!LiveIdentityMatches(root, _record.RootIdentity))
+            return "tool-authority-root-mismatch";
+        foreach (var entry in _record.Entries)
+        {
+            if (!LiveIdentityMatches(Path.Combine(root, entry.Path), entry.Identity))
+                return "tool-authority-entry-mismatch";
+        }
+        return null;
+    }
+
     // SafeDelete still performs its full Git/link/containment preflight. Recheck
     // each entry immediately before removal; a late addition prevents rmdir.
     public string? Remove(string root)
@@ -126,6 +151,36 @@ internal sealed class ToolCopyAuthority
         if (!RunOwnershipStore.SamePath(root, _record.ToolDirectory, _context)) return "tool-authority-root-mismatch";
         var refusal = Check();
         if (refusal is not null) return refusal;
+        return LegacyUnbound ? RemoveLegacy(root) : RemoveAnchored(root);
+    }
+
+    private string? RemoveLegacy(string root)
+    {
+        string? refusal;
+        foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "file"))
+        {
+            var path = Path.Combine(root, entry.Path);
+            refusal = new CheckpointWrite(_context).Preflight(root, [path]);
+            if (refusal is not null || !Matches(path, entry)) return refusal ?? "tool-authority-entry-mismatch";
+            _context.Io.Unlink(path);
+        }
+        foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "directory")
+                     .OrderByDescending(entry => entry.Path.Count(c => c == '/')))
+        {
+            var path = Path.Combine(root, entry.Path);
+            refusal = new CheckpointWrite(_context).Preflight(root, [path]);
+            if (refusal is not null || !SameDirectory(path, entry.Stamp, entry.CreatedUtcTicks))
+                return refusal ?? "tool-authority-entry-mismatch";
+            _context.Io.RemoveDirectory(path, recursive: false);
+        }
+        if (!SameDirectory(root, _record.Root, _record.RootCreatedUtcTicks)) return "tool-authority-root-mismatch";
+        _context.Io.RemoveDirectory(root, recursive: false);
+        return null;
+    }
+
+    private string? RemoveAnchored(string root)
+    {
+        string? refusal;
         foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "file"))
         {
             var path = Path.Combine(root, entry.Path);
@@ -148,6 +203,9 @@ internal sealed class ToolCopyAuthority
         _context.Io.DeleteAnchored(root, _record.RootIdentity, directory: true);
         return null;
     }
+
+    private bool LiveIdentityMatches(string path, FilesystemIdentity expected) =>
+        expected.SameAs(FilesystemIdentityReader.Read(_context.Io, path));
 
     private bool Matches(string path, CopyEntry entry)
     {

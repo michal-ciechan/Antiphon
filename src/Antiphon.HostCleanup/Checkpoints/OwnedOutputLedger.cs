@@ -119,11 +119,29 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
     }
 
     // Linux ENOTEMPTY is errno 39. Windows ERROR_DIR_NOT_EMPTY is 145. The virtual
-    // fixture says "directory not empty". A late entry keeps the directory; it does not throw.
-    private static bool IsNonEmptyDirectory(IOException ex) =>
-        ex.Message.Contains("directory not empty", StringComparison.OrdinalIgnoreCase)
-        || ex.Message.Contains("errno=39", StringComparison.Ordinal)
-        || ex.Message.Contains("win32=145", StringComparison.Ordinal);
+    // fixture says "directory not empty". The code must be the whole token: win32=145
+    // is not ERROR_NO_SYSTEM_RESOURCES (1450). A late entry keeps the directory.
+    private static bool IsNonEmptyDirectory(IOException ex)
+    {
+        var message = ex.Message;
+        return message.Contains("directory not empty", StringComparison.OrdinalIgnoreCase)
+            || HasExactCode(message, "errno=", "39")
+            || HasExactCode(message, "win32=", "145");
+    }
+
+    private static bool HasExactCode(string message, string label, string code)
+    {
+        var token = label + code;
+        var index = 0;
+        while ((index = message.IndexOf(token, index, StringComparison.Ordinal)) >= 0)
+        {
+            var end = index + token.Length;
+            if (end >= message.Length || !char.IsAsciiDigit(message[end]))
+                return true;
+            index = end;
+        }
+        return false;
+    }
 
     private Dictionary<string, string> Inventory(string root)
     {

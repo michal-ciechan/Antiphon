@@ -160,6 +160,10 @@ public sealed class ToolCopyCleanup
         ToolCopyAuthority authority, DeleteOwnership deletion)
     {
         var marker = Path.Combine(run, "tool-removal-started.json");
+        var admission = authority.AdmitRemoval(tool);
+        if (admission is not null)
+            return new("Refused", admission + "; left in place: " + tool + "; remove it manually", tool);
+        var legacy = authority.LegacyUnbound;
         try
         {
             // Publish under the cleanup gate after authority/death admission, before
@@ -181,7 +185,7 @@ public sealed class ToolCopyCleanup
             var removed = _delete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
             return removed.Disposition == DeleteDisposition.Refused
                 ? Incomplete(tool, marker, removed.Reason ?? "refused")
-                : new("Removed", "identity-dead", tool);
+                : new("Removed", legacy ? "identity-dead; legacy-unbound-record" : "identity-dead", tool);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
         {
