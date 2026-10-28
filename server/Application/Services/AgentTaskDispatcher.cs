@@ -5744,11 +5744,10 @@ public sealed partial class AgentTaskDispatcher
                         throw;
                     }
 
-                    // The raw token is discarded only after the reuse commit. A hold or a lost
-                    // commit must leave it with the still-queued task.
+                    // The raw token is discarded only after the reuse commit. A hold leaves it
+                    // with the still-queued task. LostAck committed too: the session is already
+                    // Running, so the brief is delivered here rather than by interrupted-launch recovery.
                     AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
-                    if (reuseLaunch == LaunchCommit.LostAck)
-                        return DispatchOneResult.Dispatched;
                     await DeliverReuseMessagesAsync(claimed, ct);
                     await _eventBus.PublishToAllAsync(
                         "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
@@ -8148,12 +8147,25 @@ public sealed partial class AgentTaskDispatcher
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             await AbandonClaimAsync(ct);
-            await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), ct);
             var stored = await _db.AgentTasks.AsNoTracking()
                 .FirstAsync(t => t.Id == claimed.Id, CancellationToken.None);
+            // A Postgres fault whose reread is already Dispatched lost the acknowledgement
+            // after the commit landed. A transient SQLSTATE, or a non-Postgres fault, may
+            // still land and stays queued. Any other Postgres SQLSTATE rolled back.
             if (stored.Status == AgentTaskStatus.Dispatched && stored.AgentSessionId == sessionId)
+            {
+                await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), CancellationToken.None);
                 return LaunchCommit.LostAck;
-            return LaunchCommit.Refused;
+            }
+
+            if (IsTransientCapacity(ex) || !IsPostgres(ex))
+            {
+                await WarnCapacityConsumeRefusedAsync(claimed, CapacityFailureLabel(ex), CancellationToken.None);
+                return LaunchCommit.Refused;
+            }
+
+            await ReleaseFailedReservationAsync(claimed, CancellationToken.None);
+            throw;
         }
 
         return LaunchCommit.Committed;
@@ -8221,6 +8233,17 @@ public sealed partial class AgentTaskDispatcher
         for (var current = ex; current is not null; current = current.InnerException)
         {
             if (current is PostgresException pg && pg.SqlState is "40P01" or "40001" or "55P03")
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPostgres(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException)
                 return true;
         }
 
@@ -8456,6 +8479,14 @@ public sealed partial class AgentTaskDispatcher
         // so a stop that already holds the session meets this claim in the same order.
         var previous = await LockPreviousTokenOwnerAsync(claimed, session, ct);
         await LockSessionKeyShareAsync(session, ct);
+        if (!await SessionIsLiveAsync(session, ct))
+        {
+            await _db.Entry(agent).ReloadAsync(ct);
+            if (claimed.AgentId == agent.Id && await LiveSessionIdOfAsync(agent, ct) is not null)
+                return ReuseOutcome.WaitForAgent;
+            return ReuseOutcome.SpawnFresh;
+        }
+
         await LockPhysicalAgentAsync(agent.Id, ct);
         await _db.Entry(agent).ReloadAsync(ct);
         if (!StillWarm(agent, session))
@@ -8716,6 +8747,8 @@ public sealed partial class AgentTaskDispatcher
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
         await LockSessionKeyShareAsync(session, ct);
+        if (!await SessionIsLiveAsync(session, ct))
+            return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
         if (await RefuseParallelAsync(claimed, ct))
             return await FinishParallelReuseAsync(claimed, ct);
         WarnIfStandingInheritedEnvDiffers(claimed, standing, now);
@@ -9456,11 +9489,13 @@ public sealed partial class AgentTaskDispatcher
         if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
             return null;
 
-        var alive = await _db.AgentSessions.AsNoTracking().AnyAsync(
+        return await SessionIsLiveAsync(sessionId, ct) ? sessionId : null;
+    }
+
+    private Task<bool> SessionIsLiveAsync(Guid sessionId, CancellationToken ct) =>
+        _db.AgentSessions.AsNoTracking().AnyAsync(
             s => s.Id == sessionId
                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
-        return alive ? sessionId : null;
-    }
 
     private static bool SameDirectory(string a, string b)
     {
