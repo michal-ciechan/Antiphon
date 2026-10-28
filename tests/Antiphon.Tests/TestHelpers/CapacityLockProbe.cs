@@ -193,6 +193,62 @@ internal static class CapacityLockProbe
             $"no backend blocked by pid {holderPid} within {deadline.TotalSeconds:0}s; path completed={path.IsCompleted}");
     }
 
+    /// <summary>
+    /// Rule F subject: a claim backend blocked on the holder that still holds its
+    /// <c>AgentTasks</c> row lock. A waiter with only a post-commit session FK, or a path
+    /// that finishes without that in-claim wait, fails immediately.
+    /// </summary>
+    public static async Task<int> PollInClaimSessionWaitAsync(
+        string connectionString, int holderPid, Task path, TimeSpan deadline, CancellationToken ct)
+    {
+        var until = DateTime.UtcNow + deadline;
+        while (DateTime.UtcNow < until)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (await BlockedByAsync(connectionString, holderPid, ct) is int pid)
+            {
+                if (await HoldsAgentTaskRowLockAsync(connectionString, pid, ct))
+                    return pid;
+                throw new InvalidOperationException(
+                    "claim reaches the session only after the parallel key; waiter "
+                    + $"{pid} holds no AgentTasks row lock: "
+                    + await DescribePidAsync(connectionString, pid, ct));
+            }
+
+            if (path.IsCompleted)
+                throw new InvalidOperationException(
+                    "claim reaches the session only after the parallel key: path finished before an in-claim session wait: "
+                    + await DescribeAsync(path));
+            await Task.Delay(20, ct);
+        }
+
+        throw new TimeoutException(
+            $"no in-claim backend blocked by pid {holderPid} within {deadline.TotalSeconds:0}s; path completed={path.IsCompleted}");
+    }
+
+    public static async Task<bool> HoldsAgentTaskRowLockAsync(
+        string connectionString, int pid, CancellationToken ct)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_locks l
+                JOIN pg_class c ON c.oid = l.relation
+                WHERE l.pid = @pid
+                  AND l.granted
+                  AND l.locktype = 'relation'
+                  AND c.relname = 'AgentTasks'
+                  AND l.mode IN (
+                      'RowShareLock', 'RowExclusiveLock', 'ShareUpdateExclusiveLock',
+                      'ShareLock', 'ShareRowExclusiveLock', 'ExclusiveLock', 'AccessExclusiveLock'))
+            """, connection);
+        command.Parameters.AddWithValue("pid", pid);
+        return (bool)(await command.ExecuteScalarAsync(ct))!;
+    }
+
     public static async Task<string> DescribeAsync(Task path)
     {
         try
