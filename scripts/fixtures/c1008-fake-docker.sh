@@ -2,7 +2,7 @@
 # File-backed Docker boundary. Every unknown operation fails; never contacts a daemon.
 set -euo pipefail
 node - "$@" <<'NODE'
-const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
+const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process'), crypto = require('node:crypto');
 const root = process.env.C1008_FIXTURE_ROOT;
 if (!root || !/^c1008-host-/.test(path.basename(root))) throw Error('fixture root invalid');
 const file = path.join(root, 'docker.json'), trace = path.join(root, 'docker-trace.jsonl');
@@ -41,25 +41,51 @@ const ptyProbe = (shape, script) => {
   }
   return status;
 };
+const findContainer = (token) => state.containers.find(c => c.Id === token || c.Name === token);
+// A name the preview did not choose. Inspect and run both observe it, and neither removes it.
+const plantForeignPreview = (containerName) => {
+  if (!containerName || !containerName.startsWith('c1008-preview-')) return null;
+  let existing = findContainer(containerName);
+  if (existing) return existing;
+  existing = {Id: '9'.repeat(64), Name: containerName, State: {Running: false, Status: 'exited'},
+    Config: {Labels: {'io.antiphon.foreign': '1'}}, Mounts: []};
+  state.containers.push(existing);
+  save();
+  return existing;
+};
 // Bound retire-temp preview. The same program as apply, with both volumes
 // read-only in a private mount namespace. Anything that could write a volume
-// fails closed. No container is recorded: --rm removes it.
+// fails closed. --network none is apply's opposite: ls-remote and fetch then
+// fail the way a network namespace with no DNS fails. No --network matches
+// apply's docker create. A normal run records no container (--rm). A hang
+// marker keeps one running until SIGKILL.
 const previewRun = () => {
   const reason = (why) => {
     fs.appendFileSync(path.join(root, 'preview-helper-stderr'), why + '\n');
     process.stderr.write(why + '\n');
     process.exit(2);
   };
+  if (fs.existsSync(path.join(root, 'preview-name-taken'))) {
+    const namedAt = args.indexOf('--name');
+    const takenName = namedAt >= 0 ? args[namedAt + 1] : '';
+    const foreign = plantForeignPreview(takenName);
+    process.stderr.write('Conflict. The container name is already in use by container "' + (foreign ? foreign.Id : '') + '"\n');
+    process.exit(125);
+  }
   if (args.includes('--privileged') || args.includes('--cap-add') || args.includes('-v') || args.includes('--volume')) reason('preview flag refused');
   if (!args.includes('--rm')) reason('preview requires --rm');
   const network = args.indexOf('--network');
-  if (network < 0 || args[network + 1] !== 'none') reason('preview requires --network none');
+  if (network >= 0 && args[network + 1] !== 'none') reason('preview network does not match apply');
+  const offline = network >= 0 && args[network + 1] === 'none';
   const dropped = args.indexOf('--cap-drop');
   if (dropped < 0 || args[dropped + 1] !== 'ALL') reason('preview requires --cap-drop ALL');
   if (args.indexOf('--user') < 0 || args[args.indexOf('--user') + 1] !== '1654:1654') reason('preview requires --user 1654:1654');
   if (args.indexOf('--entrypoint') < 0 || args[args.indexOf('--entrypoint') + 1] !== '/bin/bash') reason('preview requires --entrypoint /bin/bash');
   const named = args.indexOf('--name');
-  if (named < 0 || !/^c1008-preview-audit-[0-9]+$/.test(args[named + 1] || '')) reason('preview name refused');
+  const previewName = named >= 0 ? (args[named + 1] || '') : '';
+  const previewNameOk = /^c1008-preview-audit-[0-9]+$/.test(previewName)
+    || /^c1008-preview-c1008[0-9a-f]{32}-[0-9a-f]{16}$/.test(previewName);
+  if (!previewNameOk) reason('preview name refused');
   const programAt = args.indexOf('-c');
   if (programAt < 1 || !/^sha256:[0-9a-f]{64}$/.test(args[programAt - 1] || '')) reason('preview image must be the pinned id');
   const mounts = args.flatMap((a, i) => a === '--mount' ? [args[i + 1]] : []);
@@ -82,10 +108,46 @@ const previewRun = () => {
   } else if (mounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
   if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
+  const cidAt = args.indexOf('--cidfile');
+  const cidPath = cidAt >= 0 ? args[cidAt + 1] : '';
+  if (fs.existsSync(path.join(root, 'preview-hang'))) {
+    const id = crypto.randomBytes(32).toString('hex');
+    if (cidPath) fs.writeFileSync(cidPath, id + '\n');
+    const labels = {};
+    for (let i = 0; i < args.length; i++) if (args[i] === '--label' && args[i + 1]) {
+      const eq = args[i + 1].indexOf('=');
+      if (eq > 0) labels[args[i + 1].slice(0, eq)] = args[i + 1].slice(eq + 1);
+    }
+    state.containers.push({Id: id, Name: previewName, State: {Running: true, Status: 'running', Pid: process.pid},
+      Config: {Labels: labels}, Mounts: []});
+    save();
+    fs.writeFileSync(path.join(root, 'preview-helper-running'), id + '\n');
+    // PID 1 with no init ignores TERM. Only SIGKILL, or docker kill's default, stops this helper.
+    process.on('SIGTERM', () => {});
+    process.on('SIGINT', () => {});
+    process.on('SIGHUP', () => {});
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      let cur;
+      try { cur = JSON.parse(fs.readFileSync(file)); } catch { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200); continue; }
+      const live = (cur.containers || []).find(item => item.Id === id);
+      if (!live || live.State.Running !== true) process.exit(137);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    }
+    process.exit(137);
+  }
+  if (cidPath) fs.writeFileSync(cidPath, crypto.randomBytes(32).toString('hex') + '\n');
+  if (offline) {
+    const shim = path.join(root, 'git-shim');
+    fs.mkdirSync(shim, {recursive: true});
+    const realGit = cp.execFileSync('which', ['git'], {encoding: 'utf8'}).trim();
+    fs.writeFileSync(path.join(shim, 'git'), '#!/bin/bash\ncase " $* " in\n  *" ls-remote "*|*" fetch "*) printf \'fatal: Could not resolve host: origin\\n\' >&2; exit 128 ;;\nesac\nexec ' + JSON.stringify(realGit) + ' "$@"\n', {mode: 0o755});
+  }
   // uid 1654 cannot create /runner-tmp on the host root. A private root holds the
   // production paths; both volume paths are mounted read-only inside it.
   const stage = fs.mkdtempSync('/dev/shm/c1008-preview-');
   const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program, C1008_SIM_STAGE: stage};
+  if (offline) env.PATH = path.join(root, 'git-shim') + ':' + (process.env.PATH || '/usr/bin:/bin');
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
   const outer = [
@@ -124,7 +186,10 @@ const previewRun = () => {
   ].join('\n');
   let run;
   try {
-    run = cp.spawnSync('unshare', ['--user', '--map-root-user', '--mount', 'bash', '-c', outer], {env, encoding: 'utf8', timeout: 60000});
+    const unshareArgs = ['--user', '--map-root-user', '--mount'];
+    if (offline) unshareArgs.push('--net');
+    unshareArgs.push('bash', '-c', outer);
+    run = cp.spawnSync('unshare', unshareArgs, {env, encoding: 'utf8', timeout: 60000});
   } finally {
     if (stage.startsWith('/dev/shm/c1008-preview-')) fs.rmSync(stage, {recursive: true, force: true});
   }
@@ -166,7 +231,10 @@ else if (args[0] === 'ps') {
  if(!args.some(a=>a.includes('a') && a.startsWith('-'))) items=items.filter(c=>c.State.Running);
  out(items.map(c=>c.Id).join('\n')+(items.length?'\n':''));
 } else if(args[0]==='inspect') {
- const c=state.containers.find(c=>c.Id===name); if(!c){if(fault==='c994-id-absence-error')fail();process.stderr.write('Error: No such object: '+name+'\n');process.exit(1);}
+ if (fs.existsSync(path.join(root, 'preview-name-taken')) && /^c1008-preview-/.test(name)) {
+  out([plantForeignPreview(name)]); process.exit(0);
+ }
+ const c=findContainer(name); if(!c){if(fault==='c994-id-absence-error')fail();process.stderr.write('Error: No such object: '+name+'\n');process.exit(1);}
  if(fault==='inspect-empty'){out('');process.exit(0);}
  if(fault==='inspect-malformed'){out('{');process.exit(0);}
  if(fault==='c994-wrong-id')c.Id='f'.repeat(64);
@@ -184,13 +252,35 @@ else if (args[0] === 'ps') {
  if(fault==='late-land') { const p=path.join(root,'tasks.json'),s=JSON.parse(fs.readFileSync(p));(s.scopes[Object.keys(s.scopes)[0]].land||s.scopes[Object.keys(s.scopes)[0]]).items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2026-10-03T09:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(s)); }
  if(fault==='audit-drift') fs.writeFileSync(path.join(root,'work/repo/new-work'), 'retained');
  save();out(name+'\n');
+} else if(args[0]==='kill') {
+ const target=args.at(-1);
+ const victim=findContainer(target);
+ if(!victim){process.stderr.write('Error: No such container: '+target+'\n');process.exit(1);}
+ let sig='KILL';
+ for(let i=1;i<args.length;i++){
+  if(args[i]==='-s'||args[i]==='--signal') sig=args[++i]||sig;
+  else if(args[i].startsWith('--signal=')) sig=args[i].slice(9);
+ }
+ const normalized=String(sig).replace(/^SIG/,'').toUpperCase();
+ if(normalized==='TERM'||normalized==='INT'||normalized==='HUP'){victim.State.IgnoredSignal=normalized;save();out(victim.Id+'\n');}
+ else if(normalized==='KILL'){victim.State={Running:false,Status:'exited',Pid:victim.State&&victim.State.Pid};save();out(victim.Id+'\n');}
+ else process.exit(1);
 } else if(args[0]==='rm') {
- if(args.some(a=>a==='-f'||a==='--force'||a==='-v'))fail();
- const c=state.containers.find(c=>c.Id===name);if(!c||c.State.Running||fault==='helper-rm-failed'&&c.Config.Labels['io.antiphon.audit'])fail();
+ const force=args.includes('-f')||args.includes('--force');
+ const target=args.at(-1);
+ const found=findContainer(target);
+ if(force){
+  if(args.includes('-v'))fail();
+  if(!found){process.stderr.write('Error: No such container: '+target+'\n');process.exit(1);}
+  if(!found.Config||!found.Config.Labels||!found.Config.Labels['io.antiphon.preview-audit'])fail();
+  state.containers=state.containers.filter(c=>c.Id!==found.Id);save();out(found.Id+'\n');
+ } else {
+ if(args.includes('-v'))fail();
+ const c=found;if(!c||c.State.Running||fault==='helper-rm-failed'&&c.Config.Labels['io.antiphon.audit'])fail();
  if(fault==='owned-rm-failed'&&c.Config.Labels['com.docker.compose.service']==='session-runner')fail();
  state.cleanupRm=(state.cleanupRm||0)+1;
  if(fault==='c994-rm-'+state.cleanupRm){save();fail();}
- if(fault!=='c994-rm-retains')state.containers=state.containers.filter(c=>c.Id!==name);
+ if(fault!=='c994-rm-retains')state.containers=state.containers.filter(c=>c.Id!==found.Id);
  const next=state.containers.find(c=>c.Config.Labels['com.docker.compose.project']==='antiphon-runner-temp');
  if(next&&fault==='c994-late-image')next.Image='sha256:'+'b'.repeat(64);
  if(next&&fault==='c994-late-mount')next.Mounts[0].Source='/foreign';
@@ -202,6 +292,7 @@ else if (args[0] === 'ps') {
  if(fault==='c994-late-task'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));(v.scopes[Object.keys(v.scopes)[0]].open||v.scopes[Object.keys(v.scopes)[0]]).items.push({id:'22222222-2222-2222-2222-222222222222',status:'Working',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:null,landStartedAt:null});fs.writeFileSync(p,JSON.stringify(v));}
  if(fault==='c994-final-replacement') {const replacement=structuredClone(c);replacement.Id='e'.repeat(64);state.containers.push(replacement);}
  save();out(name+'\n');
+ }
 } else if(args[0]==='volume'&&args[1]==='ls')out(Object.keys(state.volumes).join('\n')+'\n');
 else if(args[0]==='volume'&&args[1]==='inspect') {
  if(fault==='generation-after-stop'&&!state.generationChanged&&name==='antiphon-runner_work'&&
