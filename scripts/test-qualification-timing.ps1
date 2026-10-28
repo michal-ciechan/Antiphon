@@ -358,17 +358,19 @@ try {
 $phaseDir = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-phase-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $phaseDir -Force | Out-Null
 try {
+    $phaseChunk = Join-Path $phaseDir (Get-QualificationChunkDirectoryName -Chunk 'group-1' -RunId 'new-run' -Attempt '1' -Suite 'antiphon')
+    New-Item -ItemType Directory -Path $phaseChunk -Force | Out-Null
     $currentLines = @(
         '{"recordKind":"header","version":1,"pid":11,"nonce":"abc","runId":"new-run","groupId":"group-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
         '{"recordKind":"fixture","fixtureId":"fix-1","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1000}]}',
         '{"recordKind":"complete","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":500}]}'
     )
-    [IO.File]::WriteAllLines((Join-Path $phaseDir 'cases-11-abc.jsonl'), $currentLines)
-    [IO.File]::WriteAllLines((Join-Path $phaseDir 'cases-13-ghi.jsonl'), @(
+    [IO.File]::WriteAllLines((Join-Path $phaseChunk 'cases-11-abc.jsonl'), $currentLines)
+    [IO.File]::WriteAllLines((Join-Path $phaseChunk 'cases-13-ghi.jsonl'), @(
         '{"recordKind":"header","version":1,"pid":13,"nonce":"ghi","runId":"new-run","groupId":"group-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
         '{"recordKind":"fixture","fixtureId":"fix-1","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1000}]}'
     ))
-    [IO.File]::WriteAllLines((Join-Path $phaseDir 'cases-12-def.jsonl'), @(
+    [IO.File]::WriteAllLines((Join-Path $phaseChunk 'cases-12-def.jsonl'), @(
         '{"recordKind":"header","version":1,"pid":12,"nonce":"def","runId":"old-run","groupId":"group-1","attempt":"0","suite":"other","assembly":"Other"}',
         '{"recordKind":"complete","phases":[{"phase":"process-wait","startOffsetMs":0,"endOffsetMs":9000}]}'
     ))
@@ -403,7 +405,9 @@ $boundTiming = Join-Path $boundLog 'timing'
 New-Item -ItemType Directory -Path $boundTiming -Force | Out-Null
 try {
     $malformed = ('{invalid' + "`n") * 4000
-    [IO.File]::WriteAllText((Join-Path $boundTiming 'cases-99-zzzz.jsonl'), $malformed)
+    $boundChunk = Join-Path $boundTiming (Get-QualificationChunkDirectoryName -Chunk 'g1' -RunId 'run-bound' -Attempt '1' -Suite 'antiphon')
+    New-Item -ItemType Directory -Path $boundChunk -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $boundChunk 'cases-99-zzzz.jsonl'), $malformed)
     $heartWatch = [Diagnostics.Stopwatch]::StartNew()
     Update-QualificationChunkTiming -LogRoot $boundLog -TimingRoot $boundTiming -Suite 'antiphon' -Chunk 'g1' -LastPhase 'run' -StartedAt '2026-10-27T00:00:00.0000000Z'
     $heartWatch.Stop()
@@ -459,7 +463,9 @@ $payload = [ordered]@{
 
         $fifoDir = Join-Path $boundTiming 'fifo-dir'
         New-Item -ItemType Directory -Path $fifoDir -Force | Out-Null
-        $fifo = Join-Path $fifoDir 'cases-81-fifo.jsonl'
+        $fifoChunk = Join-Path $fifoDir (Get-QualificationChunkDirectoryName -Chunk 'g1' -RunId 'run-fifo' -Attempt '1' -Suite 'antiphon')
+        New-Item -ItemType Directory -Path $fifoChunk -Force | Out-Null
+        $fifo = Join-Path $fifoChunk 'cases-81-fifo.jsonl'
         & mkfifo $fifo
         $fifoOkCreated = ($LASTEXITCODE -eq 0)
         $fifoResult = Join-Path $boundRoot 'fifo.json'
@@ -738,17 +744,19 @@ try {
     $aggFifo = Join-Path $aggLog 'antiphon-g9.trx'
     & mkfifo $aggFifo
     $aggFifoOk = ($LASTEXITCODE -eq 0)
-    $aggHuge = Join-Path $aggTiming 'cases-80-huge.jsonl'
+    $aggFolder = Join-Path $aggTiming (Get-QualificationChunkDirectoryName -Chunk 'g9' -RunId 'agg' -Attempt '1' -Suite 'antiphon')
+    New-Item -ItemType Directory -Path $aggFolder -Force | Out-Null
+    $aggHuge = Join-Path $aggFolder 'cases-80-huge.jsonl'
     $aggStream = [IO.File]::Create($aggHuge)
     try {
         $aggChunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
         for ($n = 0; $n -lt 100; $n++) { $aggStream.Write($aggChunk, 0, $aggChunk.Length) }
     } finally { $aggStream.Dispose() }
-    $aggDenied = Join-Path $aggTiming 'cases-82-denied.jsonl'
+    $aggDenied = Join-Path $aggFolder 'cases-82-denied.jsonl'
     [IO.File]::WriteAllText($aggDenied, '{"recordKind":"header"}' + "`n")
     & chmod 000 $aggDenied
-    & ln -s $aggHuge (Join-Path $aggTiming 'cases-83-link.jsonl')
-    & mkfifo (Join-Path $aggTiming 'cases-81-fifo.jsonl')
+    & ln -s $aggHuge (Join-Path $aggFolder 'cases-83-link.jsonl')
+    & mkfifo (Join-Path $aggFolder 'cases-81-fifo.jsonl')
     $aggDense = New-Object System.Text.StringBuilder
     [void]$aggDense.Append('{"v":[')
     for ($n = 0; $n -lt 100000; $n++) { [void]$aggDense.Append('0,') }
@@ -998,7 +1006,9 @@ try {
         $wideWriter.Dispose()
     }
     $wideBytes = [int64](Get-Item -LiteralPath $wideTrx).Length
-    $wideShard = Join-Path $wideTiming 'cases-11-abc.jsonl'
+    $wideChunk = Join-Path $wideTiming (Get-QualificationChunkDirectoryName -Chunk 'g5' -RunId 'run-5k' -Attempt '1' -Suite 'antiphon')
+    New-Item -ItemType Directory -Path $wideChunk -Force | Out-Null
+    $wideShard = Join-Path $wideChunk 'cases-11-abc.jsonl'
     $shardWriter = New-Object System.IO.StreamWriter($wideShard, $false, (New-Object System.Text.UTF8Encoding $false))
     try {
         $shardWriter.WriteLine('{"recordKind":"header","version":1,"pid":11,"nonce":"abc","runId":"run-5k","groupId":"g5","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}')
@@ -1237,10 +1247,9 @@ $NightlySeams = @{
     Remove-Item -LiteralPath $heartRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# A shared timing root holds the journals of every parallel chunk. The post-exit
-# read attributes by the owner file the recorder writes
-# (own-<utf8-hex of the group id>-<pid>-<nonce>.txt) and does not open another
-# chunk's journal.
+# A shared timing root holds one directory per chunk identity. The post-exit
+# read lists only that directory. The owner file is
+# own-<sha256 of chunk, run, attempt, and suite>-<pid>-<nonce>.txt.
 Assert-Check ((ConvertTo-QualificationGroupToken -Chunk 'g-own') -eq '672d6f776e') 'group-token-vector'
 
 $foreignRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-foreign-' + [guid]::NewGuid().ToString('N'))
@@ -1273,15 +1282,18 @@ try {
         [IO.File]::WriteAllText((Join-Path $foreignTiming $foreignOwner), ($foreignName + "`n"))
         $foreignBytes += [int64](Get-Item -LiteralPath $foreignPath).Length
     }
+    $ownChunk = Join-Path $foreignTiming (Get-QualificationChunkDirectoryName -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon')
+    New-Item -ItemType Directory -Path $ownChunk -Force | Out-Null
     $ownName = 'cases-42-own1.jsonl'
     $ownText = @(
         '{"recordKind":"header","version":1,"pid":42,"nonce":"own1","runId":"run-own","groupId":"g-own","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
         '{"recordKind":"fixture","fixtureId":"fix-own","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1250}]}',
         '{"recordKind":"complete","testId":"own-a","phases":[{"phase":"process-spawn","startOffsetMs":0,"endOffsetMs":400}]}'
     ) -join "`n"
-    [IO.File]::WriteAllText((Join-Path $foreignTiming $ownName), $ownText + "`n")
-    [IO.File]::WriteAllText((Join-Path $foreignTiming ('own-' + (ConvertTo-QualificationGroupToken -Chunk 'g-own') + '-42-own1.txt')), ($ownName + "`n"))
-    $foreignBytes += [int64](Get-Item -LiteralPath (Join-Path $foreignTiming $ownName)).Length
+    [IO.File]::WriteAllText((Join-Path $ownChunk $ownName), $ownText + "`n")
+    $ownIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon'
+    [IO.File]::WriteAllText((Join-Path $ownChunk ('own-' + $ownIdentity + '-42-own1.txt')), ($ownName + "`n"))
+    $foreignBytes += [int64](Get-Item -LiteralPath (Join-Path $ownChunk $ownName)).Length
     $ownTrx = Join-Path $foreignLog 'antiphon-g-own.trx'
     $ownPad = ' ' * 8200
     $ownTrxText = "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<TestRun><!--$ownPad--><Results>`n<UnitTestResult testId=`"a`" testName=`"OwnA`" duration=`"00:00:01`" outcome=`"Passed`" />`n<UnitTestResult testId=`"b`" testName=`"OwnB`" duration=`"00:00:03`" outcome=`"Passed`" />`n</Results></TestRun>`n"
@@ -1296,7 +1308,7 @@ try {
     $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
     $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
-    $foreignBound = ($foreignSw.Elapsed.TotalSeconds -lt 0.2 -and $listedForeign.Count -eq 41 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192)
+    $foreignBound = ($foreignSw.Elapsed.TotalSeconds -lt 0.2 -and $listedForeign.Count -eq 40 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192)
     $foreignExit = ([int]$foreignAgg.ChunkExitCode -eq 5 -and [string]$foreignAgg.ChunkResult -eq 'KEEP-5')
     Assert-Check ($foreignOwn -and $foreignBound -and $foreignExit) 'own-chunk-ignores-foreign-journals'
 } catch {

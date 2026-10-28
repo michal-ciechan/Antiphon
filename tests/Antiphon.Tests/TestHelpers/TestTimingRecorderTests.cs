@@ -58,6 +58,8 @@ public sealed class TestTimingRecorderTests
     public void C1514T_OwnerFileNamesTheChunk()
     {
         TestTimingSession.GroupToken("g-own").ShouldBe("672d6f776e");
+        TestTimingSession.IdentityToken("g-own", "run-own", "1", "antiphon")
+            .ShouldBe("8def7fbfd342eaf05739d98009c13b6d0070236cc44e7027d022d19c04d9b193");
         var root = C1514Support.FreshRoot();
         using var session = TestTimingSession.TryOpen(new TestTimingConfig
         {
@@ -72,10 +74,40 @@ public sealed class TestTimingRecorderTests
             AssemblyId = "asm1",
         });
         session.Enabled.ShouldBeTrue("owner-file-session-opens");
-        var owner = Path.Combine(root, "own-672d6f776e-42-own1.txt");
+        var folder = TestTimingSession.ChunkDirectory(root, "g-own", "run-own", "1", "antiphon");
+        var owner = Path.Combine(folder, "own-8def7fbfd342eaf05739d98009c13b6d0070236cc44e7027d022d19c04d9b193-42-own1.txt");
         File.Exists(owner).ShouldBeTrue("owner-file-names-the-chunk");
         File.ReadAllText(owner).ShouldBe("cases-42-own1.jsonl\n");
-        File.Exists(Path.Combine(root, "cases-42-own1.jsonl")).ShouldBeTrue("journal-name-stays-pid-nonce");
+        File.Exists(Path.Combine(folder, "cases-42-own1.jsonl")).ShouldBeTrue("journal-name-stays-pid-nonce");
+    }
+
+    [Test]
+    public void C1514T_OwnerWriteFailureKeepsTheJournal()
+    {
+        var root = C1514Support.FreshRoot();
+        var folder = TestTimingSession.ChunkDirectory(root, "g-own", "run-own", "1", "antiphon");
+        Directory.CreateDirectory(folder);
+        var token = TestTimingSession.IdentityToken("g-own", "run-own", "1", "antiphon");
+        Directory.CreateDirectory(Path.Combine(folder, "own-" + token + "-42-own1.txt"));
+        using var session = TestTimingSession.TryOpen(new TestTimingConfig
+        {
+            Root = root,
+            RunId = "run-own",
+            GroupId = "g-own",
+            Attempt = "1",
+            Suite = "antiphon",
+            ManualClock = true,
+            Pid = 42,
+            Nonce = "own1",
+            AssemblyId = "asm1",
+        });
+        session.Enabled.ShouldBeTrue("owner-write-failure-keeps-journal");
+        session.FailureCode.ShouldBeNull("owner-write-failure-keeps-journal");
+        session.BeginCase("case-a", "TimingProbe", "Keep", [], 0);
+        session.EndCase("case-a", "Passed", C1514Support.Ms(1));
+        var journal = Path.Combine(folder, "cases-42-own1.jsonl");
+        File.Exists(journal).ShouldBeTrue("owner-write-failure-keeps-journal");
+        C1514Support.Complete(journal, "case-a").GetProperty("outcome").GetString().ShouldBe("Passed");
     }
 
     [Test]
@@ -334,8 +366,9 @@ public sealed class TestTimingRecorderTests
         var first = RunWriter(staged, root, "writera", cancellationToken);
         var second = RunWriter(staged, root, "writerb", cancellationToken);
         await Task.WhenAll(first, second);
-        var left = Path.Combine(root, "cases-77-writera.jsonl");
-        var right = Path.Combine(root, "cases-77-writerb.jsonl");
+        var folder = TestTimingSession.ChunkDirectory(root, "group-a", "run-a", "1", "suite-a");
+        var left = Path.Combine(folder, "cases-77-writera.jsonl");
+        var right = Path.Combine(folder, "cases-77-writerb.jsonl");
         File.Exists(left).ShouldBeTrue("writers-have-distinct-shards");
         File.Exists(right).ShouldBeTrue("writers-have-distinct-shards");
         var leftText = C1514Support.ReadLiveText(left);
