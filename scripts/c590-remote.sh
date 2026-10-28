@@ -8091,6 +8091,14 @@ c1008_recycle() {
         else
             c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
         fi
+        # No pin: warn and leave apply on the current SHA image. A chosen image that
+        # is not on the host, or an empty matching receipt, refuses instead of skipping.
+        if [ -z "${C994_IMAGE:-}" ]; then
+            case "${C994_LOOKUP:-}" in
+                unpinned) printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n' ;;
+                *) c1008_refuse RecycleGitAuditUnknown ;;
+            esac
+        fi
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
@@ -8637,17 +8645,23 @@ c994_status_proof() {
     C994_MAIN="$(printf '%s' "$main" | jq -c '{available,dispatchEligible,acceptingNewWork,draining,retiredAt,buildVersion}')"
 }
 
-# Only bound host-owned receipts can supply an offline audit image. A preview is
-# never a lookup authority. Multiple matching receipts must carry the same digest.
+# Bound host-owned receipts supply an offline audit image. A preview is never a
+# lookup authority. A current-SHA image wins. Otherwise the newest completed
+# non-dry-run receipt for this project, project id, and retirement stamp does,
+# including a receipt written at another source SHA. Two current-SHA images that
+# differ refuse. The chosen image must still be present on the host.
 c994_lookup_image() {
     require_lane host
-    local operation="${1:-}" file record image='' candidate found='' root allow=false
+    local operation="${1:-}" file record candidate='' found_id='' root allow=false
+    local named_file=false match dry outcome src mtime opid inspected=''
+    local same_image='' same_original='' cross_image='' cross_original='' cross_mtime=0 cross_op=''
+    local identity_mismatch=0 saw_empty=0
     # allow-preview accepts a dry-run receipt only when the caller named that operation.
     [ "${2:-}" = allow-preview ] && [ -n "$operation" ] && allow=true
-    C994_IMAGE=''; C994_ORIGINAL=''
+    C994_IMAGE=''; C994_ORIGINAL=''; C994_LOOKUP=''
     root="$SERVER2_ROOT/temp-container-retirement"
     [ ! -L "$root" ] || return 2
-    [ -d "$root" ] || { [ -z "$operation" ] && return 0; return 2; }
+    [ -d "$root" ] || { [ -z "$operation" ] && { C994_LOOKUP=unpinned; return 0; }; return 2; }
     [ "$(sudo -n readlink -e -- "$root" 2>/dev/null)" = "$root" ] || return 2
     if [ -n "$operation" ]; then
         [[ "$operation" =~ ^c994[0-9a-f]{32}$ ]] || return 2
@@ -8669,20 +8683,82 @@ c994_lookup_image() {
             (.outcome as $o | ["pending","completed","partial","refused","preview"]|index($o)!=null) and
             (if has("originalCleanupOperationId") then (.originalCleanupOperationId|test("^c994[0-9a-f]{32}$")) else true end)' >/dev/null || return 2
         [ "$(printf '%s' "$record" | jq -r .operationId)" = "$(basename "$file" .json)" ] || return 2
-        if [ -n "$operation" ] && [ "$file" != "$root/$operation.json" ]; then continue; fi
-        if ! printf '%s' "$record" | jq -e --arg sha "$SHA" --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
-            --argjson allow "$([ "$allow" = true ] && printf true || printf false)" \
-            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and
-             (if $allow then (.dryRun==true or .dryRun==false) else .dryRun==false end)' >/dev/null; then
-            [ -z "$operation" ] && continue; return 2
+        named_file=false
+        if [ -n "$operation" ] && [ "$file" = "$root/$operation.json" ]; then named_file=true; fi
+        match="$(printf '%s' "$record" | jq -r --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
+            'if .project==$project and .projectId==$id and .retiredAt==$stamp then "yes" else "no" end')"
+        if [ "$match" != yes ]; then
+            # The named receipt is a different project or retirement. Do not borrow another file.
+            [ "$named_file" = true ] && return 2
+            identity_mismatch=1
+            continue
         fi
+        dry="$(printf '%s' "$record" | jq -r .dryRun)"
+        outcome="$(printf '%s' "$record" | jq -r .outcome)"
         candidate="$(printf '%s' "$record" | jq -r .image)"
-        [ -n "$candidate" ] || continue
+        # Naming a dry-run receipt does not authorize apply, and it does not borrow a sibling.
+        if [ "$named_file" = true ] && [ "$dry" = true ] && [ "$allow" != true ]; then return 2; fi
+        if [ -z "$candidate" ]; then
+            # Container cleanup writes this operation's pending receipt before lookup.
+            [ "$outcome" = pending ] && continue
+            # An ineligible dry-run is not an empty-image match.
+            if [ "$dry" = true ] && { [ "$allow" != true ] || [ "$named_file" != true ]; }; then continue; fi
+            saw_empty=1
+            continue
+        fi
+        found_id="$(printf '%s' "$record" | jq -r '.originalCleanupOperationId // .operationId')"
+        src="$(printf '%s' "$record" | jq -r .sourceSha)"
+        if [ "$src" = "$SHA" ]; then
+            if [ "$dry" = false ] || { [ "$allow" = true ] && [ "$named_file" = true ]; }; then
+                [[ "$candidate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+                [ -z "$same_image" ] || [ "$same_image" = "$candidate" ] || return 2
+                same_image="$candidate"
+                same_original="$found_id"
+            fi
+            continue
+        fi
+        # Another SHA counts only when that cleanup completed. Newest mtime, then operation id.
+        if [ "$dry" != false ] || [ "$outcome" != completed ]; then continue; fi
         [[ "$candidate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
-        [ -z "$image" ] || [ "$image" = "$candidate" ] || return 2
-        image="$candidate"; found="$(printf '%s' "$record" | jq -r '.originalCleanupOperationId // .operationId')"
+        mtime="$(stat -c %Y -- "$file" 2>/dev/null)" || return 2
+        opid="$(printf '%s' "$record" | jq -r .operationId)"
+        if [ -z "$cross_image" ] || [ "$mtime" -gt "$cross_mtime" ] || { [ "$mtime" -eq "$cross_mtime" ] && [ "$opid" \> "$cross_op" ]; }; then
+            cross_image="$candidate"
+            cross_original="$found_id"
+            cross_mtime="$mtime"
+            cross_op="$opid"
+        fi
     done
-    C994_IMAGE="$image"; C994_ORIGINAL="$found"
+    if [ -n "$same_image" ]; then
+        candidate="$same_image"
+        found_id="$same_original"
+    elif [ -n "$cross_image" ]; then
+        candidate="$cross_image"
+        found_id="$cross_original"
+    else
+        candidate=''
+        found_id=''
+    fi
+    if [ -n "$candidate" ]; then
+        inspected="$(docker image inspect -f '{{.Id}}' "$candidate" 2>/dev/null || true)"
+        if [ "$inspected" != "$candidate" ]; then
+            C994_LOOKUP=image-absent
+            C994_IMAGE=''
+            C994_ORIGINAL=''
+            return 0
+        fi
+        C994_IMAGE="$candidate"
+        C994_ORIGINAL="$found_id"
+        C994_LOOKUP=bound
+        return 0
+    fi
+    # A settled matching receipt with no image refuses. A different retirement refuses
+    # when nothing else matches. No receipt at all stays unpinned.
+    if [ "$saw_empty" = 1 ]; then return 2; fi
+    if [ "$identity_mismatch" = 1 ]; then return 2; fi
+    C994_LOOKUP=unpinned
+    C994_IMAGE=''
+    C994_ORIGINAL=''
 }
 
 c994_exact_absent() {

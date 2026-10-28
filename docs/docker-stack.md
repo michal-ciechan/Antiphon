@@ -426,8 +426,19 @@ That is the only container a preview may create: one read-only, capability-less,
 auto-removed, pinned-image helper on apply's network. A container that can write
 a volume, a rollout stop or rm, a volume rm, and a recycle journal are not part
 of a preview. The preview prints `auditPending=false` and grants no apply
-authority. A preview without a pinned image prints `auditPending=true`, does not
-audit, and starts no container. Apply keeps its own helper, obtains fresh proofs,
+authority when it binds an image. That image comes from a cleanup receipt for
+this project, project id, and retirement stamp. A receipt for the current source
+SHA is preferred when it carries a `sha256` image; otherwise the newest
+completed, non-dry-run receipt from another source SHA is used. The image must
+still be present on the host (`docker image inspect` by id). A missing image
+refuses `RecycleGitAuditUnknown` and starts no helper. A matching receipt whose
+image is empty also refuses, rather than printing `auditPending=true` and
+exiting 0. When no receipt matches, the preview prints
+`C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`, prints
+`auditPending=true`, does not audit, and starts no container. Apply prints that
+same warning. It still audits with `antiphon-server2/session-testing:<sha12>`
+when that image is present, and refuses `RecycleGitAuditUnknown` when it is not.
+Apply keeps its own helper, obtains fresh proofs,
 stops and removes only inspected owned container IDs, and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
@@ -500,10 +511,16 @@ A non-retiring failed-deploy hold uses the abandonment procedure above.
 After retaining the matching cleanup receipt, the wrapper re-reads status and
 requires fresh host absence before the independent C1008 volume gate. Explicit
 null live inventory is accepted only for a retired, offline, absent temp with
-zero bound/queued work. The pinned original image from the source/project/retirement
-receipt supplies the offline UID-1654 publication audit; unavailable image or
-unpublished/dirty work preserves the volumes. A separate gate-9 invocation uses
-the matching receipt across run IDs. Container removal retains all four private
+zero bound/queued work. The pinned original image supplies the offline UID-1654 publication audit. A
+receipt matches on project, project id, and the retirement stamp. The current
+source SHA is preferred when that receipt carries an image; otherwise the newest
+completed, non-dry-run receipt from another source SHA is used, including across
+run IDs. The image must be present on the host or the gate refuses. An empty
+image on a matching receipt refuses rather than skipping the audit. Unpublished
+or dirty work preserves the volumes. When no receipt matches, the gate warns
+`C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`. Apply then uses the
+current SHA `antiphon-server2/session-testing:<sha12>` image when that image
+exists, and refuses when it does not. Container removal retains all four private
 volumes, provider binds, caches and images until this audit passes.
 
 `retire-temp -DryRun` previews exact container IDs and four volume targets.
