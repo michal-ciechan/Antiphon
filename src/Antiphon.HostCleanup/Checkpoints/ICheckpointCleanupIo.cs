@@ -62,6 +62,12 @@ public static class AnchoredDelete
     }
 }
 public readonly record struct AnchoredChild(string Name, string Kind, long Size);
+
+// Truncation would change bytes reachable through another hard link. The caller unlinks the name.
+public sealed class AnchoredHardLinkException : IOException
+{
+    public AnchoredHardLinkException() : base("anchored-hard-link") { }
+}
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
 public readonly record struct CheckpointReadOpen(int UnixFlags, uint WindowsFlags);
 public sealed record CheckpointGitRequest(string Executable, string WorkingDirectory,
