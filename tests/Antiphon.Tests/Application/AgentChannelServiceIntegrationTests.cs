@@ -205,6 +205,247 @@ public class AgentChannelServiceIntegrationTests
         }
     }
 
+    // The desktop pump and a phone-home worker both await ObserveOutputAsync before the next
+    // event. A delivery whose transcript never arrives must not hold that call: the next observe
+    // has to finish, the second mention has to be queued, and the held delivery must not be
+    // marked unconfirmed just because the pump could not record a transcript.
+    [Test]
+    public async Task Held_flush_does_not_block_the_next_observe_or_drop_the_second_mention()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var sourceSession = NewSession(graph.SourceCard, "lead");
+            var helper = NewSession(graph.TargetCard, "helper");
+            var other = NewSession(graph.TargetCard, "other");
+            // Raw delivers blind. Claude waits on the transcript, which is the 30s hold.
+            helper.AgentKind = AgentKind.ClaudeCode;
+            other.AgentKind = AgentKind.ClaudeCode;
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.AddRange(sourceSession, helper, other);
+            await db.SaveChangesAsync();
+
+            var sourceAdapter = new FakeAgentProtocolAdapter();
+            var helperAdapter = new FakeAgentProtocolAdapter();
+            var otherAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [sourceAdapter, helperAdapter, otherAdapter]);
+            harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            harness.Runtime.Register(helper.Id, helperAdapter);
+            harness.Runtime.Register(other.Id, otherAdapter);
+            // A Claude session with no dialog observation is withheld before SendInput.
+            // Bind the persisted generation and a readable composer so the first delivery
+            // types, submits, and then waits on a transcript that never arrives.
+            await helperAdapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, helper.Id);
+            await otherAdapter.EnableClaudeDialogObservationAsync(TestDbFixture.ConnectionString, other.Id);
+
+            var started = DateTime.UtcNow;
+            var pumpDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await harness.Runtime.ObserveOutputAsync(sourceSession.Id, 1, "@helper one\n", CancellationToken.None);
+                    await harness.Runtime.ObserveOutputAsync(sourceSession.Id, 2, "@other two\n", CancellationToken.None);
+                    pumpDone.TrySetResult();
+                }
+                catch (Exception ex)
+                {
+                    pumpDone.TrySetException(ex);
+                }
+            });
+
+            var finished = await Task.WhenAny(pumpDone.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            finished.ShouldBe(pumpDone.Task,
+                $"the next observe on the same pump was still blocked after {(DateTime.UtcNow - started).TotalMilliseconds:F0}ms."
+                + DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter));
+            await pumpDone.Task;
+
+            await WaitUntilAsync(
+                () => MentionRows(db, other.Id, "two") == 1,
+                () => DescribeChannelPipeline(harness, sourceSession.Id, otherAdapter));
+            (await FreshMentionAsync(other.Id, "two")).ShouldNotBeNull();
+
+            await WaitUntilAsync(
+                () => helperAdapter.SubmittedBodies.Count == 1,
+                () => DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter),
+                TimeSpan.FromSeconds(8));
+            var submitted = helperAdapter.SubmittedBodies.Single();
+            await harness.Runtime.ObserveTranscriptAsync(
+                new SessionRunnerTranscriptEvent(
+                    helper.Id, 1, TranscriptKinds.UserPrompt, "held-flush-confirm", null, DateTimeOffset.UtcNow,
+                    "user", submitted, null, null, null, null, null),
+                CancellationToken.None);
+
+            await WaitUntilAsync(
+                () => FreshMention(helper.Id, "one") is { DeliveryVerdict: DeliveryVerdict.Delivered },
+                () => DescribeMention(helper.Id, "one") + DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter),
+                TimeSpan.FromSeconds(8));
+            FreshMention(helper.Id, "one")!.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(20));
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Queued_commands_at_dispose_do_not_leave_the_observer_blocked()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var sourceSession = NewSession(graph.SourceCard, "lead");
+            var helper = NewSession(graph.TargetCard, "helper");
+            var other = NewSession(graph.TargetCard, "other");
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.AddRange(sourceSession, helper, other);
+            await db.SaveChangesAsync();
+
+            var sourceAdapter = new FakeAgentProtocolAdapter();
+            var helperAdapter = new FakeAgentProtocolAdapter();
+            var otherAdapter = new FakeAgentProtocolAdapter();
+            var harness = BuildHarness(tempRoot, [sourceAdapter, helperAdapter, otherAdapter]);
+            harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            harness.Runtime.Register(helper.Id, helperAdapter);
+            harness.Runtime.Register(other.Id, otherAdapter);
+            var router = harness.Provider.GetRequiredService<AgentMentionRouter>();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            router.RouteGateEntered = entered;
+            router.BeforeRouteGate = gate;
+            Exception? blocked = null;
+            try
+            {
+                var observe = harness.Runtime.ObserveOutputAsync(
+                    sourceSession.Id, 1, "@helper one\n@other two\n", CancellationToken.None);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                router.Dispose();
+                var finished = await Task.WhenAny(observe, Task.Delay(TimeSpan.FromSeconds(3)));
+                finished.ShouldBe(observe, "a command still queued at dispose left the observer waiting");
+                await observe;
+            }
+            catch (Exception ex)
+            {
+                blocked = ex;
+            }
+            finally
+            {
+                gate.TrySetResult();
+            }
+
+            // The container disposes this singleton again. Keep the observer assertion as the
+            // failure when both fire; a second Dispose that throws is still a failure on its own.
+            Exception? disposeError = null;
+            try
+            {
+                await harness.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+
+            if (blocked is not null)
+                throw blocked;
+            if (disposeError is not null)
+                throw disposeError;
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Route_refuses_a_source_whose_generation_changed_after_the_line()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var sourceSession = NewSession(graph.SourceCard, "lead");
+            var helper = NewSession(graph.TargetCard, "helper");
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.AddRange(sourceSession, helper);
+            await db.SaveChangesAsync();
+
+            var sourceAdapter = new FakeAgentProtocolAdapter();
+            var helperAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [sourceAdapter, helperAdapter]);
+            harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            harness.Runtime.Register(helper.Id, helperAdapter);
+            var router = harness.Provider.GetRequiredService<AgentMentionRouter>();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            router.RouteGateEntered = entered;
+            router.BeforeRouteGate = gate;
+            try
+            {
+                var observe = harness.Runtime.ObserveOutputAsync(
+                    sourceSession.Id, 1, "@helper hello\n", CancellationToken.None);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var started = sourceSession.StartedAt.AddMinutes(5);
+                await using (var edit = CreateContext())
+                {
+                    var row = await edit.AgentSessions.SingleAsync(s => s.Id == sourceSession.Id);
+                    row.StartedAt = started;
+                    await edit.SaveChangesAsync();
+                }
+
+                gate.TrySetResult();
+                await WaitUntilAsync(
+                    () => harness.RouteDiagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.RouteReturned),
+                    () => DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter));
+                FreshMention(helper.Id, "hello").ShouldBeNull();
+                harness.RouteDiagnostics.Snapshot().ShouldContain(e =>
+                    e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=false reason=other-agent");
+                await observe.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                gate.TrySetResult();
+            }
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static int MentionRows(AppDbContext db, Guid sessionId, string text) =>
+        db.SessionQueuedMessages.Count(m => m.AgentSessionId == sessionId
+            && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains(text));
+
+    private static SessionQueuedMessage? FreshMention(Guid sessionId, string text)
+    {
+        using var db = CreateContext();
+        return db.SessionQueuedMessages.AsNoTracking().SingleOrDefault(m => m.AgentSessionId == sessionId
+            && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains(text));
+    }
+
+    private static Task<SessionQueuedMessage?> FreshMentionAsync(Guid sessionId, string text) =>
+        Task.FromResult(FreshMention(sessionId, text));
+
+    private static string DescribeMention(Guid sessionId, string text)
+    {
+        var row = FreshMention(sessionId, text);
+        return row is null
+            ? $"{Environment.NewLine}mention '{text}': (no row)"
+            : $"{Environment.NewLine}mention '{text}': status={row.Status} verdict={row.DeliveryVerdict}";
+    }
+
     [Test]
     public async Task Channel_delegate_claims_via_optimistic_concurrency()
     {
