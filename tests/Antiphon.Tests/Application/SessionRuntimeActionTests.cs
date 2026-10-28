@@ -25,6 +25,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
+[ParallelLimiter<SessionRuntimeActionLoadLimit>]
 public class SessionRuntimeActionTests
 {
     [Test]
@@ -193,7 +194,7 @@ public class SessionRuntimeActionTests
             runner.SetTranscript(new(f.SessionId, entries, 1));
             var gate = f.Services.GetRequiredService<SessionMessageQueueService>().GetLock(f.SessionId);
             await gate.WaitAsync();
-            try { await f.Runtime.SyncTranscriptAsync(f.SessionId, default).WaitAsync(TimeSpan.FromSeconds(5)); }
+            try { await AwaitReadyAsync(f.Runtime.SyncTranscriptAsync(f.SessionId, default), "The catch-up sync"); }
             finally { gate.Release(); }
             await using var db = f.Db();
             (await db.SessionRuntimeActions.CountAsync(a => a.TriggerKind == "catchup")).ShouldBe(1);
@@ -215,7 +216,7 @@ public class SessionRuntimeActionTests
             runner.SetTranscript(new(f.SessionId, entries, 1));
             writes.Armed = true;
             var ingest = f.Runtime.PersistTranscriptAsync(f.SessionId, entries);
-            await writes.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await AwaitReadyAsync(writes.Entered.Task, "The transcript write");
             var pull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
             var secondPull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
             try
@@ -339,7 +340,7 @@ public class SessionRuntimeActionTests
             Task? stop = null;
             try
             {
-                await submitted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await AwaitReadyAsync(submitted.Task, "The submitted input");
                 stop = worker.StopAsync(default);
                 stop.IsCompleted.ShouldBeFalse("the submitted input callback is still owned");
             }
@@ -387,7 +388,7 @@ public class SessionRuntimeActionTests
         {
             if (variant == "uncooperative-effect")
             {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await AwaitReadyAsync(entered.Task, "The uncooperative effect");
                 stopping = first.StopAsync(default);
                 stopping.IsCompleted.ShouldBeFalse();
                 receiver.Payloads.ShouldBeEmpty();
@@ -509,7 +510,7 @@ public class SessionRuntimeActionTests
             Task? ingest = null;
             try
             {
-                await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await AwaitReadyAsync(gate.Entered.Task, "The retention delete");
                 ingest = f.Runtime.ObserveTranscriptAsync(f.Event(2, "ToolResult", text: "new action after pruning"), default);
                 ingest.IsCompleted.ShouldBeFalse("retention owns the actual mutation lease");
             }
@@ -577,7 +578,7 @@ public class SessionRuntimeActionTests
         await worker.StartAsync(default);
         try
         {
-            await firstPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await AwaitReadyAsync(firstPage.Task, "The hosted page yield");
             held.Count.ShouldBe(3);
             Volatile.Read(ref bSeen).ShouldBe(0, "the fourth owner still holds its first page");
             await using (var db = f.Db())
@@ -586,7 +587,7 @@ public class SessionRuntimeActionTests
                 (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.OtherId)).ShouldBe(1);
             }
             releasePage.TrySetResult();
-            await secondPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await AwaitReadyAsync(secondPage.Task, "The second hosted page");
             bBeforeSecond.ShouldBeTrue("the worker must release A and service queued B before A's second page");
             receiver.Payloads.Select(Text).Where(t => t!.StartsWith("page-")).ShouldBe(
                 Enumerable.Range(1, 128).Select(i => "page-" + i));
@@ -707,6 +708,10 @@ public class SessionRuntimeActionTests
     private static SessionRuntimeActionCoordinator Actions(SessionStateTestFixture f) => f.Services.GetRequiredService<SessionRuntimeActionCoordinator>();
     private static string? Text(object payload) => (string?)payload.GetType().GetProperty("text")!.GetValue(payload);
 
+    private static Task AwaitReadyAsync(Task signal, string label) =>
+        LoadTimeoutWait.UntilSignaledAsync(signal, clock: null, budget: null,
+            LoadTimeoutBounds.SessionRuntimeActionWait, label: label);
+
     private static async Task RunUntilAsync(ServiceProvider services, Func<Task<bool>> done)
     {
         using var worker = new SessionRuntimeActionHostedService(services.GetRequiredService<SessionRuntimeActionCoordinator>());
@@ -715,11 +720,12 @@ public class SessionRuntimeActionTests
         finally { await worker.StopAsync(default); }
     }
 
-    private static async Task UntilAsync(Func<Task<bool>> done)
-    {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!await done()) await Task.Delay(20, deadline.Token);
-    }
+    private static Task UntilAsync(Func<Task<bool>> done) =>
+        LoadTimeoutWait.UntilSignaledAsync(async ct =>
+        {
+            while (!await done()) await Task.Delay(20, ct);
+        }, clock: null, budget: null, LoadTimeoutBounds.SessionRuntimeActionWait,
+            label: "The session runtime action");
 
     private sealed class Receiver : IEventBus
     {
