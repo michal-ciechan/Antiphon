@@ -7,6 +7,7 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -64,15 +65,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
                     throw;
                 }
             }));
-        if (Volatile.Read(ref startUnavailable) > 0)
-        {
-            exit.ShouldBe(2);
-            var refused = ReadReport(run);
-            refused.Rows.ShouldAllBe(row => row.SlotReason == "holder_identity_unavailable");
-            refused.Builds.ShouldAllBe(build => build.SlotReason == "holder_identity_unavailable");
-            driver.Calls.ShouldBeEmpty();
-            return;
-        }
+        SkipWhenStartUnread(Volatile.Read(ref startUnavailable), exit);
         exit.ShouldBe(0);
         entered.ShouldBe(2, "actual driver roster: both row drivers must run");
         observedOccupancy.ShouldBe(2, "simultaneous-holder-roster: rows must have distinct held leases");
@@ -151,13 +144,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
                         throw;
                     }
                 }));
-            if (Volatile.Read(ref startUnavailable) > 0)
-            {
-                exit.ShouldBe(2);
-                ReadReport(run).Rows.ShouldAllBe(row => row.SlotReason == "holder_identity_unavailable");
-                driver.Calls.ShouldBeEmpty();
-                return;
-            }
+            SkipWhenStartUnread(Volatile.Read(ref startUnavailable), exit);
             exit.ShouldBe(0);
             var calls = recorder.Calls.ToArray();
             calls.Count(call => call.Path.EndsWith("/renew", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
@@ -463,6 +450,16 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
                 child.Dispose();
             }
         }
+    }
+
+    private static void SkipWhenStartUnread(int unread, int exit)
+    {
+        if (unread == 0)
+            return;
+        throw new SkipTestException(
+            $"StartTime was unreadable {unread} time(s) (executor exit {exit}); " +
+            "skipped so an unread start cannot pass without the success-path assertions. " +
+            "Fail-closed refusal stays on failed_start_time_capture_disposes_new_holder.");
     }
 
     private static void AssertCachedHolderStart(string cachedStamp, Func<DateTime> readLiveStart)
