@@ -40,21 +40,26 @@ internal sealed class ToolCopyAuthority
         var entries = Inventory(context, tool).Select(path =>
         {
             var stamp = LedgerStat.Of(context, path);
+            var identity = FilesystemIdentityReader.Read(context.Io, path);
             var content = write.CreationRecord(path);
-            if (content is null || !write.MatchesCreation(path) || !stamp.Matches(LedgerStat.Of(context, path)))
+            if (content is null || !identity.IsBound || !write.MatchesCreation(path) || !stamp.Matches(LedgerStat.Of(context, path)))
                 throw new IOException("refused: tool-authority-creation-mismatch");
             return new CopyEntry
             {
                 Path = Path.GetRelativePath(tool, path).Replace('\\', '/'),
-                Content = content, Stamp = stamp,
+                Content = content, Stamp = stamp, Identity = identity,
                 CreatedUtcTicks = context.Io.DirectoryExists(path) ? context.Io.CreationTimeUtc(path).Ticks : 0,
             };
         }).ToList();
+        var rootIdentity = FilesystemIdentityReader.Read(context.Io, tool);
+        if (!rootIdentity.IsBound)
+            throw new IOException("refused: tool-authority-creation-mismatch");
         var record = new CopyRecord
         {
             RunId = owner.RunId, RunDirectory = Path.GetFullPath(run), ToolDirectory = tool,
             Creator = owner.Starter ?? throw new IOException("refused: tool-authority-owner-missing"),
-            Root = LedgerStat.Of(context, tool), RootCreatedUtcTicks = context.Io.CreationTimeUtc(tool).Ticks,
+            Root = LedgerStat.Of(context, tool), RootIdentity = rootIdentity,
+            RootCreatedUtcTicks = context.Io.CreationTimeUtc(tool).Ticks,
             Entries = entries,
         };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(record, Json);
@@ -125,20 +130,22 @@ internal sealed class ToolCopyAuthority
         {
             var path = Path.Combine(root, entry.Path);
             refusal = new CheckpointWrite(_context).Preflight(root, [path]);
-            if (refusal is not null || !Matches(path, entry)) return refusal ?? "tool-authority-entry-mismatch";
-            _context.Io.Unlink(path);
+            if (refusal is not null || !Matches(path, entry) || !entry.Identity.IsBound)
+                return refusal ?? "tool-authority-entry-mismatch";
+            _context.Io.DeleteAnchored(path, entry.Identity, directory: false);
         }
         foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "directory")
                      .OrderByDescending(entry => entry.Path.Count(c => c == '/')))
         {
             var path = Path.Combine(root, entry.Path);
             refusal = new CheckpointWrite(_context).Preflight(root, [path]);
-            if (refusal is not null || !SameDirectory(path, entry.Stamp, entry.CreatedUtcTicks))
+            if (refusal is not null || !SameDirectory(path, entry.Stamp, entry.CreatedUtcTicks) || !entry.Identity.IsBound)
                 return refusal ?? "tool-authority-entry-mismatch";
-            _context.Io.RemoveDirectory(path, recursive: false);
+            _context.Io.DeleteAnchored(path, entry.Identity, directory: true);
         }
-        if (!SameDirectory(root, _record.Root, _record.RootCreatedUtcTicks)) return "tool-authority-root-mismatch";
-        _context.Io.RemoveDirectory(root, recursive: false);
+        if (!SameDirectory(root, _record.Root, _record.RootCreatedUtcTicks) || !_record.RootIdentity.IsBound)
+            return "tool-authority-root-mismatch";
+        _context.Io.DeleteAnchored(root, _record.RootIdentity, directory: true);
         return null;
     }
 
@@ -208,6 +215,7 @@ internal sealed class ToolCopyAuthority
         public string ToolDirectory { get; set; } = "";
         public ProcessIdentity Creator { get; set; } = null!;
         public LedgerStat Root { get; set; }
+        public FilesystemIdentity RootIdentity { get; set; }
         public long RootCreatedUtcTicks { get; set; }
         public List<CopyEntry> Entries { get; set; } = [];
     }
@@ -217,6 +225,7 @@ internal sealed class ToolCopyAuthority
         public string Path { get; set; } = "";
         public string Content { get; set; } = "";
         public LedgerStat Stamp { get; set; }
+        public FilesystemIdentity Identity { get; set; }
         public long CreatedUtcTicks { get; set; }
     }
 }

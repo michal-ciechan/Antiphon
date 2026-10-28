@@ -87,8 +87,11 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
 
         if (ownership.FileOnly)
         {
-            if (!SafeWrite.MatchesCreation(full!)) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = "left in place: " + full + "; current-process creation record missing or changed" };
-            Io.Unlink(full!);
+            if (!SafeWrite.MatchesCreation(full!))
+                return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = "left in place: " + full + "; current-process creation record missing or changed" };
+            if (context.Registry.Identity(full!) is not { } expected)
+                return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = "left in place: " + full + "; current-process creation record missing or changed" };
+            Io.DeleteAnchored(full!, expected, directory: false);
         }
         else
         {
