@@ -6675,8 +6675,13 @@ consider_stale_index() {
 # unknown), review-evidence/ and antiphon-evidence/ (agent files, walked so neither
 # can hide a repository; plain files and directories stay allowed, file content is
 # never read, there is no depth, count or size cap, and an executable bit is
-# allowed), an empty common/ and an empty git-daemon-export-ok. Editor
-# swap/backup files: unknown.
+# allowed). The walk refuses .git (any type), HEAD, ORIG_HEAD, FETCH_HEAD,
+# MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, REBASE_HEAD, BISECT_HEAD,
+# AUTO_MERGE, MERGE_AUTOSTASH, commondir, gitdir, objects, refs, packed-refs,
+# reftable, shallow, and any name containing a control character. A symlink,
+# another file type, a second hard link or an unreadable entry also refuses,
+# and that line names the entry. An empty common/ and an empty
+# git-daemon-export-ok pass. Editor swap/backup files: unknown.
 # Linked worktree admin only: antiphon-mirror-owner.json (RunnerWorkspaceBindingStore
 # WriteOwnerStamp). A regular file, not a symlink or directory, one link, at most
 # 4096 bytes, owned by the uid running this audit. The same name in the common
@@ -6812,29 +6817,39 @@ consider_mirror_owner() {
     [ "${BASH_REMATCH[1]}" = 1 ] && [ "${BASH_REMATCH[2]}" = "$(id -u)" ] && [ "${BASH_REMATCH[3]}" -le 4096 ] \
         || refuse_gitdir_entry "$directory"
 }
-# A name Git would open as repository state. logs is not on this list: a directory
-# of build logs is the evidence this entry exists for, and Git does not read
-# antiphon-evidence/logs as the parent reflog.
+# A name that makes a directory openable by Git. Other names stay, including
+# other dot-names, config, index, hooks, info, description, modules, lock
+# files and editor backups. logs is not here: a directory of build logs is
+# the evidence this entry exists for.
 antiphon_evidence_git_name() {
     case "$1" in
-        .*|*[[:cntrl:]]*|*~|*.lock|BISECT_*|NOTES_MERGE_*|sharedindex.*|fsmonitor--daemon|fsmonitor--daemon.ipc)
+        *[[:cntrl:]]*|.git) return 0 ;;
+        HEAD|ORIG_HEAD|FETCH_HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|REBASE_HEAD|BISECT_HEAD)
             return 0 ;;
-        HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH|AUTO_MERGE)
-            return 0 ;;
-        MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|packed-refs|shallow)
-            return 0 ;;
-        refs|objects|config|config.worktree|hooks|worktrees|index|commondir|gitdir|reftable|modules)
-            return 0 ;;
-        description|info|branches|remotes|locked|gc.log|gc.pid|git-daemon-export-ok)
-            return 0 ;;
-        COMMIT_EDITMSG|MERGE_MSG|MERGE_MODE|MERGE_RR|SQUASH_MSG|TAG_EDITMSG|NOTES_EDITMSG)
-            return 0 ;;
-        EDIT_DESCRIPTION|BRANCH_DESCRIPTION|rebase-merge|rebase-apply|sequencer|rr-cache)
-            return 0 ;;
-        common|antiphon|review-evidence|antiphon-evidence|antiphon-mirror-owner.json)
-            return 0 ;;
+        AUTO_MERGE|MERGE_AUTOSTASH) return 0 ;;
+        commondir|gitdir|objects|refs|packed-refs|reftable|shallow) return 0 ;;
         *) return 1 ;;
     esac
+}
+# Entry path relative to the admin directory. Credential-shaped components are
+# redacted the same way as rel_repo. A control character cannot sit on the line.
+evidence_entry_rel() {
+    local admin="$1" child="$2" full admin_rel prefix
+    case "$child" in
+        *[[:cntrl:]]*) printf '?'; return 0 ;;
+    esac
+    full="$(rel_repo "$child")"
+    [ "$full" != '?' ] || { printf '?'; return 0; }
+    admin_rel="$(rel_repo "$admin")"
+    prefix="$admin_rel/"
+    if [ "${full#"$prefix"}" != "$full" ]; then
+        printf '%s' "${full#"$prefix"}"
+    else
+        printf '?'
+    fi
+}
+refuse_evidence_entry() {
+    refuse_unknown gitdir-entry 0 "$audit_repo" "admin=$(rel_repo "$1") entry=$(evidence_entry_rel "$1" "$2")"
 }
 # CARD-1594. Common directory only. Agent files beside the repository.
 # antiphon-evidence/ and review-evidence/ share this walk so neither can hide a
@@ -6842,32 +6857,33 @@ antiphon_evidence_git_name() {
 # never read, so a patch or notes are deleted with the volume. There is no depth,
 # count or size cap, and an executable bit is allowed. A second hard link refuses:
 # the other name can sit outside this tree, and the audit does not search the
-# volume for it. Anything else refuses gitdir-entry, the same diagnosis as any
-# other unknown entry.
+# volume for it. The refusal keeps check=gitdir-entry and names the entry.
 consider_antiphon_evidence() {
     # Do not local-shadow root: rel_repo reads that global, and bash locals are
     # visible to the functions this walk calls.
     local tree="$1" admin="$2" child base nlink
     audit_check="${tree##*/}"
-    [ -d "$tree" ] && [ ! -L "$tree" ] || refuse_gitdir_entry "$admin"
+    [ -d "$tree" ] && [ ! -L "$tree" ] || refuse_evidence_entry "$admin" "$tree"
     # -P: do not follow a symlink into a repository. A walk that cannot list an
-    # entry refuses, so an unreadable directory cannot hide one.
-    find -P "$tree" -mindepth 1 -print0 > "$scratch/antiphon-evidence" 2>/dev/null || refuse_gitdir_entry "$admin"
+    # entry refuses, so an unreadable directory cannot hide one. Byte order makes
+    # the named entry stable when several names would refuse.
+    find -P "$tree" -mindepth 1 -print0 > "$scratch/antiphon-evidence" 2>/dev/null || refuse_evidence_entry "$admin" "$tree"
+    sort -z "$scratch/antiphon-evidence" > "$scratch/antiphon-evidence-sorted" || refuse_evidence_entry "$admin" "$tree"
     while IFS= read -r -d '' child; do
         base="${child##*/}"
-        if antiphon_evidence_git_name "$base"; then refuse_gitdir_entry "$admin"; fi
+        if antiphon_evidence_git_name "$base"; then refuse_evidence_entry "$admin" "$child"; fi
         if [ -L "$child" ]; then
-            refuse_gitdir_entry "$admin"
+            refuse_evidence_entry "$admin" "$child"
         elif [ -d "$child" ]; then
-            [ -r "$child" ] && [ -x "$child" ] || refuse_gitdir_entry "$admin"
+            [ -r "$child" ] && [ -x "$child" ] || refuse_evidence_entry "$admin" "$child"
         elif [ -f "$child" ]; then
-            [ -r "$child" ] || refuse_gitdir_entry "$admin"
-            nlink="$(stat -c '%h' -- "$child" 2>/dev/null)" || refuse_gitdir_entry "$admin"
-            [ "$nlink" = 1 ] || refuse_gitdir_entry "$admin"
+            [ -r "$child" ] || refuse_evidence_entry "$admin" "$child"
+            nlink="$(stat -c '%h' -- "$child" 2>/dev/null)" || refuse_evidence_entry "$admin" "$child"
+            [ "$nlink" = 1 ] || refuse_evidence_entry "$admin" "$child"
         else
-            refuse_gitdir_entry "$admin"
+            refuse_evidence_entry "$admin" "$child"
         fi
-    done < "$scratch/antiphon-evidence"
+    done < "$scratch/antiphon-evidence-sorted"
     audit_check=gitdir-list
 }
 consider_gitdir() {
