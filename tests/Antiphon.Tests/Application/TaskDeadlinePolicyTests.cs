@@ -536,6 +536,114 @@ public class TaskDeadlinePolicyTests
         verdict.Boot.BootDueAt.ShouldBe(verdict.Boot.PromptAt.AddMinutes(8));
     }
 
+    // ---- Codex token_count heartbeat -------------------------------------------------------------
+
+    [Test]
+    public async Task a_codex_token_count_five_minutes_old_holds_a_twenty_one_minute_assistant_text()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 30);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 40),
+            (TranscriptKinds.AssistantText, "still reasoning", 21));
+        await scenario.SetCodexTokenCountAsync(5);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldBeNull(
+            "five minutes since token_count is inside the 20-minute model wait, and the ceiling is not near");
+        (await scenario.EntryCountAsync()).ShouldBe(2, "token_count must not become a transcript row");
+    }
+
+    [Test]
+    public async Task twenty_one_minutes_without_a_transcript_row_or_a_token_count_still_breaches_model_wait()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 30);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 40),
+            (TranscriptKinds.AssistantText, "silent", 21));
+        await scenario.SetCodexTokenCountAsync(21);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait);
+        verdict.Breached.ShouldBeTrue();
+        verdict.Limit.ShouldBe(TimeSpan.FromMinutes(20));
+        verdict.Summary.ShouldContain("waiting on the model");
+        verdict.Summary.ShouldContain("AssistantText");
+    }
+
+    [Test]
+    [Arguments(AgentKind.ClaudeCode)]
+    [Arguments(AgentKind.Grok)]
+    public async Task a_session_without_a_token_count_still_breaches_model_wait_at_twenty_one_minutes(AgentKind kind)
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 30);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 40),
+            (TranscriptKinds.AssistantText, "silent", 21));
+        await scenario.SetAgentKindAsync(kind);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait);
+        verdict.Breached.ShouldBeTrue();
+        verdict.Limit.ShouldBe(TimeSpan.FromMinutes(20));
+    }
+
+    [Test]
+    public async Task a_token_count_does_not_reset_the_local_tool_clock()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 100);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 120),
+            (TranscriptKinds.ToolCall, "build", 100));
+        await scenario.SetCodexTokenCountAsync(5);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.LocalExecution);
+        verdict.Breached.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task a_token_count_does_not_reset_the_boot_clock()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 15);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 10));
+        await scenario.SetCodexTokenCountAsync(1);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.BootModelWait);
+        verdict.Breached.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task a_token_count_does_not_reset_the_role_ceiling()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 241);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 240),
+            (TranscriptKinds.TurnEnd, null, 1));
+        await scenario.SetCodexTokenCountAsync(1);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling);
+        verdict.Breached.ShouldBeTrue();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private sealed class Scenario : IAsyncDisposable
@@ -611,6 +719,30 @@ public class TaskDeadlinePolicyTests
             }
 
             await db.SaveChangesAsync();
+        }
+
+        public async Task SetCodexTokenCountAsync(int minutesAgo)
+        {
+            await using var db = CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == _sessionId);
+            session.AgentKind = AgentKind.Codex;
+            session.CodexTokenCountAt = DateTime.UtcNow.AddMinutes(-minutesAgo);
+            await db.SaveChangesAsync();
+        }
+
+        public async Task SetAgentKindAsync(AgentKind kind)
+        {
+            await using var db = CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == _sessionId);
+            session.AgentKind = kind;
+            session.CodexTokenCountAt = null;
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<int> EntryCountAsync()
+        {
+            await using var db = CreateContext();
+            return await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == _sessionId);
         }
 
         public async Task SetLaunchResumedAsync(int minutesAgo)

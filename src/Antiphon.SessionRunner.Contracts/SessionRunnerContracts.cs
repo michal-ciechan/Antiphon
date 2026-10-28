@@ -369,7 +369,9 @@ public sealed record RunnerTranscriptDto(
     long LastSequence,
     bool TerminalComplete = false,
     DateTime? AcceptedStartedAt = null,
-    RunnerTranscriptReadiness? Readiness = null);
+    RunnerTranscriptReadiness? Readiness = null,
+    // Codex token_count time. Additive-optional: old peers omit it. Not a transcript entry.
+    DateTimeOffset? CodexTokenCountAt = null);
 
 /// <summary>Normalized transcript entry kinds (see <see cref="RunnerTranscriptEvent.Kind"/>).</summary>
 public static class TranscriptKinds
