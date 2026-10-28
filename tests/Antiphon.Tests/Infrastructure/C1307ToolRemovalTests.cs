@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
 using Shouldly;
@@ -189,6 +192,90 @@ public sealed class C1307ToolRemovalTests
         partial.Io.Text(partial.Run + "/ownership.json").ShouldBe(owner);
         partial.Io.FileExists(partial.Receipt.StatePath).ShouldBeTrue();
         partial.Io.FileExists(partial.Receipt.JsonPath).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Legacy_unbound_record_is_removed_by_the_base_path_delete()
+    {
+        var f = Sealed();
+        StripIdentity(f);
+        var loaded = ToolCopyAuthority.Load(f.Run, f.Owner, out var loadRefusal, f.Files.FreshContext());
+        loaded.ShouldNotBeNull(loadRefusal);
+        loadRefusal.ShouldBeNull();
+        var exit = await f.Wait(f.Files.FreshContext());
+        exit.ShouldBe(ExitCodes.Green, f.LastWaitOutput.ToString());
+        f.LastWaitOutput.ToString().ShouldContain("legacy-unbound-record");
+        f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
+        f.Io.FileExists(Marker(f)).ShouldBeTrue();
+        var again = await f.Wait(f.Files.FreshContext());
+        again.ShouldBe(ExitCodes.Green, f.LastWaitOutput.ToString());
+        f.LastWaitOutput.ToString().ShouldNotContain("previous-removal-attempt");
+    }
+
+    [Test]
+    public void Bound_record_uses_the_anchored_delete()
+    {
+        var f = Sealed();
+        var authority = ToolCopyAuthority.Load(f.Run, f.Owner, out var refusal, f.Files.FreshContext());
+        authority.ShouldNotBeNull(refusal);
+        var payload = f.Io.Nodes[f.Payload];
+        payload.Stat = payload.Stat with { Created = payload.Stat.Created + 1 };
+        Should.Throw<IOException>(() => authority.Remove(f.Tool)).Message.ShouldBe("anchored-identity-mismatch");
+        f.Io.Text(f.Payload).ShouldBe("keep");
+        f.Io.Text(Path.Combine(f.Tool, "second.dll")).ShouldBe("second-sentinel");
+    }
+
+    [Test]
+    public void Bound_parent_swap_is_refused_before_any_marker()
+    {
+        var f = Sealed();
+        var outside = Path.Combine(f.Files.Parent, "outside");
+        f.Io.CreateDirectory(outside);
+        f.Io.Put(Path.Combine(outside, "payload.txt"), "foreign-sentinel");
+        f.Io.Nodes[f.Tool].Target = outside;
+        var receipt = f.Cleanup(f.Files.FreshContext()).Remove(f.Run);
+        receipt.Removed.ShouldBeFalse();
+        receipt.Reason.ShouldNotContain("may be partially removed");
+        receipt.Reason.ShouldNotContain("tool-removal-incomplete");
+        receipt.Reason.ShouldNotContain("previous-removal-attempt");
+        f.Io.FileExists(Marker(f)).ShouldBeFalse();
+        f.Io.Text(f.Payload).ShouldBe("keep");
+        f.Io.Text(Path.Combine(outside, "payload.txt")).ShouldBe("foreign-sentinel");
+        var again = f.Cleanup(f.Files.FreshContext()).Remove(f.Run);
+        again.Reason.ShouldNotContain("previous-removal-attempt");
+        f.Io.FileExists(Marker(f)).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Bound_identity_mismatch_is_refused_before_any_marker()
+    {
+        var f = Sealed();
+        var payload = f.Io.Nodes[f.Payload];
+        payload.Stat = payload.Stat with { Created = payload.Stat.Created + 1 };
+        var receipt = f.Cleanup(f.Files.FreshContext()).Remove(f.Run);
+        receipt.Removed.ShouldBeFalse();
+        receipt.Reason.ShouldNotContain("may be partially removed");
+        receipt.Reason.ShouldNotContain("tool-removal-incomplete");
+        receipt.Reason.ShouldNotContain("previous-removal-attempt");
+        f.Io.FileExists(Marker(f)).ShouldBeFalse();
+        f.Io.Text(f.Payload).ShouldBe("keep");
+        var again = f.Cleanup(f.Files.FreshContext()).Remove(f.Run);
+        again.Reason.ShouldNotContain("previous-removal-attempt");
+        f.Io.FileExists(Marker(f)).ShouldBeFalse();
+    }
+
+    private static void StripIdentity(HostCleanupToolFixture f)
+    {
+        var path = Path.Combine(f.Run, "tool-copy-authority.json");
+        var node = JsonNode.Parse(f.Io.Text(path))!.AsObject();
+        node.Remove("rootIdentity");
+        foreach (var entry in node["entries"]!.AsArray())
+            entry!.AsObject().Remove("identity");
+        var json = node.ToJsonString();
+        f.Io.Put(path, json);
+        f.Owner.ToolCopy = new(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))));
+        RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
+        f.Receipt.ClearEvents();
     }
 
     private static EnteredRead BlockAfterFirstUnlink(HostCleanupToolFixture f)

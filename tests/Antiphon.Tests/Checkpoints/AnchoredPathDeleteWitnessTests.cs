@@ -137,6 +137,36 @@ public sealed class AnchoredPathDeleteWitnessTests
     }
 
     [Test]
+    public void directory_not_empty_matches_win32_145_exactly()
+    {
+        foreach (var (message, left) in new (string Message, bool Left)[]
+        {
+            ("anchored-unlink-failed: win32=145", true),
+            ("anchored-unlink-failed: win32=1450", false),
+            ("anchored-unlink-failed: errno=39", true),
+            ("anchored-unlink-failed: errno=390", false),
+            ("directory not empty", true),
+        })
+        {
+            var fixture = new HostCleanupCheckpointFixture();
+            fixture.Seal();
+            fixture.Io.Before = (op, path) =>
+            {
+                if (op == "rmdir" && path == fixture.Root)
+                    throw new IOException(message);
+            };
+            if (left)
+            {
+                var refusal = fixture.Ledger.Remove(fixture.Root);
+                refusal.ShouldNotBeNull(message);
+                refusal.ShouldContain("left in place");
+            }
+            else
+                Should.Throw<IOException>(() => fixture.Ledger.Remove(fixture.Root), message).Message.ShouldBe(message);
+        }
+    }
+
+    [Test]
     public void windows_entry_name_rejects_an_alternate_data_stream()
     {
         AnchoredDelete.EntryNameSafe(windows: true, "owned:stream").ShouldBeFalse();
