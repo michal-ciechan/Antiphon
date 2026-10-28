@@ -289,7 +289,7 @@ public sealed class WorktreeRetirementRaceTests
         var session = await world.SeedInteractiveSessionAsync();
         (await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
         world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
-        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
         var adapterStarts = world.Adapter.Started ? 1 : 0;
         adapterStarts.ShouldBe(0);
     }
@@ -322,7 +322,7 @@ public sealed class WorktreeRetirementRaceTests
         var session = await world.SeedInterruptedLaunchAsync();
         (await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None)).Accepted.ShouldBeTrue();
         world.LaunchQueue.ResumeInterrupted(session.Id, world.AgentId);
-        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
         var adapterAttaches = world.Adapter.Attached ? 1 : 0;
         adapterAttaches.ShouldBe(0);
     }
@@ -937,7 +937,7 @@ public sealed class WorktreeRetirementRaceTests
         var session = await world.SeedInteractiveSessionAsync();
         var generation = await world.OwnStandingLaunchAsync(session.Id);
         world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
-        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
         world.Adapter.Started.ShouldBeTrue();
         (await world.ActiveSessionLaunchIdsAsync(session.Id)).Count.ShouldBe(1, "the launch admits one Launch row for the session");
 
@@ -959,7 +959,7 @@ public sealed class WorktreeRetirementRaceTests
         var session = await world.SeedInteractiveSessionAsync();
         var generation = await world.OwnStandingLaunchAsync(session.Id);
         world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
-        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
 
         world.Adapter.Started.ShouldBeTrue();
         await using (var db = world.CreateDb())
