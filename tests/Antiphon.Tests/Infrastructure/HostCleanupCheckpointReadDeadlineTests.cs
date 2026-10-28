@@ -6,7 +6,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
-// CARD-1358: the verified reader bounds a read by a stall window that every delivered chunk re-arms, not by one
+// CARD-1358: the verified reader bounds a read by a stall window that every delivered chunk re-arms, as well as a size-proportional overall cap. A short silence window is not one
 // clock over the whole file. The clock is the fixture's ControlledTimeProvider and the stream advances it inside
 // ReadAsync, so no witness here waits on the wall clock.
 [Category("Unit")]
@@ -23,14 +23,15 @@ public sealed class HostCleanupCheckpointReadDeadlineTests
         var f = new HostCleanupCheckpointFixture();
         var payload = Patterned(PayloadSize);
         f.Io.Put(f.Payload, payload);
-        f.Io.StreamFactory = () => new PacedStream(payload, f.Clock, _ => TimeSpan.FromSeconds(1));
+        f.Io.StreamFactory = () => new PacedStream(payload, f.Clock, _ => TimeSpan.FromMilliseconds(100));
 
         var read = ReceiptFile.ReadBytes(f.Context, f.Payload);
 
         read.Length.ShouldBe(payload.Length);
-        read.SequenceEqual(payload).ShouldBeTrue("the bytes delivered over 120 virtual seconds are the file's bytes");
+        read.SequenceEqual(payload).ShouldBeTrue("the bytes delivered over 12 virtual seconds are the file's bytes");
         SHA256.HashData(read).ShouldBe(SHA256.HashData(payload));
-        f.Clock.Events.Count(e => e.Action == "change").ShouldBeGreaterThanOrEqualTo(119, "each delivered chunk re-arms the stall window");
+        f.Clock.Events.ShouldBeEmpty("the reader must not install a thread-pool timer");
+        (f.Clock.GetUtcNow() - DateTimeOffset.Parse("2026-09-25T00:00:00Z")).ShouldBeGreaterThan(TimeSpan.FromSeconds(12));
         f.Io.Count("stream").ShouldBe(1, "one handle stream serves the whole read");
     }
 

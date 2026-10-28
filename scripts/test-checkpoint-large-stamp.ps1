@@ -129,7 +129,7 @@ public sealed class LargeZeroStream : Stream
             }
             _clock.Advance(TimeSpan.FromSeconds(3));
         }
-        else _clock.Advance(TimeSpan.FromSeconds(_mode == "stall" && Reads == 2 ? 3 : 1));
+        else _clock.Advance(TimeSpan.FromSeconds(_mode == "stall" && Reads == 2 ? 3 : _length >= 67108864 ? 0.1 : 1));
         cancellationToken.ThrowIfCancellationRequested();
         var count = (int)Math.Min(buffer.Length, _length - Delivered);
         buffer.Span.Slice(0, count).Clear(); Delivered += count;
@@ -178,7 +178,8 @@ public sealed class LargeZeroStream : Stream
                     Assert-Equal $result.Item2 $expected "$case full independent hash"
                 }
                 Assert-Equal $stream.Delivered $size "$case delivered"
-                if ($clock.Changes -lt 4) { throw "$case progress did not rearm beyond three seconds" }
+                if ($stream.Reads -lt 5) { throw "$case did not deliver multiple bounded chunks" }
+                if ($clock.Creates -ne 0) { throw "$case installed a pool timer" }
             } else {
                 if ($null -eq $failure) { throw "$case accepted" }
                 if ($case -in @('oversize','growth','receipt-over')) {

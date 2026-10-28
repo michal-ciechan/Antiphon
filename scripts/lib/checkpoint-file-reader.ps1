@@ -20,11 +20,12 @@ public static class ConfinedFileReader
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
     public const long ContentLimit = 1L << 30;
-    // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused. CARD-1363 (the CARD-1358
-    // design): the window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the
-    // total is bounded by the chunk count and not by a throughput assumption.
+    // A three-second silence window covers open/inspection and each read. Dedicated I/O and
+    // monitor waits remove the pool-starvation reason for CARD-1599's six-second stopgap.
+    // The overall budget assumes at least 1 MiB/s after a 30s allowance: tiny receipts get
+    // 31s, and an inclusive 1 GiB stamp gets 1054s. Short reads cannot restart that budget.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
-    // Linux handle reads use workers; 256 KiB keeps a 7.5 MiB file at 30 hops.
+    public static TimeSpan OverallDeadline(long size) => TimeSpan.FromSeconds(30 + Math.Ceiling(size / (1024d * 1024)));
     public const int ReadChunk = 256 * 1024;
 
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root)
@@ -56,9 +57,12 @@ public static class ConfinedFileReader
     public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification, CancellationToken cancellationToken,
         TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
     {
-        using var content = new MemoryStream();
-        Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span => content.Write(span));
-        return content.ToArray();
+        return ReadBudget.Run(time ?? TimeProvider.System, limit, cancellationToken, budget =>
+        {
+            using var content = new MemoryStream();
+            Consume(root, path, limit, afterVerification, cancellationToken, openStream, budget, span => content.Write(span));
+            return content.ToArray();
+        });
     }
 
     public static (long Length, string Sha256) Digest(string root, string path, long limit, CancellationToken cancellationToken = default) =>
@@ -67,53 +71,219 @@ public static class ConfinedFileReader
     public static (long Length, string Sha256) Digest(string root, string path, long limit, Action? afterVerification,
         CancellationToken cancellationToken, TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        long total = 0;
-        Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span =>
+        return ReadBudget.Run(time ?? TimeProvider.System, limit, cancellationToken, budget =>
         {
-            hash.AppendData(span);
-            total += span.Length;
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            long total = 0;
+            Consume(root, path, limit, afterVerification, cancellationToken, openStream, budget, span =>
+            {
+                hash.AppendData(span);
+                total += span.Length;
+            });
+            return (total, Convert.ToHexString(hash.GetHashAndReset()));
         });
-        return (total, Convert.ToHexString(hash.GetHashAndReset()));
     }
 
     private delegate void ContentSink(ReadOnlySpan<byte> bytes);
 
     private static void Consume(string root, string path, long limit, Action? afterVerification, CancellationToken cancellationToken,
-        TimeProvider? time, Func<SafeFileHandle, Stream>? openStream, ContentSink sink)
+        Func<SafeFileHandle, Stream>? openStream, ReadBudget budget, ContentSink sink)
     {
-        using var stall = new CancellationTokenSource(StallDeadline, time ?? TimeProvider.System);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stall.Token);
-        deadline.Token.ThrowIfCancellationRequested();
+        budget.Check();
         using var handle = OperatingSystem.IsLinux() ? OpenLinux(path) : OperatingSystem.IsWindows() ? OpenWindows(path)
             : throw new InvalidDataException("opened-handle verification unsupported on this platform");
         var metadata = OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle);
         var refusal = Refusal(metadata.Regular, metadata.Links, metadata.Path, root);
         if (refusal is not null) throw new InvalidDataException(refusal);
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
+        budget.Inspect(metadata.Size);
         afterVerification?.Invoke();
-        using var stream = openStream is null ? new FileStream(handle, FileAccess.Read) : openStream(handle);
+        using var stream = openStream is not null ? openStream(handle) : OperatingSystem.IsLinux() ? new LinuxReadStream(handle) : new FileStream(handle, FileAccess.Read);
         long total = 0;
         var buffer = new byte[ReadChunk];
         try
         {
-            int count;
             // One byte past the limit is requested so a file that grows during the read is still refused.
-            while ((count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+            while (true)
             {
+                budget.Check();
+                var count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), budget.Token)
+                    .AsTask().WaitAsync(budget.Token).GetAwaiter().GetResult();
+                budget.Check();
+                if (count == 0) break;
                 if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
                 sink(buffer.AsSpan(0, count));
                 total += count;
-                stall.CancelAfter(StallDeadline); // progress re-arms the window
+                budget.Progress(count);
             }
         }
-        catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is ReadStalledException ||
+            (ex is OperationCanceledException && budget.Stalled && !cancellationToken.IsCancellationRequested))
         {
             // Only the retained handle can prove that an EOF stall still represents a complete read.
+            budget.CheckOverall();
             if (total == (long)metadata.Size &&
                 (OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle)).Size == metadata.Size)
+            {
+                budget.CheckOverall();
                 return;
+            }
             throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+        }
+    }
+
+    // One dedicated I/O thread owns the handle, buffers and sink through disposal. The caller
+    // waits on a monitor, not a pool timer. If a syscall cannot be cancelled, that thread keeps
+    // ownership until it returns; it cannot publish bytes or touch a disposed caller-owned sink.
+    private sealed class ReadBudget
+    {
+        private readonly object _gate = new();
+        private readonly TimeProvider _time;
+        private readonly CancellationToken _caller;
+        private readonly CancellationTokenSource _stop;
+        private readonly long _started;
+        private long _progress;
+        private long _total;
+        private ulong _size;
+        private TimeSpan _overall;
+        private Exception? _refusal;
+        private bool _completed;
+
+        private ReadBudget(TimeProvider time, long limit, CancellationToken caller)
+        {
+            _time = time;
+            _caller = caller;
+            _stop = CancellationTokenSource.CreateLinkedTokenSource(caller);
+            _started = _progress = time.GetTimestamp();
+            _overall = OverallDeadline(limit);
+        }
+
+        public CancellationToken Token => _stop.Token;
+        public bool Stalled { get { lock (_gate) return _refusal is ReadStalledException; } }
+
+        public static T Run<T>(TimeProvider time, long limit, CancellationToken caller, Func<ReadBudget, T> action)
+        {
+            caller.ThrowIfCancellationRequested();
+            var budget = new ReadBudget(time, limit, caller);
+            T result = default!;
+            Exception? error = null;
+            var worker = new Thread(() =>
+            {
+                try { result = action(budget); }
+                catch (Exception ex) { error = ex; }
+                finally
+                {
+                    lock (budget._gate)
+                    {
+                        budget._stop.Dispose();
+                        budget._completed = true;
+                        Monitor.PulseAll(budget._gate);
+                    }
+                }
+            }) { IsBackground = true, Name = "checkpoint-file-read" };
+            try { worker.Start(); }
+            catch { budget._stop.Dispose(); throw; }
+            lock (budget._gate)
+            {
+                while (!budget._completed)
+                {
+                    var refusal = budget.Refusal();
+                    if (refusal is not null)
+                    {
+                        budget._refusal = refusal;
+                        budget._stop.Cancel();
+                        // Let a cancellable read unwind and perform the retained-handle EOF check.
+                        // This is a bounded cancellation handoff, never a join of a hung syscall.
+                        // An overall expiry has no handoff allowance.
+                        var handoff = TimeSpan.FromMilliseconds(100);
+                        var left = budget._overall - time.GetElapsedTime(budget._started);
+                        if (left < handoff) handoff = left;
+                        if (!budget._completed && handoff > TimeSpan.Zero)
+                            Monitor.Wait(budget._gate, handoff);
+                        if (!budget._completed) throw refusal is ReadStalledException ? new IOException(refusal.Message) : refusal;
+                        break;
+                    }
+                    // Polling also observes manual TimeProviders and caller cancellation without
+                    // installing any timer or queueing any thread-pool work.
+                    var remaining = budget.Remaining();
+                    if (remaining <= TimeSpan.Zero) continue;
+                    Monitor.Wait(budget._gate, remaining < TimeSpan.FromMilliseconds(10)
+                        ? remaining : TimeSpan.FromMilliseconds(10));
+                }
+            }
+            if (error is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            caller.ThrowIfCancellationRequested();
+            return result;
+        }
+
+        public void Inspect(ulong size)
+        {
+            lock (_gate)
+            {
+                _size = size;
+                _overall = OverallDeadline((long)size);
+            }
+            Check();
+        }
+
+        public void Progress(int count)
+        {
+            lock (_gate)
+            {
+                _total += count;
+                _progress = _time.GetTimestamp();
+            }
+        }
+
+        public void Check()
+        {
+            lock (_gate)
+            {
+                var refusal = _refusal ?? Refusal();
+                if (refusal is null) return;
+                _refusal = refusal;
+                throw refusal;
+            }
+        }
+
+        public void CheckOverall()
+        {
+            _caller.ThrowIfCancellationRequested();
+            lock (_gate)
+                if (_time.GetElapsedTime(_started) >= _overall)
+                    throw OverallRefusal();
+        }
+
+        // All state accesses below are under _gate. A short read never extends _started.
+        private TimeSpan Remaining()
+        {
+            var stall = StallDeadline - _time.GetElapsedTime(_progress);
+            var overall = _overall - _time.GetElapsedTime(_started);
+            return stall < overall ? stall : overall;
+        }
+
+        private Exception? Refusal()
+        {
+            if (_caller.IsCancellationRequested) return new OperationCanceledException(_caller);
+            if (_time.GetElapsedTime(_started) >= _overall) return OverallRefusal();
+            if (_time.GetElapsedTime(_progress) >= StallDeadline)
+                return new ReadStalledException($"read-stalled: {_total} of {_size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+            return null;
+        }
+
+        private IOException OverallRefusal() => new($"read-deadline-exceeded: {_total} of {_size} bytes; overall limit {_overall.TotalSeconds:0}s");
+    }
+
+    private sealed class ReadStalledException(string message) : IOException(message);
+
+    // Linux FileStream.ReadAsync on a non-overlapped fd queues blocking I/O on the pool.
+    // The reader already owns a dedicated thread, so execute that syscall inline instead.
+    private sealed class LinuxReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Read(buffer.Span));
         }
     }
 

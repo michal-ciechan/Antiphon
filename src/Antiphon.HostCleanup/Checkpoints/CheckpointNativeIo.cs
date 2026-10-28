@@ -528,9 +528,20 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
         return new NativeHandle(handle);
     }
 
+    // Linux FileStream.ReadAsync on a non-overlapped fd queues blocking I/O on the pool.
+    // The reader already owns a dedicated thread, so execute that syscall inline instead.
+    private sealed class LinuxReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Read(buffer.Span));
+        }
+    }
+
     private sealed class NativeHandle(SafeFileHandle handle) : ICheckpointReadHandle
     {
-        public Stream OpenStream() => new FileStream(handle, FileAccess.Read);
+        public Stream OpenStream() => OperatingSystem.IsLinux() ? new LinuxReadStream(handle) : new FileStream(handle, FileAccess.Read);
         public void Dispose() => handle.Dispose();
         public CheckpointHandleStat Inspect()
         {
