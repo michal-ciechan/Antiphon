@@ -16,6 +16,7 @@ public sealed class CheckpointScriptReaderDeadlineTests : CheckpointTestBase
     [Test]
     [Arguments("progress")]
     [Arguments("stall")]
+    [Arguments("trickle")]
     [Arguments("unreadable")]
     [Arguments("tampered-beside-unreadable")]
     [Arguments("windows-open")]

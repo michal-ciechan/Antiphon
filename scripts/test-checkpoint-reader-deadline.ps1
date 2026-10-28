@@ -145,6 +145,18 @@ public sealed class PacedStream : MemoryStream
 
     public Func<SafeFileHandle, Stream> Factory() => _ => this;
 }
+
+public sealed class TrickleStream : MemoryStream
+{
+    private readonly PacedClock _clock;
+    public TrickleStream(byte[] bytes, PacedClock clock) : base(bytes, false) { _clock = clock; }
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        return base.ReadAsync(buffer.Slice(0, 1), cancellationToken);
+    }
+    public Func<SafeFileHandle, Stream> Factory() => _ => this;
+}
 '@
 
 function Get-InnermostException {
@@ -168,21 +180,34 @@ $payloadSize = 7864320 # 7.5 MiB, the archive size behind CARD-1358
 $second = [TimeSpan]::FromSeconds(1)
 
 switch ($Mode) {
+    'trickle' {
+        $path = Join-Path $Scratch 'trickle.bin'
+        $bytes = [byte[]]::new(256)
+        [IO.File]::WriteAllBytes($path, $bytes)
+        $clock = [Antiphon.Checkpoints.Witness.PacedClock]::new()
+        $stream = [Antiphon.Checkpoints.Witness.TrickleStream]::new($bytes, $clock)
+        $refused = $null
+        try { [void]$readerType::ReadBytes($Scratch, $path, $limit, $null, $none, $clock, $stream.Factory()) }
+        catch { $refused = Get-InnermostException $_ }
+        if ($null -eq $refused -or -not $refused.Message.Contains('read-deadline-exceeded')) { throw 'trickle escaped overall deadline' }
+        if ($clock.GetUtcNow() -gt [DateTimeOffset]::Parse('2026-10-19T00:00:31Z')) { throw 'trickle exceeded 31s cap' }
+        "PASS $Mode $($refused.Message)"
+    }
     'progress' {
         # red: one three-second deadline over the whole read refuses an early chunk although every read answered within a second.
         [byte[]]$payload = New-PatternedBytes $payloadSize
         $path = Join-Path $Scratch 'payload.bin'
         [IO.File]::WriteAllBytes($path, $payload)
         $clock = [Antiphon.Checkpoints.Witness.PacedClock]::new()
-        $stream = [Antiphon.Checkpoints.Witness.PacedStream]::new($payload, $clock, $second, 0, [TimeSpan]::Zero, $null)
+        $stream = [Antiphon.Checkpoints.Witness.PacedStream]::new($payload, $clock, [TimeSpan]::FromMilliseconds(100), 0, [TimeSpan]::Zero, $null)
         [byte[]]$read = $readerType::ReadBytes($Scratch, $path, $limit, $null, $none, $clock, $stream.Factory())
         if ($read.Length -ne $payload.Length) { throw "read $($read.Length) of $($payload.Length) bytes" }
         $expected = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($payload))
         $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($read))
-        if ($actual -cne $expected) { throw 'the bytes delivered over 120 virtual seconds are not the file bytes' }
+        if ($actual -cne $expected) { throw 'the bytes delivered over 12 virtual seconds are not the file bytes' }
         if ($stream.Reads -lt 120) { throw "only $($stream.Reads) reads served the payload" }
-        if ($clock.Creates -ne 1) { throw "expected one stall timer, saw $($clock.Creates)" }
-        if ($clock.Changes -lt 119) { throw "each delivered chunk must re-arm the stall window; saw $($clock.Changes) re-arms" }
+        if ($clock.Creates -ne 0) { throw "reader installed $($clock.Creates) timers" }
+        if ($clock.GetUtcNow() -lt [DateTimeOffset]::Parse("2026-10-19T00:00:12Z")) { throw "progress did not cross the silence window" }
         "PASS $Mode reads=$($stream.Reads) changes=$($clock.Changes) fires=$($clock.Fires)"
     }
     'stall' {
