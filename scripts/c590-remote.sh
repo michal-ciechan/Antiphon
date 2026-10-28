@@ -8087,12 +8087,13 @@ c1008_recycle() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
         C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
         if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview || c1008_refuse RecycleGitAuditUnknown
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || c1008_refuse RecycleGitAuditUnknown
         else
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || c1008_refuse RecycleGitAuditUnknown
         fi
         # No pin: warn and leave apply on the current SHA image. A chosen image that
-        # is not on the host, or an empty matching receipt, refuses instead of skipping.
+        # is not on the host refuses. An empty matching receipt refuses only when
+        # nothing else binds.
         if [ -z "${C994_IMAGE:-}" ]; then
             case "${C994_LOOKUP:-}" in
                 unpinned) printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n' ;;
@@ -8649,15 +8650,19 @@ c994_status_proof() {
 # lookup authority. A current-SHA image wins. Otherwise the newest completed
 # non-dry-run receipt for this project, project id, and retirement stamp does,
 # including a receipt written at another source SHA. Two current-SHA images that
-# differ refuse. The chosen image must still be present on the host.
+# differ refuse. An empty matching receipt refuses only when the caller is the
+# audit lookup and nothing else binds. The chosen image must still be present
+# on the host.
 c994_lookup_image() {
     require_lane host
-    local operation="${1:-}" file record candidate='' found_id='' root allow=false
+    local operation="${1:-}" file record candidate='' found_id='' root allow=false audit=false
     local named_file=false match dry outcome src mtime opid inspected=''
     local same_image='' same_original='' cross_image='' cross_original='' cross_mtime=0 cross_op=''
     local identity_mismatch=0 saw_empty=0
     # allow-preview accepts a dry-run receipt only when the caller named that operation.
+    # audit is the C1008 volume gate. Container cleanup does not pass it.
     [ "${2:-}" = allow-preview ] && [ -n "$operation" ] && allow=true
+    if [ "${2:-}" = audit ] || [ "${3:-}" = audit ]; then audit=true; fi
     C994_IMAGE=''; C994_ORIGINAL=''; C994_LOOKUP=''
     root="$SERVER2_ROOT/temp-container-retirement"
     [ ! -L "$root" ] || return 2
@@ -8752,9 +8757,10 @@ c994_lookup_image() {
         C994_LOOKUP=bound
         return 0
     fi
-    # A settled matching receipt with no image refuses. A different retirement refuses
-    # when nothing else matches. No receipt at all stays unpinned.
-    if [ "$saw_empty" = 1 ]; then return 2; fi
+    # A settled matching receipt with no image refuses on the audit lookup only.
+    # Container cleanup keeps an empty image for an absent temp. A different
+    # retirement still refuses when nothing else matches. No receipt stays unpinned.
+    if [ "$audit" = true ] && [ "$saw_empty" = 1 ]; then return 2; fi
     if [ "$identity_mismatch" = 1 ]; then return 2; fi
     C994_LOOKUP=unpinned
     C994_IMAGE=''
