@@ -26,4 +26,9 @@ public sealed class C1514LandingSplitBudgetTests
     public Task C1410_MeasuredCostGroups() =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1410", "C1410_MeasuredCostGroups", 1,
             "C1410 rc launch groups pack by measured cost under the watchdog and assign every node once");
+
+    [Test]
+    public Task G2865_Group28Group65MeasuredBudget() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "G2865", "G2865_Group28Group65MeasuredBudget", 1,
+            "G2865 group 28 and 65 measured class costs fit inside chunk prices under the watchdog");
 }
