@@ -1579,6 +1579,8 @@ public sealed partial class AttentionService
         // LandedWithResidue, or LandingCleanup event. It is not AgentTask.CompletedAt.
         // EligibleHistoricalRefusalsAsync omits a LandRefused when LandRefusalResolvedAsync is
         // true or task.ReplyTo is None. An unresolved LandRefused has no age check.
+        // A missing AgentTasks row is omitted. The event scan and the task lookup are separate
+        // reads, so a task deleted between them is not a row.
         // AppendHistoricalLandRowsAsync emits one row. When both groups are eligible the
         // representative is refusal.Newest. When only the refusal is eligible the representative
         // is refusal.Newest, the LandRefused event. When only the receipt is eligible the
@@ -1618,7 +1620,9 @@ public sealed partial class AttentionService
         {
             var source = group.Newest;
             if (await LegacyReceiptConfirmedAsync(source, ct)) continue;
-            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
+            var task = await _db.AgentTasks.AsNoTracking()
+                .SingleOrDefaultAsync(t => t.Id == source.AgentTaskId, ct);
+            if (task is null) continue;
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
             // No new delivery obligation. source is the newest receipt event in this group
             // (OrderByDescending At). The comparison is now - source.At against RecencyWindow
@@ -1646,7 +1650,9 @@ public sealed partial class AttentionService
         {
             var source = group.Newest;
             if (await LandRefusalResolvedAsync(source, ct)) continue;
-            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
+            var task = await _db.AgentTasks.AsNoTracking()
+                .SingleOrDefaultAsync(t => t.Id == source.AgentTaskId, ct);
+            if (task is null) continue;
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
             result[task.Id] = new EligibleHistoricalGroup(task, group.Count, source);
         }
