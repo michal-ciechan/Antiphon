@@ -21,6 +21,28 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
         await AssertRunAsync(root, 3, 6, cancellationToken);
     }
 
+    // Windows MAX_PATH is 260 including the terminating NUL, so a path string must stay
+    // within 259 characters. The deepest file in a UseArtifactsOutput FilterHost build is
+    // the generated testing-platform cache under the isolated output directory.
+    [Test]
+    [Timeout(30_000)]
+    public void repeat_output_directory_stays_within_windows_max_path()
+    {
+        const string longestRelative =
+            @"artifacts\obj\Antiphon.Checkpoints.FilterHost\debug\Antiphon.Checkpoints.FilterHost.gentestingplatformentrypointinputcache.cache";
+        var tempName = "c723-" + new string('a', 32);
+        var output = CheckpointRepeatFixture.OutputName(tempName) + "-sequence-2";
+        foreach (var prefix in new[]
+        {
+            @"C:\Antiphon\releases\checkout-1873094e\tests\Antiphon.Checkpoints.FilterHost",
+            @"C:\Antiphon\worktrees\card-task-0a352e05\tests\Antiphon.Checkpoints.FilterHost",
+        })
+        {
+            var full = prefix + "\\" + output + "\\" + longestRelative;
+            full.Length.ShouldBeLessThanOrEqualTo(259, full);
+        }
+    }
+
     private async Task AssertRunAsync(string root, int repeat, int expectedExecuted,
         CancellationToken cancellationToken)
     {
