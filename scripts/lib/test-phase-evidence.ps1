@@ -234,75 +234,35 @@ function Read-TestPhaseTrxRows {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
-    $rows = @()
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $rows }
+    $none = [pscustomobject]@{ Rows = @(); Complete = $false; Refused = $true }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     $identity = Get-TestPhasePathIdentity -Path $Path
-    if ($identity.Kind -ne 'regular' -or [int64]$identity.Size -gt 262144) { return $rows }
-    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $rows }
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
-    if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $rows }
-    $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
-    $search = 0
-    while ($search -lt $text.Length) {
-        if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return @() }
-        $idx = $text.IndexOf('UnitTestResult', $search, [StringComparison]::Ordinal)
-        if ($idx -lt 0) { break }
-        $lt = $text.LastIndexOf('<', $idx)
-        if ($lt -lt $search) { $search = $idx + 14; continue }
-        $between = $text.Substring($lt + 1, $idx - ($lt + 1))
-        if ($between -notmatch '^(\w+:)?$') { $search = $idx + 14; continue }
-        $i = $idx + 14
-        $inQuote = $false
-        $quote = [char]0
-        $end = -1
-        while ($i -lt $text.Length) {
-            $ch = $text[$i]
-            if ($inQuote) {
-                if ($ch -eq $quote) { $inQuote = $false }
-            } elseif ($ch -eq '"' -or $ch -eq "'") {
-                $inQuote = $true
-                $quote = $ch
-            } elseif ($ch -eq '>') {
-                $end = $i
-                break
-            }
-            $i++
+    if ($identity.Kind -ne 'regular') { return $none }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $none }
+    $opened = Open-TestPhaseReadStream -Path $Path
+    if ($opened.Refused -or $null -eq $opened.Stream) { return $none }
+    try {
+        $read = [Antiphon.TestPhase.TrxTimingScanner]::Read($opened.Stream, $Watch, $DeadlineMilliseconds, 262144, 16384)
+        if ($null -eq $read -or -not $read.Complete) { return $none }
+        $rows = New-Object System.Collections.Generic.List[object]
+        foreach ($row in $read.Rows) {
+            $rows.Add([pscustomobject]@{
+                TestId = [string]$row.TestId
+                Outcome = [string]$row.Outcome
+                Name = [string]$row.Name
+                Duration = [string]$row.Duration
+                StdOut = [string]$row.StdOut
+                Path = $Path
+            })
         }
-        if ($end -lt 0) { break }
-        $selfClose = ($end -gt ($lt + 1) -and $text[$end - 1] -eq '/')
-        $attrEnd = $end
-        if ($selfClose) { $attrEnd = $end - 1 }
-        $attrs = ''
-        $attrStart = $idx + 14
-        if ($attrEnd -gt $attrStart) { $attrs = $text.Substring($attrStart, $attrEnd - $attrStart) }
-        $stdout = ''
-        if ($selfClose) {
-            $search = $end + 1
-        } else {
-            $close = $text.IndexOf('UnitTestResult', $end + 1, [StringComparison]::Ordinal)
-            $bodyEnd = $text.Length
-            if ($close -ge 0) {
-                $closeLt = $text.LastIndexOf('<', $close)
-                if ($closeLt -ge $end) { $bodyEnd = $closeLt }
-            }
-            if ($bodyEnd -gt ($end + 1)) {
-                $stdout = Get-TestPhaseStdOutText -Body $text.Substring($end + 1, $bodyEnd - ($end + 1))
-            }
-            $search = $bodyEnd
-            if ($search -le $end) { $search = $end + 1 }
-        }
-        $rows += [pscustomobject]@{
-            TestId = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'testId')
-            Outcome = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'outcome')
-            Name = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'testName')
-            Duration = (Read-TestPhaseTrxAttribute -Attrs $attrs -Name 'duration')
-            StdOut = $stdout
-            Path = $Path
-        }
+        return [pscustomobject]@{ Rows = @($rows.ToArray()); Complete = $true; Refused = $false }
+    } catch {
+        return $none
+    } finally {
+        try { $opened.Stream.Dispose() } catch { }
     }
-    return $rows
 }
 
 function Get-TestPhaseNativeIds {
@@ -366,6 +326,557 @@ namespace Antiphon.TestPhase {
 
 Initialize-TestPhaseLinuxIdentity
 
+function Initialize-TestPhaseStreamReaders {
+    if ('Antiphon.TestPhase.TrxTimingScanner' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Text;
+
+namespace Antiphon.TestPhase {
+    public sealed class TrxTimingRow {
+        public string TestId;
+        public string Outcome;
+        public string Name;
+        public string Duration;
+        public string StdOut;
+    }
+
+    public sealed class TrxTimingRead {
+        public bool Complete;
+        public List<TrxTimingRow> Rows = new List<TrxTimingRow>();
+    }
+
+    public sealed class TrxTimingStats {
+        public bool Complete;
+        public int Count;
+        public double P50;
+        public double P95;
+        public double Max;
+        public string[] SlowNames = new string[0];
+        public double[] SlowSeconds = new double[0];
+    }
+
+    public sealed class JsonlTimingRead {
+        public bool Complete;
+        public List<string> Lines = new List<string>();
+    }
+
+    public static class TrxTimingScanner {
+        public static TrxTimingRead Read(Stream stream, Stopwatch watch, int deadlineMs, int maxTagBytes, int maxStdoutBytes) {
+            var read = new TrxTimingRead();
+            var scan = Scan(stream, watch, deadlineMs, maxTagBytes, maxStdoutBytes, true);
+            read.Complete = scan.Complete;
+            if (!scan.Complete) return read;
+            for (int i = 0; i < scan.Rows.Count; i++) {
+                var row = scan.Rows[i];
+                read.Rows.Add(new TrxTimingRow {
+                    TestId = row.TestId,
+                    Outcome = row.Outcome,
+                    Name = row.Name,
+                    Duration = row.Duration,
+                    StdOut = row.StdOut
+                });
+            }
+            return read;
+        }
+
+        public static TrxTimingStats Summarize(Stream stream, Stopwatch watch, int deadlineMs, int maxTagBytes) {
+            var stats = new TrxTimingStats();
+            var scan = Scan(stream, watch, deadlineMs, maxTagBytes, 0, false);
+            stats.Complete = scan.Complete;
+            if (!scan.Complete) return stats;
+            var ranked = new List<Ranked>();
+            for (int i = 0; i < scan.Rows.Count; i++) {
+                if (!scan.Rows[i].HasSeconds) continue;
+                ranked.Add(new Ranked { Seconds = scan.Rows[i].Seconds, Name = scan.Rows[i].Name ?? "" });
+            }
+            stats.Count = ranked.Count;
+            if (ranked.Count < 1) return stats;
+            ranked.Sort(CompareRank);
+            var sorted = new double[ranked.Count];
+            for (int i = 0; i < ranked.Count; i++) sorted[i] = ranked[i].Seconds;
+            stats.P50 = Rank(sorted, 0.50);
+            stats.P95 = Rank(sorted, 0.95);
+            stats.Max = Math.Round(sorted[sorted.Length - 1], 3, MidpointRounding.ToEven);
+            int take = ranked.Count < 20 ? ranked.Count : 20;
+            stats.SlowNames = new string[take];
+            stats.SlowSeconds = new double[take];
+            for (int i = 0; i < take; i++) {
+                var row = ranked[ranked.Count - 1 - i];
+                stats.SlowNames[i] = row.Name;
+                stats.SlowSeconds[i] = Math.Round(row.Seconds, 3, MidpointRounding.ToEven);
+            }
+            return stats;
+        }
+
+        static int CompareRank(Ranked left, Ranked right) {
+            int bySeconds = left.Seconds.CompareTo(right.Seconds);
+            if (bySeconds != 0) return bySeconds;
+            return string.CompareOrdinal(right.Name, left.Name);
+        }
+
+        static double Rank(double[] sorted, double fraction) {
+            int n = sorted.Length;
+            int rank = (int)Math.Ceiling(fraction * n);
+            if (rank < 1) rank = 1;
+            if (rank > n) rank = n;
+            return Math.Round(sorted[rank - 1], 3, MidpointRounding.ToEven);
+        }
+
+        static ScanBag Scan(Stream stream, Stopwatch watch, int deadlineMs, int maxTagBytes, int maxStdoutBytes, bool captureStdout) {
+            var bag = new ScanBag();
+            var cursor = new Cursor(stream, watch, deadlineMs);
+            if (maxTagBytes < 64) maxTagBytes = 64;
+            if (maxStdoutBytes < 0) maxStdoutBytes = 0;
+            while (true) {
+                int b = cursor.NextUntil((byte)'<');
+                if (b == -2) { bag.Complete = false; return bag; }
+                if (b < 0) break;
+                string name = cursor.ReadName();
+                if (!IsLocal(name, "UnitTestResult")) continue;
+                string attrs;
+                bool selfClose;
+                if (!cursor.ReadStartTag(maxTagBytes, out attrs, out selfClose)) {
+                    bag.Complete = false;
+                    return bag;
+                }
+                string stdout = "";
+                if (!selfClose) {
+                    if (!cursor.ReadBody(name, maxTagBytes, maxStdoutBytes, captureStdout, out stdout)) {
+                        bag.Complete = false;
+                        return bag;
+                    }
+                }
+                string duration = Attribute(attrs, "duration");
+                double seconds;
+                bool hasSeconds = TrySeconds(duration, out seconds);
+                bag.Rows.Add(new HeldRow {
+                    TestId = captureStdout ? Attribute(attrs, "testId") : "",
+                    Outcome = captureStdout ? Attribute(attrs, "outcome") : "",
+                    Name = Attribute(attrs, "testName"),
+                    Duration = captureStdout ? duration : "",
+                    StdOut = stdout ?? "",
+                    Seconds = seconds,
+                    HasSeconds = hasSeconds
+                });
+            }
+            bag.Complete = true;
+            return bag;
+        }
+
+        static bool TrySeconds(string text, out double seconds) {
+            seconds = 0;
+            if (string.IsNullOrEmpty(text)) return false;
+            int i = 0;
+            int sign = 1;
+            if (text[0] == '-') { sign = -1; i++; }
+            int first = ReadDigits(text, ref i);
+            if (first < 0) return FallbackSeconds(text, out seconds);
+            int days = 0;
+            int hours = first;
+            if (i < text.Length && text[i] == '.') {
+                int mark = i;
+                i++;
+                int afterDot = ReadDigits(text, ref i);
+                if (afterDot >= 0 && i < text.Length && text[i] == ':') {
+                    days = first;
+                    hours = afterDot;
+                } else {
+                    i = mark;
+                    return FallbackSeconds(text, out seconds);
+                }
+            }
+            if (i >= text.Length || text[i] != ':') return FallbackSeconds(text, out seconds);
+            i++;
+            int minutes = ReadDigits(text, ref i);
+            if (minutes < 0 || i >= text.Length || text[i] != ':') return FallbackSeconds(text, out seconds);
+            i++;
+            int secs = ReadDigits(text, ref i);
+            if (secs < 0) return FallbackSeconds(text, out seconds);
+            double frac = 0;
+            if (i < text.Length && text[i] == '.') {
+                i++;
+                int digits = 0;
+                int value = 0;
+                while (i < text.Length && text[i] >= '0' && text[i] <= '9' && digits < 7) {
+                    value = value * 10 + (text[i] - '0');
+                    digits++;
+                    i++;
+                }
+                if (digits < 1) return FallbackSeconds(text, out seconds);
+                double scale = 1;
+                for (int d = 0; d < digits; d++) scale *= 10;
+                frac = value / scale;
+                while (i < text.Length && text[i] >= '0' && text[i] <= '9') i++;
+            }
+            if (i != text.Length) return FallbackSeconds(text, out seconds);
+            seconds = sign * ((days * 86400.0) + (hours * 3600.0) + (minutes * 60.0) + secs + frac);
+            return true;
+        }
+
+        static int ReadDigits(string text, ref int i) {
+            if (i >= text.Length || text[i] < '0' || text[i] > '9') return -1;
+            int value = 0;
+            while (i < text.Length && text[i] >= '0' && text[i] <= '9') {
+                value = (value * 10) + (text[i] - '0');
+                i++;
+            }
+            return value;
+        }
+
+        static bool FallbackSeconds(string text, out double seconds) {
+            seconds = 0;
+            TimeSpan span;
+            if (!TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out span)) return false;
+            seconds = span.TotalSeconds;
+            return true;
+        }
+
+        static string Attribute(string attrs, string name) {
+            if (string.IsNullOrEmpty(attrs) || string.IsNullOrEmpty(name)) return "";
+            for (int i = 0; i + name.Length <= attrs.Length; i++) {
+                if (i > 0 && IsWord(attrs[i - 1])) continue;
+                if (string.CompareOrdinal(attrs, i, name, 0, name.Length) != 0) continue;
+                int j = i + name.Length;
+                if (j < attrs.Length && IsWord(attrs[j])) continue;
+                while (j < attrs.Length && char.IsWhiteSpace(attrs[j])) j++;
+                if (j >= attrs.Length || attrs[j] != '=') continue;
+                j++;
+                while (j < attrs.Length && char.IsWhiteSpace(attrs[j])) j++;
+                if (j >= attrs.Length) return "";
+                char quote = attrs[j];
+                if (quote != '"' && quote != '\'') continue;
+                j++;
+                int end = attrs.IndexOf(quote, j);
+                if (end < 0) return attrs.Substring(j);
+                return attrs.Substring(j, end - j);
+            }
+            return "";
+        }
+
+        static bool IsLocal(string name, string local) {
+            if (name == local) return true;
+            int colon = name.LastIndexOf(':');
+            return colon > 0 && name.IndexOf(':') == colon && name.Substring(colon + 1) == local;
+        }
+
+        static bool IsWord(char c) {
+            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        }
+
+        sealed class Ranked {
+            public double Seconds;
+            public string Name;
+        }
+
+        sealed class HeldRow {
+            public string TestId;
+            public string Outcome;
+            public string Name;
+            public string Duration;
+            public string StdOut;
+            public double Seconds;
+            public bool HasSeconds;
+        }
+
+        sealed class ScanBag {
+            public bool Complete;
+            public List<HeldRow> Rows = new List<HeldRow>();
+        }
+
+        sealed class Cursor {
+            readonly Stream _stream;
+            readonly Stopwatch _watch;
+            readonly int _deadline;
+            readonly byte[] _buf = new byte[8192];
+            byte[] _tag = new byte[256];
+            int _pos;
+            int _len;
+            int _push = -1;
+
+            public Cursor(Stream stream, Stopwatch watch, int deadline) {
+                _stream = stream;
+                _watch = watch;
+                _deadline = deadline < 1 ? 1 : deadline;
+            }
+
+            public int Next() {
+                if (_push >= 0) {
+                    int pushed = _push;
+                    _push = -1;
+                    return pushed;
+                }
+                if (_pos >= _len) {
+                    if (_watch.ElapsedMilliseconds >= _deadline) return -2;
+                    _len = _stream.Read(_buf, 0, _buf.Length);
+                    _pos = 0;
+                    if (_len <= 0) return -1;
+                }
+                return _buf[_pos++];
+            }
+
+            public int NextUntil(byte target) {
+                if (_push >= 0) {
+                    int pushed = _push;
+                    _push = -1;
+                    if (pushed == target) return pushed;
+                }
+                while (true) {
+                    if (_pos >= _len) {
+                        if (_watch.ElapsedMilliseconds >= _deadline) return -2;
+                        _len = _stream.Read(_buf, 0, _buf.Length);
+                        _pos = 0;
+                        if (_len <= 0) return -1;
+                    }
+                    int found = Array.IndexOf(_buf, target, _pos, _len - _pos);
+                    if (found >= 0) {
+                        _pos = found + 1;
+                        return target;
+                    }
+                    _pos = _len;
+                }
+            }
+
+            void Push(int value) { _push = value; }
+
+            public string ReadName() {
+                var chars = new StringBuilder();
+                while (chars.Length < 200) {
+                    int b = Next();
+                    if (b < 0) return chars.ToString();
+                    if (IsNameByte(b)) chars.Append((char)b);
+                    else { Push(b); return chars.ToString(); }
+                }
+                return chars.ToString();
+            }
+
+            static bool IsNameByte(int b) {
+                return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+                    || b == '_' || b == ':' || b == '-' || b == '.';
+            }
+
+            public bool ReadStartTag(int maxTagBytes, out string attrs, out bool selfClose) {
+                attrs = "";
+                selfClose = false;
+                int len = 0;
+                bool quoted = false;
+                byte quote = 0;
+                int last = -1;
+                while (true) {
+                    int b = Next();
+                    if (b < 0) return false;
+                    if (quoted) {
+                        if (!StoreTag(ref len, maxTagBytes, (byte)b)) return false;
+                        if (b == quote) quoted = false;
+                        continue;
+                    }
+                    if (b == '"' || b == '\'') {
+                        quoted = true;
+                        quote = (byte)b;
+                        if (!StoreTag(ref len, maxTagBytes, (byte)b)) return false;
+                        continue;
+                    }
+                    if (b == '>') {
+                        selfClose = last == '/';
+                        int use = len;
+                        if (selfClose && use > 0) use--;
+                        attrs = Encoding.UTF8.GetString(_tag, 0, use);
+                        return true;
+                    }
+                    if (!StoreTag(ref len, maxTagBytes, (byte)b)) return false;
+                    last = b;
+                }
+            }
+
+            bool StoreTag(ref int len, int maxTagBytes, byte value) {
+                if (len >= maxTagBytes) return false;
+                if (len >= _tag.Length) {
+                    int size = _tag.Length * 2;
+                    if (size < len + 1) size = len + 1;
+                    if (size > maxTagBytes) size = maxTagBytes;
+                    var next = new byte[size];
+                    Buffer.BlockCopy(_tag, 0, next, 0, len);
+                    _tag = next;
+                }
+                _tag[len++] = value;
+                return true;
+            }
+
+            public bool ReadBody(string resultName, int maxTagBytes, int maxStdoutBytes, bool captureStdout, out string stdout) {
+                stdout = "";
+                int depth = 1;
+                var captured = new List<byte>(64);
+                bool capturing = false;
+                int captureDepth = -1;
+                while (depth > 0) {
+                    int b;
+                    if (capturing && captured.Count < maxStdoutBytes) b = Next();
+                    else b = NextUntil((byte)'<');
+                    if (b < 0) return false;
+                    if (b != '<') {
+                        if (capturing && captured.Count < maxStdoutBytes) captured.Add((byte)b);
+                        continue;
+                    }
+                    int mark = Next();
+                    if (mark < 0) return false;
+                    if (mark == '!') {
+                        if (!ReadSpecial(capturing, captured, maxStdoutBytes)) return false;
+                        continue;
+                    }
+                    if (mark == '/') {
+                        string endName = ReadName();
+                        if (!SkipUntil('>')) return false;
+                        depth--;
+                        if (capturing && depth < captureDepth) capturing = false;
+                        continue;
+                    }
+                    Push(mark);
+                    string startName = ReadName();
+                    string ignored;
+                    bool selfClose;
+                    if (!ReadStartTag(maxTagBytes, out ignored, out selfClose)) return false;
+                    if (selfClose) continue;
+                    depth++;
+                    if (captureStdout && !capturing && IsLocal(startName, "StdOut")) {
+                        capturing = true;
+                        captureDepth = depth;
+                    }
+                }
+                stdout = DecodeStdout(captured);
+                return true;
+            }
+
+            bool ReadSpecial(bool capturing, List<byte> captured, int maxStdoutBytes) {
+                int next = Next();
+                if (next < 0) return false;
+                if (next == '-') {
+                    int second = Next();
+                    if (second < 0) return false;
+                    return SkipSequence(new byte[] { (byte)'-', (byte)'>' });
+                }
+                if (next == '[') {
+                    byte[] cdata = Encoding.ASCII.GetBytes("CDATA[");
+                    for (int i = 0; i < cdata.Length; i++) {
+                        int got = Next();
+                        if (got != cdata[i]) return false;
+                    }
+                    return ReadMarked(new byte[] { (byte)']', (byte)']', (byte)'>' }, capturing, captured, maxStdoutBytes);
+                }
+                return SkipUntil('>');
+            }
+
+            bool ReadMarked(byte[] marker, bool capturing, List<byte> captured, int maxStdoutBytes) {
+                int matched = 0;
+                while (matched < marker.Length) {
+                    int b = Next();
+                    if (b < 0) return false;
+                    if (b == marker[matched]) {
+                        matched++;
+                        continue;
+                    }
+                    if (capturing) {
+                        for (int i = 0; i < matched && captured.Count < maxStdoutBytes; i++) captured.Add(marker[i]);
+                        if (captured.Count < maxStdoutBytes) captured.Add((byte)b);
+                    }
+                    matched = 0;
+                    if (b == marker[0]) matched = 1;
+                }
+                return true;
+            }
+
+            bool SkipSequence(byte[] marker) {
+                int matched = 0;
+                while (matched < marker.Length) {
+                    int b = Next();
+                    if (b < 0) return false;
+                    if (b == marker[matched]) matched++;
+                    else matched = b == marker[0] ? 1 : 0;
+                }
+                return true;
+            }
+
+            bool SkipUntil(char expected) {
+                while (true) {
+                    int b = Next();
+                    if (b < 0) return false;
+                    if (b == expected) return true;
+                }
+            }
+
+            static string DecodeStdout(List<byte> captured) {
+                if (captured.Count < 1) return "";
+                string text = Encoding.UTF8.GetString(captured.ToArray());
+                if (text.StartsWith("<![CDATA[", StringComparison.Ordinal) && text.EndsWith("]]>", StringComparison.Ordinal) && text.Length >= 12) {
+                    return text.Substring(9, text.Length - 12);
+                }
+                return text;
+            }
+        }
+    }
+
+    public static class JsonlTimingScanner {
+        static readonly byte[] Header = Encoding.ASCII.GetBytes("\"recordKind\":\"header\"");
+        static readonly byte[] Fixture = Encoding.ASCII.GetBytes("\"recordKind\":\"fixture\"");
+        static readonly byte[] Spawn = Encoding.ASCII.GetBytes("\"process-spawn\"");
+        static readonly byte[] Wait = Encoding.ASCII.GetBytes("\"process-wait\"");
+        static readonly byte[] Setup = Encoding.ASCII.GetBytes("\"fixture-setup\"");
+        static readonly byte[] Teardown = Encoding.ASCII.GetBytes("\"fixture-teardown\"");
+
+        public static JsonlTimingRead Read(Stream stream, Stopwatch watch, int deadlineMs, int maxLineBytes) {
+            var read = new JsonlTimingRead { Complete = true };
+            if (maxLineBytes < 1) maxLineBytes = 1;
+            if (deadlineMs < 1) deadlineMs = 1;
+            var buf = new byte[8192];
+            var line = new byte[maxLineBytes];
+            int lineLen = 0;
+            while (true) {
+                if (watch.ElapsedMilliseconds >= deadlineMs) { read.Complete = false; return read; }
+                int count = stream.Read(buf, 0, buf.Length);
+                if (count <= 0) break;
+                for (int i = 0; i < count; i++) {
+                    byte b = buf[i];
+                    if (b == (byte)'\n') {
+                        Accept(line, lineLen, read.Lines);
+                        lineLen = 0;
+                        continue;
+                    }
+                    if (lineLen >= maxLineBytes) {
+                        read.Complete = false;
+                        return read;
+                    }
+                    line[lineLen++] = b;
+                }
+            }
+            if (lineLen > 0) Accept(line, lineLen, read.Lines);
+            return read;
+        }
+
+        static void Accept(byte[] line, int length, List<string> lines) {
+            if (length > 0 && line[length - 1] == (byte)'\r') length--;
+            if (length < 1) return;
+            if (IndexOf(line, length, Header) < 0 && IndexOf(line, length, Fixture) < 0 && IndexOf(line, length, Spawn) < 0
+                && IndexOf(line, length, Wait) < 0 && IndexOf(line, length, Setup) < 0 && IndexOf(line, length, Teardown) < 0) {
+                return;
+            }
+            lines.Add(Encoding.UTF8.GetString(line, 0, length));
+        }
+
+        static int IndexOf(byte[] line, int length, byte[] needle) {
+            int n = needle.Length;
+            if (n == 0 || length < n) return -1;
+            return new ReadOnlySpan<byte>(line, 0, length).IndexOf(needle);
+        }
+    }
+}
+'@
+}
+
+Initialize-TestPhaseStreamReaders
+
 function Get-TestPhasePathIdentity {
     param([string]$Path)
     $missing = [pscustomobject]@{ Kind = 'missing'; Size = [int64]0 }
@@ -424,6 +935,48 @@ function Read-TestPhaseStreamBytes {
     return [pscustomobject]@{ Bytes = $ms.ToArray(); Complete = [bool]$complete; Refused = $false; Kind = 'regular' }
 }
 
+function Open-TestPhaseReadStream {
+    param([string]$Path)
+    $refused = [pscustomobject]@{ Stream = $null; Refused = $true; Kind = 'unreadable' }
+    $stream = $null
+    $handle = $null
+    $fd = -1
+    $owned = $true
+    try {
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $share = [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete)
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
+        } else {
+            # O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW. A FIFO open returns
+            # immediately; fstat then refuses anything that is not a regular file.
+            Initialize-TestPhaseLinuxIdentity
+            $fd = [Antiphon.TestPhase.FileIdentity]::Open($Path, 657408)
+            if ($fd -lt 0) { return $refused }
+            $stat = New-Object Antiphon.TestPhase.LinuxStat
+            $code = [Antiphon.TestPhase.FileIdentity]::FStat($fd, [ref]$stat)
+            if ($code -ne 0) { return $refused }
+            $kind = ([uint32]$stat.Mode) -band 61440
+            if ($kind -ne 32768) {
+                return [pscustomobject]@{ Stream = $null; Refused = $true; Kind = 'unsupported' }
+            }
+            $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle ([IntPtr]$fd, $true)
+            $fd = -1
+            $stream = New-Object System.IO.FileStream ($handle, [IO.FileAccess]::Read, 8192, $false)
+            $handle = $null
+        }
+        $owned = $false
+        return [pscustomobject]@{ Stream = $stream; Refused = $false; Kind = 'regular' }
+    } catch {
+        return $refused
+    } finally {
+        if ($owned) {
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+            elseif ($null -ne $handle) { try { $handle.Dispose() } catch { } }
+            elseif ($fd -ge 0) { try { [void][Antiphon.TestPhase.FileIdentity]::Close($fd) } catch { } }
+        }
+    }
+}
+
 function Read-TestPhaseBoundedBytes {
     param(
         [string]$Path,
@@ -442,37 +995,18 @@ function Read-TestPhaseBoundedBytes {
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) {
         return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'budget' }
     }
-    $watch = $Watch
-    $stream = $null
-    $handle = $null
-    $fd = -1
+    $opened = Open-TestPhaseReadStream -Path $Path
+    if ($opened.Refused -or $null -eq $opened.Stream) {
+        $kind = [string]$opened.Kind
+        if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'unreadable' }
+        return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = $kind }
+    }
     try {
-        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-            $share = [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete)
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
-        } else {
-            # O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW. A FIFO open returns
-            # immediately; fstat then refuses anything that is not a regular file.
-            $fd = [Antiphon.TestPhase.FileIdentity]::Open($Path, 657408)
-            if ($fd -lt 0) { return $refused }
-            $stat = New-Object Antiphon.TestPhase.LinuxStat
-            $code = [Antiphon.TestPhase.FileIdentity]::FStat($fd, [ref]$stat)
-            if ($code -ne 0) { return $refused }
-            $kind = ([uint32]$stat.Mode) -band 61440
-            if ($kind -ne 32768) {
-                return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'unsupported' }
-            }
-            $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle ([IntPtr]$fd, $true)
-            $fd = -1
-            $stream = New-Object System.IO.FileStream ($handle, [IO.FileAccess]::Read, 8192, $false)
-        }
-        return (Read-TestPhaseStreamBytes -Stream $stream -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $watch)
+        return (Read-TestPhaseStreamBytes -Stream $opened.Stream -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch)
     } catch {
         return $refused
     } finally {
-        if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
-        elseif ($null -ne $handle) { try { $handle.Dispose() } catch { } }
-        elseif ($fd -ge 0) { try { [void][Antiphon.TestPhase.FileIdentity]::Close($fd) } catch { } }
+        try { $opened.Stream.Dispose() } catch { }
     }
 }
 
@@ -746,8 +1280,11 @@ function Write-TestPhaseExecutedManifest {
     $rows = @()
     $trxIdentity = Get-TestPhasePathIdentity -Path $TrxPath
     $trxMissing = ($trxIdentity.Kind -ne 'regular')
-    if ($trxIdentity.Kind -eq 'regular' -and [int64]$trxIdentity.Size -le 262144) {
-        $rows = @(Read-TestPhaseTrxRows -Path $TrxPath)
+    if ($trxIdentity.Kind -eq 'regular') {
+        $trxRead = Read-TestPhaseTrxRows -Path $TrxPath
+        if ($null -ne $trxRead -and $trxRead.Complete -and -not $trxRead.Refused) {
+            $rows = @($trxRead.Rows)
+        }
     }
     $outcomes = New-Object System.Collections.Generic.List[object]
     $passed = 0
@@ -894,7 +1431,9 @@ function ConvertTo-TestPhaseSummaryRows {
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
     foreach ($trx in $trxFiles) {
         if ((Get-TestPhasePathIdentity -Path $trx.FullName).Kind -ne 'regular') { continue }
-        foreach ($row in @(Read-TestPhaseTrxRows -Path $trx.FullName)) {
+        $trxRead = Read-TestPhaseTrxRows -Path $trx.FullName
+        if ($null -eq $trxRead -or -not $trxRead.Complete -or $trxRead.Refused) { continue }
+        foreach ($row in @($trxRead.Rows)) {
             $group = ''
             if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
             $row | Add-Member -NotePropertyName GroupId -NotePropertyValue $group
@@ -1158,27 +1697,46 @@ function Get-QualificationTrxStats {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    $incomplete = [pscustomobject]@{ P50 = $null; P95 = $null; Max = $null; Slowest = @(); Count = 0; Complete = $false }
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { return $null }
-    $named = @()
-    foreach ($row in @(Read-TestPhaseTrxRows -Path $TrxPath -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds)) {
-        $seconds = $null
-        try { $seconds = ([TimeSpan][string]$row.Duration).TotalSeconds } catch { $seconds = $null }
-        if ($null -eq $seconds) { continue }
-        $named += [pscustomobject]@{ name = [string]$row.Name; seconds = [math]::Round([double]$seconds, 3) }
-    }
-    if ($named.Count -lt 1) { return $null }
-    $sorted = @($named | ForEach-Object { [double]$_.seconds } | Sort-Object)
-    $slow = @($named | Sort-Object { -1 * [double]$_.seconds }, { [string]$_.name } | Select-Object -First 20)
-    $slowRows = @()
-    foreach ($row in $slow) {
-        $slowRows += [ordered]@{ name = [string]$row.name; seconds = [math]::Round([double]$row.seconds, 3) }
-    }
-    return [pscustomobject]@{
-        P50 = (Get-QualificationNearestRank -Sorted $sorted -Fraction 0.50)
-        P95 = (Get-QualificationNearestRank -Sorted $sorted -Fraction 0.95)
-        Max = [math]::Round([double]$sorted[$sorted.Count - 1], 3)
-        Slowest = @($slowRows)
-        Count = $sorted.Count
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    $identity = Get-TestPhasePathIdentity -Path $TrxPath
+    if ($identity.Kind -ne 'regular') { return $incomplete }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $incomplete }
+    $opened = Open-TestPhaseReadStream -Path $TrxPath
+    if ($opened.Refused -or $null -eq $opened.Stream) { return $incomplete }
+    try {
+        $stats = [Antiphon.TestPhase.TrxTimingScanner]::Summarize($opened.Stream, $Watch, $DeadlineMilliseconds, 262144)
+        if ($null -eq $stats -or -not $stats.Complete) { return $incomplete }
+        $slowRows = New-Object System.Collections.Generic.List[object]
+        $names = @($stats.SlowNames)
+        $values = @($stats.SlowSeconds)
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            $seconds = 0.0
+            if ($i -lt $values.Count) { $seconds = [double]$values[$i] }
+            $slowRows.Add([ordered]@{ name = [string]$names[$i]; seconds = $seconds })
+        }
+        $p50 = $null
+        $p95 = $null
+        $max = $null
+        if ([int]$stats.Count -gt 0) {
+            $p50 = [double]$stats.P50
+            $p95 = [double]$stats.P95
+            $max = [double]$stats.Max
+        }
+        return [pscustomobject]@{
+            P50 = $p50
+            P95 = $p95
+            Max = $max
+            Slowest = @($slowRows.ToArray())
+            Count = [int]$stats.Count
+            Complete = $true
+        }
+    } catch {
+        return $incomplete
+    } finally {
+        try { $opened.Stream.Dispose() } catch { }
     }
 }
 
@@ -1300,6 +1858,39 @@ function Test-QualificationTimingDirectory {
     return 'other'
 }
 
+function Read-QualificationTimingJsonl {
+    param(
+        [string]$Path,
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 200
+    )
+    $none = [pscustomobject]@{ Records = @(); Complete = $false }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    $identity = Get-TestPhasePathIdentity -Path $Path
+    if ($identity.Kind -ne 'regular') { return $none }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $none }
+    $opened = Open-TestPhaseReadStream -Path $Path
+    if ($opened.Refused -or $null -eq $opened.Stream) { return $none }
+    try {
+        $read = [Antiphon.TestPhase.JsonlTimingScanner]::Read($opened.Stream, $Watch, $DeadlineMilliseconds, 262144)
+        if ($null -eq $read -or -not $read.Complete) { return $none }
+        $records = New-Object System.Collections.Generic.List[object]
+        foreach ($line in $read.Lines) {
+            if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $none }
+            $parsed = $null
+            try { $parsed = $line | ConvertFrom-Json } catch { $parsed = $null }
+            if ($null -ne $parsed) { $records.Add($parsed) }
+        }
+        return [pscustomobject]@{ Records = @($records.ToArray()); Complete = $true }
+    } catch {
+        return $none
+    } finally {
+        try { $opened.Stream.Dispose() } catch { }
+    }
+}
+
 function Get-QualificationPhaseSums {
     param(
         [string]$TimingRoot,
@@ -1355,9 +1946,9 @@ function Get-QualificationPhaseSums {
             $slice = $left
             if ($ownedWatch -and $slice -gt 200) { $slice = 200 }
             if ($ownedWatch) {
-                $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $slice
+                $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $slice
             } else {
-                $parsed = Read-TestPhaseJsonlBounded -Path $shard.FullName -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+                $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
             }
             if (-not $parsed.Complete) { $refused = $true }
             $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
@@ -1488,10 +2079,22 @@ function Initialize-TestPhaseReadWarmup {
         $bytes = New-Object byte[] 262145
         [IO.File]::WriteAllBytes($path, $bytes)
         $null = Read-TestPhaseJsonlBounded -Path $path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+        $null = Read-QualificationTimingJsonl -Path $path -DeadlineMilliseconds 200
+        $good = Join-Path $dir 'cases-1-warm.jsonl'
+        [System.IO.File]::WriteAllText($good, '{"recordKind":"header","pid":1,"nonce":"warm","runId":"warm","groupId":"warm","attempt":"0","suite":"warm"}' + "`n")
+        $null = Read-QualificationTimingJsonl -Path $good -DeadlineMilliseconds 200
+        $trx = Join-Path $dir 'warm.trx'
+        [System.IO.File]::WriteAllText($trx, '<TestRun><Results><UnitTestResult testName="warm" duration="00:00:01" outcome="Passed" /></Results></TestRun>')
+        $null = Get-QualificationTrxStats -TrxPath $trx
+        $null = Read-TestPhaseTrxRows -Path $trx
         $null = Get-QualificationPhaseSums -TimingRoot $dir -Chunk 'warm' -RunId 'warm' -Suite 'warm' -Attempt '0'
         $side = Join-Path $dir 'side.json'
         [System.IO.File]::WriteAllText($side, '{}')
         $null = Read-QualificationSidecar -Path $side
+        $denseWatch = [Diagnostics.Stopwatch]::StartNew()
+        $null = Test-QualificationSidecarDense -Text ('{"v":[' + ('0,' * 4001) + '0]}') -Limit 4000 -Watch $denseWatch -DeadlineMilliseconds 200
+        $null = ConvertTo-TestPhaseJsonText -Value ([ordered]@{ why = ''; testCount = 0; slowest = @() })
+        $null = Update-QualificationChunkTiming -LogRoot $dir -TimingRoot $dir -Suite 'warm' -Chunk 'c' -TrxPath $trx -LastPhase 'complete' -RunId 'warm' -Attempt '0' -Terminal
     } catch {
     } finally {
         if (-not [string]::IsNullOrWhiteSpace($dir) -and (Test-Path -LiteralPath $dir)) {
@@ -1499,8 +2102,6 @@ function Initialize-TestPhaseReadWarmup {
         }
     }
 }
-
-Initialize-TestPhaseReadWarmup
 
 function Update-QualificationChunkTiming {
     param(
@@ -1606,16 +2207,15 @@ function Update-QualificationChunkTiming {
                 $trxIdentity = Get-TestPhasePathIdentity -Path $trx
                 if ($trxIdentity.Kind -eq 'missing') {
                     $trxMissing = $true
-                } elseif ($trxIdentity.Kind -ne 'regular' -or [int64]$trxIdentity.Size -gt 262144) {
+                } elseif ($trxIdentity.Kind -ne 'regular') {
                     $refused = $true
-                    if ($trxIdentity.Kind -eq 'regular') { $trxMissing = $false }
                 } elseif ($watch.ElapsedMilliseconds -ge 200) {
                     $trxMissing = $false
                     $refused = $true
                 } else {
                     $trxMissing = $false
                     $stats = Get-QualificationTrxStats -TrxPath $trx -Watch $watch -DeadlineMilliseconds 200
-                    if ($null -eq $stats -and $watch.ElapsedMilliseconds -ge 200) { $refused = $true }
+                    if ($null -eq $stats -or -not [bool]$stats.Complete) { $refused = $true }
                 }
             }
             if (-not [string]::IsNullOrWhiteSpace($timingRootText)) {
@@ -1701,6 +2301,8 @@ function Update-QualificationChunkTiming {
         # A timing sidecar must not change the suite verdict.
     }
 }
+
+Initialize-TestPhaseReadWarmup
 
 function Invoke-QualificationPostRunAggregation {
     param(
