@@ -11,6 +11,20 @@ namespace Antiphon.Tests.TestHelpers;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TestTimingChokePointTests
 {
+    // Both arms stop once each has this much in-process wall. The old loop
+    // also required a repetition count taken from one hot sample, so under
+    // load a 10 s arm stretched to about 24 s and ten pairs passed 300 s.
+    // Two seconds keeps nine pairs near a minute even when each repetition
+    // slows, and the ratios are still taken over equal work.
+    private const double ArmFloorMilliseconds = 2_000d;
+
+    // Do not start another repetition once either arm is already past this.
+    private const double ArmCeilingMilliseconds = 4_000d;
+
+    // The pair loop stops here and fails the nine-pair count, inside the
+    // 300 s test timeout.
+    private const double PairCollectionBudgetMilliseconds = 180_000d;
+
     [Test]
     [Timeout(300_000)]
     public async Task C1514T_DbHostGit(CancellationToken cancellationToken)
@@ -120,15 +134,17 @@ public sealed class TestTimingChokePointTests
         using var disabled = TestTimingSession.TryOpen(new TestTimingConfig());
         using var offLease = TestTiming.Install(disabled);
         TestTiming.Resolve()!.Enabled.ShouldBeFalse("off-recorder-disabled");
-        // Sequential 10s walls on this host differ by more than 2% because the
-        // idle P-state is ~2.3x slower and a hot core still wanders. Pin one CPU,
-        // leave that idle state before the clocks, and interleave OFF/ON repetitions
-        // so both walls share one frequency window. Acceptance is the paired wall
-        // median under 20% and the paired processor-time median under 5%.
+        // Pin one CPU, leave the idle P-state before the clocks, and interleave
+        // OFF/ON repetitions so both walls share one frequency window. Acceptance
+        // is the paired wall median under 10% and the paired processor-time
+        // median under 5%. `reps` is the hot-sample estimate for the arm floor.
+        // It is recorded and is not a minimum: under load that minimum was what
+        // stretched a 10 s arm to about 24 s.
         PinCurrentCpu();
         HeatUntilFast();
         var one = TimeInProcessRep();
-        var reps = Math.Clamp((int)Math.Ceiling(10000d / Math.Max(one.TotalMilliseconds, 0.01d)), 4, 80);
+        var reps = Math.Clamp((int)Math.Ceiling(ArmFloorMilliseconds / Math.Max(one.TotalMilliseconds, 0.01d)), 4, 80);
+        var testClock = Stopwatch.StartNew();
         var lifecycle = new TestDbFixtureLifecycle();
         var setup = Stopwatch.StartNew();
         try
@@ -137,20 +153,24 @@ public sealed class TestTimingChokePointTests
                 schema.ShouldNotBeNull();
             await RecordHostStartupAsync(cancellationToken);
             setup.Stop();
-            var warm = await PairedSampleAsync(lifecycle, offFirst: true, reps, cancellationToken);
+            var warm = await PairedSampleAsync(lifecycle, offFirst: true, cancellationToken);
             var ratios = new List<double>();
             var cpuRatios = new List<double>();
             var samples = new List<object>();
-            // Predeclare the whole sample; never stop when a partial bound passes.
+            // Nine pairs are required. Stop on the wall budget and fail the
+            // count; do not accept a shorter sample because the ratio looks small.
             for (var pairIndex = 0; pairIndex < PairedOverheadStatistics.MinimumPairs; pairIndex++)
             {
+                if (testClock.Elapsed.TotalMilliseconds >= PairCollectionBudgetMilliseconds)
+                    break;
                 var offFirst = pairIndex % 2 == 0;
-                var pair = await PairedSampleAsync(lifecycle, offFirst, reps, cancellationToken);
+                var pair = await PairedSampleAsync(lifecycle, offFirst, cancellationToken);
                 samples.Add(new
                 {
                     offFirst,
                     offMs = pair.Off.Wall.TotalMilliseconds,
                     onMs = pair.On.Wall.TotalMilliseconds,
+                    reachedArmFloor = pair.ReachedArmFloor,
                     dropped = pair.On.Dropped,
                     shardBytes = pair.On.ShardBytes,
                     repetitions = pair.On.Repetitions,
@@ -163,13 +183,19 @@ public sealed class TestTimingChokePointTests
                 // Keep observed numbers even if a later acceptance assertion fails.
                 await File.WriteAllTextAsync(Path.Combine(evidence, "overhead-raw.json"),
                     System.Text.Json.JsonSerializer.Serialize(new { status = "collecting", samples }), cancellationToken);
-                pair.Off.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(10000d);
-                pair.On.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(10000d);
+                if (!pair.ReachedArmFloor)
+                    break;
+                pair.Off.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(ArmFloorMilliseconds);
+                pair.On.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(ArmFloorMilliseconds);
                 pair.Off.Repetitions.ShouldBe(pair.On.Repetitions, "paired-work-matches");
                 pair.On.Dropped.ShouldBe(0);
                 ratios.Add(OverheadAcceptance.Ratio(pair.On.Wall.TotalMilliseconds, pair.Off.Wall.TotalMilliseconds));
                 cpuRatios.Add(OverheadAcceptance.Ratio(pair.On.Cpu.TotalMilliseconds, pair.Off.Cpu.TotalMilliseconds));
             }
+
+            ratios.Count.ShouldBeGreaterThanOrEqualTo(
+                PairedOverheadStatistics.MinimumPairs,
+                "pairs that reached the arm floor inside the wall budget");
 
             var emptyOff = TimeEmptyScopes(enabled: false);
             var emptyOn = TimeEmptyScopes(enabled: true);
@@ -180,6 +206,9 @@ public sealed class TestTimingChokePointTests
             {
                 oneMs = one.TotalMilliseconds,
                 reps,
+                armFloorMs = ArmFloorMilliseconds,
+                armCeilingMs = ArmCeilingMilliseconds,
+                elapsedMs = testClock.Elapsed.TotalMilliseconds,
                 setupMs = setup.Elapsed.TotalMilliseconds,
                 warmMs = warm.On.Wall.TotalMilliseconds,
                 warmDropped = warm.On.Dropped,
@@ -204,6 +233,8 @@ public sealed class TestTimingChokePointTests
             cpuMedian.ShouldBeLessThan(OverheadAcceptance.CpuMedianBound);
             OverheadAcceptance.Accepts(ratios, cpuRatios).ShouldBeTrue();
             emptyOn.BytesPerCase.ShouldBeGreaterThan(0d);
+            // Worst observed empty-scope ON cost was 5.5 us. 50 us is about 9x.
+            emptyOn.ScopeNs.ShouldBeLessThan(50_000d);
         }
         finally
         {
@@ -379,7 +410,7 @@ public sealed class TestTimingChokePointTests
     }
 
     private static async Task<PairResult> PairedSampleAsync(
-        TestDbFixtureLifecycle lifecycle, bool offFirst, int reps, CancellationToken cancellationToken)
+        TestDbFixtureLifecycle lifecycle, bool offFirst, CancellationToken cancellationToken)
     {
         var root = C1514Support.FreshRoot();
         var session = OpenReal(Path.Combine(root, "timing"), Guid.NewGuid().ToString("N"));
@@ -395,6 +426,7 @@ public sealed class TestTimingChokePointTests
         long offAllocated = 0;
         long onAllocated = 0;
         var completedRepetitions = 0;
+        var reachedArmFloor = false;
         using var process = Process.GetCurrentProcess();
         async Task MeasureIoAsync(bool enabled)
         {
@@ -408,12 +440,20 @@ public sealed class TestTimingChokePointTests
         }
         try
         {
-            // A one-rep calibration can run cold while the measured loop runs hot.
-            // Finish whole equal-work pairs until BOTH arms meet the existing
-            // minimum. The finite cap also keeps eight spans/rep below SpanCap.
+            // Stop at the first equal repetition where both arms have reached
+            // the floor. Eight spans per repetition and a 400-repetition cap
+            // stay under SpanCap. The ceiling refuses another repetition once
+            // either arm is already past it, so a slow host cannot be kept on
+            // a fast-sample repetition count.
             for (var repetition = 0; repetition < 400; repetition++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (off.TotalMilliseconds >= ArmFloorMilliseconds
+                    && on.TotalMilliseconds >= ArmFloorMilliseconds)
+                    break;
+                if (off.TotalMilliseconds >= ArmCeilingMilliseconds
+                    || on.TotalMilliseconds >= ArmCeilingMilliseconds)
+                    break;
                 for (var step = 0; step < 2; step++)
                 {
                     var onStep = offFirst ? step == 1 : step == 0;
@@ -435,9 +475,10 @@ public sealed class TestTimingChokePointTests
                 }
 
                 completedRepetitions++;
-                if (completedRepetitions >= reps && off.TotalMilliseconds >= 10000d && on.TotalMilliseconds >= 10000d)
-                    break;
             }
+
+            reachedArmFloor = off.TotalMilliseconds >= ArmFloorMilliseconds
+                && on.TotalMilliseconds >= ArmFloorMilliseconds;
 
             if (offFirst)
             {
@@ -486,7 +527,8 @@ public sealed class TestTimingChokePointTests
         var records = File.ReadLines(path).Count();
         return new PairResult(
             new SampleResult(off, 0, 0, completedRepetitions, offCpu, offAllocated, 0),
-            new SampleResult(on, dropped, bytes, completedRepetitions, onCpu, onAllocated, records));
+            new SampleResult(on, dropped, bytes, completedRepetitions, onCpu, onAllocated, records),
+            reachedArmFloor);
     }
 
     private static async Task<TimeSpan> TimeIoAsync(
@@ -599,7 +641,7 @@ public sealed class TestTimingChokePointTests
     private readonly record struct SampleResult(TimeSpan Wall, int Dropped, long ShardBytes,
         int Repetitions, TimeSpan Cpu, long AllocatedBytes, int Records);
 
-    private readonly record struct PairResult(SampleResult Off, SampleResult On);
+    private readonly record struct PairResult(SampleResult Off, SampleResult On, bool ReachedArmFloor);
 
     private readonly record struct EmptyCost(double NsPerScope, double BytesPerCase,
         double ScopeNs, double AllocatedBytesPerScope);
