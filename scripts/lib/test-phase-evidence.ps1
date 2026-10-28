@@ -1926,6 +1926,37 @@ function ConvertTo-QualificationGroupToken {
     return $sb.ToString()
 }
 
+# Length-prefixed chunk, run id, attempt, and suite. LF separators. SHA-256
+# lowercase hex. The same text is hashed by TestTimingSession.IdentityToken.
+function ConvertTo-QualificationIdentityText {
+    param([string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite)
+    if ($null -eq $Chunk) { $Chunk = '' }
+    if ($null -eq $RunId) { $RunId = '' }
+    if ($null -eq $Attempt) { $Attempt = '' }
+    if ($null -eq $Suite) { $Suite = '' }
+    return ([string]$Chunk.Length + ':' + [string]$Chunk + "`n" + [string]$RunId.Length + ':' + [string]$RunId + "`n" + [string]$Attempt.Length + ':' + [string]$Attempt + "`n" + [string]$Suite.Length + ':' + [string]$Suite)
+}
+
+function ConvertTo-QualificationChunkIdentity {
+    param([string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite)
+    $text = ConvertTo-QualificationIdentityText -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+        $hash = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    $sb = New-Object System.Text.StringBuilder ($hash.Length * 2)
+    foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
+    return $sb.ToString()
+}
+
+function Get-QualificationChunkDirectoryName {
+    param([string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite)
+    return ('chunk-' + (ConvertTo-QualificationChunkIdentity -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite))
+}
+
 function ConvertFrom-QualificationOwnerName {
     param([string]$Name)
     if ($Name -notmatch '^own-([0-9a-f]+)-(\d+)-(.+)\.txt$') { return $null }
