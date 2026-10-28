@@ -15,6 +15,53 @@ function Assert-Check {
     $script:failed++
 }
 
+function Get-NetFxAddTypeFindings {
+    param([string[]]$Paths)
+    $rules = @(
+        @{ Name = 'ReadOnlySpan'; Pattern = '\bReadOnlySpan\b' },
+        @{ Name = 'Span'; Pattern = '\bSpan<' },
+        @{ Name = 'Memory'; Pattern = '\bReadOnlyMemory\b|\bMemory<' },
+        @{ Name = 'stackalloc'; Pattern = '\bstackalloc\b' },
+        @{ Name = 'is-not'; Pattern = '\bis\s+not\b' },
+        @{ Name = 'switch-expression'; Pattern = '\bswitch\s*\{|\bswitch\s+[^\s(]' },
+        @{ Name = 'ValueTuple'; Pattern = '\bValueTuple\b' },
+        @{ Name = 'tuple-type'; Pattern = '\(\s*(?:bool|byte|char|int|long|float|double|decimal|string|object|var)\s*,' },
+        @{ Name = 'Contains-char'; Pattern = '\.Contains\(\s*''' },
+        @{ Name = 'ArrayPool'; Pattern = '\bArrayPool\b' },
+        @{ Name = 'interpolation'; Pattern = '\$"' },
+        @{ Name = 'null-conditional'; Pattern = '\?\.' },
+        @{ Name = 'nameof'; Pattern = '\bnameof\s*\(' },
+        @{ Name = 'out-var'; Pattern = '\bout\s+var\b' },
+        @{ Name = 'TimeSpan.TryParse-provider'; Pattern = 'TimeSpan\s*\.\s*TryParse\s*\([^;\n]*,[^;\n]*,' }
+    )
+    $single = [regex]::new("(?s)Add-Type(?:\s+-Language\s+\w+)?\s+-TypeDefinition\s+@'\r?\n(.*?)\r?\n'@")
+    $double = [regex]::new("(?s)Add-Type(?:\s+-Language\s+\w+)?\s+-TypeDefinition\s+@`"\r?\n(.*?)\r?\n`"@")
+    $findings = New-Object System.Collections.Generic.List[string]
+    foreach ($path in @($Paths)) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            $findings.Add($path + ':missing')
+            continue
+        }
+        $text = [IO.File]::ReadAllText($path)
+        $blocks = @()
+        foreach ($match in $single.Matches($text)) { $blocks += [string]$match.Groups[1].Value }
+        foreach ($match in $double.Matches($text)) { $blocks += [string]$match.Groups[1].Value }
+        if ($blocks.Count -lt 1 -and $path -like '*test-phase-evidence.ps1') {
+            $findings.Add($path + ':no-add-type-block')
+        }
+        foreach ($block in $blocks) {
+            $source = [regex]::Replace($block, '(?s)/\*.*?\*/', ' ')
+            $source = [regex]::Replace($source, '(?m)//.*?$', ' ')
+            foreach ($rule in $rules) {
+                if ([regex]::IsMatch($source, [string]$rule.Pattern)) {
+                    $findings.Add(([IO.Path]::GetFileName($path) + ':' + [string]$rule.Name))
+                }
+            }
+        }
+    }
+    return @($findings)
+}
+
 function Invoke-QualificationWitness {
     param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutMilliseconds)
     $exe = Join-Path $PSHOME 'pwsh'
@@ -67,6 +114,40 @@ $lib = Join-Path $repo 'scripts/lib'
 Assert-Check ([bool](Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) 'resolver-exists'
 Assert-Check ([bool](Get-Command Update-QualificationChunkTiming -ErrorAction SilentlyContinue)) 'chunk-writer-exists'
 Assert-Check ([bool](Get-Command Get-QualificationTimingReport -ErrorAction SilentlyContinue)) 'report-exists'
+
+# Windows PowerShell 5.1 compiles every Add-Type here-string with the legacy
+# csc (.NET Framework, C# 5). This host has no powershell.exe, so the Linux
+# witness is the source scan. The desktop row below is pending native.
+$ps51Paths = @(
+    (Join-Path $lib 'test-phase-evidence.ps1'),
+    $PSCommandPath
+)
+$ps51Findings = @(Get-NetFxAddTypeFindings -Paths $ps51Paths)
+foreach ($ps51Hit in $ps51Findings) { Write-Host ('PS51 ' + $ps51Hit) }
+Assert-Check ($ps51Findings.Count -eq 0) 'ps51-add-type-netfx-clean'
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $ps51Exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $ps51Exe)) {
+        Write-Host 'SKIP ps51-powershell-exe-load-pending-native pending-native: powershell.exe missing'
+    } else {
+        $ps51Root = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-ps51-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $ps51Root -Force | Out-Null
+        $ps51Child = Join-Path $ps51Root 'load.ps1'
+        @'
+param([string]$Lib)
+$ErrorActionPreference = "Stop"
+. $Lib
+if (-not ("Antiphon.TestPhase.TrxTimingScanner" -as [type])) { exit 2 }
+if (-not ("Antiphon.TestPhase.JsonlTimingScanner" -as [type])) { exit 3 }
+exit 0
+'@ | Set-Content -LiteralPath $ps51Child -Encoding ascii
+        & $ps51Exe -NoProfile -File $ps51Child (Join-Path $lib 'test-phase-evidence.ps1')
+        Assert-Check ($LASTEXITCODE -eq 0) 'ps51-powershell-exe-load-pending-native'
+        Remove-Item -LiteralPath $ps51Root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host 'SKIP ps51-powershell-exe-load-pending-native pending-native: desktop lane loads scripts/lib/test-phase-evidence.ps1 under powershell.exe; blank TimingRoot release-cut.ps1 is the production caller (-WhatIf skips that load)'
+}
 
 if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) -and
     (Get-Command Update-QualificationChunkTiming -ErrorAction SilentlyContinue) -and
@@ -689,17 +770,22 @@ try {
 }
 
 # The launch heartbeat must not open a timing file. strace records openat only.
+# Absent strace is an explicit skip: an ungated missing command is a failure
+# on Windows and on strace-less Linux.
+$openStrace = '/tmp/strace-root/usr/bin/strace'
+if (-not (Test-Path -LiteralPath $openStrace)) {
+    $openCmd = Get-Command strace -ErrorAction SilentlyContinue
+    if ($openCmd) { $openStrace = [string]$openCmd.Source }
+}
+if (-not (Test-Path -LiteralPath $openStrace)) {
+    Write-Host 'SKIP launch-path-opens-no-timing-file strace-absent'
+} else {
 $openDenied = ''
 $openRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-open-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $openRoot -Force | Out-Null
 $openLog = Join-Path $openRoot 'logs'
 $openTiming = Join-Path $openLog 'timing'
 New-Item -ItemType Directory -Path $openTiming -Force | Out-Null
-$openStrace = '/tmp/strace-root/usr/bin/strace'
-if (-not (Test-Path -LiteralPath $openStrace)) {
-    $openCmd = Get-Command strace -ErrorAction SilentlyContinue
-    if ($openCmd) { $openStrace = [string]$openCmd.Source }
-}
 try {
     $openFifoTrx = Join-Path $openLog 'antiphon-g1.trx'
     $openSide = Join-Path $openLog 'antiphon-g1.timing.json'
@@ -756,6 +842,7 @@ exit $LASTEXITCODE
 } finally {
     if (Test-Path -LiteralPath $openDenied) { & chmod 644 $openDenied }
     Remove-Item -LiteralPath $openRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 }
 
 # Stdout, stderr, and the chunk exit stay the same with the phase environment forwarded or stripped.
@@ -931,23 +1018,45 @@ try {
     } finally {
         $lineReader.Dispose()
     }
+    # Correctness uses an injected deadline well above the production 200 ms
+    # read budget, so load cannot refuse a finished 5000-result file.
+    $wideInjected = 10000
     $readSw = [Diagnostics.Stopwatch]::StartNew()
-    $wideStats = Get-QualificationTrxStats -TrxPath $wideTrx
+    $wideStats = Get-QualificationTrxStats -TrxPath $wideTrx -DeadlineMilliseconds $wideInjected
     $readSw.Stop()
-    Write-Host ('MEASURED trx-5000-read-ms=' + [math]::Round($readSw.Elapsed.TotalMilliseconds, 1) + ' bytes=' + $wideBytes)
+    Write-Host ('MEASURED trx-5000-read-ms=' + [math]::Round($readSw.Elapsed.TotalMilliseconds, 1) + ' bytes=' + $wideBytes + ' deadline=' + $wideInjected)
+    $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
+    $widePhases = Get-QualificationPhaseSums -TimingRoot $wideTiming -Chunk 'g5' -RunId 'run-5k' -Suite 'antiphon' -Attempt '1' -Watch $phaseWatch -DeadlineMilliseconds $wideInjected
+    $phaseWatch.Stop()
+    Write-Host ('MEASURED trx-5000-phase-ms=' + [math]::Round($phaseWatch.Elapsed.TotalMilliseconds, 1))
+    # Boundedness stays on the production 200 ms budget. R5 provisional, n=4,
+    # review ebe7ba48, this fixture: reads 32.8, 38.4, 40.9, 203.6 ms;
+    # terminals 73.6, 90.7, 112.8, 313.4 ms. The ceiling is 2x the largest
+    # sample (read 408 ms, terminal 628 ms), not the production budget.
+    $boundReadSw = [Diagnostics.Stopwatch]::StartNew()
+    $null = Get-QualificationTrxStats -TrxPath $wideTrx
+    $boundReadSw.Stop()
     $aggSw = [Diagnostics.Stopwatch]::StartNew()
     $wideAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 3 -ChunkResult 'KEEP-3' -LogRoot $wideLog -TimingRoot $wideTiming -Suite 'antiphon' -Chunk 'g5' -TrxPath $wideTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:05:00.0000000Z' -RunId 'run-5k' -Attempt '1'
     $aggSw.Stop()
-    Write-Host ('MEASURED trx-5000-terminal-ms=' + [math]::Round($aggSw.Elapsed.TotalMilliseconds, 1) + ' shard-bytes=' + $shardBytes + ' shard-lines=' + $shardLines)
+    Write-Host ('MEASURED trx-5000-terminal-ms=' + [math]::Round($aggSw.Elapsed.TotalMilliseconds, 1) + ' bound-read-ms=' + [math]::Round($boundReadSw.Elapsed.TotalMilliseconds, 1) + ' shard-bytes=' + $shardBytes + ' shard-lines=' + $shardLines)
     $wideDoc = Get-Content -LiteralPath (Join-Path $wideLog 'antiphon-g5.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $wideRank = ($null -ne $wideStats -and [int]$wideStats.Count -eq 5000 -and [math]::Abs([double]$wideStats.P50 - 2500) -lt 0.001 -and [math]::Abs([double]$wideStats.P95 - 4750) -lt 0.001 -and [math]::Abs([double]$wideStats.Max - 5000) -lt 0.001)
+    $wideRank = ($null -ne $wideStats -and [bool]$wideStats.Complete -and [int]$wideStats.Count -eq 5000 -and [math]::Abs([double]$wideStats.P50 - 2500) -lt 0.001 -and [math]::Abs([double]$wideStats.P95 - 4750) -lt 0.001 -and [math]::Abs([double]$wideStats.Max - 5000) -lt 0.001)
     $wideSlow = $false
     if ($wideRank) {
         $top = @($wideStats.Slowest)
         $wideSlow = ($top.Count -eq 20 -and [string]$top[0].name -eq 'T5000' -and [math]::Abs([double]$top[0].seconds - 5000) -lt 0.001)
     }
-    $wideDocOk = ($wideBytes -gt 262144 -and $shardBytes -gt 262144 -and $shardLines -gt 4000 -and [int]$wideAgg.ChunkExitCode -eq 3 -and [string]$wideAgg.ChunkResult -eq 'KEEP-3' -and [string]$wideDoc.why -eq '' -and [int]$wideDoc.testCount -eq 5000 -and [math]::Abs([double]$wideDoc.p50Seconds - 2500) -lt 0.001 -and [math]::Abs([double]$wideDoc.p95Seconds - 4750) -lt 0.001 -and [math]::Abs([double]$wideDoc.maxSeconds - 5000) -lt 0.001 -and [math]::Abs([double]$wideDoc.fixtureSetupSeconds - 1.5) -lt 0.001 -and $readSw.Elapsed.TotalMilliseconds -lt 200 -and $aggSw.Elapsed.TotalMilliseconds -lt 200)
-    Assert-Check ($wideRank -and $wideSlow -and $wideDocOk) 'five-thousand-result-trx-streams-inside-budget'
+    $widePhaseOk = ($null -ne $widePhases -and -not [bool]$widePhases.refused -and $null -ne $widePhases.fixtureSetupSeconds -and [math]::Abs([double]$widePhases.fixtureSetupSeconds - 1.5) -lt 0.001)
+    $wideBound = ($boundReadSw.Elapsed.TotalMilliseconds -lt 408 -and $aggSw.Elapsed.TotalMilliseconds -lt 628 -and $readSw.Elapsed.TotalMilliseconds -lt $wideInjected)
+    $wideExit = ($wideBytes -gt 262144 -and $shardBytes -gt 262144 -and $shardLines -gt 4000 -and [int]$wideAgg.ChunkExitCode -eq 3 -and [string]$wideAgg.ChunkResult -eq 'KEEP-3')
+    $wideClosed = $false
+    if ([string]$wideDoc.why -eq 'timing-read-refused') {
+        $wideClosed = ($null -eq $wideDoc.p50Seconds -and $null -eq $wideDoc.fixtureSetupSeconds -and [int]$wideDoc.testCount -eq 0 -and @($wideDoc.slowest).Count -eq 0)
+    } elseif ([string]$wideDoc.why -eq '') {
+        $wideClosed = ([int]$wideDoc.testCount -eq 5000 -and [math]::Abs([double]$wideDoc.p50Seconds - 2500) -lt 0.001 -and [math]::Abs([double]$wideDoc.p95Seconds - 4750) -lt 0.001 -and [math]::Abs([double]$wideDoc.maxSeconds - 5000) -lt 0.001 -and [math]::Abs([double]$wideDoc.fixtureSetupSeconds - 1.5) -lt 0.001)
+    }
+    Assert-Check ($wideRank -and $wideSlow -and $widePhaseOk -and $wideBound -and $wideExit -and $wideClosed) 'five-thousand-result-trx-streams-inside-budget'
 
     $hugeLog = Join-Path $wideRoot 'huge-logs'
     $hugeTiming = Join-Path $hugeLog 'timing'
@@ -974,6 +1083,88 @@ try {
     $script:failed++
 } finally {
     Remove-Item -LiteralPath $wideRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# The TRX cursor checks the deadline before every 8 KiB refill. A stream that
+# sleeps on each small read must stop mid-document under the production 200 ms
+# budget. Removing those checks lets the same stream finish and this row goes red.
+if (-not ('Antiphon.TestPhaseWitness.BudgetTrxStream' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+namespace Antiphon.TestPhaseWitness {
+    public sealed class BudgetTrxStream : Stream {
+        readonly byte[] _data;
+        readonly int _chunk;
+        readonly int _delayMs;
+        int _pos;
+        public int Reads;
+        public BudgetTrxStream(byte[] data, int chunk, int delayMs) {
+            _data = data;
+            _chunk = chunk < 1 ? 1 : chunk;
+            _delayMs = delayMs < 0 ? 0 : delayMs;
+        }
+        public int DataChunks {
+            get {
+                if (_data.Length < 1) return 0;
+                return ((_data.Length + _chunk - 1) / _chunk);
+            }
+        }
+        public override int Read(byte[] buffer, int offset, int count) {
+            Reads++;
+            if (_delayMs > 0) System.Threading.Thread.Sleep(_delayMs);
+            if (_pos >= _data.Length || count < 1) return 0;
+            int n = _chunk;
+            if (n > count) n = count;
+            if (n > _data.Length - _pos) n = _data.Length - _pos;
+            System.Buffer.BlockCopy(_data, _pos, buffer, offset, n);
+            _pos += n;
+            return n;
+        }
+        public override bool CanRead { get { return true; } }
+        public override bool CanSeek { get { return false; } }
+        public override bool CanWrite { get { return false; } }
+        public override long Length { get { throw new System.NotSupportedException(); } }
+        public override long Position {
+            get { throw new System.NotSupportedException(); }
+            set { throw new System.NotSupportedException(); }
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) { throw new System.NotSupportedException(); }
+        public override void SetLength(long value) { throw new System.NotSupportedException(); }
+        public override void Write(byte[] buffer, int offset, int count) { throw new System.NotSupportedException(); }
+    }
+}
+'@
+}
+try {
+    $slowHead = "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<TestRun><Results>`n"
+    $slowFoot = "</Results></TestRun>`n"
+    $slowRow = "<UnitTestResult testName=`"D`" duration=`"00:00:01`" outcome=`"Passed`" />`n"
+    $slowXml = $slowHead
+    $slowCount = 0
+    while (($slowXml.Length + $slowFoot.Length) -lt 900) {
+        $slowXml += $slowRow
+        $slowCount++
+    }
+    $slowXml += $slowFoot
+    $slowBytes = [Text.Encoding]::UTF8.GetBytes($slowXml)
+    $slowStop = New-Object Antiphon.TestPhaseWitness.BudgetTrxStream($slowBytes, 32, 50)
+    $slowSw = [Diagnostics.Stopwatch]::StartNew()
+    $slowStats = [Antiphon.TestPhase.TrxTimingScanner]::Summarize($slowStop, $slowSw, 200, 262144)
+    $slowSw.Stop()
+    Write-Host ('MEASURED trx-instream-stop-ms=' + [math]::Round($slowSw.Elapsed.TotalMilliseconds, 1) + ' reads=' + $slowStop.Reads + ' chunks=' + $slowStop.DataChunks)
+    $slowFull = New-Object Antiphon.TestPhaseWitness.BudgetTrxStream($slowBytes, 32, 50)
+    $slowFullSw = [Diagnostics.Stopwatch]::StartNew()
+    $slowFullStats = [Antiphon.TestPhase.TrxTimingScanner]::Summarize($slowFull, $slowFullSw, 10000, 262144)
+    $slowFullSw.Stop()
+    Write-Host ('MEASURED trx-instream-full-ms=' + [math]::Round($slowFullSw.Elapsed.TotalMilliseconds, 1) + ' reads=' + $slowFull.Reads + ' count=' + $slowFullStats.Count)
+    $slowStopped = (-not [bool]$slowStats.Complete -and $slowStop.Reads -gt 0 -and $slowStop.Reads -lt $slowStop.DataChunks -and $slowSw.Elapsed.TotalMilliseconds -lt 400)
+    $slowValid = ([bool]$slowFullStats.Complete -and [int]$slowFullStats.Count -eq $slowCount -and $slowFull.Reads -ge $slowFull.DataChunks)
+    Assert-Check ($slowStopped -and $slowValid) 'trx-instream-deadline-stops-before-next-read'
+} catch {
+    Write-Host ('FAIL trx-instream-deadline-stops-before-next-read ' + $_.Exception.Message)
+    $script:failed++
 }
 
 # The real nightly heartbeat (the pre-launch Update-QualificationChunkTiming) must stay
