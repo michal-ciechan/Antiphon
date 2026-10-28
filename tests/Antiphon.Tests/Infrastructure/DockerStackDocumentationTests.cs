@@ -111,6 +111,9 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("It is walked for Git state with the same rules as `antiphon-evidence/`");
         section.ShouldContain("The audit never reads file content, so a patch or notes there are deleted with the volume");
         section.ShouldContain("A symlink, any other file type, a regular file with a second hard link, or an entry the audit cannot read refuses `RecycleGitAuditUnknown` (`gitdir-entry`)");
+        section.ShouldContain("`.git` (any type), `HEAD`, `ORIG_HEAD`, `FETCH_HEAD`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`, `BISECT_HEAD`, `AUTO_MERGE`, `MERGE_AUTOSTASH`, `commondir`, `gitdir`, `objects`, `refs`, `packed-refs`, `reftable`, `shallow`, and any name containing a control character");
+        section.ShouldContain("appends `entry=`");
+        section.ShouldNotContain("a dot-name (including a nested `.git`)", Case.Sensitive, "ordinary dot-names under evidence trees stay allowed");
         section.ShouldContain("There is no depth, file-count or size cap");
         section.ShouldContain("an executable bit on a regular file is allowed");
         section.ShouldContain("A directory named `logs` is allowed");
