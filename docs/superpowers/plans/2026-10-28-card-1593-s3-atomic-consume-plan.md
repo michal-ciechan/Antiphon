@@ -3,6 +3,23 @@
 Task 62fb542c, Plan stage. Base `origin/rc/2026-10-27` = `aa6dfd24a51db7c02e8722a05a21817bf4df407a`.
 All line numbers are at that base unless marked otherwise. No product code changed in this task.
 
+**Amendment 1 (task f264f937, 2026-10-28) after design review 0b34dc40.** It fixes the five
+blocking defects and records the advisories. See `## Amendment log` at the end. Changed sections:
+- Ground truth rows 8 and 10-12.
+- D-S3-1: an own-scope helper.
+- D-S3-3: a retained task with no wait, or with the feature off.
+- D-S3-4: an Enter-only consume.
+- D-S3-5: a full supervisor exit table and an S-4 reread under `FOR UPDATE`.
+- D-S3-6: default 0.
+- D-S3-7: rows L16', L17' and L17e.
+- D-S3-8: master first, in three Code rounds.
+- Slices, verification, performance budget, checkpoints, landing and risks.
+
+Every file this plan touches is byte-identical at `origin/master` `fe73cfd2e` and at the rc base.
+That covers the five services, `SupervisionSettings.cs`, `CardService.cs`,
+`SessionReconciliationService.cs` and `tests/Antiphon.Tests/Application/` (`git diff --stat` is
+empty). The line numbers therefore hold on master as well.
+
 Inputs:
 - Investigation bcb5bc45, `docs/investigations/2026-10-28-card-1593-capacity-leaks.md` on
   `origin/feat/card-task-bcb5bc45` (read at `4563e525`; its line numbers match this base for the
@@ -46,7 +63,10 @@ preparation is still in flight, and grants the provider to another waiter (S1 D-
 | Progress for a standing wait is keyed on the receipt | **No.** `OnTranscriptAsync` keys on `wait.SessionId` (`CapacityRecoveryService.cs:883-889`); `SessionId` is not in `HasExecutionReceipt` (`CapacityRecoveryPolicy.cs:92-96`). Moving `SessionId` does not change re-arm behaviour. |
 | Retained return can share the dispatcher context's transaction | **Risky.** The retained loop runs on the tick's `_db` (`AgentTaskDispatcher.cs:602-652`), which tracks every queued row of the tick; a transaction there would flush unrelated tracked edits under the provider lock (Rule P). `TryClaimCountedSlotAsync` (`CapacityRecoveryService.cs:845-863`) takes `pg_advisory_xact_lock` with no explicit transaction, so the lock ends with the statement; its only production caller is `:637`. |
 | The queue consume can go at "delivered" | **No (see D-S3-4).** Delivery confirmation (`DeliverAsync`, `SessionMessageQueueService.cs:2760-2763`) can outlast the 120 s grant; a revoke mid-delivery re-keys the message (`PrepareNextAttemptOnAsync` `:1401-1407`) and the consume would refuse after the provider was used. The queue already charges its own attempt at the `Sent` stamp and "deliberately" never refunds it (`:2712-2714`). |
-| A pre-`Sent` flush exit is rare | **No.** Between the redeem (`:2586`) and the `Sent` save there are: quota-suppressed recheck `:2707-2710`, expired briefs `:2717`, spill-hold/restaging exits (`:2644-2700`), enter-only confirm `:2700-2701`. Each returns without delivery after the spend. |
+| A pre-`Sent` flush exit is rare | **No.** Between the redeem (`:2586`) and the `Sent` save, these exits return **without** delivery after the spend: quota-suppressed recheck (`:2707-2710`), expired briefs (`:2717`), spill-hold/restaging (`:2644-2680`), pointer defer (`RecoverPointerAsync` -> `DeferPointersAsync`, `SessionMessageQueueService.CodexPointers.cs:146-147`) and an unavailable redelivery snapshot (`:2690-2697`). Two exits **do deliver**. Enter-only confirm (`:2700-2701`) and pointer recovery (`:2684` -> `CodexPointers.cs:143-144`) both reach `EnterOnlyConfirmLockedAsync` (`:3380`), which presses Enter (`:3426`) on a body that was typed earlier and so submits a provider turn without a `Sent` stamp (amendment D-2). |
+| Every Enter-only caller sits behind the flush gate | **No.** `EnterOnlyConfirmLockedAsync` has three callers. Two come from `DeliverNextLockedAsync` on a `Pending` head: `:2701`, and `:2684` via pointer recovery. One comes from interrupted-`Sent` recovery (`:3358`, and `:3345` via pointer recovery), on rows that are already `Sent`. `RecoverPointerAsync` is also reached from the human retry at `:1508`. After S3 a `Sent` row has already paid, because its stamp committed the consume. |
+| A retained task always returns through a consume | **No.** `TryRedeemCapacityWaitAsync` returns true with **no** consume when there is no unfinished wait (`AgentTaskDispatcher.cs:1756-1757`). That covers `Exhausted`, `Canceled` and `Superseded` waits. The tick skips the redeem entirely when capacity recovery is disabled (`:631-635`). Retained tasks are not orphan-swept. |
+| A standing start whose commit acknowledgement is lost is recovered by interrupted-launch recovery | **Only as a backstop.** The enqueue sits after `CommitAsync` (`AgentControlService.cs:687-688`, `:797-798`). Pass 1c (`SessionReconciliationService.cs:289-343`) resumes only a `Starting` row that the runner **already serves**. A row that was never enqueued is ended by pass 1 after `StartingGraceMs` (`:202-213`). The supervisor then sees a dead agent, and the `Admitted` wait (no receipt) re-arms. That costs one attempt and stays bounded by `MaxAttempts`. |
 | `HeldForRemotePrep` can be observed later | **Yes.** `RemoteHoldForAsync` (`AgentTaskDispatcher.cs:1238-1250`) returns a hold while `_remotePrep.IsInFlight(task.Id, out since)` (`:1245`), before the gate (`:949-959`) and with no transaction open. `since` is the preparation start. |
 | Grant renewal exists | **No.** `GrantedAt` is written only by `GrantReadyAsync` (`:212-215`) and cleared by `ClearGrant` (`:1224-1230`). |
 
@@ -75,9 +95,25 @@ still records durable refusals on its own scope.
 - *Rejected:* `StartAccepted` + extending `RearmStalledAdmissionsAsync` to `StartAccepted`. It
   would also re-arm S1 dispatch receipts, which S1 D-3 I3 relies on never happening.
 
+*Own-scope helper (amendment).* `ConsumeAdmittedAsync(Guid waitId, string actionKey, AgentKind kind, CapacityRedemptionPath path, CancellationToken ct)`
+opens its own scope and transaction and takes rank 7 then rank 8. It calls
+`RedeemOnAsync(consume: true, receipt: Admitted)` and commits on `Ok`; it rolls back on a refusal
+and returns the refusal. It is the single shape for every consume that has no row transaction to
+join:
+- the card arm (D-S3-2),
+- `ChargeFailedStartAsync` (S-3),
+- the Enter-only consume (D-S3-4).
+
+It differs from `RedeemAsync` only in the D-S3-1 state check, and in that a refusal writes
+nothing (S1 D-9 class 1). *Rejected:* keeping `RedeemAsync` for these sites. It records
+`Exhausted`/`Deferred` rows on refusal (`:258-280`), and the S1 consume-mode contract forbids
+that.
+
 After S3 `RedeemAsync` has no production caller. It stays (service-level tests in
 `CapacityRecoveryAcceptanceTests` call it 27 times) with an XML note "test and compatibility
-only"; S3e adds a source-scan guard that `server/` has no `.RedeemAsync(` call site.
+only". The S3e source-scan guard (V-S3-12) checks that `server/` has no `.RedeemAsync(` call
+site. It can go green only on a branch that carries S3b, S3c and S3d (review A-7), so it rides
+the last of them (D-S3-8).
 
 **D-S3-2 Supervisor (leak 2): consume inside the start reservation.**
 - *Consume point:* `AgentControlService.StartInteractiveSessionAsync`, between `await AcceptAsync(...)`
@@ -105,29 +141,49 @@ only"; S3e adds a source-scan guard that `server/` has no `.RedeemAsync(` call s
   (`:523`) **before** calling the start. No `RedeemAsync`.
 - *Card arm:* a capacity-recovery start whose agent has pending card work goes through
   `CardService.SpawnAsync` (`:291-299`), outside this reservation. S3 consumes in a separate
-  7->8 leaf after `SpawnAsync` returns (own scope, `RedeemOnAsync(..., Admitted)` + commit). The
-  crash window there under-spends (one unpaced launch), never strands.
+  7->8 leaf after `SpawnAsync` returns: `ConsumeAdmittedAsync(..., Start)`, which also stamps
+  `SessionId = spawn.SessionId`. A refusal there is logged at Warning and the launch stands. The
+  crash window there under-spends (one unpaced launch), never strands. A `SpawnAsync` throw is S-3.
+  Witness: V-S3-5c.
   *Rejected:* threading the consume into `CardService.SpawnAsync` (another service's transaction,
   a larger blast radius than this slice). *Rejected:* refusing a capacity start with card work
   (base starts it; a behaviour change outside the leak).
 
 **D-S3-3 Retained return (leak 3): one transaction for slot, task flag and consume.** New
-`CapacityRecoveryService.ReturnRetainedAsync(Guid taskId, Guid waitId, string actionKey, AgentKind kind, int? localLimit, CancellationToken ct)`
+`CapacityRecoveryService.ReturnRetainedAsync(Guid taskId, (Guid Id, string Key, AgentKind Kind)? wait, int? localLimit, CancellationToken ct)`
 on its own scope:
 1. `BEGIN`; if `localLimit` is set: counted advisory (rank 1) and the count from
    `TryClaimCountedSlotAsync` (`:851-861`) inside this transaction; over the limit -> rollback, `false`.
-2. `AgentTasks` row `FOR UPDATE` (rank 3); recheck `Working && CapacityWaitRetained && CapacityWaitId == waitId`;
-   lost -> rollback, `false`.
+2. `AgentTasks` row `FOR UPDATE` (rank 3); recheck **only** `Working && CapacityWaitRetained`;
+   lost -> rollback, `false`. (Amendment D-1: no `CapacityWaitId == waitId` recheck. The wait
+   comes from `FindUnfinishedCapacityWaitAsync`, which matches `TaskId` or `ConsumerKey`, not
+   the task's `CapacityWaitId` pointer.)
 3. `CapacityWaitRetained = false`; `SaveChangesAsync`.
-4. `RedeemOnAsync(consume: true, receipt: Admitted, path: Dispatch)` (ranks 7, 8). Refusal -> rollback, `false`.
+4. Only when `wait` is not null **and** `IsEnabled`: `RedeemOnAsync(wait.Id, wait.Key, wait.Kind, Dispatch, consume: true, receipt: Admitted)`
+   (ranks 7, 8). Refusal -> rollback, `false`. When `wait` is null or the feature is off, there
+   is no consume. That is exactly base: `:631-635` skips the redeem when disabled, and
+   `:1756-1757` returns true with no wait.
 5. `COMMIT`, `true`.
 
 The tick (`AgentTaskDispatcher.cs:631-652`) replaces `TryRedeemCapacityWaitAsync(..., consume:true)`
-and `TryClaimCountedSlotAsync` with one call. Its local `active` pre-filter (`:613-614`) and the
-remote occupancy pre-filter (`:617-630`) stay as cheap skips. On `true` the tick sets the
-tracked `retained.CapacityWaitRetained = false` and marks that property unmodified (the row is
-already committed), so `:651-652` does not write it again. `TryRedeemCapacityWaitAsync`'s
-`consume:true` branch (`:1779-1782`) is deleted; the helper keeps only the gate.
+and `TryClaimCountedSlotAsync` with one call. Before the call it keeps:
+- its local `active` pre-filter (`:613-614`) and the remote occupancy pre-filter (`:617-630`);
+- when `_capacityRecovery.IsEnabled`, `FindUnfinishedCapacityWaitAsync`. A non-null wait then
+  keeps the base cheap gate of `:1762-1769`: skip when it is `WaitingForHold`, and skip when the
+  AsNoTracking provider row does not name this wait and key. Without this gate every ungranted
+  retained task would take the counted lock, a task row lock and the provider lock on every tick.
+
+A null wait, or a disabled feature, calls `ReturnRetainedAsync(task.Id, null, localLimit)`.
+On `true` the tick sets the tracked `retained.CapacityWaitRetained = false` and marks that
+property unmodified (the row is already committed), so `:651-652` does not write it again.
+`TryRedeemCapacityWaitAsync`'s `consume:true` branch (`:1779-1782`) is deleted; the helper keeps
+only the gate.
+- *Rejected (review D-1):* always consume and recheck `CapacityWaitId == waitId`. A retained
+  task whose wait is `Exhausted`/`Canceled`/`Superseded`, or that runs with the feature off,
+  would refuse on every tick and stay `Working` and retained forever. Retained tasks are not
+  orphan-swept, so nothing would end it.
+- Witnesses: V-S3-6b `no-unfinished-wait` and `feature-disabled` (guards at base; the PC deletes
+  the null branch so that the method always consumes), and V-S3-6c for the remote arm.
 - *Why own scope:* Rule P on the tick context is unprovable (Ground truth row 6). The new
   method's transaction holds exactly 1 -> 3 -> 7 -> 8.
 - *Remote retained tasks* pass `localLimit: null`: no counted lock, the same task-flag-plus-consume commit.
