@@ -94,6 +94,9 @@ public sealed partial class CheckpointNativeIo
             {
                 if (Statx(file, "", 0x1000, 0x3CF, out var opened) != 0 || (opened.Mode & 0xF000) != 0x8000)
                     throw new IOException("anchored-not-file");
+                // STATX_NLINK is 0x4. A second link names the same bytes outside this root.
+                if ((opened.Mask & 0x4) == 0 || opened.Links != 1)
+                    throw new AnchoredHardLinkException();
                 if (FTruncate(file, length) != 0)
                     throw new IOException("anchored-truncate-failed: errno=" + Marshal.GetLastPInvokeError());
             }
@@ -212,6 +215,8 @@ public sealed partial class CheckpointNativeIo
             var size = ((long)info.SizeHigh << 32) | info.SizeLow;
             if ((info.Attributes & 0x400u) != 0 || (info.Attributes & 0x10u) != 0 || length > size)
                 throw new IOException("anchored-not-file");
+            if (info.Links != 1)
+                throw new AnchoredHardLinkException();
             stream = new FileStream(child, FileAccess.ReadWrite);
             stream.SetLength(length);
         }
