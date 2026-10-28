@@ -106,6 +106,40 @@ public sealed class LoadTimeoutBoundWitnessTests
         neverHook.TrySetResult();
     }
 
+    [Test]
+    public async Task Session_runtime_page_yield_accepts_a_twenty_second_delay_and_fails_at_the_cap()
+    {
+        var lateClock = new FakeTimeProvider();
+        var lateHook = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var late = LoadTimeoutWait.UntilSignaledAsync(
+            lateHook.Task, clock: null, budget: null,
+            wallCap: LoadTimeoutBounds.SessionRuntimeActionWait, wallClock: lateClock,
+            label: "The hosted page yield");
+        lateClock.Advance(TimeSpan.FromSeconds(20));
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        late.IsCompleted.ShouldBeFalse("a page yield 20s late stays inside the 70s cap");
+        lateHook.TrySetResult();
+        await late.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var neverClock = new FakeTimeProvider();
+        var neverHook = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wall = System.Diagnostics.Stopwatch.StartNew();
+        var never = LoadTimeoutWait.UntilSignaledAsync(
+            neverHook.Task, clock: null, budget: null,
+            wallCap: LoadTimeoutBounds.SessionRuntimeActionWait, wallClock: neverClock,
+            label: "The hosted page yield");
+        neverClock.Advance(LoadTimeoutBounds.SessionRuntimeActionWait - TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        never.IsCompleted.ShouldBeFalse("the page yield stays open until the wall cap elapses");
+        neverClock.Advance(TimeSpan.FromSeconds(1));
+        var atCap = await Task.WhenAny(never, Task.Delay(TimeSpan.FromSeconds(2)));
+        atCap.ShouldBe(never, "a page yield that never arrives fails at the cap");
+        (await Should.ThrowAsync<TimeoutException>(never)).Message.ShouldContain("wall cap");
+        wall.Stop();
+        wall.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+        neverHook.TrySetResult();
+    }
+
     private static async Task WaitHookAsync(Task hook, TimeSpan cap, TimeProvider clock)
     {
         using var budget = new CancellationTokenSource(cap, clock);
