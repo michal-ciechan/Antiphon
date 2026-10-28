@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.Application;
@@ -293,18 +294,18 @@ public sealed class AmServiceDeployReadinessTests
         }
     }
 
+    // Blob 3a7f8565a47c174daaaa1d28eac6a4b2347d996e from 10fe51b0. That commit is on no branch.
+    private const string BaselineSha256 = "ed51126d218d2848bcce0aaa274d6c61d8c65c5fbfbb3fea9b57499a75180b67";
+
+    private static string BaselineFixture => Path.Combine(
+        Root, "tests", "Antiphon.Tests", "Infrastructure", "Fixtures", "c504-deploy-am-service-baseline.ps1");
+
     private static async Task<string> LoadBaselineAsync()
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("show");
-        start.ArgumentList.Add("10fe51b0f668a272d621a935c27e53313b8de1c8:scripts/deploy-am-service.ps1");
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git show did not start");
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        process.ExitCode.ShouldBe(0, await error);
+        var bytes = await File.ReadAllBytesAsync(BaselineFixture);
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant().ShouldBe(BaselineSha256);
         var path = Path.Combine(Path.GetTempPath(), "c504-baseline-" + Guid.NewGuid().ToString("N") + ".ps1");
-        await File.WriteAllTextAsync(path, await output);
+        await File.WriteAllBytesAsync(path, bytes);
         return path;
     }
 

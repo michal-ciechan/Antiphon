@@ -70,3 +70,6 @@ docker/session-runner-grok/verify-codex-image.sh text eol=lf
 # them out CRLF when core.autocrlf is true, and sh -n then fails the docker build.
 docker/session-runner-grok/**/*.sh text eol=lf
 docker/session-runner-grok/**/*.mjs text eol=lf
+
+# Historical deploy baseline. The readiness test hashes these bytes; checkout must not rewrite them.
+tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1 -text
