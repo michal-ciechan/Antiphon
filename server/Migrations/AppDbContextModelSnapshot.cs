@@ -8084,6 +8084,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("ExecutionTaskId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("FirstWithheldAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("HoldUntil")
                         .HasColumnType("timestamp with time zone");
 
@@ -8095,6 +8098,13 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("LastDeliveryStartedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastWithheldAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastWithholdReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime?>("MaintenanceAcceptedStartedAt")
                         .HasColumnType("timestamp with time zone");
@@ -8212,6 +8222,11 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("SubmissionStartedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("WithholdCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.HasKey("Id");
 

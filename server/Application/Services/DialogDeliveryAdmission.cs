@@ -2,7 +2,11 @@ using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>One named withhold. <see cref="Code"/> is the guarded-input outcome; <see cref="Text"/> is the queue reason.</summary>
+/// <summary>
+/// One named withhold. <see cref="Code"/> is the guarded-input outcome; <see cref="Text"/> is the queue reason.
+/// <see cref="ChargeAttempt"/> records a durable withhold. It does not grant a write and it does not
+/// increment <c>DeliveryAttempts</c>.
+/// </summary>
 internal readonly record struct DialogWithhold(string Text, string Code, bool ChargeAttempt);
 
 /// <summary>

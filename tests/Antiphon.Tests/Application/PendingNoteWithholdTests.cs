@@ -15,9 +15,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1591. A withheld Claude note is named, charged once when the withhold is durable,
-/// and readable without typing. Adopted idle, an operator draft, a dialog, and Working
-/// still write no bytes.
+/// CARD-1591. A withheld Claude note is named and recorded once, apart from delivery
+/// attempts, and readable without typing. Adopted idle, an operator draft, a dialog, and
+/// Working still write no bytes.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
@@ -33,26 +33,18 @@ public class PendingNoteWithholdTests
         await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
             new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
         await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
-        long floor;
-        DateTime generation;
-        await using (var db = harness.CreateObserverContext())
-        {
-            floor = await db.TranscriptEntries.Where(t => t.AgentSessionId == harness.SessionId)
-                .MaxAsync(t => t.Sequence, ct);
-            generation = SessionGeneration.Normalize(await db.AgentSessions.Where(s => s.Id == harness.SessionId)
-                .Select(s => s.StartedAt).SingleAsync(ct));
-        }
 
         harness.Adapter.DialogAdopted = true;
         var adopted = await ExpectWithheldAsync(
             harness, "adopted notice", DialogDeliveryAdmission.AdoptedSession, 1, ct);
-        await AssertFloorAsync(harness, adopted.Id, floor, generation, ct);
+        await AssertUntypedAsync(harness, adopted.Id, ct);
         await harness.Queue.OnTurnEndAsync(harness.SessionId, ct);
-        (await ReloadAsync(harness, adopted.Id, ct)).DeliveryAttempts.ShouldBe(1);
+        (await ReloadAsync(harness, adopted.Id, ct)).WithholdCount.ShouldBe(1);
+        (await ReloadAsync(harness, adopted.Id, ct)).DeliveryAttempts.ShouldBe(0);
         var sent = await harness.Queue.SendNowAsync(harness.SessionId, adopted.Id, ct);
         sent.ModalBlocked.ShouldBeTrue();
         sent.ModalBlockedReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
-        sent.Messages.Single(m => m.Id == adopted.Id).DeliveryAttempts.ShouldBe(1);
+        sent.Messages.Single(m => m.Id == adopted.Id).DeliveryAttempts.ShouldBe(0);
         harness.Adapter.Inputs.ShouldBeEmpty();
         harness.Adapter.SubmittedBodies.ShouldBeEmpty();
         harness.Adapter.ConditionalInputs.ShouldBeEmpty();
@@ -84,8 +76,9 @@ public class PendingNoteWithholdTests
         var dialog = await ExpectWithheldAsync(
             harness, "dialog notice", DialogDeliveryAdmission.BlocksInput, 0, ct);
         await harness.Queue.OnTurnEndAsync(harness.SessionId, ct);
-        (await ReloadAsync(harness, dialog.Id, ct)).DeliveryAttempts.ShouldBe(0);
-        (await ReloadAsync(harness, adopted.Id, ct)).DeliveryAttempts.ShouldBe(1);
+        (await ReloadAsync(harness, dialog.Id, ct)).WithholdCount.ShouldBe(0);
+        (await ReloadAsync(harness, adopted.Id, ct)).WithholdCount.ShouldBe(1);
+        (await ReloadAsync(harness, adopted.Id, ct)).DeliveryAttempts.ShouldBe(0);
 
         harness.Adapter.DialogGuardEnabled = false;
         harness.Adapter.DialogAdopted = false;
@@ -105,10 +98,14 @@ public class PendingNoteWithholdTests
         page.WithholdReason.ShouldBe(DialogDeliveryAdmission.SnapshotUnavailable);
         page.NextSince.ShouldBe(page.Notes[0].Sequence);
         page.Notes[0].Body.ShouldBe("adopted notice");
+        page.Notes[0].DeliveryAttempts.ShouldBe(0);
+        page.Notes[0].WithholdCount.ShouldBe(1);
+        page.Notes[0].LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
+        page.Notes[0].FirstWithheldAt.ShouldNotBeNull();
         var rest = await harness.Queue.ListPendingNotesAsync(harness.SessionId, page.NextSince, 50, ct);
         rest.Notes.ShouldNotContain(n => n.Sequence == page.Notes[0].Sequence);
-        rest.Notes.ShouldContain(n => n.Body == "dialog notice" && n.DeliveryAttempts == 0);
-        rest.Notes.ShouldContain(n => n.Body == "uncertain notice" && n.DeliveryAttempts == 1);
+        rest.Notes.ShouldContain(n => n.Body == "dialog notice" && n.DeliveryAttempts == 0 && n.WithholdCount == 0);
+        rest.Notes.ShouldContain(n => n.Body == "uncertain notice" && n.DeliveryAttempts == 0 && n.WithholdCount == 1);
         var wide = await harness.Queue.ListPendingNotesAsync(harness.SessionId, -1, 0, ct);
         wide.Since.ShouldBe(0);
         wide.Notes.Count.ShouldBeGreaterThan(1);
@@ -116,12 +113,16 @@ public class PendingNoteWithholdTests
         await Should.ThrowAsync<NotFoundException>(() =>
             harness.Queue.ListPendingNotesAsync(Guid.NewGuid(), 0, 10, ct));
 
-        var oldId = await harness.SeedPendingMessageAsync(
-            "aged withheld note", createdAtUtc: harness.Now.AddMinutes(-20));
         await harness.SeedPendingMessageAsync(
-            "young withheld note", createdAtUtc: harness.Now.AddMinutes(-5));
+            "old busy note", createdAtUtc: harness.Now.AddMinutes(-20));
         await harness.SeedPendingMessageAsync(
-            "parked withheld note", createdAtUtc: harness.Now.AddMinutes(-20), deliveryAttempts: 3);
+            "parked note", createdAtUtc: harness.Now.AddMinutes(-20), deliveryAttempts: 3);
+        await using (var db = harness.CreateObserverContext())
+        {
+            await db.SessionQueuedMessages.Where(m => m.Id == adopted.Id).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.FirstWithheldAt, harness.Now.AddMinutes(-20))
+                .SetProperty(m => m.LastWithheldAt, harness.Now.AddMinutes(-20)), ct);
+        }
 
         await using var observer = harness.CreateObserverContext();
         var feed = await AttentionServiceTests.BuildService(
@@ -129,12 +130,34 @@ public class PendingNoteWithholdTests
         var aged = feed.Items.Where(i => i.Kind == AttentionKind.PendingNotesAged).ToList();
         aged.Count.ShouldBe(1);
         aged[0].SessionId.ShouldBe(harness.SessionId);
-        aged[0].MessageId.ShouldBe(oldId);
+        aged[0].MessageId.ShouldBe(adopted.Id);
         aged[0].Severity.ShouldBe(AlertSeverity.Warning);
         aged[0].Actions.ShouldBe([AttentionAction.OpenDrawer]);
         aged[0].ConditionKey.ShouldBe($"pending-notes-aged:{harness.SessionId:N}");
         aged[0].Title.ShouldContain("1 pending note");
         aged[0].Evidence.ShouldContain("nothing was flushed or sent");
+
+        await using (var db = harness.CreateObserverContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == harness.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Stopped), ct);
+        }
+        var stopped = await AttentionServiceTests.BuildService(
+            new AttentionServiceTests.FakeRunnerClient(), db: observer).GetAsync(ct);
+        stopped.Items.ShouldNotContain(i => i.Kind == AttentionKind.PendingNotesAged);
+        await using (var db = harness.CreateObserverContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == harness.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Failed), ct);
+        }
+        var failed = await AttentionServiceTests.BuildService(
+            new AttentionServiceTests.FakeRunnerClient(), db: observer).GetAsync(ct);
+        failed.Items.ShouldNotContain(i => i.Kind == AttentionKind.PendingNotesAged);
+        await using (var db = harness.CreateObserverContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == harness.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running), ct);
+        }
 
         var silenced = await new AttentionService(
             observer,
@@ -393,6 +416,41 @@ public class PendingNoteWithholdTests
         harness.Adapter.SubmittedBodies.ShouldBeEmpty();
     }
 
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_PendingNotePageBoundsBodyBytes(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        var body = new string('n', 8_000);
+        await using (var db = harness.CreateObserverContext())
+        {
+            for (var n = 0; n < 40; n++)
+            {
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = harness.SessionId,
+                    Body = body + n.ToString("00"),
+                    Status = QueuedMessageStatus.Pending,
+                    Sequence = n + 1,
+                    CreatedAt = harness.Now,
+                });
+            }
+            await db.SaveChangesAsync(ct);
+        }
+
+        var page = await harness.Queue.ListPendingNotesAsync(harness.SessionId, 0, 100, ct);
+        page.Notes.Count.ShouldBeGreaterThan(1);
+        page.Notes.Count.ShouldBeLessThan(40);
+        page.Notes.Sum(n => System.Text.Encoding.UTF8.GetByteCount(n.Body))
+            .ShouldBeLessThanOrEqualTo(SessionMessageQueueService.PendingNotePageMaxBytes);
+        var rest = await harness.Queue.ListPendingNotesAsync(harness.SessionId, page.NextSince, 100, ct);
+        rest.Notes.ShouldNotBeEmpty();
+        rest.Notes.ShouldNotContain(n => n.Sequence <= page.NextSince);
+    }
+
     private static void RecordRealPrompts(BridgeQueueHarness harness)
     {
         harness.Adapter.OnSubmitted = async body =>
@@ -408,7 +466,7 @@ public class PendingNoteWithholdTests
     }
 
     private static async Task<QueuedMessageDto> ExpectWithheldAsync(
-        BridgeQueueHarness harness, string body, string reason, int attempts, CancellationToken ct)
+        BridgeQueueHarness harness, string body, string reason, int withholdCount, CancellationToken ct)
     {
         var inputs = harness.Adapter.Inputs.Count;
         var queue = await harness.Queue.EnqueueAsync(harness.SessionId, body, MessageSendMode.WhenIdle, ct);
@@ -418,34 +476,41 @@ public class PendingNoteWithholdTests
         queue.ModalBlockedReason.ShouldBe(reason);
         var message = queue.Messages.Single(m => m.Body == body);
         message.Status.ShouldBe(QueuedMessageStatus.Pending.ToString());
-        message.DeliveryAttempts.ShouldBe(attempts);
+        message.DeliveryAttempts.ShouldBe(0);
         message.WithholdReason.ShouldBe(reason);
         var stored = await ReloadAsync(harness, message.Id, ct);
         stored.Status.ShouldBe(QueuedMessageStatus.Pending);
-        stored.DeliveryAttempts.ShouldBe(attempts);
+        stored.DeliveryAttempts.ShouldBe(0);
         stored.LastDeliveryGeneration.ShouldBeNull();
-        if (attempts == 0)
+        stored.LastDeliveryStartedAt.ShouldBeNull();
+        stored.LastDeliveryBaselineSequence.ShouldBeNull();
+        stored.WithholdCount.ShouldBe(withholdCount);
+        if (withholdCount == 0)
         {
-            stored.LastDeliveryStartedAt.ShouldBeNull();
-            stored.LastDeliveryBaselineSequence.ShouldBeNull();
+            stored.FirstWithheldAt.ShouldBeNull();
+            stored.LastWithheldAt.ShouldBeNull();
+            stored.LastWithholdReason.ShouldBeNull();
+        }
+        else
+        {
+            stored.FirstWithheldAt.ShouldNotBeNull();
+            stored.LastWithheldAt.ShouldBe(stored.FirstWithheldAt);
+            stored.LastWithholdReason.ShouldBe(reason);
         }
         return message;
     }
 
-    private static async Task AssertFloorAsync(
-        BridgeQueueHarness harness, Guid messageId, long floor, DateTime generation, CancellationToken ct)
+    private static async Task AssertUntypedAsync(BridgeQueueHarness harness, Guid messageId, CancellationToken ct)
     {
         await using var db = harness.CreateObserverContext();
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == messageId, ct);
-        row.LastDeliveryBaselineSequence.ShouldBe(floor);
-        SessionGeneration.Equal(
-            row.LastDeliveryStartedAt,
-            generation.AddTicks(-SessionGeneration.MicrosecondTicks)).ShouldBeTrue();
-        var prompts = LandNoteReceipt.Prompts(
+        row.DeliveryAttempts.ShouldBe(0);
+        row.LastDeliveryStartedAt.ShouldBeNull();
+        row.LastDeliveryBaselineSequence.ShouldBeNull();
+        row.WithholdCount.ShouldBe(1);
+        LandNoteReceipt.Prompts(
             db.TranscriptEntries, harness.SessionId, false, LandNotificationKind.Outcome,
-            row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt, 30);
-        prompts.ShouldNotBeNull();
-        (await prompts.CountAsync(ct)).ShouldBe(0);
+            row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt, 30).ShouldBeNull();
     }
 
     private static async Task<SessionQueuedMessage> ReloadAsync(

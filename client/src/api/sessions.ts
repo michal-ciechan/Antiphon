@@ -131,6 +131,10 @@ export interface PendingNoteDto {
   origin: string
   noteHeader?: string | null
   withholdReason?: string | null
+  withholdCount?: number
+  firstWithheldAt?: string | null
+  lastWithheldAt?: string | null
+  lastWithholdReason?: string | null
 }
 
 /** Read-only page of pending notes. `since` is an exclusive sequence cursor. */

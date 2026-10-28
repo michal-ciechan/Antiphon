@@ -344,9 +344,10 @@ public sealed class DeliveryVerificationSettings
     public int StrandedAgeSeconds { get; set; } = 60;
 
     /// <summary>
-    /// Attention when a destination has at least <see cref="PendingNoteAlertMinimumCount"/>
-    /// pending notes, still under <c>MaxDeliveryAttempts</c>, older than this many seconds.
+    /// Attention when a running destination has at least <see cref="PendingNoteAlertMinimumCount"/>
+    /// never-typed notes whose withhold record is older than this many seconds.
     /// Zero or negative disables the row. Detection only: the projection does not flush or send.
+    /// Stopped and failed sessions are not included.
     /// </summary>
     public int PendingNoteAlertAgeSeconds { get; set; } = 900;
 

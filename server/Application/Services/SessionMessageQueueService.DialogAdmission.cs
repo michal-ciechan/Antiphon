@@ -12,6 +12,8 @@ public sealed partial class SessionMessageQueueService
 {
     public const int PendingNotePageDefault = 50;
     public const int PendingNotePageMax = 100;
+    public const int PendingNotePageMaxBytes = 256 * 1024;
+    public const int WithholdReasonMaxLength = 200;
 
     private async Task<DialogWithhold?> ReadDialogWithholdAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
@@ -30,33 +32,32 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>
-    /// One attempt for a durable observation withhold. Rows already attempted are left alone.
-    /// A real dialog, a remote-control menu, and a missing snapshot do not call this.
-    /// When a transcript floor exists, the start stamp is one microsecond before the accepted
-    /// generation so later recovery does not treat the untyped row as standing in the composer.
+    /// Record one durable withhold on notes that have never been typed and have not already
+    /// been recorded. Does not set <see cref="SessionQueuedMessage.DeliveryAttempts"/>,
+    /// <see cref="SessionQueuedMessage.LastDeliveryStartedAt"/>, or
+    /// <see cref="SessionQueuedMessage.LastDeliveryBaselineSequence"/>. A real dialog, a
+    /// remote-control menu, and a missing snapshot do not call this.
     /// </summary>
-    private async Task ChargeDurableWithholdAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    private async Task ChargeDurableWithholdAsync(
+        AppDbContext db, Guid sessionId, string reason, CancellationToken ct)
     {
-        var any = await db.SessionQueuedMessages.AnyAsync(m =>
-            m.AgentSessionId == sessionId
-            && m.Status == QueuedMessageStatus.Pending
-            && m.DeliveryAttempts == 0, ct);
-        if (!any) return;
-        var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
-        var generation = SessionGeneration.Normalize(await db.AgentSessions.AsNoTracking()
-            .Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync(ct));
-        var started = baseline.Observable
-            ? generation.AddTicks(-SessionGeneration.MicrosecondTicks)
-            : UtcNow();
-        long? floor = baseline.Observable ? baseline.MaxSequence : null;
+        var now = UtcNow();
+        var recorded = reason.Length <= WithholdReasonMaxLength
+            ? reason
+            : reason[..WithholdReasonMaxLength];
         await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending
-                && m.DeliveryAttempts == 0)
+                && m.WithholdCount == 0
+                && m.DeliveryAttempts == 0
+                && m.LastDeliveryStartedAt == null
+                && m.LastDeliveryBaselineSequence == null
+                && m.DeliveryVerdict == null)
             .ExecuteUpdateAsync(setters => setters
-                .SetProperty(m => m.DeliveryAttempts, 1)
-                .SetProperty(m => m.LastDeliveryStartedAt, started)
-                .SetProperty(m => m.LastDeliveryBaselineSequence, floor), ct);
+                .SetProperty(m => m.WithholdCount, 1)
+                .SetProperty(m => m.FirstWithheldAt, now)
+                .SetProperty(m => m.LastWithheldAt, now)
+                .SetProperty(m => m.LastWithholdReason, recorded), ct);
     }
 
     /// <summary>
@@ -81,9 +82,21 @@ public sealed partial class SessionMessageQueueService
             .Take(limit)
             .Select(m => new PendingNoteDto(
                 m.Id, m.Sequence, m.Body, m.CreatedAt, m.DeliveryAttempts, m.Origin.ToString(),
-                m.NoteHeader, reason))
+                m.NoteHeader, reason, m.WithholdCount, m.FirstWithheldAt, m.LastWithheldAt,
+                m.LastWithholdReason))
             .ToListAsync(ct);
-        var next = rows.Count == 0 ? since : rows[^1].Sequence;
-        return new PendingNotePageDto(sessionId, since, next, reason is not null, reason, rows);
+        var page = new List<PendingNoteDto>(rows.Count);
+        var bytes = 0;
+        foreach (var note in rows)
+        {
+            var size = System.Text.Encoding.UTF8.GetByteCount(note.Body);
+            if (page.Count > 0 && bytes + size > PendingNotePageMaxBytes)
+                break;
+            page.Add(note);
+            bytes += size;
+        }
+
+        var next = page.Count == 0 ? since : page[^1].Sequence;
+        return new PendingNotePageDto(sessionId, since, next, reason is not null, reason, page);
     }
 }

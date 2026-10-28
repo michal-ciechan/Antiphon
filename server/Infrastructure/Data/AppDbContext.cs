@@ -1772,6 +1772,8 @@ public class AppDbContext : DbContext
                     + "AND \"SourceTaskId\" IS NOT NULL AND \"ContentDigest\" IS NOT NULL");
             entity.Property(m => m.CreatedAt).IsRequired();
             entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
+            entity.Property(m => m.WithholdCount).IsRequired().HasDefaultValue(0);
+            entity.Property(m => m.LastWithholdReason).HasMaxLength(200);
 
             // Pending messages for a session are flushed in FIFO order.
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
