@@ -1,8 +1,9 @@
 #requires -Version 7.0
 # Fresh-output inventory witnesses. Seal-CheckpointFreshOutput streams a regular file
 # through the 1 GiB content digest, keeps the uppercase SHA-256 ledger value, and
-# refuses an over-bound file, a symlink, a FIFO, and a file replaced after the hash
-# with the same inode, size, and mtime.
+# refuses an over-bound file. On Linux it also refuses a symlink, a FIFO, and a file
+# replaced after the hash with the same inode, size, and mtime. Other hosts print
+# SKIP for those three cases. Append, truncate, and same-size swap stay portable.
 # ASCII-only. Owner: docs/testing-and-build.md (checkpoint runner tool).
 param([string]$Root, [switch]$HideStat)
 $ErrorActionPreference = 'Stop'
@@ -11,9 +12,10 @@ $Repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Join-Path ([IO.Path]::GetTempPath()) ('inventory-' + [guid]::NewGuid().ToString('N')) }
 $Root = [IO.Path]::GetFullPath($Root)
 [void][IO.Directory]::CreateDirectory($Root)
+# $IsLinux is constant. -HideStat forces the non-Linux branch of that gate and
+# removes stat from PATH, so this host can prove the skip does not call it.
+$script:LinuxOnly = [bool]$IsLinux -and -not [bool]$HideStat
 if ($HideStat) {
-    # Witness seam: drop stat (and every other external command) from PATH.
-    # The Linux-only cases must skip instead of calling stat. Until they do, this fails.
     $hiddenPath = Join-Path $Root 'path-without-stat'
     [void][IO.Directory]::CreateDirectory($hiddenPath)
     $env:PATH = $hiddenPath
@@ -33,6 +35,10 @@ function Assert-Inventory {
     param([bool]$Condition, [string]$Label, [string]$Detail = '')
     if ($Condition) { Write-Host "PASS $Label" }
     else { $script:Failures.Add("$Label $Detail"); Write-Host "FAIL $Label $Detail" }
+}
+function Write-LinuxOnlySkip {
+    param([string]$Label)
+    Write-Host "SKIP $Label (Linux only; pending native Windows witness)"
 }
 function New-InventoryRoot {
     param([string]$Name)
@@ -218,20 +224,22 @@ $overSeal = Seal-CheckpointFreshOutput $overDir
 Assert-Inventory ($overSeal -like "output-inventory-failed: $over size=$overSize limit=${limit}:*selected file exceeds size limit*") 'over-bound-refused' ([string]$overSeal)
 Assert-Inventory (-not [IO.File]::Exists((Join-Path $overDir '.checkpoint-output-ledger.json'))) 'over-bound-writes-no-ledger'
 
-$linkDir = New-InventoryRoot 'link'
-$linkTarget = Join-Path $linkDir 'target.bin'
-[IO.File]::WriteAllBytes($linkTarget, [byte[]]@(1, 2, 3))
-$link = Join-Path $linkDir 'link.bin'
-try {
-    [void][IO.File]::CreateSymbolicLink($link, $linkTarget)
-    $linkSeal = Seal-CheckpointFreshOutput $linkDir
-    Assert-Inventory ($linkSeal -like 'output-inventory-failed: *link.bin size=* limit=*:*linked output*') 'symlink-refused' ([string]$linkSeal)
-} finally {
-    # The checkpoint fixture refuses to delete a root that still contains a reparse point.
-    if ([IO.File]::Exists($link)) { [IO.File]::Delete($link) }
-}
+if ($script:LinuxOnly) {
+    $linkDir = New-InventoryRoot 'link'
+    $linkTarget = Join-Path $linkDir 'target.bin'
+    [IO.File]::WriteAllBytes($linkTarget, [byte[]]@(1, 2, 3))
+    $link = Join-Path $linkDir 'link.bin'
+    try {
+        [void][IO.File]::CreateSymbolicLink($link, $linkTarget)
+        $linkSeal = Seal-CheckpointFreshOutput $linkDir
+        Assert-Inventory ($linkSeal -like 'output-inventory-failed: *link.bin size=* limit=*:*linked output*') 'symlink-refused' ([string]$linkSeal)
+    } finally {
+        # The checkpoint fixture refuses to delete a root that still contains a reparse point.
+        if ([IO.File]::Exists($link)) { [IO.File]::Delete($link) }
+    }
+} else { Write-LinuxOnlySkip 'symlink-refused' }
 
-if ($IsLinux) {
+if ($script:LinuxOnly) {
     $fifoDir = New-InventoryRoot 'fifo'
     $fifo = Join-Path $fifoDir 'device.fifo'
     try {
@@ -242,7 +250,7 @@ if ($IsLinux) {
     } finally {
         if (Test-Path -LiteralPath $fifo) { Remove-Item -LiteralPath $fifo -Force }
     }
-}
+} else { Write-LinuxOnlySkip 'fifo-refused' }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -291,7 +299,8 @@ Assert-Inventory ($growthStream.Delivered -eq ($growthLimit + 1L) -and $growthSt
 $sealText = ${function:Seal-CheckpointFreshOutput}.ToString()
 Assert-Inventory ($sealText.Contains('Get-CheckpointFileDigest') -and -not $sealText.Contains('Read-CheckpointBytes')) 'seal-uses-streaming-digest'
 
-Assert-MutationRefused 'inode-reuse' 'reuse'
+if ($script:LinuxOnly) { Assert-MutationRefused 'inode-reuse' 'reuse' }
+else { Write-LinuxOnlySkip 'inode-reuse' }
 Assert-MutationRefused 'appended' 'append'
 Assert-MutationRefused 'truncated' 'truncate'
 Assert-MutationRefused 'swapped-same-size' 'swap'
