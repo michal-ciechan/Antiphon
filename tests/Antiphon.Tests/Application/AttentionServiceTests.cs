@@ -3419,6 +3419,29 @@ public partial class AttentionServiceTests
             return id;
         }
 
+        /// <summary>
+        /// Deletes the task row and leaves its events. The historical land scan reads events, then
+        /// looks the task up; the foreign key would otherwise remove the events with the task.
+        /// </summary>
+        public async Task DeleteTaskRowLeavingEventsAsync(Guid taskId)
+        {
+            await using var db = CreateContext();
+            await db.Database.OpenConnectionAsync();
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync("SET session_replication_role = replica");
+                var deleted = await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""DELETE FROM "AgentTasks" WHERE "Id" = {taskId}""");
+                if (deleted != 1)
+                    throw new InvalidOperationException($"expected one AgentTasks delete, deleted {deleted}.");
+            }
+            finally
+            {
+                await db.Database.ExecuteSqlRawAsync("SET session_replication_role = DEFAULT");
+                await db.Database.CloseConnectionAsync();
+            }
+        }
+
         public async Task ConfirmLegacyReceiptAsync(Guid taskId, Guid sourceEventId, DateTime at)
         {
             await using var db = CreateContext();
