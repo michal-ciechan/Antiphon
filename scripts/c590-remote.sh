@@ -8647,10 +8647,11 @@ c994_status_proof() {
 }
 
 # Bound host-owned receipts supply an offline audit image. A preview is never a
-# lookup authority. A current-SHA image wins. Otherwise the newest completed
-# non-dry-run receipt for this project, project id, and retirement stamp does,
-# including a receipt written at another source SHA. A receipt for a different
-# retirement is ignored. Two current-SHA images that differ refuse. An empty
+# lookup authority. A current-SHA image wins. Otherwise completed non-dry-run
+# receipts from another source SHA for this project, project id, and retirement
+# stamp supply one image. If those images differ, the lookup refuses instead of
+# taking the newest. When they agree, the newest file is recorded. A receipt for
+# a different retirement is ignored. Two current-SHA images that differ refuse. An empty
 # matching receipt refuses only when the caller is the audit lookup and nothing
 # else binds. Partial, preview, refused, and dry-run receipts from another SHA
 # do not count. The chosen image must still be present on the host.
@@ -8659,6 +8660,7 @@ c994_lookup_image() {
     local operation="${1:-}" file record candidate='' found_id='' root allow=false audit=false
     local named_file=false match dry outcome src mtime opid inspected=''
     local same_image='' same_original='' cross_image='' cross_original='' cross_mtime=0 cross_op=''
+    local cross_conflict=0
     local saw_empty=0
     # allow-preview accepts a dry-run receipt only when the caller named that operation.
     # audit is the C1008 volume gate. Container cleanup does not pass it.
@@ -8724,21 +8726,27 @@ c994_lookup_image() {
             fi
             continue
         fi
-        # Another SHA counts only when that cleanup completed. Newest mtime, then operation id.
+        # Another SHA counts only when that cleanup completed. Differing images refuse.
         if [ "$dry" != false ] || [ "$outcome" != completed ]; then continue; fi
         [[ "$candidate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
         mtime="$(stat -c %Y -- "$file" 2>/dev/null)" || return 2
         opid="$(printf '%s' "$record" | jq -r .operationId)"
-        if [ -z "$cross_image" ] || [ "$mtime" -gt "$cross_mtime" ] || { [ "$mtime" -eq "$cross_mtime" ] && [ "$opid" \> "$cross_op" ]; }; then
-            cross_image="$candidate"
-            cross_original="$found_id"
-            cross_mtime="$mtime"
-            cross_op="$opid"
+        if [ -n "$cross_image" ] && [ "$cross_image" != "$candidate" ]; then cross_conflict=1; fi
+        if [ -z "$cross_image" ] || [ "$cross_image" = "$candidate" ]; then
+            # Newest mtime, then operation id, when the image agrees.
+            if [ -z "$cross_image" ] || [ "$mtime" -gt "$cross_mtime" ] || { [ "$mtime" -eq "$cross_mtime" ] && [ "$opid" \> "$cross_op" ]; }; then
+                cross_image="$candidate"
+                cross_original="$found_id"
+                cross_mtime="$mtime"
+                cross_op="$opid"
+            fi
         fi
     done
     if [ -n "$same_image" ]; then
         candidate="$same_image"
         found_id="$same_original"
+    elif [ "$cross_conflict" = 1 ]; then
+        return 2
     elif [ -n "$cross_image" ]; then
         candidate="$cross_image"
         found_id="$cross_original"
