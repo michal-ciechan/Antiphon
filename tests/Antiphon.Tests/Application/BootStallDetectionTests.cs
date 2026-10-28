@@ -30,12 +30,14 @@ namespace Antiphon.Tests.Application;
 /// identity as well as its named outcome.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 30s wall cap and the 13.23s Linux max row. ceil(59/4)*120s = 1800s.
+[ParallelLimiter<BootStallDetectionLoadLimit>]
+// Above the 30s wall cap. Width-4 Linux row max was 11.33s. ceil(59/4)*120s = 1800s,
+// under the 3600s chunk cap.
 [Timeout(120_000)]
 public class BootStallDetectionTests
 {
-    // 30s keeps the existing sweep bound. 2x the 4.19s cost-file mean (247s/59) is 8.4s.
+    // 30s stays above the width-4 Linux row max of 11.33s (review 968eb849).
+    // The 4.19s cost-file mean (247s/59) is not the basis.
     private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(30);
 
     /// <summary>
