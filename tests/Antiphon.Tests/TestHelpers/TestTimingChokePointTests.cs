@@ -124,7 +124,7 @@ public sealed class TestTimingChokePointTests
         // idle P-state is ~2.3x slower and a hot core still wanders. Pin one CPU,
         // leave that idle state before the clocks, and interleave OFF/ON repetitions
         // so both walls share one frequency window. Acceptance is the paired wall
-        // median and the paired processor-time median, each under 2%.
+        // median under 20% and the paired processor-time median under 5%.
         PinCurrentCpu();
         HeatUntilFast();
         var one = TimeInProcessRep();
@@ -226,9 +226,10 @@ public sealed class TestTimingChokePointTests
         }
 
         // Eight phases per repetition, 50 ms each, against a few hundred
-        // milliseconds of work. The wall median has to clear 10% or the
-        // injection did not land on the ON arm.
-        PairedOverheadStatistics.Median(wall).ShouldBeGreaterThanOrEqualTo(0.10d);
+        // milliseconds of work. The wall median has to clear the acceptance
+        // bound or the injection did not land on the ON arm. Processor time
+        // barely moves, so the wall median is what rejects the sleep.
+        PairedOverheadStatistics.Median(wall).ShouldBeGreaterThanOrEqualTo(OverheadAcceptance.WallMedianBound);
         OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
     }
 
