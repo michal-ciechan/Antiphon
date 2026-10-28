@@ -13,7 +13,9 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly Channel<MentionRouteCommand> _commands = Channel.CreateBounded<MentionRouteCommand>(
         new BoundedChannelOptions(1024)
         {
-            FullMode = BoundedChannelFullMode.DropOldest,
+            // A full queue refuses the new command. DropOldest would discard a command whose
+            // completion the session observer is awaiting and leave that observer parked.
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false
         });
@@ -43,10 +45,14 @@ public sealed class AgentMentionRouter : IDisposable
         _worker = Task.Run(ProcessAsync);
     }
 
-    public void ObserveDelta(Guid sourceSessionId, string text)
+    public void ObserveDelta(Guid sourceSessionId, string text) =>
+        _ = ObserveAndRouteAsync(sourceSessionId, text);
+
+    // Completed-line routes only. The pending debounce stays asynchronous.
+    internal Task ObserveAndRouteAsync(Guid sourceSessionId, string text)
     {
         if (string.IsNullOrEmpty(text))
-            return;
+            return Task.CompletedTask;
 
         var stripped = MentionScanner.StripAnsi(text);
         Record(
@@ -61,10 +67,11 @@ public sealed class AgentMentionRouter : IDisposable
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
             .Split('\n');
+        var routes = new List<Task>();
         var completedLineCount = combined.EndsWith('\n') ? lines.Length : Math.Max(0, lines.Length - 1);
         for (var i = 0; i < completedLineCount; i++)
         {
-            EnqueueMentions(sourceSessionId, lines[i], skipPendingDuplicate: true);
+            EnqueueMentions(sourceSessionId, lines[i], routes, skipPendingDuplicate: true);
             _pendingStates.TryRemove(sourceSessionId, out _);
         }
 
@@ -73,6 +80,7 @@ public sealed class AgentMentionRouter : IDisposable
             remainder = remainder[^MaxLineChars..];
         _pendingText[sourceSessionId] = remainder;
         SchedulePendingMentions(sourceSessionId, remainder);
+        return routes.Count == 0 ? Task.CompletedTask : Task.WhenAll(routes);
     }
 
     public void Dispose()
@@ -90,7 +98,7 @@ public sealed class AgentMentionRouter : IDisposable
         _cts.Dispose();
     }
 
-    private void EnqueueMentions(Guid sourceSessionId, string line, bool skipPendingDuplicate = false)
+    private void EnqueueMentions(Guid sourceSessionId, string line, List<Task> routes, bool skipPendingDuplicate = false)
     {
         foreach (var mention in _scanner.Extract(line))
         {
@@ -100,7 +108,7 @@ public sealed class AgentMentionRouter : IDisposable
                 continue;
             }
 
-            EnqueueCommand(sourceSessionId, mention);
+            routes.Add(EnqueueCommand(sourceSessionId, mention));
         }
     }
 
@@ -187,7 +195,7 @@ public sealed class AgentMentionRouter : IDisposable
                     continue;
                 }
 
-                EnqueueCommand(sourceSessionId, mention);
+                _ = EnqueueCommand(sourceSessionId, mention);
             }
         }
     }
@@ -223,7 +231,12 @@ public sealed class AgentMentionRouter : IDisposable
 
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var service = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
-                    await service.RouteMentionAsync(command.SourceSessionId, command.Mention, command.OccurrenceId, _cts.Token);
+                    await service.RouteMentionAsync(
+                        command.SourceSessionId,
+                        command.Mention,
+                        command.OccurrenceId,
+                        _cts.Token,
+                        onDurable: () => command.Durable.TrySetResult());
                 }
                 catch (OperationCanceledException) when (_cts.IsCancellationRequested)
                 {
@@ -237,6 +250,10 @@ public sealed class AgentMentionRouter : IDisposable
                         $"{ex.GetType().Name}: {ex.Message}");
                     _logger.LogWarning(ex, "Failed to route mention from session {SessionId}", command.SourceSessionId);
                 }
+                finally
+                {
+                    command.Durable.TrySetResult();
+                }
             }
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
@@ -244,7 +261,8 @@ public sealed class AgentMentionRouter : IDisposable
         }
     }
 
-    private sealed record MentionRouteCommand(Guid SourceSessionId, AgentMention Mention, Guid OccurrenceId);
+    private sealed record MentionRouteCommand(
+        Guid SourceSessionId, AgentMention Mention, Guid OccurrenceId, TaskCompletionSource Durable);
 
     private sealed class PendingMentionState
     {
@@ -254,16 +272,22 @@ public sealed class AgentMentionRouter : IDisposable
         public HashSet<string> RoutedKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private void EnqueueCommand(Guid sourceSessionId, AgentMention mention)
+    private Task EnqueueCommand(Guid sourceSessionId, AgentMention mention)
     {
-        if (_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention, Guid.NewGuid())))
+        var command = new MentionRouteCommand(
+            sourceSessionId,
+            mention,
+            Guid.NewGuid(),
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        if (_commands.Writer.TryWrite(command))
         {
             Record(sourceSessionId, MentionRouteDiagnostics.CommandEnqueued, $"target={mention.Target}");
-            return;
+            return command.Durable.Task;
         }
 
         Record(sourceSessionId, MentionRouteDiagnostics.CommandDropped, $"target={mention.Target}");
         _logger.LogWarning("Dropped mention route command for source session {SessionId}", sourceSessionId);
+        return Task.CompletedTask;
     }
 
     private void Record(Guid sourceSessionId, string stage, string? detail = null)

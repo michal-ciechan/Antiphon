@@ -140,7 +140,10 @@ public sealed partial class AgentSessionRuntime
             try
             {
                 phase?.Invoke(SessionObservationPhase.OutputMention);
-                _mentionRouter?.ObserveDelta(sessionId, chunk);
+                // Hold this observer until a completed-line mention is inserted, so a later
+                // exit cannot mark the source stopped while that route is still reading it.
+                if (_mentionRouter is not null)
+                    await _mentionRouter.ObserveAndRouteAsync(sessionId, chunk);
             }
             catch (Exception ex)
             {
