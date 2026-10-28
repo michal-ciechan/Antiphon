@@ -12,6 +12,9 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
+/// <summary>The granted wait a supervisor start must consume with its launch.</summary>
+internal sealed record CapacityStartAdmission(Guid WaitId, string ActionKey, AgentKind Kind);
+
 /// <summary>
 /// Agent-facing lifecycle layer: starts/stops the persistent process for an agent.
 /// Selects the agent's current (or queue-head) card and delegates the actual process
@@ -56,6 +59,9 @@ public sealed class AgentControlService : ICompactionContinuationResume
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
     private readonly ISessionRunnerDirectory? _runnerDirectory;
     private readonly WorkspaceUseAdmission? _workspaceUse;
+    private readonly LandDeliveryBoundary? _landBoundary;
+    private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly IServiceScopeFactory? _scopeFactory;
     private readonly StandingRestartEscalationPolicy _restartEscalation;
 
     public AgentControlService(
@@ -86,8 +92,14 @@ public sealed class AgentControlService : ICompactionContinuationResume
         IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null,
         PhoneHomeLaunchPolicy? phoneHome = null,
         ISessionRunnerDirectory? runnerDirectory = null,
-        WorkspaceUseAdmission? workspaceUse = null)
+        WorkspaceUseAdmission? workspaceUse = null,
+        LandDeliveryBoundary? landBoundary = null,
+        CapacityRecoveryService? capacityRecovery = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
+        _scopeFactory = scopeFactory;
+        _capacityRecovery = capacityRecovery;
+        _landBoundary = landBoundary;
         _workspaceUse = workspaceUse;
         _db = db;
         _agentService = agentService;
@@ -151,18 +163,25 @@ public sealed class AgentControlService : ICompactionContinuationResume
         Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false, Guid? compactionRecoveryId = null)
         => StartCoreAsync(agentId, request, automatic, compactionRecoveryId, null, ct);
 
-    internal Task<AgentDetailDto> StartSupervisedFreshAsync(
-        Guid agentId, Guid expectedSessionId, DateTime expectedStartedAt, string? capacityActionKey, CancellationToken ct) =>
-        StartCoreAsync(agentId, new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true,
-                CapacityRecovery: capacityActionKey is not null), automatic: true, compactionRecoveryId: null,
-            new SupervisedFreshReservation(expectedSessionId, expectedStartedAt, capacityActionKey), ct);
+    internal Task<AgentDetailDto> StartForCapacityAsync(
+        Guid agentId, StartAgentRequest request, CapacityStartAdmission admission, CancellationToken ct) =>
+        StartCoreAsync(agentId, request, automatic: true, compactionRecoveryId: null, supervisedFresh: null, ct, admission);
 
-    private sealed record SupervisedFreshReservation(Guid SessionId, DateTime StartedAt, string? CapacityActionKey);
+    internal Task<AgentDetailDto> StartSupervisedFreshAsync(
+        Guid agentId, Guid expectedSessionId, DateTime expectedStartedAt, CapacityStartAdmission? admission, CancellationToken ct) =>
+        StartCoreAsync(agentId, new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true,
+                CapacityRecovery: admission is not null), automatic: true, compactionRecoveryId: null,
+            new SupervisedFreshReservation(expectedSessionId, expectedStartedAt, admission), ct, admission);
+
+    private sealed record SupervisedFreshReservation(
+        Guid SessionId, DateTime StartedAt, CapacityStartAdmission? Admission);
 
     private async Task<AgentDetailDto> StartCoreAsync(
         Guid agentId, StartAgentRequest request, bool automatic, Guid? compactionRecoveryId,
-        SupervisedFreshReservation? supervisedFresh, CancellationToken ct)
+        SupervisedFreshReservation? supervisedFresh, CancellationToken ct,
+        CapacityStartAdmission? admission = null)
     {
+        var capacityAdmission = admission ?? supervisedFresh?.Admission;
         if ((request.Fresh ? 1 : 0) + (request.ResumeSessionId is not null ? 1 : 0) + (request.RetryContinuity ? 1 : 0) > 1)
             throw new ValidationException("start", "fresh, resumeSessionId and retryContinuity are mutually exclusive.");
         if (compactionRecoveryId is not null)
@@ -313,7 +332,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             sessionId = await StartInteractiveSessionAsync(
                 agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt,
                 request.PolicyRefreshDelta, request.ResumeSessionId, request.RetryContinuity, automatic || request.CapacityRecovery, ct,
-                compactionRecoveryId, supervisedFresh);
+                compactionRecoveryId, supervisedFresh, capacityAdmission);
             agent.CurrentCardId = null;
         }
 
@@ -324,6 +343,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
             agent.UpdatedAt = UtcNow();
             if (!automatic && !request.CapacityRecovery) await ClearSupervisionLatchAsync(agent, ct);
             await _db.SaveChangesAsync(ct);
+            if (capacityAdmission is { } cardAdmission)
+                await ConsumeCardAdmissionAsync(agent, sessionId, cardAdmission, ct);
         }
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
         if (_workspaceWarning is not null)
@@ -400,7 +421,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
         bool automatic,
         CancellationToken ct,
         Guid? compactionRecoveryId = null,
-        SupervisedFreshReservation? supervisedFresh = null)
+        SupervisedFreshReservation? supervisedFresh = null,
+        CapacityStartAdmission? capacityAdmission = null)
     {
         var expectedAgentVersion = agent.UpdatedAt;
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -577,7 +599,6 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     ProviderEndpoint.Parse(agent.ProviderEndpointJson));
             }
             var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
-            CapacityRecoveryWait? admittedCapacity = null;
             if (_db.Entry(intent).State != EntityState.Added) await _db.Entry(intent).ReloadAsync(ct);
             if (automatic && (intent.Suspended || intent.LivenessLatchedAt is not null))
                 throw new ConflictException("Start was superseded by operator intent.", "standing_start_intent_revoked");
@@ -599,19 +620,30 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 await ownership.RequireAsync(agent, captured, ct);
                 if (ownership.Refusal(agent, captured, spec.Kind, cwd) is { } sourceRefusal)
                     throw new ConflictException("The supervised conversation is incompatible.", sourceRefusal);
+                if (_landBoundary is not null)
+                    await _landBoundary.ReachedAsync("capacity-start-before-precheck", agent.Id, supervisedFresh.SessionId, ct);
                 var wait = await _db.CapacityRecoveryWaits.AsNoTracking().FirstOrDefaultAsync(w =>
                     (w.AgentId == agent.Id || w.ConsumerKey == $"agent:{agent.Id:N}")
                     && w.State != CapacityRecoveryWaitState.Progressed && w.State != CapacityRecoveryWaitState.Canceled
                     && w.State != CapacityRecoveryWaitState.Superseded && w.State != CapacityRecoveryWaitState.Exhausted, ct);
-                if (wait is not null || supervisedFresh.CapacityActionKey is not null)
+                var freshAdmission = supervisedFresh.Admission;
+                if (wait is not null || freshAdmission is not null)
                 {
-                    if (wait is null || supervisedFresh.CapacityActionKey is null
-                        || wait.ActionKey != supervisedFresh.CapacityActionKey
-                        || intent.CapacityRecoveryActionKey != wait.ActionKey
-                        || wait.ExecutionKind != spec.Kind || wait.State != CapacityRecoveryWaitState.Admitted
-                        || wait.OutcomeReason != nameof(CapacityRedemptionPath.Start))
-                        throw new ConflictException("Automatic fresh recovery needs its admitted capacity grant.", "standing_automatic_fresh_capacity_required");
-                    admittedCapacity = wait;
+                    if (wait is null || freshAdmission is null || wait.ExecutionKind != spec.Kind)
+                        throw new ConflictException(
+                            "Automatic fresh recovery needs its admitted capacity grant.",
+                            "standing_automatic_fresh_capacity_required");
+                    if (wait.ActionKey != freshAdmission.ActionKey
+                        || !(CapacityRecoveryPolicy.IsGrantCandidate(wait) || wait.State == CapacityRecoveryWaitState.ActionPending))
+                        throw new ConflictException(
+                            "The capacity grant moved before the start.",
+                            "capacity_consume_refused");
+                    var grant = await _db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                        .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
+                    if (grant is null || grant.GrantedWaitId != wait.Id || grant.GrantedActionKey != wait.ActionKey)
+                        throw new ConflictException(
+                            "The capacity grant moved before the start.",
+                            "capacity_consume_refused");
                 }
             }
             if (previous is not null)
@@ -678,16 +710,16 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 // CARD-0186: a PATCH that changed the agent's lane takes effect on the next
                 // crash-restart rather than being silently ignored for the life of this row.
                 previous.SessionBackend = agent.SessionBackend;
+                if (capacityAdmission is { } resumeAdmission)
+                    previous.CapacityRecoveryActionKey = resumeAdmission.ActionKey;
                 if (compactionRecoveryId is Guid recoveryId)
                     await ReserveCompactionResumeAsync(agent, previous, recoveryId, priorGeneration, ct);
                 await _db.SaveChangesAsync(ct);
 
                 await AcceptAsync(previous);
                 var acceptedGeneration = previous.StartedAt;
-                await reservation.CommitAsync(ct);
-                _launchQueue.EnqueueInteractiveSession(
-                    previous.Id, agent.Id, acceptedGeneration, spec, remoteControlName, resume: true, notes: notes,
-                    initialPrompt: initialPrompt);
+                await ConsumeAdmittedStartAsync(previous);
+                await CommitOrEnqueueAsync(previous, acceptedGeneration, resume: true);
                 return previous.Id;
             }
 
@@ -725,7 +757,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 CreatedAt = now,
                 StartedAt = now,
                 LastSeenAt = now,
-                CapacityRecoveryActionKey = supervisedFresh?.CapacityActionKey,
+                CapacityRecoveryActionKey = capacityAdmission?.ActionKey,
                 DelegationTokenHash = composition.DelegationTokenHash,
                 TuiProfileRevisionId = resolved.ProfileRevisionId,
                 EffectiveModelId = resolved.EffectiveModelId,
@@ -794,27 +826,96 @@ public sealed class AgentControlService : ICompactionContinuationResume
             }
 
             await AcceptAsync(session);
-            await reservation.CommitAsync(ct);
-            _launchQueue.EnqueueInteractiveSession(
-                session.Id, agent.Id, session.StartedAt, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
+            await ConsumeAdmittedStartAsync(session);
+            await CommitOrEnqueueAsync(session, session.StartedAt, resume: false);
             return session.Id;
+
+            async Task ConsumeAdmittedStartAsync(AgentSession accepted)
+            {
+                if (capacityAdmission is not { } spend)
+                    return;
+                if (_landBoundary is not null)
+                    await _landBoundary.ReachedAsync("capacity-start-before-consume", agent.Id, accepted.Id, ct);
+                if (_capacityRecovery is null)
+                    throw new InvalidOperationException("Capacity start has no recovery service.");
+                // The provider update inside this call is the last command before COMMIT.
+                var consumed = await _capacityRecovery.RedeemOnAsync(
+                    _db, spend.WaitId, spend.ActionKey, spend.Kind, CapacityRedemptionPath.Start, ct,
+                    consume: true,
+                    receipt: CapacityConsumeReceipt.Admitted,
+                    stampSessionId: accepted.Id,
+                    stampSessionStartedAt: accepted.StartedAt);
+                if (!consumed.Ok)
+                    throw new ConflictException("The capacity grant was not consumed.", "capacity_consume_refused");
+            }
+
+            async Task CommitOrEnqueueAsync(AgentSession accepted, DateTime acceptedGeneration, bool resume)
+            {
+                try
+                {
+                    await reservation.CommitAsync(ct);
+                }
+                catch (Exception commitEx)
+                {
+                    await RecoverLostCommitAsync(commitEx, accepted, acceptedGeneration, resume);
+                    return;
+                }
+
+                EnqueueAccepted(accepted.Id, acceptedGeneration, resume);
+            }
+
+            async Task RecoverLostCommitAsync(
+                Exception commitEx, AgentSession accepted, DateTime acceptedGeneration, bool resume)
+            {
+                // Release the reservation's agent lock before the reread takes it, or the
+                // in-doubt stand-in and this read deadlock on the same row.
+                try
+                {
+                    await reservation.DisposeAsync();
+                }
+                catch (Exception disposeEx)
+                {
+                    _logger.LogWarning(disposeEx,
+                        "Supervisor start reservation dispose failed after a lost commit acknowledgement for session {SessionId}",
+                        accepted.Id);
+                }
+
+                _db.ChangeTracker.Clear();
+                if (_scopeFactory is null)
+                {
+                    _logger.LogWarning(commitEx,
+                        "Supervisor start commit acknowledgement was lost and no scope factory is registered for agent {AgentId}",
+                        agent.Id);
+                    throw commitEx;
+                }
+
+                bool committed;
+                try
+                {
+                    committed = await RereadCommittedStartAsync(agent.Id, accepted.Id, acceptedGeneration, ct);
+                }
+                catch (Exception rereadEx)
+                {
+                    _logger.LogWarning(rereadEx,
+                        "Supervisor start commit reread failed for agent {AgentId} session {SessionId}",
+                        agent.Id, accepted.Id);
+                    throw commitEx;
+                }
+
+                if (!committed)
+                    throw commitEx;
+                EnqueueAccepted(accepted.Id, acceptedGeneration, resume);
+            }
+
+            void EnqueueAccepted(Guid sessionId, DateTime acceptedGeneration, bool resume) =>
+                _launchQueue.EnqueueInteractiveSession(
+                    sessionId, agent.Id, acceptedGeneration, spec, remoteControlName, resume: resume, notes: notes,
+                    initialPrompt: initialPrompt);
 
             async Task AcceptAsync(AgentSession accepted)
             {
-                if (admittedCapacity is { } capacity)
-                {
-                    // Move the admitted standing wait with its owner so transcript progress
-                    // is observed on the new conversation. Revocation rolls back reservation.
-                    var changed = await _db.CapacityRecoveryWaits.Where(w => w.Id == capacity.Id
-                        && w.ActionKey == capacity.ActionKey && w.Version == capacity.Version
-                        && w.State == CapacityRecoveryWaitState.Admitted)
-                        .ExecuteUpdateAsync(u => u.SetProperty(w => w.SessionId, accepted.Id)
-                            .SetProperty(w => w.SessionStartedAt, accepted.StartedAt)
-                            .SetProperty(w => w.Version, w => w.Version + 1)
-                            .SetProperty(w => w.UpdatedAt, UtcNow()), ct);
-                    if (changed != 1)
-                        throw new ConflictException("The admitted capacity action changed.", "standing_automatic_fresh_capacity_required");
-                }
+                if (capacityAdmission is { } acceptedAdmission)
+                    intent.CapacityRecoveryActionKey = acceptedAdmission.ActionKey;
                 if (pending.Count > 0)
                 {
                     var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
@@ -888,6 +989,67 @@ public sealed class AgentControlService : ICompactionContinuationResume
             }
         }
         finally { for (var i = acquired - 1; i >= 0; i--) queueLocks[i].Release(); }
+    }
+
+    private async Task ConsumeCardAdmissionAsync(
+        Agent agent, Guid sessionId, CapacityStartAdmission admission, CancellationToken ct)
+    {
+        if (_capacityRecovery is null)
+        {
+            _logger.LogWarning(
+                "Capacity card start has no recovery service for wait {WaitId} session {SessionId}. The launch stands.",
+                admission.WaitId, sessionId);
+            return;
+        }
+
+        var startedAt = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .SingleOrDefaultAsync(ct);
+        try
+        {
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync("capacity-card-before-consume", agent.Id, sessionId, ct);
+            var consumed = await _capacityRecovery.ConsumeAdmittedAsync(
+                admission.WaitId, admission.ActionKey, admission.Kind, CapacityRedemptionPath.Start, ct,
+                stampSessionId: sessionId, stampSessionStartedAt: startedAt);
+            if (!consumed.Ok)
+            {
+                _logger.LogWarning(
+                    "Capacity card start consume refused for wait {WaitId} key {ActionKey} session {SessionId}: {Reason}. The launch stands.",
+                    admission.WaitId, admission.ActionKey, sessionId, consumed.Reason);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Capacity card start consume failed for wait {WaitId} key {ActionKey} session {SessionId}. The launch stands.",
+                admission.WaitId, admission.ActionKey, sessionId);
+        }
+    }
+
+    private async Task<bool> RereadCommittedStartAsync(
+        Guid agentId, Guid sessionId, DateTime acceptedGeneration, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory!.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
+            .AsNoTracking()
+            .SingleAsync(ct);
+        var pointer = await db.Agents.AsNoTracking()
+            .Where(a => a.Id == agentId)
+            .Select(a => a.PersistentSessionId)
+            .SingleAsync(ct);
+        var startedAt = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .SingleOrDefaultAsync(ct);
+        var committed = pointer == sessionId.ToString("D")
+            && SessionGeneration.Equal(startedAt, acceptedGeneration);
+        await tx.CommitAsync(ct);
+        return committed;
     }
 
     public async Task<StandingSessionHistoryDto> GetSessionsAsync(Guid agentId, int take, Guid? before, CancellationToken ct)
