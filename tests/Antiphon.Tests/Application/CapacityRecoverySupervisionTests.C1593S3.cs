@@ -120,7 +120,8 @@ public partial class CapacityRecoverySupervisionTests
         var ladder = await witness.ReadLadderAsync(ct);
         if (mode != "standing_resume_delivery_pending")
         {
-            ladder.Failures.ShouldBe(before.Failures);
+            // Observe charges the dead session before the start. An S-3 charge moves it again.
+            ladder.Failures.ShouldBe(before.Failures + 1);
             ladder.Next.ShouldBe(before.Next);
         }
     }
@@ -196,7 +197,8 @@ public partial class CapacityRecoverySupervisionTests
         }
 
         var ladder = await witness.ReadLadderAsync(ct);
-        ladder.Failures.ShouldBe(before.Failures);
+        // Observe charges the dead session before the start. An S-3 charge moves it again.
+        ladder.Failures.ShouldBe(before.Failures + 1);
         ladder.Next.ShouldBe(before.Next);
         witness.AssertClean();
     }
@@ -245,7 +247,10 @@ public partial class CapacityRecoverySupervisionTests
         }
 
         witness.Adapter.Started.ShouldBeFalse(witness.Log);
-        await witness.AssertUntouchedAsync(ct);
+        if (mode == "consume-refused-nonreserve")
+            await witness.AssertGrantRevokedAsync(ct);
+        else
+            await witness.AssertUntouchedAsync(ct);
         var ladder = await witness.ReadLadderAsync(ct);
         ladder.Failures.ShouldBe(before.Failures);
         ladder.Next.ShouldBe(before.Next);
@@ -643,12 +648,25 @@ public partial class CapacityRecoverySupervisionTests
         public async Task AssertUntouchedAsync(CancellationToken ct)
         {
             await using var db = CapacityRecoveryTestSupport.CreateContext(Schema);
+            await AssertWaitPendingAsync(db, ct);
+            (await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(s => s.Kind == AgentKind.ClaudeCode, ct))
+                .GrantedWaitId.ShouldBe(Wait.Id);
+        }
+
+        public async Task AssertGrantRevokedAsync(CancellationToken ct)
+        {
+            await using var db = CapacityRecoveryTestSupport.CreateContext(Schema);
+            await AssertWaitPendingAsync(db, ct);
+            (await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(s => s.Kind == AgentKind.ClaudeCode, ct))
+                .GrantedWaitId.ShouldBeNull();
+        }
+
+        private async Task AssertWaitPendingAsync(AppDbContext db, CancellationToken ct)
+        {
             var wait = await db.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == Wait.Id, ct);
             wait.AdmissionCount.ShouldBe(0);
             wait.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
             wait.ActionKey.ShouldBe(Wait.ActionKey);
-            (await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(s => s.Kind == AgentKind.ClaudeCode, ct))
-                .GrantedWaitId.ShouldBe(Wait.Id);
         }
 
         public async Task<int> SessionCountAsync(CancellationToken ct)
@@ -690,8 +708,9 @@ public partial class CapacityRecoverySupervisionTests
     }
 
     /// <summary>
-    /// One AgentSessions non-query on the supervisor context. The base key stamp is that
-    /// write; after the fix it is the reservation's session save.
+    /// One AgentSessions write on the supervisor context. The base key stamp is a non-query.
+    /// The reservation insert is INSERT ... RETURNING, which EF runs as a reader. Session
+    /// probes are SELECT and must not spend the fault.
     /// </summary>
     private sealed class AgentSessionDeadlockOnce : DbCommandInterceptor
     {
@@ -701,17 +720,34 @@ public partial class CapacityRecoverySupervisionTests
             DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            if (!Spent
-                && eventData.Context?.ChangeTracker.Entries<Agent>().Any() == true
-                && command.CommandText.Contains("AgentSessions", StringComparison.Ordinal))
-            {
-                Spent = true;
-                return ValueTask.FromException<InterceptionResult<int>>(
-                    new PostgresException("c1593-40P01", "ERROR", "ERROR", "40P01"));
-            }
-
+            if (Claim(command, eventData))
+                return ValueTask.FromException<InterceptionResult<int>>(Deadlock());
             return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Claim(command, eventData))
+                return ValueTask.FromException<InterceptionResult<DbDataReader>>(Deadlock());
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private bool Claim(DbCommand command, CommandEventData eventData)
+        {
+            if (Spent || eventData.Context?.ChangeTracker.Entries<Agent>().Any() != true)
+                return false;
+            var text = command.CommandText.TrimStart();
+            if (text.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                || !text.Contains("AgentSessions", StringComparison.Ordinal))
+                return false;
+            Spent = true;
+            return true;
+        }
+
+        private static PostgresException Deadlock() =>
+            new("c1593-40P01", "ERROR", "ERROR", "40P01");
     }
 
     private sealed class ArmedWaitUpdateFault : DbCommandInterceptor
@@ -724,16 +760,31 @@ public partial class CapacityRecoverySupervisionTests
             DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            if (Volatile.Read(ref _armed) == 1
-                && Interlocked.Exchange(ref _armed, 0) == 1
-                && command.CommandText.Contains("CapacityRecoveryWaits", StringComparison.Ordinal))
-            {
-                return ValueTask.FromException<InterceptionResult<int>>(
-                    new PostgresException("c1593-card-consume", "ERROR", "ERROR", "XX000"));
-            }
-
+            if (Claim(command))
+                return ValueTask.FromException<InterceptionResult<int>>(Fault());
             return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Claim(command))
+                return ValueTask.FromException<InterceptionResult<DbDataReader>>(Fault());
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private bool Claim(DbCommand command)
+        {
+            var text = command.CommandText.TrimStart();
+            if (text.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                || !text.Contains("CapacityRecoveryWaits", StringComparison.Ordinal))
+                return false;
+            return Volatile.Read(ref _armed) == 1 && Interlocked.Exchange(ref _armed, 0) == 1;
+        }
+
+        private static PostgresException Fault() =>
+            new("c1593-card-consume", "ERROR", "ERROR", "XX000");
     }
 
     private sealed class CommitVisibility : DbTransactionInterceptor
@@ -890,11 +941,16 @@ public partial class CapacityRecoverySupervisionTests
             var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
             while (DateTime.UtcNow < until && !TickDone.Task.IsCompleted)
             {
+                // Row-lock waiters do not show as an ungranted relation lock. They wait
+                // on the tuple, which pg_stat_activity reports as wait_event tuple.
                 await using var waiter = new NpgsqlCommand(
                     """
                     SELECT 1
-                    FROM pg_locks
-                    WHERE relation = '"Agents"'::regclass AND NOT granted AND pid <> pg_backend_pid()
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock'
+                      AND wait_event = 'tuple'
                     LIMIT 1
                     """, connection, tx);
                 if (await waiter.ExecuteScalarAsync() is not null)
