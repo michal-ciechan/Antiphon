@@ -1238,17 +1238,10 @@ $NightlySeams = @{
 }
 
 # A shared timing root holds the journals of every parallel chunk. The post-exit
-# read must attribute by the owner file the recorder writes (own-<utf8-hex of the
-# group id>-<pid>-<nonce>.txt) and must not open another chunk's journal.
-function Get-QualificationWitnessGroupToken {
-    param([string]$Text)
-    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Text)
-    $sb = New-Object System.Text.StringBuilder ($bytes.Length * 2)
-    foreach ($b in $bytes) { [void]$sb.Append($b.ToString('x2')) }
-    return $sb.ToString()
-}
-
-Assert-Check ((Get-QualificationWitnessGroupToken 'g-own') -eq '672d6f776e') 'group-token-vector'
+# read attributes by the owner file the recorder writes
+# (own-<utf8-hex of the group id>-<pid>-<nonce>.txt) and does not open another
+# chunk's journal.
+Assert-Check ((ConvertTo-QualificationGroupToken -Chunk 'g-own') -eq '672d6f776e') 'group-token-vector'
 
 $foreignRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-foreign-' + [guid]::NewGuid().ToString('N'))
 $foreignLog = Join-Path $foreignRoot 'logs'
@@ -1276,7 +1269,7 @@ try {
             $foreignStream.Write($foreignHeaderBytes, 0, $foreignHeaderBytes.Length)
             $foreignStream.Write($foreignChunk, 0, $foreignChunk.Length)
         } finally { $foreignStream.Dispose() }
-        $foreignOwner = 'own-' + (Get-QualificationWitnessGroupToken $foreignGroup) + '-' + $foreignPid + '-' + $foreignNonce + '.txt'
+        $foreignOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk $foreignGroup) + '-' + $foreignPid + '-' + $foreignNonce + '.txt'
         [IO.File]::WriteAllText((Join-Path $foreignTiming $foreignOwner), ($foreignName + "`n"))
         $foreignBytes += [int64](Get-Item -LiteralPath $foreignPath).Length
     }
@@ -1287,7 +1280,7 @@ try {
         '{"recordKind":"complete","testId":"own-a","phases":[{"phase":"process-spawn","startOffsetMs":0,"endOffsetMs":400}]}'
     ) -join "`n"
     [IO.File]::WriteAllText((Join-Path $foreignTiming $ownName), $ownText + "`n")
-    [IO.File]::WriteAllText((Join-Path $foreignTiming ('own-' + (Get-QualificationWitnessGroupToken 'g-own') + '-42-own1.txt')), ($ownName + "`n"))
+    [IO.File]::WriteAllText((Join-Path $foreignTiming ('own-' + (ConvertTo-QualificationGroupToken -Chunk 'g-own') + '-42-own1.txt')), ($ownName + "`n"))
     $foreignBytes += [int64](Get-Item -LiteralPath (Join-Path $foreignTiming $ownName)).Length
     $ownTrx = Join-Path $foreignLog 'antiphon-g-own.trx'
     $ownPad = ' ' * 8200

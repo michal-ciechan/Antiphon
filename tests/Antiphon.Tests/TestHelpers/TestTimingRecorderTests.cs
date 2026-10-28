@@ -55,6 +55,30 @@ public sealed class TestTimingRecorderTests
     }
 
     [Test]
+    public void C1514T_OwnerFileNamesTheChunk()
+    {
+        TestTimingSession.GroupToken("g-own").ShouldBe("672d6f776e");
+        var root = C1514Support.FreshRoot();
+        using var session = TestTimingSession.TryOpen(new TestTimingConfig
+        {
+            Root = root,
+            RunId = "run-own",
+            GroupId = "g-own",
+            Attempt = "1",
+            Suite = "antiphon",
+            ManualClock = true,
+            Pid = 42,
+            Nonce = "own1",
+            AssemblyId = "asm1",
+        });
+        session.Enabled.ShouldBeTrue("owner-file-session-opens");
+        var owner = Path.Combine(root, "own-672d6f776e-42-own1.txt");
+        File.Exists(owner).ShouldBeTrue("owner-file-names-the-chunk");
+        File.ReadAllText(owner).ShouldBe("cases-42-own1.jsonl\n");
+        File.Exists(Path.Combine(root, "cases-42-own1.jsonl")).ShouldBeTrue("journal-name-stays-pid-nonce");
+    }
+
+    [Test]
     public void C1514T_IntervalAlgebra()
     {
         var root = C1514Support.FreshRoot();

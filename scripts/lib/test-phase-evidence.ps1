@@ -365,6 +365,11 @@ namespace Antiphon.TestPhase {
         public List<string> Lines = new List<string>();
     }
 
+    public sealed class JsonlHeaderRead {
+        public bool Refused;
+        public string Line;
+    }
+
     public static class TrxTimingScanner {
         public static TrxTimingRead Read(Stream stream, Stopwatch watch, int deadlineMs, int maxTagBytes, int maxStdoutBytes) {
             var read = new TrxTimingRead();
@@ -883,6 +888,33 @@ namespace Antiphon.TestPhase {
                 if (j == n) return i;
             }
             return -1;
+        }
+
+        public static JsonlHeaderRead ReadFirstLine(Stream stream, Stopwatch watch, int deadlineMs, int maxLineBytes) {
+            var read = new JsonlHeaderRead();
+            if (maxLineBytes < 1) maxLineBytes = 1;
+            if (deadlineMs < 1) deadlineMs = 1;
+            var buf = new byte[8192];
+            var line = new byte[maxLineBytes];
+            int lineLen = 0;
+            while (true) {
+                if (watch.ElapsedMilliseconds >= deadlineMs) { read.Refused = true; return read; }
+                int count = stream.Read(buf, 0, buf.Length);
+                if (count <= 0) break;
+                for (int i = 0; i < count; i++) {
+                    byte b = buf[i];
+                    if (b == (byte)'\n') {
+                        if (lineLen > 0 && line[lineLen - 1] == (byte)'\r') lineLen--;
+                        read.Line = lineLen < 1 ? "" : Encoding.UTF8.GetString(line, 0, lineLen);
+                        return read;
+                    }
+                    if (lineLen >= maxLineBytes) { read.Refused = true; return read; }
+                    line[lineLen++] = b;
+                }
+            }
+            if (lineLen > 0 && line[lineLen - 1] == (byte)'\r') lineLen--;
+            read.Line = lineLen < 1 ? "" : Encoding.UTF8.GetString(line, 0, lineLen);
+            return read;
         }
     }
 }
@@ -1779,29 +1811,9 @@ function ConvertTo-QualificationShardContribution {
     foreach ($rec in @($Records)) {
         if ([string]$rec.recordKind -eq 'header') { $header = $rec; break }
     }
-    if ($null -eq $header) { return $empty }
-    if ([string]$header.groupId -ne [string]$Chunk) { return $empty }
-    if ([string]$header.runId -ne [string]$RunId) { return $empty }
-    if ([string]$header.suite -ne [string]$Suite) { return $empty }
-    if ([string]$header.attempt -ne [string]$Attempt) { return $empty }
-    $filePid = ''
-    $fileNonce = ''
-    if ($FileName -match '^cases-(\d+)-([^.]+)\.jsonl$') {
-        $filePid = [string]$Matches[1]
-        $fileNonce = [string]$Matches[2]
-    } else {
+    if (-not (Test-QualificationShardOwned -Header $header -FileName $FileName -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt)) {
         return $empty
     }
-    $headerPid = ''
-    if ($header.PSObject.Properties.Name -contains 'pid' -and $null -ne $header.pid -and -not [string]::IsNullOrWhiteSpace([string]$header.pid)) {
-        $headerPid = [string]$header.pid
-    }
-    $headerNonce = ''
-    if ($header.PSObject.Properties.Name -contains 'nonce' -and $null -ne $header.nonce -and -not [string]::IsNullOrWhiteSpace([string]$header.nonce)) {
-        $headerNonce = [string]$header.nonce
-    }
-    if ($headerPid -ne '' -and $headerPid -ne $filePid) { return $empty }
-    if ($headerNonce -ne '' -and $headerNonce -ne $fileNonce) { return $empty }
     $fixtures = @{}
     $processSpawn = $null
     $processWait = $null
@@ -1905,6 +1917,88 @@ function Read-QualificationTimingJsonl {
     }
 }
 
+function ConvertTo-QualificationGroupToken {
+    param([string]$Chunk)
+    if ([string]::IsNullOrEmpty($Chunk)) { return '' }
+    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Chunk)
+    $sb = New-Object System.Text.StringBuilder ($bytes.Length * 2)
+    foreach ($b in $bytes) { [void]$sb.Append($b.ToString('x2')) }
+    return $sb.ToString()
+}
+
+function ConvertFrom-QualificationOwnerName {
+    param([string]$Name)
+    if ($Name -notmatch '^own-([0-9a-f]+)-(\d+)-(.+)\.txt$') { return $null }
+    return [pscustomobject]@{
+        Token = [string]$Matches[1]
+        Journal = ('cases-' + [string]$Matches[2] + '-' + [string]$Matches[3] + '.jsonl')
+    }
+}
+
+function New-QualificationEmptyContribution {
+    return [pscustomobject]@{ fixtures = @{}; processSpawn = $null; processWait = $null }
+}
+
+function Test-QualificationShardOwned {
+    param($Header, [string]$FileName, [string]$Chunk, [string]$RunId, [string]$Suite, [string]$Attempt)
+    if ($null -eq $Header) { return $false }
+    if ([string]$Header.recordKind -ne 'header') { return $false }
+    if ([string]$Header.groupId -ne [string]$Chunk) { return $false }
+    if ([string]$Header.runId -ne [string]$RunId) { return $false }
+    if ([string]$Header.suite -ne [string]$Suite) { return $false }
+    if ([string]$Header.attempt -ne [string]$Attempt) { return $false }
+    $filePid = ''
+    $fileNonce = ''
+    if ($FileName -match '^cases-(\d+)-([^.]+)\.jsonl$') {
+        $filePid = [string]$Matches[1]
+        $fileNonce = [string]$Matches[2]
+    } else {
+        return $false
+    }
+    $headerPid = ''
+    if ($Header.PSObject.Properties.Name -contains 'pid' -and $null -ne $Header.pid -and -not [string]::IsNullOrWhiteSpace([string]$Header.pid)) {
+        $headerPid = [string]$Header.pid
+    }
+    $headerNonce = ''
+    if ($Header.PSObject.Properties.Name -contains 'nonce' -and $null -ne $Header.nonce -and -not [string]::IsNullOrWhiteSpace([string]$Header.nonce)) {
+        $headerNonce = [string]$Header.nonce
+    }
+    if ($headerPid -ne '' -and $headerPid -ne $filePid) { return $false }
+    if ($headerNonce -ne '' -and $headerNonce -ne $fileNonce) { return $false }
+    return $true
+}
+
+function Read-QualificationShardHeader {
+    param(
+        [string]$Path,
+        $Watch = $null,
+        [int]$DeadlineMilliseconds = 200
+    )
+    $refused = [pscustomobject]@{ Header = $null; Refused = $true }
+    $absent = [pscustomobject]@{ Header = $null; Refused = $false }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $refused }
+    if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
+    if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $refused }
+    $opened = Open-TestPhaseReadStream -Path $Path
+    if ($opened.Refused -or $null -eq $opened.Stream) { return $refused }
+    try {
+        $read = [Antiphon.TestPhase.JsonlTimingScanner]::ReadFirstLine($opened.Stream, $Watch, $DeadlineMilliseconds, 262144)
+        if ($null -eq $read -or $read.Refused) { return $refused }
+        $text = [string]$read.Line
+        if ([string]::IsNullOrWhiteSpace($text)) { return $absent }
+        if ($text.IndexOf('"recordKind":"header"', [StringComparison]::Ordinal) -lt 0) { return $absent }
+        $parsed = $null
+        try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null }
+        if ($null -eq $parsed -or [string]$parsed.recordKind -ne 'header') { return $absent }
+        return [pscustomobject]@{ Header = $parsed; Refused = $false }
+    } catch {
+        return $refused
+    } finally {
+        try { $opened.Stream.Dispose() } catch { }
+    }
+}
+
 function Get-QualificationPhaseSums {
     param(
         [string]$TimingRoot,
@@ -1942,9 +2036,42 @@ function Get-QualificationPhaseSums {
     $processSpawn = $null
     $processWait = $null
     $refused = $false
-    $shards = @(Get-ChildItem -LiteralPath $TimingRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
+    # Owner files name this chunk's journals. Another chunk's journal is not opened.
+    # A journal with no owner file is legacy: only its first record is read to attribute it.
+    $entries = @(Get-ChildItem -LiteralPath $TimingRoot -Force -ErrorAction SilentlyContinue)
+    $shards = @($entries | Where-Object { $_.Name -like 'cases-*.jsonl' })
+    $ourToken = ConvertTo-QualificationGroupToken -Chunk $Chunk
+    $ownedNames = @{}
+    $foreignNames = @{}
+    foreach ($entry in $entries) {
+        if ([string]$entry.Name -notlike 'own-*.txt') { continue }
+        $owner = ConvertFrom-QualificationOwnerName -Name $entry.Name
+        if ($null -eq $owner) { continue }
+        if (-not [string]::IsNullOrEmpty($ourToken) -and $owner.Token -eq $ourToken) {
+            $ownedNames[$owner.Journal] = $true
+            if ($foreignNames.ContainsKey($owner.Journal)) { $foreignNames.Remove($owner.Journal) }
+        } elseif (-not $ownedNames.ContainsKey($owner.Journal)) {
+            $foreignNames[$owner.Journal] = $true
+        }
+    }
     foreach ($shard in $shards) {
         if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { $refused = $true; break }
+        $name = [string]$shard.Name
+        $indexedForeign = $foreignNames.ContainsKey($name)
+        if ($indexedForeign) {
+            $stamp = 0L
+            try { $stamp = [int64]$shard.LastWriteTimeUtc.Ticks } catch { $stamp = 0L }
+            $size = 0L
+            try { $size = [int64]$shard.Length } catch { $size = 0L }
+            $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
+            $key = ([string]$shard.FullName + '|' + [string]$size + '|' + [string]$stamp + '|' + $identity)
+            if ($script:QualificationPhaseShardCache.ContainsKey($key)) {
+                $contribution = $script:QualificationPhaseShardCache[$key]
+            } else {
+                $contribution = New-QualificationEmptyContribution
+                $script:QualificationPhaseShardCache[$key] = $contribution
+            }
+        } else {
         $shardIdentity = Get-TestPhasePathIdentity -Path $shard.FullName
         if ($shardIdentity.Kind -ne 'regular') { $refused = $true; continue }
         $identity = ([string]$RunId + '|' + [string]$Suite + '|' + [string]$Attempt + '|' + [string]$Chunk)
@@ -1959,6 +2086,20 @@ function Get-QualificationPhaseSums {
             if ($left -lt 1) { $refused = $true; break }
             $slice = $left
             if ($ownedWatch -and $slice -gt 200) { $slice = 200 }
+            $owned = $ownedNames.ContainsKey($name)
+            if (-not $owned) {
+                if ($ownedWatch) {
+                    $headerRead = Read-QualificationShardHeader -Path $shard.FullName -DeadlineMilliseconds $slice
+                } else {
+                    $headerRead = Read-QualificationShardHeader -Path $shard.FullName -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
+                }
+                if ($headerRead.Refused) { $refused = $true; continue }
+                $owned = Test-QualificationShardOwned -Header $headerRead.Header -FileName $name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
+            }
+            if (-not $owned) {
+                $contribution = New-QualificationEmptyContribution
+                $script:QualificationPhaseShardCache[$key] = $contribution
+            } else {
             if ($ownedWatch) {
                 $parsed = Read-QualificationTimingJsonl -Path $shard.FullName -DeadlineMilliseconds $slice
             } else {
@@ -1967,6 +2108,8 @@ function Get-QualificationPhaseSums {
             if (-not $parsed.Complete) { $refused = $true }
             $contribution = ConvertTo-QualificationShardContribution -Records $parsed.Records -FileName $shard.Name -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt
             if ($parsed.Complete) { $script:QualificationPhaseShardCache[$key] = $contribution }
+            }
+        }
         }
         if ($null -eq $contribution) { continue }
         foreach ($fid in @($contribution.fixtures.Keys)) {
