@@ -7652,13 +7652,25 @@ c1008_preview_restore_traps() {
 
 # The audit runs in this shell, not a command substitution, so these traps see
 # the script's own signal. wait is interruptible; a foreground docker run is not.
+# Killing the helper re-delivers TERM. A second entry would clear the id and
+# exit before docker rm, so further signals are ignored until release finishes.
 c1008_preview_on_signal() {
+    trap '' INT TERM HUP
     if [ -n "${c1008_preview_run_pid:-}" ]; then
         kill -TERM "${c1008_preview_run_pid}" 2>/dev/null || true
     fi
     c1008_preview_release || true
     c1008_preview_restore_traps
     exit 143
+}
+
+# Inherited descriptors above stderr are the caller's pipes. An orphaned
+# watchdog sleep would keep the preview looking unfinished for the whole budget.
+c1008_preview_drop_extra_fds() {
+    local fd
+    for fd in 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        eval "exec ${fd}>&-" 2>/dev/null || true
+    done
 }
 
 c1008_preview_finish() {
@@ -7747,11 +7759,14 @@ c1008_audit_readonly() {
     trap 'c1008_preview_on_signal' INT TERM HUP
     # Backgrounded so a signal reaches the trap during wait. timeout covers the
     # client; the watchdog docker-kills the owned id at the same budget.
-    timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
-        --security-opt no-new-privileges --user 1654:1654 --init \
-        --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
-        --entrypoint /bin/bash \
-        "${mounts[@]}" "$image" -c "$program" >"$c1008_preview_output_file" 2>/dev/null &
+    (
+        c1008_preview_drop_extra_fds
+        timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
+            --security-opt no-new-privileges --user 1654:1654 --init \
+            --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
+            --entrypoint /bin/bash \
+            "${mounts[@]}" "$image" -c "$program"
+    ) >"$c1008_preview_output_file" 2>/dev/null &
     c1008_preview_run_pid=$!
     attempt=0
     while [ "$attempt" -lt 25 ]; do
@@ -7774,6 +7789,7 @@ c1008_audit_readonly() {
         # sleep keeps the caller's stderr pipe open for the rest of the budget.
         (
             trap 'kill "${inner:-}" 2>/dev/null || true; exit 0' TERM INT HUP
+            c1008_preview_drop_extra_fds
             sleep "$cap" &
             inner=$!
             wait "$inner" || exit 0
