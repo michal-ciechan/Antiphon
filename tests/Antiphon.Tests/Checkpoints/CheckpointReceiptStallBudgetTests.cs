@@ -93,6 +93,47 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    public async Task blocked_inline_read_is_refused_without_waiting_for_the_syscall()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        using var stream = new BlockedInline();
+        f.Io.StreamFactory = () => stream;
+        var read = Task.Run(() => ReceiptFile.ReadBytes(f.Context, f.Payload));
+        try
+        {
+            stream.Entered.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            f.Clock.Advance(CheckpointFileReader.StallDeadline);
+            await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(1)));
+            read.IsCompleted.ShouldBeTrue("the caller must refuse while the synchronous syscall remains blocked");
+            var error = await Should.ThrowAsync<IOException>(async () => await read);
+            error.Message.ShouldContain("read-stalled");
+            (f.Clock.GetUtcNow() - DateTimeOffset.Parse("2026-09-25T00:00:00Z")).ShouldBeLessThan(TimeSpan.FromSeconds(31));
+            stream.Closed.IsSet.ShouldBeFalse("the worker retains the handle until its syscall returns");
+        }
+        finally
+        {
+            stream.Release.Set();
+            try { await read; } catch (IOException) { }
+            stream.Closed.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("the late read must release its owned stream");
+        }
+    }
+
+    private sealed class BlockedInline : MemoryStream
+    {
+        public ManualResetEventSlim Entered { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+        public ManualResetEventSlim Closed { get; } = new();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Entered.Set();
+            Release.Wait();
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(0);
+        }
+        protected override void Dispose(bool disposing) { base.Dispose(disposing); Closed.Set(); }
+    }
+
     private static byte[] Receipt(int size)
     {
         var bytes = new byte[size];
