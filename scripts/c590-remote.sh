@@ -6672,8 +6672,11 @@ consider_stale_index() {
 # belongs to that checkout's content audit (never followed), any other symlink must
 # resolve inside the volume.
 # Common directory only: antiphon/ (product state; a pending children/ journal is
-# unknown), review-evidence/ (agent evidence, not repository state), an empty
-# common/ and an empty git-daemon-export-ok. Editor swap/backup files: unknown.
+# unknown), review-evidence/ (agent evidence, not repository state; the directory
+# is not walked, so it has no depth, count or size cap and an executable bit is
+# allowed), antiphon-evidence/ (the same kind of agent files, walked so it cannot
+# hide a repository), an empty common/ and an empty git-daemon-export-ok. Editor
+# swap/backup files: unknown.
 # Linked worktree admin only: antiphon-mirror-owner.json (RunnerWorkspaceBindingStore
 # WriteOwnerStamp). A regular file, not a symlink or directory, one link, at most
 # 4096 bytes, owned by the uid running this audit. The same name in the common
@@ -6809,6 +6812,62 @@ consider_mirror_owner() {
     [ "${BASH_REMATCH[1]}" = 1 ] && [ "${BASH_REMATCH[2]}" = "$(id -u)" ] && [ "${BASH_REMATCH[3]}" -le 4096 ] \
         || refuse_gitdir_entry "$directory"
 }
+# A name Git would open as repository state. logs is not on this list: a directory
+# of build logs is the evidence this entry exists for, and Git does not read
+# antiphon-evidence/logs as the parent reflog.
+antiphon_evidence_git_name() {
+    case "$1" in
+        .*|*[[:cntrl:]]*|*~|*.lock|BISECT_*|NOTES_MERGE_*|sharedindex.*|fsmonitor--daemon|fsmonitor--daemon.ipc)
+            return 0 ;;
+        HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH|AUTO_MERGE)
+            return 0 ;;
+        MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|packed-refs|shallow)
+            return 0 ;;
+        refs|objects|config|config.worktree|hooks|worktrees|index|commondir|gitdir|reftable|modules)
+            return 0 ;;
+        description|info|branches|remotes|locked|gc.log|gc.pid|git-daemon-export-ok)
+            return 0 ;;
+        COMMIT_EDITMSG|MERGE_MSG|MERGE_MODE|MERGE_RR|SQUASH_MSG|TAG_EDITMSG|NOTES_EDITMSG)
+            return 0 ;;
+        EDIT_DESCRIPTION|BRANCH_DESCRIPTION|rebase-merge|rebase-apply|sequencer|rr-cache)
+            return 0 ;;
+        common|antiphon|review-evidence|antiphon-evidence|antiphon-mirror-owner.json)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+# CARD-1594. Common directory only. Agent files beside the repository. review-evidence/
+# is not walked and has no depth, count or size cap, and it does not forbid an
+# executable bit; this directory copies that bound and is walked so a repository
+# cannot hide here. A second hard link refuses: the other name can sit outside
+# this tree, and the audit does not search the volume for it. Anything else
+# refuses gitdir-entry, the same diagnosis as any other unknown entry.
+consider_antiphon_evidence() {
+    # Do not local-shadow root: rel_repo reads that global, and bash locals are
+    # visible to the functions this walk calls.
+    local tree="$1" admin="$2" child base nlink
+    audit_check=antiphon-evidence
+    [ -d "$tree" ] && [ ! -L "$tree" ] || refuse_gitdir_entry "$admin"
+    # -P: do not follow a symlink into a repository. A walk that cannot list an
+    # entry refuses, so an unreadable directory cannot hide one.
+    find -P "$tree" -mindepth 1 -print0 > "$scratch/antiphon-evidence" 2>/dev/null || refuse_gitdir_entry "$admin"
+    while IFS= read -r -d '' child; do
+        base="${child##*/}"
+        if antiphon_evidence_git_name "$base"; then refuse_gitdir_entry "$admin"; fi
+        if [ -L "$child" ]; then
+            refuse_gitdir_entry "$admin"
+        elif [ -d "$child" ]; then
+            [ -r "$child" ] && [ -x "$child" ] || refuse_gitdir_entry "$admin"
+        elif [ -f "$child" ]; then
+            [ -r "$child" ] || refuse_gitdir_entry "$admin"
+            nlink="$(stat -c '%h' -- "$child" 2>/dev/null)" || refuse_gitdir_entry "$admin"
+            [ "$nlink" = 1 ] || refuse_gitdir_entry "$admin"
+        else
+            refuse_gitdir_entry "$admin"
+        fi
+    done < "$scratch/antiphon-evidence"
+    audit_check=gitdir-list
+}
 consider_gitdir() {
     local directory="$1" level="$2" entry name linked held
     audit_check=gitdir-list
@@ -6838,7 +6897,12 @@ consider_gitdir() {
                 consider_antiphon "$entry"
                 ;;
             review-evidence)
+                # Not walked. A real directory in the common git dir is enough.
                 [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory" ;;
+            antiphon-evidence)
+                [ "$level" = common ] || refuse_gitdir_entry "$directory"
+                consider_antiphon_evidence "$entry" "$directory"
+                ;;
             common)
                 [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory"
                 audit_check=gitdir-common
