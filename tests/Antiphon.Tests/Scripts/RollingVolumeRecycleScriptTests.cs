@@ -1111,7 +1111,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     private static void ResetPreviewTrace(C1008HostFixture fixture)
     {
-        foreach (var name in new[] { "docker-trace.jsonl", "host-git", "timeout-invocations" })
+        foreach (var name in new[] { "docker-trace.jsonl", "host-git", "timeout-invocations", "preview-helper-running" })
         {
             var path = Path.Combine(fixture.Root, name);
             if (File.Exists(path)) File.Delete(path);
