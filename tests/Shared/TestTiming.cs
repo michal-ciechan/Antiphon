@@ -232,6 +232,17 @@ public sealed class TestTimingSession : IDisposable
     public string? ShardPath { get; }
     public long FrequencyHz => _clock.Frequency;
 
+    public static string GroupToken(string? groupId)
+    {
+        if (string.IsNullOrEmpty(groupId))
+            return "";
+        var bytes = Encoding.UTF8.GetBytes(groupId);
+        var sb = new StringBuilder(bytes.Length * 2);
+        for (var i = 0; i < bytes.Length; i++)
+            sb.Append(bytes[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
+    }
+
     public static TestTimingSession TryOpen(TestTimingConfig config)
     {
         if (string.IsNullOrWhiteSpace(config.Root))
@@ -252,20 +263,31 @@ public sealed class TestTimingSession : IDisposable
         if (!IsToken(nonce))
             return new TestTimingSession(false, "phase-root-invalid", null, clock);
 
+        TestTimingSession? session = null;
         try
         {
             Directory.CreateDirectory(config.Root);
             var path = Path.Combine(config.Root, "cases-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".jsonl");
             var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096);
-            var session = new TestTimingSession(true, null, path, clock) { _writer = new StreamWriter(stream, new UTF8Encoding(false)) };
+            session = new TestTimingSession(true, null, path, clock) { _writer = new StreamWriter(stream, new UTF8Encoding(false)) };
             var assembly = string.IsNullOrWhiteSpace(config.AssemblyId)
                 ? (AssemblyId() ?? "")
                 : config.AssemblyId!;
             session.WriteLine(session.HeaderJson(pid, nonce, assembly, config));
-            return session;
+            var ownerPath = Path.Combine(
+                config.Root,
+                "own-" + GroupToken(config.GroupId) + "-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".txt");
+            File.WriteAllText(
+                ownerPath,
+                "cases-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".jsonl\n",
+                new UTF8Encoding(false));
+            var opened = session;
+            session = null;
+            return opened;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            session?.Dispose();
             return new TestTimingSession(false, "phase-sink-failed", null, clock);
         }
     }
