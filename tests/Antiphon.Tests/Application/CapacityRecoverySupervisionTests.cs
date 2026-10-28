@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
-public class CapacityRecoverySupervisionTests
+public partial class CapacityRecoverySupervisionTests
 {
     [Test]
     public async Task Card0412_D8_stalled_standing_start_rearms_and_actually_starts_again()

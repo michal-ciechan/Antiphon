@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -791,6 +792,135 @@ public sealed class CapacityLockOrderTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
         stored.AgentId.ShouldBe(agentId, "the claim must warm-reuse X so the continuation waits on that row");
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    [Arguments("supervisor-start")]
+    public async Task C1593_S3_path_blocked_on_row_holds_no_provider_lock(string path, CancellationToken ct)
+    {
+        path.ShouldBe("supervisor-start");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentSupervisionTests.NewTempRoot();
+        var tail = new ProviderTail();
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var harness = AgentSupervisionTests.BuildHarness(
+            tempRoot,
+            [adapter],
+            definitionKind: "ClaudeCode",
+            connectionString: schema.ConnectionString,
+            configureDb: options => options.AddInterceptors(tail),
+            supervision: new Antiphon.Server.Application.Settings.SupervisionSettings
+            {
+                TickSeconds = 1,
+                BackoffBaseSeconds = 5,
+                HealthyUptimeResetMinutes = 10,
+                FreshAfterResumeFailures = 2,
+                CapacityRecovery = new Antiphon.Server.Application.Settings.CapacityRecoverySettings
+                {
+                    Enabled = true,
+                    JitterSeconds = 0,
+                },
+            });
+        try
+        {
+            var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(harness, tempRoot);
+            var sessionId = Guid.NewGuid();
+            var started = DateTime.UtcNow.AddMinutes(-10);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var owner = await db.Agents.SingleAsync(a => a.Id == agent.Id, ct);
+                owner.Kind = AgentKind.ClaudeCode;
+                owner.PersistentSessionId = sessionId.ToString("D");
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId,
+                    AgentKind = AgentKind.ClaudeCode,
+                    DefinitionName = "fake",
+                    Cwd = owner.WorkingDirectory,
+                    Status = SessionStatus.Failed,
+                    CreatedAt = started,
+                    StartedAt = started,
+                });
+                await db.SaveChangesAsync(ct);
+            }
+
+            var recovery = harness.Provider.GetRequiredService<CapacityRecoveryService>();
+            var wait = await recovery.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+                $"agent:{agent.Id:N}", CapacityWaitConsumerKind.StandingStart,
+                holdAlreadyCleared: true, agentId: agent.Id, sessionId: sessionId), ct);
+            await recovery.ReconcileAsync(ct);
+            await using var holder = await CapacityLockProbe.OpenAsync(schema.ConnectionString, ct);
+            var holderPid = await CapacityLockProbe.BackendPidAsync(holder, ct);
+            await using var transaction = await holder.BeginTransactionAsync(ct);
+            await CapacityLockProbe.HoldRowAsync(holder, transaction, "AgentSessions", sessionId, ct);
+            await using var tickScope = harness.Provider.CreateAsyncScope();
+            var tick = tickScope.ServiceProvider.GetRequiredService<AgentSupervisorService>().TickAsync(ct);
+            var waiter = await CapacityLockProbe.PollBlockedByAsync(
+                schema.ConnectionString, holderPid, tick, CapacityLockProbe.Deadline, ct);
+            (await CapacityLockProbe.HoldsAdvisoryAsync(schema.ConnectionString, waiter, ClaudeKey, ct))
+                .ShouldBeFalse($"pid {waiter} holds {ClaudeKey} while blocked on session {sessionId}");
+            await transaction.CommitAsync(ct);
+            (await tick).ShouldBeGreaterThan(0);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), ct);
+            foreach (var sql in tail.AfterProvider)
+                sql.Trim().Equals("COMMIT", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(sql);
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            (await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id, ct))
+                .AdmissionCount.ShouldBe(1);
+        }
+        finally
+        {
+            await harness.DisposeAsync();
+            await AgentSupervisionTests.CleanupAsync(tempRoot);
+        }
+    }
+
+    private sealed class ProviderTail : DbCommandInterceptor
+    {
+        private bool _seen;
+        public List<string> AfterProvider { get; } = [];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Note(command, eventData.Context);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Note(command, eventData.Context);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Note(command, eventData.Context);
+            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void Note(DbCommand command, DbContext? context)
+        {
+            if (context?.ChangeTracker.Entries<Agent>().Any() != true)
+                return;
+            var text = command.CommandText;
+            if (!_seen
+                && text.Contains("CapacityRecoveryProviderStates", StringComparison.Ordinal)
+                && text.Contains("UPDATE", StringComparison.Ordinal))
+            {
+                _seen = true;
+                return;
+            }
+
+            if (_seen)
+                AfterProvider.Add(text);
+        }
     }
 
     private static async Task MarkStoppedAsync(
