@@ -60,8 +60,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(SessionBackend.Herdr, AgentKind.Grok)]
     public async Task AlwaysOn_channel_bound_survives_child_death_and_replies(SessionBackend backend, AgentKind kind)
     {
-        // Grok is reproduced on Linux: FakeHerdr never writes the native directory, so
-        // the runner's --resume guard fails the same way the Windows qualification saw.
+        // Claude rows stay on the CARD-0865 Linux skip. Grok runs: the fixture below
+        // supplies the session directory FakeHerdr does not write.
         if (OperatingSystem.IsLinux() && kind != AgentKind.Grok)
             Skip.Test("CARD-0865: Linux standing/always-on channel parity awaits native recovery fixes.");
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card0186-s4-{Guid.NewGuid():N}");
@@ -107,6 +107,20 @@ public partial class HerdrAlwaysOnChannelParityTests
             agent.SessionBackend.ShouldBe(backend);
             agent.AlwaysOn.ShouldBeTrue();
 
+            string? grokHome = null;
+            if (kind == AgentKind.Grok)
+            {
+                // Isolated home so the runner probe does not consult the operator's ~/.grok.
+                grokHome = Path.Combine(tempRoot, "grok-home");
+                Directory.CreateDirectory(grokHome);
+                agent = await harness.Agents.UpdateAsync(agent.Id,
+                    new UpdateAgentRequest(agent.Name, agent.WorkingDirectory, agent.Details,
+                        agent.DefaultWorkflowTemplateId, agent.AssignmentPolicy,
+                        Kind: AgentKind.Grok,
+                        LaunchEnv: new Dictionary<string, string> { ["GROK_HOME"] = grokHome }),
+                    CancellationToken.None);
+            }
+
             await harness.Control.StartAsync(
                 agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -123,6 +137,18 @@ public partial class HerdrAlwaysOnChannelParityTests
                 var row = await verify.AgentSessions.SingleAsync(s => s.Id == firstSessionId);
                 row.Status.ShouldBe(SessionStatus.Running);
                 row.SessionBackend.ShouldBe(backend);
+            }
+
+            if (grokHome is not null)
+            {
+                // FakeHerdr paints a ready screen and does not run fakegrok. A real grok
+                // writes sessions/<encoded-cwd>/<id>/ at launch (CARD-0383). Standing
+                // resume keeps --resume, and the runner refuses when that directory is absent.
+                Directory.CreateDirectory(Path.Combine(
+                    grokHome,
+                    "sessions",
+                    Uri.EscapeDataString(Path.GetFullPath(workspace)),
+                    firstSessionId.ToString("D")));
             }
 
             string? firstPane = null;
