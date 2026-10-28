@@ -124,7 +124,7 @@ public class GrokSignInRuntimeTests
                 catch (OperationCanceledException) when (idleWall.IsCancellationRequested
                     && !cancellationToken.IsCancellationRequested)
                 {
-                    throw new TimeoutException(
+                    throw new System.TimeoutException(
                         $"launch idle exceeded the {SignInWallCap.TotalSeconds:0}s wall cap before the test clock elapsed.");
                 }
             }
@@ -161,7 +161,7 @@ public class GrokSignInRuntimeTests
                     while (await RunnerListsRunningAsync(runner, sessionId))
                     {
                         if (TimeProvider.System.GetUtcNow() >= runningDeadline)
-                            throw new TimeoutException(
+                            throw new System.TimeoutException(
                                 $"runner stayed Running for {SignInWallCap.TotalSeconds:0}s wall time.");
                         await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
                     }
