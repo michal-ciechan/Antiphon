@@ -68,7 +68,8 @@ public partial class CapacityAdmissionLifecycleTests
             tracked.LaunchSessionId.ShouldBeNull();
             tracked.LaunchReceipt.ShouldBeNull();
             tracked.DispatchAttemptId.ShouldBeNull();
-            tracked.SessionId.ShouldBeNull();
+            // RedeemAsync leaves the progress key the registration already stored.
+            tracked.SessionId.ShouldBe(sessionId);
             grant.GrantedWaitId.ShouldBeNull();
             grant.GrantedActionKey.ShouldBeNull();
             grant.LastActionKey.ShouldBe(wait.ActionKey);
