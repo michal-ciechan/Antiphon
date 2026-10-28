@@ -189,8 +189,134 @@ public sealed class TempRootSweepAnchoredDeleteTests
         finally { RemoveScratch(sandbox); }
     }
 
+    // A directory symlink to a mode-000 child must not throw out of SweepOnce.
+    // The bad root stays, with its marker, and the other root is still reclaimed.
+    [Test]
+    public void directory_symlink_to_an_unreadable_child_does_not_abort_other_roots()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("the unreadable directory-symlink witness uses Linux mode bits");
+        var sandbox = Scratch();
+        string? locked = null;
+        try
+        {
+            var target = Path.Combine(sandbox, "target");
+            locked = Path.Combine(target, "locked");
+            Directory.CreateDirectory(locked);
+            File.WriteAllText(Path.Combine(locked, "hidden.txt"), "secret");
+            Chmod(locked, 0).ShouldBe(0, "chmod errno " + Marshal.GetLastPInvokeError());
+            var bad = Candidate(sandbox);
+            Directory.CreateSymbolicLink(Path.Combine(bad, "out"), target);
+            var good = Candidate(sandbox);
+            File.WriteAllText(Path.Combine(good, "payload.txt"), "owned");
+            var receipt = Sweep(sandbox).SweepOnce();
+            receipt.Examined.ShouldBe(2, "skips " + Format(receipt));
+            receipt.CompletedRoots.ShouldBe(1, "skips " + Format(receipt));
+            receipt.Skips.GetValueOrDefault("inventory-incomplete-or-linked").ShouldBe(1, "skips " + Format(receipt));
+            Directory.Exists(good).ShouldBeFalse();
+            Directory.Exists(bad).ShouldBeTrue();
+            File.Exists(Path.Combine(bad, TestRootGuard.MarkerName)).ShouldBeTrue();
+            File.Exists(Path.Combine(sandbox, ".checkpoint-temp-cursor.json")).ShouldBeTrue();
+        }
+        finally
+        {
+            if (locked is not null) Chmod(locked, 0x1FF);
+            RemoveScratch(sandbox);
+        }
+    }
+
+    // The outside tree is not the root's content. Listing it would see tool/ and
+    // skip as nested-custody-missing, or would change these bytes.
+    [Test]
+    public void directory_symlink_does_not_read_or_modify_the_outside_tree()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("requires a Linux directory symlink");
+        var sandbox = Scratch();
+        try
+        {
+            var outside = Path.Combine(sandbox, "outside");
+            var tool = Path.Combine(outside, "tool");
+            Directory.CreateDirectory(tool);
+            var sentinel = Path.Combine(outside, "kept.txt");
+            var toolFile = Path.Combine(tool, "secret.txt");
+            File.WriteAllText(sentinel, "foreign-sentinel");
+            File.WriteAllText(toolFile, "foreign-tool");
+            var bad = Candidate(sandbox);
+            var link = Path.Combine(bad, "out");
+            Directory.CreateSymbolicLink(link, outside);
+            var io = new OutsideReadIo(outside, link);
+            var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner());
+            var receipt = Sweep(context, sandbox).SweepOnce();
+            io.OutsideReads.ShouldBe(0, "skips " + Format(receipt));
+            File.ReadAllText(sentinel).ShouldBe("foreign-sentinel");
+            File.ReadAllText(toolFile).ShouldBe("foreign-tool");
+            receipt.Skips.GetValueOrDefault("nested-custody-missing").ShouldBe(0, "skips " + Format(receipt));
+            receipt.Skips.GetValueOrDefault("inventory-incomplete-or-linked").ShouldBe(1, "skips " + Format(receipt));
+            receipt.CompletedRoots.ShouldBe(0, "skips " + Format(receipt));
+            Directory.Exists(bad).ShouldBeTrue();
+            File.Exists(Path.Combine(bad, TestRootGuard.MarkerName)).ShouldBeTrue();
+            Directory.Exists(link).ShouldBeTrue();
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
     [DllImport("libc", EntryPoint = "link", SetLastError = true)]
     private static extern int Link(string oldPath, string newPath);
+
+    [DllImport("libc", EntryPoint = "chmod", SetLastError = true)]
+    private static extern int Chmod(string path, int mode);
+
+    private sealed class OutsideReadIo(string outside, string link) : ForwardingNativeIo
+    {
+        public int OutsideReads { get; private set; }
+
+        public override IReadOnlyList<AnchoredChild> ListAnchored(string directory)
+        {
+            Note(directory);
+            return base.ListAnchored(directory);
+        }
+
+        public override IEnumerable<string> Enumerate(string path)
+        {
+            Note(path);
+            return base.Enumerate(path);
+        }
+
+        public override bool FileExists(string path)
+        {
+            Note(path);
+            return base.FileExists(path);
+        }
+
+        public override bool DirectoryExists(string path)
+        {
+            Note(path);
+            return base.DirectoryExists(path);
+        }
+
+        public override Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
+        {
+            Note(path);
+            return base.Open(path, mode, access, share);
+        }
+
+        public override ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
+        {
+            Note(path);
+            return base.OpenRead(path, request);
+        }
+
+        private void Note(string path)
+        {
+            string full;
+            try { full = Path.GetFullPath(path); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException) { return; }
+            if (Covers(full, outside) || Covers(full, link)) OutsideReads++;
+        }
+
+        private static bool Covers(string full, string root) =>
+            full.Equals(root, StringComparison.Ordinal)
+            || full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
 
     private sealed class SweepSwapIo(string parent, string foreign) : ForwardingNativeIo
     {
