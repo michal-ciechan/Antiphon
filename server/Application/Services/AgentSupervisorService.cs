@@ -112,6 +112,9 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
+                // Rollback leaves the failed entities Modified. Detach them so the next
+                // AlwaysOn agent's SaveChanges does not retry this agent's bookkeeping.
+                _db.ChangeTracker.Clear();
                 _logger.LogWarning(ex, "Supervision failed for agent {AgentId} ({AgentName})", agent.Id, agent.Name);
             }
         }
