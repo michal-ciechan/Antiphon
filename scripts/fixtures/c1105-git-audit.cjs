@@ -266,6 +266,14 @@ function evidenceTree() {
     put('antiphon-evidence/task-x/out/timing.jsonl', '{"ms":1}\n');
     fs.chmodSync(gd('antiphon-evidence/task-x/build.log'), 0o755);
 }
+// Plain Final Review reports. Content is never read: a patch in the markdown
+// still passes. logs is a directory of notes, not the parent reflog.
+function reviewReports() {
+    put('review-evidence/4a14585d/review.md', 'evidence\n--- a/file\n+++ b/file\n');
+    put('review-evidence/4a14585d/notes/findings.md', 'unpublished notes\n');
+    put('review-evidence/4a14585d/logs/build.log', 'log\n');
+    fs.chmodSync(gd('review-evidence/4a14585d/review.md'), 0o755);
+}
 function otherAuditUid() {
     const bin = path.join(root, 'fake-bin');
     fs.mkdirSync(bin);
@@ -594,8 +602,42 @@ const hidden = {
     'antiphon-evidence-hardlink': [K, () => { evidenceTree(); const outside = path.join(work, 'outside-evidence'); fs.writeFileSync(outside, 'outside\n'); fs.linkSync(outside, gd('antiphon-evidence/task-x/alias.log')); }, commonAdmin],
     'antiphon-evidence-dot': [K, () => { evidenceTree(); put('antiphon-evidence/task-x/.hidden', 'x'); }, commonAdmin],
     'antiphon-evidence-linked': [K, () => put(linked() + 'antiphon-evidence/task-x/build.log', 'log'), linkedAdmin],
-    // review-evidence/ and antiphon/ are not walked: an interior symlink still passes.
-    'review-evidence-symlink': [P, () => { put('review-evidence/4a14585d/review.md', 'evidence'); fs.symlinkSync('review.md', gd('review-evidence/4a14585d/linked.md')); }],
+    // review-evidence/ is walked like antiphon-evidence/. Plain reports pass.
+    // A repository, a Git state name, or a non-plain entry refuses gitdir-entry.
+    // antiphon/ is not walked: an interior symlink still passes.
+    'review-evidence-reports': [P, reviewReports],
+    'review-evidence-repo': [K, () => {
+        reviewReports();
+        const nested = gd('review-evidence/x/repo');
+        fs.mkdirSync(nested, {recursive: true});
+        run('git', ['init', '-q', '-b', 'master', nested]);
+        run('git', ['-C', nested, 'config', 'user.name', 'Fixture']);
+        run('git', ['-C', nested, 'config', 'user.email', 'fixture@example.invalid']);
+        fs.writeFileSync(path.join(nested, 'notes.md'), 'unpublished\n');
+        run('git', ['-C', nested, 'add', 'notes.md']);
+        run('git', ['-C', nested, 'commit', '-qm', 'unpublished']);
+        const oid = run('git', ['-C', nested, 'rev-parse', 'HEAD']);
+        assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', oid], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'the hidden commit is not in the audited repository');
+    }, commonAdmin],
+    'review-evidence-bare': [K, () => {
+        reviewReports();
+        const bare = gd('review-evidence/x/bare.git');
+        run('git', ['init', '-q', '--bare', '--initial-branch=master', bare]);
+        const tree = run('git', ['-C', bare, 'mktree'], {input: ''});
+        const oid = run('git', ['-C', bare, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', tree, '-m', 'unpublished']);
+        run('git', ['-C', bare, 'update-ref', 'refs/heads/master', oid]);
+        assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', oid], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'the bare commit is not in the audited repository');
+    }, commonAdmin],
+    'review-evidence-gitfile': [K, () => { reviewReports(); put('review-evidence/x/repo/.git', 'gitdir: /work/repo/.git\n'); }, commonAdmin],
+    'review-evidence-symlink': [K, () => { reviewReports(); fs.symlinkSync('review.md', gd('review-evidence/4a14585d/linked.md')); }, commonAdmin],
+    'review-evidence-head': [K, () => { reviewReports(); put('review-evidence/x/HEAD', 'ref: refs/heads/master\n'); }, commonAdmin],
+    'review-evidence-refs': [K, () => { reviewReports(); put('review-evidence/x/refs/heads/master', head() + '\n'); }, commonAdmin],
+    'review-evidence-objects': [K, () => { reviewReports(); put('review-evidence/x/objects/pack/pack-x', 'pack'); }, commonAdmin],
+    'review-evidence-packed-refs': [K, () => { reviewReports(); put('review-evidence/x/packed-refs', '# pack-refs with: peeled fully-peeled sorted\n'); }, commonAdmin],
+    'review-evidence-odd': [K, () => { reviewReports(); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); run('mkfifo', [gd('review-evidence/x/pipe')]); }, commonAdmin],
+    'review-evidence-unreadable': [K, () => { reviewReports(); const secret = gd('review-evidence/x/secret.md'); fs.mkdirSync(path.dirname(secret), {recursive: true}); fs.writeFileSync(secret, 'x'); fs.chmodSync(secret, 0); }, commonAdmin],
+    'review-evidence-hardlink': [K, () => { reviewReports(); const outside = path.join(work, 'outside-review'); fs.writeFileSync(outside, 'outside\n'); fs.mkdirSync(gd('review-evidence/x'), {recursive: true}); fs.linkSync(outside, gd('review-evidence/x/alias.md')); }, commonAdmin],
+    'review-evidence-dot': [K, () => { reviewReports(); put('review-evidence/x/.hidden', 'x'); }, commonAdmin],
     'antiphon-symlink': [P, () => { put('antiphon/landing.lock', ''); fs.symlinkSync('landing.lock', gd('antiphon/linked.lock')); }],
 };
 try {
