@@ -56,15 +56,36 @@ public sealed class CheckpointWindowsReadModeTests
                 throw new ArgumentOutOfRangeException(nameof(consumer));
         }
 
-        // Publication verifies the destination, then the custody digest reads it again.
-        // Receipt and digest consumers open once. Every open is overlapped: a synchronous
-        // Read, or ReadAsync on a synchronous handle, queues behind blocked workers.
+        // A write opens twice: ReplacementPublication.Matches reads the new bytes back
+        // with a synchronous Read, then the custody digest opens the same file. Receipt
+        // and digest consumers open once. Linux, review 7ba417d9, every pool worker busy:
+        // that synchronous Read returned 808 bytes in 4-5 ms. ReadAsync on the same
+        // non-overlapped handle did not finish within 3 s on a capped pool and took 969 ms
+        // when the pool could grow. Only that ReadAsync is a worker stall. Digest and
+        // receipt opens stay overlapped, no-follow, and sequential.
         var opens = consumer == "write" ? 2 : 1;
         streams.Count.ShouldBe(opens);
-        streams.ShouldAllBe(s => s.Delivered == size && s.WorkerWaits == 0 && s.Disposed);
+        streams.ShouldAllBe(s => s.WorkerWaits == 0 && s.Disposed);
+        streams[^1].Delivered.ShouldBe(size);
+        if (consumer == "write") streams[0].Delivered.ShouldBe(0);
         f.Io.ReadRequests.Count.ShouldBe(opens);
-        foreach (var request in f.Io.ReadRequests)
-            (request.WindowsFlags & 0x48200000u).ShouldBe(0x48200000u);
+        // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED. The verification open is the
+        // base Matches request and is not this mask.
+        const uint digestOpen = 0x00200000u | 0x08000000u | 0x40000000u;
+        for (var i = 0; i < f.Io.ReadRequests.Count; i++)
+        {
+            var request = f.Io.ReadRequests[i];
+            if (consumer == "write" && i == 0)
+            {
+                request.UnixFlags.ShouldBe(0x20000);
+                request.WindowsFlags.ShouldBe(0x00200000u);
+            }
+            else
+            {
+                (request.WindowsFlags & digestOpen).ShouldBe(digestOpen);
+            }
+        }
+
         f.Io.Count("inspect", path).ShouldBe(1);
         f.Io.Count("close-read", path).ShouldBe(opens);
     }
@@ -73,26 +94,14 @@ public sealed class CheckpointWindowsReadModeTests
     // acquiring a native lock: ReadAsync on a synchronous handle needs a worker to
     // run ReadFile. With workers occupied by blocking callers, no read starts before
     // the existing deadline. An overlapped handle can submit I/O without that worker.
+    // A synchronous Read on either handle runs on the caller and is not a stall.
     // This witnesses the scheduling dependency, not the load of the historical host.
     private sealed class ModeledWindowsStream(byte[] bytes, ControlledTimeProvider clock, bool overlapped)
         : MemoryStream(bytes, writable: false)
     {
-        private bool _async;
         public int WorkerWaits { get; private set; }
         public long Delivered { get; private set; }
         public bool Disposed { get; private set; }
-
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            if (_async) return base.Read(buffer, offset, count);
-            return RefuseSynchronous();
-        }
-
-        public override int Read(Span<byte> buffer)
-        {
-            if (_async) return base.Read(buffer);
-            return RefuseSynchronous();
-        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -103,21 +112,9 @@ public sealed class CheckpointWindowsReadModeTests
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new InvalidOperationException("the queued synchronous read must reach its deadline");
             }
-            _async = true;
-            try
-            {
-                var result = base.ReadAsync(buffer, cancellationToken);
-                Delivered += result.Result;
-                return result;
-            }
-            finally { _async = false; }
-        }
-
-        private int RefuseSynchronous()
-        {
-            WorkerWaits++;
-            clock.Advance(CheckpointFileReader.StallDeadline);
-            throw new InvalidOperationException("the queued synchronous read must reach its deadline");
+            var result = base.ReadAsync(buffer, cancellationToken);
+            Delivered += result.Result;
+            return result;
         }
 
         protected override void Dispose(bool disposing)
