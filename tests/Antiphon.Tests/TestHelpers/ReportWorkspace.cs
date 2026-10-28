@@ -41,9 +41,17 @@ internal sealed class ReportWorkspace : IAsyncDisposable
         await GitAsync(Main, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "seed");
         if (worktree) await GitAsync(Main, "worktree", "add", "-b", "delegate", Worktree);
     }
-    public AgentReportStore Store(DelegationSettings? settings = null) => new(
-        new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
-        Options.Create(settings ?? new()), NullLogger<AgentReportStore>.Instance);
+    // Custody assertions are not the production hung-IO bound. The budget row sets IoBudget to zero.
+    internal static readonly TimeSpan CustodyIoBudget = TimeSpan.FromSeconds(30);
+
+    public AgentReportStore Store(DelegationSettings? settings = null)
+    {
+        var store = new AgentReportStore(
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+            Options.Create(settings ?? new()), NullLogger<AgentReportStore>.Instance)
+        { IoBudget = CustodyIoBudget };
+        return store;
+    }
     public AgentTask Task(string raw, Guid? id = null) => new()
     {
         Id = id ?? Guid.NewGuid(), Title = "report custody", Goal = "fixture", Result = raw,
