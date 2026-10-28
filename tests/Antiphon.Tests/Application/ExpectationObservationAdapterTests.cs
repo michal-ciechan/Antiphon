@@ -10,7 +10,9 @@ using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -228,15 +230,20 @@ public sealed class ExpectationObservationAdapterTests
             await db.SaveChangesAsync();
         }
 
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        await using var firstDb = world.Db();
+        var probe = new NoteReadProbe();
+        var reading = new DbContextOptionsBuilder<AppDbContext>(world.Options).AddInterceptors(probe).Options;
+        await using var firstDb = new AppDbContext(reading);
         var first = await new ExpectationSnapshotReader(firstDb).ReadAsync(world.Directive,
             world.Digest, world.Now, ExpectationProbeInput.None, CancellationToken.None);
-        timer.Stop();
         first.Notes.Count.ShouldBe(100);
         first.NoteCoverageIncomplete.ShouldBeTrue();
         first.NextNoteQueueCursorId.ShouldNotBeNull();
-        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8));
+        probe.Queries.ShouldBeGreaterThan(0);
+        probe.Queries.ShouldBeLessThan(historySize);
+        probe.PageLimits.ShouldNotBeEmpty(probe.Describe());
+        probe.PageLimits.ShouldContain(101, probe.Describe());
+        foreach (var limit in probe.PageLimits)
+            limit.ShouldBeLessThanOrEqualTo(101, probe.Describe());
 
         var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
         await using (var scanDb = world.Db())
@@ -407,5 +414,108 @@ public sealed class ExpectationObservationAdapterTests
     private sealed class NeverHeld : IModelAvailability
     {
         public Task<bool> IsHeldAsync(AgentKind kind, string alias, CancellationToken ct) => Task.FromResult(false);
+    }
+
+    /// <summary>
+    /// Counts reader commands and the LIMIT/FETCH page size on the note tables.
+    /// The page size is 101 (100 plus the incomplete-page probe) for every history size.
+    /// </summary>
+    private sealed class NoteReadProbe : DbCommandInterceptor
+    {
+        public int Queries { get; private set; }
+        public List<int> PageLimits { get; } = [];
+        private readonly List<string> _sql = [];
+
+        public string Describe()
+        {
+            var sample = string.Join(" || ", _sql.Take(8).Select(sql => sql.Length <= 240 ? sql : sql[..240]));
+            return $"queries={Queries} limits=[{string.Join(",", PageLimits)}] sql={sample}";
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Note(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Note(command);
+            return new ValueTask<InterceptionResult<DbDataReader>>(result);
+        }
+
+        private void Note(DbCommand command)
+        {
+            Queries++;
+            var text = command.CommandText ?? "";
+            if (_sql.Count < 12)
+                _sql.Add(text.Replace('\n', ' ').Replace('\r', ' '));
+            if (!text.Contains("SessionQueuedMessages", StringComparison.Ordinal)
+                && !text.Contains("AgentTaskLandNotifications", StringComparison.Ordinal))
+                return;
+            if (TryReadLimit(text, "LIMIT", out var literal, out var name)
+                || TryReadLimit(text, "FETCH", out literal, out name))
+                Add(command, literal, name);
+        }
+
+        private void Add(DbCommand command, int? literal, string? name)
+        {
+            if (literal is int limit)
+            {
+                PageLimits.Add(limit);
+                return;
+            }
+            if (name is null)
+                return;
+            var wanted = name.TrimStart('@', ':');
+            foreach (DbParameter parameter in command.Parameters)
+            {
+                var actual = parameter.ParameterName.TrimStart('@', ':');
+                if (!string.Equals(actual, wanted, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (parameter.Value is int number)
+                    PageLimits.Add(number);
+                else if (parameter.Value is long wide && wide is >= 0 and <= int.MaxValue)
+                    PageLimits.Add((int)wide);
+            }
+        }
+
+        private static bool TryReadLimit(string text, string keyword, out int? literal, out string? name)
+        {
+            literal = null;
+            name = null;
+            var index = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                return false;
+            var cursor = index + keyword.Length;
+            while (cursor < text.Length && char.IsWhiteSpace(text[cursor]))
+                cursor++;
+            if (text.AsSpan(cursor).StartsWith("NEXT", StringComparison.OrdinalIgnoreCase))
+            {
+                cursor += 4;
+                while (cursor < text.Length && char.IsWhiteSpace(text[cursor]))
+                    cursor++;
+            }
+            if (cursor < text.Length && char.IsDigit(text[cursor]))
+            {
+                var start = cursor;
+                while (cursor < text.Length && char.IsDigit(text[cursor]))
+                    cursor++;
+                if (int.TryParse(text.AsSpan(start, cursor - start), out var value))
+                    literal = value;
+                return true;
+            }
+            if (cursor >= text.Length || text[cursor] is not ('@' or ':'))
+                return false;
+            var token = cursor;
+            cursor++;
+            while (cursor < text.Length && (char.IsLetterOrDigit(text[cursor]) || text[cursor] == '_'))
+                cursor++;
+            name = text[token..cursor];
+            return true;
+        }
     }
 }
