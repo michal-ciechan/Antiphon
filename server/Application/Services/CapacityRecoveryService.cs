@@ -425,6 +425,9 @@ public sealed class CapacityRecoveryService
             await db.Entry(wait).ReloadAsync(ct);
             if (IsFinished(wait))
                 continue;
+            // Cancel only an ActionPending wait that has not yet named a launch session.
+            if (wait.State != CapacityRecoveryWaitState.ActionPending || wait.LaunchSessionId is not null)
+                continue;
             wait.State = CapacityRecoveryWaitState.Canceled;
             wait.Outcome = nameof(CapacityRecoveryWaitState.Canceled);
             wait.OutcomeReason = reason;
