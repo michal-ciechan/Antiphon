@@ -65,6 +65,14 @@ public sealed class AgentControlService : ICompactionContinuationResume
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly StandingRestartEscalationPolicy _restartEscalation;
 
+    /// <summary>
+    /// Seconds the S-4 lost-commit reread may wait on the agent row. 120 matches the grant
+    /// reconcile bound (D-12 / StalledAdmissionTimeout): the low end of the 2-5 minute review
+    /// range, and longer than the 30s stand-in CommandTimeout 0 was added to outlast. S1 names
+    /// no production reread budget. Tests inject a shorter value. Below 1 is not unbounded.
+    /// </summary>
+    internal int LostCommitRereadTimeoutSeconds { get; set; } = 120;
+
     public AgentControlService(
         AppDbContext db,
         AgentService agentService,

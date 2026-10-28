@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Net.Http;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -259,6 +260,8 @@ public partial class CapacityRecoverySupervisionTests
         if (mode != "transient-40P01")
             return;
 
+        witness.Log.ShouldContain("40P01");
+        witness.Log.ShouldContain(witness.Agent.Id.ToString("D"));
         deadlock.Spent.ShouldBeTrue();
         var started = await witness.TickAsync(ct);
         started.ShouldBeTrue(witness.Log);
@@ -355,6 +358,9 @@ public partial class CapacityRecoverySupervisionTests
             ladder.Failures.ShouldBeGreaterThan(before.Failures);
             ladder.Next.ShouldNotBeNull();
             witness.Adapter.Started.ShouldBeFalse(witness.Log);
+            // throw commitEx would reset the stack to the reread. The preserved stack still
+            // names the commit that threw.
+            witness.Log.ShouldContain("CommitTransactionAsync");
             return;
         }
 
@@ -378,6 +384,53 @@ public partial class CapacityRecoverySupervisionTests
         wait.SessionId.ShouldBe(session.Id);
         witness.Adapter.StartedSessionId.ShouldBe(session.Id);
         witness.Adapter.StartedAcceptedGeneration.ShouldBe(session.StartedAt);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1593_S3_supervisor_lost_commit_reread_bounds_the_tick(CancellationToken ct)
+    {
+        var standIn = new BoundedRereadStandIn();
+        const int boundSeconds = 2;
+        await using var witness = await Witness.OpenAsync(
+            ct, previous: true, reserve: false, interceptor: standIn);
+        await using (var probe = witness.Harness.Provider.CreateAsyncScope())
+        {
+            probe.ServiceProvider.GetRequiredService<AgentControlService>()
+                .LostCommitRereadTimeoutSeconds.ShouldBe(120);
+        }
+
+        standIn.ConnectionString = witness.Schema.ConnectionString;
+        standIn.AgentId = witness.Agent.Id;
+        standIn.WaitId = witness.Wait.Id;
+        var before = await witness.ReadLadderAsync(ct);
+        var tick = witness.TickAsync(ct, lostCommitRereadTimeoutSeconds: boundSeconds);
+        await standIn.LockHeld.Task.WaitAsync(TimeSpan.FromSeconds(40), ct);
+        var elapsed = Stopwatch.StartNew();
+        var acted = await tick;
+        elapsed.Stop();
+        await standIn.Completed.WaitAsync(TimeSpan.FromSeconds(20), ct);
+
+        // The stand-in holds the agent row for 25s unless the reread gives up. The tick must
+        // return on the injected bound, and the charge must not rewrite a commit that landed.
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(boundSeconds + 10));
+        standIn.WaitClearedBeforeRelease.ShouldBeTrue(witness.Log);
+        standIn.HeldUntilWaitCleared.ShouldBeLessThan(TimeSpan.FromSeconds(boundSeconds + 4));
+        acted.ShouldBeTrue(witness.Log);
+        witness.Adapter.Started.ShouldBeFalse(witness.Log);
+
+        await using var db = CapacityRecoveryTestSupport.CreateContext(witness.Schema);
+        var wait = await db.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == witness.Wait.Id, ct);
+        wait.AdmissionCount.ShouldBe(1);
+        wait.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        wait.OutcomeReason.ShouldBe("lost-commit-applied");
+        (await db.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(s => s.Kind == AgentKind.ClaudeCode, ct))
+            .GrantedWaitId.ShouldBeNull();
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == witness.SessionId, ct);
+        session.StartedAt.ShouldBe(standIn.AcceptedGeneration!.Value);
+        var ladder = await witness.ReadLadderAsync(ct);
+        ladder.Failures.ShouldBeGreaterThan(before.Failures);
+        ladder.Next.ShouldNotBeNull();
     }
 
     [Test]
@@ -628,10 +681,16 @@ public partial class CapacityRecoverySupervisionTests
             }
         }
 
-        public async Task<bool> TickAsync(CancellationToken ct)
+        public async Task<bool> TickAsync(CancellationToken ct, int? lostCommitRereadTimeoutSeconds = null)
         {
             _tickScope?.Dispose();
             _tickScope = Harness.Provider.CreateScope();
+            if (lostCommitRereadTimeoutSeconds is int bound)
+            {
+                _tickScope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .LostCommitRereadTimeoutSeconds = bound;
+            }
+
             var supervisor = _tickScope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             var actions = await supervisor.TickAsync(ct);
             return actions > 0;
@@ -961,6 +1020,150 @@ public partial class CapacityRecoverySupervisionTests
             }
 
             await tx.CommitAsync();
+        }
+
+        private async Task<bool> WaitingOnLockAsync(int pid, CancellationToken ct)
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync(ct);
+            await using var command = new NpgsqlCommand(
+                """SELECT wait_event_type FROM pg_stat_activity WHERE pid = @pid""", connection);
+            command.Parameters.AddWithValue("pid", pid);
+            var value = await command.ExecuteScalarAsync(ct);
+            return value is string kind && kind == "Lock";
+        }
+    }
+
+    /// <summary>
+    /// Holds the agent row past an injected reread bound. The committed start is published on a
+    /// second connection while the lock is still held, so a charge that runs after the reread
+    /// gives up can see that the commit really happened.
+    /// </summary>
+    private sealed class BoundedRereadStandIn : DbTransactionInterceptor
+    {
+        public string ConnectionString { get; set; } = "";
+        public Guid AgentId { get; set; }
+        public Guid WaitId { get; set; }
+        public DateTime? AcceptedGeneration { get; private set; }
+        public TaskCompletionSource LockHeld { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Completed { get; private set; } = Task.CompletedTask;
+        public bool WaitClearedBeforeRelease { get; private set; }
+        public TimeSpan HeldUntilWaitCleared { get; private set; }
+        private int _once;
+
+        public override async ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            var session = eventData.Context?.ChangeTracker.Entries<AgentSession>()
+                .FirstOrDefault(entry => entry.Entity.Status == SessionStatus.Starting)
+                ?.Entity;
+            if (session is null || Interlocked.Exchange(ref _once, 1) == 1)
+                return await base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+
+            AcceptedGeneration = session.StartedAt;
+            var acceptedId = session.Id;
+            var generation = session.StartedAt;
+            var ready = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Completed = Task.Run(() => StandInAsync(acceptedId, generation, ready));
+            var pid = await ready.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (DateTime.UtcNow < until)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await WaitingOnLockAsync(pid, cancellationToken))
+                    break;
+                await Task.Delay(25, cancellationToken);
+            }
+
+            throw new PostgresException("c1593-reread-bound", "ERROR", "ERROR", "XX000");
+        }
+
+        private async Task StandInAsync(Guid sessionId, DateTime generation, TaskCompletionSource<int> ready)
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(ConnectionString);
+                await connection.OpenAsync();
+                await using (var pidCommand = new NpgsqlCommand("SELECT pg_backend_pid()", connection))
+                    ready.TrySetResult((int)(await pidCommand.ExecuteScalarAsync())!);
+                await using var tx = await connection.BeginTransactionAsync();
+                await using (var hold = new NpgsqlCommand(
+                    """SELECT "Id" FROM "Agents" WHERE "Id" = @id FOR UPDATE""", connection, tx))
+                {
+                    hold.CommandTimeout = 60;
+                    hold.Parameters.AddWithValue("id", AgentId);
+                    await hold.ExecuteScalarAsync();
+                }
+
+                await PublishCommittedAsync(sessionId, generation);
+                LockHeld.TrySetResult();
+                var heldAt = DateTime.UtcNow;
+                var safety = heldAt + TimeSpan.FromSeconds(25);
+                var sawWaiter = false;
+                while (DateTime.UtcNow < safety)
+                {
+                    var waiting = await RereadWaitingAsync(connection, tx);
+                    if (waiting)
+                        sawWaiter = true;
+                    if (sawWaiter && !waiting)
+                    {
+                        WaitClearedBeforeRelease = true;
+                        HeldUntilWaitCleared = DateTime.UtcNow - heldAt;
+                        break;
+                    }
+
+                    await Task.Delay(50);
+                }
+
+                if (!WaitClearedBeforeRelease)
+                    HeldUntilWaitCleared = DateTime.UtcNow - heldAt;
+                await tx.RollbackAsync();
+            }
+            catch (Exception ex)
+            {
+                LockHeld.TrySetException(ex);
+                throw;
+            }
+        }
+
+        private async Task PublishCommittedAsync(Guid sessionId, DateTime generation)
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var write = new NpgsqlCommand(
+                """
+                UPDATE "AgentSessions" SET "StartedAt" = @gen, "Status" = 1 WHERE "Id" = @session;
+                UPDATE "CapacityRecoveryWaits"
+                   SET "State" = 3, "AdmissionCount" = 1, "SessionId" = @session,
+                       "SessionStartedAt" = @gen, "NeedsRevalidationGrant" = FALSE,
+                       "Outcome" = 'Admitted', "OutcomeReason" = 'lost-commit-applied'
+                 WHERE "Id" = @wait;
+                UPDATE "CapacityRecoveryProviderStates"
+                   SET "GrantedWaitId" = NULL, "GrantedActionKey" = NULL, "GrantedAt" = NULL
+                 WHERE "Kind" = 1;
+                """, connection);
+            write.Parameters.AddWithValue("gen", generation);
+            write.Parameters.AddWithValue("session", sessionId);
+            write.Parameters.AddWithValue("wait", WaitId);
+            await write.ExecuteNonQueryAsync();
+        }
+
+        private async Task<bool> RereadWaitingAsync(NpgsqlConnection connection, NpgsqlTransaction tx)
+        {
+            await using var waiter = new NpgsqlCommand(
+                """
+                SELECT 1
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND state = 'active'
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE '%FOR UPDATE%'
+                LIMIT 1
+                """, connection, tx);
+            return await waiter.ExecuteScalarAsync() is not null;
         }
 
         private async Task<bool> WaitingOnLockAsync(int pid, CancellationToken ct)
