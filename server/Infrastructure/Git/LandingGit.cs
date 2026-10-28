@@ -15,6 +15,11 @@ public class LandingGit : ILandingGit
     /// <summary>Budget for every git command that does not pass <see cref="LandingGitRunOptions.Budget"/>.</summary>
     public static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(5);
 
+    /// <summary>After the budget fires, the kill and the redirected-stream drain may continue only this long.
+    /// A descendant that survives <c>Kill(entireProcessTree: true)</c> and still holds a pipe must not
+    /// stretch the operation out to that descendant's own lifetime.</summary>
+    internal static readonly TimeSpan KillDrainGrace = TimeSpan.FromSeconds(2);
+
     private readonly CardFileBoardLookup? _cardFiles;
 
     public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
@@ -112,21 +117,23 @@ public class LandingGit : ILandingGit
                 if (started is not null && identified) await started(process.Id, startTicks, ct);
             }
             await process.WaitForExitAsync(budget.Token);
+            // The root can exit while a reparented grandchild still holds the redirected pipe.
+            // ReadToEndAsync would then wait out that grandchild. Stay inside the budget.
+            await Task.WhenAll(output, error).WaitAsync(budget.Token);
         }
         catch
         {
             // The Process handle, not a subsequently looked-up PID, identifies this child.
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync(CancellationToken.None);
-            await Task.WhenAll(output, error);
-            journal?.Exited(process);
+            // KillDrainGrace bounds the drain: a grandchild the tree kill cannot see must not
+            // extend this past the budget by its own lifetime (CARD-1076, Windows 30.5s on a 2s budget).
+            await ReleaseChildAsync(process, output, error);
+            if (process.HasExited) journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
             if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
             throw;
         }
-        // Descendants may retain redirected handles after the root exits. Keep the standing
-        // journal until both streams drain; worker death in that interval must still fence admission.
-        await Task.WhenAll(output, error); // Never expose Git stderr (endpoints/hooks may contain secrets).
+        // Never expose Git stderr (endpoints/hooks may contain secrets). The journal stays until
+        // the drain above finishes, so a worker death while the root's own pipes close still fences.
         journal?.Exited(process);
         _cardFiles?.NoteServerGit(repository, arguments);
         string? rebaseHead = null;
@@ -137,6 +144,57 @@ public class LandingGit : ILandingGit
         }
         return new(process.ExitCode, await output,
             process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
+    }
+
+    /// <summary>Kill the root and wait at most <see cref="KillDrainGrace"/> for it and its redirected
+    /// streams. Streams still open when the grace ends are abandoned; their tasks are observed.</summary>
+    private static async Task ReleaseChildAsync(Process process, params Task[] streams)
+    {
+        TryKill(process, entireProcessTree: true);
+        using var grace = new CancellationTokenSource(KillDrainGrace);
+        try
+        {
+            if (!process.HasExited)
+                await process.WaitForExitAsync(grace.Token);
+            if (streams.Length > 0)
+                await Task.WhenAll(streams).WaitAsync(grace.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The tree walk can miss the root when an intermediate job already reaped it.
+            TryKill(process, entireProcessTree: false);
+            try
+            {
+                if (!process.HasExited)
+                {
+                    using var root = new CancellationTokenSource(KillDrainGrace);
+                    await process.WaitForExitAsync(root.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            ObserveAbandoned(streams);
+        }
+    }
+
+    private static void TryKill(Process process, bool entireProcessTree)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { }
+    }
+
+    private static void ObserveAbandoned(Task[] streams)
+    {
+        if (streams.Length == 0) return;
+        _ = Task.WhenAll(streams).ContinueWith(
+            static finished => _ = finished.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     /// <summary>
@@ -761,12 +819,11 @@ public class LandingGit : ILandingGit
         }
         catch
         {
-            if (!child.HasExited) child.Kill(entireProcessTree: true);
-            await child.WaitForExitAsync(CancellationToken.None);
-            // Descendants may retain the redirected handles after the root exits; the record
-            // fences admission until both streams drain. The original failure is the one reported.
-            try { await Task.WhenAll(copy, error); } catch { }
-            journal?.Exited(child);
+            // Same bound as ExecuteProcessAsync: a grandchild holding a redirected pipe must not
+            // outlive the budget by its own lifetime. The original failure is the one reported.
+            try { await ReleaseChildAsync(child, write, copy, error); }
+            catch { }
+            if (child.HasExited) journal?.Exited(child);
             throw;
         }
         journal?.Exited(child);
