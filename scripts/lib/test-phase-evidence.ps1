@@ -530,10 +530,18 @@ namespace Antiphon.TestPhase {
 
         static bool FallbackSeconds(string text, out double seconds) {
             seconds = 0;
-            TimeSpan span;
-            if (!TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out span)) return false;
-            seconds = span.TotalSeconds;
-            return true;
+            // TimeSpan.TryParse(string, IFormatProvider, out TimeSpan) is not in .NET Framework.
+            try {
+                TimeSpan span = TimeSpan.Parse(text, CultureInfo.InvariantCulture);
+                seconds = span.TotalSeconds;
+                return true;
+            } catch (FormatException) {
+                return false;
+            } catch (OverflowException) {
+                return false;
+            } catch (ArgumentException) {
+                return false;
+            }
         }
 
         static string Attribute(string attrs, string name) {
@@ -868,7 +876,13 @@ namespace Antiphon.TestPhase {
         static int IndexOf(byte[] line, int length, byte[] needle) {
             int n = needle.Length;
             if (n == 0 || length < n) return -1;
-            return new ReadOnlySpan<byte>(line, 0, length).IndexOf(needle);
+            int last = length - n;
+            for (int i = 0; i <= last; i++) {
+                int j = 0;
+                while (j < n && line[i + j] == needle[j]) j++;
+                if (j == n) return i;
+            }
+            return -1;
         }
     }
 }
