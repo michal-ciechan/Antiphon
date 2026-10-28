@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Shouldly;
@@ -368,6 +369,25 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         Directory.Exists(live).ShouldBeTrue();
         TestRootGuard.Read(live).ShouldNotBeNull();
     }
+
+    [Test]
+    public void fifo_or_socket_root_is_reclaimed()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("a FIFO is the persistent stand-in for a Linux dotnet-diagnostic socket");
+        var sandbox = TempDir();
+        var root = Candidate(sandbox, payloadBytes: 16);
+        var child = Path.Combine(root, "child");
+        Directory.CreateDirectory(child);
+        var socket = Path.Combine(child, "dotnet-diagnostic-1-1-socket");
+        MkFifo(socket, 0x1B6).ShouldBe(0, "mkfifo errno " + Marshal.GetLastPInvokeError());
+        var receipt = Sweep(sandbox).SweepOnce();
+        receipt.CompletedRoots.ShouldBe(1, "skips " + string.Join(",", receipt.Skips.Select(pair => pair.Key + "=" + pair.Value)));
+        Directory.Exists(root).ShouldBeFalse();
+        File.Exists(socket).ShouldBeFalse();
+    }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MkFifo(string path, int mode);
 
     private static CheckpointTempRootSweep Sweep(string sandbox, Func<DateTimeOffset>? clock = null,
         TimeSpan? grace = null, TimeSpan? interval = null, int maxRoots = 16, long maxBytes = 256L * 1024 * 1024,
