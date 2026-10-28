@@ -111,6 +111,43 @@ public sealed class TempRootSweepAnchoredDeleteTests
         finally { RemoveScratch(sandbox); }
     }
 
+    [Test]
+    public void hard_link_outside_the_root_is_not_truncated()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("the hard-link truncate witness uses Linux link(2)");
+        var sandbox = Scratch();
+        try
+        {
+            var outside = Path.Combine(sandbox, "outside");
+            Directory.CreateDirectory(outside);
+            var foreign = Path.Combine(outside, "foreign.bin");
+            var payload = new byte[1000];
+            payload[950] = 0x5A;
+            File.WriteAllBytes(foreign, payload);
+            var root = Candidate(sandbox);
+            var linked = Path.Combine(root, "payload.bin");
+            Link(foreign, linked).ShouldBe(0, "link errno " + Marshal.GetLastPInvokeError());
+            // MaxBytes below the file length is what reaches truncation. A full unlink would not shrink the foreign link.
+            var receipt = new CheckpointTempRootSweep(sandbox, options: new CheckpointSweepOptions
+            {
+                Grace = TimeSpan.Zero,
+                Interval = TimeSpan.Zero,
+                MaxDuration = TimeSpan.FromSeconds(5),
+                MaxBytes = 100,
+            }).SweepOnce();
+            var after = File.ReadAllBytes(foreign);
+            after.Length.ShouldBe(1000, "skips " + Format(receipt) + " reclaimed=" + receipt.ReclaimedBytes);
+            after[950].ShouldBe((byte)0x5A);
+            receipt.ReclaimedBytes.ShouldBe(0);
+            receipt.CompletedRoots.ShouldBe(1, "skips " + Format(receipt));
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link(string oldPath, string newPath);
+
     private sealed class SweepSwapIo(string parent, string foreign) : ForwardingNativeIo
     {
         public bool Swapped { get; private set; }
