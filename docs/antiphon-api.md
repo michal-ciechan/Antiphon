@@ -304,6 +304,7 @@ GET    /api/sessions/{id}/transcript         normalized transcript entries
 POST   /api/sessions/{id}/input              type into the session
 GET    /api/sessions/{id}/commands           the slash-command catalogue for this session
 GET    /api/sessions/{id}/messages           the delivery queue
+GET    /api/sessions/{id}/pending-notes?since={sequence}&limit={n}  pending notes after since, read only (CARD-1591)
 POST   /api/sessions/{id}/messages           enqueue (Now / WhenIdle)
 DELETE /api/sessions/{id}/messages/{messageId}
 POST   /api/sessions/{id}/messages/{messageId}/send-now

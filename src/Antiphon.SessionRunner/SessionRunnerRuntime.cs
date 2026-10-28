@@ -2518,13 +2518,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _dialogObservation = ClaudeDialogObservation.Observe(_screen?.GetScreenText());
                 _dialogSequence = _lastSequence;
             }
-            var known = !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost;
-            var state = known ? _dialogObservation.State switch
+            var classified = _dialogObservation.State switch
             {
                 ClaudeDialogState.Clear => ProviderDialogState.Clear,
                 ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
                 _ => ProviderDialogState.Unknown
-            } : ProviderDialogState.Unknown;
+            };
+            var known = !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost;
+            var state = known ? classified : ProviderDialogState.Unknown;
             if (clock is not null)
                 _submittedInput.ObserveEmpty(_screen?.GetScreenText() ?? "", _inputRevision,
                     clock.GetUtcNow(), known && _terminalInputWriters == 0);
@@ -2532,7 +2533,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _submittedInput.HasSubmittedCapture ? _tailer?.Snapshot() : null,
                 known && _terminalInputWriters == 0 && !_terminalComposerPending);
             return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
-                state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof);
+                state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof,
+                _adopted, _terminalInputUncertain, classified);
         }
 
         internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch)

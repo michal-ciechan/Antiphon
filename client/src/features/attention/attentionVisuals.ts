@@ -44,6 +44,10 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Provider input', color: 'warning', icon: TbHelpCircle,
     hint: 'A current Claude dialog needs an authorized decision. Inspect the session; the existing task deadline still applies.',
   },
+  PendingNotesAged: {
+    label: 'Notes withheld', color: 'warning', icon: TbMailExclamation,
+    hint: 'Pending notes are older than the configured age and still withheld. Detection only - open the queue. Nothing is flushed or sent.',
+  },
   TaskInputUnreadable: {
     label: 'Input unreadable', color: 'warning', icon: TbEyeOff,
     hint: 'The delegate says it cannot read a caller refinement or reply. Open the task and session evidence.',
