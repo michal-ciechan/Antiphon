@@ -15,6 +15,22 @@ blocking defects and records the advisories. See `## Amendment log` at the end. 
 - D-S3-8: master first, in three Code rounds.
 - Slices, verification, performance budget, checkpoints, landing and risks.
 
+**Amendment 2 (task e92ad0f5, 2026-10-28) after design review 8f6e5b17.** It fixes the three
+Round A blocking defects (D-1 to D-3), records the Round B decision for D-4, takes advisories
+A-1 to A-10 and corrects the line drift. See `## Amendment log (review 8f6e5b17)`. Changed
+sections:
+- Ground truth: rows 3 and 4 corrected, new rows 13-16.
+- D-S3-2: the pre-check classification, the card-arm placement and throw rule, the boundary plumbing.
+- D-S3-4: the Enter-only bound.
+- D-S3-5: catch lines, the exact outer S-2 list, release call sites, the S-0c row, S-2h in the
+  tracker rule, S-T and S-3 wording.
+- D-S3-7: L16', L16c, L17' and the S1 L18 note.
+- New D-S3-10 (Round B decision on the reconciler re-key).
+- Verification (V-S3-4, V-S3-5b, V-S3-5c, V-S3-11), budget, checkpoints, risks.
+
+Line numbers were re-read for this amendment at `aa6dfd24a`; `git diff --stat origin/master` over
+`server/` is empty, so they hold at master `fe73cfd2e` too.
+
 Every file this plan touches is byte-identical at `origin/master` `fe73cfd2e` and at the rc base.
 That covers the five services, `SupervisionSettings.cs`, `CardService.cs`,
 `SessionReconciliationService.cs` and `tests/Antiphon.Tests/Application/` (`git diff --stat` is
@@ -43,7 +59,7 @@ call the own-scope wrapper `CapacityRecoveryService.RedeemAsync`
 
 | Leak | Caller | Spend | Work that can then not happen |
 |---|---|---|---|
-| 2 | `AgentSupervisorService.TryHandleCapacityWaitAsync` `:507-508` | before the start | duplicate-key exit `:512-516`, compaction block `:523-524`, `StartSupervisedRestartAsync` false `:525-526`/`:571`, start throws (`:236-245`) |
+| 2 | `AgentSupervisorService.TryHandleCapacityWaitAsync` `:507-508` | before the start | duplicate-key exit `:512-516`, compaction block `:523-524`, `StartSupervisedRestartAsync` false `:525-526`/`:571`, start throws (`:240-245`) |
 | 3 | `AgentTaskDispatcher` retained return `:633-635` -> `:1779-1782` | before the counted slot | `TryClaimCountedSlotAsync` false `:636-639` (stale snapshot `:510`, `AfterQueuedSnapshotAsync` `:537`, overlapping ticks) |
 | 4 | `SessionMessageQueueService` flush `:2577-2590` | before composing and before the `Sent` stamp `:2725-2749` | every `return FlushResult.Nothing/Failed` between `:2590` and the `Sent` save |
 
@@ -58,8 +74,8 @@ preparation is still in flight, and grants the provider to another waiter (S1 D-
 |---|---|
 | `RedeemOnAsync(consume:true)` can be reused as-is by the three callers | **No.** It refuses any wait not `ActionPending` (`CapacityRecoveryService.cs:343-344`), so a receipt-backed revalidation grant (`Admitted && NeedsRevalidationGrant`, `CapacityRecoveryPolicy.cs:28-31`) can never be consumed in a transaction. It also requires `launchSessionId` (`:327-328`) and always writes `StartAccepted` + `LaunchSessionId` + `DispatchAttemptId` (`:376-381`). |
 | The supervisor consume can write the S1 launch receipt (`StartAccepted`) | **No.** `StartAccepted` is never re-armed: `RearmStalledAdmissionsAsync` selects only `Admitted` (`:1328-1331`). A standing start that launches and then dies before a report boundary would leave the wait unfinished forever, and the outer check `AgentSupervisorService.cs:209-212` would then block the ungated restart forever. `CapacityRecoverySupervisionTests.Card0412_D8_stalled_standing_start_rearms_and_actually_starts_again` (`:22-100`) pins the opposite: `HasExecutionReceipt == false` after the start, re-arm, a second launch, `AdmissionCount == 2`. |
-| The supervisor start has one commit to join | **Partly.** The interactive path `AgentControlService.StartInteractiveSessionAsync` has one reservation transaction (`AgentControlService.cs:543`) with two commit points: resume arm `AcceptAsync` `:686` -> `CommitAsync` `:687`, new-row arm `AcceptAsync` `:796` -> `CommitAsync` `:797`. `AcceptAsync` (`:802-887`) ends in `SaveChangesAsync` `:886`. The card arm (`_cardService.SpawnAsync`, `:291-299`) commits in `CardService`, not here. Early returns that start nothing: launch-owned `:198-199`, already live `:225-230`, reservation-live `:556-559`. |
-| The supervised-fresh reservation already checks the capacity wait | **Yes, against the spent state.** `:599-611` require `wait.State == Admitted && OutcomeReason == Start`, and `AcceptAsync` moves the wait to the new session with an `ExecuteUpdate` filtered on `State == Admitted` (`:806-816`). Both encode "redeemed before start" and must change with the consume point. |
+| The supervisor start has one commit to join | **Partly.** The interactive path `AgentControlService.StartInteractiveSessionAsync` has one reservation transaction (`AgentControlService.cs:543`) with two commit points: resume arm `AcceptAsync` `:686` -> `CommitAsync` `:687`, new-row arm `AcceptAsync` `:796` -> `CommitAsync` `:797`. `AcceptAsync` (`:802-888`) ends in `SaveChangesAsync` `:887`. The card arm (`_cardService.SpawnAsync`, `:302-307`) commits in `CardService`, not here. Early returns that start nothing: launch-owned `:198-199`, already live `:225-230`, reservation-live `:557-561`. |
+| The supervised-fresh reservation already checks the capacity wait | **Yes, against the spent state.** `:602-615` require `wait.State == Admitted && OutcomeReason == Start`, and `AcceptAsync` moves the wait to the new session with an `ExecuteUpdate` filtered on `State == Admitted` (`:808-816`). Both encode "redeemed before start" and must change with the consume point. |
 | Progress for a standing wait is keyed on the receipt | **No.** `OnTranscriptAsync` keys on `wait.SessionId` (`CapacityRecoveryService.cs:883-889`); `SessionId` is not in `HasExecutionReceipt` (`CapacityRecoveryPolicy.cs:92-96`). Moving `SessionId` does not change re-arm behaviour. |
 | Retained return can share the dispatcher context's transaction | **Risky.** The retained loop runs on the tick's `_db` (`AgentTaskDispatcher.cs:602-652`), which tracks every queued row of the tick; a transaction there would flush unrelated tracked edits under the provider lock (Rule P). `TryClaimCountedSlotAsync` (`CapacityRecoveryService.cs:845-863`) takes `pg_advisory_xact_lock` with no explicit transaction, so the lock ends with the statement; its only production caller is `:637`. |
 | The queue consume can go at "delivered" | **No (see D-S3-4).** Delivery confirmation (`DeliverAsync`, `SessionMessageQueueService.cs:2760-2763`) can outlast the 120 s grant; a revoke mid-delivery re-keys the message (`PrepareNextAttemptOnAsync` `:1401-1407`) and the consume would refuse after the provider was used. The queue already charges its own attempt at the `Sent` stamp and "deliberately" never refunds it (`:2712-2714`). |
@@ -69,6 +85,11 @@ preparation is still in flight, and grants the provider to another waiter (S1 D-
 | A standing start whose commit acknowledgement is lost is recovered by interrupted-launch recovery | **Only as a backstop.** The enqueue sits after `CommitAsync` (`AgentControlService.cs:687-688`, `:797-798`). Pass 1c (`SessionReconciliationService.cs:289-343`) resumes only a `Starting` row that the runner **already serves**. A row that was never enqueued is ended by pass 1 after `StartingGraceMs` (`:202-213`). The supervisor then sees a dead agent, and the `Admitted` wait (no receipt) re-arms. That costs one attempt and stays bounded by `MaxAttempts`. |
 | `HeldForRemotePrep` can be observed later | **Yes.** `RemoteHoldForAsync` (`AgentTaskDispatcher.cs:1238-1250`) returns a hold while `_remotePrep.IsInFlight(task.Id, out since)` (`:1245`), before the gate (`:949-959`) and with no transaction open. `since` is the preparation start. |
 | Grant renewal exists | **No.** `GrantedAt` is written only by `GrantReadyAsync` (`:212-215`) and cleared by `ClearGrant` (`:1224-1230`). |
+| The fresh pre-check can simply become a grant check (amendment 2) | **Not as written.** `AgentControlService.cs:606-613` also requires `intent.CapacityRecoveryActionKey == wait.ActionKey` (`:610`), which holds only because the supervisor stamps the intent first (`AgentSupervisorService.cs:521`). S3 deletes that stamp, so `:610` must go. The pre-check's only code is `standing_automatic_fresh_capacity_required`, which S-2 releases, so a grant race there would cancel the wait (review D-1). |
+| `CardService.SpawnAsync` leaves the agent consistent (amendment 2) | **No.** It does not set the agent pointer. `StartCoreAsync` saves `PersistentSessionId`/`Status` at `AgentControlService.cs:320-327`, after the spawn returns. The card arm is reachable only from the non-reserve start: the reserve arm refuses card work at `:281-282` and `:588-589` (review D-3). |
+| The reconciler writes no queue row under the provider lock (amendment 2) | **No.** Grant expiry (`GrantReadyAsync` `:141` -> `:157` `RecordRevokedGrantAsync` -> `:1188` `RearmRevokedGrantOnAsync` -> `:1215`), stall re-arm (`:1342` -> `:1359`) and new-wall (`BumpWaveAsync` `:808` -> `:827`) all reach `PrepareNextAttemptOnAsync`, which loads and re-keys `SessionQueuedMessages` rows (`:1401-1407`). They are written at the provider transaction's save, under rank 7. The expiry path does not consult `SelectedMessageId` (review D-4). |
+| `SessionQueuedMessages.CapacityRecoveryActionKey` may repeat (amendment 2) | **No.** It has a filtered unique index (`AppDbContext.cs:1785-1788`). The key format is `{waitId:N}:{ordinal}` (`CapacityRecoveryPolicy.cs:16-17`), and enqueue and both stamps set the key and `CapacityWaitId` together (`SessionMessageQueueService.cs:799-800`, `:5569-5571`, `CapacityRecoveryService.cs:980-982`). |
+| The reconcile pass and the supervisor pass are independent (amendment 2) | **No.** `AgentSupervisorHostedService.cs:146` (`ReconcileAsync`) and `:148` (`supervisor.TickAsync`) share one `try`, so a reconcile exception skips that tick's supervisor pass and the later sweeps. |
 
 ## Decisions
 
@@ -127,24 +148,96 @@ the last of them (D-S3-8).
   The supervisor calls new `internal AgentControlService.StartForCapacityAsync(agentId, request, admission, ct)`
   (public `StartAsync` signature unchanged) and passes it in `SupervisedFreshReservation` for the
   fresh arm. `StartInteractiveSessionAsync` gets it as a parameter.
+  `StartSupervisedRestartAsync`'s `string? capacityActionKey` parameter becomes
+  `CapacityStartAdmission? admission` (the ungated path passes `null`, as it passes `null` today).
+- *Test boundaries (amendment 2).* `AgentControlService` has no `LandDeliveryBoundary` today. It
+  gains an optional constructor parameter `LandDeliveryBoundary? landBoundary = null`, the same
+  shape as `CapacityRecoveryService` (`CapacityRecoveryService.cs:26`, `:33`). Production DI
+  leaves it null. The points are `capacity-start-before-precheck` (immediately before
+  `AgentControlService.cs:602`), `capacity-start-before-consume` (between `AcceptAsync` and the
+  consume on both arms) and, in the supervisor, `capacity-supervisor-before-start`.
+- *Admission for the outer catches (amendment 2).* `SuperviseAsync` declares
+  `CapacityStartAdmission? admission = null` before the `try` at `AgentSupervisorService.cs:228`,
+  and `TryHandleCapacityWaitAsync` sets it (through a `StrongBox<CapacityStartAdmission?>`
+  argument) right after the grant-match read (`:500-505`) succeeds. The outer S-1/S-2/S-2h/S-3
+  catches use it for the release and the charge. When it is still null, the throw came before
+  any grant was matched, and the catches behave exactly as base (no release, no charge).
 - *Key stamps move into the reservation:* the supervisor's `session.CapacityRecoveryActionKey = ...`
-  and `state.CapacityRecoveryActionKey = ...` plus the save (`AgentSupervisorService.cs:510-522`)
+  and `state.CapacityRecoveryActionKey = ...` plus the save (`AgentSupervisorService.cs:512-522`)
   are deleted. The new-row arm already sets the session key (`AgentControlService.cs:728`, extend
   to `admission?.ActionKey`); the resume arm sets `previous.CapacityRecoveryActionKey`; `AcceptAsync`
   sets `intent.CapacityRecoveryActionKey`.
-- *Pre-check:* `:599-611` becomes a read-only "grant still matches" check (`IsGrantCandidate(wait)`
-  and the provider row's `GrantedWaitId/GrantedActionKey`), code unchanged
-  (`standing_automatic_fresh_capacity_required`). The authoritative check is the consume under
-  the provider lock.
+- *Pre-check (amendment 2, review 8f6e5b17 D-1).* The fresh arm's check at
+  `AgentControlService.cs:602-615` is rewritten. It stays read-only: an AsNoTracking read of the
+  wait (`:602-605`, unchanged) and of the provider row, and no rank 7. Each mismatch has one of
+  two classes:
+
+  | Clause | Code | Class |
+  |---|---|---|
+  | no unfinished wait while `supervisedFresh.CapacityActionKey` is set | `standing_automatic_fresh_capacity_required` | S-2 (durable; the release finds no wait and is a no-op) |
+  | an unfinished wait while `supervisedFresh.CapacityActionKey` is null | `standing_automatic_fresh_capacity_required` | not on the capacity branch: only the ungated path calls with a null key, and its own catch handles it as base |
+  | `wait.ExecutionKind != spec.Kind` | `standing_automatic_fresh_capacity_required` | S-2 (the composed launch kind is not the waiting provider; durable) |
+  | `wait.ActionKey != supervisedFresh.CapacityActionKey` | `capacity_consume_refused` | S-1 |
+  | `!(IsGrantCandidate(wait) \|\| wait.State == ActionPending)` (the supervisor's own test, `AgentSupervisorService.cs:497`) | `capacity_consume_refused` | S-1 |
+  | provider row missing, or `GrantedWaitId != wait.Id`, or `GrantedActionKey != wait.ActionKey` | `capacity_consume_refused` | S-1 |
+
+  - `:610` (`intent.CapacityRecoveryActionKey != wait.ActionKey`) is **deleted**. The supervisor
+    no longer stamps the intent before the start (`AgentSupervisorService.cs:521` is deleted),
+    and `AcceptAsync` stamps it after the pre-check. Keeping the clause would refuse every
+    capacity fresh start.
+  - `:611-612` (`State != Admitted`, `OutcomeReason != Start`) are **deleted** and replaced by
+    the two grant clauses above. They encoded "redeemed before start".
+  - *Why S-1 for a grant race:* a grant revoked or moved between the supervisor's grant-match
+    read (`AgentSupervisorService.cs:500-505`) and this check is the same race that the consume
+    catches one step later. Both are owned by the reconciler: no release, no cancel, no backoff,
+    no charge. Classing it S-2 would cancel the wait and send the next tick down the ungated
+    path, which drops pacing through a race exit.
+  - *Where this differs from the review's fix:* the review kept `ActionKey !=
+    supervisedFresh.CapacityActionKey` as durable (S-2). It is a race too. A wait's `ActionKey`
+    changes only in `PrepareNextAttemptOnAsync` (`CapacityRecoveryService.cs:1385-1387`), that
+    is, in a reconciler re-arm after a grant expiry, a stall or a new wall. A different unfinished
+    wait returned by `:602` also shows up as a key mismatch. In both cases the reconciler owns the
+    wait, so the class is S-1.
+  - The non-reserve arm (`_control.StartAsync`, `AgentSupervisorService.cs:535`) has no
+    pre-check. Its consume is the check, and a refusal there is S-1 as well.
+  - The authoritative check stays the consume under the provider lock. The pre-check exists so
+    that a moved grant fails before composition work and the queue-lock wait.
+  - Witness: V-S3-4 `precheck-revoked`.
 - *Supervisor order:* `TryHandleCapacityWaitAsync` keeps the grant-match read (`:500-505`), then
-  runs the duplicate-key check (`:510-516`, read-only now) and `BlocksAutomaticRestartAsync`
+  runs the duplicate-key check (`:512-516`, read-only now) and `BlocksAutomaticRestartAsync`
   (`:523`) **before** calling the start. No `RedeemAsync`.
-- *Card arm:* a capacity-recovery start whose agent has pending card work goes through
-  `CardService.SpawnAsync` (`:291-299`), outside this reservation. S3 consumes in a separate
-  7->8 leaf after `SpawnAsync` returns: `ConsumeAdmittedAsync(..., Start)`, which also stamps
-  `SessionId = spawn.SessionId`. A refusal there is logged at Warning and the launch stands. The
-  crash window there under-spends (one unpaced launch), never strands. A `SpawnAsync` throw is S-3.
-  Witness: V-S3-5c.
+- *Card arm (amendment 2, review D-3).*
+  - *Reach.* Only the non-reserve arm reaches it. The reserve arm refuses card work at
+    `AgentControlService.cs:281-282` and again inside the reservation at `:588-589`
+    (`standing_resume_card_work_pending`).
+  - *What the spawn does and does not save.* `CardService.SpawnAsync` (`CardService.cs:1601`,
+    called at `AgentControlService.cs:302-307`) commits its own launch. It does **not** set the
+    agent pointer. `StartCoreAsync` sets `PersistentSessionId`, `Status` and `UpdatedAt` and
+    saves them at `:320-327`.
+  - *Placement.* The consume runs **after the `:326` save and before the event publish at
+    `:328`**, only when the start carries a `CapacityStartAdmission`. The call is
+    `ConsumeAdmittedAsync(admission.WaitId, admission.ActionKey, admission.Kind, Start, ct, stampSessionId: sessionId, stampSessionStartedAt: <the spawned row's StartedAt, AsNoTracking>)`.
+    `ConsumeAdmittedAsync` gains the two optional stamp parameters and passes them to
+    `RedeemOnAsync`.
+  - *Throw rule.* The call is wrapped in `catch (Exception ex) when (!ct.IsCancellationRequested)`.
+    That covers a refusal, a transient (`40P01`, `40001`, `55P03`), a connection loss and any
+    other exception from the consume's own 7->8 scope. On any of them the consume rolls back,
+    the method logs at Warning with the wait id, action key and session id, and **the launch
+    stands**. `StartCoreAsync` continues to `:328` and returns normally, so the supervisor sees
+    `true`. This is class **S-0c** (D-S3-5): no backoff, no charge, and the wait as it was. A
+    cancellation propagates after the pointer save. It is S-C, and the launch stands too.
+  - *Why after `:326`.* If the consume sat before the save and threw:
+    1. the launched card session would keep a stale pointer;
+    2. the exception would reach S-3, and `RecordStartFailureAsync` could not see the launch as
+       owned at `AgentSupervisorService.cs:384`, so it would record a backoff;
+    3. the S-3 charge would consume;
+    4. after the re-arm, the supervisor would call `ResolveStartCardAsync`/`SpawnAsync` again
+       for an agent whose card already has a running session.
+  - *Direction.* It under-spends: at most one unpaced launch per failure (Risk 3). Because
+    `SessionId` is not stamped on a failed consume, transcript progress on the card session does
+    not progress the wait. The wait therefore cycles at D-12 like Risk 9 until that session dies,
+    and the next capacity start then consumes normally.
+  - Witness: V-S3-5c (`spends-after-spawn`, `consume-throws`).
   *Rejected:* threading the consume into `CardService.SpawnAsync` (another service's transaction,
   a larger blast radius than this slice). *Rejected:* refusing a capacity start with card work
   (base starts it; a behaviour change outside the leak).
@@ -224,10 +317,17 @@ only the gate.
     path never redeemed either, so requiring a grant there would block crash recovery behind
     the wall.
   - *Why own scope and spend-first:* a keystroke cannot join a database transaction. Committing
-    the consume first and then pressing Enter fails toward one over-spent attempt, bounded by
-    `MaxAttempts`. That is the queue's own stated direction for a crash between the stamp and
-    the write (`:2712-2714`). The reverse order fails toward an unpaced turn with no clock and no
-    attempt bound, which is the leak.
+    the consume first and then pressing Enter fails toward a spent admission with no turn. That
+    is the queue's own stated direction for a crash between the stamp and the write
+    (`:2712-2714`). The reverse order fails toward an unpaced turn with no clock, which is the
+    leak. *Bound (amendment 2, review A-6):* only the first consume of a wall episode increments
+    `AdmissionCount`. After it the wait is `Admitted` with `SelectedMessageId`, re-arms as
+    revalidation and never increments again, and Enter-only never charges `DeliveryAttempts`
+    (`:3380-3477`). So `MaxAttempts` does **not** bound a repeating Enter-failure cycle. Its real
+    bound is the message: one grant per `StalledAdmissionTimeout` (120 s), each paced by the
+    provider clock, until the head leaves `Pending` (confirmed, canceled, expired or settled by a
+    person) or the session's waits end. That is exactly base (round-1 A-3), because base also
+    spends at `:2586` before Enter-only. See Risk 12.
   - *Rejected (review D-2):* treating Enter-only as a non-delivering exit. It submits a provider
     turn. Once the consume moves to the `Sent` stamp, a stamped head with `DeliveryAttempts > 0`
     (a wall hit that `ApplyCapacityHoldAsync` `:5561-5573` stamped, or a revalidation
@@ -254,43 +354,83 @@ only the gate.
 grant-match read is listed below. Row order is the classification order. The first matching row
 wins.
 
-*Catch site (amendment D-4b).* The S3 catches sit in the outer handler around
-`TryHandleCapacityWaitAsync` (`AgentSupervisorService.cs:228-245`). They go **beside** the
-existing hold catch at `:232` and **before** the generic `catch (Exception)` at `:236`, in this
-order:
-1. S-1 (`capacity_consume_refused`);
-2. the hold codes (S-2h);
-3. the S-2 durable codes not already handled inside `StartSupervisedRestartAsync`;
-4. the transient class (S-T);
-5. the generic S-3.
+*Catch site (amendment D-4b; lines corrected in amendment 2).* The S3 catches sit in the outer
+handler around `TryHandleCapacityWaitAsync` (`AgentSupervisorService.cs:228-245`). They go
+**beside** the existing hold catch at `:232` and **before** the generic `catch (Exception)` at
+`:240`, in this order:
+1. S-1: `ConflictException` with code `capacity_consume_refused`, thrown by the consume or by the
+   fresh pre-check (D-S3-2).
+2. S-2h: the hold codes. This is the existing `:232` catch, extended with the release.
+3. S-2: `ConflictException` with exactly these codes:
+   - `capacity_recovery_not_standing`, `capacity_recovery_suspended` and
+     `capacity_recovery_liveness_latched` (`AgentControlService.cs:201-222`);
+   - `standing_start_intent_revoked` (`:582-583`, suspend or latch set during the start; new in
+     amendment 2, the same durable meaning as `capacity_recovery_suspended`);
+   - `standing_automatic_fresh_capacity_required` (only the durable clauses remain, D-S3-2);
+   - `standing_automatic_fresh_ineligible` (`:178-180`, `:595-597`);
+   - `specialist_start_refused` (`:182-183`).
 
-This placement covers both start arms. The non-reserve `_control.StartAsync` (`:531`) is outside
+   No `standing_resume_*` code is in this list (see the release call sites below).
+4. S-T: the transient class.
+5. S-3: the generic catch, `:240`.
+
+This placement covers both start arms. The non-reserve `_control.StartAsync` (`:535`) is outside
 `StartSupervisedRestartAsync`'s try, and that try's filter (`:547-551`) lists `standing_resume_*`
 only. A refusal from either arm therefore propagates to the outer handler. If the S-1 catch sat
-inside `StartSupervisedRestartAsync`, the non-reserve arm's refusal would reach `:236` instead,
+inside `StartSupervisedRestartAsync`, the non-reserve arm's refusal would reach `:240` instead,
 and be charged with a backoff and an S-3 consume.
 
-*Tracker rule (amendment D-4e, S1 D-4).* The reservation runs on the supervisor's scoped `_db`.
-The tick reuses that context across agents. After any rollback on S-1, S-T, S-4 (not committed),
-S-2 or S-3, `AcceptAsync` may already have saved the pointer, intent and session edits into that
-context's tracker. So:
-- the catch calls `_db.ChangeTracker.Clear()` before any further write on `_db`;
+*Release call sites (amendment 2, review A-2).* `ReleaseAgentReservationAsync` is called in
+exactly three places, and only when the start carried a `CapacityStartAdmission`:
+1. **Inside `StartSupervisedRestartAsync`, for the codes its own filter handles
+   (`:547-551`).** The call goes after `held == true`, that is after the `if (!held) throw;` at
+   `:569` and the warning at `:570`, and before `return false` at `:571`:
+   `ReleaseAgentReservationAsync(agent.Id, admission.Kind, "start-refused", ct)`.
+   - When `_scopeFactory` is set it runs in the same fresh scope as `HoldRefusedFreshAsync`;
+     otherwise it runs after the `_db.ChangeTracker.Clear()` at `:566`.
+   - The ungated path calls `StartSupervisedRestartAsync` with `admission: null` and does not
+     release.
+2. **In the outer S-2 catch,** with reason `"start-refused"`.
+3. **In the outer S-2h catch,** after `ObserveAsync`, with reason `"start-held"`.
+
+*A rethrown `standing_resume_*` is S-3.* When `HoldRefusedFreshAsync` returns false (`!held`:
+the generation moved, a concurrent human start won, or `CanReserve` no longer holds), `:569`
+rethrows. The code is not in the outer S-2 list, so the generic S-3 catch takes it:
+- `RecordStartFailureInFreshScopeAsync` runs, and returns early without a backoff when a launch
+  already owns the pointer (`:384`);
+- then the S-3 charge runs.
+
+This is base behaviour: base also reached `:240` and had already spent at `:507`. The same holds
+for every `standing_resume_*` code thrown by the non-reserve arm or by the reservation itself
+(`standing_resume_current_changed` `:552`/`:554`/`:563`, `standing_resume_target_active`
+`:534`/`:556`/`:621`, `standing_resume_current_active` `:195`/`:560`) and for
+`standing_resume_runner_unavailable` (`:524`, `:531`).
+
+*Tracker rule (amendment D-4e, S1 D-4; S-2h added in amendment 2, review A-1).* The reservation
+runs on the supervisor's scoped `_db`. The tick reuses that context across agents. After any
+rollback on S-1, S-2h, S-T, S-4 (not committed), S-2 or S-3, `AcceptAsync` may already have saved
+the pointer, intent and session edits into that context's tracker. S-2h is included because the
+reservation's hold throws at `AgentControlService.cs:585`/`:587` roll back and then reach
+`ObserveAsync` on `_db`. So:
+- the catch calls `_db.ChangeTracker.Clear()` before any further write on `_db`, including
+  S-2h's `ObserveAsync`;
 - the S-2/S-3 bookkeeping keeps running in a fresh scope when `_scopeFactory` is set, as base
-  does for refusals (`:552-562`).
+  does for refusals (`:558-563`).
 
 The witnesses assert that no `Added`/`Modified` entry is left on the harness context after the
-tick returns (V-S3-4 `consume-revoked`, V-S3-4b).
+tick returns (V-S3-4 `consume-revoked` and `precheck-revoked`, V-S3-4b).
 
 | Class | Exits | Outcome | Bound |
 |---|---|---|---|
-| S-0 pre-start skip | duplicate action key (`:510-516`), `BlocksAutomaticRestartAsync` (`:523`), launch-owned (`AgentControlService.cs:198-199`), already live (`:225-230`/`:556-559`) | no spend, no write; the grant stays reserved | D-12 revokes after 120 s with no increment and regrants on the next cycle. Compaction is ended by CARD-0079 and launch ownership by the launch itself. **Residual (review A-6, pre-existing):** a live agent that a human started fresh does **not** progress the wait. Progress keys on `wait.SessionId` (`CapacityRecoveryService.cs:883-889`), and `OrphanedWaits` (`:665-680`) never cancels standing waits. The grant therefore cycles every expiry until that agent dies (Risk 9) |
-| S-1 consume refusal | the grant was revoked or moved between the read and the consume: `grant-mismatch`, `missing-grant`, `not-action-pending`, `clock-not-due`, `feature-disabled` | a `RedeemOnAsync` refusal makes the reservation throw `ConflictException("capacity_consume_refused")`; the reservation rolls back (no session, no pointer move); the outer catch beside `:232` returns `false` with no backoff and no charge; the tracker is cleared | the reconciler owns the wait |
-| S-2h hold (amendment D-4a) | `HerdrSupervisionStateService.HeldCode` and `StandingContinuityState.HeldCode`, from either arm, thrown before the reservation (`AgentControlService.cs:192`, `:197`) or inside it (`:585`, `:587`, `:975`, `:1007`; the reservation rolls back) | as base, `_herdrSupervision.ObserveAsync(agent.Id, false, false, ct)` and `false` with no backoff; **then** `ReleaseAgentReservationAsync(agentId, kind, "start-held")` | a hold does not clear with time; a person or a recovery clears it. **Chosen: S-2 (release).** *Rejected: S-0.* The grant would cycle through D-12 every 120 s for the whole hold, and block every other waiter of that provider kind. When the hold clears, the ungated path restarts through its own holds, as after any S-2 release |
-| S-2 durable start refusal | `standing_resume_*` conflicts handled by `HoldRefusedFreshAsync` (`AgentSupervisorService.cs:550-572`); `capacity_recovery_not_standing`, `capacity_recovery_suspended`, `capacity_recovery_liveness_latched` (`AgentControlService.cs:201-222`); `standing_automatic_fresh_*`; `specialist_start_refused` | the reservation was rolled back or never opened; then `ReleaseAgentReservationAsync(agentId, kind, "start-refused")` (new, a 7->8 leaf on its own scope: cancel the agent's unfinished `ActionPending`/revalidation wait, clear its grant; `AdmissionCount` unchanged) | the next tick has no unfinished wait and takes the ungated path with its own holds (continuity, suspend, latch). This is the base outcome after `MaxAttempts`, without the three wasted cycles |
-| S-T transient (amendment D-4c) | any exception whose chain holds a `PostgresException` with SQLSTATE `40P01`, `40001` or `55P03`, from the reservation's locks, its save or the consume | reservation rolled back; tracker cleared; return `false` with **no backoff and no charge** (S1 D-9 class 2); the grant stays reserved | each of these needs a concurrent partner and cannot repeat on its own. The reservation now holds ranks 4 and 5 while it waits on rank 7, so it can be a deadlock victim more often than base was |
-| S-C cancellation (amendment D-4d) | `OperationCanceledException` while `ct.IsCancellationRequested` (shutdown) | not caught: `:236`'s filter (`!ct.IsCancellationRequested`) already lets it propagate; the reservation is disposed (rolled back); no backoff, no charge | D-12 revokes the grant; the next process regrants |
+| S-0 pre-start skip | duplicate action key (`:512-516`), `BlocksAutomaticRestartAsync` (`:523`), launch-owned (`AgentControlService.cs:198-199`), already live (`:225-230`/`:557-561`) | no spend, no write; the grant stays reserved | D-12 revokes after 120 s with no increment and regrants on the next cycle. Compaction is ended by CARD-0079 and launch ownership by the launch itself. **Residual (review A-6, pre-existing):** a live agent that a human started fresh does **not** progress the wait. Progress keys on `wait.SessionId` (`CapacityRecoveryService.cs:883-889`), and `OrphanedWaits` (`:665-680`) never cancels standing waits. The grant therefore cycles every expiry until that agent dies (Risk 9) |
+| S-0c card-arm consume failed (amendment 2, review D-3) | the post-spawn `ConsumeAdmittedAsync` (D-S3-2 card arm) refuses or throws anything but a cancellation | caught inside `StartCoreAsync` after the `:326` pointer save; logged at Warning; the consume's own scope rolls back; the launch stands and the start returns normally (`true`); no backoff, no charge, wait and grant as they were | one unpaced launch (Risk 3). The wait cycles at D-12 until the card session dies (no `SessionId` stamp, as Risk 9); then the next capacity start consumes normally |
+| S-1 grant race | the grant was revoked or moved between the supervisor's grant-match read and the consume. Raised either by the fresh pre-check's grant clauses (D-S3-2, amendment 2) or by a `RedeemOnAsync` refusal at the consume: `grant-mismatch`, `missing-grant`, `not-action-pending`, `clock-not-due`, `feature-disabled` | `ConflictException("capacity_consume_refused")`; the reservation rolls back (no session, no pointer move); the outer S-1 catch clears the tracker and returns `false`; no release, no cancel, no backoff, no charge | the reconciler owns the wait |
+| S-2h hold (amendment D-4a) | `HerdrSupervisionStateService.HeldCode` and `StandingContinuityState.HeldCode`, from either arm, thrown before the reservation (`AgentControlService.cs:192`, `:197`) or inside it (`:585`, `:587`, `:975`, `:1007`; the reservation rolls back) | tracker cleared; as base, `_herdrSupervision.ObserveAsync(agent.Id, false, false, ct)` and `false` with no backoff; **then** `ReleaseAgentReservationAsync(agentId, kind, "start-held")` | a hold does not clear with time; a person or a recovery clears it. **Chosen: S-2 (release).** *Rejected: S-0.* The grant would cycle through D-12 every 120 s for the whole hold, and block every other waiter of that provider kind. When the hold clears, the ungated path restarts through its own holds, as after any S-2 release. No re-grant loop forms (review A-1): the supervisor's early returns at `AgentSupervisorService.cs:133-144` and `:148-149` precede the capacity branch, and a new wait needs a new wall observation, which a dead, held agent cannot produce |
+| S-2 durable start refusal | `standing_resume_*` codes handled **and held** by `HoldRefusedFreshAsync` (`AgentSupervisorService.cs:547-572`; release call site 1); the outer S-2 list above (release call site 2) | the reservation was rolled back or never opened; then `ReleaseAgentReservationAsync(agentId, kind, "start-refused")` (new, a 7->8 leaf on its own scope: cancel the agent's unfinished `ActionPending`/revalidation wait, clear its grant; `AdmissionCount` unchanged) | the next tick has no unfinished wait and takes the ungated path with its own holds (continuity, suspend, latch). This is the base outcome after `MaxAttempts`, without the three wasted cycles |
+| S-T transient (amendment D-4c) | any exception whose chain holds a `PostgresException` with SQLSTATE `40P01`, `40001` or `55P03`, from the reservation's locks, its save or the consume | reservation rolled back; tracker cleared; return `false` with **no backoff and no charge** (S1 D-9 class 2); the grant stays reserved | `40P01` and `40001` need a concurrent partner. A `55P03` can repeat for as long as a foreign lock holder persists (review A-7): with no backoff that costs one reservation attempt per tick until D-12 revokes the grant (120 s), then the next grant cycle. The reservation now holds ranks 4 and 5 while it waits on rank 7, so it can be a deadlock victim more often than base was |
+| S-C cancellation (amendment D-4d) | `OperationCanceledException` while `ct.IsCancellationRequested` (shutdown) | not caught: `:240`'s filter (`!ct.IsCancellationRequested`) already lets it propagate; the reservation is disposed (rolled back); no backoff, no charge. On the card arm a cancellation after the `:326` save leaves the launch standing (as S-0c) | D-12 revokes the grant; the next process regrants |
 | S-4 commit acknowledgement lost (amendment D-3) | `reservation.CommitAsync` throws (any exception, including the transient class) | see the S-4 procedure below | as S-3, or a committed start |
-| S-3 start throws (infrastructure, model, runner) | every other exception reaching `:236` | reservation rolled back; backoff recorded as today (`RecordStartFailureInFreshScopeAsync`); then `ChargeFailedStartAsync(waitId, actionKey, kind)`, which is `ConsumeAdmittedAsync(..., Start)` and runs only if the grant still matches. A failed launch is a real attempt. A throw after the reservation committed (enqueue `:688`/`:798`, event publish `:319`) finds the grant already cleared and charges nothing, so nothing is spent twice | `MaxAttempts` -> `Exhausted` -> ungated restart, as base |
+| S-3 start throws (infrastructure, model, runner) | every other exception reaching `:240`, including a `standing_resume_*` rethrown at `:569` (`!held`) and a `SpawnAsync` throw on the card arm | reservation rolled back; backoff recorded as today (`RecordStartFailureInFreshScopeAsync`); then `ChargeFailedStartAsync(waitId, actionKey, kind)`, which is `ConsumeAdmittedAsync(..., Start)` and runs only if the grant still matches. A failed launch is a real attempt. A throw after the reservation committed (enqueue `:688`/`:798`, event publish `:328`) finds the grant already cleared and charges nothing, so nothing is spent twice. **A `ModelDisabledException` (`AgentControlService.cs:249`, review A-3):** `RecordStartFailureAsync` links the model hold to the wait first (`AgentSupervisorService.cs:385-400`), so the charge after it usually refuses with `not-action-pending` and nothing is spent. That is accepted: a model hold, not the provider wall, blocked the start | `MaxAttempts` -> `Exhausted` -> ungated restart, as base |
 
 *S-4 procedure (amendment D-3).* Inside `StartInteractiveSessionAsync`, wrap each arm's
 `CommitAsync` in a `try`. On a throw:
