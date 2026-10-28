@@ -548,7 +548,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             world.Harness.EventBus,
             ownership: queue);
         await service.ScanAsync(CancellationToken.None);
-        await queue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await WaitForLaunchIdleAsync(queue);
     }
 
     private static void WireDispatchPrompt(FakeAgentProtocolAdapter adapter, DispatchWorld world, Guid sessionId)

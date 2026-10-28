@@ -30,8 +30,14 @@ namespace Antiphon.Tests.Application;
 /// identity as well as its named outcome.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<LoadTimeoutParallelLimit>]
+// Above the 30s wall cap and the 13.23s Linux max row. ceil(59/4)*120s = 1800s.
+[Timeout(120_000)]
 public class BootStallDetectionTests
 {
+    // 30s keeps the existing sweep bound. 2x the 4.19s cost-file mean (247s/59) is 8.4s.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// V-3. No listing, inventory or task-status shape changes the outcome, and the boot branch
     /// reads no inventory at all (option B has no absence proof). Working shapes at nine minutes
@@ -1099,7 +1105,8 @@ public class BootStallDetectionTests
             var mark = world.LogEntries().Count;
             try
             {
-                (await world.RunOverdueSweepAsync().WaitAsync(TimeSpan.FromSeconds(30)))
+                (await LoadTimeoutWait.UntilSignaledAsync(
+                    world.RunOverdueSweepAsync(), clock: null, budget: null, wallCap: LoadWallCap, label: "overdue sweep"))
                     .ShouldBe(0, world.Warnings());
             }
             finally

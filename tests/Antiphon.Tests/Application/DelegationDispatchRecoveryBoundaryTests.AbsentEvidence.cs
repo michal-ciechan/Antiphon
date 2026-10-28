@@ -1149,9 +1149,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             uri.Port.ShouldNotBe(17204);
             var serverSettings = new SessionRunnerSettings { BaseUrl = uri.ToString() };
             serverSettings.AbsenceEvidence.KeyPath = keyPath;
-            var http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(20) };
+            var http = new HttpClient { BaseAddress = uri, Timeout = LoadWallCap };
             var client = new SessionRunnerHttpClient(http, new FixedFactory(uri), Options.Create(serverSettings), time: clock);
-            self = new EvidenceHost(app, root, new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(20) }, runtime, client);
+            self = new EvidenceHost(app, root, new HttpClient { BaseAddress = uri, Timeout = LoadWallCap }, runtime, client);
             return self;
         }
 
@@ -1175,7 +1175,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
     private sealed class FixedFactory(Uri uri) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new() { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(20) };
+        public HttpClient CreateClient(string name) => new() { BaseAddress = uri, Timeout = LoadWallCap };
     }
 
     /// <summary>
