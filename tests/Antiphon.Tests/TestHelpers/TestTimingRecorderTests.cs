@@ -75,7 +75,8 @@ public sealed class TestTimingRecorderTests
         });
         session.Enabled.ShouldBeTrue("owner-file-session-opens");
         var folder = TestTimingSession.ChunkDirectory(root, "g-own", "run-own", "1", "antiphon");
-        var owner = Path.Combine(folder, "own-8def7fbfd342eaf05739d98009c13b6d0070236cc44e7027d022d19c04d9b193-42-own1.txt");
+        var owner = Path.Combine(folder, TestTimingSession.OwnerFileName(
+            TestTimingSession.IdentityToken("g-own", "run-own", "1", "antiphon"), 42, "own1"));
         File.Exists(owner).ShouldBeTrue("owner-file-names-the-chunk");
         File.ReadAllText(owner).ShouldBe("cases-42-own1.jsonl\n");
         File.Exists(Path.Combine(folder, "cases-42-own1.jsonl")).ShouldBeTrue("journal-name-stays-pid-nonce");
@@ -124,13 +125,102 @@ public sealed class TestTimingRecorderTests
     }
 
     [Test]
+    [Timeout(60_000)]
+    public async Task C1514T_RecorderJournalMatchesPowerShellReader(CancellationToken cancellationToken)
+    {
+        const string group = "g-own";
+        const string run = "run-own";
+        const string attempt = "1";
+        const string suite = "antiphon";
+        var identity = TestTimingSession.IdentityToken(group, run, attempt, suite);
+        var root = C1514Support.FreshRoot();
+        using (var session = TestTimingSession.TryOpen(new TestTimingConfig
+        {
+            Root = root,
+            RunId = run,
+            GroupId = group,
+            Attempt = attempt,
+            Suite = suite,
+            ManualClock = true,
+            Pid = 42,
+            Nonce = "own1",
+            AssemblyId = "asm1",
+        }))
+        {
+            session.Enabled.ShouldBeTrue("recorder-journal");
+            session.SetTicks(0);
+            using (session.BeginFixturePhase("fix-own", TestPhaseKind.FixtureSetup, "before"))
+                session.SetTicks(C1514Support.Ms(1500));
+        }
+
+        var script = Path.Combine(Path.GetTempPath(), "c1598-read-" + Guid.NewGuid().ToString("N") + ".ps1");
+        await File.WriteAllTextAsync(script, """
+            $ErrorActionPreference = 'Stop'
+            . $args[0]
+            $root = $args[1]
+            $id = ConvertTo-QualificationChunkIdentity -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon'
+            $prefix = Get-QualificationOwnerPrefixLength
+            $sums = Get-QualificationPhaseSums -TimingRoot $root -Chunk 'g-own' -RunId 'run-own' -Suite 'antiphon' -Attempt '1'
+            $folder = Join-Path $root (Get-QualificationChunkDirectoryName -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon')
+            $own = @(Get-ChildItem -LiteralPath $folder -Filter 'own-*.txt' -File)
+            if ($own.Count -ne 1) { throw ('owner-count=' + $own.Count) }
+            $parsed = ConvertFrom-QualificationOwnerName -Name $own[0].Name
+            if ($null -eq $parsed) { throw 'owner-name-unparsed' }
+            $match = Test-QualificationOwnerToken -Token $parsed.Token -Identity $id
+            $setup = 'null'
+            if ($null -ne $sums.fixtureSetupSeconds) {
+                $setup = ([double]$sums.fixtureSetupSeconds).ToString('0.000', [Globalization.CultureInfo]::InvariantCulture)
+            }
+            Write-Output ('IDENTITY=' + $id)
+            Write-Output ('PREFIX=' + $prefix)
+            Write-Output ('SETUP=' + $setup)
+            Write-Output ('REFUSED=' + [bool]$sums.refused)
+            Write-Output ('TOKEN=' + $parsed.Token)
+            Write-Output ('MATCH=' + [bool]$match)
+            Write-Output ('JOURNAL=' + $parsed.Journal)
+            """, cancellationToken);
+        try
+        {
+            var start = new ProcessStartInfo("pwsh");
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-File");
+            start.ArgumentList.Add(script);
+            start.ArgumentList.Add(Path.Combine(C1514Support.RepoRoot(), "scripts", "lib", "test-phase-evidence.ps1"));
+            start.ArgumentList.Add(root);
+            var ran = await C1514Support.RunProcess(start, cancellationToken);
+            ran.ExitCode.ShouldBe(0, ran.Text);
+            var lines = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var raw in ran.Text.Split('\n'))
+            {
+                var line = raw.Trim().TrimEnd('\r');
+                var split = line.IndexOf('=');
+                if (split > 0)
+                    lines[line[..split]] = line[(split + 1)..];
+            }
+
+            lines["IDENTITY"].ShouldBe(identity, "chunk-identity");
+            lines["PREFIX"].ShouldBe(TestTimingSession.OwnerHashPrefixLength.ToString(), "owner-prefix");
+            lines["SETUP"].ShouldBe("1.500", "recorder-journal");
+            lines["REFUSED"].ShouldBe("False", "recorder-journal");
+            lines["MATCH"].ShouldBe("True", "owner-prefix");
+            lines["TOKEN"].ShouldBe(identity[..TestTimingSession.OwnerHashPrefixLength], "owner-prefix");
+            lines["JOURNAL"].ShouldBe("cases-42-own1.jsonl", "recorder-journal");
+            File.Exists(Path.Combine(root, "chunk-" + identity, "cases-42-own1.jsonl")).ShouldBeTrue("recorder-journal");
+        }
+        finally
+        {
+            File.Delete(script);
+        }
+    }
+
+    [Test]
     public void C1514T_OwnerWriteFailureKeepsTheJournal()
     {
         var root = C1514Support.FreshRoot();
         var folder = TestTimingSession.ChunkDirectory(root, "g-own", "run-own", "1", "antiphon");
         Directory.CreateDirectory(folder);
         var token = TestTimingSession.IdentityToken("g-own", "run-own", "1", "antiphon");
-        Directory.CreateDirectory(Path.Combine(folder, "own-" + token + "-42-own1.txt"));
+        Directory.CreateDirectory(Path.Combine(folder, TestTimingSession.OwnerFileName(token, 42, "own1")));
         using var session = TestTimingSession.TryOpen(new TestTimingConfig
         {
             Root = root,
