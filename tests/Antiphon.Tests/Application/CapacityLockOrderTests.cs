@@ -879,6 +879,7 @@ public sealed class CapacityLockOrderTests
     private sealed class ProviderTail : DbCommandInterceptor
     {
         private bool _seen;
+        private DbContext? _consumeContext;
         public List<string> AfterProvider { get; } = [];
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
@@ -907,18 +908,24 @@ public sealed class CapacityLockOrderTests
 
         private void Note(DbCommand command, DbContext? context)
         {
-            if (context?.ChangeTracker.Entries<Agent>().Any() != true)
+            if (context is null)
                 return;
             var text = command.CommandText;
             if (!_seen
+                && context.ChangeTracker.Entries<Agent>().Any()
                 && text.Contains("CapacityRecoveryProviderStates", StringComparison.Ordinal)
                 && text.Contains("UPDATE", StringComparison.Ordinal))
             {
                 _seen = true;
+                _consumeContext = context;
                 return;
             }
 
-            if (_seen)
+            // StartCoreAsync reads the agent detail after the reservation commits, on this
+            // same context. The tail is only the commands still inside that transaction.
+            if (_seen
+                && ReferenceEquals(context, _consumeContext)
+                && context.Database.CurrentTransaction is not null)
                 AfterProvider.Add(text);
         }
     }
