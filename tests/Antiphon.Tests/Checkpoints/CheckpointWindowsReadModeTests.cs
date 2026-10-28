@@ -18,15 +18,24 @@ public sealed class CheckpointWindowsReadModeTests
     [Arguments("digest", 808)]
     [Arguments("digest", 524305)]
     [Arguments("write", 32)]
+    [Arguments("write", 467)]
+    [Arguments("write", 808)]
+    [Arguments("write", 262144)]
+    [Arguments("write", 524305)]
     public void Windows_reads_do_not_queue_synchronous_io_behind_blocked_workers(string consumer, int size)
     {
         var f = new HostCleanupCheckpointFixture(CheckpointPlatform.Windows);
         var path = Path.Combine(f.Root, "new-content.txt");
         var bytes = Enumerable.Repeat((byte)'x', size).ToArray();
         if (consumer != "write") f.Io.Put(path, bytes);
-        ModeledWindowsStream? stream = null;
-        f.Io.StreamFactory = () => stream = new(bytes, f.Clock,
-            (f.Io.ReadRequests.Last().WindowsFlags & 0x40000000) != 0);
+        var streams = new List<ModeledWindowsStream>();
+        f.Io.StreamFactory = () =>
+        {
+            var opened = new ModeledWindowsStream(bytes, f.Clock,
+                (f.Io.ReadRequests.Last().WindowsFlags & 0x40000000) != 0);
+            streams.Add(opened);
+            return opened;
+        };
 
         switch (consumer)
         {
@@ -47,14 +56,17 @@ public sealed class CheckpointWindowsReadModeTests
                 throw new ArgumentOutOfRangeException(nameof(consumer));
         }
 
-        stream.ShouldNotBeNull().Delivered.ShouldBe(size);
-        stream.WorkerWaits.ShouldBe(0);
-        f.Io.ReadRequests.Count.ShouldBe(1);
-        // Keep the existing verified-handle and sequential-read protections.
-        (f.Io.ReadRequests.Single().WindowsFlags & 0x08200000).ShouldBe(0x08200000u);
+        // Publication verifies the destination, then the custody digest reads it again.
+        // Receipt and digest consumers open once. Every open is overlapped: a synchronous
+        // Read, or ReadAsync on a synchronous handle, queues behind blocked workers.
+        var opens = consumer == "write" ? 2 : 1;
+        streams.Count.ShouldBe(opens);
+        streams.ShouldAllBe(s => s.Delivered == size && s.WorkerWaits == 0 && s.Disposed);
+        f.Io.ReadRequests.Count.ShouldBe(opens);
+        foreach (var request in f.Io.ReadRequests)
+            (request.WindowsFlags & 0x48200000u).ShouldBe(0x48200000u);
         f.Io.Count("inspect", path).ShouldBe(1);
-        f.Io.Count("close-read", path).ShouldBe(1);
-        stream.Disposed.ShouldBeTrue();
+        f.Io.Count("close-read", path).ShouldBe(opens);
     }
 
     // Model the .NET Windows split without changing the process-wide thread pool or
@@ -65,9 +77,22 @@ public sealed class CheckpointWindowsReadModeTests
     private sealed class ModeledWindowsStream(byte[] bytes, ControlledTimeProvider clock, bool overlapped)
         : MemoryStream(bytes, writable: false)
     {
+        private bool _async;
         public int WorkerWaits { get; private set; }
         public long Delivered { get; private set; }
         public bool Disposed { get; private set; }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_async) return base.Read(buffer, offset, count);
+            return RefuseSynchronous();
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (_async) return base.Read(buffer);
+            return RefuseSynchronous();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -78,9 +103,21 @@ public sealed class CheckpointWindowsReadModeTests
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new InvalidOperationException("the queued synchronous read must reach its deadline");
             }
-            var result = base.ReadAsync(buffer, cancellationToken);
-            Delivered += result.Result;
-            return result;
+            _async = true;
+            try
+            {
+                var result = base.ReadAsync(buffer, cancellationToken);
+                Delivered += result.Result;
+                return result;
+            }
+            finally { _async = false; }
+        }
+
+        private int RefuseSynchronous()
+        {
+            WorkerWaits++;
+            clock.Advance(CheckpointFileReader.StallDeadline);
+            throw new InvalidOperationException("the queued synchronous read must reach its deadline");
         }
 
         protected override void Dispose(bool disposing)
