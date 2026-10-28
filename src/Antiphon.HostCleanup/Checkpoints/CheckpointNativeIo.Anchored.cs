@@ -209,7 +209,8 @@ public sealed partial class CheckpointNativeIo
         if (!AnchoredDelete.EntryNameSafe(windows: true, name) || name is "." or "..")
             throw new IOException("anchored-path-unsafe");
         using var parent = OpenNoFollowChainWindows(directory);
-        var child = OpenChild(parent, name, 0x40 | 0x00200000 | 0x20, 0xC0000000);
+        // Share 0 matches the base FileShare.None truncate open.
+        var child = OpenChild(parent, name, 0x40 | 0x00200000 | 0x20, 0xC0000000, share: 0);
         FileStream? stream = null;
         try
         {
@@ -274,7 +275,7 @@ public sealed partial class CheckpointNativeIo
         && (info.Attributes & 0x400u) == 0
         && (info.Attributes & 0x10u) != 0;
 
-    private static SafeFileHandle OpenChild(SafeFileHandle parent, string name, uint options, uint access)
+    private static SafeFileHandle OpenChild(SafeFileHandle parent, string name, uint options, uint access, uint share = 7)
     {
         var buffer = Marshal.StringToHGlobalUni(name);
         var unicode = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
@@ -297,7 +298,7 @@ public sealed partial class CheckpointNativeIo
                     ObjectName = unicode,
                     Attributes = 0x40,
                 };
-                var status = NtCreateFile(out var handle, access, ref attributes, out _, IntPtr.Zero, 0, 7, 1, options, IntPtr.Zero, 0);
+                var status = NtCreateFile(out var handle, access, ref attributes, out _, IntPtr.Zero, 0, share, 1, options, IntPtr.Zero, 0);
                 if (status < 0) throw new IOException("anchored-entry-open-failed: status=0x" + status.ToString("X8"));
                 return new SafeFileHandle(handle, ownsHandle: true);
             }
