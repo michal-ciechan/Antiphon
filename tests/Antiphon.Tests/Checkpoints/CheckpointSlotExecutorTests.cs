@@ -377,6 +377,15 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
     }
 
     [Test]
+    public void a_wrong_live_start_fails_the_cached_stamp()
+    {
+        var stamp = new DateTimeOffset(2026, 10, 28, 0, 0, 0, TimeSpan.Zero)
+            .UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        var wrong = new DateTime(2026, 10, 28, 1, 0, 0, DateTimeKind.Utc);
+        Should.Throw<ShouldAssertException>(() => AssertCachedHolderStart(stamp, () => wrong));
+    }
+
+    [Test]
     public void a_thrown_start_time_does_not_fail_the_cached_stamp()
     {
         var stamp = new DateTimeOffset(2026, 10, 28, 0, 0, 0, TimeSpan.Zero)
