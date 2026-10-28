@@ -8,7 +8,16 @@ internal static class CheckpointRepeatFixture
 {
     internal sealed record ScriptResult(int ExitCode, string Text, string[] Calls, string? Evidence, string? Trx);
 
-    internal static string OutputName(string root) => "bin-c885-script-" + Path.GetFileName(root);
+    // Temp roots are "c723-" plus a 32-digit guid. Keeping that whole name makes the
+    // deepest FilterHost artifacts file 270 characters on the release checkout. Windows
+    // MAX_PATH is 260 including the terminating NUL, so the path string must stay <= 259.
+    // The last 12 characters of the temp root keep the directory unique.
+    internal static string OutputName(string root)
+    {
+        var name = Path.GetFileName(root);
+        var tail = name.Length <= 12 ? name : name[^12..];
+        return "bin-c885-script-" + tail;
+    }
 
     internal static string OutputDirectory(string root) =>
         Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.RepeatHost", OutputName(root));
