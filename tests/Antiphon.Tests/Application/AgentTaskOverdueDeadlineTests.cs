@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -961,6 +962,92 @@ public class AgentTaskOverdueDeadlineTests
         stopper.Killed.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// CARD-1604 D-1. The stored heartbeat is already past 20 minutes, so the sweep's first
+    /// pass is breached and gate 2 pulls. A fresh <c>token_count</c> on that pull keeps the
+    /// task Dispatched; an older or empty follow-up pull does not move the column backwards;
+    /// no pull still fails the model wait. The clock is year 2000 so every other open task
+    /// has zero elapsed against it.
+    /// </summary>
+    [Test]
+    public async Task a_stale_stored_token_count_is_replaced_by_a_fresh_pull_and_silence_still_fails()
+    {
+        var now = new DateTime(2000, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var fresh = SessionGeneration.Normalize(now.AddMinutes(-5));
+        var stale = SessionGeneration.Normalize(now.AddMinutes(-25));
+        var runner = new TokenCountRunner { CodexTokenCountAt = fresh };
+        var built = OverdueSweepHarness.Create(
+            s => s.ModelWaitDeadlineMinutes = 20,
+            clock: new FixedClock(now),
+            runner: runner);
+        await using var provider = built.Provider;
+        var harness = built.Dispatcher;
+        var stopper = built.Stopper;
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+
+        await using var held = new Scenario { Clock = now };
+        var heldTask = await held.SeedTaskAsync(
+            dispatchedMinutesAgo: 30, status: AgentTaskStatus.Dispatched);
+        await held.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 28),
+            (TranscriptKinds.AssistantText, "still reasoning", 25));
+        await held.SetCodexTokenCountAsync(25);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var open = await verify.AgentTasks.SingleAsync(t => t.Id == heldTask);
+            open.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            open.FailureReason.ShouldBeNull();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == held.SessionId)).CodexTokenCountAt
+                .ShouldBe(fresh);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == held.SessionId))
+                .ShouldBe(2);
+        }
+        runner.Pulls.ShouldBeGreaterThan(0);
+        stopper.Killed.ShouldBeEmpty();
+
+        runner.CodexTokenCountAt = stale;
+        await runtime.CatchUpTranscriptAsync(held.SessionId, CancellationToken.None);
+        runner.CodexTokenCountAt = null;
+        await runtime.CatchUpTranscriptAsync(held.SessionId, CancellationToken.None);
+        await using (var verify = CreateContext())
+        {
+            (await verify.AgentSessions.SingleAsync(s => s.Id == held.SessionId)).CodexTokenCountAt
+                .ShouldBe(fresh);
+        }
+
+        await using var silent = new Scenario { Clock = now };
+        var silentTask = await silent.SeedTaskAsync(
+            dispatchedMinutesAgo: 30, status: AgentTaskStatus.Dispatched);
+        await silent.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "earlier", 28),
+            (TranscriptKinds.AssistantText, "silent", 25));
+        await silent.SetCodexTokenCountAsync(25);
+        var pullsBeforeSilence = runner.Pulls;
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var after = CreateContext();
+        var failed = await after.AgentTasks.SingleAsync(t => t.Id == silentTask);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("waiting on the model");
+        failed.FailureReason.ShouldContain("20-minute deadline");
+        failed.FailureReason.ShouldContain("NOT killed");
+        (await after.AgentSessions.SingleAsync(s => s.Id == silent.SessionId)).CodexTokenCountAt
+            .ShouldBe(stale);
+        (await after.TranscriptEntries.CountAsync(t => t.AgentSessionId == silent.SessionId))
+            .ShouldBe(2);
+        (await after.AgentTasks.SingleAsync(t => t.Id == heldTask)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        (await after.AgentSessions.SingleAsync(s => s.Id == held.SessionId)).CodexTokenCountAt
+            .ShouldBe(fresh);
+        runner.Pulls.ShouldBeGreaterThan(pullsBeforeSilence);
+        stopper.Killed.ShouldBeEmpty();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
@@ -1028,6 +1115,60 @@ public class AgentTaskOverdueDeadlineTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
+    private sealed class FixedClock(DateTime utc) : TimeProvider
+    {
+        private readonly DateTimeOffset _now = new(DateTime.SpecifyKind(utc, DateTimeKind.Utc), TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    private sealed class TokenCountRunner : ISessionRunnerClient
+    {
+        private int _pulls;
+
+        public DateTime? CodexTokenCountAt { get; set; }
+
+        public int Pulls => Volatile.Read(ref _pulls);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerBufferDto(sessionId, string.Empty, 0));
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _pulls);
+            return Task.FromResult(new SessionRunnerTranscriptDto(
+                sessionId, [], 0, CodexTokenCountAt: CodexTokenCountAt));
+        }
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
     /// <summary>Seeds rows, remembers their ids, deletes exactly those — the shared-database rule.</summary>
     private sealed class Scenario : IAsyncDisposable
     {
@@ -1039,7 +1180,12 @@ public class AgentTaskOverdueDeadlineTests
 
         public Scenario() => _sessions.Add(_sessionId);
 
+        /// <summary>When set, seeded ages are measured from this UTC instant instead of the wall clock.</summary>
+        public DateTime? Clock { get; set; }
+
         public Guid SessionId => _sessionId;
+
+        private DateTime Origin => Clock ?? DateTime.UtcNow;
 
         public async Task<Guid> SeedSessionAsync()
         {
@@ -1060,7 +1206,7 @@ public class AgentTaskOverdueDeadlineTests
             AgentTaskStatus status = AgentTaskStatus.Working,
             int attempt = 1)
         {
-            var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
+            var dispatched = Origin.AddMinutes(-dispatchedMinutesAgo);
             var cwd = workingDirectory ?? Path.GetTempPath();
             await using var db = CreateContext();
             if (!await db.AgentSessions.AnyAsync(s => s.Id == _sessionId))
@@ -1119,7 +1265,7 @@ public class AgentTaskOverdueDeadlineTests
             await using var db = CreateContext();
             foreach (var (kind, text, minutesAgo) in entries)
             {
-                var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+                var at = Origin.AddMinutes(-minutesAgo);
                 db.TranscriptEntries.Add(new TranscriptEntry
                 {
                     Id = Guid.NewGuid(),
@@ -1161,7 +1307,7 @@ public class AgentTaskOverdueDeadlineTests
             await using var db = CreateContext();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == _sessionId);
             session.AgentKind = kind;
-            session.CodexTokenCountAt = minutesAgo is int ago ? DateTime.UtcNow.AddMinutes(-ago) : null;
+            session.CodexTokenCountAt = minutesAgo is int ago ? Origin.AddMinutes(-ago) : null;
             await db.SaveChangesAsync();
         }
 
