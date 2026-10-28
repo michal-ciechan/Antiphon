@@ -20,14 +20,16 @@ namespace Antiphon.Tests.Application;
 /// Code adds the other eleven <c>C1149_C1150_Statement_budgets</c> arguments before CP-19.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 30s wall cap and the 48.71s Linux max row. ceil(95/4)*90s = 2160s,
-// under the 2400s lone-class ceiling for a planner chunk of about 95 rows.
+[ParallelLimiter<DelegationRecoveryLoadLimit>]
+// Above the 30s wall cap. Width-4 Linux row max was 8.27s. The class is split
+// (3505s > 2400s); a 900s method chunk holds at most 97 rows, so
+// ceil(97/4)*90s = 2250s, under the 3600s chunk cap.
 [Timeout(90_000)]
 public partial class DelegationDispatchRecoveryBoundaryTests
 {
-    // 30s keeps the existing idle bound. 2x the 9.2s cost-file pace (3505s/381) is 18.4s.
-    // The 20s HTTP bound rises to this cap. The pace row is not tightened.
+    // 30s stays above the width-4 Linux row max of 8.27s (review 968eb849).
+    // The 9.2s cost-file pace (3505s/381) is not the basis. The 20s HTTP bound
+    // rises to this cap. The pace row is not tightened.
     private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(30);
 
     private static Task WaitForLaunchIdleAsync(AgentSessionLaunchQueue queue)

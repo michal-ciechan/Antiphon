@@ -20,13 +20,15 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 18s wall cap and the 36.65s Linux max row. ceil(15/4)*180s = 720s.
+[ParallelLimiter<SpecialistQualificationLoadLimit>]
+// Above the 45s wall cap. Width-4 Linux row max was 23.21s. ceil(15/4)*180s = 720s,
+// under the 3600s chunk cap.
 [Timeout(180_000)]
 public class SpecialistQualificationTests
 {
-    // 18s is 2x the 8.67s cost-file mean (130s/15). It raises the 10s check bound.
-    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(18);
+    // 45s covers the width-4 Linux row max of 23.21s (review 968eb849). The
+    // 8.67s cost-file mean (130s/15) is not the basis. It raises the 10s check bound.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(45);
 
     private sealed class SyntheticEvidence : ISpecialistExecutionEvidenceReader
     {

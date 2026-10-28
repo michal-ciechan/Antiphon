@@ -17,13 +17,15 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 23s wall cap and the 8.51s Linux max row. ceil(35/4)*120s = 1080s.
+[ParallelLimiter<LandSourcePersistenceLoadLimit>]
+// Above the 30s wall cap. Width-4 Linux row max was 5.61s. ceil(35/4)*120s = 1080s,
+// under the 3600s chunk cap.
 [Timeout(120_000)]
 public sealed class AgentTaskLandSourcePersistenceTests
 {
-    // 23s is 2x the 11.29s cost-file mean (395s/35). It raises the 10s monitor bound.
-    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(23);
+    // 30s is above the width-4 Linux row max of 5.61s (review 968eb849). The
+    // 11.29s cost-file mean (395s/35) is not the basis. It raises the 10s monitor bound.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(30);
 
     [Test]
     [Arguments(0)]
