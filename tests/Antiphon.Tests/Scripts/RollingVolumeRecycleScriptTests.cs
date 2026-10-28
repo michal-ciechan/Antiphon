@@ -1227,7 +1227,10 @@ public sealed class RollingVolumeRecycleScriptTests
     // Logs, TRX, HTML and jsonl pass. A symlink, nested .git, refs or objects, a
     // file named HEAD or packed-refs, an unreadable file, a fifo, an outside hard
     // link, a dot-name, or the same name in a linked admin refuses gitdir-entry.
-    // review-evidence/ and antiphon/ are not walked, so an interior symlink still passes.
+    // review-evidence/ is walked the same way. Plain reports pass. A real repository
+    // with an unpublished commit, a bare repository, a .git pointer file, and the
+    // same Git-state shapes refuse. antiphon/ is not walked, so an interior symlink
+    // still passes.
     [Test]
     [Arguments("antiphon-evidence")]
     [Arguments("antiphon-evidence-symlink")]
@@ -1242,7 +1245,19 @@ public sealed class RollingVolumeRecycleScriptTests
     [Arguments("antiphon-evidence-hardlink")]
     [Arguments("antiphon-evidence-dot")]
     [Arguments("antiphon-evidence-linked")]
+    [Arguments("review-evidence-reports")]
+    [Arguments("review-evidence-repo")]
+    [Arguments("review-evidence-bare")]
+    [Arguments("review-evidence-gitfile")]
     [Arguments("review-evidence-symlink")]
+    [Arguments("review-evidence-head")]
+    [Arguments("review-evidence-refs")]
+    [Arguments("review-evidence-objects")]
+    [Arguments("review-evidence-packed-refs")]
+    [Arguments("review-evidence-odd")]
+    [Arguments("review-evidence-unreadable")]
+    [Arguments("review-evidence-hardlink")]
+    [Arguments("review-evidence-dot")]
     [Arguments("antiphon-symlink")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1594_Antiphon_evidence_gitdir(string variant)
