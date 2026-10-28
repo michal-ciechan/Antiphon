@@ -61,7 +61,9 @@ public static class AnchoredDelete
         return true;
     }
 }
-public readonly record struct AnchoredChild(string Name, string Kind, long Size);
+// Device is the Linux device id or the Windows volume serial. Inode is the inode or file index.
+// A zero Inode is unbound and is not checked at unlink.
+public readonly record struct AnchoredChild(string Name, string Kind, long Size, ulong Device = 0, ulong Inode = 0);
 
 // Truncation would change bytes reachable through another hard link. The caller unlinks the name.
 public sealed class AnchoredHardLinkException : IOException
@@ -129,7 +131,8 @@ public interface ICheckpointCleanupIo
     IReadOnlyList<AnchoredChild> ListAnchored(string directory);
     // Unlink this name through an ancestor-safe nofollow walk of directory.
     // Symlink, FIFO and socket names are removed without being opened.
-    void UnlinkAnchored(string directory, string name, bool directoryEntry);
+    // device and inode are the identity recorded at listing. Zero inode skips that check.
+    void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0);
     // Shrink a regular file through the same walk. A symlink or FIFO is refused.
     void TruncateAnchored(string directory, string name, long length);
     string? EnvironmentVariable(string name);

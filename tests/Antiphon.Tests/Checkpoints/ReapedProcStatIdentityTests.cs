@@ -78,7 +78,7 @@ public sealed class ReapedProcStatIdentityTests
         public void RemoveDirectory(string path, bool recursive) => throw Unused();
         public void DeleteAnchored(string path, FilesystemIdentity expectedEntry, bool directory) => throw Unused();
         public IReadOnlyList<AnchoredChild> ListAnchored(string directory) => throw Unused();
-        public void UnlinkAnchored(string directory, string name, bool directoryEntry) => throw Unused();
+        public void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0) => throw Unused();
         public void TruncateAnchored(string directory, string name, long length) => throw Unused();
         public string? EnvironmentVariable(string name) => throw Unused();
     }

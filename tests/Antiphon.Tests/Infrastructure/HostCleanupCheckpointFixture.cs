@@ -296,16 +296,23 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
             var child = Nodes[path];
             var kind = child.Target is not null ? "symlink"
                 : child.Stat.Kind is "file" or "directory" or "fifo" or "socket" ? child.Stat.Kind : "other";
-            children.Add(new AnchoredChild(Path.GetFileName(path), kind, kind == "file" ? child.Bytes.Length : 0));
+            children.Add(new AnchoredChild(Path.GetFileName(path), kind, kind == "file" ? child.Bytes.Length : 0,
+                child.Stat.Device, child.Stat.Inode));
         }
         return children;
     }
-    public void UnlinkAnchored(string directory, string name, bool directoryEntry)
+    public void UnlinkAnchored(string directory, string name, bool directoryEntry, ulong device = 0, ulong inode = 0)
     {
         if (!Nodes.TryGetValue(directory, out var parent) || parent.Stat.Kind != "directory" || parent.Target is not null)
             throw new IOException("anchored-open-failed");
         var path = Path.Combine(directory, name);
-        if (!Nodes.TryGetValue(path, out var node)) throw new FileNotFoundException(path);
+        if (!Nodes.TryGetValue(path, out var node))
+        {
+            if (!directoryEntry) return;
+            throw new FileNotFoundException(path);
+        }
+        if (inode != 0 && (node.Stat.Device != device || node.Stat.Inode != inode))
+            throw new IOException("anchored-identity-changed");
         var isDirectory = node.Stat.Kind == "directory" && node.Target is null;
         if (directoryEntry != isDirectory)
             throw new IOException(directoryEntry ? "anchored-not-directory" : "anchored-not-leaf");
