@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using System.Data.Common;
 using Shouldly;
 using TUnit.Core;
@@ -625,7 +626,10 @@ public class TerminalRunnerSeatReleaseTests
         Task answer = Task.CompletedTask;
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // BeforeDispatch is the signal. The budget is on a test clock this test does not
+            // advance, so a loaded host cannot expire the wait before the boundary.
+            var boundaryClock = new FakeTimeProvider();
+            await WaitForBeforeDispatchAsync(entered.Task, boundaryClock, TimeSpan.FromSeconds(10));
             answer = f.TryAnswerAsync("race answer");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "answer cannot mutate while release owns the queue gate");
         }
@@ -668,6 +672,31 @@ public class TerminalRunnerSeatReleaseTests
                 .AdvanceAsync(reserved.ReleaseId!.Value, early.Observation, default);
         early.Wire.ConditionalCommands.ShouldBe(0);
         (await early.TaskAsync()).Attempt.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task BeforeDispatch_budget_follows_the_test_clock()
+    {
+        var clock = new FakeTimeProvider();
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = WaitForBeforeDispatchAsync(signal.Task, clock, TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var finished = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        finished.ShouldBe(wait, "a loaded host must not spend a wall-clock cap");
+        await Should.ThrowAsync<TimeoutException>(wait);
+    }
+
+    private static async Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget)
+    {
+        using var timeout = new CancellationTokenSource(budget, clock);
+        try
+        {
+            await signal.WaitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException("BeforeDispatch was not signaled before the test-clock budget elapsed.");
+        }
     }
 
     [Test]
