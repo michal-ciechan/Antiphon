@@ -7609,14 +7609,95 @@ c1008_audit() {
     printf '%s' "$output" | sort
 }
 
+# Release only the helper this preview created. A missing id, a missing container,
+# or a label that is not this run's is left untouched. docker kill runs only while
+# that id is still running, so a helper --rm already removed is not killed.
+c1008_preview_release() {
+    local id="" label="" cid="" inspected="" got="" running="" watch=""
+    id="${c1008_preview_owned_id:-}"
+    label="${c1008_preview_owned_label:-}"
+    cid="${c1008_preview_cidfile:-}"
+    watch="${c1008_preview_watch_pid:-}"
+    c1008_preview_owned_id=''
+    c1008_preview_owned_label=''
+    c1008_preview_cidfile=''
+    c1008_preview_watch_pid=''
+    if [ -n "$watch" ]; then
+        kill "$watch" 2>/dev/null || true
+        wait "$watch" 2>/dev/null || true
+    fi
+    if [ -z "$id" ] && [ -n "$cid" ] && [ -f "$cid" ]; then
+        id="$(tr -d '[:space:]' < "$cid" 2>/dev/null || true)"
+    fi
+    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 0
+    [ -n "$label" ] || return 0
+    inspected="$(docker inspect "$id" 2>/dev/null)" || return 0
+    got="$(printf '%s' "$inspected" | jq -r '.[0].Config.Labels["io.antiphon.preview-audit"] // empty' 2>/dev/null || true)"
+    [ "$got" = "$label" ] || return 0
+    running="$(printf '%s' "$inspected" | jq -r '.[0].State.Running // empty' 2>/dev/null || true)"
+    if [ "$running" = "true" ]; then
+        docker kill "$id" >/dev/null 2>&1 || true
+    fi
+    docker rm -f -- "$id" >/dev/null 2>&1 || true
+    if docker inspect "$id" >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+c1008_preview_restore_traps() {
+    trap - INT TERM HUP
+    trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
+}
+
+# The audit runs in this shell, not a command substitution, so these traps see
+# the script's own signal. wait is interruptible; a foreground docker run is not.
+c1008_preview_on_signal() {
+    if [ -n "${c1008_preview_run_pid:-}" ]; then
+        kill -TERM "${c1008_preview_run_pid}" 2>/dev/null || true
+    fi
+    c1008_preview_release || true
+    c1008_preview_restore_traps
+    exit 143
+}
+
+c1008_preview_finish() {
+    local run_code="$1" release_status=0 output=""
+    c1008_preview_release || release_status=$?
+    c1008_preview_restore_traps
+    if [ "$release_status" != 0 ]; then
+        printf 'audit check=preview-helper status=2 repo=.\n'
+        return 2
+    fi
+    if [ -f "${c1008_preview_output_file:-}" ]; then
+        output="$(cat "$c1008_preview_output_file")"
+    fi
+    if [ "$run_code" != 0 ]; then
+        printf '%s\n' "$output"
+        case "$output" in
+            *RecycleUnpublishedWork*) return 3 ;;
+            *RecycleWorktreeDirty*) return 4 ;;
+            *) return 2 ;;
+        esac
+    fi
+    printf '%s' "$output" | sort
+}
+
 # A bound retire-temp preview runs the same program as apply inside the pinned
-# image. Docker mounts both volumes read-only, drops every capability and attaches
-# no network, so a hook cannot remount or write. --rm removes the container. The
-# host does not invoke Git. A container that can write a volume is not a preview.
+# image. Docker mounts both volumes read-only and drops every capability. The
+# network is apply's: no --network argument. --init, a run-owned name and label,
+# and docker kill of that id keep the helper inside the audit budget. The host
+# does not invoke Git. A container that can write a volume is not a preview.
 c1008_audit_readonly() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image cap resolve_status=0
-    local name program output code=0
+    local name token label cidfile program code=0 run_status=0 attempt raw=""
     local -a mounts=()
+    c1008_preview_owned_id=''
+    c1008_preview_owned_label=''
+    c1008_preview_cidfile=''
+    c1008_preview_run_pid=''
+    c1008_preview_watch_pid=''
+    c1008_preview_output_file=''
     facts="$(c1008_volume "$work")" || return 2
     if [ "$facts" = null ]; then
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
@@ -7639,26 +7720,66 @@ c1008_audit_readonly() {
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
-    name="c1008-preview-audit-$$"
-    program="$(c1008_git_program)"
-    output="$(timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --network none --cap-drop ALL \
-        --user 1654:1654 --entrypoint /bin/bash \
-        "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" || code=$?
-    # --rm removes the helper. A name that is still inspectable after that lost
-    # the race with removal; one more rm, then a remaining container is a failure.
+    [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] || {
+        printf 'audit check=preview-name status=2 repo=.\n'
+        return 2
+    }
+    token="$(od -An -N8 -tx1 /dev/urandom | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+    [[ "$token" =~ ^[0-9a-f]{16}$ ]] || {
+        printf 'audit check=preview-name status=2 repo=.\n'
+        return 2
+    }
+    name="c1008-preview-${C1008_OPERATION}-${token}"
+    label="${C1008_OPERATION}:${token}"
+    cidfile="$CASE_DIR/preview-${token}.cid"
+    c1008_preview_output_file="$CASE_DIR/preview-${token}.out"
+    rm -f -- "$cidfile" "$c1008_preview_output_file"
+    # An existing name belongs to something else. Refuse before creating, and do
+    # not remove it.
     if docker inspect "$name" >/dev/null 2>&1; then
-        docker rm -- "$name" >/dev/null 2>&1 || true
-        docker inspect "$name" >/dev/null 2>&1 && return 2
+        printf 'audit check=preview-name status=2 repo=.\n'
+        return 2
     fi
-    if [ "$code" != 0 ]; then
-        printf '%s\n' "$output"
-        case "$output" in
-            *RecycleUnpublishedWork*) return 3 ;;
-            *RecycleWorktreeDirty*) return 4 ;;
-            *) return 2 ;;
-        esac
+    program="$(c1008_git_program)"
+    c1008_preview_owned_label="$label"
+    c1008_preview_cidfile="$cidfile"
+    trap 'ec=$?; c1008_preview_release || true; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
+    trap 'c1008_preview_on_signal' INT TERM HUP
+    # Backgrounded so a signal reaches the trap during wait. timeout covers the
+    # client; the watchdog docker-kills the owned id at the same budget.
+    timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
+        --security-opt no-new-privileges --user 1654:1654 --init \
+        --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
+        --entrypoint /bin/bash \
+        "${mounts[@]}" "$image" -c "$program" >"$c1008_preview_output_file" 2>/dev/null &
+    c1008_preview_run_pid=$!
+    attempt=0
+    while [ "$attempt" -lt 25 ]; do
+        if [ -f "$cidfile" ]; then
+            raw="$(tr -d '[:space:]' < "$cidfile" 2>/dev/null || true)"
+            if [[ "$raw" =~ ^[0-9a-f]{64}$ ]]; then
+                c1008_preview_owned_id="$raw"
+                break
+            fi
+        fi
+        if ! kill -0 "$c1008_preview_run_pid" 2>/dev/null; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.2
+    done
+    if [[ "${c1008_preview_owned_id:-}" =~ ^[0-9a-f]{64}$ ]]; then
+        c1008_preview_watch_id="$c1008_preview_owned_id"
+        (
+            sleep "$cap"
+            docker kill "$c1008_preview_watch_id" >/dev/null 2>&1 || true
+        ) &
+        c1008_preview_watch_pid=$!
     fi
-    printf '%s' "$output" | sort
+    wait "$c1008_preview_run_pid" || code=$?
+    c1008_preview_run_pid=''
+    c1008_preview_finish "$code" || run_status=$?
+    return "$run_status"
 }
 
 c1008_audit_checked() {
@@ -7936,7 +8057,10 @@ c1008_recycle() {
         if [ -n "${C994_IMAGE:-}" ]; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleGitAuditUnknown
             code=0
-            audit="$(c1008_audit_readonly)" || code=$?
+            rm -f -- "$CASE_DIR/preview-audit.out"
+            # Current shell: the helper traps have to see this script's signals.
+            c1008_audit_readonly >"$CASE_DIR/preview-audit.out" || code=$?
+            audit="$(cat "$CASE_DIR/preview-audit.out" 2>/dev/null || true)"
             if [ "$code" != 0 ]; then
                 detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
