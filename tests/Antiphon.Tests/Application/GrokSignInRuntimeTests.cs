@@ -41,6 +41,9 @@ public class GrokSignInRuntimeTests
     // 2x the 32s stored serial duration (nightly-class-costs.json, run 8f055f87,
     // n=1, may-understate, not a p95). The method timeout is above the two
     // sequential 64s caps so each cap can report before TUnit cancels.
+    // Left under the 190s run-28bbb58e bound: this class is two tests on
+    // ProcessSpawnLimit (limit 1), packed with 14 single-node classes
+    // (all-group-58, 88s), not a 39-row wave.
     private static readonly TimeSpan SignInWallCap = TimeSpan.FromSeconds(64);
 
     [Test]

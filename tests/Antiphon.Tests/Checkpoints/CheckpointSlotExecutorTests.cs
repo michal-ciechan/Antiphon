@@ -15,6 +15,12 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
 {
+    // About 2x the 94.8s max from run 28bbb58e. This class is ProcessSpawnLimit
+    // 1, but the same chunk includes OutputCleanupTests (49 rows) and
+    // CheckpointTaskOwnershipTests (24), which have no limiter. One hung wait
+    // is 190s, under the 900s launch target.
+    private static readonly TimeSpan SeatExecutorWallCap = TimeSpan.FromSeconds(190);
+
     private static readonly Guid TaskId = Guid.Parse("11111111-1111-4111-8111-111111111111");
     private static readonly Guid SessionId = Guid.Parse("22222222-2222-4222-8222-222222222222");
     private const string Token = "C833-SYNTHETIC-OWNER";
@@ -130,7 +136,8 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var startUnavailable = 0;
         try
         {
-            var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
+            using var wall = new CancellationTokenSource();
+            var pending = CheckpointApp.ExecuteAsync(run, wall.Token, Runtime(recorder, driver,
                 startTimeReader: process =>
                 {
                     try
@@ -144,6 +151,17 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
                         throw;
                     }
                 }));
+            int exit;
+            try
+            {
+                exit = await pending.WaitAsync(SeatExecutorWallCap);
+            }
+            catch (TimeoutException)
+            {
+                wall.Cancel();
+                throw new TimeoutException(
+                    $"renew driver exceeded the {SeatExecutorWallCap.TotalSeconds:0}s wall cap.");
+            }
             SkipWhenStartUnread(Volatile.Read(ref startUnavailable), exit);
             exit.ShouldBe(0);
             var calls = recorder.Calls.ToArray();
@@ -309,10 +327,10 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
                     child = Process.GetProcessById(process.Id);
                     return process.StartTime;
                 }));
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(SeatExecutorWallCap);
             host.Broker.List().Occupied.ShouldBe(1);
             cancel.Cancel();
-            try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
+            try { await execute.WaitAsync(SeatExecutorWallCap); }
             catch (OperationCanceledException) { }
             host.Broker.List().Occupied.ShouldBe(0);
             recorder.Calls.Count(call => call.Method == "DELETE").ShouldBe(1, "released-lease: exact DELETE");
