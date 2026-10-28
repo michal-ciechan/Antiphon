@@ -41,6 +41,76 @@ const ptyProbe = (shape, script) => {
   }
   return status;
 };
+// Bound retire-temp preview. The same program as apply, with both volumes
+// read-only in a private mount namespace. Anything that could write a volume
+// fails closed. No container is recorded: --rm removes it.
+const previewRun = () => {
+  const reason = (why) => {
+    fs.appendFileSync(path.join(root, 'preview-helper-stderr'), why + '\n');
+    process.stderr.write(why + '\n');
+    process.exit(2);
+  };
+  if (args.includes('--privileged') || args.includes('--cap-add') || args.includes('-v') || args.includes('--volume')) reason('preview flag refused');
+  if (!args.includes('--rm')) reason('preview requires --rm');
+  const network = args.indexOf('--network');
+  if (network < 0 || args[network + 1] !== 'none') reason('preview requires --network none');
+  const dropped = args.indexOf('--cap-drop');
+  if (dropped < 0 || args[dropped + 1] !== 'ALL') reason('preview requires --cap-drop ALL');
+  if (args.indexOf('--user') < 0 || args[args.indexOf('--user') + 1] !== '1654:1654') reason('preview requires --user 1654:1654');
+  if (args.indexOf('--entrypoint') < 0 || args[args.indexOf('--entrypoint') + 1] !== '/bin/bash') reason('preview requires --entrypoint /bin/bash');
+  const named = args.indexOf('--name');
+  if (named < 0 || !/^c1008-preview-audit-[0-9]+$/.test(args[named + 1] || '')) reason('preview name refused');
+  const programAt = args.indexOf('-c');
+  if (programAt < 1 || !/^sha256:[0-9a-f]{64}$/.test(args[programAt - 1] || '')) reason('preview image must be the pinned id');
+  const mounts = args.flatMap((a, i) => a === '--mount' ? [args[i + 1]] : []);
+  const envs = args.flatMap((a, i) => a === '--env' ? [args[i + 1]] : []);
+  const mount = mounts[0] || '';
+  if (!mount.endsWith(',readonly') || !mount.includes('target=/work')) reason('preview work mount refused');
+  const vol = (mount.match(/source=([^,]+)/) || [])[1];
+  if (!vol || !state.volumes[vol]) reason('preview work volume missing');
+  if (mounts[1] !== 'type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648') reason('preview tmpfs refused');
+  const tmpVol = vol.replace(/_work$/, '_runner-tmp');
+  const mountEnv = envs.filter(e => e === 'C1008_TMP_MOUNT=/runner-tmp');
+  const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp');
+  const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))
+    && new Set(extra.map(e => e.split('=', 1)[0])).size === extra.length;
+  if (!mounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(',readonly'))) reason('preview volume mount is writable');
+  let tmpMount = '';
+  if (mounts.length === 3) {
+    if (mounts[2] !== 'type=volume,source=' + tmpVol + ',target=/runner-tmp,readonly' || !state.volumes[tmpVol] || mountEnv.length !== 1 || !forwarded) reason('preview runner-tmp mount refused');
+    tmpMount = state.volumes[tmpVol].Mountpoint;
+  } else if (mounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
+  const program = args[programAt + 1];
+  if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
+  const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program};
+  for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
+  if (tmpMount) env.C1008_SIM_TMP = tmpMount;
+  const outer = [
+    'set -euo pipefail',
+    'mount --make-rprivate /',
+    'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_WORK"',
+    'mount -o remount,bind,ro -- "$C1008_SIM_WORK"',
+    'mkdir -p /work',
+    'mount --bind -- "$C1008_SIM_WORK" /work',
+    'mount -o remount,bind,ro /work',
+    'if [ -n "${C1008_SIM_TMP:-}" ]; then',
+    '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_TMP"',
+    '  mount -o remount,bind,ro -- "$C1008_SIM_TMP"',
+    '  mkdir -p /runner-tmp',
+    '  mount --bind -- "$C1008_SIM_TMP" /runner-tmp',
+    '  mount -o remount,bind,ro /runner-tmp',
+    'fi',
+    'mount -t tmpfs -o mode=1777,size=2147483648 none /tmp',
+    'exec unshare --user --map-root-user -- bash -c "$C1008_SIM_PROGRAM"',
+  ].join('\n');
+  const run = cp.spawnSync('unshare', ['--user', '--map-root-user', '--mount', 'bash', '-c', outer], {env, encoding: 'utf8', timeout: 60000});
+  if (run.stdout) process.stdout.write(run.stdout);
+  if (run.status !== 0) {
+    const err = run.stderr || (run.error && run.error.message) || 'preview helper failed';
+    fs.appendFileSync(path.join(root, 'preview-helper-stderr'), err + '\n');
+  }
+  process.exit(run.status === null || run.status === undefined ? 2 : run.status);
+};
 const name = args.at(-1), fault = state.fault || '';
 if(state.dockerStderr&&args[0]==='inspect')process.stderr.write(state.dockerStderr+'\n');
 if (fault === 'ps-error' && args[0] === 'ps') fail();
@@ -188,5 +258,6 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
   process.exit(state.tmpAssets===false?1:0);
  }
  else fail();
-} else fail();
+} else if (args[0] === 'run') previewRun();
+else fail();
 NODE
