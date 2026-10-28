@@ -60,7 +60,9 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(SessionBackend.Herdr, AgentKind.Grok)]
     public async Task AlwaysOn_channel_bound_survives_child_death_and_replies(SessionBackend backend, AgentKind kind)
     {
-        if (OperatingSystem.IsLinux())
+        // Grok is reproduced on Linux: FakeHerdr never writes the native directory, so
+        // the runner's --resume guard fails the same way the Windows qualification saw.
+        if (OperatingSystem.IsLinux() && kind != AgentKind.Grok)
             Skip.Test("CARD-0865: Linux standing/always-on channel parity awaits native recovery fixes.");
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card0186-s4-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
