@@ -103,6 +103,15 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("audited whether or not its checkout still exists");
         section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
         section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
+        // CARD-1594: antiphon-evidence/ is the third common-dir agent directory.
+        // It is walked. review-evidence/ is not, and that bound is the cap.
+        section.ShouldContain("`antiphon-evidence/` is allowed only in the common directory");
+        section.ShouldContain("`antiphon/` is safe because it is product state");
+        section.ShouldContain("`review-evidence/` is safe because it is agent evidence rather than repository state");
+        section.ShouldContain("A symlink, any other file type, a regular file with a second hard link, or an entry the audit cannot read refuses `RecycleGitAuditUnknown` (`gitdir-entry`)");
+        section.ShouldContain("There is no depth, file-count or size cap");
+        section.ShouldContain("an executable bit on a regular file is allowed");
+        section.ShouldContain("A directory named `logs` is allowed");
         // CARD-1335: the linked-admin mirror-owner stamp is on the closed list, and a
         // gitdir-entry refusal names that admin.
         section.ShouldContain("antiphon-mirror-owner.json");
