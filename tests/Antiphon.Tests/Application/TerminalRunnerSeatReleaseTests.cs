@@ -693,11 +693,49 @@ public class TerminalRunnerSeatReleaseTests
         await Should.ThrowAsync<TimeoutException>(wait);
     }
 
+    [Test]
+    public async Task BeforeDispatch_late_hook_passes_at_sixty_seconds_and_fails_past_the_cap()
+    {
+        var logical = new FakeTimeProvider();
+        var wall = new FakeTimeProvider();
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = WaitForBeforeDispatchAsync(signal.Task, logical, TimeSpan.FromSeconds(10),
+            BeforeDispatchWallCap, wallClock: wall);
+
+        wall.Advance(TimeSpan.FromSeconds(32));
+        var atThirtyTwo = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(200)));
+        atThirtyTwo.ShouldNotBe(wait, "32s of wall delay must not fail a hook that is only late");
+
+        wall.Advance(TimeSpan.FromSeconds(28));
+        var atSixty = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(200)));
+        atSixty.ShouldNotBe(wait, "60s of wall delay must not fail a hook that is only late");
+        signal.SetResult();
+        var passed = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        passed.ShouldBe(wait, "a hook 60s late must pass");
+        await wait;
+
+        var expiredClock = new FakeTimeProvider();
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expired = WaitForBeforeDispatchAsync(never.Task, logical, TimeSpan.FromSeconds(10),
+            BeforeDispatchWallCap, wallClock: expiredClock);
+        expiredClock.Advance(BeforeDispatchWallCap - TimeSpan.FromSeconds(1));
+        var beforeCap = await Task.WhenAny(expired, Task.Delay(TimeSpan.FromMilliseconds(200)));
+        beforeCap.ShouldNotBe(expired, "the wait fails only once the wall cap elapses");
+        expiredClock.Advance(TimeSpan.FromSeconds(1));
+        var atCap = await Task.WhenAny(expired, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        atCap.ShouldBe(expired, "the wait fails at the wall cap");
+        var error = await Should.ThrowAsync<TimeoutException>(expired);
+        error.Message.ShouldContain("wall cap");
+    }
+
     private static async Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget,
-        TimeSpan? wallCap = null, CancellationToken cancellationToken = default)
+        TimeSpan? wallCap = null, CancellationToken cancellationToken = default,
+        TimeProvider? wallClock = null)
     {
         using var logical = new CancellationTokenSource(budget, clock);
-        using var wall = new CancellationTokenSource(wallCap ?? System.Threading.Timeout.InfiniteTimeSpan);
+        using var wall = wallCap is { } cap
+            ? new CancellationTokenSource(cap, wallClock ?? TimeProvider.System)
+            : new CancellationTokenSource();
         using var clocks = CancellationTokenSource.CreateLinkedTokenSource(logical.Token, wall.Token);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(clocks.Token, cancellationToken);
         try
