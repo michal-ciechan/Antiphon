@@ -43,7 +43,8 @@ public sealed record QueuedMessageDto(
     string Origin = "Ui",
     bool Parked = false,
     string? NoteHeader = null,
-    bool ModalBlocked = false);
+    bool ModalBlocked = false,
+    string? WithholdReason = null);
 
 /// <summary>
 /// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.
@@ -78,3 +79,26 @@ public sealed record SessionQueueDto(
     DeliveryReceiptDto? LastDelivery = null,
     bool ModalBlocked = false,
     string? ModalBlockedReason = null);
+
+/// <summary>One pending note on the read-only poll. <see cref="WithholdReason"/> is the current queue withhold, when one is active.</summary>
+public sealed record PendingNoteDto(
+    Guid Id,
+    long Sequence,
+    string Body,
+    DateTime CreatedAt,
+    int DeliveryAttempts,
+    string Origin,
+    string? NoteHeader,
+    string? WithholdReason);
+
+/// <summary>
+/// A bounded page of pending notes after <see cref="Since"/> (exclusive sequence).
+/// <see cref="NextSince"/> is the last returned sequence, or <see cref="Since"/> when the page is empty.
+/// </summary>
+public sealed record PendingNotePageDto(
+    Guid SessionId,
+    long Since,
+    long NextSince,
+    bool ModalBlocked,
+    string? WithholdReason,
+    IReadOnlyList<PendingNoteDto> Notes);

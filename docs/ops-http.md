@@ -859,10 +859,12 @@ runner rollout on the rc line, with loaded SHAs and `window-v1` verified directl
 ### Claude dialog observation and guarded input (CARD-0680)
 
 Runner snapshots optionally carry `dialog`: runtime epoch, accepted generation,
-output sequence, input revision, Clear/Blocked/Unknown, kind/cancel metadata and
-optional submitted-input evidence. Missing metadata means unsupported/Unknown.
+output sequence, input revision, Clear/Blocked/Unknown, the classified
+`screenState`, `adopted`, `inputUncertain`, kind/cancel metadata and optional
+submitted-input evidence. Missing metadata means unsupported/Unknown.
 The server reads this on demand with a cancellable two-second deadline; it keeps
 no cached Clear authority. Snapshot reads do not mutate queue state or send keys.
+Those fields name a withhold. They do not authorize a write.
 
 Automated conditional input requires `claudeDialogGuardV1` and sends the exact
 snapshot generation/sequence/revision/epoch with `requireClaudeDialogClear=true`.
@@ -870,9 +872,20 @@ Refusals include `modal-blocked`, `observation-unknown`, `stale-observation`,
 `generation-mismatch` and `unsupported`; none authorizes raw fallback. An unknown
 transport acknowledgement is uncertain, not a zero-byte refusal. The interactive
 session input endpoint remains intentional input and advances the same revision.
-`SessionQueueDto.modalBlockedReason` distinguishes an observed Claude dialog from
-unavailable evidence. Resolve dialogs interactively or through separately
-qualified owner actions; do not force Enter, clear holds by age, or release a seat.
+`SessionQueueDto.modalBlockedReason` names the withhold: an observed Claude dialog,
+a missing snapshot, an accepted-generation mismatch, uncertain input, an adopted
+session, an unreadable screen, or other unavailable evidence. Each pending row
+repeats that text as `withholdReason`. A real dialog, a remote-control menu, and
+a missing snapshot leave `deliveryAttempts` at 0. The other withholds record one
+attempt and then stop, so a later flush does not spin the count. Resolve dialogs
+interactively or through separately qualified owner actions; do not force Enter,
+clear holds by age, or release a seat.
+
+`GET /api/sessions/{id}/pending-notes?since={sequence}&limit={n}` returns pending
+notes with sequence greater than `since`, oldest first, at most 100 rows (default
+50). `nextSince` is the last sequence on the page, or `since` when the page is
+empty. The route is a read: it does not flush, charge an attempt, or type. A
+missing session is 404. Use it to fetch withheld notices without sending input.
 
 ### Provider input waits (CARD-1518)
 

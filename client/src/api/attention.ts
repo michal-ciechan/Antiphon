@@ -199,6 +199,11 @@ export type AttentionKind =
    */
   | 'SlotOrphan'
   | 'ProviderInputWait'
+  /**
+   * Pending notes on one destination are older than the configured age and still
+   * under the delivery-attempt cap. Warning. One row per destination. Detection only.
+   */
+  | 'PendingNotesAged'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -141,6 +141,51 @@ public class ClaudeDialogInputGuardTests
         (await single.Runtime.GetSnapshotAsync(single.Id, CancellationToken.None)).Dialog!.SubmittedInput.ShouldBeNull();
     }
 
+    [Test]
+    public async Task C1591_AdoptedIdleDraftDialogAndWorkingWriteNothing()
+    {
+        const string draft = "────────────────────\n❯ Try \"ship the note\"\n────────────────────\n? for shortcuts";
+        const string working = "Reading files…\n✻ Working… (esc to interrupt)";
+        await using var adopted = new Fixture(adopted: true);
+        foreach (var (screen, screenState) in new (string Screen, ProviderDialogState State)[]
+        {
+            (Clear, ProviderDialogState.Clear),
+            (draft, ProviderDialogState.Clear),
+            (working, ProviderDialogState.Clear),
+            (Modal, ProviderDialogState.Blocked),
+        })
+        {
+            adopted.Session.RenderDialogScreenForTest(screen);
+            (await adopted.SendAsync("adopted-" + screenState)).Outcome
+                .ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+            var dialog = (await adopted.Runtime.GetSnapshotAsync(adopted.Id, CancellationToken.None)).Dialog!;
+            dialog.Adopted.ShouldBeTrue();
+            dialog.InputHistoryKnown.ShouldBeFalse();
+            dialog.InputUncertain.ShouldBeFalse();
+            dialog.State.ShouldBe(ProviderDialogState.Unknown);
+            dialog.ScreenState.ShouldBe(screenState);
+        }
+        adopted.Child.Inputs.ShouldBeEmpty();
+
+        await using var known = new Fixture();
+        known.Session.RenderDialogScreenForTest(working);
+        (await known.SendAsync("known-working")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        known.Child.Inputs.ShouldBe(["known-working"]);
+        var workingDialog = (await known.Runtime.GetSnapshotAsync(known.Id, CancellationToken.None)).Dialog!;
+        workingDialog.Adopted.ShouldBeFalse();
+        workingDialog.InputHistoryKnown.ShouldBeTrue();
+        workingDialog.State.ShouldBe(ProviderDialogState.Clear);
+        workingDialog.ScreenState.ShouldBe(ProviderDialogState.Clear);
+
+        known.Session.RenderDialogScreenForTest(Modal);
+        (await known.SendAsync("known-dialog")).Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        known.Child.Inputs.ShouldBe(["known-working"]);
+        var blocked = (await known.Runtime.GetSnapshotAsync(known.Id, CancellationToken.None)).Dialog!;
+        blocked.State.ShouldBe(ProviderDialogState.Blocked);
+        blocked.ScreenState.ShouldBe(ProviderDialogState.Blocked);
+        blocked.InputHistoryKnown.ShouldBeTrue();
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));
