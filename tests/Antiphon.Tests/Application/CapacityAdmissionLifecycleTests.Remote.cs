@@ -171,7 +171,6 @@ public partial class CapacityAdmissionLifecycleTests
                 PreserveDatabaseOnDispose = true,
                 ConnectionString = schema.ConnectionString,
                 Delegation = settings,
-                TimeProvider = clock,
             });
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
                 schema.ConnectionString, harness, queued, sessionId, busy, cut);
