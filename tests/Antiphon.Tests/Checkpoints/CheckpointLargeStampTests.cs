@@ -193,9 +193,9 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
                     if (mode == "grow") node.Stat = node.Stat with { Size = bytes.Length + 1 };
                     if (mode == "shrink") node.Stat = node.Stat with { Size = bytes.Length - 1 };
                     if (mode == "inspect") f.Io.InspectFails = true;
-                    f.Clock.Advance(TimeSpan.FromSeconds(3));
+                    f.Clock.Advance(CheckpointFileReader.StallDeadline);
                 }
-                else f.Clock.Advance(TimeSpan.FromSeconds(mode == "stall" && reads == 2 ? 3 : 1));
+                else f.Clock.Advance(mode == "stall" && reads == 2 ? CheckpointFileReader.StallDeadline : TimeSpan.FromSeconds(1));
             });
             if (mode is "progress" or "eof")
             {

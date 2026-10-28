@@ -12,7 +12,8 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointEofStallTests
 {
     private const int OriginalSize = 65_536;
-    private const string StalledReason = "read-stalled: 65536 of 65536 bytes; no progress within 3s";
+    private static readonly string StalledReason =
+        $"read-stalled: 65536 of 65536 bytes; no progress within {CheckpointFileReader.StallDeadline.TotalSeconds:0}s";
 
     [Test]
     [Arguments("receipt")]

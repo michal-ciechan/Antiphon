@@ -79,7 +79,7 @@ public sealed class C1307ToolRemovalTests
             var deleted = Unlinks(f).ShouldHaveSingleItem();
             f.Io.FileExists(deleted).ShouldBeFalse();
             var remaining = ToolBytes(f);
-            f.Files.Clock.Advance(TimeSpan.FromSeconds(3));
+            f.Files.Clock.Advance(CheckpointFileReader.StallDeadline);
             var receipt = await removing.WaitAsync(TimeSpan.FromSeconds(5));
             AssertIncomplete(f, receipt);
             receipt.Reason.ShouldContain("receipt-read-refused");
