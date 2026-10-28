@@ -67,6 +67,10 @@ public sealed class WindowsDeliveryFixtureWitnessTests
     [Test]
     [Arguments(@"C:\fixture", @"C:\fixture\instructions\grok\")]
     [Arguments(@"\\server\share\fixture\", @"\\server\share\fixture\instructions\grok\")]
+    // RunnerWorkspaceService reports a Windows mirror with forward slashes (C:/...).
+    // That is the remote C1029 cwd. Receipt grammar still requires X:\ or a UNC prefix.
+    [Arguments(@"C:/fixture/worktrees/task-abcdef01", @"C:\fixture\worktrees\task-abcdef01\instructions\grok\")]
+    [Arguments(@"//server/share/fixture", @"\\server\share\fixture\instructions\grok\")]
     public void Native_Windows_recipient_rules_receipt_preserves_its_path_grammar(string cwd, string prefix)
     {
         var id = Guid.NewGuid();
