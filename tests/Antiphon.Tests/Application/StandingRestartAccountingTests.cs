@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner.Contracts;
@@ -180,6 +181,33 @@ public partial class StandingRestartAccountingTests
             await recovered.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             resumed.StartedSessionId.ShouldBe(id); resumed.StartedArgs.ShouldContain("--resume");
             resumed.StartedArgs.ShouldNotContain("--session-id");
+        }
+        finally { await AgentSupervisionTests.CleanupAsync(root); }
+    }
+
+    [Test]
+    public async Task Failed_bookkeeping_save_is_not_repeated_for_a_later_always_on_agent()
+    {
+        var root = AgentSupervisionTests.NewTempRoot();
+        var fault = new OutcomeStorageFailure();
+        var first = new FakeAgentProtocolAdapter();
+        try
+        {
+            await using var h = AgentSupervisionTests.BuildHarness(root, [first], definitionKind: "ClaudeCode",
+                configureDb: b => b.AddInterceptors(fault));
+            var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
+            var later = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
+            var db = h.Scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var subject = (await db.Agents.SingleAsync(a => a.Id == agent.Id));
+            var bystander = (await db.Agents.SingleAsync(a => a.Id == later.Id));
+            bystander.CreatedAt = subject.CreatedAt.AddMinutes(1);
+            await db.SaveChangesAsync();
+            fault.AgentId = agent.Id;
+            await h.Control.StartAsync(agent.Id, new(), default);
+            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+            fault.LaunchHits.ShouldBe(1); fault.OutcomeHits.ShouldBe(1); fault.BookkeepingHits.ShouldBe(0);
+            for (var i = 0; i < 2; i++) await h.Supervisor().TickAsync(default);
+            fault.BookkeepingHits.ShouldBe(2);
         }
         finally { await AgentSupervisionTests.CleanupAsync(root); }
     }
