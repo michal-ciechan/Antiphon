@@ -1306,6 +1306,79 @@ try {
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# CARD-1598: the post-exit read must stay inside 200 ms when the shared timing
+# root holds 600 other journals, and a rerun must not open the earlier attempt.
+$crowdRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-crowd-' + [guid]::NewGuid().ToString('N'))
+$crowdLog = Join-Path $crowdRoot 'logs'
+$crowdTiming = Join-Path $crowdLog 'timing'
+$crowdChunkName = Get-QualificationChunkDirectoryName -Chunk 'g-600' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+$crowdDir = Join-Path $crowdTiming $crowdChunkName
+New-Item -ItemType Directory -Path $crowdDir -Force | Out-Null
+try {
+    $crowdIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'g-600' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+    Assert-Check ($crowdIdentity -eq '8d1c1172c1260d2d5c0925f638af059f3a8483e982fa7d086f3a20e44d17838f') 'chunk-identity-vector'
+    $crowdLine = '{"recordKind":"complete","testId":"old","phases":[{"phase":"process-wait","startOffsetMs":0,"endOffsetMs":5000}]}' + "`n"
+    $crowdLineBytes = [Text.Encoding]::UTF8.GetBytes($crowdLine)
+    $crowdCopies = [int][math]::Floor((40MB) / $crowdLineBytes.Length)
+    $crowdChunk = New-Object byte[] ($crowdLineBytes.Length * $crowdCopies)
+    for ($i = 0; $i -lt $crowdCopies; $i++) {
+        [Buffer]::BlockCopy($crowdLineBytes, 0, $crowdChunk, ($i * $crowdLineBytes.Length), $crowdLineBytes.Length)
+    }
+    $priorName = 'cases-9-prior.jsonl'
+    $priorPath = Join-Path $crowdTiming $priorName
+    $priorHeader = '{"recordKind":"header","version":1,"pid":9,"nonce":"prior","runId":"run-600","groupId":"g-600","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}' + "`n"
+    $priorStream = [IO.File]::Create($priorPath)
+    try {
+        $priorHeaderBytes = [Text.Encoding]::UTF8.GetBytes($priorHeader)
+        $priorStream.Write($priorHeaderBytes, 0, $priorHeaderBytes.Length)
+        $priorStream.Write($crowdChunk, 0, $crowdChunk.Length)
+    } finally { $priorStream.Dispose() }
+    $priorOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk 'g-600') + '-9-prior.txt'
+    [IO.File]::WriteAllText((Join-Path $crowdTiming $priorOwner), ($priorName + "`n"))
+    for ($n = 0; $n -lt 600; $n++) {
+        $crowdPid = [string](2000 + $n)
+        $crowdNonce = ('c' + $n.ToString('000'))
+        $crowdName = 'cases-' + $crowdPid + '-' + $crowdNonce + '.jsonl'
+        $crowdHeader = '{"recordKind":"header","version":1,"pid":' + $crowdPid + ',"nonce":"' + $crowdNonce + '","runId":"other","groupId":"other-' + $n + '","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}' + "`n"
+        [IO.File]::WriteAllText((Join-Path $crowdTiming $crowdName), $crowdHeader)
+        $crowdOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk ('other-' + $n)) + '-' + $crowdPid + '-' + $crowdNonce + '.txt'
+        [IO.File]::WriteAllText((Join-Path $crowdTiming $crowdOwner), ($crowdName + "`n"))
+    }
+    $ownText = @(
+        '{"recordKind":"header","version":1,"pid":42,"nonce":"own1","runId":"run-600","groupId":"g-600","attempt":"2","suite":"antiphon","assembly":"Antiphon.Tests"}',
+        '{"recordKind":"fixture","fixtureId":"fix-own","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1250}]}',
+        '{"recordKind":"complete","testId":"own-a","phases":[{"phase":"process-spawn","startOffsetMs":0,"endOffsetMs":400}]}'
+    ) -join "`n"
+    [IO.File]::WriteAllText((Join-Path $crowdDir 'cases-42-own1.jsonl'), $ownText + "`n")
+    [IO.File]::WriteAllText((Join-Path $crowdDir ('own-' + $crowdIdentity + '-42-own1.txt')), ("cases-42-own1.jsonl`n"))
+    $bareText = @(
+        '{"recordKind":"header","version":1,"pid":7,"nonce":"bare","runId":"run-600","groupId":"g-600","attempt":"2","suite":"antiphon","assembly":"Antiphon.Tests"}',
+        '{"recordKind":"fixture","fixtureId":"fix-bare","phases":[{"phase":"fixture-teardown","startOffsetMs":0,"endOffsetMs":500}]}'
+    ) -join "`n"
+    [IO.File]::WriteAllText((Join-Path $crowdDir 'cases-7-bare.jsonl'), $bareText + "`n")
+    $foreignIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'other' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+    [IO.File]::WriteAllText((Join-Path $crowdDir ('own-' + $foreignIdentity + '-7-bare.txt')), "cases-7-bare.jsonl`n")
+    $crowdTrx = Join-Path $crowdLog 'antiphon-g-600.trx'
+    [IO.File]::WriteAllText($crowdTrx, "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<TestRun><Results>`n<UnitTestResult testId=`"a`" testName=`"OwnA`" duration=`"00:00:01`" outcome=`"Passed`" />`n</Results></TestRun>`n")
+    $crowdList = [Diagnostics.Stopwatch]::StartNew()
+    $crowdListed = @(Get-ChildItem -LiteralPath $crowdTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
+    $crowdList.Stop()
+    $crowdSw = [Diagnostics.Stopwatch]::StartNew()
+    $crowdAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 0 -ChunkResult 'KEEP-0' -LogRoot $crowdLog -TimingRoot $crowdTiming -Suite 'antiphon' -Chunk 'g-600' -TrxPath $crowdTrx -LastPhase 'complete' -StartedAt '2026-10-28T00:00:00.0000000Z' -CompletedAt '2026-10-28T00:01:00.0000000Z' -RunId 'run-600' -Attempt '2'
+    $crowdSw.Stop()
+    $crowdDoc = Get-Content -LiteralPath (Join-Path $crowdLog 'antiphon-g-600.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED six-hundred-journals files=' + $crowdListed.Count + ' root-list-ms=' + [math]::Round($crowdList.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($crowdSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$crowdDoc.why + ' setup=' + $crowdDoc.fixtureSetupSeconds + ' teardown=' + $crowdDoc.fixtureTeardownSeconds + ' spawn=' + $crowdDoc.processSpawnSeconds + ' wait=' + $crowdDoc.processWaitSeconds)
+    $crowdPhases = ([string]$crowdDoc.why -eq '' -and [math]::Abs([double]$crowdDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$crowdDoc.fixtureTeardownSeconds - 0.5) -lt 0.001 -and [math]::Abs([double]$crowdDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $crowdDoc.processWaitSeconds)
+    $crowdBound = ($crowdSw.Elapsed.TotalSeconds -lt 0.2 -and $crowdListed.Count -eq 601)
+    $crowdExit = ([int]$crowdAgg.ChunkExitCode -eq 0 -and [string]$crowdAgg.ChunkResult -eq 'KEEP-0')
+    Assert-Check ($crowdPhases -and $crowdBound -and $crowdExit) 'six-hundred-journals-stay-inside-budget'
+} catch {
+    Write-Host ('FAIL six-hundred-journals-stay-inside-budget ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    Remove-Item -LiteralPath $crowdRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failed -gt 0) {
     Write-Host ('FAILED ' + $failed)
     exit 1
