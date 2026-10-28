@@ -963,6 +963,214 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    // A temp retired at SHA A keeps its completed cleanup image. Preview and apply at
+    // SHA B must audit with that image. A different retirement, a missing image, and
+    // no record do not.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1594_Cross_sha_cleanup_image_binds_the_retired_temp()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string boundEmpty = "C1008_CLEANUP_OPERATION=" + CrossEmptyOperation;
+
+        using (var clean = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(clean);
+            var cross = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            var empty = CloneReceipt(seed, CrossEmptyOperation, image: "");
+            ReplaceReceipts(clean, cross, empty);
+            TouchNewer(clean, CrossEmptyOperation);
+            await PublishRepo(clean);
+            ShareVolumeWithApply(clean);
+            ResetPreviewTrace(clean);
+            var run = await clean.Run("retire-temp-runner", boundEmpty + "\n" + PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-cross-sha: preview audits with the retired image; " + run.Output);
+            run.Output.ShouldContain("auditPending=false");
+            run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+            AssertReadonlyPreview(clean, CrossShaImage, audited: true);
+
+            ResetPreviewTrace(clean);
+            var applied = await clean.Run("retire-temp-runner", boundEmpty);
+            applied.Exit.ShouldBe(0, "c1594-cross-sha: apply audits with the retired image; " + applied.Output);
+            var created = AppliedCreate(clean);
+            created.ShouldContain(CrossShaImage);
+            created.ShouldContain("--user");
+            created.ShouldContain("1654:1654");
+        }
+
+        using (var dirty = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(dirty);
+            ReplaceReceipts(dirty,
+                CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage),
+                CloneReceipt(seed, CrossEmptyOperation, image: ""));
+            await PublishRepo(dirty);
+            ShareVolumeWithApply(dirty);
+            await File.WriteAllTextAsync(Path.Combine(WorkMount(dirty), "repo", "dirty"), "unpublished-sentinel");
+            ResetPreviewTrace(dirty);
+            var run = await dirty.Run("retire-temp-runner", boundEmpty + "\n" + PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(2, "c1594-cross-sha: dirty work still refuses; " + run.Output);
+            run.Output.ShouldContain("RecycleWorktreeDirty");
+            run.Output.ShouldNotContain("auditPending=true");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            AssertReadonlyPreview(dirty, CrossShaImage, audited: true);
+            dirty.Removed.ShouldBeEmpty();
+        }
+
+        var unpublishedRoot = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(unpublishedRoot);
+        try
+        {
+            using var unpublished = new C1008HostFixture(main: false, unpublishedRoot);
+            var seed = await CaptureCleanupSeed(unpublished);
+            ReplaceReceipts(unpublished,
+                CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage),
+                CloneReceipt(seed, CrossEmptyOperation, image: ""));
+            await PublishRepo(unpublished);
+            ShareVolumeWithApply(unpublished);
+            var repo = Path.Combine(WorkMount(unpublished), "repo");
+            var local = Path.Combine(repo, "local");
+            await File.WriteAllTextAsync(local, "unpublished-sentinel");
+            var add = await C994ScriptProcess.Run("git", "-C", repo, "add", "local");
+            add.Exit.ShouldBe(0, "c1594-cross-sha: unpublished add; " + add.Output);
+            var commit = await C994ScriptProcess.Run("git", "-C", repo, "commit", "-qm", "unpublished");
+            commit.Exit.ShouldBe(0, "c1594-cross-sha: unpublished commit; " + commit.Output);
+            ResetPreviewTrace(unpublished);
+            var run = await unpublished.Run("retire-temp-runner", boundEmpty + "\n" + PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(2, "c1594-cross-sha: unpublished work still refuses; " + run.Output);
+            run.Output.ShouldContain("RecycleUnpublishedWork");
+            run.Output.ShouldNotContain("auditPending=true");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            AssertReadonlyPreview(unpublished, CrossShaImage, audited: true);
+            unpublished.Removed.ShouldBeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(unpublishedRoot)) Directory.Delete(unpublishedRoot, recursive: true);
+        }
+
+        foreach (var (field, value) in new (string, string)[]
+        {
+            ("retiredAt", "2026-10-04T09:30:00.000000000Z"),
+            ("projectId", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ("project", "antiphon-runner")
+        })
+        {
+            using var refused = new C1008HostFixture(main: false);
+            var seed = await CaptureCleanupSeed(refused);
+            var foreign = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            foreign[field] = value;
+            ReplaceReceipts(refused, foreign);
+            ResetPreviewTrace(refused);
+            var run = await refused.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
+            run.Exit.ShouldBe(2, "c1594-cross-sha: " + field + " is not this retirement; " + run.Output);
+            run.Output.ShouldContain("RecycleGitAuditUnknown");
+            run.Output.ShouldNotContain("auditPending=true");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            refused.Trace.Any(args => args.Length > 0 && args[0] == "run").ShouldBeFalse("c1594-cross-sha: " + field);
+            refused.Removed.ShouldBeEmpty();
+        }
+
+        using (var missing = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(missing);
+            ReplaceReceipts(missing, CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha,
+                image: "sha256:" + new string('b', 64)));
+            missing.Docker["fault"] = "original-image-missing";
+            ResetPreviewTrace(missing);
+            var run = await missing.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
+            run.Exit.ShouldBe(2, "c1594-cross-sha: a missing pinned image refuses; " + run.Output);
+            run.Output.ShouldContain("RecycleGitAuditUnknown");
+            run.Output.ShouldNotContain("auditPending=true");
+            run.Output.ShouldNotContain("C1008_PREVIEW");
+            missing.Trace.Any(args => args.Length > 0 && args[0] == "run").ShouldBeFalse("c1594-cross-sha: missing image starts no helper");
+            missing.Removed.ShouldBeEmpty();
+        }
+
+        using (var unpinned = new C1008HostFixture(main: false))
+        {
+            ResetPreviewTrace(unpinned);
+            var preview = await unpinned.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            preview.Exit.ShouldBe(0, "c1594-cross-sha: no record stays an unpinned preview; " + preview.Output);
+            preview.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            preview.Output.ShouldContain("auditPending=true");
+            preview.Output.ShouldNotContain("auditPending=false");
+            AssertReadonlyPreview(unpinned, CrossShaImage, audited: false);
+            unpinned.Docker["fault"] = "image-inspect-error";
+            ResetPreviewTrace(unpinned);
+            var apply = await unpinned.Run("retire-temp-runner");
+            apply.Exit.ShouldBe(2, "c1594-cross-sha: unpinned apply refuses when the current image is absent; " + apply.Output);
+            apply.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            apply.Output.ShouldContain("RecycleGitAuditUnknown");
+            unpinned.Removed.ShouldBeEmpty();
+        }
+
+        using (var preferred = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(preferred);
+            var current = CloneReceipt(seed, AppliedCleanupOperation, image: C1008HostFixture.SessionImage);
+            var newer = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            ReplaceReceipts(preferred, current, newer);
+            TouchNewer(preferred, CrossShaOperation);
+            ResetPreviewTrace(preferred);
+            var run = await preferred.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-cross-sha: the current SHA image still wins; " + run.Output);
+            run.Output.ShouldContain("auditPending=false");
+            AssertReadonlyPreview(preferred, C1008HostFixture.SessionImage, audited: true);
+        }
+    }
+
+    private const string CrossSourceSha = "f84228f2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private const string CrossShaImage = "sha256:4ae919704ae919704ae919704ae919704ae919704ae919704ae919704ae91970";
+    private const string CrossShaOperation = "c99400000000000000000000000000000011";
+    private const string CrossEmptyOperation = "c99400000000000000000000000000000012";
+
+    private static async Task<JsonObject> CaptureCleanupSeed(C1008HostFixture fixture)
+    {
+        fixture.Docker["containers"]!.AsArray().Add(
+            fixture.Container('7', "antiphon-runner-temp", "session-runner", running: false));
+        var sha = new string('a', 40);
+        fixture.Statuses["server2-temp"]!["buildVersion"] = sha;
+        await File.WriteAllTextAsync(Path.Combine(fixture.Root, "temp.env"),
+            "RUNNER_GROK_STORE_DIR=" + fixture.Root + "/grok\nSOURCE_REVISION=" + sha + "\n");
+        var applied = await fixture.Run("retire-temp-containers");
+        applied.Exit.ShouldBe(0, "c1594-cross-sha: seed cleanup; " + applied.Output);
+        var seed = CleanupReceipt(fixture, AppliedCleanupOperation);
+        fixture.ReloadDocker();
+        return seed;
+    }
+
+    private static JsonObject CloneReceipt(JsonObject seed, string operation, string? sourceSha = null, string? image = null)
+    {
+        var copy = JsonNode.Parse(seed.ToJsonString())!.AsObject();
+        copy["operationId"] = operation;
+        copy["dryRun"] = false;
+        copy["outcome"] = "completed";
+        if (sourceSha is not null) copy["sourceSha"] = sourceSha;
+        if (image is not null) copy["image"] = image;
+        copy.Remove("originalCleanupOperationId");
+        return copy;
+    }
+
+    private static void ReplaceReceipts(C1008HostFixture fixture, params JsonObject[] records)
+    {
+        var dir = Path.Combine(fixture.Root, "server", "temp-container-retirement");
+        Directory.CreateDirectory(dir);
+        foreach (var file in Directory.GetFiles(dir, "c994*.json")) File.Delete(file);
+        foreach (var record in records)
+            File.WriteAllText(Path.Combine(dir, record["operationId"]!.GetValue<string>() + ".json"), record.ToJsonString());
+    }
+
+    private static void TouchNewer(C1008HostFixture fixture, string operation)
+    {
+        File.SetLastWriteTimeUtc(
+            Path.Combine(fixture.Root, "server", "temp-container-retirement", operation + ".json"),
+            DateTime.UtcNow.AddMinutes(5));
+    }
+
+    private static string[] AppliedCreate(C1008HostFixture fixture) =>
+        fixture.Trace.Single(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint"));
+
     private const string AppliedCleanupOperation = "c99400000000000000000000000000000001";
     private const string PreviewCleanupOperation = "c99400000000000000000000000000000002";
 
