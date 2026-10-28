@@ -98,6 +98,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private readonly Dictionary<string, CodexRolloutProbe> _probes = new(StringComparer.OrdinalIgnoreCase);
     private Task? _loop;
     private long _seq;
+    private DateTimeOffset? _codexTokenCountAt;
     private DateTime? _childExitedAtUtc;
     private readonly TerminalTranscriptCompletion _completion = new();
     private DateTime? _firstInputObservedUtc;
@@ -220,7 +221,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     {
         lock (_gate)
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
-                _completion.IsComplete && !_claimRevoked);
+                _completion.IsComplete && !_claimRevoked,
+                CodexTokenCountAt: _codexTokenCountAt);
     }
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
@@ -379,6 +381,15 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
             _completion.ParseFailed();
             _logger.LogDebug(ex, "Failed to normalize Codex rollout row for session {SessionId}", _sessionId);
             return;
+        }
+
+        if (_normalizer.LastTokenCountAt is DateTimeOffset heartbeat)
+        {
+            lock (_gate)
+            {
+                if (_codexTokenCountAt is null || heartbeat > _codexTokenCountAt)
+                    _codexTokenCountAt = heartbeat;
+            }
         }
 
         foreach (var p in parts)
