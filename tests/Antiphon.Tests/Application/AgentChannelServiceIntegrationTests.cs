@@ -89,10 +89,11 @@ public class AgentChannelServiceIntegrationTests
 
             sourceAdapter.Emit("@helper please inspect failing test");
 
-            // Route returns when the mention is accepted. Flush, including the
-            // submitting Enter, runs afterwards, so the body is the delivery signal.
+            // Route returns when the mention is accepted. The submitting Enter records
+            // the body before OnSubmitted commits the UserPrompt, so wait for both.
             await WaitUntilAsync(
-                () => targetAdapter.SubmittedBodies.Count == 1,
+                () => targetAdapter.SubmittedBodies.Count == 1
+                    && CountUserPrompts(targetSession.Id, "[channel from lead] please inspect failing test") == 1,
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
             targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == targetSession.Id && t.Kind == TranscriptKinds.UserPrompt
@@ -422,6 +423,13 @@ public class AgentChannelServiceIntegrationTests
             await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
+    }
+
+    private static int CountUserPrompts(Guid sessionId, string text)
+    {
+        using var db = CreateContext();
+        return db.TranscriptEntries.Count(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == text);
     }
 
     private static int MentionRows(AppDbContext db, Guid sessionId, string text) =>
