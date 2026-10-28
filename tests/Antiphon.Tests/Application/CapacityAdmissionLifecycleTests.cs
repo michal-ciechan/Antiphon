@@ -367,7 +367,7 @@ public partial class CapacityAdmissionLifecycleTests
                 .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
             (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
                 && e.Type == AgentTaskEventType.Warning
-                && e.Detail == "capacity non-postgres commit fault", ct)).ShouldBe(1);
+                && e.Detail == AgentTaskDispatcher.NonPostgresCommitFaultMarker, ct)).ShouldBe(1);
             return;
         }
 
