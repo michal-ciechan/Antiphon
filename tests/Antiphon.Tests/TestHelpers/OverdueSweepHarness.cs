@@ -34,7 +34,9 @@ public static class OverdueSweepHarness
         Action<DelegationSettings>? configure = null,
         RecordingGitWorkspaceService? gitSpy = null,
         string? claudeProjectsRoot = null,
-        SaveChangesInterceptor? saveInterceptor = null)
+        SaveChangesInterceptor? saveInterceptor = null,
+        TimeProvider? clock = null,
+        ISessionRunnerClient? runner = null)
     {
         var stopper = new RecordingSessionStopper();
         var settings = new DelegationSettings
@@ -60,7 +62,11 @@ public static class OverdueSweepHarness
                 o.AddInterceptors(saveInterceptor);
         });
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        // CARD-1604: a fixed clock and a stub runner let one sweep judge the real 20-minute
+        // model wait and the pull that stamps CodexTokenCountAt. Absent, the harness is unchanged.
+        services.AddSingleton<TimeProvider>(clock ?? TimeProvider.System);
+        if (runner is not null)
+            services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(settings));
