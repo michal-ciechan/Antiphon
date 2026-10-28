@@ -1123,6 +1123,106 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    // A receipt from another retirement is history. The same retirement's completed
+    // cross-SHA image still binds. Partial and dry-run cross-SHA receipts do not.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1594_Older_retirement_receipt_is_ignored()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string olderOperation = "c99400000000000000000000000000000019";
+        const string partialOperation = "c9940000000000000000000000000000001a";
+        const string dryOperation = "c9940000000000000000000000000000001b";
+
+        using (var older = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(older);
+            var foreign = CloneReceipt(seed, olderOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            foreign["retiredAt"] = "2026-10-02T09:30:00.000000000Z";
+            ReplaceReceipts(older, foreign);
+            ResetPreviewTrace(older);
+            var run = await older.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-older-retirement: a different retirement warns; " + run.Output);
+            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            run.Output.ShouldContain("auditPending=true");
+            AssertReadonlyPreview(older, CrossShaImage, audited: false);
+        }
+
+        using (var bound = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(bound);
+            var foreign = CloneReceipt(seed, olderOperation, sourceSha: CrossSourceSha, image: "sha256:" + new string('d', 64));
+            foreign["retiredAt"] = "2026-10-02T09:30:00.000000000Z";
+            var cross = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            ReplaceReceipts(bound, foreign, cross);
+            await PublishRepo(bound);
+            ShareVolumeWithApply(bound);
+            ResetPreviewTrace(bound);
+            var run = await bound.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-older-retirement: the same retirement still binds; " + run.Output);
+            run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+            run.Output.ShouldContain("auditPending=false");
+            AssertReadonlyPreview(bound, CrossShaImage, audited: true);
+        }
+
+        using (var partial = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(partial);
+            var record = CloneReceipt(seed, partialOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            record["outcome"] = "partial";
+            ReplaceReceipts(partial, record);
+            ResetPreviewTrace(partial);
+            var run = await partial.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-older-retirement: a partial cross-SHA receipt does not count; " + run.Output);
+            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            AssertReadonlyPreview(partial, CrossShaImage, audited: false);
+        }
+
+        using (var dry = new C1008HostFixture(main: false))
+        {
+            var seed = await CaptureCleanupSeed(dry);
+            var record = CloneReceipt(seed, dryOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+            record["dryRun"] = true;
+            record["outcome"] = "preview";
+            ReplaceReceipts(dry, record);
+            ResetPreviewTrace(dry);
+            var run = await dry.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-older-retirement: a dry-run cross-SHA receipt does not count; " + run.Output);
+            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            AssertReadonlyPreview(dry, CrossShaImage, audited: false);
+        }
+    }
+
+    // Two completed receipts from other SHAs for this retirement must agree.
+    // The newest image is not a tie-break when they differ.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1594_Disagreeing_cross_sha_images_refuse()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string otherOperation = "c9940000000000000000000000000000001c";
+        const string otherSha = "dddddddddddddddddddddddddddddddddddddddd";
+        var newerImage = "sha256:" + new string('e', 64);
+        using var fixture = new C1008HostFixture(main: false);
+        var seed = await CaptureCleanupSeed(fixture);
+        var first = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+        var second = CloneReceipt(seed, otherOperation, sourceSha: otherSha, image: newerImage);
+        ReplaceReceipts(fixture, first, second);
+        TouchNewer(fixture, otherOperation);
+        ResetPreviewTrace(fixture);
+        var run = await fixture.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+        run.Exit.ShouldBe(2, "c1594-cross-sha: different images from other SHAs refuse; " + run.Output);
+        run.Output.ShouldContain("RecycleGitAuditUnknown");
+        run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        run.Output.ShouldNotContain(newerImage);
+        fixture.Trace.Any(args => args.Length > 0 && args[0] == "create").ShouldBeFalse(
+            "c1594-cross-sha: a disagreement starts no helper");
+        fixture.Removed.ShouldBeEmpty();
+    }
+
     private const string CrossSourceSha = "f84228f2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string CrossShaImage = "sha256:4ae919704ae919704ae919704ae919704ae919704ae919704ae919704ae91970";
     private const string CrossShaOperation = "c99400000000000000000000000000000011";
