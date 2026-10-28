@@ -41,7 +41,7 @@ public sealed partial class CheckpointNativeIo
             foreach (var entry in Directory.EnumerateFileSystemEntries("/proc/self/fd/" + fd))
             {
                 var name = Path.GetFileName(entry);
-                if (name is "." or ".." || !AnchoredDelete.EntryNameSafe(windows: false, name)) continue;
+                if (!AnchoredDelete.IncludeListedName(windows: false, name)) continue;
                 names.Add(name);
             }
             var children = new List<AnchoredChild>(names.Count);
@@ -159,7 +159,7 @@ public sealed partial class CheckpointNativeIo
         var children = new List<AnchoredChild>();
         foreach (var info in new DirectoryInfo(final).EnumerateFileSystemInfos())
         {
-            if (!AnchoredDelete.EntryNameSafe(windows: true, info.Name)) continue;
+            if (!AnchoredDelete.IncludeListedName(windows: true, info.Name)) continue;
             var attributes = info.Attributes;
             string kind;
             long size = 0;
