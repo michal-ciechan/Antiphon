@@ -1505,10 +1505,19 @@ permitted for an unsupported guarded peer.
 
 Queue and expectation admission still refuse the write when the veto precedes
 typing. A real blocking dialog, a remote-control menu, and a missing snapshot
-retain the pending row with no attempt. A durable observation withhold (adopted
-session, uncertain input, stale accepted generation, unreadable screen, or other
-unavailable evidence) records one delivery attempt and a transcript floor, then
-stops; later flushes do not add another attempt while that withhold holds. Adopted
+retain the pending row with no attempt and no withhold record. A durable
+observation withhold (adopted session, uncertain input, stale accepted
+generation, unreadable screen, or other unavailable evidence) records
+`WithholdCount`, `FirstWithheldAt`, `LastWithheldAt`, and `LastWithholdReason`
+and does not set `DeliveryAttempts`, `LastDeliveryStartedAt`, or
+`LastDeliveryBaselineSequence`. The same reason does not write again. A later
+durable withhold whose reason differs advances the count and `LastWithheldAt`
+once and keeps `FirstWithheldAt`. Expiry, standing recovery, resume receipt,
+late-confirm, land receipt, and the absent-launch never-attempted hold do not
+read the record as a delivery attempt. Moving a pending note onto another
+session clears the record. The record is not cleared when the withhold ends, so
+`PendingNotesAged` can still name a withhold after the session is no longer
+withheld if the note stays pending for another reason. Adopted
 idle, an operator draft, a dialog, and a Working screen on an adopted session
 still write no bytes. A body already written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw

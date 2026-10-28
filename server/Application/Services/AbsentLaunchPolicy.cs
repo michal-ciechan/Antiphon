@@ -21,6 +21,7 @@ internal static class AbsentLaunchPolicy
         "CreatedAt SentAt CanceledAt DeliveryAttempts LastDeliveryStartedAt LastDeliveryGeneration " +
         "DeliveryVerdict DeliveryVerdictAt LastDeliveryBaselineSequence " +
         "PinRefreshKey PinRequestedRevision PinRequestedHash PinRequestedLocationGeneration " +
+        "WithholdCount FirstWithheldAt LastWithheldAt LastWithholdReason " +
         "RulesRefreshKey RulesReceiptJson RulesDeadlineAt RulesAcknowledgedAt RulesFailure " +
         "RulesPromptSequence RulesTurnEndSequence RulesCoveredByMessageId RulesChainId " +
         "RulesFollowOnCount RulesBoundarySequence SourceChannelInboundId ChannelOutboundDeliveryId " +
@@ -36,6 +37,8 @@ internal static class AbsentLaunchPolicy
     /// no other related message; no historical Working, database or native/sidecar entry; positive
     /// runner absence; and the exact runner-unknown failure. Null/unknown evidence never qualifies.
     /// Current Working/listed-runner safety withholds are enforced by the caller before this decision.
+    /// WithholdCount, FirstWithheldAt, LastWithheldAt, and LastWithholdReason are classified by
+    /// omission: a withhold never types, so any values still count as never attempted.
     /// </summary>
     internal static bool IsNeverAttempted(AbsentLaunchEvidence? evidence) =>
         evidence is

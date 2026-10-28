@@ -200,8 +200,11 @@ export type AttentionKind =
   | 'SlotOrphan'
   | 'ProviderInputWait'
   /**
-   * Pending notes on one destination are older than the configured age and still
-   * under the delivery-attempt cap. Warning. One row per destination. Detection only.
+   * CARD-1591: pending notes carry a withhold record, have no delivery attempt,
+   * and were first withheld before the configured age. Warning. One row per
+   * destination. Stopped and failed sessions are excluded. Detection only.
+   * The record stays after the withhold ends, so a note that remains pending
+   * for another reason can still raise this row.
    */
   | 'PendingNotesAged'
 

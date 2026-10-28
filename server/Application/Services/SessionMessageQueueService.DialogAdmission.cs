@@ -32,8 +32,12 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>
-    /// Record one durable withhold on notes that have never been typed and have not already
-    /// been recorded. Does not set <see cref="SessionQueuedMessage.DeliveryAttempts"/>,
+    /// Record one durable withhold cycle on notes that have never been typed. The first
+    /// observation writes the record. A later observation whose reason differs advances
+    /// <see cref="SessionQueuedMessage.WithholdCount"/> and
+    /// <see cref="SessionQueuedMessage.LastWithheldAt"/> once and keeps
+    /// <see cref="SessionQueuedMessage.FirstWithheldAt"/>. The same reason does not write
+    /// again. Does not set <see cref="SessionQueuedMessage.DeliveryAttempts"/>,
     /// <see cref="SessionQueuedMessage.LastDeliveryStartedAt"/>, or
     /// <see cref="SessionQueuedMessage.LastDeliveryBaselineSequence"/>. A real dialog, a
     /// remote-control menu, and a missing snapshot do not call this.
@@ -48,14 +52,14 @@ public sealed partial class SessionMessageQueueService
         await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending
-                && m.WithholdCount == 0
                 && m.DeliveryAttempts == 0
                 && m.LastDeliveryStartedAt == null
                 && m.LastDeliveryBaselineSequence == null
-                && m.DeliveryVerdict == null)
+                && m.DeliveryVerdict == null
+                && (m.WithholdCount == 0 || m.LastWithholdReason != recorded))
             .ExecuteUpdateAsync(setters => setters
-                .SetProperty(m => m.WithholdCount, 1)
-                .SetProperty(m => m.FirstWithheldAt, now)
+                .SetProperty(m => m.WithholdCount, m => m.WithholdCount + 1)
+                .SetProperty(m => m.FirstWithheldAt, m => m.FirstWithheldAt == null ? now : m.FirstWithheldAt)
                 .SetProperty(m => m.LastWithheldAt, now)
                 .SetProperty(m => m.LastWithholdReason, recorded), ct);
     }

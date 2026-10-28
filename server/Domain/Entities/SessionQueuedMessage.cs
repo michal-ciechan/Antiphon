@@ -109,16 +109,22 @@ public class SessionQueuedMessage
     public int DeliveryAttempts { get; set; }
 
     /// <summary>
-    /// CARD-1591. How many times a durable Claude withhold was recorded while this note was still
-    /// untyped. One record per note: a later flush does not increment it. Expiry, standing
-    /// recovery, resume receipt, late-confirm, and land receipt do not read this field.
+    /// CARD-1591. How many durable Claude withhold cycles were recorded while this note was still
+    /// untyped. The first observation and each later observation with a different reason count
+    /// once. A repeat of the same reason does not increment it. Expiry, standing recovery,
+    /// resume receipt, late-confirm, land receipt, and the absent-launch hold do not read this
+    /// field as a delivery attempt.
     /// </summary>
     public int WithholdCount { get; set; }
 
-    /// <summary>When the durable withhold was first recorded. Null when <see cref="WithholdCount"/> is 0.</summary>
+    /// <summary>When the durable withhold was first recorded. Kept across later cycles. Null when <see cref="WithholdCount"/> is 0.</summary>
     public DateTime? FirstWithheldAt { get; set; }
 
-    /// <summary>When that one withhold record was written. A later flush does not move it.</summary>
+    /// <summary>
+    /// When the latest withhold cycle was recorded. Equals <see cref="FirstWithheldAt"/> on the
+    /// first cycle and moves once when a later cycle has a different reason. Null when
+    /// <see cref="WithholdCount"/> is 0.
+    /// </summary>
     public DateTime? LastWithheldAt { get; set; }
 
     /// <summary>Queue reason stored with the withhold record. Not a delivery verdict.</summary>
