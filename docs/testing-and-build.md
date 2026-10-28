@@ -1602,7 +1602,7 @@ and the embedded `scripts/lib/checkpoint-file-reader.ps1` reader. The retained
 `FileStream` detects that handle mode; a synchronous Windows handle makes
 `ReadAsync` queue blocking I/O on a worker even though the caller is already
 blocking for the bounded result. Worker availability can then consume the
-six-second window before any bytes arrive. Keep the no-follow and sequential
+three-second window before any bytes arrive. Keep the no-follow and sequential
 flags alongside the overlapped flag. `CheckpointWindowsReadModeTests` models
 unavailable workers with controlled time; the `windows-open` case in
 `CheckpointScriptReaderDeadlineTests` executes the embedded Windows factory with
