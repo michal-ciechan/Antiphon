@@ -806,10 +806,11 @@ public sealed class RollingVolumeRecycleScriptTests
 
     // A retire-temp apply writes the session image. The next preview cleanup keeps
     // that image. A bound dry-run runs the same publication audit inside that pinned
-    // image: both volumes read-only, no network, every capability dropped, --rm, and
-    // a hard timeout. That helper is the only container a preview may start. The host
-    // does not invoke Git. An unbound scan still starts no container. Apply still
-    // requires a dryRun false receipt.
+    // image: both volumes read-only, the same network as apply, every capability
+    // dropped, no-new-privileges, --init, --rm, and a hard timeout. The helper name
+    // and label belong to this preview run. That helper is the only container a
+    // preview may start. The host does not invoke Git. An unbound scan still starts
+    // no container. Apply still requires a dryRun false receipt.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
@@ -1128,9 +1129,19 @@ public sealed class RollingVolumeRecycleScriptTests
             runs.Length.ShouldBe(1, "recycle-preview-readonly: one pinned helper");
             var args = runs[0];
             args.ShouldContain("--rm");
-            var network = Array.IndexOf(args, "--network");
-            network.ShouldBeGreaterThanOrEqualTo(0);
-            args[network + 1].ShouldBe("none");
+            args.ShouldContain("--init");
+            Array.IndexOf(args, "--network").ShouldBe(-1, "recycle-preview-readonly: preview uses apply's network");
+            var security = Array.IndexOf(args, "--security-opt");
+            security.ShouldBeGreaterThanOrEqualTo(0, "recycle-preview-readonly: preview sets no-new-privileges");
+            args[security + 1].ShouldBe("no-new-privileges");
+            var named = Array.IndexOf(args, "--name");
+            named.ShouldBeGreaterThanOrEqualTo(0);
+            Regex.IsMatch(args[named + 1], "^c1008-preview-c100800000000000000000000000000000001-[0-9a-f]{16}$")
+                .ShouldBeTrue("recycle-preview-readonly: name is this operation plus a private token: " + args[named + 1]);
+            var label = Array.IndexOf(args, "--label");
+            label.ShouldBeGreaterThanOrEqualTo(0);
+            args[label + 1].ShouldStartWith("io.antiphon.preview-audit=c100800000000000000000000000000000001:");
+            args.ShouldContain("--cidfile");
             var dropped = Array.IndexOf(args, "--cap-drop");
             dropped.ShouldBeGreaterThanOrEqualTo(0);
             args[dropped + 1].ShouldBe("ALL");
@@ -1164,12 +1175,18 @@ public sealed class RollingVolumeRecycleScriptTests
         fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: preview removes nothing");
         fixture.ReloadDocker();
         foreach (var container in fixture.Docker["containers"]!.AsArray())
+        {
             container!["Config"]!["Labels"]!["io.antiphon.audit"].ShouldBeNull(
                 "recycle-preview-readonly: --rm leaves no audit container");
+            container["Config"]!["Labels"]!["io.antiphon.preview-audit"].ShouldBeNull(
+                "recycle-preview-readonly: the owned helper is gone");
+        }
     }
 
     private static async Task AssertApplyMatchesPreview(C1008HostFixture fixture, string refusal)
     {
+        var preview = fixture.Trace.Single(args => args.Length > 0 && args[0] == "run");
+        var previewNetwork = FlagValue(preview, "--network");
         ResetPreviewTrace(fixture);
         var applied = await fixture.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation);
         applied.Exit.ShouldBe(2, "recycle-preview-receipt: apply refusal matches the preview; " + applied.Output);
@@ -1177,6 +1194,167 @@ public sealed class RollingVolumeRecycleScriptTests
         foreach (var other in new[] { "RecycleWorktreeDirty", "RecycleUnpublishedWork", "RecycleGitAuditUnknown" })
             if (other != refusal) applied.Output.ShouldNotContain(other);
         fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: a refusing apply removes nothing");
+        var created = fixture.Trace.Single(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint"));
+        FlagValue(created, "--network").ShouldBe(previewNetwork, "recycle-preview-readonly: preview network matches apply");
+    }
+
+    private static string? FlagValue(string[] args, string flag)
+    {
+        var index = Array.IndexOf(args, flag);
+        return index < 0 ? null : args[index + 1];
+    }
+
+    // Timeout and abort must kill and remove the helper this run created. A name
+    // that already belongs to another container is refused and left in place.
+    // The hang stub ignores SIGTERM, so a client-only timeout leaves it running.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Preview_helper_removal_is_owned()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string bound = "C1008_CLEANUP_OPERATION=" + PreviewCleanupOperation;
+        var root = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        C1008HostFixture? fixture = null;
+        try
+        {
+            fixture = new C1008HostFixture(main: false, root);
+            await RetainPreviewImage(fixture);
+
+            await File.WriteAllTextAsync(Path.Combine(fixture.Root, "preview-hang"), "1");
+            ResetPreviewTrace(fixture);
+            // GNU timeout cannot see the docker() function. This shell timeout runs the
+            // stub, then signals that process group the way timeout --kill-after does.
+            var hang = await fixture.Run("retire-temp-runner", bound + "\n" + PreviewEnforcingTimeout, dryRun: true);
+            hang.Exit.ShouldBe(2, "recycle-preview-owned: a timed-out helper refuses; " + hang.Output);
+            hang.Output.ShouldContain("RecycleGitAuditUnknown");
+            hang.Output.ShouldNotContain("C1008_PREVIEW");
+            AssertOwnedRemoval(fixture, "timeout");
+            ReapPreviewSleepers(fixture);
+
+            ResetPreviewTrace(fixture);
+            var abort = await fixture.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe + "\n" + PreviewAbortProbe, dryRun: true);
+            abort.Exit.ShouldNotBe(0, "recycle-preview-owned: an aborted preview does not succeed; " + abort.Output);
+            AssertOwnedRemoval(fixture, "abort");
+            ReapPreviewSleepers(fixture);
+
+            File.Delete(Path.Combine(fixture.Root, "preview-hang"));
+            await File.WriteAllTextAsync(Path.Combine(fixture.Root, "preview-name-taken"), "1");
+            ResetPreviewTrace(fixture);
+            var collision = await fixture.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
+            collision.Exit.ShouldBe(2, "recycle-preview-owned: a taken name refuses; " + collision.Output);
+            collision.Output.ShouldContain("RecycleGitAuditUnknown");
+            collision.Output.ShouldNotContain("C1008_PREVIEW");
+            AssertForeignPreviewKept(fixture);
+        }
+        finally
+        {
+            if (fixture is not null) ReapPreviewSleepers(fixture);
+            fixture?.Dispose();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // Same argument shape as GNU timeout. The sleeper is the docker() stub, so the
+    // signal has to reach that process group; an external timeout would not.
+    private const string PreviewEnforcingTimeout = """
+        C1008_AUDIT_TIMEOUT_SECONDS=2
+        timeout() {
+            printf '%s\n' "$*" >> "$C1008_FIXTURE_ROOT/timeout-invocations"
+            local kill_after=10 duration=0
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --kill-after=*) kill_after="${1#*=}"; shift ;;
+                    --kill-after) shift; kill_after="$1"; shift ;;
+                    --foreground|--preserve-status) shift ;;
+                    *) break ;;
+                esac
+            done
+            duration="${1%s}"
+            shift
+            kill_after="${kill_after%s}"
+            kill_tree() {
+                local sig="$1" pid="$2" child
+                for child in $(ps -o pid= --ppid "$pid" 2>/dev/null); do
+                    kill_tree "$sig" "$child"
+                done
+                kill "$sig" "$pid" 2>/dev/null || true
+            }
+            "$@" &
+            local child=$!
+            (
+                sleep "$duration"
+                kill_tree -TERM "$child"
+                sleep "$kill_after"
+                kill_tree -KILL "$child"
+            ) &
+            local watcher=$! status=0
+            wait "$child" || status=$?
+            kill "$watcher" 2>/dev/null || true
+            wait "$watcher" 2>/dev/null || true
+            return "$status"
+        }
+        """;
+
+    private const string PreviewAbortProbe = """
+        C1008_AUDIT_TIMEOUT_SECONDS=30
+        (
+            deadline=$((SECONDS + 20))
+            while [ ! -s "$C1008_FIXTURE_ROOT/preview-helper-running" ]; do
+                [ "$SECONDS" -ge "$deadline" ] && exit 0
+                sleep 0.1
+            done
+            kill -TERM $$
+        ) &
+        """;
+
+    private static void AssertOwnedRemoval(C1008HostFixture fixture, string path)
+    {
+        fixture.ReloadDocker();
+        var left = fixture.Docker["containers"]!.AsArray().Where(container =>
+        {
+            var name = container?["Name"]?.GetValue<string>();
+            var label = container?["Config"]?["Labels"]?["io.antiphon.preview-audit"];
+            return (name?.StartsWith("c1008-preview-", StringComparison.Ordinal) ?? false) || label is not null;
+        }).ToArray();
+        left.ShouldBeEmpty("recycle-preview-owned: " + path + " leaves no preview helper");
+        fixture.Trace.Any(args => args.Length > 0 && args[0] == "kill")
+            .ShouldBeTrue("recycle-preview-owned: " + path + " kills the owned helper");
+        fixture.Trace.Any(args => args.Length > 0 && args[0] == "rm" && (args.Contains("-f") || args.Contains("--force")))
+            .ShouldBeTrue("recycle-preview-owned: " + path + " force-removes the owned helper");
+    }
+
+    private static void AssertForeignPreviewKept(C1008HostFixture fixture)
+    {
+        fixture.ReloadDocker();
+        var foreign = fixture.Docker["containers"]!.AsArray()
+            .Where(container => container?["Id"]?.GetValue<string>() == new string('9', 64)).ToArray();
+        foreign.Length.ShouldBe(1, "recycle-preview-owned: a pre-existing name is not removed");
+        foreign[0]!["Config"]!["Labels"]!["io.antiphon.foreign"]!.GetValue<string>().ShouldBe("1");
+        fixture.Trace.Any(args => args.Length > 0 && args[0] is "rm" or "kill")
+            .ShouldBeFalse("recycle-preview-owned: refusal does not remove a foreign container");
+    }
+
+    private static void ReapPreviewSleepers(C1008HostFixture fixture)
+    {
+        if (!File.Exists(fixture.StatePath)) return;
+        JsonObject docker;
+        try { docker = JsonNode.Parse(File.ReadAllText(fixture.StatePath))!.AsObject(); }
+        catch (Exception) { return; }
+        var containers = docker["containers"]?.AsArray();
+        if (containers is null) return;
+        foreach (var container in containers)
+        {
+            var pidNode = container?["State"]?["Pid"];
+            if (pidNode is null) continue;
+            int pid;
+            try { pid = pidNode.GetValue<int>(); }
+            catch (Exception) { continue; }
+            if (pid <= 1) continue;
+            try { Process.GetProcessById(pid).Kill(entireProcessTree: true); }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+        }
     }
 
     [Test]
