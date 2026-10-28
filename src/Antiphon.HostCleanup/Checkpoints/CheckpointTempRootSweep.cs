@@ -173,18 +173,18 @@ public sealed class CheckpointTempRootSweep
             { receipt.Skip(preflightOwner.Reason); continue; }
             using var rootGate = TestRootGuard.TryLock(_context, root);
             if (rootGate is null) { receipt.Skip("root-busy"); continue; }
-            var reason = Eligible(root, started);
-            if (reason is not null) { receipt.Skip(reason); continue; }
-            var marker = ReadMarker(root)!;
-            if (marker.State is not ("active" or "deleting")) { receipt.Skip("marker-state"); continue; }
-            marker.State = "deleting";
-            try { TestRootGuard.MarkDeleting(_context, root, marker, rootGate, _probe); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { receipt.Skip("marker-write-" + ex.GetType().Name); continue; }
-            receipt.EligibleRemaining++;
-            var allowance = _options.MaxBytes - receipt.ReclaimedBytes;
             try
             {
+                var reason = Eligible(root, started);
+                if (reason is not null) { receipt.Skip(reason); continue; }
+                var marker = ReadMarker(root)!;
+                if (marker.State is not ("active" or "deleting")) { receipt.Skip("marker-state"); continue; }
+                marker.State = "deleting";
+                try { TestRootGuard.MarkDeleting(_context, root, marker, rootGate, _probe); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { receipt.Skip("marker-write-" + ex.GetType().Name); continue; }
+                receipt.EligibleRemaining++;
+                var allowance = _options.MaxBytes - receipt.ReclaimedBytes;
                 var deleted = DeleteBounded(root, allowance, started);
                 receipt.ReclaimedBytes += deleted.Bytes;
                 if (deleted.Complete)
@@ -221,32 +221,40 @@ public sealed class CheckpointTempRootSweep
 
     private string? Eligible(string root, long started)
     {
-        if (Elapsed(started) >= _options.MaxDuration) return "time-budget";
-        if (!IsCandidate(root)) return "name-or-depth";
-        if (!_io.DirectoryExists(root)) return "absent";
-        if (!ContainedCleanup.SafeAncestors(root, _context)) return "inventory-incomplete-or-linked";
-        if (AnchoredInventory(root) is { } inventory) return inventory;
-        var marker = ReadMarker(root);
-        if (marker is null) return "marker-invalid";
-        if (_clock() - marker.CreatedAt < _options.Grace) return "grace";
-        var owner = _probe.Observe(marker.Owner);
-        if (owner.Verdict != ProcessVerdict.Dead) return owner.Reason;
-        foreach (var directory in EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+        try
         {
-            var hasRun = _io.FileExists(Path.Combine(directory, RunOwnershipStore.FileName));
-            var looksLikeRun = hasRun || _io.DirectoryExists(Path.Combine(directory, "tool"))
-                || _io.FileExists(Path.Combine(directory, "manifest.resolved.yaml"))
-                || _io.FileExists(Path.Combine(directory, "request.json"));
-            if (!looksLikeRun) continue;
-            if (!hasRun) return "nested-custody-missing";
-            var journal = RunOwnershipStore.Read(directory, _context);
-            if (journal is null) return "nested-custody-invalid";
-            var observed = journal.Phase == "preparing"
-                ? _probe.Observe(journal.Starter)
-                : new ToolCopyCleanup(_probe, context: _context).ObserveExecutor(directory);
-            if (observed.Verdict != ProcessVerdict.Dead) return "nested-" + observed.Reason;
+            if (Elapsed(started) >= _options.MaxDuration) return "time-budget";
+            if (!IsCandidate(root)) return "name-or-depth";
+            if (!_io.DirectoryExists(root)) return "absent";
+            if (!ContainedCleanup.SafeAncestors(root, _context)) return "inventory-incomplete-or-linked";
+            var directories = new List<string>();
+            if (AnchoredInventory(root, directories) is { } inventory) return inventory;
+            var marker = ReadMarker(root);
+            if (marker is null) return "marker-invalid";
+            if (_clock() - marker.CreatedAt < _options.Grace) return "grace";
+            var owner = _probe.Observe(marker.Owner);
+            if (owner.Verdict != ProcessVerdict.Dead) return owner.Reason;
+            foreach (var directory in directories)
+            {
+                var hasRun = _io.FileExists(Path.Combine(directory, RunOwnershipStore.FileName));
+                var looksLikeRun = hasRun || _io.DirectoryExists(Path.Combine(directory, "tool"))
+                    || _io.FileExists(Path.Combine(directory, "manifest.resolved.yaml"))
+                    || _io.FileExists(Path.Combine(directory, "request.json"));
+                if (!looksLikeRun) continue;
+                if (!hasRun) return "nested-custody-missing";
+                var journal = RunOwnershipStore.Read(directory, _context);
+                if (journal is null) return "nested-custody-invalid";
+                var observed = journal.Phase == "preparing"
+                    ? _probe.Observe(journal.Starter)
+                    : new ToolCopyCleanup(_probe, context: _context).ObserveExecutor(directory);
+                if (observed.Verdict != ProcessVerdict.Dead) return "nested-" + observed.Reason;
+            }
+            return null;
         }
-        return null;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "inventory-incomplete-or-linked";
+        }
     }
 
     private BoundedDelete DeleteBounded(string root, long allowance, long started)
@@ -319,7 +327,8 @@ public sealed class CheckpointTempRootSweep
 
     // Symlink, FIFO and socket names are leaves. A directory symlink is not entered.
     // A child whose device differs from the root is a mount and is not entered.
-    private string? AnchoredInventory(string root)
+    // directories receives only real directories, for the nested-custody check.
+    private string? AnchoredInventory(string root, List<string> directories)
     {
         ulong rootDevice;
         try
@@ -346,8 +355,12 @@ public sealed class CheckpointTempRootSweep
                     {
                         if (rootDevice != 0 && child.Device != 0 && child.Device != rootDevice)
                             return "mount-boundary";
-                        pending.Push(Path.Combine(directory, child.Name));
+                        var path = Path.Combine(directory, child.Name);
+                        directories.Add(path);
+                        pending.Push(path);
                     }
+                    else if (child.Kind == "symlink" && IsDirectorySymlink(directory, child.Name))
+                        return "inventory-incomplete-or-linked";
                     else if (++count > _options.MaxDescendantEntries) return "inventory-incomplete-or-linked";
                 }
             }
@@ -357,6 +370,14 @@ public sealed class CheckpointTempRootSweep
         {
             return "inventory-incomplete-or-linked";
         }
+    }
+
+    // Classify the link. Do not list the target. A directory symlink is linked inventory.
+    private bool IsDirectorySymlink(string directory, string name)
+    {
+        var attributes = _io.Attributes(Path.Combine(directory, name));
+        return (attributes & FileAttributes.ReparsePoint) != 0
+            && (attributes & FileAttributes.Directory) != 0;
     }
 
     private void CollectAnchored(string root, ulong rootDevice, List<ListedFile> files, List<ListedName> directories,
@@ -545,8 +566,12 @@ public sealed class CheckpointTempRootSweep
         {
             foreach (var entry in _io.Enumerate(directory))
             {
+                var attributes = _io.Attributes(entry);
                 yield return entry;
-                if (search == SearchOption.AllDirectories && (_io.Attributes(entry) & FileAttributes.Directory) != 0)
+                // A directory symlink is not a child of this root. Do not follow it.
+                if (search == SearchOption.AllDirectories
+                    && (attributes & FileAttributes.Directory) != 0
+                    && (attributes & FileAttributes.ReparsePoint) == 0)
                     pending.Push(entry);
             }
         }
