@@ -300,7 +300,8 @@ public partial class CapacityAdmissionLifecycleTests
             stored.AgentSessionId.ShouldBeNull();
             admitted.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
             admitted.AdmissionCount.ShouldBe(0);
-            (await verify.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct)).GrantedWaitId.ShouldBe(wait.Id);
+            (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+                .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBe(wait.Id);
             (tick?.Failures ?? 0).ShouldBe(0);
             (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
                 && e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("capacity consume refused"), ct)).ShouldBe(1);
@@ -322,7 +323,8 @@ public partial class CapacityAdmissionLifecycleTests
         admitted.State.ShouldBe(CapacityRecoveryWaitState.Canceled);
         admitted.OutcomeReason.ShouldBe("claim-consume-failed");
         admitted.AdmissionCount.ShouldBe(0);
-        (await verify.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct)).GrantedWaitId.ShouldBeNull();
+        (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+            .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
     }
 
     internal static async Task<CapacityRecoveryWait> GrantAsync(

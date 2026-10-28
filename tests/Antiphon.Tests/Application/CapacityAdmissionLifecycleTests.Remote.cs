@@ -103,7 +103,8 @@ public partial class CapacityAdmissionLifecycleTests
                 row.ActionOrdinal.ShouldBe(ordinal + 1);
                 row.ActionKey.ShouldNotBe(actionKey);
                 row.OutcomeReason.ShouldBe("grant-expired");
-                (await revoked.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct)).GrantedWaitId.ShouldBeNull();
+                (await revoked.CapacityRecoveryProviderStates.AsNoTracking()
+                    .SingleAsync(s => s.Kind == row.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
 
                 await using var heldProvider = Create();
                 await using var heldScope = heldProvider.CreateAsyncScope();
@@ -149,7 +150,8 @@ public partial class CapacityAdmissionLifecycleTests
             admitted.LaunchSessionId.ShouldBe(sessionId);
             if (cut == "grant-expired-tick-first")
                 admitted.ActionOrdinal.ShouldBe(ordinal);
-            (await verify.CapacityRecoveryProviderStates.AsNoTracking().SingleAsync(ct)).GrantedWaitId.ShouldBeNull();
+            (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+                .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
 
             if (cut == "grant-expired-during-prep")
             {
