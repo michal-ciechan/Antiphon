@@ -420,7 +420,7 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         census.Group.ShouldBe("wrapper-census");
         rest.Group.ShouldBe("wrapper-census-rest");
         census.MinExecuted.ShouldBe(4);
-        rest.MinExecuted.ShouldBe(12);
+        rest.MinExecuted.ShouldBe(13);
         (census.EstimatedMinutes + rest.EstimatedMinutes).ShouldBe(14);
         census.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
         rest.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
@@ -433,12 +433,12 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         var censusMethods = FilterMethods(census.Filter);
         var restMethods = FilterMethods(rest.Filter);
         censusMethods.Length.ShouldBe(4);
-        restMethods.Length.ShouldBe(12);
+        restMethods.Length.ShouldBe(13);
         censusMethods.ShouldAllBe(name => name.StartsWith("C1087_", StringComparison.Ordinal));
         restMethods.ShouldAllBe(name => name.StartsWith("C1008_", StringComparison.Ordinal));
         var selected = censusMethods.Concat(restMethods).Order(StringComparer.Ordinal).ToArray();
         var declared = DeclaredWrapperCensusMethods();
-        declared.Length.ShouldBe(16);
+        declared.Length.ShouldBe(17);
         selected.ShouldBe(declared);
         censusMethods.Intersect(restMethods, StringComparer.Ordinal).ShouldBeEmpty();
 
