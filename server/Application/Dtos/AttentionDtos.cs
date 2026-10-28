@@ -383,11 +383,11 @@ public enum AttentionKind
     ProviderInputWait = 60,
 
     /// <summary>
-    /// Pending notes on one destination are older than
-    /// <c>DeliveryVerification.PendingNoteAlertAgeSeconds</c>, still under
-    /// <c>MaxDeliveryAttempts</c>, and at least
-    /// <c>DeliveryVerification.PendingNoteAlertMinimumCount</c>. One Warning row
-    /// per session. Detection only: the projection does not flush or send.
+    /// Never-typed notes on one running destination have a withhold record older than
+    /// <c>DeliveryVerification.PendingNoteAlertAgeSeconds</c>, and at least
+    /// <c>DeliveryVerification.PendingNoteAlertMinimumCount</c> of them. One Warning row
+    /// per session. Stopped and failed sessions are omitted. Detection only: the projection
+    /// does not flush or send.
     /// </summary>
     PendingNotesAged = 61,
 }

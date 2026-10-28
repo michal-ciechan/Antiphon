@@ -89,7 +89,11 @@ public sealed record PendingNoteDto(
     int DeliveryAttempts,
     string Origin,
     string? NoteHeader,
-    string? WithholdReason);
+    string? WithholdReason,
+    int WithholdCount = 0,
+    DateTime? FirstWithheldAt = null,
+    DateTime? LastWithheldAt = null,
+    string? LastWithholdReason = null);
 
 /// <summary>
 /// A bounded page of pending notes after <see cref="Since"/> (exclusive sequence).

@@ -1487,7 +1487,7 @@ public sealed partial class SessionMessageQueueService
             if (await ReadDialogWithholdAsync(db, sessionId, ct) is { } sendNowWithhold)
             {
                 if (sendNowWithhold.ChargeAttempt)
-                    await ChargeDurableWithholdAsync(db, sessionId, ct);
+                    await ChargeDurableWithholdAsync(db, sessionId, sendNowWithhold.Text, ct);
                 return await GetQueueAsync(sessionId, ct) with
                 {
                     ModalBlocked = true,
@@ -2343,7 +2343,7 @@ public sealed partial class SessionMessageQueueService
         if (await ReadDialogWithholdAsync(db, sessionId, ct) is { } flushWithhold)
         {
             if (flushWithhold.ChargeAttempt)
-                await ChargeDurableWithholdAsync(db, sessionId, ct);
+                await ChargeDurableWithholdAsync(db, sessionId, flushWithhold.Text, ct);
             return TemporaryBlock();
         }
 
