@@ -688,7 +688,7 @@ public class TerminalRunnerSeatReleaseTests
     {
         var clock = new FakeTimeProvider();
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var wait = WaitForBeforeDispatchAsync(signal.Task, clock, TimeSpan.FromSeconds(10));
+        var wait = WaitForBeforeDispatchAsync(signal.Task, clock, TimeSpan.FromSeconds(10), BeforeDispatchWallCap);
         clock.Advance(TimeSpan.FromSeconds(10));
         var finished = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(500)));
         finished.ShouldBe(wait, "a loaded host must not spend a wall-clock cap");
@@ -730,31 +730,11 @@ public class TerminalRunnerSeatReleaseTests
         error.Message.ShouldContain("wall cap");
     }
 
-    private static async Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget,
+    private static Task WaitForBeforeDispatchAsync(Task signal, TimeProvider clock, TimeSpan budget,
         TimeSpan? wallCap = null, CancellationToken cancellationToken = default,
-        TimeProvider? wallClock = null)
-    {
-        using var logical = new CancellationTokenSource(budget, clock);
-        using var wall = wallCap is { } cap
-            ? new CancellationTokenSource(cap, wallClock ?? TimeProvider.System)
-            : new CancellationTokenSource();
-        using var clocks = CancellationTokenSource.CreateLinkedTokenSource(logical.Token, wall.Token);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(clocks.Token, cancellationToken);
-        try
-        {
-            await signal.WaitAsync(linked.Token);
-        }
-        catch (OperationCanceledException) when (wall.IsCancellationRequested && wallCap is not null
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException($"BeforeDispatch was not signaled before the {wallCap} wall cap.");
-        }
-        catch (OperationCanceledException) when (logical.IsCancellationRequested
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException("BeforeDispatch was not signaled before the test-clock budget elapsed.");
-        }
-    }
+        TimeProvider? wallClock = null) =>
+        LoadTimeoutWait.UntilSignaledAsync(
+            signal, clock, budget, wallCap ?? BeforeDispatchWallCap, cancellationToken, wallClock, "BeforeDispatch");
 
     [Test]
     public async Task Answer_recovery_preserves_round_and_admission_guards()
