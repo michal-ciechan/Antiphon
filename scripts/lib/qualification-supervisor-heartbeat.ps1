@@ -73,9 +73,40 @@ function Get-QualificationHeartbeatIdleBudget {
 
 function Get-QualificationHeartbeatSubjects {
     param([object[]]$Processes, [int]$ChunkRootPid, [int[]]$ExcludedPids)
-    $subjects = New-Object System.Collections.Generic.List[object]
+    $byPid = @{}
+    $children = @{}
     foreach ($proc in @($Processes)) {
-        if ($null -ne $proc) { $subjects.Add($proc) }
+        if ($null -eq $proc) { continue }
+        $processId = [int](Get-QualificationHeartbeatField $proc 'Pid')
+        if ($processId -eq 0) { $processId = [int](Get-QualificationHeartbeatField $proc 'pid') }
+        $byPid[[string]$processId] = $proc
+        $parentId = 0
+        $parentValue = Get-QualificationHeartbeatField $proc 'ParentPid'
+        if ($null -eq $parentValue) { $parentValue = Get-QualificationHeartbeatField $proc 'parentPid' }
+        if ($null -ne $parentValue) { $parentId = [int]$parentValue }
+        $parentKey = [string]$parentId
+        if (-not $children.ContainsKey($parentKey)) {
+            $children[$parentKey] = New-Object System.Collections.Generic.List[int]
+        }
+        $children[$parentKey].Add($processId)
+    }
+    $excluded = @{}
+    foreach ($excludedId in @($ExcludedPids)) { $excluded[[string]([int]$excludedId)] = $true }
+    $subjects = New-Object System.Collections.Generic.List[object]
+    if ($ChunkRootPid -le 0 -or -not $byPid.ContainsKey([string]$ChunkRootPid)) { return @() }
+    $pending = New-Object System.Collections.Generic.Stack[int]
+    $pending.Push($ChunkRootPid)
+    $seen = @{}
+    while ($pending.Count -gt 0) {
+        $processId = $pending.Pop()
+        $key = [string]$processId
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        if ($excluded.ContainsKey($key)) { continue }
+        $subjects.Add($byPid[$key])
+        if ($children.ContainsKey($key)) {
+            foreach ($childId in @($children[$key])) { $pending.Push([int]$childId) }
+        }
     }
     return @($subjects.ToArray())
 }
