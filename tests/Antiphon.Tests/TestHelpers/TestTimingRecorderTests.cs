@@ -82,6 +82,48 @@ public sealed class TestTimingRecorderTests
     }
 
     [Test]
+    public void C1514T_OwnerSidecarFitsTheCandidateRoot()
+    {
+        // Real rc candidate: C:\Antiphon\releases\candidates\rc-YYYY-MM-DD-<12 hex>\logs\timing-<32 hex>.
+        // Pid is a 10-digit int and the production nonce is a 32-hex guid. The owner file is the long path.
+        const string pid = "2147483647";
+        var nonce = new string('a', 32);
+        var root = C1514Support.FreshRoot();
+        using var session = TestTimingSession.TryOpen(new TestTimingConfig
+        {
+            Root = root,
+            RunId = "run-own",
+            GroupId = "g-own",
+            Attempt = "1",
+            Suite = "antiphon",
+            ManualClock = true,
+            Pid = int.MaxValue,
+            Nonce = nonce,
+            AssemblyId = "asm1",
+        });
+        session.Enabled.ShouldBeTrue("candidate-owner-path");
+        var identity = TestTimingSession.IdentityToken("g-own", "run-own", "1", "antiphon");
+        var folder = TestTimingSession.ChunkDirectory(root, "g-own", "run-own", "1", "antiphon");
+        var files = Directory.GetFiles(folder, "own-*.txt");
+        files.Length.ShouldBe(1, "candidate-owner-path");
+        var name = Path.GetFileName(files[0]);
+        name.ShouldStartWith("own-", Case.Sensitive, "candidate-owner-path");
+        name.ShouldEndWith("-" + pid + "-" + nonce + ".txt", Case.Sensitive, "candidate-owner-path");
+        var token = name.Substring("own-".Length, name.Length - "own-".Length - ("-" + pid + "-" + nonce + ".txt").Length);
+        identity.StartsWith(token, StringComparison.Ordinal).ShouldBeTrue("candidate-owner-path");
+        var windowsRoot = @"C:\Antiphon\releases\candidates\rc-2026-10-27-" + new string('f', 12)
+            + @"\logs\timing-" + new string('e', 32);
+        var windowsPath = windowsRoot + @"\chunk-" + identity + @"\" + name;
+        var bare = windowsRoot + @"\chunk-" + identity + @"\own--" + pid + "-" + nonce + ".txt";
+        var room = 240 - bare.Length;
+        token.Length.ShouldBe(room, "candidate-owner-prefix");
+        windowsPath.Length.ShouldBeLessThanOrEqualTo(240, "candidate-owner-path");
+        var journal = windowsRoot + @"\chunk-" + identity + @"\cases-" + pid + "-" + nonce + ".jsonl";
+        journal.Length.ShouldBeLessThanOrEqualTo(windowsPath.Length, "candidate-journal-path");
+        journal.Length.ShouldBeLessThanOrEqualTo(240, "candidate-journal-path");
+    }
+
+    [Test]
     public void C1514T_OwnerWriteFailureKeepsTheJournal()
     {
         var root = C1514Support.FreshRoot();

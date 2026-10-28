@@ -1391,6 +1391,59 @@ try {
     Remove-Item -LiteralPath $crowdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A symlinked chunk-* directory is not a chunk. The phase reader and the summary
+# reader both refuse it. A real chunk directory beside the link is still read.
+$linkRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-link-' + [guid]::NewGuid().ToString('N'))
+$linkLog = Join-Path $linkRoot 'logs'
+$linkTiming = Join-Path $linkLog 'timing'
+$linkOutside = Join-Path $linkRoot 'outside'
+New-Item -ItemType Directory -Path $linkTiming -Force | Out-Null
+New-Item -ItemType Directory -Path $linkOutside -Force | Out-Null
+$savedTimingRoot = [string]$script:QualificationTimingRoot
+try {
+    $script:QualificationTimingRoot = ''
+    $linkChunk = 'g-link'
+    $linkRun = 'run-link'
+    $linkAttempt = '1'
+    $linkSuite = 'antiphon'
+    $linkName = Get-QualificationChunkDirectoryName -Chunk $linkChunk -RunId $linkRun -Attempt $linkAttempt -Suite $linkSuite
+    $linkJournal = @(
+        '{"recordKind":"header","version":1,"pid":42,"nonce":"link1","runId":"run-link","groupId":"g-link","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
+        '{"recordKind":"fixture","fixtureId":"fix-link","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1500}]}',
+        '{"recordKind":"complete","testId":"link-case","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"Passed","phases":[],"processes":[],"exclusive":{"db":0,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
+    ) -join "`n"
+    [IO.File]::WriteAllText((Join-Path $linkOutside 'cases-42-link1.jsonl'), $linkJournal + "`n")
+    $linkPath = Join-Path $linkTiming $linkName
+    & ln -s $linkOutside $linkPath
+    $linkMade = ($LASTEXITCODE -eq 0)
+    $linkSums = Get-QualificationPhaseSums -TimingRoot $linkTiming -Chunk $linkChunk -RunId $linkRun -Suite $linkSuite -Attempt $linkAttempt
+    $linkRefused = ($linkMade -and [bool]$linkSums.refused -and $null -eq $linkSums.fixtureSetupSeconds)
+    $realName = Get-QualificationChunkDirectoryName -Chunk 'g-real' -RunId $linkRun -Attempt $linkAttempt -Suite $linkSuite
+    $realDir = Join-Path $linkTiming $realName
+    New-Item -ItemType Directory -Path $realDir -Force | Out-Null
+    $realJournal = $linkJournal.Replace('g-link', 'g-real').Replace('link-case', 'real-case').Replace('fix-link', 'fix-real')
+    [IO.File]::WriteAllText((Join-Path $realDir 'cases-42-link1.jsonl'), $realJournal + "`n")
+    $planned = [pscustomobject]@{ version = 1; runId = 'run-link'; assembly = 'Antiphon.Tests' }
+    $summary = ConvertTo-TestPhaseSummaryRows -Planned $planned -RunDirectory $linkLog
+    $sawLink = $false
+    $sawReal = $false
+    foreach ($row in @($summary.Tests)) {
+        if ([string]$row.testId -ceq 'link-case') { $sawLink = $true }
+        if ([string]$row.testId -ceq 'real-case') { $sawReal = $true }
+    }
+    $sawFlag = $false
+    foreach ($flag in @($summary.Quality)) {
+        if ([string]$flag -ceq 'chunk-link-refused') { $sawFlag = $true }
+    }
+    Assert-Check ($linkRefused -and $sawFlag -and -not $sawLink -and $sawReal) 'symlinked-chunk-directory-is-refused'
+} catch {
+    Write-Host ('FAIL symlinked-chunk-directory-is-refused ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    $script:QualificationTimingRoot = $savedTimingRoot
+    Remove-Item -LiteralPath $linkRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failed -gt 0) {
     Write-Host ('FAILED ' + $failed)
     exit 1
