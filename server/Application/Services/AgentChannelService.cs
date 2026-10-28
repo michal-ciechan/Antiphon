@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -64,26 +65,60 @@ public sealed class AgentChannelService
         RouteMentionAsync(sourceSessionId, mention, Guid.NewGuid(), ct);
 
     internal async Task<bool> RouteMentionAsync(
+        Guid sourceSessionId, AgentMention mention, Guid occurrenceId, CancellationToken ct)
+    {
+        var result = await RouteMentionAsync(
+            sourceSessionId, mention, occurrenceId, ct, observed: null, deferFlush: false);
+        return result.Accepted;
+    }
+
+    internal async Task<MentionRouteResult> RouteMentionAsync(
         Guid sourceSessionId, AgentMention mention, Guid occurrenceId, CancellationToken ct,
-        Action? onDurable = null)
+        MentionSourceLiveness? observed, bool deferFlush)
     {
         Record(sourceSessionId, MentionRouteDiagnostics.RouteStarted, $"target={mention.Target}");
-        var source = await _db.AgentSessions
-            .AsNoTracking()
-            .Include(s => s.Card)
-            .FirstOrDefaultAsync(s => s.Id == sourceSessionId && SourceStatuses.Contains(s.Status), ct);
-        if (source is null)
+        AgentSession? source;
+        if (observed is { WasLive: true } live)
         {
-            Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=false");
-            Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=source-missing");
-            return false;
+            source = await _db.AgentSessions
+                .AsNoTracking()
+                .Include(s => s.Card)
+                .FirstOrDefaultAsync(s => s.Id == sourceSessionId, ct);
+            if (source is null)
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=false");
+                Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=source-missing");
+                return new(false, null);
+            }
+
+            if (!SessionGeneration.Equal(source.StartedAt, live.StartedAt)
+                || source.CardId != live.CardId
+                || source.StandingAgentId != live.StandingAgentId)
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=true");
+                Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=other-agent");
+                return new(false, null);
+            }
+        }
+        else
+        {
+            source = await _db.AgentSessions
+                .AsNoTracking()
+                .Include(s => s.Card)
+                .FirstOrDefaultAsync(s => s.Id == sourceSessionId && SourceStatuses.Contains(s.Status), ct);
+            if (source is null)
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=false");
+                Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=source-missing");
+                return new(false, null);
+            }
         }
         // Cardless interactive sessions don't participate in card-scoped channel routing.
         if (source.CardId is not Guid sourceCardId)
         {
             Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=true cardId=no");
             Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=cardless");
-            return false;
+            return new(false, null);
         }
 
         Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, $"found=true cardId={sourceCardId:N}");
@@ -105,14 +140,14 @@ public sealed class AgentChannelService
                 sourceSessionId,
                 MentionRouteDiagnostics.RouteReturned,
                 matches.Count == 0 ? "ok=false reason=no-target" : "ok=false reason=ambiguous");
-            return false;
+            return new(false, null);
         }
 
         var target = matches.Single();
         if (target.Id == source.Id)
         {
             Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=self");
-            return false;
+            return new(false, null);
         }
 
         var message = string.IsNullOrWhiteSpace(mention.Message)
@@ -121,15 +156,18 @@ public sealed class AgentChannelService
         var queue = _queue ?? throw new InvalidOperationException("Mention routing requires the session queue.");
         var messageId = await queue.EnqueueMentionAsync(target.Id, FormatInput(source, message), occurrenceId, ct);
         Record(sourceSessionId, MentionRouteDiagnostics.Queued, $"target={target.Id:N} queue={messageId:N}");
-        // The row is the acceptance point. Release the source observer before flush: a single
-        // event consumer delivering the target would otherwise deadlock on this session.
-        onDurable?.Invoke();
         // Acceptance is durable. Activity and prompt transport cannot undo it or mint another row.
         try
         {
             await PublishMessageAsync(source, target, message, routedByMention: true, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        if (deferFlush)
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=true");
+            return new(true, target.Id);
+        }
+
         try
         {
             await queue.FlushIfIdleAsync(target.Id, ct);
@@ -139,7 +177,7 @@ public sealed class AgentChannelService
             _logger.LogWarning(ex, "Accepted mention {MessageId} awaits queue recovery", messageId);
         }
         Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=true");
-        return true;
+        return new(true, null);
     }
 
     public async Task<SpawnCardResult> DelegateCardAsync(

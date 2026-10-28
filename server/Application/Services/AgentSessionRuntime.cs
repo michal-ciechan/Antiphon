@@ -140,10 +140,11 @@ public sealed partial class AgentSessionRuntime
             try
             {
                 phase?.Invoke(SessionObservationPhase.OutputMention);
-                // Hold this observer until a completed-line mention is inserted, so a later
-                // exit cannot mark the source stopped while that route is still reading it.
+                // Queue the mention and return. The liveness read is the stamp taken while
+                // this session is still the observer's source; delivery stays off this call.
                 if (_mentionRouter is not null)
-                    await _mentionRouter.ObserveAndRouteAsync(sessionId, chunk);
+                    await _mentionRouter.ObserveCompletedAsync(
+                        sessionId, chunk, token => ReadMentionLivenessAsync(sessionId, token), ct);
             }
             catch (Exception ex)
             {
@@ -160,6 +161,21 @@ public sealed partial class AgentSessionRuntime
 
         phase?.Invoke(SessionObservationPhase.OutputActivity);
         await RecordActivityAsync(sessionId);
+    }
+
+    private async ValueTask<MentionSourceLiveness?> ReadMentionLivenessAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.Status, s.StartedAt, s.CardId, s.StandingAgentId })
+            .FirstOrDefaultAsync(ct);
+        if (row is null)
+            return null;
+
+        var live = row.Status is SessionStatus.Starting or SessionStatus.Running;
+        return new MentionSourceLiveness(row.StartedAt, row.CardId, row.StandingAgentId, live);
     }
 
     /// <summary>
