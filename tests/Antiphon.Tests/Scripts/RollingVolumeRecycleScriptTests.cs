@@ -805,32 +805,17 @@ public sealed class RollingVolumeRecycleScriptTests
     }
 
     // A retire-temp apply writes the session image. The next preview cleanup keeps
-    // that image, and a bound dry-run recycle runs the same publication audit as
-    // apply, in the production /work namespace, without a helper. A Git hook aimed
-    // at the original volume mount must fail to change it. Apply still requires a
-    // dryRun false receipt. An unbound scan still ignores a dry-run receipt.
+    // that image. A bound dry-run runs the same publication audit inside that pinned
+    // image: both volumes read-only, no network, every capability dropped, --rm, and
+    // a hard timeout. That helper is the only container a preview may start. The host
+    // does not invoke Git. An unbound scan still starts no container. Apply still
+    // requires a dryRun false receipt.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
     {
         C1008HostFixture.RequireNativeLinux();
         const string bound = "C1008_CLEANUP_OPERATION=" + PreviewCleanupOperation;
-        const string modeProbe = """
-            rm() {
-                local arg
-                for arg in "$@"; do
-                    case "$arg" in
-                        /dev/shm/c1008-audit-ro-*)
-                            if [ -d "$arg" ]; then
-                                stat -c %a -- "$arg" >> "$C1008_FIXTURE_ROOT/audit-dir-mode"
-                                if [ -f "$arg/program.sh" ]; then stat -c %a -- "$arg/program.sh" >> "$C1008_FIXTURE_ROOT/audit-program-mode"; fi
-                            fi
-                            ;;
-                    esac
-                done
-                command rm "$@"
-            }
-            """;
 
         // The volume mountpoint has to stay outside /tmp: the audit covers /tmp with a
         // private tmpfs, and the fake Docker root must be named c1008-host-*.
@@ -843,22 +828,22 @@ public sealed class RollingVolumeRecycleScriptTests
             await PublishRepo(clean);
             var description = Path.Combine(WorkMount(clean), "repo", ".git", "description");
             var before = await File.ReadAllBytesAsync(description);
-            await InstallPreviewHook(clean, description);
+            await InstallPreviewHook(clean, description, WorkMount(clean));
             ResetPreviewTrace(clean);
             var hostWork = await HostWorkMount();
-            var run = await clean.Run("retire-temp-runner", bound + "\n" + modeProbe, dryRun: true);
+            var run = await clean.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
             run.Exit.ShouldBe(0, "recycle-preview-receipt: dry-run receipt is preview authority; " + run.Output);
             run.Output.ShouldContain("C1008_PREVIEW remove=antiphon-runner-temp_work");
             run.Output.ShouldContain("auditPending=false");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
+            // The hook remounts read-write and a detached child writes after the audit returns.
+            await Task.Delay(TimeSpan.FromSeconds(4));
             (await File.ReadAllBytesAsync(description)).ShouldBe(before);
             File.ReadAllText(Path.Combine(clean.Root, "hook-result")).ShouldContain("Read-only file system");
-            PreviewModes(clean, "audit-dir-mode").ShouldAllBe(mode => mode == "755");
-            PreviewModes(clean, "audit-program-mode").ShouldAllBe(mode => mode == "755");
-            AssertPreviewDidNotMutate(clean);
-            (await HostWorkMount()).ShouldBe(hostWork, "recycle-preview-receipt: private namespace leaves the host /work mount alone");
+            AssertReadonlyPreview(clean, image, audited: true);
+            (await HostWorkMount()).ShouldBe(hostWork, "recycle-preview-receipt: the helper leaves the host /work mount alone");
             CleanupReceipt(clean, PreviewCleanupOperation)["image"]!.GetValue<string>().ShouldBe(image,
                 "recycle-preview-receipt: recycle does not rewrite the producer image");
 
@@ -874,11 +859,11 @@ public sealed class RollingVolumeRecycleScriptTests
 
             File.Delete(CleanupReceiptPath(clean, AppliedCleanupOperation));
             ResetPreviewTrace(clean);
-            var unbound = await clean.Run("retire-temp-runner", dryRun: true);
+            var unbound = await clean.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
             unbound.Exit.ShouldBe(0, "recycle-preview-receipt: unbound preview is not authority; " + unbound.Output);
             unbound.Output.ShouldContain("auditPending=true");
             unbound.Output.ShouldNotContain("auditPending=false");
-            AssertPreviewDidNotMutate(clean);
+            AssertReadonlyPreview(clean, image, audited: false);
         }
         finally
         {
@@ -887,19 +872,21 @@ public sealed class RollingVolumeRecycleScriptTests
 
         using (var dirty = new C1008HostFixture(main: false))
         {
-            await RetainPreviewImage(dirty);
+            var dirtyImage = await RetainPreviewImage(dirty);
             await PublishRepo(dirty);
+            ShareVolumeWithApply(dirty);
             var dirtyFile = Path.Combine(WorkMount(dirty), "repo", "dirty");
             await File.WriteAllTextAsync(dirtyFile, "unpublished-sentinel");
             ResetPreviewTrace(dirty);
-            var run = await dirty.Run("retire-temp-runner", bound, dryRun: true);
+            var run = await dirty.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
             run.Exit.ShouldBe(2, "recycle-preview-receipt: dirty worktree still refuses; " + run.Output);
             run.Output.ShouldContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("C1008_PREVIEW");
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertPreviewDidNotMutate(dirty);
+            AssertReadonlyPreview(dirty, dirtyImage, audited: true);
             File.ReadAllText(dirtyFile).ShouldBe("unpublished-sentinel");
+            await AssertApplyMatchesPreview(dirty, "RecycleWorktreeDirty");
         }
 
         // Origin has to stay off /tmp. The preview covers /tmp with the same private
@@ -909,8 +896,9 @@ public sealed class RollingVolumeRecycleScriptTests
         try
         {
             using var unpublished = new C1008HostFixture(main: false, unpublishedRoot);
-            await RetainPreviewImage(unpublished);
+            var unpublishedImage = await RetainPreviewImage(unpublished);
             await PublishRepo(unpublished);
+            ShareVolumeWithApply(unpublished);
             var repo = Path.Combine(WorkMount(unpublished), "repo");
             var local = Path.Combine(repo, "local");
             await File.WriteAllTextAsync(local, "unpublished-sentinel");
@@ -919,14 +907,15 @@ public sealed class RollingVolumeRecycleScriptTests
             var commit = await C994ScriptProcess.Run("git", "-C", repo, "commit", "-qm", "unpublished");
             commit.Exit.ShouldBe(0, "recycle-preview-receipt: unpublished commit; " + commit.Output);
             ResetPreviewTrace(unpublished);
-            var run = await unpublished.Run("retire-temp-runner", bound, dryRun: true);
+            var run = await unpublished.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
             run.Exit.ShouldBe(2, "recycle-preview-receipt: unpublished work still refuses; " + run.Output);
             run.Output.ShouldContain("RecycleUnpublishedWork");
             run.Output.ShouldNotContain("C1008_PREVIEW");
             run.Output.ShouldNotContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertPreviewDidNotMutate(unpublished);
+            AssertReadonlyPreview(unpublished, unpublishedImage, audited: true);
             File.ReadAllText(local).ShouldBe("unpublished-sentinel");
+            await AssertApplyMatchesPreview(unpublished, "RecycleUnpublishedWork");
         }
         finally
         {
@@ -935,16 +924,16 @@ public sealed class RollingVolumeRecycleScriptTests
 
         using (var unknown = new C1008HostFixture(main: false))
         {
-            await RetainPreviewImage(unknown);
+            var unknownImage = await RetainPreviewImage(unknown);
             Directory.CreateDirectory(Path.Combine(WorkMount(unknown), "broken", ".git"));
             ResetPreviewTrace(unknown);
-            var run = await unknown.Run("retire-temp-runner", bound, dryRun: true);
+            var run = await unknown.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
             run.Exit.ShouldBe(2, "recycle-preview-receipt: unreadable Git still refuses; " + run.Output);
             run.Output.ShouldContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("C1008_PREVIEW");
             run.Output.ShouldNotContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
-            AssertPreviewDidNotMutate(unknown);
+            AssertReadonlyPreview(unknown, unknownImage, audited: true);
         }
 
         var linkedRoot = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
@@ -952,18 +941,18 @@ public sealed class RollingVolumeRecycleScriptTests
         try
         {
             using var linked = new C1008HostFixture(main: false, linkedRoot);
-            await RetainPreviewImage(linked);
+            var linkedImage = await RetainPreviewImage(linked);
             await PublishLinkedWorktree(linked);
             ResetPreviewTrace(linked);
             var hostWork = await HostWorkMount();
-            var run = await linked.Run("retire-temp-runner", bound, dryRun: true);
+            var run = await linked.Run("retire-temp-runner", bound + "\n" + PreviewWitnessProbe, dryRun: true);
             run.Exit.ShouldBe(0, "recycle-preview-receipt: /work gitdir pointers resolve; " + run.Output);
             run.Output.ShouldContain("auditPending=false");
             run.Output.ShouldNotContain("worktree-confine");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
-            AssertPreviewDidNotMutate(linked);
+            AssertReadonlyPreview(linked, linkedImage, audited: true);
             (await HostWorkMount()).ShouldBe(hostWork, "recycle-preview-receipt: linked-worktree preview leaves the host /work mount alone");
         }
         finally
@@ -977,6 +966,15 @@ public sealed class RollingVolumeRecycleScriptTests
 
     private static string WorkMount(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "volumes", "antiphon-runner-temp_work", "_data");
+
+    // Apply's fixture helper reads the checkout through the fixture work directory.
+    // The preview mounts the volume. The same tree has to satisfy both.
+    private static void ShareVolumeWithApply(C1008HostFixture fixture)
+    {
+        var link = Path.Combine(fixture.Root, "work");
+        Directory.Delete(link);
+        Directory.CreateSymbolicLink(link, WorkMount(fixture));
+    }
 
     private static string CleanupReceiptPath(C1008HostFixture fixture, string operation) =>
         Path.Combine(fixture.Root, "server", "temp-container-retirement", operation + ".json");
@@ -1029,20 +1027,24 @@ public sealed class RollingVolumeRecycleScriptTests
         setup.Exit.ShouldBe(0, "recycle-preview-receipt: git setup; " + setup.Output);
     }
 
-    private static async Task InstallPreviewHook(C1008HostFixture fixture, string description)
+    private static async Task InstallPreviewHook(C1008HostFixture fixture, string description, string volume)
     {
         var repo = Path.Combine(WorkMount(fixture), "repo");
         var hook = Path.Combine(fixture.Root, "fsmonitor");
         var result = Path.Combine(fixture.Root, "hook-result");
-        // Bash reports a failed append while it is opening the target, before the
-        // command's own stderr redirection exists. Capture the shell stderr first.
+        // Remount the volume and /work, then write. A detached child writes again after
+        // the audit returns. Capture the shell stderr before the append's own redirection.
         await File.WriteAllTextAsync(hook, "#!/bin/bash\n" +
             "exec 2>" + BashSingle(result + ".err") + "\n" +
+            "mount -o remount,bind,rw -- " + BashSingle(volume) + " 2>>" + BashSingle(result + ".err") + " || true\n" +
+            "mount -o remount,bind,rw /work 2>>" + BashSingle(result + ".err") + " || true\n" +
             "if printf ' mutated' >> " + BashSingle(description) + "; then\n" +
             "  printf writable > " + BashSingle(result) + "\n" +
             "else\n" +
             "  cat " + BashSingle(result + ".err") + " > " + BashSingle(result) + "\n" +
             "fi\n" +
+            "setsid bash -c " + BashSingle("sleep 2; mount -o remount,bind,rw -- \"$1\" 2>/dev/null || true; mount -o remount,bind,rw /work 2>/dev/null || true; printf ' late' >> \"$2\"") +
+            " _ " + BashSingle(volume) + " " + BashSingle(description) + " </dev/null >/dev/null 2>&1 &\n" +
             "exit 0\n");
         var setup = await C994ScriptProcess.Run("bash", "-c",
             "chmod 0755 " + BashSingle(hook) + " && git -C " + BashSingle(repo) + " config core.fsmonitor " + BashSingle(hook));
@@ -1078,34 +1080,102 @@ public sealed class RollingVolumeRecycleScriptTests
         return run.Exit + "\n" + run.Output;
     }
 
-    private static string[] PreviewModes(C1008HostFixture fixture, string name)
-    {
-        var lines = File.ReadAllLines(Path.Combine(fixture.Root, name));
-        lines.ShouldNotBeEmpty("recycle-preview-receipt: " + name);
-        return lines;
-    }
+    // The parent shell records a host Git call. The fixture helper sets
+    // C1008_SIMULATED_HELPER so Git inside that container is not a host call.
+    // timeout() stays in this shell: an external timeout would skip the docker() stub.
+    private const string PreviewWitnessProbe = """
+        timeout() {
+            printf '%s\n' "$*" >> "$C1008_FIXTURE_ROOT/timeout-invocations"
+            local saw=0
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --kill-after=*|--foreground|--preserve-status) shift ;;
+                    --kill-after) shift 2 ;;
+                    *s|[0-9]*) shift; saw=1; break ;;
+                    *) break ;;
+                esac
+            done
+            [ "$saw" = 1 ]
+            "$@"
+        }
+        git() {
+            if [ -z "${C1008_SIMULATED_HELPER:-}" ]; then
+                printf '%s\n' "$*" >> "$C1008_FIXTURE_ROOT/host-git"
+            fi
+            command git "$@"
+        }
+        export -f git
+        """;
 
     private static void ResetPreviewTrace(C1008HostFixture fixture)
     {
-        var trace = Path.Combine(fixture.Root, "docker-trace.jsonl");
-        if (File.Exists(trace)) File.Delete(trace);
+        foreach (var name in new[] { "docker-trace.jsonl", "host-git", "timeout-invocations" })
+        {
+            var path = Path.Combine(fixture.Root, name);
+            if (File.Exists(path)) File.Delete(path);
+        }
         fixture.ReloadDocker();
     }
 
-    private static bool PreviewDockerMutation(string[] args) =>
-        args.Length > 0 && (args[0] is "create" or "run" or "rm" or "start" or "stop" or "kill" or "prune"
-            || args.Contains("down")
-            || (args.Length >= 2 && args[0] == "volume" && args[1] != "ls" && args[1] != "inspect"));
-
-    private static void AssertPreviewDidNotMutate(C1008HostFixture fixture)
+    private static void AssertReadonlyPreview(C1008HostFixture fixture, string image, bool audited)
     {
-        fixture.Trace.Where(PreviewDockerMutation).ShouldBeEmpty(
-            "docker create/run/rm/volume mutations are empty and no journal was written");
+        var runs = fixture.Trace.Where(args => args.Length > 0 && args[0] == "run").ToArray();
+        if (!audited)
+            runs.ShouldBeEmpty("recycle-preview-readonly: an unbound preview starts no helper");
+        else
+        {
+            runs.Length.ShouldBe(1, "recycle-preview-readonly: one pinned helper");
+            var args = runs[0];
+            args.ShouldContain("--rm");
+            var network = Array.IndexOf(args, "--network");
+            network.ShouldBeGreaterThanOrEqualTo(0);
+            args[network + 1].ShouldBe("none");
+            var dropped = Array.IndexOf(args, "--cap-drop");
+            dropped.ShouldBeGreaterThanOrEqualTo(0);
+            args[dropped + 1].ShouldBe("ALL");
+            args.ShouldNotContain("--privileged");
+            args.ShouldNotContain("--cap-add");
+            args.ShouldNotContain("-v");
+            args.ShouldNotContain("--volume");
+            var program = Array.IndexOf(args, "-c");
+            program.ShouldBeGreaterThan(0);
+            args[program - 1].ShouldBe(image);
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_work,target=/work,readonly");
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_runner-tmp,target=/runner-tmp,readonly");
+            args.Where(arg => arg.StartsWith("type=volume,", StringComparison.Ordinal))
+                .ShouldAllBe(arg => arg.EndsWith(",readonly", StringComparison.Ordinal));
+            var timeoutLog = Path.Combine(fixture.Root, "timeout-invocations");
+            File.Exists(timeoutLog).ShouldBeTrue("recycle-preview-readonly: the helper has a hard timeout");
+            var timeout = File.ReadAllText(timeoutLog);
+            timeout.ShouldContain("--kill-after=10s");
+            timeout.ShouldContain("docker run");
+        }
+        fixture.Trace.Where(args => args.Length > 0 && (args[0] is "create" or "start" or "stop" or "kill" or "prune"
+            || args.Contains("down")
+            || (args.Length >= 2 && args[0] == "volume" && args[1] != "ls" && args[1] != "inspect")))
+            .ShouldBeEmpty("recycle-preview-readonly: no rollout mutation");
+        File.Exists(Path.Combine(fixture.Root, "host-git")).ShouldBeFalse(
+            "recycle-preview-readonly: the host does not invoke git");
         File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
             .ShouldBeFalse("recycle-preview-receipt: pinned preview writes no journal");
         File.Exists(Path.Combine(fixture.Root, "evidence", "retire-temp-runner", "recycle.json"))
             .ShouldBeFalse("recycle-preview-receipt: pinned preview writes no journal copy");
         fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: preview removes nothing");
+        fixture.ReloadDocker();
+        foreach (var container in fixture.Docker["containers"]!.AsArray())
+            container!["Config"]!["Labels"]!["io.antiphon.audit"].ShouldBeNull(
+                "recycle-preview-readonly: --rm leaves no audit container");
+    }
+
+    private static async Task AssertApplyMatchesPreview(C1008HostFixture fixture, string refusal)
+    {
+        ResetPreviewTrace(fixture);
+        var applied = await fixture.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation);
+        applied.Exit.ShouldBe(2, "recycle-preview-receipt: apply refusal matches the preview; " + applied.Output);
+        applied.Output.ShouldContain(refusal);
+        foreach (var other in new[] { "RecycleWorktreeDirty", "RecycleUnpublishedWork", "RecycleGitAuditUnknown" })
+            if (other != refusal) applied.Output.ShouldNotContain(other);
+        fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: a refusing apply removes nothing");
     }
 
     [Test]
