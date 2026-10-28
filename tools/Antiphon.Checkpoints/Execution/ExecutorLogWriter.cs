@@ -65,9 +65,9 @@ public sealed class ExecutorLogWriter : IAsyncDisposable
     {
         using var gate = new ManualResetEventSlim(false);
         var item = Admit(LogKind.Append, line, CancellationToken.None, gate);
-        // The event is set by the writer thread after the sink finishes. Waiting
-        // here does not block on the sink task, so a continuation posted back to
-        // this caller can still run.
+        // The writer thread runs the sink and signals this event afterwards.
+        // Note does not block on the sink task, so a continuation is not stuck
+        // behind this caller.
         gate.Wait();
         if (item.Error is not null)
             ExceptionDispatchInfo.Capture(item.Error).Throw();
