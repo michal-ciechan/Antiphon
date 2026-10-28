@@ -2251,8 +2251,8 @@ function Test-C1410_MeasuredCostGroups {
     # 19012 nodes) is packed by estimated serial seconds: measured rows from
     # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
     # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
-    # anywhere doubles. CARD-1567 and CARD-1577 calibrations make this fixed
-    # fixture estimate 14.62 h in 107 launches (not a measured wall-clock SLA); every
+    # anywhere doubles. The run 8f055f87 measured rows make this fixed
+    # fixture estimate 16.58 h in 114 launches (not a measured wall-clock SLA); every
     # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
@@ -2393,15 +2393,14 @@ function Test-C1410_MeasuredCostGroups {
         $launches = @($plan).Count
         $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
-        # CARD-1577 adds 5514.055555555556 seconds to CARD-1567's
-        # 47108.09756097559 seconds: sum(new per-node bound - old fallback)
-        # over the fixed listing. Its Rolling class has 26 nodes, while the
-        # Windows measurement denominator has 27. All other counts match.
-        # Repacking adds three launches: 103 real + four suffix probes.
-        if ($launches -ne 107) { [void]$reasons.Add('launch-count') }
-        # CARD-1584: the shared TestClassificationGuardTests node now has
-        # an explicit 10 s bound instead of 0.5 s: +9.5 s, census unchanged.
-        if ([Math]::Abs($suiteSeconds - 52631.653116531146) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        # Run 8f055f87 adds 7067.451690366325 seconds to the CARD-1584 total
+        # 52631.653116531146. Three listing counts are below the journal
+        # denominators, so those fixture prices are the journal per-node rate
+        # times the listing count: DelegateBranchDelivery 3/7, RepairSourceDispatch
+        # 39/41, CompletedCardWorktreeRemoval 36/37. Repacking adds seven real
+        # launches: 110 real + four suffix probes.
+        if ($launches -ne 114) { [void]$reasons.Add('launch-count') }
+        if ([Math]::Abs($suiteSeconds - 59699.10480689747) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
