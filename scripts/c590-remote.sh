@@ -6672,10 +6672,10 @@ consider_stale_index() {
 # belongs to that checkout's content audit (never followed), any other symlink must
 # resolve inside the volume.
 # Common directory only: antiphon/ (product state; a pending children/ journal is
-# unknown), review-evidence/ (agent evidence, not repository state; the directory
-# is not walked, so it has no depth, count or size cap and an executable bit is
-# allowed), antiphon-evidence/ (the same kind of agent files, walked so it cannot
-# hide a repository), an empty common/ and an empty git-daemon-export-ok. Editor
+# unknown), review-evidence/ and antiphon-evidence/ (agent files, walked so neither
+# can hide a repository; plain files and directories stay allowed, file content is
+# never read, there is no depth, count or size cap, and an executable bit is
+# allowed), an empty common/ and an empty git-daemon-export-ok. Editor
 # swap/backup files: unknown.
 # Linked worktree admin only: antiphon-mirror-owner.json (RunnerWorkspaceBindingStore
 # WriteOwnerStamp). A regular file, not a symlink or directory, one link, at most
@@ -6836,17 +6836,19 @@ antiphon_evidence_git_name() {
         *) return 1 ;;
     esac
 }
-# CARD-1594. Common directory only. Agent files beside the repository. review-evidence/
-# is not walked and has no depth, count or size cap, and it does not forbid an
-# executable bit; this directory copies that bound and is walked so a repository
-# cannot hide here. A second hard link refuses: the other name can sit outside
-# this tree, and the audit does not search the volume for it. Anything else
-# refuses gitdir-entry, the same diagnosis as any other unknown entry.
+# CARD-1594. Common directory only. Agent files beside the repository.
+# antiphon-evidence/ and review-evidence/ share this walk so neither can hide a
+# repository. Plain files and plain directories stay allowed. File content is
+# never read, so a patch or notes are deleted with the volume. There is no depth,
+# count or size cap, and an executable bit is allowed. A second hard link refuses:
+# the other name can sit outside this tree, and the audit does not search the
+# volume for it. Anything else refuses gitdir-entry, the same diagnosis as any
+# other unknown entry.
 consider_antiphon_evidence() {
     # Do not local-shadow root: rel_repo reads that global, and bash locals are
     # visible to the functions this walk calls.
     local tree="$1" admin="$2" child base nlink
-    audit_check=antiphon-evidence
+    audit_check="${tree##*/}"
     [ -d "$tree" ] && [ ! -L "$tree" ] || refuse_gitdir_entry "$admin"
     # -P: do not follow a symlink into a repository. A walk that cannot list an
     # entry refuses, so an unreadable directory cannot hide one.
@@ -6896,10 +6898,7 @@ consider_gitdir() {
                 [ "$level" = common ] || refuse_gitdir_entry "$directory"
                 consider_antiphon "$entry"
                 ;;
-            review-evidence)
-                # Not walked. A real directory in the common git dir is enough.
-                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory" ;;
-            antiphon-evidence)
+            review-evidence|antiphon-evidence)
                 [ "$level" = common ] || refuse_gitdir_entry "$directory"
                 consider_antiphon_evidence "$entry" "$directory"
                 ;;
