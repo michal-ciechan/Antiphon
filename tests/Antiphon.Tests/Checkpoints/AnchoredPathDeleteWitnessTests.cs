@@ -149,6 +149,20 @@ public sealed class AnchoredPathDeleteWitnessTests
     }
 
     [Test]
+    public void listed_name_accepts_a_linux_backslash_and_throws_when_refused()
+    {
+        AnchoredDelete.EntryNameSafe(windows: false, "C:\\Antiphon\\x.txt").ShouldBeTrue();
+        AnchoredDelete.EntryNameSafe(windows: true, "C:\\Antiphon\\x.txt").ShouldBeFalse();
+        AnchoredDelete.IncludeListedName(windows: false, "C:\\Antiphon\\x.txt").ShouldBeTrue();
+        AnchoredDelete.IncludeListedName(windows: false, ".").ShouldBeFalse();
+        AnchoredDelete.IncludeListedName(windows: false, "..").ShouldBeFalse();
+        Should.Throw<IOException>(() => AnchoredDelete.IncludeListedName(windows: true, "C:\\Antiphon\\x.txt"))
+            .Message.ShouldBe("anchored-name-refused");
+        Should.Throw<IOException>(() => AnchoredDelete.IncludeListedName(windows: true, "owned:stream"))
+            .Message.ShouldBe("anchored-name-refused");
+    }
+
+    [Test]
     public void missing_birth_time_matches_device_and_inode_only()
     {
         var recorded = new FilesystemIdentity(7, 11, 0);

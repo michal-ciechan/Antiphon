@@ -44,11 +44,22 @@ public static class AnchoredDelete
         parentOpenedWithoutFollow && parentIsDirectory && !parentIsReparse && !entryIsReparse
         && expectedEntry.SameAs(entryThroughParent);
 
-    // A colon is an NTFS alternate-data-stream separator. Linux file names may contain one.
+    // A colon is an NTFS alternate-data-stream separator. A backslash separates Windows
+    // paths. Linux names may contain either; only '/' splits a component there.
     public static bool EntryNameSafe(bool windows, string name) =>
         !string.IsNullOrEmpty(name)
-        && name.IndexOfAny(['/', '\\']) < 0
-        && (!windows || !name.Contains(':'));
+        && name.IndexOf('/') < 0
+        && (!windows || (name.IndexOf('\\') < 0 && !name.Contains(':')));
+
+    // False for "." and "..". A name this layer still refuses is an error, not an absence,
+    // so the caller keeps the root and its marker.
+    public static bool IncludeListedName(bool windows, string name)
+    {
+        if (name is "." or "..") return false;
+        if (!EntryNameSafe(windows, name))
+            throw new IOException("anchored-name-refused");
+        return true;
+    }
 }
 public readonly record struct AnchoredChild(string Name, string Kind, long Size);
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
