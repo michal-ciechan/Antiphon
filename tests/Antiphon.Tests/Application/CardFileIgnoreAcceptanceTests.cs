@@ -30,7 +30,7 @@ public class CardFileIgnoreAcceptanceTests
         var repository = new CardFileTestRepository { BeforeInstall = denied ? () => throw new UnauthorizedAccessException("synthetic denial") : null };
         await using var db = world.Db();
         var service = new ProjectService(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance, cardFiles: world.Service(db, repository: repository));
-        var result = await service.CreateAsync(new("c408-install", "", null, false, false, world.Repo.Path, "master"), default);
+        var result = await service.CreateAsync(new($"c408-install-{Guid.NewGuid():N}", "", null, false, false, world.Repo.Path, "master"), default);
         result.CardFileWarnings.ShouldContain("card_files_ignore_missing");
         (await db.Projects.AnyAsync(p => p.Id == result.Id)).ShouldBeTrue();
         (await File.ReadAllTextAsync(file)).ShouldBe(original); Directory.Exists(world.DirectoryPath).ShouldBeFalse();
@@ -38,11 +38,36 @@ public class CardFileIgnoreAcceptanceTests
     }
 
     [Test]
+    public async Task Parallel_same_base_name_creates_both_preserve_the_project_and_ignore_bytes()
+    {
+        async Task<Guid> CreateOne()
+        {
+            await using var world = new CardFilePrivacyWorld(); await world.Repo.CommitFileAsync("seed", "seed");
+            var file = Path.Combine(world.Repo.Path, ".gitignore");
+            const string original = "# BEGIN ANTIPHON CARD FILES\n# malformed\n";
+            await File.WriteAllTextAsync(file, original);
+            await using var db = world.Db();
+            var service = new ProjectService(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance, cardFiles: world.Service(db));
+            var result = await service.CreateAsync(new($"c408-install-{Guid.NewGuid():N}", "", null, false, false, world.Repo.Path, "master"), default);
+            try
+            {
+                result.CardFileWarnings.ShouldContain("card_files_ignore_missing");
+                (await db.Projects.AnyAsync(p => p.Id == result.Id)).ShouldBeTrue();
+                (await File.ReadAllTextAsync(file)).ShouldBe(original); Directory.Exists(world.DirectoryPath).ShouldBeFalse();
+                return result.Id;
+            }
+            finally { await db.Projects.Where(p => p.Id == result.Id).ExecuteDeleteAsync(); }
+        }
+        var ids = await Task.WhenAll(CreateOne(), CreateOne());
+        ids[0].ShouldNotBe(ids[1]);
+    }
+
+    [Test]
     public async Task Same_target_other_project_opt_in_preserves_exceptions_and_warnings()
     {
         await using var world = new CardFilePrivacyWorld(); await world.InitializeAsync(); await world.AddCardAsync();
         await using var db = world.Db();
-        var other = new Project { Id = Guid.NewGuid(), Name = "c408-other", LocalRepositoryPath = world.Repo.Path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var other = new Project { Id = Guid.NewGuid(), Name = $"c408-other-{Guid.NewGuid():N}", LocalRepositoryPath = world.Repo.Path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         db.Projects.Add(other); await db.SaveChangesAsync();
         try {
             var before = await File.ReadAllBytesAsync(Path.Combine(world.Repo.Path, ".gitignore"));
@@ -60,7 +85,7 @@ public class CardFileIgnoreAcceptanceTests
         using var target = new ScratchGitRepo("c408-target"); await target.CommitFileAsync("seed", "seed");
         await using var db = world.Db();
         var service = new ProjectService(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance, cardFiles: world.Service(db));
-        var result = await service.UpdateAsync(world.ProjectId, new("c408-target", "", null, false, false, target.Path, "master"), default);
+        var result = await service.UpdateAsync(world.ProjectId, new($"c408-target-{Guid.NewGuid():N}", "", null, false, false, target.Path, "master"), default);
         result.RepositoryVisibility.ShouldBe(RepositoryVisibility.Unknown);
         result.CardFileWarnings.ShouldContain("card_files_ignore_missing"); File.Exists(Path.Combine(target.Path, ".gitignore")).ShouldBeFalse();
         (await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId)).SyncCardFiles.ShouldBeTrue();
