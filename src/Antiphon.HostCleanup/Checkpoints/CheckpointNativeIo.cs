@@ -141,7 +141,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
     {
         var parent = Path.GetDirectoryName(path);
         var name = Path.GetFileName(path);
-        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name) || name.IndexOfAny(['/', '\\']) >= 0)
+        if (string.IsNullOrEmpty(parent) || !AnchoredDelete.EntryNameSafe(windows: false, name))
             throw new IOException("anchored-path-unsafe");
         // O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC. A swapped symlink fails here and is not deleted.
         var fd = OpenNative(parent, 0x10000 | 0x20000 | 0x80000);
@@ -166,7 +166,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
     {
         var parent = Path.GetDirectoryName(path);
         var name = Path.GetFileName(path);
-        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name) || name.IndexOfAny(['/', '\\']) >= 0)
+        if (string.IsNullOrEmpty(parent) || !AnchoredDelete.EntryNameSafe(windows: true, name))
             throw new IOException("anchored-path-unsafe");
         const uint flags = 0x02000000 | 0x00200000;
         var parentHandle = CreateFile(parent, 0x80000000, 7, IntPtr.Zero, 3, flags, IntPtr.Zero);

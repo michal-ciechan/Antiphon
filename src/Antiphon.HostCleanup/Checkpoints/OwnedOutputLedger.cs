@@ -107,9 +107,23 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             return "left in place: " + full;
         if (context.Registry.Identity(full) is not { } expected)
             return "left in place: " + full;
-        Io.DeleteAnchored(full, expected, directory);
+        try
+        {
+            Io.DeleteAnchored(full, expected, directory);
+        }
+        catch (IOException ex) when (directory && IsNonEmptyDirectory(ex))
+        {
+            return "left in place: " + full;
+        }
         return null;
     }
+
+    // Linux ENOTEMPTY is errno 39. Windows ERROR_DIR_NOT_EMPTY is 145. The virtual
+    // fixture says "directory not empty". A late entry keeps the directory; it does not throw.
+    private static bool IsNonEmptyDirectory(IOException ex) =>
+        ex.Message.Contains("directory not empty", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("errno=39", StringComparison.Ordinal)
+        || ex.Message.Contains("win32=145", StringComparison.Ordinal);
 
     private Dictionary<string, string> Inventory(string root)
     {
