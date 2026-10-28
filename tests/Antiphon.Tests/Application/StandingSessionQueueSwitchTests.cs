@@ -42,6 +42,46 @@ public class StandingSessionQueueSwitchTests
     }
 
     [Test]
+    public async Task C1591_MovedNoteDropsWithholdRecord()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter);
+        await f.SeedAsync();
+        var messageId = Guid.NewGuid();
+        var at = DateTime.UtcNow;
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = messageId,
+                AgentSessionId = f.B.Id,
+                Body = "withheld note moving with the standing agent",
+                Sequence = 1,
+                CreatedAt = at,
+                Status = QueuedMessageStatus.Pending,
+                WithholdCount = 1,
+                FirstWithheldAt = at,
+                LastWithheldAt = at,
+                LastWithholdReason = DialogDeliveryAdmission.AdoptedSession,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var started = await f.StartAsync(new StartAgentRequest(Fresh: true));
+        await f.IdleAsync();
+        var newId = Guid.Parse(started.PersistentSessionId!);
+        newId.ShouldNotBe(f.B.Id);
+        await using var verify = f.Db();
+        var row = (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == messageId))!;
+        row.AgentSessionId.ShouldBe(newId);
+        row.Body.ShouldBe("withheld note moving with the standing agent");
+        row.WithholdCount.ShouldBe(0);
+        row.FirstWithheldAt.ShouldBeNull();
+        row.LastWithheldAt.ShouldBeNull();
+        row.LastWithholdReason.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Target_late_confirmation_and_open_task_guards_remain_intact()
     {
         var adapter = new FakeAgentProtocolAdapter().WithClaudeDialogObservation();

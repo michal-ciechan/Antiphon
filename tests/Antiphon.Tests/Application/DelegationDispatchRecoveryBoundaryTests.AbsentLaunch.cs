@@ -208,6 +208,46 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     }
 
     [Test]
+    public async Task C1591_Withheld_brief_still_holds_absent_launch()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape { Parent = true });
+        var withheldAt = Pg(DateTime.UtcNow.AddMinutes(-5));
+        const string reason = "Claude dialog observation unavailable: adopted session";
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            (await db.SessionQueuedMessages.Where(m => m.Id == seeded.BriefId).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.WithholdCount, 1)
+                .SetProperty(m => m.FirstWithheldAt, withheldAt)
+                .SetProperty(m => m.LastWithheldAt, withheldAt)
+                .SetProperty(m => m.LastWithholdReason, reason))).ShouldBe(1);
+        }
+
+        var runner = new CountingRunner();
+        var stopper = new RecordingSessionStopper();
+        await using (var host = OpenSweep(
+            schema.ConnectionString, runner, stopper, new FakeTimeProvider(DateTimeOffset.UtcNow),
+            new DeadSessionFirstSeenState()))
+            await host.DueAsync();
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var held = await verify.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
+        held.Status.ShouldBe(AgentTaskStatus.Blocked);
+        held.CompletedAt.ShouldBeNull();
+        held.FailureReason.ShouldBe(AgentTaskDispatcher.DispatchLaunchAbsentReason);
+        held.Attempt.ShouldBe(seeded.Attempt);
+        var brief = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == seeded.BriefId);
+        brief.Status.ShouldBe(QueuedMessageStatus.Pending);
+        brief.DeliveryAttempts.ShouldBe(0);
+        brief.WithholdCount.ShouldBe(1);
+        brief.FirstWithheldAt.ShouldBe(withheldAt);
+        brief.LastWithheldAt.ShouldBe(withheldAt);
+        brief.LastWithholdReason.ShouldBe(reason);
+        Encoding.UTF8.GetBytes(brief.Body).ShouldBe(seeded.Body);
+        Quiet(runner, stopper, "withheld brief");
+    }
+
+    [Test]
     public async Task C1149_Hold_is_once_and_automatic_relaunch_bound_is_zero()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
