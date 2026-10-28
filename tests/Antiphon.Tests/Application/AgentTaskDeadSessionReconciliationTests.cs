@@ -270,6 +270,47 @@ public class AgentTaskDeadSessionReconciliationTests
         harness.Stopper.Killed.ShouldBeEmpty("THE SWEEP NEVER KILLS");
     }
 
+    /// <summary>
+    /// Linux stand-in for the ConPTY sign-in runtime test. The launch outcome is a Failed
+    /// session with <see cref="SessionLaunchBlock.ProviderSignInRequired"/> and a runner that
+    /// still lists it. An advance while that listing is up leaves the task Dispatched. After
+    /// the listing drops, the same fake clock fails it AuthenticationRequired, and the sweep
+    /// never writes pty input.
+    /// </summary>
+    [Test]
+    public async Task a_sign_in_block_stays_dispatched_while_the_runner_lists_it_then_fails_on_the_clock()
+    {
+        const string reason =
+            "ProviderSignInRequired: Grok opened on its sign-in screen. Nothing was typed into it. Run grok login";
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed,
+            failureReason: reason,
+            agentKind: AgentKind.Grok,
+            terminationSource: SessionTerminationSource.SystemRequest,
+            launchBlock: SessionLaunchBlock.ProviderSignInRequired);
+        var harness = scenario.Harness();
+
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        harness.Clock.Advance(TimeSpan.FromMinutes(5));
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "a runner that still lists the session spends the advance");
+        harness.Runner.InputsSent.ShouldBe(0);
+
+        harness.Runner.Gone.Add(task.SessionId);
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+        failed.FailureReason.ShouldContain("grok login");
+        harness.Runner.InputsSent.ShouldBe(0);
+        harness.Stopper.Killed.ShouldBeEmpty("THE SWEEP NEVER KILLS");
+        (await scenario.ParentNoteBodiesAsync()).ShouldContain(b => b.Contains("grok login"));
+    }
+
     // ---- 6-8: the evidence gates -----------------------------------------------------------------
 
     /// <summary>
@@ -1097,6 +1138,7 @@ public class AgentTaskDeadSessionReconciliationTests
         public HashSet<Guid> Gone { get; } = [];
         public Exception? ListError { get; set; }
         public List<Guid> Killed { get; } = [];
+        public int InputsSent { get; private set; }
 
         public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
         {
@@ -1147,8 +1189,11 @@ public class AgentTaskDeadSessionReconciliationTests
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+        {
+            InputsSent++;
             throw new NotSupportedException();
+        }
 
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
