@@ -1237,6 +1237,82 @@ $NightlySeams = @{
     Remove-Item -LiteralPath $heartRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A shared timing root holds the journals of every parallel chunk. The post-exit
+# read must attribute by the owner file the recorder writes (own-<utf8-hex of the
+# group id>-<pid>-<nonce>.txt) and must not open another chunk's journal.
+function Get-QualificationWitnessGroupToken {
+    param([string]$Text)
+    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Text)
+    $sb = New-Object System.Text.StringBuilder ($bytes.Length * 2)
+    foreach ($b in $bytes) { [void]$sb.Append($b.ToString('x2')) }
+    return $sb.ToString()
+}
+
+Assert-Check ((Get-QualificationWitnessGroupToken 'g-own') -eq '672d6f776e') 'group-token-vector'
+
+$foreignRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-foreign-' + [guid]::NewGuid().ToString('N'))
+$foreignLog = Join-Path $foreignRoot 'logs'
+$foreignTiming = Join-Path $foreignLog 'timing'
+New-Item -ItemType Directory -Path $foreignTiming -Force | Out-Null
+try {
+    $foreignLine = '{"recordKind":"complete","testId":"t000000","phases":[{"phase":"process-wait","startOffsetMs":0,"endOffsetMs":5000}]}' + "`n"
+    $foreignLineBytes = [Text.Encoding]::UTF8.GetBytes($foreignLine)
+    $foreignCopies = [int][math]::Floor((4.5MB) / $foreignLineBytes.Length)
+    $foreignChunk = New-Object byte[] ($foreignLineBytes.Length * $foreignCopies)
+    for ($i = 0; $i -lt $foreignCopies; $i++) {
+        [Buffer]::BlockCopy($foreignLineBytes, 0, $foreignChunk, ($i * $foreignLineBytes.Length), $foreignLineBytes.Length)
+    }
+    $foreignBytes = 0L
+    for ($n = 0; $n -lt 40; $n++) {
+        $foreignPid = [string](1000 + $n)
+        $foreignNonce = ('f' + $n.ToString('00'))
+        $foreignGroup = ('other-' + $n)
+        $foreignName = 'cases-' + $foreignPid + '-' + $foreignNonce + '.jsonl'
+        $foreignPath = Join-Path $foreignTiming $foreignName
+        $foreignHeader = '{"recordKind":"header","version":1,"pid":' + $foreignPid + ',"nonce":"' + $foreignNonce + '","runId":"other-run","groupId":"' + $foreignGroup + '","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}' + "`n"
+        $foreignStream = [IO.File]::Create($foreignPath)
+        try {
+            $foreignHeaderBytes = [Text.Encoding]::UTF8.GetBytes($foreignHeader)
+            $foreignStream.Write($foreignHeaderBytes, 0, $foreignHeaderBytes.Length)
+            $foreignStream.Write($foreignChunk, 0, $foreignChunk.Length)
+        } finally { $foreignStream.Dispose() }
+        $foreignOwner = 'own-' + (Get-QualificationWitnessGroupToken $foreignGroup) + '-' + $foreignPid + '-' + $foreignNonce + '.txt'
+        [IO.File]::WriteAllText((Join-Path $foreignTiming $foreignOwner), ($foreignName + "`n"))
+        $foreignBytes += [int64](Get-Item -LiteralPath $foreignPath).Length
+    }
+    $ownName = 'cases-42-own1.jsonl'
+    $ownText = @(
+        '{"recordKind":"header","version":1,"pid":42,"nonce":"own1","runId":"run-own","groupId":"g-own","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
+        '{"recordKind":"fixture","fixtureId":"fix-own","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1250}]}',
+        '{"recordKind":"complete","testId":"own-a","phases":[{"phase":"process-spawn","startOffsetMs":0,"endOffsetMs":400}]}'
+    ) -join "`n"
+    [IO.File]::WriteAllText((Join-Path $foreignTiming $ownName), $ownText + "`n")
+    [IO.File]::WriteAllText((Join-Path $foreignTiming ('own-' + (Get-QualificationWitnessGroupToken 'g-own') + '-42-own1.txt')), ($ownName + "`n"))
+    $foreignBytes += [int64](Get-Item -LiteralPath (Join-Path $foreignTiming $ownName)).Length
+    $ownTrx = Join-Path $foreignLog 'antiphon-g-own.trx'
+    $ownPad = ' ' * 8200
+    $ownTrxText = "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<TestRun><!--$ownPad--><Results>`n<UnitTestResult testId=`"a`" testName=`"OwnA`" duration=`"00:00:01`" outcome=`"Passed`" />`n<UnitTestResult testId=`"b`" testName=`"OwnB`" duration=`"00:00:03`" outcome=`"Passed`" />`n</Results></TestRun>`n"
+    [IO.File]::WriteAllText($ownTrx, $ownTrxText)
+    $ownTrxBytes = [int64](Get-Item -LiteralPath $ownTrx).Length
+    $listSw = [Diagnostics.Stopwatch]::StartNew()
+    $listedForeign = @(Get-ChildItem -LiteralPath $foreignTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
+    $listSw.Stop()
+    $foreignSw = [Diagnostics.Stopwatch]::StartNew()
+    $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
+    $foreignSw.Stop()
+    $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
+    $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
+    $foreignBound = ($foreignSw.Elapsed.TotalSeconds -lt 0.2 -and $listedForeign.Count -eq 41 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192)
+    $foreignExit = ([int]$foreignAgg.ChunkExitCode -eq 5 -and [string]$foreignAgg.ChunkResult -eq 'KEEP-5')
+    Assert-Check ($foreignOwn -and $foreignBound -and $foreignExit) 'own-chunk-ignores-foreign-journals'
+} catch {
+    Write-Host ('FAIL own-chunk-ignores-foreign-journals ' + $_.Exception.Message)
+    $script:failed++
+} finally {
+    Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failed -gt 0) {
     Write-Host ('FAILED ' + $failed)
     exit 1
