@@ -7664,13 +7664,28 @@ c1008_preview_on_signal() {
     exit 143
 }
 
-# Inherited descriptors above stderr are the caller's pipes. An orphaned
-# watchdog sleep would keep the preview looking unfinished for the whole budget.
+# The watchdog sleep is the process that can outlive the client. Inherited
+# descriptors above stderr are the caller's pipes; closing them here keeps an
+# orphaned sleep from holding the preview open for the rest of the budget.
+# The helper client does not close them: that shell still has to run docker.
 c1008_preview_drop_extra_fds() {
     local fd
     for fd in 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
         eval "exec ${fd}>&-" 2>/dev/null || true
     done
+}
+
+# One printable line from the helper client, for a failure that printed no
+# audit check. Credential-shaped text is not copied into the receipt.
+c1008_preview_helper_reason() {
+    local err_file="${c1008_preview_output_file}.err" line lower
+    [ -s "$err_file" ] || return 0
+    line="$(tr -cd '[:print:]' < "$err_file" | head -c 160)"
+    lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+        *credential*|*token*|*secret*|*password*|*ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*) line='redacted' ;;
+    esac
+    printf '%s' "$line"
 }
 
 c1008_preview_finish() {
@@ -7685,6 +7700,10 @@ c1008_preview_finish() {
         output="$(cat "$c1008_preview_output_file")"
     fi
     if [ "$run_code" != 0 ]; then
+        case "$output" in
+            *'audit check='*|*RecycleUnpublishedWork*|*RecycleWorktreeDirty*) ;;
+            *) printf 'audit check=preview-helper status=%s repo=. detail=%s\n' "$run_code" "$(c1008_preview_helper_reason)" ;;
+        esac
         printf '%s\n' "$output"
         case "$output" in
             *RecycleUnpublishedWork*) return 3 ;;
@@ -7759,14 +7778,15 @@ c1008_audit_readonly() {
     trap 'c1008_preview_on_signal' INT TERM HUP
     # Backgrounded so a signal reaches the trap during wait. timeout covers the
     # client; the watchdog docker-kills the owned id at the same budget.
+    # Stderr stays beside the audit so a helper that prints no check line can
+    # name the startup failure without copying it on the success path.
     (
-        c1008_preview_drop_extra_fds
         timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
             --security-opt no-new-privileges --user 1654:1654 --init \
             --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
             --entrypoint /bin/bash \
             "${mounts[@]}" "$image" -c "$program"
-    ) >"$c1008_preview_output_file" 2>/dev/null &
+    ) >"$c1008_preview_output_file" 2>"${c1008_preview_output_file}.err" &
     c1008_preview_run_pid=$!
     attempt=0
     while [ "$attempt" -lt 25 ]; do
