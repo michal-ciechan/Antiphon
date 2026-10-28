@@ -57,8 +57,9 @@ const plantForeignPreview = (containerName) => {
 // read-only in a private mount namespace. Anything that could write a volume
 // fails closed. --network none is apply's opposite: ls-remote and fetch then
 // fail the way a network namespace with no DNS fails. No --network matches
-// apply's docker create. A normal run records no container (--rm). A hang
-// marker keeps one running until SIGKILL.
+// apply's docker create. A normal run records no container (--rm) and writes a
+// cidfile id that was never created, so release's inspect misses. A hang marker
+// keeps one running until SIGKILL.
 const previewRun = () => {
   const reason = (why) => {
     fs.appendFileSync(path.join(root, 'preview-helper-stderr'), why + '\n');
@@ -81,11 +82,19 @@ const previewRun = () => {
   if (dropped < 0 || args[dropped + 1] !== 'ALL') reason('preview requires --cap-drop ALL');
   if (args.indexOf('--user') < 0 || args[args.indexOf('--user') + 1] !== '1654:1654') reason('preview requires --user 1654:1654');
   if (args.indexOf('--entrypoint') < 0 || args[args.indexOf('--entrypoint') + 1] !== '/bin/bash') reason('preview requires --entrypoint /bin/bash');
+  if (!args.includes('--init')) reason('preview requires --init');
+  const security = args.indexOf('--security-opt');
+  if (security < 0 || args[security + 1] !== 'no-new-privileges') reason('preview requires no-new-privileges');
   const named = args.indexOf('--name');
   const previewName = named >= 0 ? (args[named + 1] || '') : '';
-  const previewNameOk = /^c1008-preview-audit-[0-9]+$/.test(previewName)
-    || /^c1008-preview-c1008[0-9a-f]{32}-[0-9a-f]{16}$/.test(previewName);
+  const previewNameOk = /^c1008-preview-(c1008[0-9a-f]{32})-([0-9a-f]{16})$/.exec(previewName);
   if (!previewNameOk) reason('preview name refused');
+  const labelAt = args.indexOf('--label');
+  const labelValue = labelAt >= 0 ? (args[labelAt + 1] || '') : '';
+  if (labelValue !== 'io.antiphon.preview-audit=' + previewNameOk[1] + ':' + previewNameOk[2]) reason('preview label refused');
+  const cidAt = args.indexOf('--cidfile');
+  const cidPath = cidAt >= 0 ? args[cidAt + 1] : '';
+  if (!cidPath) reason('preview requires --cidfile');
   const programAt = args.indexOf('-c');
   if (programAt < 1 || !/^sha256:[0-9a-f]{64}$/.test(args[programAt - 1] || '')) reason('preview image must be the pinned id');
   const mounts = args.flatMap((a, i) => a === '--mount' ? [args[i + 1]] : []);
@@ -108,8 +117,6 @@ const previewRun = () => {
   } else if (mounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
   if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
-  const cidAt = args.indexOf('--cidfile');
-  const cidPath = cidAt >= 0 ? args[cidAt + 1] : '';
   if (fs.existsSync(path.join(root, 'preview-hang'))) {
     const id = crypto.randomBytes(32).toString('hex');
     if (cidPath) fs.writeFileSync(cidPath, id + '\n');

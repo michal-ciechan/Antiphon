@@ -401,16 +401,34 @@ retire-temp preview bound to a cleanup receipt runs the same publication audit a
 apply, inside the same pinned image, so it uses that image's Git and the production
 `/work` path. Docker mounts the work volume and, when present, `runner-tmp`
 read-only (`--mount type=volume,source=<volume>,target=/work,readonly` and the
-same for `runner-tmp`). The container is `--network none`, `--cap-drop ALL`,
-`--user 1654:1654`, and `--rm`, and `timeout` kills it at the audit budget. It
-cannot remount or write either volume. That is the only container a preview may
-create: a read-only, no-network, capability-less helper that Docker removes when
-it exits. A container that can write a volume, a rollout stop or rm, a volume
-rm, and a recycle journal are not part of a preview. The preview prints
-`auditPending=false` and grants no apply authority. A preview without a pinned
-image prints `auditPending=true`, does not audit, and starts no container. Apply
-keeps its own helper, obtains fresh proofs, stops and removes only inspected
-owned container IDs, and never prunes.
+same for `runner-tmp`). The helper's scratch is a private tmpfs at `/tmp`. The
+preview uses apply's network: there is no `--network` argument, which is Docker's
+default bridge, the same mode as apply's `docker create`. The audit's
+`git ls-remote origin` and origin-proof fetch need that network. The container is
+`--rm`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user 1654:1654`,
+and `--init`. Apply's helper receives `C1008_AUDIT_TIMEOUT_SECONDS`,
+`C1008_SCRATCH_QUOTA_BYTES` when that variable is set, and `C1008_TMP_MOUNT` when
+`runner-tmp` is mounted. The preview passes that same environment and nothing
+further. No GitHub token, SSH agent, or git credential helper is passed. State
+and auth volumes are not mounted. The audit program sets `GIT_CONFIG_SYSTEM` and
+`GIT_CONFIG_GLOBAL` to `/dev/null`. The helper name is
+`c1008-preview-<operation id>-<16 hex token>` and its label is
+`io.antiphon.preview-audit=<operation id>:<token>`. `--cidfile` records the id
+this run created. If that name already exists, the preview refuses with
+`RecycleGitAuditUnknown` and leaves the existing container in place. The shared
+audit budget above (default 10800 s, from the 5225 s clean-volume measurement
+and the 1404 s read-only OLD-volume replay) is enforced with `docker kill` of the
+owned id, so a client timeout or a dropped session cannot leave the helper
+running for the rest of that budget. On timeout, SIGHUP, SIGINT, SIGTERM, and
+exit, the preview `docker kill`s that id while it is still running and
+`docker rm -f`s it only after the label matches, then checks the id is gone.
+That is the only container a preview may create: one read-only, capability-less,
+auto-removed, pinned-image helper on apply's network. A container that can write
+a volume, a rollout stop or rm, a volume rm, and a recycle journal are not part
+of a preview. The preview prints `auditPending=false` and grants no apply
+authority. A preview without a pinned image prints `auditPending=true`, does not
+audit, and starts no container. Apply keeps its own helper, obtains fresh proofs,
+stops and removes only inspected owned container IDs, and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under
