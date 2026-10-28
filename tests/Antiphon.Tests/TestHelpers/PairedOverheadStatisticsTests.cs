@@ -76,6 +76,46 @@ public sealed class PairedOverheadStatisticsTests
     }
 
     [Test]
+    public void Load_32_wall_median_above_two_percent_is_accepted()
+    {
+        // Host load rose from 6.5 to 32.7 with no extra burn processes.
+        // Wall median 0.067 failed the 2% wall gate. CPU median 0.0197
+        // stayed under 2%. Pairs are the recorded overhead-raw.json ratios.
+        double[] wall =
+        [
+            0.11064420097004474,
+            -0.14738731304463082,
+            0.10958911125948702,
+            0.15957359571017873,
+            -0.019970722606371043,
+            -0.009353746155999374,
+            0.018629858202053734,
+            0.06703080297158907,
+            0.06899630773064495,
+        ];
+        double[] cpu =
+        [
+            0.014556023610913335,
+            0.019697994375422346,
+            0.032424821167697175,
+            0.02057549046368223,
+            -0.0017678641691869761,
+            -0.01129200952571168,
+            0.009720835376443093,
+            0.02725998552774833,
+            0.02847057908444517,
+        ];
+        PairedOverheadStatistics.Median(wall).ShouldBe(0.06703080297158907d);
+        PairedOverheadStatistics.Median(cpu).ShouldBe(0.019697994375422346d);
+        // The 2% wall gate is what failed. CPU stayed inside that same 2%.
+        PairedOverheadStatistics.Median(wall).ShouldBeGreaterThan(0.02d);
+        PairedOverheadStatistics.Median(cpu).ShouldBeLessThan(0.02d);
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeTrue();
+        PairedOverheadStatistics.Median(wall).ShouldBeLessThan(OverheadAcceptance.WallMedianBound);
+        PairedOverheadStatistics.Median(cpu).ShouldBeLessThan(OverheadAcceptance.CpuMedianBound);
+    }
+
+    [Test]
     public void Processor_time_above_two_percent_is_rejected()
     {
         double[] wall = [0, 0, 0, 0, 0, 0, 0, 0, 0];
