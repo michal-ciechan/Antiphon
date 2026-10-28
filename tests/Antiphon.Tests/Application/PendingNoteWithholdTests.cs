@@ -418,6 +418,57 @@ public class PendingNoteWithholdTests
 
     [Test]
     [Timeout(180_000)]
+    public async Task C1591_LaterWithholdReasonAdvancesLastOnce(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        harness.Adapter.DialogAdopted = true;
+        var queued = await harness.Queue.EnqueueAsync(
+            harness.SessionId, "cycle notice", MessageSendMode.WhenIdle, ct);
+        var id = queued.Messages.Single(m => m.Body == "cycle notice").Id;
+        var first = await ReloadAsync(harness, id, ct);
+        first.WithholdCount.ShouldBe(1);
+        first.LastWithheldAt.ShouldBe(first.FirstWithheldAt);
+        first.DeliveryAttempts.ShouldBe(0);
+
+        var opened = harness.Now.AddMinutes(-15);
+        await using (var db = harness.CreateObserverContext())
+        {
+            (await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.FirstWithheldAt, opened)
+                .SetProperty(m => m.LastWithheldAt, opened), ct)).ShouldBe(1);
+        }
+
+        harness.Adapter.DialogAdopted = false;
+        harness.Adapter.DialogInputUncertain = true;
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+        var second = await ReloadAsync(harness, id, ct);
+        second.WithholdCount.ShouldBe(2);
+        second.FirstWithheldAt.ShouldBe(opened);
+        second.LastWithheldAt.ShouldNotBeNull();
+        second.LastWithheldAt!.Value.ShouldBeGreaterThan(opened);
+        second.LastWithholdReason.ShouldBe(DialogDeliveryAdmission.InputUncertain);
+        second.DeliveryAttempts.ShouldBe(0);
+        second.LastDeliveryStartedAt.ShouldBeNull();
+        second.LastDeliveryBaselineSequence.ShouldBeNull();
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+        var last = second.LastWithheldAt;
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+        var again = await ReloadAsync(harness, id, ct);
+        again.WithholdCount.ShouldBe(2);
+        again.FirstWithheldAt.ShouldBe(opened);
+        again.LastWithheldAt.ShouldBe(last);
+        again.LastWithholdReason.ShouldBe(DialogDeliveryAdmission.InputUncertain);
+        again.DeliveryAttempts.ShouldBe(0);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(180_000)]
     public async Task C1591_PendingNotePageBoundsBodyBytes(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
