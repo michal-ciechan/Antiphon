@@ -817,8 +817,9 @@ public sealed class RollingVolumeRecycleScriptTests
         C1008HostFixture.RequireNativeLinux();
         const string bound = "C1008_CLEANUP_OPERATION=" + PreviewCleanupOperation;
 
-        // The volume mountpoint has to stay outside /tmp: the audit covers /tmp with a
-        // private tmpfs, and the fake Docker root must be named c1008-host-*.
+        // Explicit root, still named c1008-host-*. The stub covers /tmp with a scratch
+        // tmpfs, then bind-mounts this root back on top, so a /var/tmp root and a
+        // default /tmp root both stay visible to the audit.
         var root = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -889,8 +890,8 @@ public sealed class RollingVolumeRecycleScriptTests
             await AssertApplyMatchesPreview(dirty, "RecycleWorktreeDirty");
         }
 
-        // Origin has to stay off /tmp. The preview covers /tmp with the same private
-        // tmpfs the helper uses, and a hidden origin is RecycleGitAuditUnknown.
+        // Same explicit root as the clean case. Origin lives inside that root, which
+        // the stub bind-mounts above its scratch tmpfs.
         var unpublishedRoot = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(unpublishedRoot);
         try
