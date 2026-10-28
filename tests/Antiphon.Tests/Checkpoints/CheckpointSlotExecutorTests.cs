@@ -156,10 +156,10 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
             {
                 exit = await pending.WaitAsync(SeatExecutorWallCap);
             }
-            catch (TimeoutException)
+            catch (System.TimeoutException)
             {
                 wall.Cancel();
-                throw new TimeoutException(
+                throw new System.TimeoutException(
                     $"renew driver exceeded the {SeatExecutorWallCap.TotalSeconds:0}s wall cap.");
             }
             SkipWhenStartUnread(Volatile.Read(ref startUnavailable), exit);
