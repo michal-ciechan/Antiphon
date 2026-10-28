@@ -195,27 +195,36 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
             TaskScheduler.Default);
     }
 
-    public async Task WaitForIdleAsync(TimeSpan timeout, CancellationToken ct)
+    public Task WaitForIdleAsync(TimeSpan timeout, CancellationToken ct) =>
+        WaitForIdleAsync(timeout, ct, TimeProvider.System);
+
+    /// <summary>
+    /// <paramref name="timeout"/> follows <paramref name="clock"/>. Callers that pass
+    /// <see cref="TimeProvider.System"/> keep a wall-clock budget. A test clock that is not
+    /// advanced does not expire while a launch is still in flight.
+    /// </summary>
+    public Task WaitForIdleAsync(TimeSpan timeout, CancellationToken ct, TimeProvider clock) =>
+        WaitForPendingAsync(PendingLaunches, timeout, ct, clock);
+
+    internal static async Task WaitForPendingAsync(
+        Func<Task[]> pending, TimeSpan timeout, CancellationToken ct, TimeProvider clock)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(timeout);
+        using var budget = new CancellationTokenSource(timeout, clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
 
         while (true)
         {
-            Task[] launches;
-            lock (_gate)
-                // Completed-but-not-yet-removed tasks count as settled (the cleanup continuation
-                // races this snapshot); including them would make WhenAll rethrow immediately.
-                launches = _launches.Where(t => !t.IsCompleted).ToArray();
-
+            // Completed-but-not-yet-removed tasks count as settled (the cleanup continuation
+            // races this snapshot); including them would make WhenAll rethrow immediately.
+            var launches = pending().Where(t => !t.IsCompleted).ToArray();
             if (launches.Length == 0)
                 return;
 
             try
             {
-                await Task.WhenAll(launches).WaitAsync(cts.Token);
+                await Task.WhenAll(launches).WaitAsync(linked.Token);
             }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
             {
                 throw; // timeout / caller cancellation — the only failures idle-waiting owns
             }
@@ -226,6 +235,12 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
                 // re-throw it at whoever happens to be waiting.
             }
         }
+    }
+
+    private Task[] PendingLaunches()
+    {
+        lock (_gate)
+            return _launches.Where(t => !t.IsCompleted).ToArray();
     }
 
     private async Task LaunchAsync(
