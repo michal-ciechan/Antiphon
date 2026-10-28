@@ -640,11 +640,14 @@ public class CodexTranscriptTailerTests
         var dir = Path.Combine(tree.SessionsRoot, "2026", "10", "28");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, $"rollout-2026-10-28T15-37-26-{Guid.NewGuid():D}.jsonl");
-        await File.WriteAllTextAsync(path, """
+        // The tailer emits a row only once its newline has arrived. A raw string omits the
+        // newline before the closing quotes, which left this heartbeat buffered forever.
+        var rollout = """
             {"timestamp":"2026-10-28T15:37:26.000Z","type":"session_meta","payload":{"id":"hb","cwd":"/tmp/hb"}}
             {"timestamp":"2026-10-28T15:45:43.145Z","type":"event_msg","payload":{"type":"user_message","message":"hold the clock"}}
             {"timestamp":"2026-10-28T16:03:58.832Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1},"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}
-            """);
+            """ + "\n";
+        await File.WriteAllTextAsync(path, rollout);
 
         await using var hub = new HubEvents();
         var tailer = NewTailer(
