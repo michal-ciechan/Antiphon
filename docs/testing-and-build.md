@@ -1637,9 +1637,11 @@ explicit PS7 test switch is supplied. PS7 parsing is not Windows parser evidence
 
 The ledger value is the uppercase hex of those bytes. A small file still matches a receipt-reader `SHA256.HashData` of `Read-CheckpointBytes`. The 64 MiB cap remains the receipt and text bound. Memory stays one chunk. The three-second stall window re-arms after every delivered chunk.
 
-After every regular file has been hashed, and before the ledger is written, the seal hashes that path again. The second digest is the content fingerprint. The ledger is written only when the length and SHA-256 still match. A replacement that reuses the original inode and preserves size and mtime changes the fingerprint and is refused with `changed while sealing`, and no ledger is written. A file above 1 GiB, or one that grows past the bound while it is read, is refused before a ledger is written. A symlink, reparse point, or non-regular file is refused too. The refusal names the file, the size, and the limit: `output-inventory-failed: <path> size=<bytes> limit=<bytes>: <reason>`. `scripts/test-checkpoint-output-inventory.ps1` seals a real 70 MiB file, refuses one byte over 1 GiB, a symlink, and a FIFO, and refuses the inode-reuse replacement.
+After every regular file has been hashed, and before the ledger is written, the seal hashes each path again, one file at a time. The second digest is the content fingerprint. The ledger is written only when every rechecked file still has the same length and SHA-256. A replacement that reuses the original inode and preserves size and mtime changes the fingerprint and is refused with `changed while sealing`, and no ledger is written. A file above 1 GiB, or one that grows past the bound while it is read, is refused before a ledger is written. A symlink, reparse point, or non-regular file is refused too. The refusal names the file, the size, and the limit: `output-inventory-failed: <path> size=<bytes> limit=<bytes>: <reason>`.
 
-A writer that restores the original bytes before the fingerprint, and a writer that changes the file after the ledger write, are outside this seal.
+A file changed after its own second hash has matched, while a later file is still being re-hashed, is sealed with that earlier digest. The ledger then records the wrong digest for the file that changed in that window. That window is no worse than base. A writer that restores the original bytes before that file's own second hash, and a writer that changes a file after the ledger write, are outside this seal.
+
+`scripts/test-checkpoint-output-inventory.ps1` seals a real 70 MiB file and refuses one byte over 1 GiB on every host. Append, truncate, and same-size swap stay portable. The symlink, FIFO, and inode-reuse (`stat -c`) cases run when `$IsLinux` is true, the same gate as the FIFO case in `scripts/test-checkpoint-large-stamp.ps1`. `-HideStat` forces the other branch and removes `stat` from `PATH`. On that branch the three cases print `SKIP <case> (Linux only; pending native Windows witness)` and do not call `stat` or `mkfifo`. The native Windows run of those three cases is still pending.
 
 ### Unit lane checkpoint shards (CARD-1573)
 
@@ -1650,9 +1652,10 @@ Each shard row:
 - Names `tests/Antiphon.Tests`, the same `OutputPath=bin-<id>/` (forward slash), and the same `After` group. The tool builds once, seals that fresh output once, and later rows reuse the build. The seal above is what lets that build record `buildSource=verified` for `Antiphon.Tests.dll`.
 - Sets `EstimatedMinutes` to at most 15, so the derived row timeout stays on the 45-minute advisory.
 - Uses a [combined class filter](#combined-class-filters-card-0403): `/*/Antiphon.Tests.<Namespace>/(ClassA*)|(ClassB*)/*`. Every class in the row carries `[Category("Unit")]` on the class. A class with another category stays in its own non-Unit row. The shard rows partition the Unit classes, each class in one row.
+- Selects only that class-level tag. A method-level `[Category("Unit")]` on a class with another category is outside these rows. `tests/Antiphon.Tests/Application/MatrixDefaultComplexityCreateTests.cs` is `[Category("Integration")]`, and `The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` at line 130 is `[Test, Category("Unit")]`. The full lane filter `/*/*/*/*[Category=Unit]` still selects that method. A class shard does not.
 - Is split again when a measurement would put `EstimatedMinutes` above 15.
 
-Set `--total-timeout` to at least the derived execution allowance for the whole shard set. A checkpoint run that executes every shard row has run the Unit lane, and that receipt can record `ordinaryScopeCompleted=Full`.
+Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Shard runtimes are UNMEASURED. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, executing the shard rows does not demonstrate `ordinaryScopeCompleted=Full`. A Full Final receipt for the Unit lane is not yet demonstrated.
 
 ## Opt-in per-test phase timing (CARD-1514)
 
