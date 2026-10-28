@@ -161,6 +161,252 @@ public class PendingNoteWithholdTests
         belowMinimum.Items.ShouldNotContain(i => i.Kind == AttentionKind.PendingNotesAged);
     }
 
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_ExpiredOptionalBriefCancelsAfterWithhold(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        var taskId = Guid.NewGuid();
+        await using (var db = harness.CreateObserverContext())
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "optional brief",
+                Goal = "expire before a late type",
+                Role = AgentTaskRole.Distill,
+                Status = AgentTaskStatus.Dispatched,
+                CreatedAt = harness.Now,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        harness.Adapter.DialogAdopted = true;
+        const string body = "optional brief that must expire";
+        await harness.Queue.EnqueueAsync(
+            harness.SessionId, body, MessageSendMode.WhenIdle, ct,
+            executionDeadlineAt: harness.Now.AddMinutes(-1), executionTaskId: taskId);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+        harness.Adapter.DialogAdopted = false;
+        harness.Adapter.RenderedScreenOverride = null;
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+
+        await using var verify = harness.CreateObserverContext();
+        var row = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == harness.SessionId && m.Body == body, ct);
+        row.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        row.DeliveryAttempts.ShouldBe(0);
+        row.LastDeliveryStartedAt.ShouldBeNull();
+        row.LastDeliveryBaselineSequence.ShouldBeNull();
+        var task = await verify.AgentTasks.SingleAsync(t => t.Id == taskId, ct);
+        task.Status.ShouldBe(AgentTaskStatus.Canceled);
+        task.FailureReason.ShouldBe("Optional work expired before execution.");
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_WithheldNotesStayTransferable(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        harness.Adapter.DialogAdopted = true;
+        var queued = await harness.Queue.EnqueueAsync(
+            harness.SessionId, "ordinary withheld note", MessageSendMode.WhenIdle, ct);
+        var id = queued.Messages.Single(m => m.Body == "ordinary withheld note").Id;
+        var row = await ReloadAsync(harness, id, ct);
+        StandingQueueSwitchPolicy.NeverAttempted(row).ShouldBeTrue();
+        new StandingRestartEscalationPolicy(new SupervisionSettings(), harness.Delegation)
+            .CanTransfer(row).ShouldBeTrue();
+        row.DeliveryAttempts.ShouldBe(0);
+        row.LastDeliveryStartedAt.ShouldBeNull();
+        row.LastDeliveryBaselineSequence.ShouldBeNull();
+        row.DeliveryVerdict.ShouldBeNull();
+        harness.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_ResumeNoteIsNotFailedAfterWithhold(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        DateTime generation;
+        await using (var db = harness.CreateObserverContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == harness.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.StandingAgentId, harness.AgentId), ct);
+            generation = SessionGeneration.Normalize(await db.AgentSessions.Where(s => s.Id == harness.SessionId)
+                .Select(s => s.StartedAt).SingleAsync(ct));
+        }
+
+        harness.Runner.TranscriptPull = (id, _) => Task.FromResult(new SessionRunnerTranscriptDto(
+            id, [], 0, AcceptedStartedAt: generation,
+            Readiness: new SessionRunnerTranscriptReadiness("Ready", "binding", 100, 100)));
+        var bound = harness.Adapter.AcceptedStartedAt;
+        harness.Adapter.AcceptedStartedAt = bound!.Value.AddMinutes(-10);
+        var noteId = Guid.Empty;
+        await harness.Queue.EnqueueAsync(
+            harness.SessionId, "Restart obligation for this launch: resume the standing work.",
+            MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System, deliverIfIdle: false,
+            runtimeActionKey: StandingResumeNote.Key(generation), onCreated: created => noteId = created);
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+        var withheld = await ReloadAsync(harness, noteId, ct);
+        withheld.Status.ShouldBe(QueuedMessageStatus.Pending);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        (await harness.Queue.GetQueueAsync(harness.SessionId, ct)).ModalBlockedReason
+            .ShouldBe(DialogDeliveryAdmission.GenerationMismatch);
+
+        harness.Adapter.AcceptedStartedAt = bound;
+        harness.Adapter.DialogAdopted = false;
+        harness.Adapter.DialogInputUncertain = false;
+        harness.Adapter.RenderedScreenOverride = null;
+        RecordRealPrompts(harness);
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+
+        var row = await ReloadAsync(harness, noteId, ct);
+        row.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.NoTranscriptRecord);
+        row.DeliveryAttempts.ShouldBe(1);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        harness.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        await using var incidents = harness.CreateObserverContext();
+        (await incidents.AgentIncidents.CountAsync(i => i.AgentId == harness.AgentId
+            && i.Kind == AgentIncidentKind.DeliveryVerificationFailed, ct)).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_QuotedHeadDoesNotConfirmOrParkAWithheldNote(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        var body = new string('A', PromptSubmissionMatch.MatchWindowChars) + " withheld tail not in the quote";
+        harness.Adapter.DialogAdopted = true;
+        var queued = await harness.Queue.EnqueueAsync(harness.SessionId, body, MessageSendMode.WhenIdle, ct);
+        var id = queued.Messages.Single(m => m.Body == body).Id;
+        await harness.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, body[..PromptSubmissionMatch.MatchWindowChars], timestamp: harness.Now);
+
+        harness.Adapter.DialogAdopted = false;
+        harness.Adapter.RenderedScreenOverride = null;
+        RecordRealPrompts(harness);
+        await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+
+        var row = await ReloadAsync(harness, id, ct);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        row.DeliveryAttempts.ShouldBe(1);
+        row.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.Truncated);
+        harness.Adapter.SubmittedBodies.ShouldBe([body]);
+        await using var incidents = harness.CreateObserverContext();
+        (await incidents.AgentIncidents.CountAsync(i => i.AgentId == harness.AgentId
+            && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery, ct)).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_ClearWithholdTypesEachNoteOnce(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions { ConnectionString = schema.ConnectionString });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        string[] bodies = ["first withheld notice alpha", "second withheld notice beta", "third withheld notice gamma"];
+        harness.Adapter.DialogAdopted = true;
+        foreach (var body in bodies)
+            await harness.Queue.EnqueueAsync(harness.SessionId, body, MessageSendMode.WhenIdle, ct);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+        harness.Adapter.DialogAdopted = false;
+        harness.Adapter.RenderedScreenOverride = null;
+        RecordRealPrompts(harness);
+        for (var n = 0; n < bodies.Length; n++)
+            await harness.Queue.FlushSessionAsync(harness.SessionId, ct);
+
+        harness.Adapter.SubmittedBodies.ShouldBe(bodies);
+        await using var verify = harness.CreateObserverContext();
+        var rows = await verify.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == harness.SessionId && bodies.Contains(m.Body))
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        rows.Count.ShouldBe(bodies.Length);
+        for (var n = 0; n < bodies.Length; n++)
+        {
+            rows[n].Body.ShouldBe(bodies[n]);
+            rows[n].Status.ShouldBe(QueuedMessageStatus.Sent);
+            rows[n].DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            rows[n].DeliveryAttempts.ShouldBe(1);
+        }
+
+        var prompts = await verify.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == harness.SessionId && t.Kind == TranscriptKinds.UserPrompt
+                && bodies.Contains(t.Text))
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+        prompts.ShouldBe(bodies);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1591_OneAttemptCapDoesNotParkAWithhold(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var harness = await ClaudeDialogFixture.CreateBridgeAsync(
+            new BridgeQueueHarness.HarnessOptions
+            {
+                ConnectionString = schema.ConnectionString,
+                ConfigureDeliveryVerification = v => v.MaxDeliveryAttempts = 1,
+            });
+        await harness.InsertStoreVisibleTurnAsync("earlier operator prompt", "earlier reply");
+        harness.Adapter.DialogAdopted = true;
+        var queued = await harness.Queue.EnqueueAsync(
+            harness.SessionId, "withheld under a one-attempt cap", MessageSendMode.WhenIdle, ct);
+        var message = queued.Messages.Single(m => m.Body == "withheld under a one-attempt cap");
+        message.Parked.ShouldBeFalse();
+        message.DeliveryAttempts.ShouldBe(0);
+        var stored = await ReloadAsync(harness, message.Id, ct);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stored.DeliveryAttempts.ShouldBe(0);
+        stored.LastDeliveryStartedAt.ShouldBeNull();
+        stored.LastDeliveryBaselineSequence.ShouldBeNull();
+        await harness.Queue.OnTurnEndAsync(harness.SessionId, ct);
+        await harness.Queue.SendNowAsync(harness.SessionId, message.Id, ct);
+        stored = await ReloadAsync(harness, message.Id, ct);
+        stored.DeliveryAttempts.ShouldBe(0);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    private static void RecordRealPrompts(BridgeQueueHarness harness)
+    {
+        harness.Adapter.OnSubmitted = async body =>
+        {
+            await StoreAwareTranscript.WriteAsync(harness.Provider, harness.SessionId, async () =>
+            {
+                await harness.InsertTranscriptEntryAsync(
+                    TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+                await harness.InsertTranscriptEntryAsync(
+                    TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: DateTime.UtcNow);
+            });
+        };
+    }
+
     private static async Task<QueuedMessageDto> ExpectWithheldAsync(
         BridgeQueueHarness harness, string body, string reason, int attempts, CancellationToken ct)
     {
