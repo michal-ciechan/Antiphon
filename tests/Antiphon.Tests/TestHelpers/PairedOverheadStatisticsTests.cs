@@ -116,18 +116,22 @@ public sealed class PairedOverheadStatisticsTests
     }
 
     [Test]
-    public void Processor_time_above_two_percent_is_rejected()
+    public void Processor_time_at_the_cpu_median_bound_is_rejected()
     {
         double[] wall = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-        double[] cpu = [0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03];
+        var atBound = OverheadAcceptance.CpuMedianBound;
+        double[] cpu = [atBound, atBound, atBound, atBound, atBound, atBound, atBound, atBound, atBound];
+        PairedOverheadStatistics.Median(cpu).ShouldBe(atBound);
         OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
     }
 
     [Test]
-    public void Wall_median_above_two_percent_is_rejected()
+    public void Wall_median_at_the_wall_median_bound_is_rejected()
     {
-        double[] wall = [0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021];
+        var atBound = OverheadAcceptance.WallMedianBound;
+        double[] wall = [atBound, atBound, atBound, atBound, atBound, atBound, atBound, atBound, atBound];
         double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        PairedOverheadStatistics.Median(wall).ShouldBe(atBound);
         OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
     }
 }
