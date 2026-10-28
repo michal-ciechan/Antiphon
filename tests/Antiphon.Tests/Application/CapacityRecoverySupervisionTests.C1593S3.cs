@@ -875,6 +875,7 @@ public partial class CapacityRecoverySupervisionTests
         public TaskCompletionSource TickDone { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task Completed { get; private set; } = Task.CompletedTask;
+        private int _once;
 
         public override async ValueTask<InterceptionResult> TransactionCommittingAsync(
             DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
@@ -884,7 +885,7 @@ public partial class CapacityRecoverySupervisionTests
             var session = context?.ChangeTracker.Entries<AgentSession>()
                 .FirstOrDefault(entry => entry.Entity.Status == SessionStatus.Starting)
                 ?.Entity;
-            if (session is null)
+            if (session is null || Interlocked.Exchange(ref _once, 1) == 1)
                 return await base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
 
             AcceptedGeneration = session.StartedAt;
@@ -941,16 +942,17 @@ public partial class CapacityRecoverySupervisionTests
             var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
             while (DateTime.UtcNow < until && !TickDone.Task.IsCompleted)
             {
-                // Row-lock waiters do not show as an ungranted relation lock. They wait
-                // on the tuple, which pg_stat_activity reports as wait_event tuple.
+                // Row-lock waiters are not an ungranted relation lock. The reread is the
+                // other backend whose current statement is FOR UPDATE and is waiting.
                 await using var waiter = new NpgsqlCommand(
                     """
                     SELECT 1
                     FROM pg_stat_activity
                     WHERE datname = current_database()
                       AND pid <> pg_backend_pid()
+                      AND state = 'active'
                       AND wait_event_type = 'Lock'
-                      AND wait_event = 'tuple'
+                      AND query LIKE '%FOR UPDATE%'
                     LIMIT 1
                     """, connection, tx);
                 if (await waiter.ExecuteScalarAsync() is not null)

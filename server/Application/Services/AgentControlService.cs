@@ -1042,6 +1042,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
         var connection = db.Database.GetDbConnection();
         await using var hold = connection.CreateCommand();
         hold.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+        hold.CommandTimeout = 0;
         hold.CommandText = """SELECT "Id" FROM "Agents" WHERE "Id" = @id FOR UPDATE""";
         var id = hold.CreateParameter();
         id.ParameterName = "id";
