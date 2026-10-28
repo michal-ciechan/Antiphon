@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
+using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Shouldly;
 using TUnit.Core;
 
@@ -70,6 +72,50 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         sink.Lines.Count.ShouldBe(1);
         sink.Lines[0].EndsWith("id=caller-context", StringComparison.Ordinal).ShouldBeTrue();
         await writer.DisposeAsync();
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    public async Task repeat_dispose_completes_after_the_sink_dispose_faults()
+    {
+        var sink = new FaultingDisposeSink();
+        var writer = new ExecutorLogWriter(sink);
+        var first = await Should.ThrowAsync<IOException>(async () => await writer.DisposeAsync());
+        first.Message.ShouldBe("injected log dispose");
+        sink.Disposes.ShouldBe(1);
+        await writer.DisposeAsync();
+        sink.Disposes.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task publication_failure_plus_log_close_failure_stays_invalid()
+    {
+        var (run, runtime, sink) = NewRun();
+        sink.ThrowOnDispose = true;
+        var io = new OneShotFinishingStateIo();
+        var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner());
+        var output = new StringWriter();
+        runtime = new CheckpointApp.Runtime
+        {
+            CleanupContext = context,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
+            EnvironmentLookup = _ => null,
+            Driver = runtime.Driver,
+            Slots = runtime.Slots,
+            LogSinkFactory = _ => sink,
+            Output = output,
+        };
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime);
+        exit.ShouldBe(ExitCodes.Invalid);
+        output.ToString().ShouldContain("checkpoint log disposal failed");
+        sink.Disposes.ShouldBe(1);
+        io.Denied.ShouldBe(1);
+        var state = new RunStateStore(context).TryRead(Path.Combine(run, "state.json")).ShouldNotBeNull();
+        state.ExitCode.ShouldNotBe(ExitCodes.ExecutorCrashed);
+        (state.Reason ?? "").ShouldNotContain("executor.log or executor failure");
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), CheckpointApp.Json);
+        report.ShouldNotBeNull().ExitCode.ShouldBe(ExitCodes.Invalid);
     }
 
     [Test]
@@ -229,9 +275,15 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
             Events.Add("flush");
         }
 
+        public int Disposes { get; private set; }
+        public bool ThrowOnDispose { get; set; }
+
         public ValueTask DisposeAsync()
         {
+            Disposes++;
             Events.Add("dispose");
+            if (ThrowOnDispose)
+                throw new IOException("injected log dispose");
             return ValueTask.CompletedTask;
         }
         public void OpenFirst() => _firstRelease.TrySetResult();
@@ -305,5 +357,39 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
 
         public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FaultingDisposeSink : IExecutorLogSink
+    {
+        public int Disposes { get; private set; }
+        public Task AppendAsync(string line, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            Disposes++;
+            throw new IOException("injected log dispose");
+        }
+    }
+
+    /// <summary>
+    /// Denies the finishing state.json publication once, then lets later writes through
+    /// so a crashed-executor rewrite would be visible.
+    /// </summary>
+    private sealed class OneShotFinishingStateIo : ForwardingNativeIo
+    {
+        public int Denied { get; private set; }
+
+        public override void Move(string source, string destination, bool overwrite)
+        {
+            if (Denied == 0
+                && destination.EndsWith(Path.DirectorySeparatorChar + "state.json", StringComparison.Ordinal)
+                && File.ReadAllText(source).Contains("\"phase\": \"finishing\"", StringComparison.Ordinal))
+            {
+                Denied++;
+                throw new IOException("injected disk full", unchecked((int)0x80070070));
+            }
+
+            base.Move(source, destination, overwrite);
+        }
     }
 }
