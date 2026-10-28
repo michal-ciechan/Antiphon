@@ -2101,13 +2101,13 @@ function Test-G2865_Group28Group65MeasuredBudget {
             @('OutputDistillationGateTests', 103, 0, 28, 0),
             @('AgentTaskServiceIntegrationTests', 120, 0, 28, 0),
             @('TaskInputAttentionCostTests', 35, 1, 28, 0),
-            @('DelegateBranchDeliveryTests', 7, 1, 28, 334),
-            @('BlockedTaskParkDeliveryTests', 6, 1, 28, 575),
-            @('PostLandMutationCustodyTests', 56, 0, 28, 1110),
-            @('RepairSourceDispatchTests', 41, 1, 28, 302),
-            @('RepairSourceSettlementTests', 36, 1, 28, 491),
-            @('SessionRuntimeActionRoutingTests', 35, 1, 28, 112),
-            @('BlockedTaskParkReclaimTests', 38, 1, 28, 907),
+            @('DelegateBranchDeliveryTests', 7, 1, 28, 371),
+            @('BlockedTaskParkDeliveryTests', 6, 1, 28, 611),
+            @('PostLandMutationCustodyTests', 56, 0, 28, 1225),
+            @('RepairSourceDispatchTests', 41, 1, 28, 337),
+            @('RepairSourceSettlementTests', 36, 1, 28, 520),
+            @('SessionRuntimeActionRoutingTests', 35, 1, 28, 115),
+            @('BlockedTaskParkReclaimTests', 38, 1, 28, 978),
             @('ChannelBridgeTests', 40, 1, 28, 0),
             @('ChannelInboundRecoveryTests', 41, 1, 28, 0),
             @('CodexStartupDeliveryTests', 62, 0, 28, 0),
@@ -2167,6 +2167,17 @@ function Test-G2865_Group28Group65MeasuredBudget {
         if ($classes.Count -ne 45 -or @($groupOf.Values | Where-Object { $_ -eq 28 }).Count -ne 17 -or @($groupOf.Values | Where-Object { $_ -eq 65 }).Count -ne 28) {
             throw 'group census'
         }
+        # The seven rows replaced by the slower 79b742de sample cite that run.
+        # The five 9a16e2cb rows the new table did not replace still cite 8f055f87.
+        $provenance = @{
+            DelegateBranchDeliveryTests = '79b742de'
+            BlockedTaskParkDeliveryTests = '79b742de'
+            PostLandMutationCustodyTests = '79b742de'
+            RepairSourceDispatchTests = '79b742de'
+            RepairSourceSettlementTests = '79b742de'
+            SessionRuntimeActionRoutingTests = '79b742de'
+            BlockedTaskParkReclaimTests = '79b742de'
+        }
         $reasons = New-Object System.Collections.Generic.List[string]
         $script:NightlyClassCostTable = $null
         $costDoc = [IO.File]::ReadAllText((Join-Path $lib 'nightly-class-costs.json')) | ConvertFrom-Json
@@ -2174,7 +2185,8 @@ function Test-G2865_Group28Group65MeasuredBudget {
             $ns = $(if ([int]$groupOf[$type] -eq 28) { 'Antiphon.Tests.Application' } else { 'Antiphon.Tests.Infrastructure' })
             $bare = $ns + '.' + $type
             $row = $costDoc.classes.PSObject.Properties[$bare]
-            if ($null -eq $row -or [int]$row.Value.nodes -ne [int]$declared[$type] -or [double]$row.Value.seconds -ne [double]$measured[$type] -or [string]$row.Value.basis -cne 'measured' -or [string]$row.Value.source -cnotlike '*8f055f87*') {
+            $marker = $(if ($provenance.ContainsKey($type)) { [string]$provenance[$type] } else { '8f055f87' })
+            if ($null -eq $row -or [int]$row.Value.nodes -ne [int]$declared[$type] -or [double]$row.Value.seconds -ne [double]$measured[$type] -or [string]$row.Value.basis -cne 'measured' -or [string]$row.Value.source -cnotlike ('*' + $marker + '*')) {
                 [void]$reasons.Add('cost-row:' + $type)
             }
         }
@@ -2233,8 +2245,8 @@ function Test-G2865_Group28Group65MeasuredBudget {
             if ($priced + 0.25 -lt [double]$measured[$type]) { [void]$reasons.Add('share:' + $type + '=' + [Math]::Round($priced, 1)) }
             if ([int]$seen[$type] -lt 1) { [void]$reasons.Add('unplaced:' + $type) }
         }
-        if ($groupChunks[28].Count -lt 4) { [void]$reasons.Add('g28-chunks:' + $groupChunks[28].Count) }
-        if ($groupChunks[65].Count -lt 4) { [void]$reasons.Add('g65-chunks:' + $groupChunks[65].Count) }
+        if ($groupChunks[28].Count -ne 5) { [void]$reasons.Add('g28-chunks:' + $groupChunks[28].Count) }
+        if ($groupChunks[65].Count -ne 6) { [void]$reasons.Add('g65-chunks:' + $groupChunks[65].Count) }
         if (@($seen.Keys).Count -ne $classes.Count) { [void]$reasons.Add('census') }
         $detail = 'g28chunks=' + $groupChunks[28].Count + ' g65chunks=' + $groupChunks[65].Count + ' launches=' + $chunks.Count + ' watchdog=' + $watchdog + ' groups=' + ($shapes -join ',') + ' reasons=' + ($reasons -join ',')
         Write-Host $detail
@@ -2251,8 +2263,8 @@ function Test-C1410_MeasuredCostGroups {
     # 19012 nodes) is packed by estimated serial seconds: measured rows from
     # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
     # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
-    # anywhere doubles. The run 8f055f87 measured rows make this fixed
-    # fixture estimate 16.58 h in 114 launches (not a measured wall-clock SLA); every
+    # anywhere doubles. After the 44a6e14e measured merge this fixed
+    # fixture estimates 29.56 h in 155 launches (not a measured wall-clock SLA); every
     # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
@@ -2302,8 +2314,14 @@ function Test-C1410_MeasuredCostGroups {
 
         # Independent estimate: per-class measured rows, else the node model.
         $measured = @{}
+        $costSeconds = @{}
+        $costNodes = @{}
         $costDoc = [System.IO.File]::ReadAllText((Join-Path $repo (Join-Path 'scripts' (Join-Path 'lib' 'nightly-class-costs.json')))) | ConvertFrom-Json
-        foreach ($row in @($costDoc.classes.PSObject.Properties)) { $measured[[string]$row.Name] = [double]$row.Value.seconds / [int]$row.Value.nodes }
+        foreach ($row in @($costDoc.classes.PSObject.Properties)) {
+            $measured[[string]$row.Name] = [double]$row.Value.seconds / [int]$row.Value.nodes
+            $costSeconds[[string]$row.Name] = [double]$row.Value.seconds
+            $costNodes[[string]$row.Name] = [int]$row.Value.nodes
+        }
         $byBare = @{}
         $required = New-Object System.Collections.Generic.List[object]
         foreach ($node in $nodeArray) {
@@ -2331,6 +2349,7 @@ function Test-C1410_MeasuredCostGroups {
         $overTarget = New-Object System.Collections.Generic.List[string]
         $invalid = New-Object System.Collections.Generic.List[string]
         $splitIds = @{}
+        $reasons = New-Object System.Collections.Generic.List[string]
         foreach ($chunk in $plan) {
             $gf = ''
             $mf = ''
@@ -2356,16 +2375,28 @@ function Test-C1410_MeasuredCostGroups {
             }
             $seconds = 0.0
             $methods = @{}
+            $placed = @{}
             foreach ($node in $hits) {
                 $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
                 $unit = Get-C1410Seconds -Node $node -Bare $bare
                 $seconds += $unit
                 if ($bare -cne $synthetic) { $suiteSeconds += $unit }
                 $methods[[string]$node.Method] = $true
+                if ($costNodes.ContainsKey($bare)) { $placed[$bare] = 1 + [int]$placed[$bare] }
                 $uid = [string]$node.Uid
                 if (-not $covered.ContainsKey($uid)) { $covered[$uid] = 0 }
                 $covered[$uid] = [int]$covered[$uid] + 1
             }
+            # Every recorded class cost in this chunk, prorated to the nodes the
+            # chunk actually selected, must fit inside the chunk price. This is
+            # the group 28/65 check extended to every row in the cost file.
+            $recordedNeed = 0.0
+            foreach ($bare in @($placed.Keys)) {
+                $portion = [double]$costSeconds[$bare] * ([int]$placed[$bare] / [double]$costNodes[$bare])
+                $recordedNeed += $portion
+                if ($portion -gt ([double]$chunk.seconds + 0.25)) { [void]$reasons.Add('measured-exceeds-chunk:' + $bare) }
+            }
+            if ($recordedNeed -gt ([double]$chunk.seconds + 0.25)) { [void]$reasons.Add('measured-exceeds-chunk:' + [string]$chunk.id) }
             if ($seconds -gt $maxSeconds) { $maxSeconds = $seconds; $maxId = [string]$chunk.id + '(' + (@($chunk.classes) -join ';') + ')' }
             $single = (@($chunk.classes).Count -eq 1 -and (($ef -or $mf) -and $methods.Count -eq 1 -or -not ($ef -or $mf)))
             if ($seconds -gt ($target + 0.01) -and -not $single) { [void]$overTarget.Add([string]$chunk.id) }
@@ -2391,16 +2422,18 @@ function Test-C1410_MeasuredCostGroups {
         $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all')
         $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all')
         $launches = @($plan).Count
-        $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
-        # Run 8f055f87 adds 7067.451690366325 seconds to the CARD-1584 total
-        # 52631.653116531146. Three listing counts are below the journal
-        # denominators, so those fixture prices are the journal per-node rate
-        # times the listing count: DelegateBranchDelivery 3/7, RepairSourceDispatch
-        # 39/41, CompletedCardWorktreeRemoval 36/37. Repacking adds seven real
-        # launches: 110 real + four suffix probes.
-        if ($launches -ne 114) { [void]$reasons.Add('launch-count') }
-        if ([Math]::Abs($suiteSeconds - 59699.10480689747) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        # Task 44a6e14e merges 702 measured rows (695 new, seven 9a16e2cb rows
+        # replaced by the slower 79b742de totals) into the same listing. The
+        # independent sum is 106427.3397645542 s. Listing launches are 151;
+        # the four suffix probes stay, so the plan is 155. Before this merge
+        # the same listing was 110 real launches and 59699.10480689747 s.
+        # Three listing counts stay below the journal denominators, so those
+        # fixture prices remain the journal per-node rate times the listing
+        # count: DelegateBranchDelivery 3/7, RepairSourceDispatch 39/41,
+        # CompletedCardWorktreeRemoval 36/37.
+        if ($launches -ne 155) { [void]$reasons.Add('launch-count') }
+        if ([Math]::Abs($suiteSeconds - 106427.3397645542) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
