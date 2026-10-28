@@ -285,6 +285,53 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
             throw new IOException("directory not empty");
         Nodes.Remove(path);
     }
+    public IReadOnlyList<AnchoredChild> ListAnchored(string directory)
+    {
+        Enter("list-anchored", directory);
+        if (!Nodes.TryGetValue(directory, out var node) || node.Stat.Kind != "directory" || node.Target is not null)
+            throw new IOException("anchored-open-failed");
+        var children = new List<AnchoredChild>();
+        foreach (var path in Nodes.Keys.Where(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), directory)).ToArray())
+        {
+            var child = Nodes[path];
+            var kind = child.Target is not null ? "symlink"
+                : child.Stat.Kind is "file" or "directory" or "fifo" or "socket" ? child.Stat.Kind : "other";
+            children.Add(new AnchoredChild(Path.GetFileName(path), kind, kind == "file" ? child.Bytes.Length : 0));
+        }
+        return children;
+    }
+    public void UnlinkAnchored(string directory, string name, bool directoryEntry)
+    {
+        if (!Nodes.TryGetValue(directory, out var parent) || parent.Stat.Kind != "directory" || parent.Target is not null)
+            throw new IOException("anchored-open-failed");
+        var path = Path.Combine(directory, name);
+        if (!Nodes.TryGetValue(path, out var node)) throw new FileNotFoundException(path);
+        var isDirectory = node.Stat.Kind == "directory" && node.Target is null;
+        if (directoryEntry != isDirectory)
+            throw new IOException(directoryEntry ? "anchored-not-directory" : "anchored-not-leaf");
+        if (directoryEntry)
+        {
+            Enter("rmdir", path);
+            if (Nodes.Keys.Any(p => Nodes.Comparer.Equals(Path.GetDirectoryName(p), path)))
+                throw new IOException("directory not empty");
+        }
+        else Enter("unlink", path);
+        Nodes.Remove(path);
+    }
+    public void TruncateAnchored(string directory, string name, long length)
+    {
+        var path = Path.Combine(directory, name);
+        Enter("open", path);
+        if (!Nodes.TryGetValue(directory, out var parent) || parent.Stat.Kind != "directory" || parent.Target is not null)
+            throw new IOException("anchored-open-failed");
+        if (!Nodes.TryGetValue(path, out var node) || node.Target is not null || node.Stat.Kind != "file")
+            throw new IOException("anchored-not-file");
+        if (length < 0 || length > node.Bytes.Length) throw new IOException("anchored-truncate-failed");
+        var prefix = new byte[length];
+        Array.Copy(node.Bytes, prefix, length);
+        node.Bytes = prefix;
+        node.Stat = node.Stat with { Size = length };
+    }
     public void Unlink(string path) { Enter("unlink", path); Nodes.Remove(path); }
     public void RemoveDirectory(string path, bool recursive)
     {

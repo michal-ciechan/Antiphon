@@ -181,12 +181,10 @@ public sealed class CheckpointTempRootSweep
                 if (complete)
                 {
                     rootGate.Dispose();
-                    // Path deletes, as at rc/2026-10-27 f84228f2. Anchoring this sweep needs an
-                    // ancestor-safe openat walk (kernel 4.15 has no openat2) and FIFO/socket
-                    // handling. It is not converted.
-                    _io.Unlink(Path.Combine(root, TestRootGuard.LockName));
-                    _io.Unlink(Path.Combine(root, TestRootGuard.MarkerName));
-                    _io.RemoveDirectory(root, recursive: false);
+                    // The same nofollow walk as the payload. Kernel 4.15 has no openat2.
+                    UnlinkEntry(Path.Combine(root, TestRootGuard.LockName), directory: false);
+                    UnlinkEntry(Path.Combine(root, TestRootGuard.MarkerName), directory: false);
+                    UnlinkEntry(root, directory: true);
                     Unregister(root);
                     receipt.CompletedRoots++;
                     receipt.EligibleRemaining--;
@@ -211,7 +209,7 @@ public sealed class CheckpointTempRootSweep
         if (Elapsed(started) >= _options.MaxDuration) return "time-budget";
         if (!IsCandidate(root)) return "name-or-depth";
         if (!_io.DirectoryExists(root)) return "absent";
-        if (!ContainedCleanup.SafeAncestors(root, _context) || !ContainedCleanup.SafeTree(root, _options.MaxDescendantEntries, _context))
+        if (!ContainedCleanup.SafeAncestors(root, _context) || !AnchoredInventory(root))
             return "inventory-incomplete-or-linked";
         var marker = ReadMarker(root);
         if (marker is null) return "marker-invalid";
@@ -239,45 +237,105 @@ public sealed class CheckpointTempRootSweep
     private (long Bytes, bool Complete) DeleteBounded(string root, long allowance, long started)
     {
         if (allowance <= 0) return (0, false);
+        var files = new List<(string Path, long Length)>();
+        var directories = new List<string>();
+        var specials = new List<string>();
+        CollectAnchored(root, files, directories, specials);
         var bytes = 0L;
-        var files = EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .OrderBy(path => Path.GetFileName(path) == TestRootGuard.MarkerName ? 2
-                : Path.GetFileName(path) is RunOwnershipStore.FileName or "executor-ownership.json" ? 1 : 0)
-            .ThenBy(path => path, StringComparer.Ordinal)
-            .ToList();
-        foreach (var file in files)
+        var removed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var special in specials)
         {
             if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
-            var name = Path.GetFileName(file);
+            UnlinkEntry(special, directory: false);
+            removed.Add(special);
+        }
+        foreach (var file in files
+            .OrderBy(file => Path.GetFileName(file.Path) == TestRootGuard.MarkerName ? 2
+                : Path.GetFileName(file.Path) is RunOwnershipStore.FileName or "executor-ownership.json" ? 1 : 0)
+            .ThenBy(file => file.Path, StringComparer.Ordinal))
+        {
+            if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
+            var name = Path.GetFileName(file.Path);
             if (name == TestRootGuard.MarkerName || name is RunOwnershipStore.FileName or "executor-ownership.json"
                 or TestRootGuard.LockName or TestRootGuard.RunsName)
                 continue;
-            var length = _io.Length(file);
+            var length = file.Length;
             var left = allowance - bytes;
             if (left <= 0) return (bytes, false);
             if (length > left)
             {
-                using var stream = _io.Open(file, FileMode.Open, FileAccess.Write, FileShare.None);
-                stream.SetLength(length - left);
-                // Preserve durable truncation for native handles supplied by the context.
-                if (stream is FileStream native) native.Flush(flushToDisk: true);
-                else stream.Flush();
+                var directory = Path.GetDirectoryName(file.Path);
+                if (string.IsNullOrEmpty(directory)) throw new IOException("anchored-path-unsafe");
+                _io.TruncateAnchored(directory, name, length - left);
                 return (bytes + left, false);
             }
-            _io.Unlink(file);
+            UnlinkEntry(file.Path, directory: false);
+            removed.Add(file.Path);
             bytes += length;
         }
         // Critical custody is retained until ordinary payload removal has finished.
         if (Elapsed(started) >= _options.MaxDuration) return (bytes, false);
-        foreach (var file in files.Where(_io.FileExists))
+        foreach (var file in files)
         {
-            if (Path.GetFileName(file) is TestRootGuard.MarkerName or TestRootGuard.LockName) continue;
-            _io.Unlink(file);
+            if (removed.Contains(file.Path)) continue;
+            if (Path.GetFileName(file.Path) is TestRootGuard.MarkerName or TestRootGuard.LockName) continue;
+            UnlinkEntry(file.Path, directory: false);
         }
-        foreach (var directory in EnumerateDirectories(root, "*", SearchOption.AllDirectories)
-                     .OrderByDescending(path => path.Length))
-            _io.RemoveDirectory(directory, recursive: false);
+        foreach (var directory in directories.OrderByDescending(path => path.Length))
+            UnlinkEntry(directory, directory: true);
         return (bytes, true);
+    }
+
+    // Symlink, FIFO and socket names are leaves. A directory symlink is not entered.
+    private bool AnchoredInventory(string root)
+    {
+        var count = 0;
+        var pending = new Stack<string>();
+        pending.Push(root);
+        try
+        {
+            while (pending.TryPop(out var directory))
+            {
+                if (++count > _options.MaxDescendantEntries) return false;
+                foreach (var child in _io.ListAnchored(directory))
+                {
+                    if (child.Kind == "directory") pending.Push(Path.Combine(directory, child.Name));
+                    else if (++count > _options.MaxDescendantEntries) return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private void CollectAnchored(string root, List<(string Path, long Length)> files, List<string> directories,
+        List<string> specials)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            foreach (var child in _io.ListAnchored(directory))
+            {
+                var path = Path.Combine(directory, child.Name);
+                if (child.Kind == "directory")
+                {
+                    directories.Add(path);
+                    pending.Push(path);
+                }
+                else if (child.Kind == "file") files.Add((path, child.Size));
+                else specials.Add(path);
+            }
+        }
+    }
+
+    private void UnlinkEntry(string path, bool directory)
+    {
+        var parent = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name))
+            throw new IOException("anchored-path-unsafe");
+        _io.UnlinkAnchored(parent, name, directory);
     }
 
     private bool IsCandidate(string path)
@@ -418,10 +476,6 @@ public sealed class CheckpointTempRootSweep
                 yield return entry;
         }
     }
-
-    private IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption search) =>
-        Entries(path, search).Where(entry => (_io.Attributes(entry) & FileAttributes.Directory) == 0
-            && Matches(pattern, entry));
 
     private IEnumerable<string> EnumerateDirectories(string path, string pattern, SearchOption search) =>
         Entries(path, search).Where(entry => (_io.Attributes(entry) & FileAttributes.Directory) != 0
