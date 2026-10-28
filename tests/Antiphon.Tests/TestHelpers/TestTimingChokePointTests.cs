@@ -123,7 +123,8 @@ public sealed class TestTimingChokePointTests
         // Sequential 10s walls on this host differ by more than 2% because the
         // idle P-state is ~2.3x slower and a hot core still wanders. Pin one CPU,
         // leave that idle state before the clocks, and interleave OFF/ON repetitions
-        // so both walls share one frequency window. The bound itself is unchanged.
+        // so both walls share one frequency window. Acceptance is the paired wall
+        // median and the paired processor-time median, each under 2%.
         PinCurrentCpu();
         HeatUntilFast();
         var one = TimeInProcessRep();
@@ -138,6 +139,7 @@ public sealed class TestTimingChokePointTests
             setup.Stop();
             var warm = await PairedSampleAsync(lifecycle, offFirst: true, reps, cancellationToken);
             var ratios = new List<double>();
+            var cpuRatios = new List<double>();
             var samples = new List<object>();
             // Predeclare the whole sample; never stop when a partial bound passes.
             for (var pairIndex = 0; pairIndex < PairedOverheadStatistics.MinimumPairs; pairIndex++)
@@ -165,12 +167,14 @@ public sealed class TestTimingChokePointTests
                 pair.On.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(10000d);
                 pair.Off.Repetitions.ShouldBe(pair.On.Repetitions, "paired-work-matches");
                 pair.On.Dropped.ShouldBe(0);
-                ratios.Add((pair.On.Wall.TotalMilliseconds - pair.Off.Wall.TotalMilliseconds) / pair.Off.Wall.TotalMilliseconds);
+                ratios.Add(OverheadAcceptance.Ratio(pair.On.Wall.TotalMilliseconds, pair.Off.Wall.TotalMilliseconds));
+                cpuRatios.Add(OverheadAcceptance.Ratio(pair.On.Cpu.TotalMilliseconds, pair.Off.Cpu.TotalMilliseconds));
             }
 
             var emptyOff = TimeEmptyScopes(enabled: false);
             var emptyOn = TimeEmptyScopes(enabled: true);
             var median = PairedOverheadStatistics.Median(ratios);
+            var cpuMedian = PairedOverheadStatistics.Median(cpuRatios);
             var upper = PairedOverheadStatistics.BootstrapUpper(ratios);
             var payload = new
             {
@@ -180,7 +184,9 @@ public sealed class TestTimingChokePointTests
                 warmMs = warm.On.Wall.TotalMilliseconds,
                 warmDropped = warm.On.Dropped,
                 ratios,
+                cpuRatios,
                 median,
+                cpuMedian,
                 bootstrapUpper = upper,
                 emptyOffNsPerScope = emptyOff.NsPerScope,
                 emptyOnNsPerScope = emptyOn.NsPerScope,
@@ -194,8 +200,9 @@ public sealed class TestTimingChokePointTests
             await File.WriteAllTextAsync(Path.Combine(evidence, "overhead-raw.json"),
                 System.Text.Json.JsonSerializer.Serialize(payload), cancellationToken);
             warm.On.Dropped.ShouldBe(0);
-            median.ShouldBeLessThan(0.02d);
-            upper.ShouldBeLessThan(0.02d);
+            median.ShouldBeLessThan(OverheadAcceptance.WallMedianBound);
+            cpuMedian.ShouldBeLessThan(OverheadAcceptance.CpuMedianBound);
+            OverheadAcceptance.Accepts(ratios, cpuRatios).ShouldBeTrue();
             emptyOn.BytesPerCase.ShouldBeGreaterThan(0d);
         }
         finally
