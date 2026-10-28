@@ -82,28 +82,48 @@ const previewRun = () => {
   } else if (mounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
   if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
-  const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program};
+  // uid 1654 cannot create /runner-tmp on the host root. A private root holds the
+  // production paths; both volume paths are mounted read-only inside it.
+  const stage = fs.mkdtempSync('/dev/shm/c1008-preview-');
+  const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program, C1008_SIM_STAGE: stage};
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
   const outer = [
     'set -euo pipefail',
     'mount --make-rprivate /',
-    'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_WORK"',
-    'mount -o remount,bind,ro -- "$C1008_SIM_WORK"',
-    'mkdir -p /work',
-    'mount --bind -- "$C1008_SIM_WORK" /work',
-    'mount -o remount,bind,ro /work',
+    'mount -t tmpfs -o mode=0755 none "$C1008_SIM_STAGE"',
+    'mkdir -p "$C1008_SIM_STAGE/bin" "$C1008_SIM_STAGE/lib" "$C1008_SIM_STAGE/lib64" "$C1008_SIM_STAGE/usr/bin" "$C1008_SIM_STAGE/usr/local" "$C1008_SIM_STAGE/proc" "$C1008_SIM_STAGE/dev" "$C1008_SIM_STAGE/tmp" "$C1008_SIM_STAGE/work" "$C1008_SIM_STAGE/runner-tmp" "$C1008_SIM_STAGE/var/tmp"',
+    'mount --bind /bin "$C1008_SIM_STAGE/bin"',
+    'mount --bind /lib "$C1008_SIM_STAGE/lib"',
+    'mount --bind /lib64 "$C1008_SIM_STAGE/lib64"',
+    'mount --bind /usr/bin "$C1008_SIM_STAGE/usr/bin"',
+    'mount --bind /usr/local "$C1008_SIM_STAGE/usr/local"',
+    'mount --bind /proc "$C1008_SIM_STAGE/proc"',
+    'touch "$C1008_SIM_STAGE/dev/null" "$C1008_SIM_STAGE/dev/urandom" "$C1008_SIM_STAGE/dev/zero"',
+    'mount --bind /dev/null "$C1008_SIM_STAGE/dev/null"',
+    'mount --bind /dev/urandom "$C1008_SIM_STAGE/dev/urandom"',
+    'mount --bind /dev/zero "$C1008_SIM_STAGE/dev/zero"',
+    'mount --bind /var/tmp "$C1008_SIM_STAGE/var/tmp"',
+    'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_STAGE$C1008_SIM_WORK"',
+    'mount -o remount,bind,ro -- "$C1008_SIM_STAGE$C1008_SIM_WORK"',
+    'mount --bind -- "$C1008_SIM_WORK" "$C1008_SIM_STAGE/work"',
+    'mount -o remount,bind,ro -- "$C1008_SIM_STAGE/work"',
     'if [ -n "${C1008_SIM_TMP:-}" ]; then',
-    '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_TMP"',
-    '  mount -o remount,bind,ro -- "$C1008_SIM_TMP"',
-    '  mkdir -p /runner-tmp',
-    '  mount --bind -- "$C1008_SIM_TMP" /runner-tmp',
-    '  mount -o remount,bind,ro /runner-tmp',
+    '  mkdir -p -- "$C1008_SIM_STAGE$C1008_SIM_TMP"',
+    '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_STAGE$C1008_SIM_TMP"',
+    '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE$C1008_SIM_TMP"',
+    '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_STAGE/runner-tmp"',
+    '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE/runner-tmp"',
     'fi',
-    'mount -t tmpfs -o mode=1777,size=2147483648 none /tmp',
-    'exec unshare --user --map-root-user -- bash -c "$C1008_SIM_PROGRAM"',
+    'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/tmp"',
+    'exec unshare --user --map-root-user -- chroot "$C1008_SIM_STAGE" /bin/bash -c "$C1008_SIM_PROGRAM"',
   ].join('\n');
-  const run = cp.spawnSync('unshare', ['--user', '--map-root-user', '--mount', 'bash', '-c', outer], {env, encoding: 'utf8', timeout: 60000});
+  let run;
+  try {
+    run = cp.spawnSync('unshare', ['--user', '--map-root-user', '--mount', 'bash', '-c', outer], {env, encoding: 'utf8', timeout: 60000});
+  } finally {
+    if (stage.startsWith('/dev/shm/c1008-preview-')) fs.rmSync(stage, {recursive: true, force: true});
+  }
   if (run.stdout) process.stdout.write(run.stdout);
   if (run.status !== 0) {
     const err = run.stderr || (run.error && run.error.message) || 'preview helper failed';
