@@ -443,6 +443,54 @@ public sealed class CapacityRecoveryService
         return result;
     }
 
+    /// <summary>
+    /// Spend a failed supervisor start when the grant still matches. A refusal writes nothing.
+    /// </summary>
+    public Task<CapacityRedemption> ChargeFailedStartAsync(
+        Guid waitId, string actionKey, AgentKind kind, CancellationToken ct) =>
+        ConsumeAdmittedAsync(waitId, actionKey, kind, CapacityRedemptionPath.Start, ct);
+
+    /// <summary>
+    /// Cancel the agent's unfinished ActionPending or revalidation wait and clear its grant.
+    /// AdmissionCount stays put. Own scope, provider lock then the provider row.
+    /// </summary>
+    public async Task ReleaseAgentReservationAsync(
+        Guid agentId, AgentKind kind, string reason, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await TakeProviderLockAsync(db, kind, ct);
+        var now = UtcNow();
+        var state = await db.Set<CapacityRecoveryProviderState>()
+            .FirstOrDefaultAsync(s => s.Kind == kind, ct);
+        if (state is not null)
+            await db.Entry(state).ReloadAsync(ct);
+        var key = $"agent:{agentId:N}";
+        var waits = await Unfinished(db.Set<CapacityRecoveryWait>())
+            .Where(w => (w.AgentId == agentId || w.ConsumerKey == key) && w.ExecutionKind == kind)
+            .ToListAsync(ct);
+        foreach (var wait in waits)
+        {
+            await db.Entry(wait).ReloadAsync(ct);
+            if (IsFinished(wait))
+                continue;
+            var revalidation = wait.State == CapacityRecoveryWaitState.Admitted && wait.NeedsRevalidationGrant;
+            if (wait.State != CapacityRecoveryWaitState.ActionPending && !revalidation)
+                continue;
+            wait.State = CapacityRecoveryWaitState.Canceled;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Canceled);
+            wait.OutcomeReason = reason;
+            wait.Version++;
+            wait.UpdatedAt = now;
+            if (state?.GrantedWaitId == wait.Id)
+                ClearGrant(state, now);
+        }
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
     /// <summary>Pre-claim gate. Own scope, so a durable refusal commits without the dispatcher's rows.</summary>
     public async Task<CapacityRedemption> RedeemGateAsync(
         Guid waitId, string actionKey, AgentKind kind, CapacityRedemptionPath path, CancellationToken ct)

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -9,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -41,6 +43,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly HerdrSupervisionStateService _herdrSupervision;
     private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly LandDeliveryBoundary? _landBoundary;
     private readonly DelegationSettings _delegation;
 
     public AgentSupervisorService(
@@ -56,8 +59,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         HerdrSupervisionStateService? herdrSupervision = null,
         CapacityRecoveryService? capacityRecovery = null,
         IOptions<DelegationSettings>? delegation = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        LandDeliveryBoundary? landBoundary = null)
     {
+        _landBoundary = landBoundary;
         _scopeFactory = scopeFactory;
         _db = db;
         _control = control;
@@ -229,23 +234,54 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 return await CompleteAsync(false);
             await CompleteAsync(false);
             await transaction.DisposeAsync();
+            var admission = new StrongBox<CapacityStartAdmission?>(null);
             try
             {
-                return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
+                return await TryHandleCapacityWaitAsync(agent, state, admission, ct) ?? false;
+            }
+            catch (ConflictException ex) when (ex.Code == "capacity_consume_refused")
+            {
+                _db.ChangeTracker.Clear();
+                return false;
             }
             catch (ConflictException ex) when (ex.Code is HerdrSupervisionStateService.HeldCode
                 or StandingContinuityState.HeldCode)
             {
                 // Same observation as the ordinary restart path: a hold that lands
                 // during the handoff is not a crash and must not climb the ladder.
+                _db.ChangeTracker.Clear();
                 await _herdrSupervision.ObserveAsync(agent.Id, false, false, ct);
+                if (admission.Value is { } held)
+                    await ReleaseCapacityAdmissionAsync(agent.Id, held, "start-held", ct);
+                return false;
+            }
+            catch (ConflictException ex) when (ex.Code is "capacity_recovery_not_standing"
+                or "capacity_recovery_suspended"
+                or "capacity_recovery_liveness_latched"
+                or "standing_start_intent_revoked"
+                or "standing_automatic_fresh_capacity_required"
+                or "standing_automatic_fresh_ineligible"
+                or "specialist_start_refused")
+            {
+                _db.ChangeTracker.Clear();
+                if (admission.Value is { } refused)
+                    await ReleaseCapacityAdmissionAsync(agent.Id, refused, "start-refused", ct);
+                return false;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && IsTransientCapacity(ex))
+            {
+                _db.ChangeTracker.Clear();
                 return false;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                return await RecordStartFailureInFreshScopeAsync(agent.Id, ex, now,
+                _db.ChangeTracker.Clear();
+                var recorded = await RecordStartFailureInFreshScopeAsync(agent.Id, ex, now,
                     Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1,
                     current?.Id, current?.StartedAt, ct);
+                if (admission.Value is { } charge && _capacityRecovery is not null)
+                    await _capacityRecovery.ChargeFailedStartAsync(charge.WaitId, charge.ActionKey, charge.Kind, ct);
+                return recorded;
             }
         }
 
@@ -328,7 +364,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 agent.Name, attemptNumber);
             // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
             // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
-            if (!await StartSupervisedRestartAsync(agent, state, beforeAttempt, capacityActionKey: null, ct))
+            if (!await StartSupervisedRestartAsync(agent, state, beforeAttempt, admission: null, ct))
                 return false;
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
@@ -469,7 +505,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     /// and only starts when the sole granter has issued a matching grant.
     /// </summary>
     private async Task<bool?> TryHandleCapacityWaitAsync(
-        Agent agent, AgentSupervisionState state, CancellationToken ct)
+        Agent agent, AgentSupervisionState state, StrongBox<CapacityStartAdmission?> admission, CancellationToken ct)
     {
         if (_capacityRecovery is null || !_capacityRecovery.IsEnabled)
             return null;
@@ -508,43 +544,41 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             || provider.GrantedActionKey != wait.ActionKey)
             return false;
 
-        var redemption = await _capacityRecovery.RedeemAsync(
-            wait.Id, wait.ActionKey, wait.ExecutionKind, CapacityRedemptionPath.Start, ct);
-        if (!redemption.Ok)
-            return false;
-
+        admission.Value = new CapacityStartAdmission(wait.Id, wait.ActionKey, wait.ExecutionKind);
         if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
         {
-            var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            var session = await _db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
             if (session is not null && session.CapacityRecoveryActionKey == wait.ActionKey)
                 return false;
-            if (session is not null)
-                session.CapacityRecoveryActionKey = wait.ActionKey;
         }
 
-        state.CapacityRecoveryActionKey = wait.ActionKey;
-        await _db.SaveChangesAsync(ct);
         if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
             return false;
+        if (_landBoundary is not null)
+            await _landBoundary.ReachedAsync("capacity-supervisor-before-start", agent.Id, wait.Id, ct);
         return await StartSupervisedRestartAsync(agent, state,
-            await FindPersistentSessionAsync(agent, statuses: null, ct), wait.ActionKey, ct);
+            await FindPersistentSessionAsync(agent, statuses: null, ct), admission.Value, ct);
     }
 
     private async Task<bool> StartSupervisedRestartAsync(
-        Agent agent, AgentSupervisionState state, AgentSession? current, string? capacityActionKey, CancellationToken ct)
+        Agent agent, AgentSupervisionState state, AgentSession? current, CapacityStartAdmission? admission, CancellationToken ct)
     {
         var policy = new StandingRestartEscalationPolicy(_settings, _delegation);
         if (!policy.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind))
         {
-            await _control.StartAsync(agent.Id, new StartAgentRequest(Fresh: false,
+            var request = new StartAgentRequest(Fresh: false,
                 IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent),
-                CapacityRecovery: capacityActionKey is not null), ct, automatic: true);
+                CapacityRecovery: admission is not null);
+            if (admission is null)
+                await _control.StartAsync(agent.Id, request, ct, automatic: true);
+            else
+                await _control.StartForCapacityAsync(agent.Id, request, admission, ct);
             return true;
         }
 
         try
         {
-            await _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct);
+            await _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, admission, ct);
             await TryRaiseFreshStartedAlertAsync(agent.Id, ct);
             return true;
         }
@@ -562,18 +596,41 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             if (_scopeFactory is not null)
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                held = await scope.ServiceProvider.GetRequiredService<AgentSupervisorService>()
-                    .HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
-            }
-            else
-            {
+                var scoped = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                held = await scoped.HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
+                if (!held) throw;
+                _logger.LogWarning(ex, "Agent {AgentName}: automatic fresh reservation refused; continuity held", agent.Name);
+                if (admission is not null)
+                    await scoped.ReleaseCapacityAdmissionAsync(agent.Id, admission, "start-refused", ct);
                 _db.ChangeTracker.Clear();
-                held = await HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
+                return false;
             }
+
+            _db.ChangeTracker.Clear();
+            held = await HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
             if (!held) throw;
             _logger.LogWarning(ex, "Agent {AgentName}: automatic fresh reservation refused; continuity held", agent.Name);
+            if (admission is not null)
+                await ReleaseCapacityAdmissionAsync(agent.Id, admission, "start-refused", ct);
             return false;
         }
+    }
+
+    private Task ReleaseCapacityAdmissionAsync(
+        Guid agentId, CapacityStartAdmission admission, string reason, CancellationToken ct) =>
+        _capacityRecovery is null
+            ? Task.CompletedTask
+            : _capacityRecovery.ReleaseAgentReservationAsync(agentId, admission.Kind, reason, ct);
+
+    private static bool IsTransientCapacity(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg && pg.SqlState is "40P01" or "40001" or "55P03")
+                return true;
+        }
+
+        return false;
     }
 
     private async Task<bool> HoldRefusedFreshAsync(
