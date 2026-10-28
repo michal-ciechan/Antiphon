@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1593 S1. Consume belongs to the committed launch. A rolled-back claim keeps the
 /// grant; a committed non-launch releases it; a consume fault follows the four-class contract.
+/// A second consecutive non-Postgres commit fault fails the task and releases the grant.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("card-1593-capacity")]
@@ -249,6 +250,7 @@ public partial class CapacityAdmissionLifecycleTests
     [Arguments("lost-commit-ack")]
     [Arguments("deterministic-consume-failure")]
     [Arguments("commit-server-error")]
+    [Arguments("non-postgres-commit-fault")]
     [Timeout(120_000)]
     public async Task C1593_consume_failure_leaves_the_task_queued(string mode, CancellationToken ct)
     {
@@ -269,12 +271,14 @@ public partial class CapacityAdmissionLifecycleTests
             task = await SeedSharedAsync(schema.ConnectionString, workspace.Path, mode, DateTime.UtcNow, ct);
         }
 
+        var commitFault = mode == "non-postgres-commit-fault" ? new NonPostgresCommitFault() : null;
         IInterceptor interceptor = mode switch
         {
             "deterministic-consume-failure" => new StartAcceptedSaveFault("XX000"),
             "commit-server-error" => new CommitServerError(),
             "lost-commit-ack" => new LostCommitAck(),
             "pre-lock-deadlock-victim" => new AgentRowDeadlock(warmAgent!.Value),
+            "non-postgres-commit-fault" => commitFault!,
             _ => new StartAcceptedSaveFault("40P01"),
         };
         await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
@@ -318,6 +322,52 @@ public partial class CapacityAdmissionLifecycleTests
             admitted.AdmissionCount.ShouldBe(1, detail);
             admitted.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
             admitted.LaunchSessionId.ShouldBe(stored.AgentSessionId);
+            return;
+        }
+
+        if (mode == "non-postgres-commit-fault")
+        {
+            stored.Status.ShouldBe(AgentTaskStatus.Queued, detail);
+            stored.FailureReason.ShouldBeNull(detail);
+            stored.AgentSessionId.ShouldBeNull();
+            admitted.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
+            admitted.AdmissionCount.ShouldBe(0);
+            (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+                .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBe(wait.Id);
+            (tick?.Failures ?? 0).ShouldBe(0, detail);
+            tickError.ShouldBeNull(detail);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning
+                && e.Detail!.Contains("capacity consume refused"), ct)).ShouldBe(1);
+            commitFault!.Throws.ShouldBe(1, detail);
+
+            Exception? secondError = null;
+            AgentTaskDispatcher.TickResult? second = null;
+            try
+            {
+                await using var secondScope = provider.CreateAsyncScope();
+                second = await secondScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                secondError = ex;
+            }
+
+            var secondDetail =
+                $"tick={second?.Failures}/{second?.Dispatched} error={secondError?.GetType().Name}: {secondError?.Message}";
+            stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+            admitted = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.Id == wait.Id, ct);
+            commitFault.Throws.ShouldBe(2, secondDetail);
+            stored.Status.ShouldBe(AgentTaskStatus.Failed, secondDetail);
+            (second?.Failures ?? (secondError is null ? 0 : 1)).ShouldBe(1, secondDetail);
+            admitted.State.ShouldBe(CapacityRecoveryWaitState.Canceled);
+            admitted.OutcomeReason.ShouldBe("claim-consume-failed");
+            admitted.AdmissionCount.ShouldBe(0);
+            (await verify.CapacityRecoveryProviderStates.AsNoTracking()
+                .SingleAsync(s => s.Kind == admitted.ExecutionKind, ct)).GrantedWaitId.ShouldBeNull();
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning
+                && e.Detail == "capacity non-postgres commit fault", ct)).ShouldBe(1);
             return;
         }
 
@@ -646,6 +696,36 @@ public partial class CapacityAdmissionLifecycleTests
                 throw new DbUpdateException(
                     "injected consume save failure",
                     new PostgresException("injected", "ERROR", "ERROR", sqlState));
+            }
+
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class NonPostgresCommitFault : ISaveChangesInterceptor, IDbTransactionInterceptor
+    {
+        private int _claim;
+        public int Throws;
+
+        public ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            var db = eventData.Context;
+            if (db is not null && db.ChangeTracker.Entries<AgentTask>().Any(e =>
+                    e.State == EntityState.Modified && e.Entity.Status == AgentTaskStatus.Dispatched))
+                Interlocked.Exchange(ref _claim, 1);
+            return ValueTask.FromResult(result);
+        }
+
+        public ValueTask<InterceptionResult> TransactionCommittingAsync(
+            System.Data.Common.DbTransaction transaction, TransactionEventData eventData,
+            InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _claim, 0) == 1)
+            {
+                Interlocked.Increment(ref Throws);
+                throw new IOException("injected non-postgres commit fault");
             }
 
             return ValueTask.FromResult(result);
