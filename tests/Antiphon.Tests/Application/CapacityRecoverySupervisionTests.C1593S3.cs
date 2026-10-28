@@ -352,7 +352,9 @@ public partial class CapacityRecoverySupervisionTests
 
         wait.AdmissionCount.ShouldBe(1);
         wait.State.ShouldBe(CapacityRecoveryWaitState.Admitted);
-        ladder.Failures.ShouldBe(before.Failures);
+        // The resume arm observes the dead session before the start and charges one ladder
+        // step there. An S-3 charge moves it again and sets NextRestartAt.
+        ladder.Failures.ShouldBe(mode == "in-doubt" ? before.Failures + 1 : before.Failures);
         ladder.Next.ShouldBe(before.Next);
         witness.Adapter.Started.ShouldBeTrue(witness.Log);
         witness.Adapter.StartedAcceptedGeneration.ShouldNotBeNull();
@@ -741,8 +743,7 @@ public partial class CapacityRecoverySupervisionTests
             DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
             CancellationToken cancellationToken = default)
         {
-            if (eventData.Context?.ChangeTracker.Entries<AgentSession>()
-                    .Any(entry => entry.State == EntityState.Added) == true)
+            if (ReservationStarting(eventData.Context))
             {
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
                 Seen = await db.CapacityRecoveryWaits.AsNoTracking()
@@ -786,11 +787,14 @@ public partial class CapacityRecoverySupervisionTests
                 new PostgresException("c1593-committed", "ERROR", "ERROR", "XX000"));
         }
 
-        private static bool ReservationSession(DbContext? context) =>
-            context?.ChangeTracker.Entries<AgentSession>().Any(entry =>
-                entry.State == EntityState.Added
-                || entry.State == EntityState.Modified && entry.Entity.Status == SessionStatus.Starting) == true;
+        // SaveChanges accepts the session before CommitAsync, so the row is Unchanged
+        // and Starting when the commit interceptors run.
+        private static bool ReservationSession(DbContext? context) => ReservationStarting(context);
     }
+
+    private static bool ReservationStarting(DbContext? context) =>
+        context?.ChangeTracker.Entries<AgentSession>().Any(entry =>
+            entry.Entity.Status == SessionStatus.Starting) == true;
 
     private sealed class InDoubtStandIn : DbTransactionInterceptor
     {
@@ -808,7 +812,7 @@ public partial class CapacityRecoverySupervisionTests
         {
             var context = eventData.Context;
             var session = context?.ChangeTracker.Entries<AgentSession>()
-                .FirstOrDefault(entry => entry.State == EntityState.Modified && entry.Entity.Status == SessionStatus.Starting)
+                .FirstOrDefault(entry => entry.Entity.Status == SessionStatus.Starting)
                 ?.Entity;
             if (session is null)
                 return await base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
