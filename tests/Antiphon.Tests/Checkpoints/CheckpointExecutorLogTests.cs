@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -37,6 +39,36 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         callbackSink.Lines.Count(line => line.EndsWith("id=callback-A", StringComparison.Ordinal)).ShouldBe(1);
         callbackSink.Lines.Count(line => line.EndsWith("id=callback-B", StringComparison.Ordinal)).ShouldBe(1);
         callbackSink.Overlaps.ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    public async Task note_returns_when_the_sink_resumes_on_the_caller_context(CancellationToken cancellationToken)
+    {
+        // The caller thread posts the sink's completion back onto itself. Note used to block
+        // that same thread inside AppendAsync().GetResult(), so the completion never ran.
+        using var caller = new CallerThread();
+        var sink = new CallerContextSink();
+        var writer = new ExecutorLogWriter(sink);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        caller.Post(() =>
+        {
+            try
+            {
+                writer.Note("BUILD SLOT grant id=caller-context");
+                finished.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                finished.TrySetException(ex);
+            }
+        });
+        var completed = await Task.WhenAny(finished.Task, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken));
+        completed.ShouldBe(finished.Task);
+        await finished.Task;
+        sink.Lines.Count.ShouldBe(1);
+        sink.Lines[0].EndsWith("id=caller-context", StringComparison.Ordinal).ShouldBeTrue();
+        await writer.DisposeAsync();
     }
 
     [Test]
@@ -203,5 +235,74 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         }
         public void OpenFirst() => _firstRelease.TrySetResult();
         public void OpenFlush() => _flushRelease.TrySetResult();
+    }
+
+    private sealed class CallerThread : IDisposable
+    {
+        private readonly BlockingCollection<Action> _queue = new();
+        private readonly Thread _thread;
+
+        public CallerThread()
+        {
+            _thread = new Thread(Run) { IsBackground = true, Name = "executor-log-caller" };
+            _thread.Start();
+        }
+
+        public void Post(Action action) => _queue.Add(action);
+
+        public void Dispose() => _queue.CompleteAdding();
+
+        private void Run()
+        {
+            SynchronizationContext.SetSynchronizationContext(new QueueContext(_queue));
+            foreach (var action in _queue.GetConsumingEnumerable())
+                action();
+        }
+
+        private sealed class QueueContext : SynchronizationContext
+        {
+            private readonly BlockingCollection<Action> _queue;
+            public QueueContext(BlockingCollection<Action> queue) => _queue = queue;
+            public override void Post(SendOrPostCallback callback, object? state) => _queue.Add(() => callback(state));
+            public override void Send(SendOrPostCallback callback, object? state)
+            {
+                using var done = new ManualResetEventSlim(false);
+                Exception? error = null;
+                _queue.Add(() =>
+                {
+                    try { callback(state); }
+                    catch (Exception ex) { error = ex; }
+                    finally { done.Set(); }
+                });
+                done.Wait();
+                if (error is not null)
+                    ExceptionDispatchInfo.Capture(error).Throw();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Completes the write only by posting back to the synchronization context that entered
+    /// AppendAsync. A caller blocked inside that call never runs the post.
+    /// </summary>
+    private sealed class CallerContextSink : IExecutorLogSink
+    {
+        public List<string> Lines { get; } = [];
+
+        public async Task AppendAsync(string line, CancellationToken cancellationToken)
+        {
+            var context = SynchronizationContext.Current;
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (context is not null)
+                context.Post(_ => done.TrySetResult(), null);
+            else
+                ThreadPool.QueueUserWorkItem(_ => done.TrySetResult());
+            await done.Task;
+            cancellationToken.ThrowIfCancellationRequested();
+            Lines.Add(line);
+        }
+
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
