@@ -141,7 +141,10 @@ public partial class CapacityRecoverySupervisionTests
             boundary: boundary,
             interceptor: mode == "commit-visibility" ? visibility : null);
         if (mode == "commit-visibility")
+        {
             visibility.ConnectionString = witness.Schema.ConnectionString;
+            visibility.WaitId = witness.Wait.Id;
+        }
         if (boundary is not null)
         {
             boundary.Arm = mode == "precheck-revoked"
@@ -154,7 +157,7 @@ public partial class CapacityRecoverySupervisionTests
         var acted = await witness.TickAsync(ct);
         if (mode == "commit-visibility")
         {
-            visibility.Seen.ShouldNotBeNull("the inserting transaction did not commit");
+            visibility.Seen.ShouldNotBeNull(visibility.Reason);
             visibility.Seen!.State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
             visibility.Seen.AdmissionCount.ShouldBe(0);
             visibility.SeenGrantHeld.ShouldBeTrue();
@@ -736,21 +739,37 @@ public partial class CapacityRecoverySupervisionTests
     private sealed class CommitVisibility : DbTransactionInterceptor
     {
         public string ConnectionString { get; set; } = "";
+        public Guid WaitId { get; set; }
         public CapacityRecoveryWait? Seen { get; private set; }
         public bool SeenGrantHeld { get; private set; }
+        public string Reason { get; private set; } = "commit not observed";
 
         public override async ValueTask<InterceptionResult> TransactionCommittingAsync(
             DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
             CancellationToken cancellationToken = default)
         {
-            if (ReservationStarting(eventData.Context))
+            // The cloned schema carries another wait, so the seeded row is read by id.
+            // A read failure must not abort the reservation commit.
+            if (!ReservationStarting(eventData.Context))
+                return await base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+
+            try
             {
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
                 Seen = await db.CapacityRecoveryWaits.AsNoTracking()
-                    .SingleAsync(cancellationToken);
-                var grant = await db.CapacityRecoveryProviderStates.AsNoTracking()
-                    .SingleAsync(s => s.Kind == AgentKind.ClaudeCode, cancellationToken);
-                SeenGrantHeld = grant.GrantedWaitId == Seen.Id;
+                    .SingleOrDefaultAsync(w => w.Id == WaitId, cancellationToken);
+                if (Seen is not null)
+                {
+                    var grant = await db.CapacityRecoveryProviderStates.AsNoTracking()
+                        .SingleAsync(s => s.Kind == AgentKind.ClaudeCode, cancellationToken);
+                    SeenGrantHeld = grant.GrantedWaitId == Seen.Id;
+                }
+
+                Reason = Seen is null ? "seeded wait missing" : "read";
+            }
+            catch (Exception ex)
+            {
+                Reason = ex.GetType().Name + ":" + ex.Message;
             }
 
             return await base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
