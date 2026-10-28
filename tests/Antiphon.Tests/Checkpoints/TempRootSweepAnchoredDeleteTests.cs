@@ -41,6 +41,8 @@ public sealed class TempRootSweepAnchoredDeleteTests
         finally { RemoveScratch(sandbox); }
     }
 
+    // Characterization of preserved reclaim. Base already removed a FIFO or socket
+    // (fifo_or_socket_root_is_reclaimed). This is not a red witness of the anchored walk.
     [Test]
     public void fifo_and_socket_inside_the_root_are_removed()
     {
@@ -82,6 +84,29 @@ public sealed class TempRootSweepAnchoredDeleteTests
             receipt.CompletedRoots.ShouldBe(1, "skips " + Format(receipt));
             Directory.Exists(root).ShouldBeFalse();
             File.Exists(sentinel).ShouldBeTrue();
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    [Test]
+    public void backslash_name_inside_the_root_is_reclaimed_with_the_root()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("a backslash is a legal Linux file name");
+        var sandbox = Scratch();
+        try
+        {
+            var root = Candidate(sandbox);
+            var plain = Path.Combine(root, "plain.txt");
+            File.WriteAllText(plain, "plain");
+            // A mishandled Windows path left as one directory entry, not nested components.
+            var weirdName = "C:\\Antiphon\\x.txt";
+            var weird = Path.Combine(root, weirdName);
+            File.WriteAllText(weird, "named");
+            Path.GetFileName(weird).ShouldBe(weirdName);
+            var receipt = Sweep(sandbox).SweepOnce();
+            receipt.CompletedRoots.ShouldBe(1, "skips " + Format(receipt));
+            Directory.Exists(root).ShouldBeFalse();
+            File.Exists(Path.Combine(root, TestRootGuard.MarkerName)).ShouldBeFalse();
         }
         finally { RemoveScratch(sandbox); }
     }
