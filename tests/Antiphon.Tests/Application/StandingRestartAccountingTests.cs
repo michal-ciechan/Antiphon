@@ -208,6 +208,15 @@ public partial class StandingRestartAccountingTests
             fault.LaunchHits.ShouldBe(1); fault.OutcomeHits.ShouldBe(1); fault.BookkeepingHits.ShouldBe(0);
             for (var i = 0; i < 2; i++) await h.Supervisor().TickAsync(default);
             fault.BookkeepingHits.ShouldBe(2);
+            // The tick swallows a later agent's failure, so only a committed row proves it was supervised.
+            await using (var verify = AgentSupervisionTests.CreateContext())
+            {
+                var laterState = await verify.AgentSupervisionStates.FindAsync(later.Id);
+                laterState.ShouldNotBeNull();
+                laterState!.NextRestartAt.ShouldNotBeNull();
+                (await verify.AgentIncidents.CountAsync(i =>
+                    i.AgentId == later.Id && i.Kind == AgentIncidentKind.RestartScheduled)).ShouldBe(1);
+            }
         }
         finally { await AgentSupervisionTests.CleanupAsync(root); }
     }
