@@ -418,16 +418,18 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Manual-turn fixture join must follow the runtime owner.");
         var turns = (System.Collections.Concurrent.ConcurrentDictionary<Guid, byte>)field.GetValue(world.Harness.Runtime)!;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        while (true)
+        await LoadTimeoutWait.UntilSignaledAsync(async ct =>
         {
-            await using var db = world.Read();
-            var seen = await db.AgentSessions.Where(s => s.Id == sessionId)
-                .Select(s => s.LastSeenAt).SingleAsync(deadline.Token);
-            if (seen >= activityFloor && !turns.ContainsKey(sessionId))
-                return;
-            await Task.Delay(10, deadline.Token);
-        }
+            while (true)
+            {
+                await using var db = world.Read();
+                var seen = await db.AgentSessions.Where(s => s.Id == sessionId)
+                    .Select(s => s.LastSeenAt).SingleAsync(ct);
+                if (seen >= activityFloor && !turns.ContainsKey(sessionId))
+                    return;
+                await Task.Delay(10, ct);
+            }
+        }, clock: null, budget: null, wallCap: LoadWallCap, label: "budget background completion");
     }
 
     private static async Task<(int Total, string Roster)> MeasureHealthyScansAsync(
@@ -482,7 +484,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             world.Harness.EventBus,
             ownership: queue);
         await service.ScanAsync(CancellationToken.None);
-        await queue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await WaitForLaunchIdleAsync(queue);
     }
 
     private static async Task<CurrentBrief> FindOnlySessionAsync(string connection)
