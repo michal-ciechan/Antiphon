@@ -1035,9 +1035,19 @@ public sealed class AgentControlService : ICompactionContinuationResume
         await using var scope = _scopeFactory!.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
-            .AsNoTracking()
-            .SingleAsync(ct);
+        // A composed FromSql ends up as a subquery, and PostgreSQL will not take the
+        // row lock from FOR UPDATE in that position. The in-doubt reread has to wait
+        // on the agent row itself, the same statement the stand-in holds.
+        var connection = db.Database.GetDbConnection();
+        await using var hold = connection.CreateCommand();
+        hold.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+        hold.CommandText = """SELECT "Id" FROM "Agents" WHERE "Id" = @id FOR UPDATE""";
+        var id = hold.CreateParameter();
+        id.ParameterName = "id";
+        id.Value = agentId;
+        hold.Parameters.Add(id);
+        if (await hold.ExecuteScalarAsync(ct) is null)
+            throw new InvalidOperationException("The agent row is gone.");
         var pointer = await db.Agents.AsNoTracking()
             .Where(a => a.Id == agentId)
             .Select(a => a.PersistentSessionId)
