@@ -1,7 +1,7 @@
 {
   "format": "antiphon-nightly-class-costs-v1",
   "platform": "windows",
-  "source": "rows with basis measured: single-class launch groups of the rc/2026-10-20 Windows qualification at 66e9cfa9f (docs/investigations/2026-10-21-rc-2026-10-20-windows-qualification-reds.md groups 19, 25, 26, 27); basis pace: the 9.2 s/node serial pace of the watchdog-killed Windows group 9 (CARD-1410), until a TRX row replaces it; CARD-1404 group 10: diagnostic runs R=d2777e21ef4c4a3e9b1fb315ff8f5602 at 0714a9a89e4bff65aae7e0b4b94098694aeb931c and P=2026-10-22-0157-27a1b370 at ceb6e3d6b784; CheckpointMatrix and PersistenceFailure are complete class totals in both runs, using the slower total rounded up to the next minute; Publication is partial (R 47/63, P 2/63), basis pace is the largest completed node 47.2861088 s x 1.25 rounded up to the next ten seconds = 60 s/node, not a complete-class measurement; docs/superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md",
+  "source": "rows with basis measured: single-class launch groups of the rc/2026-10-20 Windows qualification at 66e9cfa9f (docs/investigations/2026-10-21-rc-2026-10-20-windows-qualification-reds.md groups 19, 25, 26, 27); basis pace: the 9.2 s/node serial pace of the watchdog-killed Windows group 9 (CARD-1410), until a TRX row replaces it; CARD-1404 group 10: diagnostic runs R=d2777e21ef4c4a3e9b1fb315ff8f5602 at 0714a9a89e4bff65aae7e0b4b94098694aeb931c and P=2026-10-22-0157-27a1b370 at ceb6e3d6b784; CheckpointMatrix and PersistenceFailure are complete class totals in both runs, using the slower total rounded up to the next minute; Publication is partial (R 47/63, P 2/63), basis pace is the largest completed node 47.2861088 s x 1.25 rounded up to the next ten seconds = 60 s/node, not a complete-class measurement; docs/superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md; run 8f055f87 group 28/65 journals at rc-2026-10-25-105792f7d22f (investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea): measured serial test-seconds for classes whose completed total exceeded the model price. Not a p95. The 3600 s antiphon watchdog is unchanged",
   "refresh": "pwsh -NoProfile -File scripts/refresh-nightly-class-costs.ps1 -TrxPath (Get-ChildItem <run>\\logs\\*\\antiphon-*.trx).FullName",
   "classes": {
     "Antiphon.Tests.Application.AgentSessionLaunchFailureTests": {
@@ -199,6 +199,78 @@
       "seconds": 140,
       "basis": "observed-bound",
       "source": "CARD-1577: Windows run a779085c09ec4397a4b49941fd3cad07 at a97194ee7a4adf215454fd82c453ba46362596ee; completed-case sum 75.9 s from investigation e60e2f11 embedded on CARD-1577; ceiling(sum x 1.75 / 10) x 10 seconds. Denominator: committed c1410-antiphon-listing.txt class count (not a fresh Windows census). Single watchdog-truncated run, overlapping case durations, not standalone class wall time or p95; provisional until a release-owned complete Windows qualification. docs/superpowers/plans/2026-10-24-card-1577-group-71-costs.md"
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkDeliveryTests": {
+      "nodes": 6,
+      "seconds": 575,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 6 completed tests, 575 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkReclaimTests": {
+      "nodes": 38,
+      "seconds": 907,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 38 completed tests, 907 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.DelegateBranchDeliveryTests": {
+      "nodes": 7,
+      "seconds": 334,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 7 completed tests, 334 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.PostLandMutationCustodyTests": {
+      "nodes": 56,
+      "seconds": 1110,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 56 completed tests, 1110 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.RepairSourceDispatchTests": {
+      "nodes": 41,
+      "seconds": 302,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 41 completed tests, 302 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.RepairSourceSettlementTests": {
+      "nodes": 36,
+      "seconds": 491,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 36 completed tests, 491 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionRoutingTests": {
+      "nodes": 35,
+      "seconds": 112,
+      "basis": "measured",
+      "source": "run 8f055f87 group 28 journal timing/cases-239920-ac1b3db4d0fa429d9c2c95ac1ab391a1.jsonl at rc-2026-10-25-105792f7d22f; 35 completed tests, 112 serial test-seconds, above the model price. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests": {
+      "nodes": 37,
+      "seconds": 942,
+      "basis": "measured",
+      "source": "run 8f055f87 group 65 journal timing/cases-269272-6d44809b271d4f07935b60d58442bb4f.jsonl at rc-2026-10-25-105792f7d22f; 37 completed tests, 942 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Infrastructure.LandingAdmissionControlTests": {
+      "nodes": 42,
+      "seconds": 96,
+      "basis": "measured",
+      "source": "run 8f055f87 group 65 journal timing/cases-269272-6d44809b271d4f07935b60d58442bb4f.jsonl at rc-2026-10-25-105792f7d22f; class total 96 serial test-seconds (with GitService 13 s and the remaining classes 34 s this is the reported 143 s). The report does not print the test count. Denominator 42 is the committed c1410 listing and this checkout's expanded-case count, which agree. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95."
+    },
+    "Antiphon.Tests.Infrastructure.LandingRemovalControlTests": {
+      "nodes": 34,
+      "seconds": 761,
+      "basis": "measured",
+      "source": "run 8f055f87 group 65 journal timing/cases-269272-6d44809b271d4f07935b60d58442bb4f.jsonl at rc-2026-10-25-105792f7d22f; 34 completed tests, 761 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Infrastructure.SettledWorktreeRemovalTests": {
+      "nodes": 78,
+      "seconds": 668,
+      "basis": "measured",
+      "source": "run 8f055f87 group 65 journal timing/cases-269272-6d44809b271d4f07935b60d58442bb4f.jsonl at rc-2026-10-25-105792f7d22f; 78 completed tests, 668 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
+    },
+    "Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests": {
+      "nodes": 49,
+      "seconds": 1593,
+      "basis": "measured",
+      "source": "run 8f055f87 group 65 journal timing/cases-269272-6d44809b271d4f07935b60d58442bb4f.jsonl at rc-2026-10-25-105792f7d22f; 49 completed tests, 1593 serial test-seconds. Investigation 3d4bd26f60b2c9ad41ba610caaabd2ef8ee1d0ea. Single Windows run, not a p95. Denominator is the journal completed-test count."
     },
     "Antiphon.E2E.AgentE2ETests": {
       "nodes": 2,
