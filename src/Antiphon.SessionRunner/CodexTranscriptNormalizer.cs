@@ -133,6 +133,13 @@ public sealed class CodexTranscriptNormalizer
     private bool _sawUsageThisTurn;
     private readonly string? _apiErrorTimeZoneId;
 
+    /// <summary>
+    /// Timestamp of the newest <c>token_count</c> row this normalizer has absorbed.
+    /// Not a <see cref="TranscriptPart"/>. Callers that persist it must not invent a
+    /// <see cref="TranscriptKinds"/> value for it.
+    /// </summary>
+    public DateTimeOffset? LastTokenCountAt { get; private set; }
+
     public CodexTranscriptNormalizer(string? apiErrorTimeZoneId = null)
     {
         _apiErrorTimeZoneId = apiErrorTimeZoneId;
