@@ -927,6 +927,30 @@ public sealed partial class AgentSessionRuntime
     public async Task<bool> CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct) =>
         (await PullAndPersistAsync(sessionId, ct)).Persisted.LastStoredSeq is not null;
 
+    /// <summary>
+    /// Stores the newest Codex <c>token_count</c> time on the session. A null observation does
+    /// not clear a previous value: a missed pull is unknown, not silence. A stamp failure is
+    /// logged and swallowed so it is not reported as a failed transcript pull.
+    /// </summary>
+    internal async Task StampCodexTokenCountAsync(Guid sessionId, DateTime? observedUtc, CancellationToken ct)
+    {
+        if (observedUtc is not DateTime at)
+            return;
+        var normalized = SessionGeneration.Normalize(at);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.AgentSessions
+                .Where(s => s.Id == sessionId && (s.CodexTokenCountAt == null || s.CodexTokenCountAt < normalized))
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.CodexTokenCountAt, normalized), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Codex token_count heartbeat was not stored for session {SessionId}", sessionId);
+        }
+    }
+
     // The one pull shared by catch-up and the receipt observation. Pulled is false when the runner
     // pull itself failed; a swallowed persist failure is reported through NeedsReload/_persistFailures.
     private async Task<(bool Pulled, PersistResult Persisted)> PullAndPersistAsync(Guid sessionId, CancellationToken ct)
@@ -934,6 +958,7 @@ public sealed partial class AgentSessionRuntime
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+            await StampCodexTokenCountAsync(sessionId, snapshot.CodexTokenCountAt, ct);
             return (true, await PersistTranscriptAsync(sessionId, snapshot.Entries, ct));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1161,6 +1186,7 @@ public sealed partial class AgentSessionRuntime
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+            await StampCodexTokenCountAsync(sessionId, snapshot.CodexTokenCountAt, ct);
             await PersistTranscriptAsync(sessionId, snapshot.Entries, ct);
             await Actions().RequestAsync(sessionId, "catchup", ct);
         }

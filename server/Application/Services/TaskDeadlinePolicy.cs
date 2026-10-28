@@ -15,6 +15,14 @@ namespace Antiphon.Server.Application.Services;
 /// — the same reason <c>AgentTaskLiveness</c> is shared by the dead-session pair: a row the view
 /// shows that the sweep would not fail (or the reverse) is a defect with no single place to fix it.
 ///
+/// <para><b>Codex <c>token_count</c> holds the model-wait clock without becoming a transcript
+/// row.</b> After the boot substitution, a phase that is still
+/// <see cref="DeadlineKind.ModelWait"/> ages from the later of the last transcript timestamp and
+/// <c>AgentSession.CodexTokenCountAt</c>, still capped at this task's own age. The heartbeat does
+/// not move the boot notice, the local-tool clock, the role ceiling, or <see cref="DescribeLast"/>.
+/// A null column leaves Claude and Grok on the transcript clock. Silence of both signals still
+/// fails at the same model-wait limit, and this type still does not kill the session.</para>
+///
 /// <para><b>Two clocks, and the tighter one wins.</b> The hard ceiling
 /// (<c>RolePolicyEntry.TimeoutMinutes</c>, 240) is wall-clock from <c>DispatchedAt</c> and applies
 /// whatever the session is doing. The phase deadline (20 min model wait / 90 min local execution)
@@ -150,9 +158,10 @@ internal static class TaskDeadlinePolicy
         var elapsed = NonNegative(now - dispatched);
 
         // The cheap gate that keeps this off the hot path. EVERY clock here is bounded below by the
-        // wall clock since dispatch (a phase deadline uses min(last-entry age, elapsed)), so a task
-        // younger than the smallest armed limit cannot be near any of them and needs no query at
-        // all — which is the ordinary case on every 5 s tick.
+        // wall clock since dispatch (a phase deadline uses min(activity age, elapsed), and a Codex
+        // token_count can only make the model-wait age younger), so a task younger than the
+        // smallest armed limit cannot be near any of them and needs no query at all — which is the
+        // ordinary case on every 5 s tick.
         var smallest = SmallestArmed(ceiling, modelWait, localExecution, bootWait);
         if (smallest <= TimeSpan.Zero || elapsed < smallest * PreviewFraction)
             return null;
@@ -218,6 +227,15 @@ internal static class TaskDeadlinePolicy
                 // A warm delegate's session carries the PREVIOUS task's tail, so the phase clock is
                 // capped at this task's own age: nothing is ever failed for a stall it inherited.
                 var phaseElapsed = Smaller(age, elapsed);
+                if (phaseKind == DeadlineKind.ModelWait)
+                {
+                    var heartbeat = await LoadCodexTokenCountAsync(db, sessionId, ct);
+                    if (heartbeat is DateTime hb)
+                    {
+                        var activityAt = hb > last.At ? hb : last.At;
+                        phaseElapsed = Smaller(NonNegative(now - activityAt), elapsed);
+                    }
+                }
                 var label = phaseKind switch
                 {
                     DeadlineKind.BootModelWait => "waiting on the model's FIRST token",
@@ -310,6 +328,17 @@ internal static class TaskDeadlinePolicy
         var clock = dispatchedAt ?? DateTime.MinValue;
         return launchResumedAt is DateTime at && at > clock ? at : clock;
     }
+
+    /// <summary>
+    /// Newest stored Codex <c>token_count</c> time, or null when the session has none.
+    /// A missing row and a null column are the same answer: no heartbeat.
+    /// </summary>
+    private static async Task<DateTime?> LoadCodexTokenCountAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.CodexTokenCountAt)
+            .FirstOrDefaultAsync(ct);
 
     /// <summary>
     /// The session's last transcript entry, with the timestamp tie-break.
