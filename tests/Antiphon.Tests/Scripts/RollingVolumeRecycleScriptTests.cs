@@ -902,8 +902,13 @@ public sealed class RollingVolumeRecycleScriptTests
             File.ReadAllText(dirtyFile).ShouldBe("unpublished-sentinel");
         }
 
-        using (var unpublished = new C1008HostFixture(main: false))
+        // Origin has to stay off /tmp. The preview covers /tmp with the same private
+        // tmpfs the helper uses, and a hidden origin is RecycleGitAuditUnknown.
+        var unpublishedRoot = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(unpublishedRoot);
+        try
         {
+            using var unpublished = new C1008HostFixture(main: false, unpublishedRoot);
             await RetainPreviewImage(unpublished);
             await PublishRepo(unpublished);
             var repo = Path.Combine(WorkMount(unpublished), "repo");
@@ -923,6 +928,10 @@ public sealed class RollingVolumeRecycleScriptTests
             AssertPreviewDidNotMutate(unpublished);
             File.ReadAllText(local).ShouldBe("unpublished-sentinel");
         }
+        finally
+        {
+            if (Directory.Exists(unpublishedRoot)) Directory.Delete(unpublishedRoot, recursive: true);
+        }
 
         using (var unknown = new C1008HostFixture(main: false))
         {
@@ -938,8 +947,11 @@ public sealed class RollingVolumeRecycleScriptTests
             AssertPreviewDidNotMutate(unknown);
         }
 
-        using (var linked = new C1008HostFixture(main: false))
+        var linkedRoot = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(linkedRoot);
+        try
         {
+            using var linked = new C1008HostFixture(main: false, linkedRoot);
             await RetainPreviewImage(linked);
             await PublishLinkedWorktree(linked);
             ResetPreviewTrace(linked);
@@ -953,6 +965,10 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldNotContain("RecycleUnpublishedWork");
             AssertPreviewDidNotMutate(linked);
             (await HostWorkMount()).ShouldBe(hostWork, "recycle-preview-receipt: linked-worktree preview leaves the host /work mount alone");
+        }
+        finally
+        {
+            if (Directory.Exists(linkedRoot)) Directory.Delete(linkedRoot, recursive: true);
         }
     }
 
@@ -1018,8 +1034,11 @@ public sealed class RollingVolumeRecycleScriptTests
         var repo = Path.Combine(WorkMount(fixture), "repo");
         var hook = Path.Combine(fixture.Root, "fsmonitor");
         var result = Path.Combine(fixture.Root, "hook-result");
+        // Bash reports a failed append while it is opening the target, before the
+        // command's own stderr redirection exists. Capture the shell stderr first.
         await File.WriteAllTextAsync(hook, "#!/bin/bash\n" +
-            "if printf ' mutated' >> " + BashSingle(description) + " 2>" + BashSingle(result + ".err") + "; then\n" +
+            "exec 2>" + BashSingle(result + ".err") + "\n" +
+            "if printf ' mutated' >> " + BashSingle(description) + "; then\n" +
             "  printf writable > " + BashSingle(result) + "\n" +
             "else\n" +
             "  cat " + BashSingle(result + ".err") + " > " + BashSingle(result) + "\n" +
@@ -1036,7 +1055,9 @@ public sealed class RollingVolumeRecycleScriptTests
         var mount = WorkMount(fixture);
         var repo = Path.Combine(mount, "repo");
         var wt = Path.Combine(mount, "wt");
-        var setup = await C994ScriptProcess.Run("git", "-C", repo, "worktree", "add", "--quiet", wt, "main");
+        // main is already checked out in repo. A second linked worktree at that
+        // commit has to be detached; checking main out twice is refused.
+        var setup = await C994ScriptProcess.Run("git", "-C", repo, "worktree", "add", "--detach", "--quiet", wt, "main");
         setup.Exit.ShouldBe(0, "recycle-preview-receipt: linked worktree; " + setup.Output);
         RewriteWorkPointer(Path.Combine(repo, ".git", "worktrees", "wt", "gitdir"), mount);
         RewriteWorkPointer(Path.Combine(wt, ".git"), mount);

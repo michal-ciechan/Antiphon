@@ -7609,6 +7609,181 @@ c1008_audit() {
     printf '%s' "$output" | sort
 }
 
+# Preview runs the apply program with no helper. /work is the production path
+# linked worktrees record, so the work volume is bound read-only there. Every
+# mount of that same device and filesystem root is remounted read-only, including
+# the original mount path a hook may still name. runner-tmp, when present, is
+# bound read-only at a private directory and named by C1008_TMP_MOUNT: the helper
+# image uses /runner-tmp, which is not a path on the host. A before/after content
+# digest refuses when any audited byte changes. Directory size is not part of the
+# digest: creating and removing a lock grows a directory and does not shrink it.
+c1008_tree_digest() {
+    local root="$1" work rel type path sum target row
+    [ -d "$root" ] && [ "$root" != / ] || return 1
+    work="$(mktemp -d /dev/shm/c1008-digest-XXXXXXXX)" || return 1
+    if ! sudo -n find "$root" -xdev -printf '%P\t%y\0' > "$work/list"; then rm -rf -- "$work"; return 1; fi
+    if ! LC_ALL=C sort -z -o "$work/sorted" "$work/list"; then rm -rf -- "$work"; return 1; fi
+    : > "$work/body" || { rm -rf -- "$work"; return 1; }
+    while IFS= read -r -d '' row || [ -n "$row" ]; do
+        [ -n "$row" ] || continue
+        rel="${row%%$'\t'*}"
+        type="${row#*$'\t'}"
+        if [ -n "$rel" ]; then path="$root/$rel"; else path="$root"; fi
+        case "$type" in
+            f)
+                sum="$(sudo -n sha256sum -- "$path")" || { rm -rf -- "$work"; return 1; }
+                printf 'f\t%s\t%s\n' "$rel" "${sum%% *}" >> "$work/body" || { rm -rf -- "$work"; return 1; }
+                ;;
+            l)
+                target="$(sudo -n readlink -- "$path")" || { rm -rf -- "$work"; return 1; }
+                printf 'l\t%s\t%s\n' "$rel" "$target" >> "$work/body" || { rm -rf -- "$work"; return 1; }
+                ;;
+            *)
+                printf '%s\t%s\n' "$type" "$rel" >> "$work/body" || { rm -rf -- "$work"; return 1; }
+                ;;
+        esac
+    done < "$work/sorted"
+    sum="$(sha256sum -- "$work/body")" || { rm -rf -- "$work"; return 1; }
+    rm -rf -- "$work" || return 1
+    printf '%s\n' "${sum%% *}"
+}
+
+c1008_audit_readonly() {
+    local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts raw canon tmp_facts image cap resolve_status=0
+    facts="$(c1008_volume "$work")" || return 2
+    if [ "$facts" = null ]; then
+        [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
+        return 2
+    fi
+    raw="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+    canon="$(sudo -n readlink -e -- "$raw" 2>/dev/null)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    [ "$canon" = "$raw" ] && [ -n "$canon" ] && [ "$canon" != / ] && [ -d "$canon" ] || {
+        printf 'audit check=readonly-private status=2 repo=.\n'
+        return 2
+    }
+    tmp_facts="$(c1008_volume "$tmp")" || return 2
+    raw=''
+    if [ "$tmp_facts" != null ]; then
+        raw="$(printf '%s' "$tmp_facts" | jq -r .Mountpoint)"
+        local tmp_canon
+        tmp_canon="$(sudo -n readlink -e -- "$raw" 2>/dev/null)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+        [ "$tmp_canon" = "$raw" ] && [ -n "$tmp_canon" ] && [ "$tmp_canon" != / ] && [ "$tmp_canon" != "$canon" ] && [ -d "$tmp_canon" ] || {
+            printf 'audit check=readonly-private status=2 repo=.\n'
+            return 2
+        }
+        raw="$tmp_canon"
+    fi
+    image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+    [ "$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)" = "$image" ] || return 2
+    cap="$(c1008_resolve_audit_cap)" || resolve_status=$?
+    if [ "$resolve_status" != 0 ]; then
+        printf '%s\n' "$cap"
+        return 2
+    fi
+    c1008_audit_readonly_execute "$canon" "$raw" "$cap"
+}
+
+c1008_audit_readonly_execute() {
+    local work_mount="$1" tmp_mount="$2" cap="$3"
+    local dir program ns tmp_target='' before tmp_before='' now output code=0 bytes=0
+    if [ ! -d /dev/shm ] || [ ! -w /dev/shm ]; then
+        printf 'audit check=readonly-private status=2 repo=.\n'
+        return 2
+    fi
+    dir="$(mktemp -d /dev/shm/c1008-audit-ro-XXXXXXXX)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    # RETURN runs after this function's locals are destroyed when the dry-run
+    # caller captures the audit in a command substitution. The paths have to be
+    # globals, or set -u refuses the cleanup and the preview looks unaudited.
+    C1008_AUDIT_RO_DIR="$dir"
+    C1008_AUDIT_RO_TMP=''
+    trap 'trap - RETURN; rm -rf -- "${C1008_AUDIT_RO_DIR:-}" || true; [ -z "${C1008_AUDIT_RO_TMP:-}" ] || rm -rf -- "${C1008_AUDIT_RO_TMP:-}" || true; unset C1008_AUDIT_RO_DIR C1008_AUDIT_RO_TMP' RETURN
+    chmod 0755 -- "$dir" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    program="$dir/program.sh"
+    ns="$dir/ns.sh"
+    c1008_git_program > "$program" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    cat > "$ns" <<'C1008_NS_END'
+set -euo pipefail
+mount --make-rprivate /
+c1008_protect() {
+    local target="$1" spec id line n=0
+    mount --bind -- "$target" "$target"
+    spec="$(findmnt -J -l -o MAJ:MIN,FSROOT,TARGET)"
+    id="$(printf '%s' "$spec" | jq -r --arg t "$target" '[.filesystems[] | select(.target==$t) | (.["maj:min"] + "\t" + .fsroot)] | unique | if length==1 then .[0] else empty end')"
+    [ -n "$id" ]
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        mount -o remount,bind,ro -- "$line" || mount -o remount,ro -- "$line"
+        n=$((n + 1))
+    done < <(printf '%s' "$spec" | jq -r --arg id "$id" '.filesystems[] | select((.["maj:min"] + "\t" + .fsroot)==$id) | .target')
+    [ "$n" -ge 1 ]
+}
+c1008_protect "$C1008_AUDIT_WORK"
+mkdir -p /work
+mount --bind -- "$C1008_AUDIT_WORK" /work
+mount -o remount,bind,ro /work
+if [ -n "${C1008_AUDIT_TMP:-}" ]; then
+    c1008_protect "$C1008_AUDIT_TMP"
+    mkdir -p -- "$C1008_AUDIT_TMP_TARGET"
+    mount --bind -- "$C1008_AUDIT_TMP" "$C1008_AUDIT_TMP_TARGET"
+    mount -o remount,bind,ro -- "$C1008_AUDIT_TMP_TARGET"
+    export C1008_TMP_MOUNT="$C1008_AUDIT_TMP_TARGET"
+fi
+mount -t tmpfs -o mode=1777,size=2147483648 none /tmp
+if [ "${C1008_AUDIT_DROP:-}" = 1 ]; then
+    exec setpriv --reuid=1654 --regid=1654 --clear-groups -- bash "$C1008_AUDIT_PROGRAM"
+fi
+exec bash "$C1008_AUDIT_PROGRAM"
+C1008_NS_END
+    chmod 0755 -- "$program" "$ns" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    if [ -n "$tmp_mount" ]; then
+        tmp_target="$(mktemp -d /var/tmp/c1008-runner-tmp-XXXXXXXX)" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+        C1008_AUDIT_RO_TMP="$tmp_target"
+        chmod 0755 -- "$tmp_target" || { printf 'audit check=readonly-private status=2 repo=.\n'; return 2; }
+    fi
+    before="$(c1008_tree_digest "$work_mount")" || { printf 'audit check=readonly-bytes status=2 repo=.\n'; return 2; }
+    if [ -n "$tmp_mount" ]; then
+        tmp_before="$(c1008_tree_digest "$tmp_mount")" || { printf 'audit check=readonly-bytes status=2 repo=.\n'; return 2; }
+    fi
+    export C1008_AUDIT_WORK="$work_mount" C1008_AUDIT_PROGRAM="$program" C1008_AUDIT_TIMEOUT_SECONDS="$cap"
+    if [ -n "$tmp_mount" ]; then
+        export C1008_AUDIT_TMP="$tmp_mount" C1008_AUDIT_TMP_TARGET="$tmp_target"
+    else
+        unset C1008_AUDIT_TMP C1008_AUDIT_TMP_TARGET
+    fi
+    if [ "$(id -u)" = 1654 ]; then
+        unset C1008_AUDIT_DROP
+        output="$(unshare --user --map-root-user --mount bash "$ns")" || code=$?
+    elif [ "$(id -u)" = 0 ]; then
+        export C1008_AUDIT_DROP=1
+        output="$(unshare --mount bash "$ns")" || code=$?
+    else
+        local -a envp=("C1008_AUDIT_DROP=1" "C1008_AUDIT_WORK=$work_mount" "C1008_AUDIT_PROGRAM=$program" "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+        if [ -n "$tmp_mount" ]; then envp+=("C1008_AUDIT_TMP=$tmp_mount" "C1008_AUDIT_TMP_TARGET=$tmp_target"); fi
+        if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then envp+=("C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES"); fi
+        output="$(sudo -n env "${envp[@]}" unshare --mount bash "$ns")" || code=$?
+    fi
+    now="$(c1008_tree_digest "$work_mount")" || bytes=1
+    [ "$bytes" = 0 ] && [ "$now" = "$before" ] || bytes=1
+    if [ -n "$tmp_mount" ]; then
+        now="$(c1008_tree_digest "$tmp_mount")" || bytes=1
+        [ "$bytes" = 0 ] && [ "$now" = "$tmp_before" ] || bytes=1
+    fi
+    if [ "$bytes" != 0 ]; then
+        printf 'audit check=readonly-bytes status=2 repo=.\n'
+        return 2
+    fi
+    if [ "$code" != 0 ]; then
+        printf '%s\n' "$output"
+        case "$output" in
+            *RecycleUnpublishedWork*) return 3 ;;
+            *RecycleWorktreeDirty*) return 4 ;;
+            *) return 2 ;;
+        esac
+    fi
+    printf '%s' "$output" | sort
+}
+
 c1008_audit_checked() {
     local audit code=0 work_state detail
     work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
@@ -7838,7 +8013,7 @@ c1008_recycle() {
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
-    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha=""
+    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha="" detail pending=true
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
     # case_deploy_parent has rewritten SOURCE_SHA12, so pin that compare to previousSha.
     # A missing or short previousSha leaves the pin unset and keeps the current-tag refusal.
@@ -7872,13 +8047,32 @@ c1008_recycle() {
     c1008_status_proof
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
         C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+        if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview || c1008_refuse RecycleGitAuditUnknown
+        else
+            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+        fi
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+        if [ -n "${C994_IMAGE:-}" ]; then
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleGitAuditUnknown
+            code=0
+            audit="$(c1008_audit_readonly)" || code=$?
+            if [ "$code" != 0 ]; then
+                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+                [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+                case "$code" in
+                    3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
+                    4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
+                    *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
+                esac
+            fi
+            pending=false
+        fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
-        printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
+        printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         write_result true '' 0
     fi
     c1008_lock
@@ -8405,7 +8599,9 @@ c994_status_proof() {
 # never a lookup authority. Multiple matching receipts must carry the same digest.
 c994_lookup_image() {
     require_lane host
-    local operation="${1:-}" file record image='' candidate found='' root
+    local operation="${1:-}" file record image='' candidate found='' root allow=false
+    # allow-preview accepts a dry-run receipt only when the caller named that operation.
+    [ "${2:-}" = allow-preview ] && [ -n "$operation" ] && allow=true
     C994_IMAGE=''; C994_ORIGINAL=''
     root="$SERVER2_ROOT/temp-container-retirement"
     [ ! -L "$root" ] || return 2
@@ -8433,7 +8629,9 @@ c994_lookup_image() {
         [ "$(printf '%s' "$record" | jq -r .operationId)" = "$(basename "$file" .json)" ] || return 2
         if [ -n "$operation" ] && [ "$file" != "$root/$operation.json" ]; then continue; fi
         if ! printf '%s' "$record" | jq -e --arg sha "$SHA" --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
-            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and .dryRun==false' >/dev/null; then
+            --argjson allow "$([ "$allow" = true ] && printf true || printf false)" \
+            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and
+             (if $allow then (.dryRun==true or .dryRun==false) else .dryRun==false end)' >/dev/null; then
             [ -z "$operation" ] && continue; return 2
         fi
         candidate="$(printf '%s' "$record" | jq -r .image)"
