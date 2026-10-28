@@ -144,9 +144,10 @@ public sealed class CapacityLockOrderTests
         using var workspace = new TempWorkspace();
         var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path, level: AgentModelLevel.Medium);
-        await ClearPersistentSessionAsync(schema.ConnectionString, agentId, ct);
-        var claimTask = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
-            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.Medium, "cold relaunch");
+        // Unpinned, so warm reuse binds X inside the claim. B's committed AgentId stays null
+        // and the continuation's sole-owner read does not see the uncommitted bind.
+        var claimTask = await CapacityAdmissionLifecycleTests.SeedSharedAsync(
+            schema.ConnectionString, workspace.Path, "warm reuse continuation", DateTime.UtcNow, ct);
         var continued = await SeedReleasedAnswerAsync(
             schema.ConnectionString, workspace.Path, agentId, persistentSession: false, ct);
         var boundary = new PauseBoundary();
@@ -179,6 +180,7 @@ public sealed class CapacityLockOrderTests
             }
             early.Failures.ShouldBe(0);
             await AssertSingleDispatchAsync(schema.ConnectionString, claimTask.Id, AgentModelLevel.Medium, ct);
+            await AssertClaimHoldsWarmAgentAsync(schema.ConnectionString, claimTask.Id, agentId, ct);
             return;
         }
 
@@ -194,18 +196,30 @@ public sealed class CapacityLockOrderTests
         claimResult.Dispatched.ShouldBe(1);
         claimResult.Failures.ShouldBe(0);
         await AssertSingleDispatchAsync(schema.ConnectionString, claimTask.Id, AgentModelLevel.Medium, ct);
+        await AssertClaimHoldsWarmAgentAsync(schema.ConnectionString, claimTask.Id, agentId, ct);
     }
 
     [Test]
     [Timeout(180_000)]
-    public async Task C1593_stop_and_warm_reuse_complete_without_deadlock(CancellationToken ct)
+    [Arguments("stop")]
+    [Arguments("pool-session-exit")]
+    [Arguments("standing-session-exit")]
+    public async Task C1593_stop_and_warm_reuse_complete_without_deadlock(string mode, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path, level: AgentModelLevel.Medium);
+        if (mode == "standing-session-exit")
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.IsPoolDelegate, false)
+                .SetProperty(a => a.AlwaysOn, false), ct);
+        }
+
         var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
-            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.Medium, "warm reuse stop");
+            schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.Medium, mode);
         await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
             schema.ConnectionString, configure: services => services.AddDispatchConcurrencyAdmission());
         await CapacityAdmissionLifecycleTests.GrantAsync(provider, task.Id, ct);
@@ -220,7 +234,7 @@ public sealed class CapacityLockOrderTests
         var waiting = "";
         try
         {
-            var waiter = await CapacityLockProbe.PollBlockedByAsync(
+            var waiter = await CapacityLockProbe.PollInClaimSessionWaitAsync(
                 schema.ConnectionString, holderPid, tick, CapacityLockProbe.Deadline, ct);
             waiting = await CapacityLockProbe.DescribePidAsync(schema.ConnectionString, waiter, ct);
             (await CapacityLockProbe.HoldsAdvisoryAsync(
@@ -228,8 +242,18 @@ public sealed class CapacityLockOrderTests
                 .ShouldBeFalse($"pid {waiter} holds the parallel key while blocked on session {sessionId}: {waiting}");
             (await CapacityLockProbe.HoldsAdvisoryAsync(schema.ConnectionString, waiter, ClaudeKey, ct))
                 .ShouldBeFalse($"pid {waiter} holds {ClaudeKey} while blocked on session {sessionId}");
-            await CapacityLockProbe.HoldRowAsync(holder, transaction, "Agents", agentId, ct);
-            await MarkStoppedAsync(holder, transaction, agentId, sessionId, ct);
+            if (mode == "stop")
+            {
+                await CapacityLockProbe.HoldRowAsync(holder, transaction, "Agents", agentId, ct);
+                await MarkStoppedAsync(holder, transaction, agentId, sessionId, ct);
+            }
+            else
+            {
+                // Exit observer: S becomes Stopped or Failed and an Idle agent is left unchanged.
+                var status = mode == "standing-session-exit" ? (int)SessionStatus.Failed : (int)SessionStatus.Stopped;
+                await MarkSessionStatusAsync(holder, transaction, sessionId, status, ct);
+            }
+
             await transaction.CommitAsync(ct);
             committed = true;
         }
@@ -258,7 +282,7 @@ public sealed class CapacityLockOrderTests
 
         if (assertion is not null)
             throw assertion;
-        Deadlock.ShouldBeFalse(result is null ? new InvalidOperationException("tick returned no result") : null, "warm reuse");
+        Deadlock.ShouldBeFalse(result is null ? new InvalidOperationException("tick returned no result") : null, mode);
         result!.Dispatched.ShouldBe(1);
         result.Failures.ShouldBe(0);
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -266,10 +290,11 @@ public sealed class CapacityLockOrderTests
         stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
         stored.FailureReason.ShouldBeNull();
         stored.AgentSessionId.ShouldNotBeNull();
-        stored.AgentSessionId.ShouldNotBe(sessionId, "warm reuse kept the session a stop already held");
+        stored.AgentSessionId.ShouldNotBe(sessionId, $"{mode} kept the session the holder already exited");
         var wait = await verify.CapacityRecoveryWaits.AsNoTracking().SingleAsync(w => w.TaskId == task.Id, ct);
         wait.AdmissionCount.ShouldBe(1);
         wait.State.ShouldBe(CapacityRecoveryWaitState.StartAccepted);
+        wait.LaunchSessionId.ShouldBe(stored.AgentSessionId);
     }
 
     private static async Task<ArmedPath> ArmBlockedPathAsync(
@@ -760,6 +785,14 @@ public sealed class CapacityLockOrderTests
         (await db.AgentSessions.CountAsync(s => s.Id == stored.AgentSessionId, ct)).ShouldBe(1);
     }
 
+    private static async Task AssertClaimHoldsWarmAgentAsync(
+        string connection, Guid taskId, Guid agentId, CancellationToken ct)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+        stored.AgentId.ShouldBe(agentId, "the claim must warm-reuse X so the continuation waits on that row");
+    }
+
     private static async Task MarkStoppedAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid agentId, Guid sessionId, CancellationToken ct)
     {
@@ -769,6 +802,17 @@ public sealed class CapacityLockOrderTests
             UPDATE "AgentSessions" SET "Status" = 4, "EndedAt" = NOW() WHERE "Id" = @session;
             """, connection, transaction);
         command.Parameters.AddWithValue("agent", agentId);
+        command.Parameters.AddWithValue("session", sessionId);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task MarkSessionStatusAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid sessionId, int status, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(
+            """UPDATE "AgentSessions" SET "Status" = @status, "EndedAt" = NOW() WHERE "Id" = @session;""",
+            connection, transaction);
+        command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("session", sessionId);
         await command.ExecuteNonQueryAsync(ct);
     }
