@@ -26,7 +26,7 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
     // the generated testing-platform cache under the isolated output directory.
     [Test]
     [Timeout(30_000)]
-    public void repeat_output_directory_stays_within_windows_max_path()
+    public void repeat_output_directory_stays_within_windows_max_path(CancellationToken cancellationToken)
     {
         const string longestRelative =
             @"artifacts\obj\Antiphon.Checkpoints.FilterHost\debug\Antiphon.Checkpoints.FilterHost.gentestingplatformentrypointinputcache.cache";
