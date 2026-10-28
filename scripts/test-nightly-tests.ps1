@@ -2086,6 +2086,165 @@ function Test-C1577_Group71MeasuredBudget {
     Assert-C487 -Cond $ok -Name 'C1577 group 71 uses observed bounds within half the unchanged watchdog with every node once' -Detail $detail
 }
 
+function Test-G2865_Group28Group65MeasuredBudget {
+    # Run 8f055f87 journals: group 28 and group 65 were killed at the 3600 s
+    # watchdog while tests were still passing. The model priced each chunk at
+    # 900 s. A class with a completed serial test-second total must be priced
+    # at least that high, and no chunk of these classes may be priced above
+    # the watchdog. Combined buckets without a per-class split are omitted.
+    $ok = $false
+    $detail = ''
+    try {
+        $classes = @(
+            @('HerdrLabelFollowTests', 33, 1, 28, 0),
+            @('AgentCreateRaceTests', 4, 0, 28, 0),
+            @('OutputDistillationGateTests', 103, 0, 28, 0),
+            @('AgentTaskServiceIntegrationTests', 120, 0, 28, 0),
+            @('TaskInputAttentionCostTests', 35, 1, 28, 0),
+            @('DelegateBranchDeliveryTests', 7, 1, 28, 334),
+            @('BlockedTaskParkDeliveryTests', 6, 1, 28, 575),
+            @('PostLandMutationCustodyTests', 56, 0, 28, 1110),
+            @('RepairSourceDispatchTests', 41, 1, 28, 302),
+            @('RepairSourceSettlementTests', 36, 1, 28, 491),
+            @('SessionRuntimeActionRoutingTests', 35, 1, 28, 112),
+            @('BlockedTaskParkReclaimTests', 38, 1, 28, 907),
+            @('ChannelBridgeTests', 40, 1, 28, 0),
+            @('ChannelInboundRecoveryTests', 41, 1, 28, 0),
+            @('CodexStartupDeliveryTests', 62, 0, 28, 0),
+            @('LandEvidenceWarningDeliveryTests', 7, 1, 28, 0),
+            @('ApiErrorRecoveryServiceTests', 40, 1, 28, 0),
+            @('CompletedCardWorktreeRemovalTests', 37, 1, 65, 942),
+            @('LandRecoveryCheckoutTests', 34, 0, 65, 0),
+            @('LandingGitTests', 58, 0, 65, 0),
+            @('LandRecoveryIgnoredNestedRepositoryTests', 15, 0, 65, 0),
+            @('LandingRemovalControlTests', 34, 0, 65, 761),
+            @('LandingSourceFreshnessTests', 21, 0, 65, 0),
+            @('LandingSourceBoundaryControlTests', 30, 0, 65, 0),
+            @('RepositoryChildRecoveryTests', 15, 1, 65, 0),
+            @('SettledWorktreeRemovalTests', 78, 0, 65, 668),
+            @('WorktreeGuardedCleanupTests', 49, 1, 65, 1593),
+            @('WorktreeManagerGitIntegrationTests', 30, 1, 65, 0),
+            @('LandingAdmissionControlTests', 42, 0, 65, 96),
+            @('GitServiceTests', 12, 1, 65, 0),
+            @('DockerDeliveryBarrierTests', 24, 0, 65, 0),
+            @('DockerDeliveryDatabaseTests', 16, 0, 65, 0),
+            @('DockerDeliveryObservationTests', 31, 0, 65, 0),
+            @('DockerStackContractTests', 115, 0, 65, 0),
+            @('HostCleanupCheckpointAuthorityTests', 16, 0, 65, 0),
+            @('HostCleanupCheckpointCompatibilityTests', 54, 0, 65, 0),
+            @('HostCleanupCheckpointCustodyTests', 13, 0, 65, 0),
+            @('HostCleanupPolicyTests', 22, 0, 65, 0),
+            @('LandingGitProfileTests', 23, 0, 65, 0),
+            @('LandingIdentityControlTests', 26, 0, 65, 0),
+            @('LandingRemovalPolicyControlTests', 72, 0, 65, 0),
+            @('FileUseCaptureTests', 13, 1, 65, 0),
+            @('GrokRunnerImageContractTests', 26, 0, 65, 0),
+            @('WorktreeDeleteAccessProbeTests', 38, 0, 65, 0),
+            @('WorktreeLockDiagnosticsTests', 37, 0, 65, 0)
+        )
+        $measured = @{}
+        $declared = @{}
+        $groupOf = @{}
+        $nodes = New-Object System.Collections.Generic.List[object]
+        foreach ($row in $classes) {
+            $type = [string]$row[0]
+            $count = [int]$row[1]
+            $slow = [int]$row[2] -eq 1
+            $group = [int]$row[3]
+            $seconds = [double]$row[4]
+            $ns = $(if ($group -eq 28) { 'Antiphon.Tests.Application' } else { 'Antiphon.Tests.Infrastructure' })
+            $bare = $ns + '.' + $type
+            $declared[$type] = $count
+            $groupOf[$type] = $group
+            if ($seconds -gt 0) { $measured[$type] = $seconds }
+            $cats = @($(if ($slow) { 'Slow' }))
+            for ($i = 0; $i -lt $count; $i++) {
+                [void]$nodes.Add([pscustomobject]@{
+                    ClassName = $bare; Type = $type; Method = 'Case'; Uid = ($bare + '.' + $i); Categories = $cats
+                })
+            }
+        }
+        if ($classes.Count -ne 45 -or @($groupOf.Values | Where-Object { $_ -eq 28 }).Count -ne 17 -or @($groupOf.Values | Where-Object { $_ -eq 65 }).Count -ne 28) {
+            throw 'group census'
+        }
+        $reasons = New-Object System.Collections.Generic.List[string]
+        $script:NightlyClassCostTable = $null
+        $costDoc = [IO.File]::ReadAllText((Join-Path $lib 'nightly-class-costs.json')) | ConvertFrom-Json
+        foreach ($type in @($measured.Keys | Sort-Object)) {
+            $ns = $(if ([int]$groupOf[$type] -eq 28) { 'Antiphon.Tests.Application' } else { 'Antiphon.Tests.Infrastructure' })
+            $bare = $ns + '.' + $type
+            $row = $costDoc.classes.PSObject.Properties[$bare]
+            if ($null -eq $row -or [int]$row.Value.nodes -ne [int]$declared[$type] -or [double]$row.Value.seconds -ne [double]$measured[$type] -or [string]$row.Value.basis -cne 'measured' -or [string]$row.Value.source -cnotlike '*8f055f87*') {
+                [void]$reasons.Add('cost-row:' + $type)
+            }
+        }
+        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
+        $byType = @{}
+        foreach ($node in $nodes) {
+            if (-not $byType.ContainsKey($node.Type)) { $byType[$node.Type] = New-Object System.Collections.Generic.List[object] }
+            [void]$byType[$node.Type].Add($node)
+        }
+        $share = @{}
+        $seen = @{}
+        $groupChunks = @{ 28 = @{}; 65 = @{} }
+        $shapes = New-Object System.Collections.Generic.List[string]
+        foreach ($chunk in $chunks) {
+            $need = 0.0
+            $names = New-Object System.Collections.Generic.List[string]
+            $selected = New-Object System.Collections.Generic.List[object]
+            foreach ($bare in @($chunk.classes)) {
+                $type = ([string]$bare).Substring(([string]$bare).LastIndexOf('.') + 1)
+                $hits = New-Object System.Collections.Generic.List[object]
+                $ef = [string]$chunk.exactFilter
+                $mf = ''
+                if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $mf = [string]$chunk.methodFilter }
+                $bucket = $byType[$type]
+                if ($null -eq $bucket) { continue }
+                foreach ($node in $bucket.ToArray()) {
+                    $take = $true
+                    if ($ef) { $take = ([string]$node.Method -ceq $ef.Substring($ef.LastIndexOf('/') + 1)) }
+                    elseif ($mf) {
+                        $take = $false
+                        foreach ($m in [regex]::Matches($mf, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) {
+                            if (([string]$node.Method).StartsWith($m.Groups[1].Value, [StringComparison]::Ordinal)) { $take = $true; break }
+                        }
+                    }
+                    if ($take) { [void]$hits.Add($node); [void]$selected.Add($node) }
+                }
+                if ($hits.Count -eq 0) { continue }
+                $cost = Get-NightlyLaunchClassCost -Nodes @($hits.ToArray()) -TypeName $type -Bare ([string]$bare)
+                $share[$type] = [double]$share[$type] + [double]$cost.Seconds
+                $seen[$type] = 1 + [int]$seen[$type]
+                [void]$names.Add($type)
+                $groupChunks[[int]$groupOf[$type]][[string]$chunk.id] = $true
+                if ($measured.ContainsKey($type)) { $need += [double]$measured[$type] * ($hits.Count / [double]$declared[$type]) }
+            }
+            if ([double]$chunk.seconds -gt 3600) { [void]$reasons.Add('over-watchdog:' + $chunk.id) }
+            if ($need -gt [double]$chunk.seconds + 0.25) { [void]$reasons.Add('under-need:' + $chunk.id) }
+            [void]$shapes.Add([string]$chunk.id + ':' + $names.Count + '/' + $chunk.seconds + 's/need=' + [Math]::Round($need, 1))
+        }
+        foreach ($type in @($measured.Keys | Sort-Object)) {
+            $priced = 0.0
+            if ($share.ContainsKey($type)) { $priced = [double]$share[$type] }
+            if ($priced + 0.25 -lt [double]$measured[$type]) { [void]$reasons.Add('share:' + $type + '=' + [Math]::Round($priced, 1)) }
+            if ([int]$seen[$type] -lt 1) { [void]$reasons.Add('unplaced:' + $type) }
+        }
+        if ($groupChunks[28].Count -lt 4) { [void]$reasons.Add('g28-chunks:' + $groupChunks[28].Count) }
+        if ($groupChunks[65].Count -lt 4) { [void]$reasons.Add('g65-chunks:' + $groupChunks[65].Count) }
+        if (@($seen.Keys).Count -ne $classes.Count) { [void]$reasons.Add('census') }
+        $detail = 'g28chunks=' + $groupChunks[28].Count + ' g65chunks=' + $groupChunks[65].Count + ' launches=' + $chunks.Count + ' watchdog=' + $watchdog + ' groups=' + ($shapes -join ',') + ' reasons=' + ($reasons -join ',')
+        Write-Host $detail
+        $ok = ($reasons.Count -eq 0)
+    } catch {
+        $detail = 'setup-error: ' + [string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage
+    }
+    Assert-C487 -Cond $ok -Name 'G2865 group 28 and 65 measured class costs fit inside chunk prices under the watchdog' -Detail $detail
+}
+
 function Test-C1410_MeasuredCostGroups {
     # CARD-1410 (supersedes the CARD-1404 120-node cap case). The real
     # Antiphon.Tests listing (scripts/fixtures/nightly/c1410-antiphon-listing.txt,
