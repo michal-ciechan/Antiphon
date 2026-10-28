@@ -25,19 +25,64 @@ public sealed class PairedOverheadStatisticsTests
     }
 
     [Test]
-    public void Sustained_overhead_above_two_percent_is_rejected_despite_a_fast_on_outlier()
+    public void Sustained_overhead_above_two_percent_is_accepted_when_the_median_is_under_the_wall_bound()
     {
         double[] ratios = [-0.1, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021, 0.021];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
         PairedOverheadStatistics.Median(ratios).ShouldBeGreaterThan(0.02);
         PairedOverheadStatistics.BootstrapUpper(ratios).ShouldBeGreaterThan(0.02);
+        PairedOverheadStatistics.Median(ratios).ShouldBeLessThan(OverheadAcceptance.WallMedianBound);
+        OverheadAcceptance.Accepts(ratios, cpu).ShouldBeTrue();
     }
 
     [Test]
-    public void Uncertain_upper_bound_is_rejected_even_when_the_median_is_small()
+    public void Bootstrap_upper_above_two_percent_is_accepted_when_the_median_is_small()
     {
         double[] ratios = [0, 0, 0, 0, 0, 0.03, 0.03, 0.03, 0.03];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
         PairedOverheadStatistics.Median(ratios).ShouldBe(0);
         PairedOverheadStatistics.BootstrapUpper(ratios).ShouldBeGreaterThan(0.02);
+        OverheadAcceptance.Accepts(ratios, cpu).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Fewer_than_nine_pairs_is_rejected()
+    {
+        double[] wall = [0, 0, 0, 0, 0, 0, 0, 0];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0];
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Mismatched_wall_and_cpu_counts_are_rejected()
+    {
+        double[] wall = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0];
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Zero_baseline_is_rejected()
+    {
+        OverheadAcceptance.Ratio(1d, 0d).ShouldBe(double.PositiveInfinity);
+        OverheadAcceptance.Ratio(1d, -1d).ShouldBe(double.PositiveInfinity);
+        double[] wall = [double.PositiveInfinity, 0, 0, 0, 0, 0, 0, 0, 0];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        // +Inf sorts high, so the median stays finite and would fail open
+        // without an explicit non-finite check.
+        PairedOverheadStatistics.Median(wall).ShouldBe(0d);
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+    }
+
+    [Test]
+    public void NaN_ratio_is_rejected()
+    {
+        double[] wall = [double.NaN, 0, 0, 0, 0, 0, 0, 0, 0];
+        double[] cpu = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        // OrderBy uses double.CompareTo, which sorts NaN below every finite value.
+        PairedOverheadStatistics.Median(wall).ShouldBe(0d);
+        OverheadAcceptance.Accepts(wall, cpu).ShouldBeFalse();
+        OverheadAcceptance.Accepts(cpu, wall).ShouldBeFalse();
     }
 
     [Test]
