@@ -97,7 +97,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             _logger.LogTrace(ex, "Supervision runner probe failed non-transport; continuing");
         }
 
-        var agents = await _db.Agents.Where(a => a.AlwaysOn).ToListAsync(ct);
+        var agents = await _db.Agents.Where(a => a.AlwaysOn)
+            .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id).ToListAsync(ct);
         if (agents.Count == 0)
             return 0;
 
