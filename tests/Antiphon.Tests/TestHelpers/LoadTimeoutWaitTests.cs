@@ -49,4 +49,75 @@ public sealed class LoadTimeoutWaitTests
         atCap.ShouldBe(expired, "a hook that never runs fails at the wall cap");
         (await Should.ThrowAsync<TimeoutException>(expired)).Message.ShouldContain("wall cap");
     }
+
+    [Test]
+    [Timeout(10_000)]
+    public async Task Open_wall_cap_is_swallowed_and_an_operation_cancellation_is_rethrown(
+        CancellationToken cancellationToken)
+    {
+        var wall = new FakeTimeProvider();
+        var cap = TimeSpan.FromSeconds(45);
+        using (var gate = LoadTimeoutWait.Open(
+            clock: null, budget: null, wallCap: cap, wallClock: wall, label: "The hook"))
+        {
+            wall.Advance(cap - TimeSpan.FromSeconds(1));
+            gate.WallElapsed.ShouldBeFalse("the Open path stays open until the wall cap elapses");
+            wall.Advance(TimeSpan.FromSeconds(1));
+            gate.WallElapsed.ShouldBeTrue("Pipeline and Spill read WallElapsed after the cap");
+            var pending = Task.Delay(Timeout.Infinite, gate.Token);
+            var done = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken));
+            done.ShouldBe(pending, "Open callers observe the wall-cap cancellation");
+            var swallowed = false;
+            try
+            {
+                await pending;
+            }
+            catch (OperationCanceledException) when (gate.WallElapsed)
+            {
+                swallowed = true;
+            }
+            swallowed.ShouldBeTrue("Open callers swallow the wall-cap cancellation");
+        }
+
+        var live = new FakeTimeProvider();
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var thrown = await Should.ThrowAsync<OperationCanceledException>(() =>
+            LoadTimeoutWait.UntilSignaledAsync(
+                ct => Task.FromCanceled(canceled.Token),
+                clock: null, budget: null, wallCap: cap, wallClock: live,
+                cancellationToken: cancellationToken, label: "The hook"));
+        thrown.Message.ShouldNotContain("wall cap");
+    }
+
+    // The six LoadWallCap values. 45s covers Specialist's width-4 row max of
+    // 23.21s. 30s covers Pipeline 2.81s, Land 5.61s, Boot 11.33s and Delegation
+    // 8.27s. 64s stays for Spill. Review 968eb849 measured those maxima at
+    // width 4. The cost-file means are not the basis. The fake clock reaches
+    // the cap; this does not wait out 45s.
+    [Test]
+    [Arguments("SpecialistQualificationTests", 45)]
+    [Arguments("AgentTaskPipelineStatusTests", 30)]
+    [Arguments("AgentTaskLandSourcePersistenceTests", 30)]
+    [Arguments("BootStallDetectionTests", 30)]
+    [Arguments("DelegationDispatchRecoveryBoundaryTests", 30)]
+    [Arguments("SessionMessageQueueDeliveredSpillRecoveryTests", 64)]
+    [Timeout(10_000)]
+    public async Task Hook_that_never_runs_fails_at_its_class_wall_cap(
+        string className, int capSeconds, CancellationToken cancellationToken)
+    {
+        var wall = new FakeTimeProvider();
+        var cap = TimeSpan.FromSeconds(capSeconds);
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = LoadTimeoutWait.UntilSignaledAsync(
+            never.Task, clock: null, budget: null, wallCap: cap, wallClock: wall,
+            cancellationToken: cancellationToken, label: className);
+        wall.Advance(cap - TimeSpan.FromSeconds(1));
+        var before = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken));
+        before.ShouldNotBe(wait, className + " must not fail before its wall cap");
+        wall.Advance(TimeSpan.FromSeconds(1));
+        var atCap = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken));
+        atCap.ShouldBe(wait, className + " fails when its wall cap elapses");
+        (await Should.ThrowAsync<TimeoutException>(wait)).Message.ShouldContain("wall cap");
+    }
 }

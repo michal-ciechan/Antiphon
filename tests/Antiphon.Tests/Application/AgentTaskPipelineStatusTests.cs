@@ -22,14 +22,15 @@ namespace Antiphon.Tests.Application;
 /// not collide with other suites writing the shared Postgres container.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 22s wall cap and the 9.63s Linux max row. ceil(69/4)*120s = 2160s,
-// under the 2400s lone-class ceiling.
+[ParallelLimiter<PipelineStatusLoadLimit>]
+// Above the 30s wall cap. Width-4 Linux row max was 2.81s. ceil(69/4)*120s = 2160s,
+// under the 3600s chunk cap.
 [Timeout(120_000)]
 public partial class AgentTaskPipelineStatusTests
 {
-    // 22s is 2x the 10.58s cost-file mean (730s/69). It raises the 15s and 20s bounds.
-    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(22);
+    // 30s is above the width-4 Linux row max of 2.81s (review 968eb849). The
+    // 10.58s cost-file mean (730s/69) is not the basis. It raises the 15s and 20s bounds.
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(30);
 
     [Test]
     [Arguments(LandPublicationOutcome.Landed, false)]

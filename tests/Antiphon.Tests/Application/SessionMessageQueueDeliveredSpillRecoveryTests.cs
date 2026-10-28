@@ -15,12 +15,15 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<LoadTimeoutParallelLimit>]
-// Above the 64s catch-up cap and the 59.50s Linux max row.
+[ParallelLimiter<DeliveredSpillRecoveryLoadLimit>]
+// Above the 64s catch-up cap. Width-4 Linux class row max was 59.11s.
+// ceil(5/4)*180s = 360s, under the 3600s chunk cap.
 [Timeout(180_000)]
 public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
 {
-    // 64s is 2x the 32s cost-file mean (160s/5). The positive catch-up bound only.
+    // 64s stays. The width-4 Linux class row max was 59.11s on Stranded_sweep,
+    // which does not use this cap (review 968eb849). The 32s cost-file mean
+    // (160s/5) is not the basis. The positive catch-up bound only.
     private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(64);
 
     [Test]
