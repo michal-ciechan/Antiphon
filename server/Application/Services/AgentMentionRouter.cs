@@ -13,8 +13,8 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly Channel<MentionRouteCommand> _commands = Channel.CreateBounded<MentionRouteCommand>(
         new BoundedChannelOptions(1024)
         {
-            // A full queue refuses the new command. DropOldest would discard a command whose
-            // completion the session observer is awaiting and leave that observer parked.
+            // A full queue refuses the new command. TryWrite fails immediately when the
+            // channel is full; Wait applies only to WriteAsync. The drop is logged.
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false
@@ -27,6 +27,7 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly MentionRouteDiagnostics? _diagnostics;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
+    private int _disposed;
 
     // Test seam. Production leaves both null; a set gate pauses ProcessAsync before the route.
     internal TaskCompletionSource? BeforeRouteGate { get; set; }
@@ -46,13 +47,20 @@ public sealed class AgentMentionRouter : IDisposable
     }
 
     public void ObserveDelta(Guid sourceSessionId, string text) =>
-        _ = ObserveAndRouteAsync(sourceSessionId, text);
+        _ = ObserveCompletedAsync(sourceSessionId, text, capture: null, CancellationToken.None);
 
-    // Completed-line routes only. The pending debounce stays asynchronous.
-    internal Task ObserveAndRouteAsync(Guid sourceSessionId, string text)
+    // Returns once completed-line mentions are queued. It does not wait for the
+    // serial worker, delivery, or a transcript confirmation. A null capture
+    // (direct ObserveDelta, and every debounced remainder) leaves the route on
+    // the live-status filter.
+    internal async Task ObserveCompletedAsync(
+        Guid sourceSessionId,
+        string text,
+        Func<CancellationToken, ValueTask<MentionSourceLiveness?>>? capture,
+        CancellationToken ct)
     {
         if (string.IsNullOrEmpty(text))
-            return Task.CompletedTask;
+            return;
 
         var stripped = MentionScanner.StripAnsi(text);
         Record(
@@ -67,24 +75,45 @@ public sealed class AgentMentionRouter : IDisposable
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
             .Split('\n');
-        var routes = new List<Task>();
         var completedLineCount = combined.EndsWith('\n') ? lines.Length : Math.Max(0, lines.Length - 1);
+        var ready = new List<AgentMention>();
         for (var i = 0; i < completedLineCount; i++)
+            ready.AddRange(MentionsToEnqueue(sourceSessionId, lines[i], skipPendingDuplicate: true));
+
+        MentionSourceLiveness? observed = null;
+        if (capture is not null && ready.Count > 0)
         {
-            EnqueueMentions(sourceSessionId, lines[i], routes, skipPendingDuplicate: true);
-            _pendingStates.TryRemove(sourceSessionId, out _);
+            try
+            {
+                observed = await capture(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Mention liveness for session {SessionId} was not recorded", sourceSessionId);
+            }
         }
+
+        foreach (var mention in ready)
+            EnqueueCommand(sourceSessionId, mention, observed);
+        for (var i = 0; i < completedLineCount; i++)
+            _pendingStates.TryRemove(sourceSessionId, out _);
 
         var remainder = completedLineCount < lines.Length ? lines[^1] : string.Empty;
         if (remainder.Length > MaxLineChars)
             remainder = remainder[^MaxLineChars..];
         _pendingText[sourceSessionId] = remainder;
         SchedulePendingMentions(sourceSessionId, remainder);
-        return routes.Count == 0 ? Task.CompletedTask : Task.WhenAll(routes);
     }
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         _cts.Cancel();
         _commands.Writer.TryComplete();
         try
@@ -95,11 +124,41 @@ public sealed class AgentMentionRouter : IDisposable
         {
             // Best-effort shutdown for background mention routing.
         }
+
         _cts.Dispose();
     }
 
-    private void EnqueueMentions(Guid sourceSessionId, string line, List<Task> routes, bool skipPendingDuplicate = false)
+    // Transcript confirmation waits out the delivery timeout. That wait must not
+    // occupy the single reader, or the next completed line stays behind it.
+    private void StartFlush(Guid sessionId)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        var token = _cts.Token;
+        _ = FlushDetachedAsync(sessionId, token);
+    }
+
+    private async Task FlushDetachedAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+            await queue.FlushIfIdleAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Accepted mention for session {SessionId} awaits queue recovery", sessionId);
+        }
+    }
+
+    private List<AgentMention> MentionsToEnqueue(Guid sourceSessionId, string line, bool skipPendingDuplicate)
+    {
+        var ready = new List<AgentMention>();
         foreach (var mention in _scanner.Extract(line))
         {
             if (skipPendingDuplicate && PendingRouteExists(sourceSessionId, mention))
@@ -108,8 +167,10 @@ public sealed class AgentMentionRouter : IDisposable
                 continue;
             }
 
-            routes.Add(EnqueueCommand(sourceSessionId, mention));
+            ready.Add(mention);
         }
+
+        return ready;
     }
 
     private void SchedulePendingMentions(Guid sourceSessionId, string line)
@@ -195,7 +256,7 @@ public sealed class AgentMentionRouter : IDisposable
                     continue;
                 }
 
-                _ = EnqueueCommand(sourceSessionId, mention);
+                EnqueueCommand(sourceSessionId, mention, observed: null);
             }
         }
     }
@@ -231,12 +292,15 @@ public sealed class AgentMentionRouter : IDisposable
 
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var service = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
-                    await service.RouteMentionAsync(
+                    var result = await service.RouteMentionAsync(
                         command.SourceSessionId,
                         command.Mention,
                         command.OccurrenceId,
                         _cts.Token,
-                        onDurable: () => command.Durable.TrySetResult());
+                        command.ObservedLive,
+                        deferFlush: true);
+                    if (result.DeferredFlushSessionId is Guid flushSessionId)
+                        StartFlush(flushSessionId);
                 }
                 catch (OperationCanceledException) when (_cts.IsCancellationRequested)
                 {
@@ -250,10 +314,6 @@ public sealed class AgentMentionRouter : IDisposable
                         $"{ex.GetType().Name}: {ex.Message}");
                     _logger.LogWarning(ex, "Failed to route mention from session {SessionId}", command.SourceSessionId);
                 }
-                finally
-                {
-                    command.Durable.TrySetResult();
-                }
             }
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
@@ -262,7 +322,7 @@ public sealed class AgentMentionRouter : IDisposable
     }
 
     private sealed record MentionRouteCommand(
-        Guid SourceSessionId, AgentMention Mention, Guid OccurrenceId, TaskCompletionSource Durable);
+        Guid SourceSessionId, AgentMention Mention, Guid OccurrenceId, MentionSourceLiveness? ObservedLive);
 
     private sealed class PendingMentionState
     {
@@ -272,22 +332,17 @@ public sealed class AgentMentionRouter : IDisposable
         public HashSet<string> RoutedKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private Task EnqueueCommand(Guid sourceSessionId, AgentMention mention)
+    private void EnqueueCommand(Guid sourceSessionId, AgentMention mention, MentionSourceLiveness? observed)
     {
-        var command = new MentionRouteCommand(
-            sourceSessionId,
-            mention,
-            Guid.NewGuid(),
-            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var command = new MentionRouteCommand(sourceSessionId, mention, Guid.NewGuid(), observed);
         if (_commands.Writer.TryWrite(command))
         {
             Record(sourceSessionId, MentionRouteDiagnostics.CommandEnqueued, $"target={mention.Target}");
-            return command.Durable.Task;
+            return;
         }
 
         Record(sourceSessionId, MentionRouteDiagnostics.CommandDropped, $"target={mention.Target}");
         _logger.LogWarning("Dropped mention route command for source session {SessionId}", sourceSessionId);
-        return Task.CompletedTask;
     }
 
     private void Record(Guid sourceSessionId, string stage, string? detail = null)
@@ -301,3 +356,15 @@ public sealed class AgentMentionRouter : IDisposable
 
     private static string PendingRouteKey(AgentMention mention) => mention.Target;
 }
+
+/// <summary>
+/// Source identity read when a completed mention line was queued.
+/// <see cref="WasLive"/> is true only for Starting or Running at that read.
+/// </summary>
+internal readonly record struct MentionSourceLiveness(
+    DateTime StartedAt,
+    Guid? CardId,
+    Guid? StandingAgentId,
+    bool WasLive);
+
+internal readonly record struct MentionRouteResult(bool Accepted, Guid? DeferredFlushSessionId);

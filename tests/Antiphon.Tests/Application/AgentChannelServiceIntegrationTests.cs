@@ -89,17 +89,18 @@ public class AgentChannelServiceIntegrationTests
 
             sourceAdapter.Emit("@helper please inspect failing test");
 
+            // Route returns when the mention is accepted. Flush, including the
+            // submitting Enter, runs afterwards, so the body is the delivery signal.
             await WaitUntilAsync(
-                () => harness.RouteDiagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=true"),
+                () => targetAdapter.SubmittedBodies.Count == 1,
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
             targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == targetSession.Id && t.Kind == TranscriptKinds.UserPrompt
                 && t.Text == "[channel from lead] please inspect failing test")).ShouldBe(1);
             harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "ChannelMessage"
                 && e.Group == AgentChannelGroups.Card(graph.TargetCard.Id));
-            // Stages that precede SendInput — they must already be on the trail when
-            // the stdin predicate trips. Later stages (input-sent / event-published)
-            // can still be in-flight at that instant.
+            // Stages that precede SendInput. The submitted body is the signal that
+            // the route finished and the Enter ran; these must already be on the trail.
             var stages = harness.RouteDiagnostics.Snapshot().Select(s => s.Stage).ToList();
             stages.ShouldContain(MentionRouteDiagnostics.DeltaObserved);
             stages.ShouldContain(MentionRouteDiagnostics.PendingScheduled);
@@ -191,9 +192,8 @@ public class AgentChannelServiceIntegrationTests
             sourceAdapter.Emit("inspect failing test");
 
             await WaitUntilAsync(
-                () => harness.RouteDiagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=true"),
+                () => targetAdapter.SubmittedBodies.Count == 1,
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
-            await Task.Delay(450);
 
             CountOccurrences(targetAdapter.SentInput, "[channel from lead]").ShouldBe(1);
             targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
@@ -565,6 +565,11 @@ public class AgentChannelServiceIntegrationTests
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddLogging();
+        // Transcript confirm reads persisted UserPrompt rows. Without the store,
+        // ObserveTranscriptAsync records nothing and a verified delivery never confirms.
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
 
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
