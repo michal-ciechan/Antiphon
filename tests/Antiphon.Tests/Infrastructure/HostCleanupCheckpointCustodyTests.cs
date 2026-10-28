@@ -312,7 +312,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         dir.Io.Count("rmdir", child).ShouldBe(0, "C987.Individual_deletes_preserve_late_additions.final-directory:entry");
         var late = new HostCleanupCheckpointFixture(); late.Seal();
         late.Io.Before = (op, path) => { if (op == "rmdir" && path == late.Root) late.Io.Put(Path.Combine(late.Root, "late.txt"), "keep"); };
-        Should.Throw<IOException>(() => late.Ledger.Remove(late.Root));
+        late.Ledger.Remove(late.Root).ShouldStartWith("left in place", Case.Sensitive, "C987.Individual_deletes_preserve_late_additions.no-recursion");
         late.Io.Text(Path.Combine(late.Root, "late.txt")).ShouldBe("keep", "C987.Individual_deletes_preserve_late_additions.no-recursion");
         late.Io.RecursiveIntents.ShouldBe(0, "C987.Individual_deletes_preserve_late_additions.no-recursion:intent");
     }

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.Infrastructure;
@@ -136,6 +137,95 @@ public sealed class AnchoredPathDeleteWitnessTests
     }
 
     [Test]
+    public void windows_entry_name_rejects_an_alternate_data_stream()
+    {
+        AnchoredDelete.EntryNameSafe(windows: true, "owned:stream").ShouldBeFalse();
+        AnchoredDelete.EntryNameSafe(windows: true, "owned").ShouldBeTrue();
+        AnchoredDelete.EntryNameSafe(windows: false, "owned:stream").ShouldBeTrue();
+        AnchoredDelete.EntryNameSafe(windows: true, "nested/name").ShouldBeFalse();
+    }
+
+    [Test]
+    public void missing_birth_time_matches_device_and_inode_only()
+    {
+        var recorded = new FilesystemIdentity(7, 11, 0);
+        AnchoredDelete.Allowed(true, true, false, recorded, recorded, false).ShouldBeTrue();
+        AnchoredDelete.Allowed(true, true, false, recorded, recorded with { Created = 1 }, false).ShouldBeFalse();
+    }
+
+    [Test]
+    public void linux_colon_in_a_file_name_stays_deletable()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("a colon is a legal Linux file name");
+        var sandbox = Scratch("colon");
+        Directory.CreateDirectory(sandbox);
+        var path = Path.Combine(sandbox, "owned:stream");
+        try
+        {
+            File.WriteAllText(path, "owned-payload");
+            var io = new CheckpointNativeIo();
+            var identity = FilesystemIdentityReader.Read(io, path);
+            identity.IsBound.ShouldBeTrue();
+            io.DeleteAnchored(path, identity, directory: false);
+            File.Exists(path).ShouldBeFalse();
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    [Test]
+    public void hard_link_sibling_survives_anchored_delete()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("Linux unlinkat removes one directory entry");
+        var sandbox = Scratch("hardlink");
+        Directory.CreateDirectory(sandbox);
+        var owned = Path.Combine(sandbox, "owned.txt");
+        var foreign = Path.Combine(sandbox, "foreign.txt");
+        try
+        {
+            File.WriteAllText(owned, "payload");
+            Link(owned, foreign).ShouldBe(0, "hard link");
+            var io = new CheckpointNativeIo();
+            var identity = FilesystemIdentityReader.Read(io, owned);
+            identity.IsBound.ShouldBeTrue();
+            io.DeleteAnchored(owned, identity, directory: false);
+            File.Exists(owned).ShouldBeFalse();
+            File.ReadAllText(foreign).ShouldBe("payload");
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    [Test]
+    public void ancestor_symlink_to_a_different_inode_is_refused()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("requires a Linux directory symlink");
+        var sandbox = Scratch("ancestor");
+        var real = Path.Combine(sandbox, "real");
+        var foreign = Path.Combine(sandbox, "foreign");
+        Directory.CreateDirectory(Path.Combine(real, "owned"));
+        Directory.CreateDirectory(Path.Combine(foreign, "owned"));
+        var ownedFile = Path.Combine(real, "owned", "payload.txt");
+        var sentinel = Path.Combine(foreign, "owned", "payload.txt");
+        try
+        {
+            File.WriteAllText(ownedFile, "owned-payload");
+            File.WriteAllText(sentinel, "foreign-sentinel");
+            var io = new CheckpointNativeIo();
+            var identity = FilesystemIdentityReader.Read(io, ownedFile);
+            identity.IsBound.ShouldBeTrue();
+            Directory.Move(real, real + ".aside");
+            Directory.CreateSymbolicLink(real, foreign);
+            Should.Throw<IOException>(() => io.DeleteAnchored(ownedFile, identity, directory: false))
+                .Message.ShouldBe("anchored-identity-mismatch");
+            File.ReadAllText(sentinel).ShouldBe("foreign-sentinel");
+            File.ReadAllText(Path.Combine(real + ".aside", "owned", "payload.txt")).ShouldBe("owned-payload");
+        }
+        finally { RemoveScratch(sandbox); }
+    }
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link(string oldPath, string newPath);
+
+    [Test]
     public void native_nonempty_owned_directory_is_left_in_place()
     {
         var sandbox = Scratch("ledger");
@@ -206,6 +296,12 @@ internal sealed class ParentSwapIo(string foreignDirectory) : ForwardingNativeIo
         if (string.IsNullOrEmpty(parent)) return;
         Swapped = true;
         Directory.Move(parent, parent + ".aside");
+        if (OperatingSystem.IsWindows())
+        {
+            if (DirectoryLink.TryCreate(parent, foreignDirectory) is null)
+                throw new IOException("junction-unavailable");
+            return;
+        }
         Directory.CreateSymbolicLink(parent, foreignDirectory);
     }
 }

@@ -181,9 +181,9 @@ public sealed class CheckpointTempRootSweep
                 if (complete)
                 {
                     rootGate.Dispose();
-                    _io.Unlink(Path.Combine(root, TestRootGuard.LockName));
-                    _io.Unlink(Path.Combine(root, TestRootGuard.MarkerName));
-                    _io.RemoveDirectory(root, recursive: false);
+                    DeleteObserved(Path.Combine(root, TestRootGuard.LockName), directory: false);
+                    DeleteObserved(Path.Combine(root, TestRootGuard.MarkerName), directory: false);
+                    DeleteObserved(root, directory: true);
                     Unregister(root);
                     receipt.CompletedRoots++;
                     receipt.EligibleRemaining--;
@@ -261,7 +261,7 @@ public sealed class CheckpointTempRootSweep
                 else stream.Flush();
                 return (bytes + left, false);
             }
-            _io.Unlink(file);
+            DeleteObserved(file, directory: false);
             bytes += length;
         }
         // Critical custody is retained until ordinary payload removal has finished.
@@ -269,12 +269,20 @@ public sealed class CheckpointTempRootSweep
         foreach (var file in files.Where(_io.FileExists))
         {
             if (Path.GetFileName(file) is TestRootGuard.MarkerName or TestRootGuard.LockName) continue;
-            _io.Unlink(file);
+            DeleteObserved(file, directory: false);
         }
         foreach (var directory in EnumerateDirectories(root, "*", SearchOption.AllDirectories)
                      .OrderByDescending(path => path.Length))
-            _io.RemoveDirectory(directory, recursive: false);
+            DeleteObserved(directory, directory: true);
         return (bytes, true);
+    }
+
+    private void DeleteObserved(string path, bool directory)
+    {
+        var expected = FilesystemIdentityReader.Read(_io, path);
+        if (!expected.IsBound)
+            throw new IOException("anchored-identity-unbound");
+        _io.DeleteAnchored(path, expected, directory);
     }
 
     private bool IsCandidate(string path)

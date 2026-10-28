@@ -43,6 +43,12 @@ public static class AnchoredDelete
         FilesystemIdentity expectedEntry, FilesystemIdentity entryThroughParent, bool entryIsReparse) =>
         parentOpenedWithoutFollow && parentIsDirectory && !parentIsReparse && !entryIsReparse
         && expectedEntry.SameAs(entryThroughParent);
+
+    // A colon is an NTFS alternate-data-stream separator. Linux file names may contain one.
+    public static bool EntryNameSafe(bool windows, string name) =>
+        !string.IsNullOrEmpty(name)
+        && name.IndexOfAny(['/', '\\']) < 0
+        && (!windows || !name.Contains(':'));
 }
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
 public readonly record struct CheckpointReadOpen(int UnixFlags, uint WindowsFlags);
