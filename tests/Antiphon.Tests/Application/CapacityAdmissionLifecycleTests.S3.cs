@@ -43,11 +43,13 @@ public partial class CapacityAdmissionLifecycleTests
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        // Red commit calls the base overload for both arguments. The fix switches admitted
-        // to receipt: Admitted.
-        var result = await service.RedeemOnAsync(
-            db, wait.Id, wait.ActionKey, wait.ExecutionKind, CapacityRedemptionPath.Start, ct,
-            consume: true, launchSessionId: sessionId);
+        var result = mode == "admitted"
+            ? await service.RedeemOnAsync(
+                db, wait.Id, wait.ActionKey, wait.ExecutionKind, CapacityRedemptionPath.Start, ct,
+                consume: true, receipt: CapacityConsumeReceipt.Admitted)
+            : await service.RedeemOnAsync(
+                db, wait.Id, wait.ActionKey, wait.ExecutionKind, CapacityRedemptionPath.Start, ct,
+                consume: true, launchSessionId: sessionId);
         result.Reason.ShouldNotBe("not-action-pending");
         result.Ok.ShouldBeTrue(result.Reason);
         result.Revalidation.ShouldBeTrue();

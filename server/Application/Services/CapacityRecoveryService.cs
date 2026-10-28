@@ -237,6 +237,10 @@ public sealed class CapacityRecoveryService
         return granted;
     }
 
+    /// <summary>
+    /// Test and compatibility only. Production consumes go through <see cref="RedeemOnAsync"/>
+    /// or <see cref="ConsumeAdmittedAsync"/>.
+    /// </summary>
     public async Task<CapacityRedemption> RedeemAsync(
         Guid waitId,
         string actionKey,
@@ -307,8 +311,12 @@ public sealed class CapacityRecoveryService
     /// <summary>
     /// Redeem on the caller's transaction. <paramref name="consume"/> false is the pre-claim gate:
     /// a valid grant is left untouched and durable refusals are written for the caller to commit.
-    /// <paramref name="consume"/> true spends the grant and writes the launch receipt. It never
-    /// commits and it never refuses an expired-but-unrevoked grant (D-12).
+    /// <paramref name="consume"/> true spends the grant. <see cref="CapacityConsumeReceipt.Launch"/>
+    /// writes the launch receipt and requires <paramref name="launchSessionId"/>.
+    /// <see cref="CapacityConsumeReceipt.Admitted"/> writes the same row <see cref="RedeemAsync"/>
+    /// writes and no launch receipt. A revalidation grant (<c>Admitted</c> and
+    /// <c>NeedsRevalidationGrant</c>) is consumable and is not incremented. A consume refusal
+    /// writes nothing. This never commits, and it never refuses an expired-but-unrevoked grant (D-12).
     /// </summary>
     public async Task<CapacityRedemption> RedeemOnAsync(
         AppDbContext db,
@@ -318,14 +326,17 @@ public sealed class CapacityRecoveryService
         CapacityRedemptionPath path,
         CancellationToken ct,
         bool consume,
-        Guid? launchSessionId = null)
+        Guid? launchSessionId = null,
+        CapacityConsumeReceipt receipt = CapacityConsumeReceipt.Launch,
+        Guid? stampSessionId = null,
+        DateTime? stampSessionStartedAt = null)
     {
         if (db.Database.CurrentTransaction is null)
             throw new InvalidOperationException("Capacity redemption requires an ambient transaction.");
         if (consume)
         {
             RejectDirtyLaunchRows(db);
-            if (launchSessionId is not Guid)
+            if (receipt == CapacityConsumeReceipt.Launch && launchSessionId is not Guid)
                 throw new InvalidOperationException("Capacity consume requires the launch session.");
         }
 
@@ -340,7 +351,8 @@ public sealed class CapacityRecoveryService
             await db.Entry(wait).ReloadAsync(ct);
         if (state is null || wait is null)
             return CapacityRedemption.Refused("missing-grant");
-        if (wait.State != CapacityRecoveryWaitState.ActionPending)
+        if (wait.State != CapacityRecoveryWaitState.ActionPending
+            && !(wait.State == CapacityRecoveryWaitState.Admitted && wait.NeedsRevalidationGrant))
             return CapacityRedemption.Refused("not-action-pending");
         if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
             return CapacityRedemption.Refused("grant-mismatch");
@@ -374,19 +386,61 @@ public sealed class CapacityRecoveryService
         if (!revalidation)
             wait.AdmissionCount++;
         wait.NeedsRevalidationGrant = false;
+        wait.UpdatedAt = now;
+        wait.Version++;
+        if (receipt == CapacityConsumeReceipt.Admitted)
+        {
+            wait.State = CapacityRecoveryWaitState.Admitted;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
+            wait.OutcomeReason = path.ToString();
+            if (stampSessionId is { } stampedSession)
+                wait.SessionId = stampedSession;
+            if (stampSessionStartedAt is { } stampedStart)
+                wait.SessionStartedAt = stampedStart;
+            // The provider UPDATE is the last command before the caller's COMMIT.
+            await db.SaveChangesAsync(ct);
+            AdvanceProviderClock(state, actionKey, now);
+            await db.SaveChangesAsync(ct);
+            return CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+        }
+
         wait.SessionId = wait.LaunchSessionId = launchSessionId;
         wait.DispatchAttemptId = Guid.NewGuid();
         wait.State = CapacityRecoveryWaitState.StartAccepted;
         wait.Outcome = nameof(CapacityRecoveryWaitState.StartAccepted);
         wait.OutcomeReason = path.ToString();
-        wait.UpdatedAt = now;
-        wait.Version++;
-        state.LastActionKey = actionKey;
-        state.LastActionAt = now;
-        state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
-        ClearGrant(state, now);
+        AdvanceProviderClock(state, actionKey, now);
         await db.SaveChangesAsync(ct);
         return CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+    }
+
+    /// <summary>
+    /// Own-scope admitted consume. Takes the provider lock, then writes the provider row.
+    /// Commits when the redemption is accepted and rolls back on a refusal.
+    /// </summary>
+    public async Task<CapacityRedemption> ConsumeAdmittedAsync(
+        Guid waitId,
+        string actionKey,
+        AgentKind kind,
+        CapacityRedemptionPath path,
+        CancellationToken ct,
+        Guid? stampSessionId = null,
+        DateTime? stampSessionStartedAt = null)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var result = await RedeemOnAsync(
+            db, waitId, actionKey, kind, path, ct,
+            consume: true,
+            receipt: CapacityConsumeReceipt.Admitted,
+            stampSessionId: stampSessionId,
+            stampSessionStartedAt: stampSessionStartedAt);
+        if (result.Ok)
+            await tx.CommitAsync(ct);
+        else
+            await tx.RollbackAsync(ct);
+        return result;
     }
 
     /// <summary>Pre-claim gate. Own scope, so a durable refusal commits without the dispatcher's rows.</summary>
@@ -1220,6 +1274,14 @@ public sealed class CapacityRecoveryService
         wait.DueAt = now + CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds);
         wait.Outcome = wait.State.ToString();
         wait.OutcomeReason = reason;
+    }
+
+    private void AdvanceProviderClock(CapacityRecoveryProviderState state, string actionKey, DateTime now)
+    {
+        state.LastActionKey = actionKey;
+        state.LastActionAt = now;
+        state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+        ClearGrant(state, now);
     }
 
     private static void ClearGrant(CapacityRecoveryProviderState state, DateTime now)
