@@ -113,7 +113,7 @@ public sealed class HostCleanupCheckpointReceiptTests
             try
             {
                 await stream.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                if (cancel) source.Cancel(); else f.Files.Clock.Advance(TimeSpan.FromSeconds(3));
+                if (cancel) source.Cancel(); else f.Files.Clock.Advance(CheckpointFileReader.StallDeadline);
                 await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(2)));
                 read.IsCompleted.ShouldBeTrue(label + variant + ":completed-before-release");
                 var ex = await Should.ThrowAsync<IOException>(async () => await read);
@@ -127,7 +127,7 @@ public sealed class HostCleanupCheckpointReceiptTests
                 {
                     // CARD-1358 distinguishes a silent read from cancellation requested by the caller.
                     var stalled = ex.InnerException.ShouldBeOfType<IOException>(label + variant);
-                    stalled.Message.ShouldBe($"read-stalled: 0 of {f.Io.Nodes[f.StatePath].Bytes.Length} bytes; no progress within 3s",
+                    stalled.Message.ShouldBe($"read-stalled: 0 of {f.Io.Nodes[f.StatePath].Bytes.Length} bytes; no progress within {CheckpointFileReader.StallDeadline.TotalSeconds:0}s",
                         label + variant + ":stall-detail");
                 }
                 f.Io.Count("stream").ShouldBe(1, label + variant + ":blocked-read-entered");
