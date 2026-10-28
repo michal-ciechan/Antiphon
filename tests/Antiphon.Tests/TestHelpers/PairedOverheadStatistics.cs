@@ -43,26 +43,31 @@ internal static class OverheadAcceptance
     // about 500 ms of extra CPU on a 10 s arm.
     internal const double CpuMedianBound = 0.05d;
 
-    // Other runnable work stretches wall time. That same sample had wall
-    // median 0.067 and a worst pair of 0.160, so a 2% wall median flakes.
-    // Twenty percent stays above that worst pair. A 50 ms sleep on each of
-    // the eight enabled phases adds about 400 ms to one repetition and the
-    // wall median still rejects it. CPU time alone would miss that sleep.
-    internal const double WallMedianBound = 0.20d;
+    // Other runnable work stretches wall time. The worst recorded wall
+    // median was 0.067 at host load about 33 (worst pair 0.160), so a 2%
+    // wall median flakes. Ten percent is 1.5 times that median. The bound
+    // is the median, so one pair may still exceed it. Equality fails.
+    internal const double WallMedianBound = 0.10d;
 
     internal static double Ratio(double on, double off) =>
         off <= 0d ? double.PositiveInfinity : (on - off) / off;
 
     // Nine paired OFF/ON ratios from one process. Accept when both medians
-    // stay under the bounds above. The JSON evidence still records the wall
-    // bootstrap upper bound. At host load 22-33 that upper bound was 0.0294
-    // while the wall median was 0.0084 and the CPU median was 0.0039. A later
-    // sample at load about 33 put the wall median itself at 0.067.
+    // stay under the bounds above and every ratio is finite. A zero baseline
+    // is +Inf and a NaN sorts below every finite value, so either one would
+    // otherwise leave the median inside the bound. The JSON evidence still
+    // records the wall bootstrap upper bound.
     internal static bool Accepts(IReadOnlyList<double> wallRatios, IReadOnlyList<double> cpuRatios)
     {
         if (wallRatios.Count < PairedOverheadStatistics.MinimumPairs
             || cpuRatios.Count != wallRatios.Count)
             return false;
+        for (var i = 0; i < wallRatios.Count; i++)
+        {
+            if (!double.IsFinite(wallRatios[i]) || !double.IsFinite(cpuRatios[i]))
+                return false;
+        }
+
         return PairedOverheadStatistics.Median(cpuRatios) < CpuMedianBound
             && PairedOverheadStatistics.Median(wallRatios) < WallMedianBound;
     }
