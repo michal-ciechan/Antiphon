@@ -38,16 +38,17 @@ public class GrokSignInRuntimeTests
 
     private const string ModernBackend = "modern";
 
-    // 2x the 32s stored serial duration (nightly-class-costs.json, run 8f055f87,
-    // n=1, may-understate, not a p95). The method timeout is above the two
-    // sequential 64s caps so each cap can report before TUnit cancels.
-    // Left under the 190s run-28bbb58e bound: this class is two tests on
-    // ProcessSpawnLimit (limit 1), packed with 14 single-node classes
-    // (all-group-58, 88s), not a 39-row wave.
+    // Idle: 2x the 32s stored serial duration (nightly-class-costs.json, run
+    // 8f055f87, n=1, may-understate, not a p95). Failed poll: 2x the 41.9s
+    // slowest row in run 28bbb58e chunk all-group-80 (n=1, loaded desktop,
+    // not a p95). The method timeout is above those sequential caps so each
+    // cap can report before TUnit cancels, and under the 190s run-28bbb58e
+    // bound. This class is two tests on ProcessSpawnLimit (limit 1).
     private static readonly TimeSpan SignInWallCap = TimeSpan.FromSeconds(64);
+    private static readonly TimeSpan FailedPollWallCap = TimeSpan.FromSeconds(90);
 
     [Test]
-    [Timeout(160_000)]
+    [Timeout(180_000)]
     public async Task A_sign_in_mode_fakegrok_pool_task_never_types_the_brief(CancellationToken cancellationToken)
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
@@ -151,32 +152,47 @@ public class GrokSignInRuntimeTests
                 && i.FailureReason == GrokSignInIncident.EpisodeKey(grokHome.Path)))
                 .ShouldBe(1);
 
+            // Gate 2 forgets the grace stamp while the runner still lists the session
+            // Running, so one advance after that listing is not a wait for Failed.
+            // Poll until the sweep commits Failed. The fake clock drives the grace;
+            // the wall cap only stops a listing that never drops.
+            AgentTask failed;
             using (var scope = harness.Provider.CreateScope())
             {
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
                 var runner = harness.Provider.GetRequiredService<ISessionRunnerClient>();
-                // Gate 2 forgets the grace stamp while the runner still lists the session Running.
-                // That tick must not be the observation the two-minute advance is waiting on.
-                if (await RunnerListsRunningAsync(runner, sessionId))
+                var deadline = TimeProvider.System.GetUtcNow() + FailedPollWallCap;
+                while (true)
                 {
-                    await dispatcher.TickAsync(cancellationToken);
-                    var runningDeadline = TimeProvider.System.GetUtcNow() + SignInWallCap;
-                    while (await RunnerListsRunningAsync(runner, sessionId))
-                    {
-                        if (TimeProvider.System.GetUtcNow() >= runningDeadline)
-                            throw new System.TimeoutException(
-                                $"runner stayed Running for {SignInWallCap.TotalSeconds:0}s wall time.");
-                        await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
-                    }
-                }
+                    if (TimeProvider.System.GetUtcNow() >= deadline)
+                        throw new System.TimeoutException(
+                            $"task stayed Dispatched for {FailedPollWallCap.TotalSeconds:0}s wall time.");
 
-                await dispatcher.TickAsync(cancellationToken);
-                clock.Advance(TimeSpan.FromMinutes(2));
-                await dispatcher.TickAsync(cancellationToken);
+                    if (await RunnerListsRunningAsync(runner, sessionId))
+                    {
+                        await dispatcher.TickAsync(cancellationToken);
+                        await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+                        continue;
+                    }
+
+                    await dispatcher.TickAsync(cancellationToken);
+                    clock.Advance(TimeSpan.FromMinutes(2));
+                    await dispatcher.TickAsync(cancellationToken);
+
+                    await using var polled = CreateContext();
+                    var row = await polled.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                    if (row.Status == AgentTaskStatus.Failed)
+                    {
+                        failed = row;
+                        break;
+                    }
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+                }
             }
 
             await using var verify = CreateContext();
-            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+            failed = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
             failed.Status.ShouldBe(AgentTaskStatus.Failed);
             failed.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
             failed.FailureReason.ShouldContain("grok login");
