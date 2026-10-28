@@ -1249,7 +1249,8 @@ $NightlySeams = @{
 
 # A shared timing root holds one directory per chunk identity. The post-exit
 # read lists only that directory. The owner file is
-# own-<sha256 of chunk, run, attempt, and suite>-<pid>-<nonce>.txt.
+# own-<prefix of that sha256>-<pid>-<nonce>.txt. A full own-<sha256>- name
+# still matches.
 Assert-Check ((ConvertTo-QualificationGroupToken -Chunk 'g-own') -eq '672d6f776e') 'group-token-vector'
 
 $foreignRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-foreign-' + [guid]::NewGuid().ToString('N'))

@@ -259,6 +259,35 @@ public sealed class TestTimingSession : IDisposable
     public static string ChunkDirectory(string root, string? groupId, string? runId, string? attempt, string? suite) =>
         Path.Combine(root, "chunk-" + IdentityToken(groupId, runId, attempt, suite));
 
+    // The chunk directory already holds the full identity. The owner file keeps a
+    // prefix of that hash, the pid, and the nonce. The prefix is the longest one
+    // whose path stays within 240 characters under
+    // C:\Antiphon\releases\candidates\rc-YYYY-MM-DD-<12 hex>\logs\timing-<32 hex>.
+    public static int OwnerHashPrefixLength { get; } = ComputeOwnerHashPrefixLength();
+
+    public static string OwnerFileName(string identityToken, int pid, string nonce)
+    {
+        var length = OwnerHashPrefixLength;
+        if (length > identityToken.Length)
+            length = identityToken.Length;
+        if (length < 0)
+            length = 0;
+        return "own-" + identityToken.Substring(0, length) + "-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".txt";
+    }
+
+    private static int ComputeOwnerHashPrefixLength()
+    {
+        const string pid = "2147483647";
+        var nonce = new string('0', 32);
+        var windowsRoot = "C:\\Antiphon\\releases\\candidates\\rc-2026-10-27-" + new string('0', 12)
+            + "\\logs\\timing-" + new string('0', 32);
+        var bare = windowsRoot + "\\chunk-" + new string('0', 64) + "\\own--" + pid + "-" + nonce + ".txt";
+        var room = 240 - bare.Length;
+        if (room < 1)
+            return 1;
+        return room > 64 ? 64 : room;
+    }
+
     private static string IdentityText(string? groupId, string? runId, string? attempt, string? suite)
     {
         groupId ??= "";
@@ -306,7 +335,7 @@ public sealed class TestTimingSession : IDisposable
             session.WriteLine(session.HeaderJson(pid, nonce, assembly, config));
             var ownerPath = Path.Combine(
                 folder,
-                "own-" + IdentityToken(config.GroupId, config.RunId, config.Attempt, config.Suite) + "-" + pid.ToString(CultureInfo.InvariantCulture) + "-" + nonce + ".txt");
+                OwnerFileName(IdentityToken(config.GroupId, config.RunId, config.Attempt, config.Suite), pid, nonce));
             try
             {
                 File.WriteAllText(ownerPath, journalName + "\n", new UTF8Encoding(false));
