@@ -140,8 +140,8 @@ the last of them (D-S3-8).
 - *Consume point:* `AgentControlService.StartInteractiveSessionAsync`, between `await AcceptAsync(...)`
   and `reservation.CommitAsync` on both arms (`:686/:687`, `:796/:797`):
   `RedeemOnAsync(_db, wait.Id, wait.ActionKey, wait.ExecutionKind, Start, ct, consume: true, receipt: Admitted, stampSessionId: accepted.Id, stampSessionStartedAt: accepted.StartedAt)`.
-  `AcceptAsync`'s save (`:886`) leaves the tracker clean, so Rule P's assertion
-  (`RejectDirtyLaunchRows`) holds. The session row (`:774/:775` or the resume edits `:658-685`),
+  `AcceptAsync`'s save (`:887`) leaves the tracker clean, so Rule P's assertion
+  (`RejectDirtyLaunchRows`) holds. The session row (`:709-741` or the resume edits `:652-683`),
   `agent.PersistentSessionId`, `intent.AutomaticFreshConsumed`, the session and intent
   `CapacityRecoveryActionKey` and the spend commit together or not at all.
 - *Plumbing:* a new internal record `CapacityStartAdmission(Guid WaitId, string ActionKey, AgentKind Kind)`.
