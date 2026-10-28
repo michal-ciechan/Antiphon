@@ -1223,14 +1223,14 @@ public sealed class RollingVolumeRecycleScriptTests
         fixture.Removed.ShouldBeEmpty();
     }
 
-    // CARD-1594. antiphon-evidence/ under the common git directory is agent output.
-    // Logs, TRX, HTML and jsonl pass. A symlink, nested .git, refs or objects, a
-    // file named HEAD or packed-refs, an unreadable file, a fifo, an outside hard
-    // link, a dot-name, or the same name in a linked admin refuses gitdir-entry.
-    // review-evidence/ is walked the same way. Plain reports pass. A real repository
-    // with an unpublished commit, a bare repository, a .git pointer file, and the
-    // same Git-state shapes refuse. antiphon/ is not walked, so an interior symlink
-    // still passes.
+    // CARD-1594. antiphon-evidence/ and review-evidence/ under the common git
+    // directory are agent output. Plain files pass, including .antiphon/x.md,
+    // .gitignore, config, index, hooks, info, description, modules, *.lock and
+    // report.md~. A symlink, nested .git, bare repo, .git pointer, deep repo,
+    // reftable, lone commondir, newline name, refs, objects, HEAD, packed-refs,
+    // unreadable file, fifo, outside hard link, or the same directory name in a
+    // linked admin refuses gitdir-entry and names that entry. antiphon/ is not
+    // walked, so an interior symlink still passes.
     [Test]
     [Arguments("antiphon-evidence")]
     [Arguments("antiphon-evidence-symlink")]
@@ -1249,6 +1249,10 @@ public sealed class RollingVolumeRecycleScriptTests
     [Arguments("review-evidence-repo")]
     [Arguments("review-evidence-bare")]
     [Arguments("review-evidence-gitfile")]
+    [Arguments("review-evidence-deep")]
+    [Arguments("review-evidence-reftable")]
+    [Arguments("review-evidence-commondir")]
+    [Arguments("review-evidence-newline")]
     [Arguments("review-evidence-symlink")]
     [Arguments("review-evidence-head")]
     [Arguments("review-evidence-refs")]
@@ -1258,6 +1262,15 @@ public sealed class RollingVolumeRecycleScriptTests
     [Arguments("review-evidence-unreadable")]
     [Arguments("review-evidence-hardlink")]
     [Arguments("review-evidence-dot")]
+    [Arguments("review-evidence-config")]
+    [Arguments("review-evidence-index")]
+    [Arguments("review-evidence-hooks")]
+    [Arguments("review-evidence-info")]
+    [Arguments("review-evidence-description")]
+    [Arguments("review-evidence-modules")]
+    [Arguments("review-evidence-lock")]
+    [Arguments("review-evidence-antiphon")]
+    [Arguments("review-evidence-backup")]
     [Arguments("antiphon-symlink")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1594_Antiphon_evidence_gitdir(string variant)
