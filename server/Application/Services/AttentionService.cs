@@ -1825,13 +1825,18 @@ public sealed partial class AttentionService
         var ageSeconds = _supervision.DeliveryVerification.PendingNoteAlertAgeSeconds;
         var minimum = _supervision.DeliveryVerification.PendingNoteAlertMinimumCount;
         if (ageSeconds <= 0 || minimum <= 0) return items;
-        var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
         var cutoff = now - TimeSpan.FromSeconds(ageSeconds);
-        var pending = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.Status == QueuedMessageStatus.Pending
-                && m.DeliveryAttempts < maxAttempts
-                && m.CreatedAt < cutoff)
-            .Select(m => new { m.Id, m.AgentSessionId, m.CreatedAt })
+        var pending = await (
+            from message in _db.SessionQueuedMessages.AsNoTracking()
+            join session in _db.AgentSessions.AsNoTracking() on message.AgentSessionId equals session.Id
+            where message.Status == QueuedMessageStatus.Pending
+                && message.WithholdCount > 0
+                && message.DeliveryAttempts == 0
+                && message.FirstWithheldAt != null
+                && message.FirstWithheldAt < cutoff
+                && session.Status != SessionStatus.Stopped
+                && session.Status != SessionStatus.Failed
+            select new { message.Id, message.AgentSessionId, FirstWithheldAt = message.FirstWithheldAt!.Value })
             .ToListAsync(ct);
         if (pending.Count == 0) return items;
 
@@ -1839,7 +1844,7 @@ public sealed partial class AttentionService
         foreach (var group in pending.GroupBy(m => m.AgentSessionId))
         {
             if (group.Count() < minimum) continue;
-            var oldest = group.OrderBy(m => m.CreatedAt).ThenBy(m => m.Id).First();
+            var oldest = group.OrderBy(m => m.FirstWithheldAt).ThenBy(m => m.Id).First();
             var owner = owners.GetValueOrDefault(group.Key);
             var name = owner?.AgentName ?? $"session {group.Key.ToString("N")[..8]}";
             items.Add(new AttentionItemDto(
@@ -1852,7 +1857,7 @@ public sealed partial class AttentionService
                 $"{group.Count()} pending note(s) withheld from {name} for over {ageSeconds}s",
                 $"{group.Count()} unacknowledged pending note(s) older than {ageSeconds}s are still withheld.",
                 "The session queue names the withhold. Detection only; nothing was flushed or sent.",
-                oldest.CreatedAt,
+                oldest.FirstWithheldAt,
                 null,
                 [AttentionAction.OpenDrawer],
                 ConditionKey: $"pending-notes-aged:{group.Key:N}"));

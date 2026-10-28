@@ -104,8 +104,25 @@ public class SessionQueuedMessage
     /// Typed attempts plus failed Enter-only recoveries (CARD-0055 / CARD-0501). Survives the revert
     /// a failed verification does — that is the point: it is what stops an automatic retry looping
     /// forever, and at <c>MaxDeliveryAttempts</c> the message parks for a human instead.
+    /// A Claude withhold does not increment this. See <see cref="WithholdCount"/>.
     /// </summary>
     public int DeliveryAttempts { get; set; }
+
+    /// <summary>
+    /// CARD-1591. How many times a durable Claude withhold was recorded while this note was still
+    /// untyped. One record per note: a later flush does not increment it. Expiry, standing
+    /// recovery, resume receipt, late-confirm, and land receipt do not read this field.
+    /// </summary>
+    public int WithholdCount { get; set; }
+
+    /// <summary>When the durable withhold was first recorded. Null when <see cref="WithholdCount"/> is 0.</summary>
+    public DateTime? FirstWithheldAt { get; set; }
+
+    /// <summary>When that one withhold record was written. A later flush does not move it.</summary>
+    public DateTime? LastWithheldAt { get; set; }
+
+    /// <summary>Queue reason stored with the withhold record. Not a delivery verdict.</summary>
+    public string? LastWithholdReason { get; set; }
 
     /// <summary>When the most recent attempt started typing.</summary>
     public DateTime? LastDeliveryStartedAt { get; set; }
