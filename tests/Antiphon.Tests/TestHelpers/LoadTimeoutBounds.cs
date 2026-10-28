@@ -1,0 +1,29 @@
+namespace Antiphon.Tests.TestHelpers;
+
+/// <summary>
+/// Real-time caps for waits that must succeed when a class starts its rows together.
+/// A hook that never runs still fails when the cap elapses. None of these is infinite.
+/// </summary>
+public static class LoadTimeoutBounds
+{
+    /// <summary>
+    /// <c>WaitCommand</c> bound for a wait that must observe a terminal executor.
+    /// Was 1s. 10s covers a queued poll in the 11–17 row cleanup classes.
+    /// Deliberate <c>StillRunning</c> checks keep their short bounds.
+    /// </summary>
+    public static readonly TimeSpan CheckpointPositiveWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Launch-queue idle bound. Was 15s. WorktreeRetirementRaceTests costs 119s across
+    /// 54 rows (2.20s mean). At 39-wide fan-out, class p95 is about 3.5× the mean, so
+    /// 3×15s = 45s (under 3.5×15s = 52.5s).
+    /// </summary>
+    public static readonly TimeSpan LaunchQueueIdleWait = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Phone-home signal bound. Was 5s on waits inside a ~142-row launch group
+    /// (about 3.6× a 39-wide wave). 3.5×5s = 17.5s at that width; 45s is about
+    /// 2× a ~22s loaded estimate.
+    /// </summary>
+    public static readonly TimeSpan PhoneHomeSignalWait = TimeSpan.FromSeconds(45);
+}

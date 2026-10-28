@@ -1,4 +1,5 @@
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -198,7 +199,7 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
         var run = UnfinishedRun();
         ExecutorOwnershipStore.Write(run, Dead());
         var output = new StringWriter();
-        var exit = await new WaitCommand().WaitAsync(run, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
+        var exit = await new WaitCommand().WaitAsync(run, LoadTimeoutBounds.CheckpointPositiveWait, TimeSpan.FromSeconds(1),
             output, CancellationToken.None);
         exit.ShouldBe(ExitCodes.ExecutorCrashed);
         Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
