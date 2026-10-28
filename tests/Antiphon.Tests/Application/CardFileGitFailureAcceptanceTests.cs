@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
@@ -23,7 +24,7 @@ public class CardFileGitFailureAcceptanceTests
         const string relative = "docs/cards/board/card.md"; var path = Path.Combine(repo.Path, relative);
         await File.WriteAllTextAsync(path, "C408_PUBLIC\n");
         var hook = Path.Combine(repo.Path, ".git/hooks/post-index-change");
-        await File.WriteAllTextAsync(hook, "#!/bin/sh\necho C408_CHANGED > docs/cards/board/card.md\necho reached > c408-hook-reached\n");
+        await ScratchGitRepo.WriteExecutableHookAsync(hook, "#!/bin/sh\necho C408_CHANGED > docs/cards/board/card.md\necho reached > c408-hook-reached\n");
         var head = await repo.GitReadAsync("rev-parse", "HEAD");
         var expected = new Dictionary<string, string?> { [relative] = "C408_PUBLIC\n" };
         var result = await Repository().CommitAsync(repo.Path, directory, expected, "sync", default);
@@ -46,18 +47,29 @@ public class CardFileGitFailureAcceptanceTests
         var marker = Path.Combine(repo.Path, ".git/index.lock");
         var hook = Path.Combine(repo.Path, ".git/hooks/pre-commit");
         if (fault == "lock") await File.WriteAllTextAsync(marker, "owned test lock");
-        else await File.WriteAllTextAsync(hook, fault == "stderr"
+        else await ScratchGitRepo.WriteExecutableHookAsync(hook, fault == "stderr"
             ? "#!/bin/sh\necho C408_SYNTHETIC_CREDENTIAL_ERROR >&2\nexit 1\n"
-            : "#!/bin/sh\necho started > hook-started\nsleep 8\necho ended > hook-ended\n");
+            : StallHook());
         var expected = new Dictionary<string, string?> { [relative] = "C408_PUBLIC\n" };
         using var cancel = new CancellationTokenSource();
         var task = Repository(fault == "timeout" ? 2 : 30).CommitAsync(repo.Path, directory, expected, "public sync", cancel.Token);
         if (fault == "cancel")
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            try { while (!File.Exists(Path.Combine(repo.Path, "hook-started"))) { if (task.IsCompleted) break; await Task.Delay(25, deadline.Token); } }
+            var hookStarted = Path.Combine(repo.Path, "hook-started");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try
+            {
+                while (!File.Exists(hookStarted))
+                {
+                    if (task.IsCompleted) break;
+                    await Task.Delay(25, deadline.Token);
+                }
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+            }
             finally { cancel.Cancel(); }
-            File.Exists(Path.Combine(repo.Path, "hook-started")).ShouldBeTrue();
+            File.Exists(hookStarted).ShouldBeTrue();
             await Should.ThrowAsync<OperationCanceledException>(() => task);
         }
         else
@@ -68,6 +80,7 @@ public class CardFileGitFailureAcceptanceTests
         }
         (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
         File.Exists(Path.Combine(repo.Path, "hook-ended")).ShouldBeFalse();
+        if (fault is "timeout" or "cancel") await AssertOwnedHookKilledAsync(repo.Path);
         if (File.Exists(marker)) File.Delete(marker);
         if (File.Exists(hook)) File.Delete(hook);
         var retry = await Repository().CommitAsync(repo.Path, directory, expected, "public sync", default);
@@ -88,5 +101,64 @@ public class CardFileGitFailureAcceptanceTests
         result.SkipReason.ShouldBe("generated_files_changed"); result.Sha.ShouldBeNull();
         (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
         (await repo.GitReadAsync("diff", "--cached", "--name-only")).ShouldBeEmpty();
+    }
+
+    // Git for Windows sh has no sleep, so a failing sleep falls through and writes hook-ended.
+    // The hook waits for hook-release, which this test writes only after the hook pid is gone.
+    private static string StallHook()
+    {
+        var wait = OperatingSystem.IsWindows()
+            ? "ping -n 2 127.0.0.1 >/dev/null 2>&1"
+            : "sleep 0.2";
+        return "#!/bin/sh\n"
+            + "echo $$ > hook-pid\n"
+            + "echo started > hook-started\n"
+            + "while [ ! -f hook-release ]; do\n"
+            + $"  {wait} || {{ echo wait-failed > hook-wait-failed; exit 1; }}\n"
+            + "done\n"
+            + "echo ended > hook-ended\n";
+    }
+
+    private static async Task AssertOwnedHookKilledAsync(string root)
+    {
+        var ended = Path.Combine(root, "hook-ended");
+        File.Exists(ended).ShouldBeFalse();
+        File.Exists(Path.Combine(root, "hook-wait-failed")).ShouldBeFalse();
+        var pid = int.Parse((await File.ReadAllTextAsync(Path.Combine(root, "hook-pid"))).Trim());
+        var waited = Stopwatch.StartNew();
+        while (HookAlive(pid) && waited.Elapsed < TimeSpan.FromSeconds(15))
+            await Task.Delay(50);
+        HookAlive(pid).ShouldBeFalse();
+        File.Exists(ended).ShouldBeFalse();
+        await File.WriteAllTextAsync(Path.Combine(root, "hook-release"), "release\n");
+        var released = Stopwatch.StartNew();
+        while (!File.Exists(ended) && released.Elapsed < TimeSpan.FromSeconds(3))
+            await Task.Delay(50);
+        File.Exists(ended).ShouldBeFalse();
+    }
+
+    private static bool HookAlive(int pid)
+    {
+        if (pid <= 0) return false;
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                return !process.HasExited;
+            }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
+
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            var close = stat.LastIndexOf(')');
+            if (close < 0 || close + 2 >= stat.Length) return false;
+            return stat[close + 2] is not ('Z' or 'X');
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 }
