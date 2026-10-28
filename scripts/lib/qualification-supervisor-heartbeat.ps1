@@ -1,0 +1,277 @@
+#requires -Version 5.1
+# Qualification supervisor heartbeat. Detection only: this file never stops a process.
+# ASCII-only library, not an autostart script. Dot-source it from the supervisor.
+
+function Get-QualificationHeartbeatField {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function ConvertTo-QualificationHeartbeatDouble {
+    param($Value)
+    if ($null -eq $Value) { return 0.0 }
+    $parsed = 0.0
+    $text = [string]$Value
+    if ([double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+        return $parsed
+    }
+    return 0.0
+}
+
+function ConvertFrom-QualificationHeartbeatTime {
+    param($Value)
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    if (-not ($Value -is [string]) -or [string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $parsed = [datetime]::MinValue
+    $style = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+    if ([datetime]::TryParse($Value, [Globalization.CultureInfo]::InvariantCulture, $style, [ref]$parsed)) {
+        return $parsed
+    }
+    return $null
+}
+
+function Get-QualificationGroupPlannedSeconds {
+    param([string]$Path, [string]$ChunkId)
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($ChunkId)) { return $null }
+    if (-not [IO.File]::Exists($Path)) { return $null }
+    try {
+        $parsed = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+        foreach ($group in @($parsed.groups)) {
+            if ($null -eq $group) { continue }
+            $chunk = [string](Get-QualificationHeartbeatField $group 'chunk')
+            if ($chunk -cne $ChunkId) { continue }
+            $seconds = Get-QualificationHeartbeatField $group 'plannedSeconds'
+            if ($null -eq $seconds) { return $null }
+            return (ConvertTo-QualificationHeartbeatDouble $seconds)
+        }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+function Get-QualificationHeartbeatIdleBudget {
+    param($PlannedSeconds, [double]$FloorMinutes = 10, [double]$DefaultMinutes = 20)
+    $known = $false
+    $planned = 0.0
+    if ($null -ne $PlannedSeconds -and -not [string]::IsNullOrWhiteSpace([string]$PlannedSeconds)) {
+        $text = [string]$PlannedSeconds
+        if ([double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$planned)) {
+            $known = $true
+        }
+    }
+    if (-not $known) {
+        return [pscustomobject]@{ minutes = [double]$DefaultMinutes; source = 'default-unknown-group' }
+    }
+    $minutes = $planned / 60.0
+    if ($minutes -lt $FloorMinutes) { $minutes = $FloorMinutes }
+    return [pscustomobject]@{ minutes = [double]$minutes; source = 'plannedSeconds' }
+}
+
+function Get-QualificationHeartbeatSubjects {
+    param([object[]]$Processes, [int]$ChunkRootPid, [int[]]$ExcludedPids)
+    $subjects = New-Object System.Collections.Generic.List[object]
+    foreach ($proc in @($Processes)) {
+        if ($null -ne $proc) { $subjects.Add($proc) }
+    }
+    return @($subjects.ToArray())
+}
+
+function Update-QualificationSupervisorHeartbeat {
+    param(
+        [Parameter(Mandatory)][datetime]$NowUtc,
+        [Parameter(Mandatory)][object[]]$Processes,
+        [int]$ChunkRootPid = 0,
+        [int[]]$ExcludedPids,
+        $Previous,
+        [double]$Trx = 0,
+        [int64]$Bytes = 0,
+        [string]$Newest = '',
+        $PlannedSeconds,
+        [double]$IdleCpuSecondsPerMinute = 5,
+        [double]$DefaultIdleMinutes = 20,
+        [double]$IdleFloorMinutes = 10
+    )
+    $now = $NowUtc.ToUniversalTime()
+    $budget = Get-QualificationHeartbeatIdleBudget -PlannedSeconds $PlannedSeconds -FloorMinutes $IdleFloorMinutes -DefaultMinutes $DefaultIdleMinutes
+    $subjects = @(Get-QualificationHeartbeatSubjects -Processes $Processes -ChunkRootPid $ChunkRootPid -ExcludedPids $ExcludedPids)
+    $priorCpu = @{}
+    $previousRows = @(Get-QualificationHeartbeatField $Previous 'hostCpu')
+    foreach ($row in $previousRows) {
+        if ($null -eq $row) { continue }
+        $processId = [int](Get-QualificationHeartbeatField $row 'pid')
+        $priorCpu[[string]$processId] = ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $row 'cpuSeconds')
+    }
+    $previousAt = ConvertFrom-QualificationHeartbeatTime (Get-QualificationHeartbeatField $Previous 'observedAtUtc')
+    $cpuSeconds = 0.0
+    $delta = 0.0
+    $samples = New-Object System.Collections.Generic.List[object]
+    $subjectIds = New-Object System.Collections.Generic.List[int]
+    foreach ($proc in $subjects) {
+        $processId = [int](Get-QualificationHeartbeatField $proc 'Pid')
+        if ($processId -eq 0) { $processId = [int](Get-QualificationHeartbeatField $proc 'pid') }
+        $current = ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $proc 'CpuSeconds')
+        if ($current -eq 0) {
+            $alternate = Get-QualificationHeartbeatField $proc 'cpuSeconds'
+            if ($null -ne $alternate) { $current = ConvertTo-QualificationHeartbeatDouble $alternate }
+        }
+        $cpuSeconds += $current
+        $key = [string]$processId
+        if ($priorCpu.ContainsKey($key)) { $delta += ($current - $priorCpu[$key]) }
+        $subjectIds.Add($processId)
+        $samples.Add([pscustomobject]@{ pid = $processId; cpuSeconds = $current })
+    }
+    $trxChanged = $false
+    $bytesChanged = $false
+    $elapsedMinutes = 0.0
+    $measurable = $false
+    if ($null -ne $previousAt) {
+        $elapsedMinutes = ($now - $previousAt).TotalMinutes
+        if ($elapsedMinutes -gt 0) {
+            $measurable = $true
+            $priorTrx = ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Previous 'trx')
+            $priorBytes = [int64](ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Previous 'bytes'))
+            if ($priorTrx -ne $Trx) { $trxChanged = $true }
+            if ($priorBytes -ne $Bytes) { $bytesChanged = $true }
+        }
+    }
+    $cpuPerMinute = 0.0
+    if ($measurable -and $elapsedMinutes -gt 0) { $cpuPerMinute = $delta / $elapsedMinutes }
+    $quiet = $measurable -and ($cpuPerMinute -lt $IdleCpuSecondsPerMinute) -and (-not $trxChanged) -and (-not $bytesChanged)
+    $idleSince = $null
+    $idleMinutes = 0.0
+    if ($quiet) {
+        $idleSince = ConvertFrom-QualificationHeartbeatTime (Get-QualificationHeartbeatField $Previous 'idleSinceUtc')
+        if ($null -eq $idleSince) { $idleSince = $previousAt }
+        $idleMinutes = ($now - $idleSince).TotalMinutes
+    }
+    $hang = $quiet -and ($idleMinutes -ge [double]$budget.minutes)
+    $suspect = New-Object System.Collections.Generic.List[int]
+    if ($hang) {
+        if ($subjectIds.Count -eq 0 -and $ChunkRootPid -gt 0) { $suspect.Add($ChunkRootPid) }
+        foreach ($processId in $subjectIds) { $suspect.Add($processId) }
+    }
+    $suspectSorted = @($suspect | Sort-Object -Unique)
+    $reason = ''
+    if ($hang) {
+        $listed = ($suspectSorted | ForEach-Object { [string]$_ }) -join ','
+        $idleText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.##}', $idleMinutes)
+        $rateText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.##}', $cpuPerMinute)
+        $limitText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.##}', $IdleCpuSecondsPerMinute)
+        $budgetText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.##}', [double]$budget.minutes)
+        if ($subjectIds.Count -eq 0) {
+            $reason = "no test-host process under the chunk command; no trx growth and no chunk-log bytes for $idleText minutes; cpu $rateText/min under $limitText/min; budget $budgetText minutes ($($budget.source)); suspectPids $listed"
+        } else {
+            $reason = "test hosts idle for $idleText minutes: no trx growth, no chunk-log bytes, cpu $rateText/min under $limitText/min; budget $budgetText minutes ($($budget.source)); suspectPids $listed"
+        }
+    }
+    $sinceText = $null
+    if ($null -ne $idleSince) { $sinceText = $idleSince.ToUniversalTime().ToString('o') }
+    return [pscustomobject]@{
+        cpuSeconds = $cpuSeconds
+        bytes = $Bytes
+        idleMinutes = $idleMinutes
+        trx = $Trx
+        newest = $Newest
+        hangSuspected = [bool]$hang
+        hangReason = $reason
+        suspectPids = $suspectSorted
+        idleBudgetMinutes = [double]$budget.minutes
+        idleBudgetSource = [string]$budget.source
+        idleSinceUtc = $sinceText
+        observedAtUtc = $now.ToString('o')
+        hostCpu = @($samples.ToArray())
+    }
+}
+
+function ConvertTo-QualificationHeartbeatJsonString {
+    param([string]$Text)
+    if ($null -eq $Text) { $Text = '' }
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($ch in $Text.ToCharArray()) {
+        $code = [int]$ch
+        if ($ch -eq '"') { [void]$builder.Append('\"') }
+        elseif ($ch -eq '\') { [void]$builder.Append('\\') }
+        elseif ($code -eq 10) { [void]$builder.Append('\n') }
+        elseif ($code -eq 13) { [void]$builder.Append('\r') }
+        elseif ($code -eq 9) { [void]$builder.Append('\t') }
+        elseif ($code -lt 32) {
+            [void]$builder.Append('\u')
+            [void]$builder.Append($code.ToString('x4'))
+        } else {
+            [void]$builder.Append($ch)
+        }
+    }
+    return $builder.ToString()
+}
+
+function Format-QualificationHeartbeatNumber {
+    param([double]$Value)
+    return $Value.ToString('G15', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function ConvertTo-QualificationSupervisorHeartbeatJson {
+    param($Record)
+    $pids = @(Get-QualificationHeartbeatField $Record 'suspectPids')
+    $pidText = New-Object System.Collections.Generic.List[string]
+    foreach ($processId in $pids) {
+        if ($null -eq $processId) { continue }
+        $pidText.Add([string]([int]$processId))
+    }
+    $samples = @(Get-QualificationHeartbeatField $Record 'hostCpu')
+    $sampleText = New-Object System.Collections.Generic.List[string]
+    foreach ($row in $samples) {
+        if ($null -eq $row) { continue }
+        $processId = [int](Get-QualificationHeartbeatField $row 'pid')
+        $cpu = ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $row 'cpuSeconds')
+        $sampleText.Add(('{{"pid":{0},"cpuSeconds":{1}}}' -f $processId, (Format-QualificationHeartbeatNumber $cpu)))
+    }
+    $hangValue = 'false'
+    $hangFlag = Get-QualificationHeartbeatField $Record 'hangSuspected'
+    if ($hangFlag -eq $true) { $hangValue = 'true' }
+    $since = Get-QualificationHeartbeatField $Record 'idleSinceUtc'
+    $sinceJson = 'null'
+    if ($null -ne $since -and -not [string]::IsNullOrWhiteSpace([string]$since)) {
+        $sinceJson = '"' + (ConvertTo-QualificationHeartbeatJsonString ([string]$since)) + '"'
+    }
+    $lines = @(
+        '"cpuSeconds":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'cpuSeconds'))),
+        '"bytes":' + ([int64](ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'bytes'))).ToString([Globalization.CultureInfo]::InvariantCulture),
+        '"idleMinutes":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleMinutes'))),
+        '"trx":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'trx'))),
+        '"newest":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'newest'))) + '"',
+        '"hangSuspected":' + $hangValue,
+        '"hangReason":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'hangReason'))) + '"',
+        '"suspectPids":[' + ($pidText -join ',') + ']',
+        '"idleBudgetMinutes":' + (Format-QualificationHeartbeatNumber (ConvertTo-QualificationHeartbeatDouble (Get-QualificationHeartbeatField $Record 'idleBudgetMinutes'))),
+        '"idleBudgetSource":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'idleBudgetSource'))) + '"',
+        '"idleSinceUtc":' + $sinceJson,
+        '"observedAtUtc":"' + (ConvertTo-QualificationHeartbeatJsonString ([string](Get-QualificationHeartbeatField $Record 'observedAtUtc'))) + '"',
+        '"hostCpu":[' + ($sampleText -join ',') + ']'
+    )
+    return '{' + ($lines -join ',') + '}'
+}
+
+function Write-QualificationSupervisorHeartbeat {
+    param([Parameter(Mandatory)]$Record, [Parameter(Mandatory)][string]$Path)
+    $json = ConvertTo-QualificationSupervisorHeartbeatJson $Record
+    $directory = [IO.Path]::GetDirectoryName($Path)
+    if (-not [string]::IsNullOrWhiteSpace($directory) -and -not [IO.Directory]::Exists($directory)) {
+        [void][IO.Directory]::CreateDirectory($directory)
+    }
+    $temp = $Path + '.tmp'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [IO.File]::WriteAllText($temp, $json, $utf8)
+    if ([IO.File]::Exists($Path)) { [IO.File]::Delete($Path) }
+    [IO.File]::Move($temp, $Path)
+}
+
+function Read-QualificationSupervisorHeartbeat {
+    param([Parameter(Mandatory)][string]$Path)
+    $utf8 = New-Object System.Text.UTF8Encoding $false, $true
+    $text = [IO.File]::ReadAllText($Path, $utf8)
+    return ($text | ConvertFrom-Json)
+}
