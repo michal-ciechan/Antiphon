@@ -819,7 +819,16 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 {
                     var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
                         .MaxAsync(m => (long?)m.Sequence, ct) ?? 0;
-                    foreach (var message in pending) { message.AgentSessionId = accepted.Id; message.Sequence = ++sequence; }
+                    foreach (var message in pending)
+                    {
+                        message.AgentSessionId = accepted.Id;
+                        message.Sequence = ++sequence;
+                        // The withhold belonged to the old session. The new conversation records its own.
+                        message.WithholdCount = 0;
+                        message.FirstWithheldAt = null;
+                        message.LastWithheldAt = null;
+                        message.LastWithholdReason = null;
+                    }
                 }
                 agent.PersistentSessionId = accepted.Id.ToString("D");
                 agent.Status = AgentStatus.Running;
