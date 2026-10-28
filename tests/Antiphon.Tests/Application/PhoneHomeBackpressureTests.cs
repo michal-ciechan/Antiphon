@@ -6,6 +6,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -80,6 +81,48 @@ public partial class PhoneHomeBackpressureTests
             try { await rpc; } catch (PhoneHomeTransportException) { }
         }
         await ByteWindowDuringCatchupAsync();
+    }
+
+    [Test]
+    public async Task Exit_after_split_mention_still_queues_the_line_once()
+    {
+        await using var h = await PhoneHomeHostedRunner.CreateAsync();
+        await h.PrepareMentionAsync();
+        var router = h.Bridge.Provider.GetRequiredService<AgentMentionRouter>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RouteGateEntered = entered;
+        router.BeforeRouteGate = gate;
+        // Release the publication hold so the split line is observed and the route gate is the stall.
+        h.Bus.Release.TrySetResult();
+        try
+        {
+            h.Output(h.SessionId, 1, "@fa");
+            h.Output(h.SessionId, 2, "ke hello");
+            h.Output(h.SessionId, 3, "\n");
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            h.Exit(h.SessionId, 4, h.Generation);
+            using var stopWait = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (!stopWait.IsCancellationRequested)
+            {
+                await using var db = h.Db();
+                if (await db.AgentSessions.AnyAsync(s => s.Id == h.SessionId && s.Status == SessionStatus.Stopped))
+                    break;
+                try { await Task.Delay(10, stopWait.Token); } catch (OperationCanceledException) { }
+            }
+
+            gate.TrySetResult();
+            await PhoneHomeHostedRunner.UntilAsync(async () =>
+            {
+                await using var db = h.Db();
+                return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.Bridge.SessionId
+                    && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains("hello")) == 1;
+            }, "the split mention reaches the real recipient queue exactly once");
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
     }
 
     [Test]

@@ -26,6 +26,10 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
 
+    // Test seam. Production leaves both null; a set gate pauses ProcessAsync before the route.
+    internal TaskCompletionSource? BeforeRouteGate { get; set; }
+    internal TaskCompletionSource? RouteGateEntered { get; set; }
+
     public AgentMentionRouter(
         IServiceScopeFactory scopeFactory,
         MentionScanner scanner,
@@ -211,6 +215,12 @@ public sealed class AgentMentionRouter : IDisposable
                     $"target={command.Mention.Target} messageChars={command.Mention.Message.Length}");
                 try
                 {
+                    if (BeforeRouteGate is { } gate)
+                    {
+                        RouteGateEntered?.TrySetResult();
+                        await gate.Task.WaitAsync(_cts.Token);
+                    }
+
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var service = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
                     await service.RouteMentionAsync(command.SourceSessionId, command.Mention, command.OccurrenceId, _cts.Token);
