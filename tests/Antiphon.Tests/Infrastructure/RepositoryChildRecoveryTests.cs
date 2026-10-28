@@ -242,9 +242,18 @@ public sealed class RepositoryChildRecoveryTests
         SameGitCommonPath(raw, canonical).ShouldBeTrue();
     }
 
-    // Base behavior of the C452 raw.ShouldBe(canonical) assertion: ordinal text equality.
-    private static bool SameGitCommonPath(string left, string right) =>
-        string.Equals(left, right, StringComparison.Ordinal);
+    private static bool SameGitCommonPath(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows() || HasWindowsDrive(left) || HasWindowsDrive(right)
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(FoldGitSeparators(left), FoldGitSeparators(right), comparison);
+    }
+
+    private static string FoldGitSeparators(string path) => path.Replace('\\', '/').TrimEnd('/');
+
+    private static bool HasWindowsDrive(string path) =>
+        path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':';
 
     [Test]
     public async Task C452_R2_AliasRecoveryUsesCanonicalCommonDirectory()
@@ -273,20 +282,23 @@ public sealed class RepositoryChildRecoveryTests
             var canonical = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
             Console.WriteLine($"C452_ALIAS raw={JsonSerializer.Serialize(raw)} canonical={JsonSerializer.Serialize(canonical)} expected={JsonSerializer.Serialize(Path.GetFullPath(admin))}");
             canonical.ShouldBe(Path.GetFullPath(admin));
-            // Git on this Linux host realpaths gitdir-file aliases before rev-parse prints them.
-            // Keep the real repository and alias; adapt only that one Git spelling at the script
-            // boundary so the script must perform the same canonicalization as LandingGit.
+            // Git may resolve the alias and still print '/' (--path-format=absolute on
+            // Windows). LandingGit and the recovery script already canonicalize that
+            // spelling. On Linux, git realpaths before rev-parse, so the script is shown
+            // the alias through a shim and must canonicalize it the same way.
             IReadOnlyDictionary<string, string>? recoveryEnvironment = null;
             if (!raw.Contains("alias parent", StringComparison.Ordinal))
             {
-                raw.ShouldBe(canonical);
-                OperatingSystem.IsLinux().ShouldBeTrue("Windows junction output must be qualified without a shim");
-                var shimDirectory = Path.Combine(repo.WorktreeRoot, "git-shim");
-                Directory.CreateDirectory(shimDirectory);
-                var shim = Path.Combine(shimDirectory, "git");
-                await File.WriteAllTextAsync(shim, "#!/bin/sh\nif [ \"$#\" -eq 5 ] && [ \"$1\" = '-C' ] && [ \"$3\" = 'rev-parse' ] && [ \"$4\" = '--path-format=absolute' ] && [ \"$5\" = '--git-common-dir' ]; then\n  printf '%s\\n' '" + Path.Combine(aliasParent, "admin") + "'\nelse\n  exec /usr/bin/git \"$@\"\nfi\n");
-                File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                recoveryEnvironment = new Dictionary<string, string> { ["PATH"] = shimDirectory + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") };
+                SameGitCommonPath(raw, canonical).ShouldBeTrue();
+                if (OperatingSystem.IsLinux())
+                {
+                    var shimDirectory = Path.Combine(repo.WorktreeRoot, "git-shim");
+                    Directory.CreateDirectory(shimDirectory);
+                    var shim = Path.Combine(shimDirectory, "git");
+                    await File.WriteAllTextAsync(shim, "#!/bin/sh\nif [ \"$#\" -eq 5 ] && [ \"$1\" = '-C' ] && [ \"$3\" = 'rev-parse' ] && [ \"$4\" = '--path-format=absolute' ] && [ \"$5\" = '--git-common-dir' ]; then\n  printf '%s\\n' '" + Path.Combine(aliasParent, "admin") + "'\nelse\n  exec /usr/bin/git \"$@\"\nfi\n");
+                    File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                    recoveryEnvironment = new Dictionary<string, string> { ["PATH"] = shimDirectory + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") };
+                }
             }
             else raw.ShouldContain("alias parent");
             Task<(int Exit, string Output, string Error)> RecoverAliasedAsync(params string[] options) =>
