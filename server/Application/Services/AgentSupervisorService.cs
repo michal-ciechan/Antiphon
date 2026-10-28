@@ -266,6 +266,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             }
             catch (Exception ex) when (!ct.IsCancellationRequested && IsTransientCapacity(ex))
             {
+                _logger.LogWarning(
+                    ex,
+                    "Agent {AgentId}: capacity start hit transient SQLSTATE {SqlState}; the grant stays reserved and the next tick retries",
+                    agent.Id,
+                    CapacityTransientSqlState(ex));
                 _db.ChangeTracker.Clear();
                 return false;
             }
@@ -618,15 +623,17 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             ? Task.CompletedTask
             : _capacityRecovery.ReleaseAgentReservationAsync(agentId, admission.Kind, reason, ct);
 
-    private static bool IsTransientCapacity(Exception ex)
+    private static bool IsTransientCapacity(Exception ex) => CapacityTransientSqlState(ex) is not null;
+
+    private static string? CapacityTransientSqlState(Exception ex)
     {
         for (var current = ex; current is not null; current = current.InnerException)
         {
             if (current is PostgresException pg && pg.SqlState is "40P01" or "40001" or "55P03")
-                return true;
+                return pg.SqlState;
         }
 
-        return false;
+        return null;
     }
 
     private async Task<bool> HoldRefusedFreshAsync(

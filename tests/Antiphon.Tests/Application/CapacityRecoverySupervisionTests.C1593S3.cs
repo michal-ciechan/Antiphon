@@ -360,7 +360,7 @@ public partial class CapacityRecoverySupervisionTests
             witness.Adapter.Started.ShouldBeFalse(witness.Log);
             // throw commitEx would reset the stack to the reread. The preserved stack still
             // names the commit that threw.
-            witness.Log.ShouldContain("CommitTransactionAsync");
+            witness.Log.ShouldContain("RelationalTransaction.CommitAsync");
             return;
         }
 

@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -897,7 +898,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     _logger.LogWarning(commitEx,
                         "Supervisor start commit acknowledgement was lost and no scope factory is registered for agent {AgentId}",
                         agent.Id);
-                    throw commitEx;
+                    ExceptionDispatchInfo.Capture(commitEx).Throw();
+                    return;
                 }
 
                 bool committed;
@@ -910,11 +912,15 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     _logger.LogWarning(rereadEx,
                         "Supervisor start commit reread failed for agent {AgentId} session {SessionId}",
                         agent.Id, accepted.Id);
-                    throw commitEx;
+                    ExceptionDispatchInfo.Capture(commitEx).Throw();
+                    return;
                 }
 
                 if (!committed)
-                    throw commitEx;
+                {
+                    ExceptionDispatchInfo.Capture(commitEx).Throw();
+                    return;
+                }
                 EnqueueAccepted(accepted.Id, acceptedGeneration, resume);
             }
 
@@ -1052,7 +1058,10 @@ public sealed class AgentControlService : ICompactionContinuationResume
         var connection = db.Database.GetDbConnection();
         await using var hold = connection.CreateCommand();
         hold.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
-        hold.CommandTimeout = 0;
+        // A commit that never finishes must not stall the serial supervisor loop. 120s is the
+        // grant reconcile bound. A timeout is a reread failure: the caller rethrows the original
+        // commit exception, and the S-3 charge refuses not-action-pending if the commit landed.
+        hold.CommandTimeout = LostCommitRereadTimeoutSeconds < 1 ? 120 : LostCommitRereadTimeoutSeconds;
         hold.CommandText = """SELECT "Id" FROM "Agents" WHERE "Id" = @id FOR UPDATE""";
         var id = hold.CreateParameter();
         id.ParameterName = "id";
