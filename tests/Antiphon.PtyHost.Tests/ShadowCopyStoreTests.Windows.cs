@@ -113,7 +113,7 @@ public partial class ShadowCopyStoreTests
     {
         // OPEN_EXISTING + FILE_FLAG_BACKUP_SEMANTICS opens the directory itself. Read/write
         // sharing lets the copy finish; withholding FILE_SHARE_DELETE prevents its rename.
-        var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+        var handle = CreateFileW(path, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
