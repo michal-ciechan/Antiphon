@@ -40,7 +40,7 @@ public sealed class NativeLinuxPolicyExecutionTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task Linux_child_runs_nine_nodes_and_records_side_effects(CancellationToken cancellationToken)
+    public async Task Native_child_observes_platform_outcomes_and_side_effects(CancellationToken cancellationToken)
     {
         const string portableSentinel = "portable.body\n";
         JudgeWindowsTrx(WindowsProbeTrx(ProbeMarkerReasons, markedRuns: false), portableSentinel).ShouldBeEmpty();
@@ -71,9 +71,19 @@ public sealed class NativeLinuxPolicyExecutionTests
             File.Exists(trxPath).ShouldBeTrue(ran.Text);
             var trx = TrxReport.Parse(trxPath);
             trx.Ok.ShouldBeTrue(trx.Error ?? ran.Text);
-            var live = Problems(OperatingSystem.IsLinux(), trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, File.ReadAllText(sentinel), ReadSkipMessages(trxPath));
+            var sentinelText = File.Exists(sentinel) ? File.ReadAllText(sentinel) : "";
+            var live = Problems(OperatingSystem.IsLinux(), trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count,
+                sentinelText, ReadSkipMessages(trxPath));
             live.ShouldBeEmpty(string.Join("; ", live) + "\n" + ran.Text);
             ran.ExitCode.ShouldBe(0, ran.Text);
+            if (!OperatingSystem.IsLinux())
+            {
+                var document = XDocument.Load(trxPath);
+                AssertWindowsResults(document);
+                var changed = new XDocument(document);
+                changed.Descendants(document.Root!.Name.Namespace + "DebugTrace").First().Value += "changed";
+                Should.Throw<ShouldAssertException>(() => AssertWindowsResults(changed));
+            }
 
             Problems(linux: true, 9, 0, 0, 0, "").ShouldContain("zero-nodes");
             Problems(linux: true, 9, 0, 0, 9, "").ShouldContain("missing-sentinel");
@@ -111,6 +121,8 @@ public sealed class NativeLinuxPolicyExecutionTests
         {
             if (passed != 1 || failed != 0 || skipped != 8)
                 problems.Add($"windows-counts passed={passed} failed={failed} skipped={skipped}");
+            if (Count(sentinel, "portable.body") != 1)
+                problems.Add("missing-portable-sentinel");
             if (sentinel.Contains("direct-class.", StringComparison.Ordinal)
                 || sentinel.Contains("direct-method.", StringComparison.Ordinal)
                 || sentinel.Contains("inherited.", StringComparison.Ordinal)
@@ -165,6 +177,39 @@ public sealed class NativeLinuxPolicyExecutionTests
         }
 
         return messages;
+    }
+
+    private static void AssertWindowsResults(XDocument document)
+    {
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Runs"] = "direct class runs on Linux",
+            ["Marked"] = "direct method runs on Linux",
+            ["Inherited"] = "inherited method runs on Linux",
+            ["FromBase"] = "marked derived class runs on Linux",
+            ["Nested"] = "nested class runs on Linux",
+            ["GenericCase"] = "generic class runs on Linux",
+            ["Case(1)"] = "overload int runs on Linux",
+            ["Case(a)"] = "overload string runs on Linux",
+        };
+        var ns = document.Root!.Name.Namespace;
+        var results = document.Descendants(ns + "UnitTestResult").ToArray();
+        var definitions = document.Descendants(ns + "UnitTest").ToArray();
+        results.Select(result => (string?)result.Attribute("testName") ?? "").Order(StringComparer.Ordinal).ToArray()
+            .ShouldBe(expected.Keys.Append("Portable").Order(StringComparer.Ordinal).ToArray(), "native child roster");
+        definitions.Length.ShouldBe(9, "native child definitions");
+        results.Select(result => (string?)result.Attribute("testId")).Distinct().Count().ShouldBe(9, "native child result identities");
+        foreach (var result in results)
+        {
+            var definition = definitions.Single(item => (string?)item.Attribute("id") == (string?)result.Attribute("testId"));
+            definition.Element(ns + "TestMethod").ShouldNotBeNull("native child definition binding");
+            var name = (string)result.Attribute("testName")!;
+            var skipped = expected.TryGetValue(name, out var reason);
+            ((string?)result.Attribute("outcome")).ShouldBe(skipped ? "NotExecuted" : "Passed", name);
+            if (skipped)
+                (result.Element(ns + "Output")?.Element(ns + "DebugTrace")?.Value)
+                    .ShouldBe("Skipped: " + reason, name + " exact skip reason");
+        }
     }
 
     private static int Count(string text, string token)

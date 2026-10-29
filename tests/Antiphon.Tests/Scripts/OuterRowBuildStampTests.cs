@@ -21,6 +21,36 @@ public sealed class OuterRowBuildStampTests
     }
 
     [Test]
+    public void C1210_Isolated_checkpoint_properties_are_verified_without_replacing_the_stamp()
+    {
+        using var world = QualificationOutput.CreateWithoutAssemblyDirectory();
+        var artifacts = Path.Combine(world.AssemblyDirectory, "artifacts").Replace('\\', '/');
+        var binding = CheckpointBuildBinding.Expected(world.Root, "tests/Antiphon.Tests", world.AssemblyDirectory,
+            ["--property:ArtifactsPath=" + artifacts, "--property:UseArtifactsOutput=true"], QualificationOutput.CleanSource);
+        SafeWrite.CreateFreshDirectory(binding.OutputPath, SafeWrite.Under(binding.OutputPath)).ShouldBeNull();
+        binding.Write().ShouldBeNull();
+        var original = File.ReadAllText(binding.PathName);
+        OuterRowBuildStamp.EnsureForBuildOutput(world.AssemblyDirectory, world.Root, QualificationOutput.CleanSource)
+            .Check().ShouldBe("verified");
+        File.ReadAllText(binding.PathName).ShouldBe(original);
+        foreach (var properties in new[]
+        {
+            new[] { "ArtifactsPath=" + artifacts + "-foreign", "UseArtifactsOutput=true" },
+            new[] { "ArtifactsPath=" + artifacts, "UseArtifactsOutput=false" },
+            new[] { "ArtifactsPath=" + artifacts, "UseArtifactsOutput=true", "Unreviewed=true" },
+        })
+        {
+            var changed = JsonNode.Parse(original)!;
+            changed["properties"] = JsonSerializer.SerializeToNode(properties);
+            var corrupt = changed.ToJsonString();
+            File.WriteAllText(binding.PathName, corrupt);
+            OuterRowBuildStamp.EnsureForBuildOutput(world.AssemblyDirectory, world.Root, QualificationOutput.CleanSource)
+                .Check().ShouldBe("mismatch");
+            File.ReadAllText(binding.PathName).ShouldBe(corrupt);
+        }
+    }
+
+    [Test]
     public void C1050_Corrupt_or_stale_stamp_is_refused_without_replacement()
     {
         foreach (var (field, value) in new[] { ("commit", "\"" + new string('b', 40) + "\""), ("version", "2"),
