@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "67fb49932cf43763c6dd0bafd61ccac4d2945e72f8ceeed97c9d1910de35f38d",
+  "policyHash": "a7c88a0ab7b92daa0e9a72a8b2f377ca4a8678eaa0d469d22d1d97551c676382",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -645,6 +645,456 @@
           "platform": "windows",
           "reason": "Real phone-home recipient fixture requires Linux; these 27 methods remain required in the Linux lane (CARD-1017/CARD-1032). Separate Windows handle qualification remains owed.",
           "owner": "CARD-1561"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PhoneHomeMirrorJoinTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CP-21 phone-home join requires Linux FIFOs and Unix file modes. The case remains required on Linux.",
+          "owner": "CARD-1032"
+        },
+        {
+          "suite": "antiphon",
+          "class": "UnixDelegateLaunchArgvTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix PTY argv witness. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointBoundedReaderTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointSourceGitBoundsTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux inherited-pipe custody proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointVerifierBoundsTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux inherited-pipe custody proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointFixtureProcessTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "DetachedLauncherTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: setsid proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "SafeDeleteProcessBoundaryTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: FIFO-held monitor and process-group qualification. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GrokSha256PinTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux pin qualification. The case remains required on Linux.",
+          "owner": "CARD-1210"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GithubCredentialHelperTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the POSIX credential helper runs on Linux. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "GitMinimumVersionGuardTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux git floor. The case remains required on Linux.",
+          "owner": "CARD-1260"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RetiredTempContainerHostTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux host contracts (bash, flock and POSIX filesystem semantics). The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "HostJqPrerequisiteScriptTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: host jq contracts require native Linux (bash, flock, /proc and GNU coreutils). The case remains required on Linux.",
+          "owner": "CARD-1210"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ScriptHarnessLinuxOwnershipTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: procfs, setsid and POSIX signals. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RefreshGithubTokenRemoteCommandTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: POSIX sh executables. The case remains required on Linux.",
+          "owner": "CARD-1245"
+        },
+        {
+          "suite": "antiphon",
+          "class": "NightlyProbeSupervisorTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux process-tree deadline. The case remains required on Linux.",
+          "owner": "CARD-1375"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RetiredTempContainerDockerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux docker lifecycle. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RollingVolumeRecycleDockerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux docker comparison. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RollingVolumeRecycleCensusChurnTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux container census. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RollingProductionMountTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux production mount contracts. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointRecoveryLinuxTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux custody proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointFixtureRoutingTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux process identities and FIFO probes. The case remains required on Linux.",
+          "owner": "CARD-1233"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointInheritedFileTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux FIFO admission proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "pty-host",
+          "class": "LinuxCgroupCustodyTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the linux-cgroup-v1 backend executes on Linux only. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "UnixPtyArgvTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix PTY argv contract requires a Unix PTY and node. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PhoneHomeCompletedCardTransportTests",
+          "methods": [
+            "C1032_TransportQueueRecipientReplay"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: real phone-home runner join. The case remains required on Linux.",
+          "owner": "CARD-1032"
+        },
+        {
+          "suite": "antiphon",
+          "class": "LandGraphEvaluationTests",
+          "methods": [
+            "C1483_S1_UnreadableLinkComponentDenies"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix mode 000 has no Windows equivalent. The case remains required on Linux.",
+          "owner": "CARD-1483"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointConfinementLedgerTests",
+          "methods": [
+            "unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the statx stamp (inode and ctime) is read on Linux only. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointReceiptSafetyTests",
+          "methods": [
+            "linux_fifo_receipts_refuse_within_four_seconds"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux FIFO qualification. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "OutputCleanupTests",
+          "methods": [
+            "external_build_payload_is_adopted_at_seal_and_removed_on_green",
+            "file_added_after_seal_is_refused_and_kept",
+            "file_modified_after_seal_is_refused_and_kept",
+            "symlink_in_a_build_output_is_refused_before_and_after_seal",
+            "tracked_file_in_an_adopted_build_output_is_refused_and_kept",
+            "adopted_build_output_over_the_entry_cap_is_unsafe_tree",
+            "hard_linked_build_file_is_not_adopted_and_outside_bytes_stay",
+            "independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it",
+            "seal_without_driver_observed_build_exit_adopts_nothing",
+            "hanging_git_is_refused_and_killed_within_the_bound"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux statx seal and hanging-git proof. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "AnchoredPathDeleteWitnessTests",
+          "methods": [
+            "linux_colon_in_a_file_name_stays_deletable",
+            "hard_link_sibling_survives_anchored_delete",
+            "ancestor_symlink_to_a_different_inode_is_refused"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux file-name, hard-link and ancestor-symlink proofs. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PlanCoverageHandleTests",
+          "methods": [
+            "hardlinked_selected_file_is_refused",
+            "in_repo_fifo_project_is_refused_within_15_seconds"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux link(2) and mkfifo sentinels. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CodexRootExecContractTests",
+          "methods": [
+            "Entrypoint_heal_chowns_the_tmp_directory_once",
+            "Entrypoint_heal_never_names_a_path_outside_tmp"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux unshare namespaces. The case remains required on Linux.",
+          "owner": "CARD-1210"
+        },
+        {
+          "suite": "antiphon",
+          "class": "FileUseCaptureTests",
+          "methods": [
+            "C1539_linux_holder",
+            "C1539_absent_inputs",
+            "C1539_budget_and_caps",
+            "C1539_redaction_before_sinks",
+            "C1539_persistence_fail_safe",
+            "C1539_generation_and_ownership"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux /proc or the Linux no-follow evidence writer. The case remains required on Linux.",
+          "owner": "CARD-1539"
+        },
+        {
+          "suite": "antiphon",
+          "class": "JqRunnerImageContractTests",
+          "methods": [
+            "Version_row_accepts_only_exact_successful_pin_without_stderr",
+            "C1054_Jq_row_rejects_home_shadow",
+            "C1054_Jq_row_accepts_canonical_file_and_alias",
+            "C1054_Jq_row_rejects_canonical_leaf_symlink",
+            "C1054_Jq_row_records_found_and_resolved_paths"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux jq image contract. The case remains required on Linux.",
+          "owner": "CARD-1210"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RollingVolumeRecycleScriptTests",
+          "methods": [
+            "C1008_Option_manifest_is_strict",
+            "C1008_Documentation_and_transport_pins_match",
+            "C1008_Refusal_receipts_do_not_leak_secrets",
+            "C1008_Retired_absent_null_is_accepted",
+            "C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt",
+            "C1594_Cross_sha_cleanup_image_binds_the_retired_temp",
+            "C1594_Older_retirement_receipt_is_ignored",
+            "C1594_Disagreeing_cross_sha_images_refuse",
+            "C1594_Antiphon_evidence_gitdir",
+            "C1008_Preview_helper_removal_is_owned"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux recycle host contracts. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RetiredTempContainerScriptTests",
+          "methods": [
+            "C994_Host_strict_volume_admission_remains_independent",
+            "C994_Host_resume_never_runs_container_cleanup",
+            "C994_Host_bridge_transport_preserves_literal_context"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux retire-temp host contracts. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "BuildSlotScriptTests",
+          "methods": [
+            "C800_WrapperInterruptKillsChildAndReleasesLease"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux SIGINT behavior. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1364BoundLandWaitProofTests",
+          "methods": [
+            "C1364_Host_recycle_admission_reports_waited",
+            "C1364_Host_recycle_post_removal_reports_waited",
+            "C1364_Host_cleanup_reports_waited"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux recycle wait proof. The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RemoteScriptContractTests",
+          "methods": [
+            "C1374_Host_census_recovers_transient_reads",
+            "C1087_Host_census_filters_and_names_cause",
+            "C1008_Recycle_exact_default_volumes",
+            "C1008_Recycle_refuses_references_and_unknown_census",
+            "C1008_Recycle_audits_work_as_1654",
+            "C1008_Recycle_refuses_unpublished_and_dirty_work",
+            "C1008_Recycle_refuses_uninspectable_git",
+            "C1008_Recycle_reaps_dirty_scratch",
+            "C1008_Recycle_audits_promisor_checkout",
+            "C1105_Git_audit_volume_scale",
+            "C1105_Jq_argv_limit",
+            "C1008_Recycle_preserves_tmp_copyup",
+            "C1105_Verify_tmp_accepts_an_absent_pty_host",
+            "C1008_Recycle_resume_requires_matching_receipt",
+            "C1008_Recycle_receipt_records_disk_and_partial_failure",
+            "C1008_Retire_temp_rechecks_absence_and_retirement",
+            "C1008_Retire_temp_reclaims_below_cache_disk_gate",
+            "C1008_Recycle_dry_run_never_mutates",
+            "C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes",
+            "C1105_Redeploy_accepts_previous_generation_and_requires_new_bind",
+            "C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout",
+            "C1105_V218_dry_run_reaches_the_generation_line",
+            "C1105_Relative_dry_run_refuses_before_removal",
+            "C1105_Generation_identity_refuses_mismatch",
+            "C1105_Main_state_init_without_session_runner_refuses",
+            "C1105_Compose_cmp_refuses_before_removal",
+            "C1105_Resume_identity_refusals",
+            "C1105_Resume_state_init_image_follows_the_journal",
+            "C1105_Resume_foreign_leftover_is_not_an_image_mismatch",
+            "C1105_Resume_digest_pins_previous_sha12",
+            "C1105_Resume_post_removal_census_tracks_open_work",
+            "C849_Deploy_prepares_and_verifies_before_acceptance",
+            "C1105_Git_audit_recovery_tips",
+            "C1105_Git_audit_seed_content",
+            "C1105_Git_audit_index_content",
+            "C1105_Git_audit_object_completeness",
+            "C1105_Git_audit_overall_timeout",
+            "C1105_Git_audit_resume_preserves_proof",
+            "C1105_Git_audit_hidden_locations",
+            "C1335_Mirror_owner_stamp_in_linked_admin"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux host contracts (bash, flock and POSIX filesystem semantics). The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointStampSafetyTests",
+          "methods": [
+            "tracked_stamp_shapes_are_bounded_and_leave_results_in_place"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux source-shape qualification. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointTempRootSweepTests",
+          "methods": [
+            "fifo_or_socket_root_is_reclaimed"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: a FIFO is the stand-in for a Linux dotnet-diagnostic socket. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PlanCoverageCommandTests",
+          "methods": [
+            "outside_project_fifo_is_refused_without_opening"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: outside-project FIFO read sentinel requires Linux mkfifo. The case remains required on Linux.",
+          "owner": "CARD-0590"
+        },
+        {
+          "suite": "session-runner",
+          "class": "CompletedCardWorkspaceRemovalTests",
+          "methods": [
+            "C1032_InspectionR3Mode",
+            "C1032_RemovalLinuxIgnoredFifoRefuses"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix executable-bit witness and Linux named-pipe inventory. The case remains required on Linux.",
+          "owner": "CARD-1032"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HostStatsProbeLiveTests",
+          "methods": [
+            "Linux_probe_reads_live_proc"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux /proc probe. The case remains required on Linux.",
+          "owner": "CARD-0590"
         },
         {
           "suite": "antiphon",

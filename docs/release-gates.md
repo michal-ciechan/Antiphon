@@ -262,6 +262,14 @@ and `C1281_B1Authorization`, `C1281_B1ReceiptImport`, `C1281_B1CorrectionTransac
 `test-rc-platform.ps1 -Case C1415_SkipExclusions` checks the shipped rows and that the pack cases
 are launched on both platforms.
 
+Rows whose reason starts with `Linux-only by construction:` are Windows-only exclusions for
+tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, Unix modes, or
+POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as
+Windows obligations (junctions, case-sensitivity, CARD-1199 unverified Windows behavior, and
+opt-in) stay required and have no exclusion row.
+`test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusions` checks the source gate, the shipped
+rows, and that those obligation gaps still leave coverage incomplete.
+
 The default/full `verify-dev-stack.ps1` smoke belongs on the Windows Aspire desktop:
 its `antiphon-postgres` check concerns that desktop stack, not an isolated runner
 database. Non-Windows full invocations, including `-SkipBrowser`, refuse with
