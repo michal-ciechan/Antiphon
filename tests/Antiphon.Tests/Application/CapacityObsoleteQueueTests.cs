@@ -12,7 +12,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -432,7 +431,7 @@ public class CapacityObsoleteQueueTests
     {
         public required IsolatedTestSchema Schema { get; init; }
         public required BridgeQueueHarness Harness { get; init; }
-        public required FakeTimeProvider Time { get; init; }
+        public required OffsetClock Time { get; init; }
         public CapacityRecoveryService Recovery => Harness.Provider.GetRequiredService<CapacityRecoveryService>();
         public SessionMessageQueueService Queue => Harness.Queue;
         public FakeAgentProtocolAdapter Adapter => Harness.Adapter;
@@ -445,8 +444,7 @@ public class CapacityObsoleteQueueTests
             int maxDeliveryAttempts = 3,
             int batch = 100)
         {
-            var now = DateTimeOffset.UtcNow;
-            var time = new FakeTimeProvider(new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero));
+            var time = new OffsetClock(DateTimeOffset.UtcNow);
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
@@ -1214,12 +1212,36 @@ public class CapacityObsoleteQueueTests
                 StrandedAgeSeconds = 0,
                 TranscriptConfirmTimeoutSeconds = 3,
                 ReEnterIntervalSeconds = 1,
+                PostEvidenceSettleMs = 0,
                 PostFailureConfirmGraceSeconds = 3,
                 UnobservableBaselineConfirmClockToleranceSeconds = 30,
                 BootPromptRetryDelaySeconds = 0,
                 MaxDeliveryAttempts = maxDeliveryAttempts,
             },
         };
+    }
+
+    /// <summary>
+    /// Manual capacity clock with real timers. A frozen <c>FakeTimeProvider</c> never completes
+    /// the queue's composer-settle delay, so a successful delivery would wait forever.
+    /// </summary>
+    private sealed class OffsetClock : TimeProvider
+    {
+        private long _offsetTicks;
+
+        public OffsetClock(DateTimeOffset start)
+        {
+            var aligned = start.Ticks - start.Ticks % 10;
+            _offsetTicks = aligned - DateTimeOffset.UtcNow.Ticks;
+        }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var ticks = DateTimeOffset.UtcNow.Ticks + Interlocked.Read(ref _offsetTicks);
+            return new DateTimeOffset(ticks - ticks % 10, TimeSpan.Zero);
+        }
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _offsetTicks, by.Ticks);
     }
 
     private sealed record CanceledBatch(List<Guid> Ids, Guid Control, string ControlAction);
