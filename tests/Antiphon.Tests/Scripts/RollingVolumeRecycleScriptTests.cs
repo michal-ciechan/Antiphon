@@ -2786,7 +2786,8 @@ public sealed class RollingVolumeRecycleScriptTests
 
             var bare = Path.Combine(root, "public-origin");
             var publish = await C994ScriptProcess.Run("bash", "-c",
-                "git init -q --bare " + BashSingle(bare) +
+                "if [ -d " + BashSingle(repo) + "/.git/logs ]; then find " + BashSingle(repo) + "/.git/logs -type f -delete; fi" +
+                " && git init -q --bare " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " remote set-url origin " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " push -q origin main");
             publish.Exit.ShouldBe(0, "private-origin: public stand-in; " + publish.Output);
