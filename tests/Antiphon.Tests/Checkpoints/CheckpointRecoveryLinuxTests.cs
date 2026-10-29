@@ -17,13 +17,12 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
     public async Task native_identity_keeps_live_then_removes_dead()
     {
         if (!Linux()) return;
-        var run = Run();
+        var run = Run("sentinel", "live");
         using var child = Sleep();
         try
         {
             Own(run, child, "launched");
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            File.WriteAllText(sentinel, "live");
             var deletes = 0;
             var cleanup = new ToolCopyCleanup(beforeDelete: _ => deletes++);
             cleanup.Remove(run).Outcome.ShouldBe("Retained");
@@ -80,8 +79,7 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         {
             Own(run, child, "launched");
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
-            new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
-            { RunId = Path.GetFileName(run), Phase = "done", ExecutorPid = child.Id, ExitCode = 0 });
+            CheckpointRecoveryWindowsTests.WriteCompletion(run, child.Id);
             (await new WaitCommand().WaitAsync(run, TimeSpan.FromMilliseconds(25), TimeSpan.FromSeconds(1),
                 new StringWriter(), CancellationToken.None)).ShouldBe(ExitCodes.StillRunning);
             Directory.Exists(Path.Combine(run, "tool")).ShouldBeTrue();
@@ -97,12 +95,11 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
     public async Task starter_death_before_launch_reclaims_partial_copy()
     {
         if (!Linux()) return;
-        var run = Run();
+        var run = Run("partial", "copy began");
         using var starter = Sleep();
         try
         {
             Own(run, starter, "preparing");
-            File.WriteAllText(Path.Combine(run, "tool", "partial"), "copy began");
             new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");
             await Stop(starter);
             new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
@@ -225,13 +222,12 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
     public async Task launch_unknown_survives_until_late_ack()
     {
         if (!Linux()) return;
-        var run = Run();
+        var run = Run("sentinel", "unknown");
         using var child = Sleep();
         try
         {
             Own(run, child, "launch-attempted", includeLaunch: false);
             var sentinel = Path.Combine(run, "tool", "sentinel");
-            File.WriteAllText(sentinel, "unknown");
             new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");
             File.ReadAllText(sentinel).ShouldBe("unknown");
             ExecutorOwnershipStore.Write(run, new ProcessIdentityProbe().Capture(child.Id));
@@ -266,12 +262,8 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         catch (InvalidOperationException) { }
     }
 
-    private string Run()
-    {
-        var path = Path.Combine(TempDir(), "run-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(path, "tool"));
-        return path;
-    }
+    private string Run(string? name = null, string content = "") =>
+        CheckpointRecoveryWindowsTests.CreateRun(TempDir(), name, content);
 
     private static void Own(string run, Process child, string phase, bool includeLaunch = true)
     {
