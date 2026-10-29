@@ -267,14 +267,15 @@ tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, U
 POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as
 Windows obligations (junctions, case-sensitivity, CARD-1199 unverified Windows behavior, and
 opt-in) stay required and have no exclusion row.
-`test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusions` checks the source gate, the shipped
-rows, and that those obligation gaps still leave coverage incomplete.
+`test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` checks the shipped
+rows and that those obligation gaps still leave coverage incomplete. The compiled
+marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
+The retired `-Case LinuxOnlyWindowsExclusions` refuses and names that witness.
 
 #### CARD-1613 marker migration and maintenance
 
 The [CARD-1613 plan](superpowers/plans/2026-10-29-card-1613-pinned-linux-skip-reflection-plan.md)
-replaces that source-only verdict with compiled marker witnesses. This is the implementation
-contract; the Plan task has not installed those witnesses yet.
+replaces that source-only verdict with compiled marker witnesses.
 
 At migration, compare frozen pre-S1 and annotated S2 source once, retaining the ignored
 audit inputs and receipt. Whole-file/helper digests belong only to that migration audit.
