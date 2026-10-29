@@ -390,7 +390,15 @@ namespace Antiphon.Nightly
                     {
                         int pid = (int)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size);
                         if (pid == Observation.Pid || _descendants.ContainsKey(pid)) continue;
-                        try { var p = Process.GetProcessById(pid); _ = p.Handle; _ = p.StartTime; _descendants.Add(pid, p); }
+                        try
+                        {
+                            var p = Process.GetProcessById(pid);
+                            _ = p.Handle; _ = p.StartTime;
+                            _descendants.Add(pid, p);
+                            // Windows cannot query ProcessName after exit. Cache it while the
+                            // retained generation is live; a missed name does not affect custody.
+                            try { _ = p.ProcessName; } catch (Exception) { }
+                        }
                         catch (ArgumentException) { RecordMissed(pid); }
                         catch (InvalidOperationException) { RecordMissed(pid); }
                     }
