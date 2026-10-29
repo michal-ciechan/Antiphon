@@ -141,6 +141,27 @@ SHARD a-rsc4 end rc=0 wall=162s waited=0s  total: 83  failed: 0  succeeded: 83  
 SHARD b2-RollingOther start 2026-10-29T22:59:47Z
 SHARD i-cp5 end rc=0 wall=56s waited=0s  total: 52  failed: 0  succeeded: 52  skipped: 0  duration: 53s 900ms 
 SHARD i-cp6 start 2026-10-29T23:00:41Z
+SHARD i-cp6 end rc=0 wall=75s waited=0s  total: 28  failed: 0  succeeded: 28  skipped: 0  duration: 1m 14s 226ms 
+SHARD i-cp7 start 2026-10-29T23:01:56Z
+SHARD b2-RollingOther end rc=0 wall=132s waited=0s  total: 13  failed: 0  succeeded: 13  skipped: 0  duration: 2m 10s 533ms 
+SHARD m-matrix start 2026-10-29T23:01:59Z
+SHARD m-matrix end rc=0 wall=36s waited=30s  total: 8  failed: 0  succeeded: 8  skipped: 0  duration: 1s 879ms 
+SHARD i-cp1 start 2026-10-29T23:02:35Z
+SHARD i-cp1 end rc=0 wall=96s waited=0s  total: 52  failed: 0  succeeded: 52  skipped: 0  duration: 1m 31s 998ms 
+SHARD i-cp2 start 2026-10-29T23:04:11Z
+SHARD i-cp7 end rc=0 wall=137s waited=15s  total: 28  failed: 0  succeeded: 28  skipped: 0  duration: 1m 58s 987ms 
+SHARD i-cp8 start 2026-10-29T23:04:13Z
+SHARD i-cp2 end rc=0 wall=55s waited=15s  total: 18  failed: 0  succeeded: 18  skipped: 0  duration: 38s 041ms 
+SHARD i-cp3 start 2026-10-29T23:05:06Z
+SHARD i-cp8 end rc=0 wall=99s waited=30s  total: 29  failed: 0  succeeded: 29  skipped: 0  duration: 1m 07s 502ms 
+LANE B done 2026-10-29T23:05:52Z
+SHARD i-cp3 end rc=0 wall=93s waited=30s  total: 47  failed: 0  succeeded: 47  skipped: 0  duration: 1m 00s 863ms 
+SHARD i-cp4 start 2026-10-29T23:06:39Z
+SHARD i-cp4 end rc=0 wall=41s waited=0s  total: 24  failed: 0  succeeded: 24  skipped: 0  duration: 39s 155ms 
+LANE A done 2026-10-29T23:07:20Z
+SHARD x-c9-S end rc=0 wall=674s waited=0s  total: 356  failed: 0  succeeded: 354  skipped: 2  duration: 11m 10s 929ms 
+LANE C done 2026-10-29T23:10:38Z
+ALL-LANES-DONE
 ```
 
 Red comparisons:
