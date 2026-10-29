@@ -29,4 +29,9 @@ SHARD b2-Ch end rc=0 wall=1299s  total: 547  failed: 0  succeeded: 546  skipped:
 SHARD a4-RSC-rest end rc=0 wall=261s  total: 121  failed: 0  succeeded: 121  skipped: 0  duration: 4m 20s 147ms 
 LANE A done 2026-10-29T13:49:41Z
 SHARD c5-OP end rc=0 wall=304s  total: 753  failed: 0  succeeded: 745  skipped: 8  duration: 5m 02s 394ms 
+SHARD c6-ST end rc=0 wall=218s  total: 717  failed: 0  succeeded: 710  skipped: 7  duration: 3m 36s 302ms 
+SHARD b3-Retired end rc=0 wall=789s  total: 37  failed: 0  succeeded: 37  skipped: 0  duration: 13m 06s 701ms 
+LANE B done 2026-10-29T14:02:23Z
+SHARD c7-Rlight end rc=0 wall=316s  total: 498  failed: 0  succeeded: 498  skipped: 0  duration: 5m 14s 846ms 
+SHARD c8-A end rc=0 wall=80s  total: 481  failed: 0  succeeded: 478  skipped: 3  duration: 1m 18s 985ms 
 ```
