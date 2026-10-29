@@ -240,6 +240,19 @@ public class AgentChannelServiceIntegrationTests
     public async Task Cancelled_liveness_read_delivers_once_and_a_later_mention_still_routes() =>
         await AssertCancelledReadDeliversOnceAsync();
 
+    // The debounce has already queued '@helper please inspect'. The next chunk completes
+    // that line and carries a second message to the same target. Only the continuation is
+    // a duplicate; 'then run lint' is a new message.
+    [Test]
+    public async Task Debounced_partial_then_second_same_target_line_routes() =>
+        await AssertDebouncedPartialThenSecondLineAsync();
+
+    // Each new pending state used to restart Version at 1, so the previous state's
+    // debounce matched the recreated state and queued its partial early.
+    [Test]
+    public async Task Stale_debounce_does_not_queue_a_recreated_partial() =>
+        await AssertStaleDebounceDoesNotQueueRecreatedPartialAsync();
+
     // The desktop pump and a phone-home worker both await ObserveOutputAsync before the next
     // event. A delivery whose transcript never arrives must not hold that call: the next observe
     // has to finish, the second mention has to be queued, and the held delivery must not be
@@ -1050,6 +1063,194 @@ public class AgentChannelServiceIntegrationTests
                 bodies.Count(body => body.Contains("run lint next", StringComparison.Ordinal)).ShouldBe(1, trail);
                 CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
                     .ShouldBe(2, trail);
+            }
+            finally
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private async Task AssertDebouncedPartialThenSecondLineAsync()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var sourceSession = NewSession(graph.SourceCard, "lead");
+            var targetSession = NewSession(graph.TargetCard, "helper");
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.AddRange(sourceSession, targetSession);
+            await db.SaveChangesAsync();
+            graph.SourceCard.OwnerSessionId = sourceSession.Id;
+            graph.TargetCard.OwnerSessionId = targetSession.Id;
+            await db.SaveChangesAsync();
+
+            var sourceAdapter = new FakeAgentProtocolAdapter();
+            var targetAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [sourceAdapter, targetAdapter]);
+            harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            harness.Runtime.Register(targetSession.Id, targetAdapter);
+            var router = harness.Provider.GetRequiredService<AgentMentionRouter>();
+            var clock = new FakeTimeProvider();
+            router.Clock = clock;
+            try
+            {
+                await router.ObserveCompletedAsync(
+                    sourceSession.Id, "@helper please inspect", capture: null, CancellationToken.None);
+                await WaitUntilAsync(
+                    () =>
+                    {
+                        if (CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued) >= 1)
+                            return true;
+
+                        clock.Advance(TimeSpan.FromMilliseconds(300));
+                        return CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued) >= 1;
+                    },
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id));
+
+                await router.ObserveCompletedAsync(
+                    sourceSession.Id,
+                    " it\n@helper then run lint\n",
+                    capture: null,
+                    CancellationToken.None);
+
+                var trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(2, trail);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandSkippedDuplicate)
+                    .ShouldBe(1, trail);
+                await WaitUntilAsync(
+                    () => MentionBodies(targetSession.Id).Count == 2,
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id),
+                    TimeSpan.FromSeconds(20));
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                var bodies = MentionBodies(targetSession.Id);
+                bodies.Count.ShouldBe(2, trail);
+                bodies.Count(body => body.Contains("then run lint", StringComparison.Ordinal)).ShouldBe(1, trail);
+                bodies.Count(body => body.Contains("please inspect it", StringComparison.Ordinal)).ShouldBe(0, trail);
+                bodies.Count(body => body.Contains("please inspect", StringComparison.Ordinal)).ShouldBe(1, trail);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(2, trail);
+            }
+            finally
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private async Task AssertStaleDebounceDoesNotQueueRecreatedPartialAsync()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var sourceSession = NewSession(graph.SourceCard, "lead");
+            var targetSession = NewSession(graph.TargetCard, "helper");
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.AddRange(sourceSession, targetSession);
+            await db.SaveChangesAsync();
+            graph.SourceCard.OwnerSessionId = sourceSession.Id;
+            graph.TargetCard.OwnerSessionId = targetSession.Id;
+            await db.SaveChangesAsync();
+
+            var sourceAdapter = new FakeAgentProtocolAdapter();
+            var targetAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [sourceAdapter, targetAdapter]);
+            harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            harness.Runtime.Register(targetSession.Id, targetAdapter);
+            var router = harness.Provider.GetRequiredService<AgentMentionRouter>();
+            var clock = new FakeTimeProvider();
+            router.Clock = clock;
+            try
+            {
+                await router.ObserveCompletedAsync(
+                    sourceSession.Id, "Status: work", capture: null, CancellationToken.None);
+                await WaitUntilAsync(
+                    () => HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceDelayStarted),
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id));
+                clock.Advance(TimeSpan.FromMilliseconds(200));
+                await Task.Delay(50);
+
+                var trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(0, trail);
+                HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceFired)
+                    .ShouldBeFalse(trail);
+                HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceNoMentions)
+                    .ShouldBeFalse(trail);
+
+                await router.ObserveCompletedAsync(
+                    sourceSession.Id, "ing\n@helper second partial", capture: null, CancellationToken.None);
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceDelayStarted)
+                    .ShouldBe(2, trail);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(0, trail);
+
+                var extraMs = 0;
+                await WaitUntilAsync(
+                    () =>
+                    {
+                        if (DebounceResolvedWhileHeld(harness.RouteDiagnostics, sourceSession.Id))
+                            return true;
+
+                        if (extraMs >= 200)
+                            return false;
+
+                        clock.Advance(TimeSpan.FromMilliseconds(50));
+                        extraMs += 50;
+                        return DebounceResolvedWhileHeld(harness.RouteDiagnostics, sourceSession.Id);
+                    },
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id));
+
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(0, trail);
+                HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceFired)
+                    .ShouldBeFalse(trail);
+                HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceStale)
+                    .ShouldBeTrue(trail);
+
+                await router.ObserveCompletedAsync(
+                    sourceSession.Id, " continues to the end\n", capture: null, CancellationToken.None);
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(1, trail);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandSkippedDuplicate)
+                    .ShouldBe(0, trail);
+                await WaitUntilAsync(
+                    () => MentionBodies(targetSession.Id).Count == 1,
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id),
+                    TimeSpan.FromSeconds(20));
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                var bodies = MentionBodies(targetSession.Id);
+                bodies.Count.ShouldBe(1, trail);
+                bodies.Single().ShouldContain("second partial continues to the end");
+                clock.Advance(TimeSpan.FromMilliseconds(300));
+                await WaitUntilAsync(
+                    () => CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceStale) >= 2
+                        || HasStage(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.DebounceCancelled),
+                    () => harness.RouteDiagnostics.Format(sourceSession.Id));
+                trail = harness.RouteDiagnostics.Format(sourceSession.Id);
+                CountStages(harness.RouteDiagnostics, sourceSession.Id, MentionRouteDiagnostics.CommandEnqueued)
+                    .ShouldBe(1, trail);
+                MentionBodies(targetSession.Id).Count.ShouldBe(1, trail);
             }
             finally
             {
