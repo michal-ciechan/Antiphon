@@ -1,0 +1,42 @@
+using TUnit.Core;
+
+[Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: base class")]
+public abstract class MarkedBase
+{
+    [Test]
+    public void FromBase() { }
+}
+
+[InheritsTests]
+public class Child : MarkedBase
+{
+}
+
+public abstract class BaseTests
+{
+    [Test]
+    public void Inherited() { }
+
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: method")]
+    public void MarkedInherited() { }
+
+    [Test]
+    public virtual void Hidden() { }
+}
+
+[InheritsTests]
+public class Derived : BaseTests
+{
+    [Test]
+    public override void Hidden() { }
+
+    [Test]
+    public void PartialSibling() { }
+}
+
+[InheritsTests]
+[Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: derived class")]
+public class MarkedDerived : BaseTests
+{
+}

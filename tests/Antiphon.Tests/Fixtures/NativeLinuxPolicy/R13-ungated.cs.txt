@@ -1,0 +1,7 @@
+using TUnit.Core;
+
+public class UngatedNew
+{
+    [Test]
+    public void Run() { }
+}

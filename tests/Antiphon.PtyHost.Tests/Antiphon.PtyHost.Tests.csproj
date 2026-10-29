@@ -23,6 +23,15 @@
     <ProjectReference Include="..\Antiphon.Card0490.NativeHarness\Antiphon.Card0490.NativeHarness.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
+    <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Shared\NativeLinuxWindowsBaseline.json">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxWindowsBaseline.json</LogicalName>
+    </EmbeddedResource>
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />

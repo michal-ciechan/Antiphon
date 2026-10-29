@@ -1,0 +1,118 @@
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using TUnit.Core;
+
+public class ConditionalHost
+{
+    [Conditional("CARD1613_NEVER")]
+    public static void Gate() { throw new InvalidOperationException("elided"); }
+
+    [Test]
+    public void Run() { Gate(); }
+}
+
+public class AliasHost
+{
+    [Test]
+    [System.Obsolete("not the marker")]
+    public void Run() { }
+}
+
+public class ShadowHost
+{
+    static void RequireNativeLinux() { }
+
+    [Test]
+    public void Run() { RequireNativeLinux(); }
+}
+
+public class DeferredHost
+{
+    [Test]
+    public void Run()
+    {
+        Task.Run(() => throw new InvalidOperationException("deferred"));
+    }
+}
+
+public class ConstructorHost
+{
+    public ConstructorHost() { throw new InvalidOperationException("preamble"); }
+
+    [Test]
+    public void Run() { }
+}
+
+public class HookHost
+{
+    [Before(HookType.Test)]
+    public void BeforeRun() { throw new InvalidOperationException("hook"); }
+
+    [Test]
+    public void Run() { }
+}
+
+public class UnicodeHost
+{
+    [Test]
+    public void Caf\u00e9() { }
+}
+
+public class PreprocessorHost
+{
+#if CARD1613_NEVER
+    [Antiphon.TestSupport.NativeLinuxOnly("inactive")]
+#endif
+    [Test]
+    public void Run() { }
+}
+
+public class CommentHost
+{
+    // [NativeLinuxOnly("comment")]
+    [Test]
+    public void Run() { }
+}
+
+public class LiteralHost
+{
+    [Test]
+    public void Run()
+    {
+        var text = "[NativeLinuxOnly(\"literal\")]";
+        _ = text;
+    }
+}
+
+public class UnreachableHost
+{
+    [Test]
+    public void Run()
+    {
+        return;
+        throw new InvalidOperationException("unreachable");
+    }
+}
+
+public class SwallowedHost
+{
+    [Test]
+    public void Run()
+    {
+        try { throw new InvalidOperationException("skip"); }
+        catch (Exception) { }
+    }
+}
+
+public class SkipWhenHost
+{
+    static void SkipWhen(bool condition)
+    {
+        if (condition)
+            throw new InvalidOperationException("skip");
+    }
+
+    [Test]
+    public void Run() { SkipWhen(false); }
+}

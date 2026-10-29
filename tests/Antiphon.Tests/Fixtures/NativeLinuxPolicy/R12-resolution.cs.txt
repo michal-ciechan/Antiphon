@@ -1,0 +1,55 @@
+using TUnit.Core;
+
+namespace NotFramework
+{
+    public abstract class BaseTestAttribute : System.Attribute { }
+
+    public sealed class FakeTestAttribute : BaseTestAttribute { }
+}
+
+public abstract class AbstractOnly
+{
+    [Test]
+    public void Run() { }
+}
+
+public class EmptyHost { }
+
+public class MethodHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: present")]
+    public void Present() { }
+}
+
+public class CustomBuilderAttribute : DynamicTestBuilderAttribute
+{
+    public CustomBuilderAttribute() : base("builder.cs", 1) { }
+}
+
+public class MixedBuilder
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: ordinary")]
+    public void Ordinary() { }
+
+    [CustomBuilder]
+    public void Build() { }
+
+    [CustomBuilder]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: builder")]
+    public void BuildMarked() { }
+}
+
+public class NamesakeOnly
+{
+    [NotFramework.FakeTest]
+    public void NotATest() { }
+}
+
+public class OrdinaryOnly
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: ordinary only")]
+    public void Real() { }
+}
