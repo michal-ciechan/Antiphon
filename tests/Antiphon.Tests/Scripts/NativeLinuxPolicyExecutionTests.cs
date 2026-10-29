@@ -71,14 +71,14 @@ public sealed class NativeLinuxPolicyExecutionTests
             File.Exists(trxPath).ShouldBeTrue(ran.Text);
             var trx = TrxReport.Parse(trxPath);
             trx.Ok.ShouldBeTrue(trx.Error ?? ran.Text);
-            var live = Problems(linux: true, trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, File.ReadAllText(sentinel));
+            var live = Problems(OperatingSystem.IsLinux(), trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, File.ReadAllText(sentinel), ReadSkipMessages(trxPath));
             live.ShouldBeEmpty(string.Join("; ", live) + "\n" + ran.Text);
             ran.ExitCode.ShouldBe(0, ran.Text);
 
             Problems(linux: true, 9, 0, 0, 0, "").ShouldContain("zero-nodes");
             Problems(linux: true, 9, 0, 0, 9, "").ShouldContain("missing-sentinel");
             Problems(linux: false, 1, 0, 8, 9, "direct-class.body\n").ShouldContain("unexpected-work");
-            Problems(linux: false, 1, 0, 8, 9, "portable.body\n").ShouldBeEmpty();
+            Problems(linux: false, 1, 0, 8, 9, "portable.body\n", ExpectedSkipMessages()).ShouldBeEmpty();
         }
         finally
         {
@@ -89,7 +89,7 @@ public sealed class NativeLinuxPolicyExecutionTests
         Directory.Exists(root).ShouldBeFalse();
     }
 
-    private static List<string> Problems(bool linux, int passed, int failed, int skipped, int names, string sentinel)
+    private static List<string> Problems(bool linux, int passed, int failed, int skipped, int names, string sentinel, IReadOnlyList<string>? skipMessages = null)
     {
         var problems = new List<string>();
         if (names == 0)
@@ -119,9 +119,52 @@ public sealed class NativeLinuxPolicyExecutionTests
                 || sentinel.Contains("generic.", StringComparison.Ordinal)
                 || sentinel.Contains("overload", StringComparison.Ordinal))
                 problems.Add("unexpected-work");
+            if (skipMessages is not null)
+                AddSkipProblems(problems, skipMessages);
         }
 
         return problems;
+    }
+
+    private static string[] ExpectedSkipMessages()
+    {
+        var messages = new string[ProbeMarkerReasons.Length];
+        for (var i = 0; i < ProbeMarkerReasons.Length; i++)
+            messages[i] = "Skipped: " + ProbeMarkerReasons[i];
+        return messages;
+    }
+
+    private static void AddSkipProblems(List<string> problems, IReadOnlyList<string> actual)
+    {
+        var pending = new List<string>(actual);
+        foreach (var want in ExpectedSkipMessages())
+        {
+            var index = pending.FindIndex(item => string.Equals(item, want, StringComparison.Ordinal));
+            if (index < 0)
+                problems.Add("skip-reason " + want);
+            else
+                pending.RemoveAt(index);
+        }
+
+        foreach (var extra in pending)
+            problems.Add("skip-extra " + extra);
+    }
+
+    private static List<string> ReadSkipMessages(string trxPath)
+    {
+        var document = XDocument.Parse(File.ReadAllText(trxPath));
+        var ns = document.Root?.Name.Namespace ?? XNamespace.None;
+        var messages = new List<string>();
+        foreach (var result in document.Descendants(ns + "UnitTestResult"))
+        {
+            var outcome = (string?)result.Attribute("outcome") ?? "";
+            if (!outcome.Equals("NotExecuted", StringComparison.Ordinal))
+                continue;
+            var traces = result.Elements(ns + "Output").Elements(ns + "DebugTrace").ToArray();
+            messages.Add(traces.Length == 1 ? traces[0].Value : "<missing-or-ambiguous>");
+        }
+
+        return messages;
     }
 
     private static int Count(string text, string token)
@@ -145,7 +188,7 @@ public sealed class NativeLinuxPolicyExecutionTests
             File.WriteAllText(path, trxXml);
             var trx = TrxReport.Parse(path);
             trx.Ok.ShouldBeTrue(trx.Error);
-            return Problems(linux: false, trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, sentinel);
+            return Problems(linux: false, trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, sentinel, ReadSkipMessages(path));
         }
         finally
         {
