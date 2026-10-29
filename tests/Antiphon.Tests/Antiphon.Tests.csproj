@@ -166,7 +166,7 @@
     </EmbeddedResource>
     <!-- AssignCulture reads the .cs infix of *.cs.txt as Czech (cs) and emits a satellite. -->
     <None Remove="Fixtures\NativeLinuxPolicy\*.cs.txt" />
-    <EmbeddedResource Include="Fixtures\NativeLinuxPolicy\*.cs.txt">
+    <EmbeddedResource Include="Fixtures\NativeLinuxPolicy\*.cs.txt" WithCulture="false" Culture="">
       <LogicalName>NativeLinuxPolicy.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
     <Compile Include="../Antiphon.Agents.Pty.Tests/EffortTestScreen.cs" Link="Agents/EffortTestScreen.cs" />
@@ -183,10 +183,7 @@
   <!-- *.cs.txt is a Czech culture name to AssignCulture. Force the fixtures into the main assembly. -->
   <Target Name="KeepNativeLinuxPolicyFixturesInMainAssembly" AfterTargets="SplitResourcesByCulture">
     <ItemGroup>
-      <EmbeddedResource Update="@(EmbeddedResource)" Condition="$([System.String]::Copy('%(Identity)').Contains('NativeLinuxPolicy'))">
-        <WithCulture>false</WithCulture>
-        <Culture></Culture>
-      </EmbeddedResource>
+      <EmbeddedResource Update="Fixtures\NativeLinuxPolicy\*.cs.txt" WithCulture="false" Culture="" />
     </ItemGroup>
   </Target>
 
