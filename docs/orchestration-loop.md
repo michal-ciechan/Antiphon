@@ -2430,12 +2430,16 @@ measured on server2 at `8004259c` (22.328 s to the first `not-built` line under 
 burners, so 45 s), and on Windows at least the 120 s one-pass floor from qualification
 `28bbb58e`, which finished a pass and then refused because both passes and the canary copy
 shared one 120 s wait. That Windows 120 s floor is provisional until a Windows pass
-duration is recorded. The canary is a plain byte copy, not a hard link. Its budget is
+duration is recorded. The canary is a plain byte copy, not a hard link. Its Linux budget is
 twice the plain-copy p95 measured on server2 on 2026-10-29 (samples 1957 ms, 2253 ms and 2249 ms;
-nearest-rank p95 2253 ms, so 5 s; see `EvaluationBudget.MeasuredCopyP95Milliseconds`);
-that copy budget is provisional for Windows. Raise the Windows pass floor by editing
-`EvaluationBudget.WindowsPassFloorSeconds`, and the copy budget by editing
-`EvaluationBudget.MeasuredCopyP95Milliseconds`, both in
+nearest-rank p95 2253 ms, so 5 s; see `EvaluationBudget.MeasuredCopyP95Milliseconds`).
+The Windows copy budget is PROVISIONAL: `EvaluationBudget.WindowsCopyMeasurementMultiplier`
+(5) times that same Linux measurement, rounded up to seconds (12 s), until a native Windows
+plain-copy p95 replaces it. A canary directory left when the audit script process itself dies
+is not swept on the next run. Raise the Windows pass floor by editing
+`EvaluationBudget.WindowsPassFloorSeconds`, the Linux copy measurement by editing
+`EvaluationBudget.MeasuredCopyP95Milliseconds`, and the provisional Windows multiplier by
+editing `EvaluationBudget.WindowsCopyMeasurementMultiplier`, all in
 `tools/Antiphon.LandGraphAudit/EvaluationBudget.cs`, from a fresh measurement. The script
 waits for the tool's printed `ceiling`, which adds only `EvaluationBudget.StartupGraceSeconds`
 (60). A timeout still exits 2. `not-built` lines

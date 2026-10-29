@@ -26,14 +26,7 @@ public static class Program
         string? repo = null;
         string? solution = null;
         string? canaryRecord = null;
-        string? touch = null;
         var probe = false;
-        var witness = false;
-        int? passBudgetMs = null;
-        int? copyBudgetMs = null;
-        int? holdPass1Ms = null;
-        int? holdCopyMs = null;
-        int? holdPass2Ms = null;
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -42,35 +35,12 @@ public static class Program
                 case "--solution" when i + 1 < args.Length: solution = args[++i]; break;
                 case "--api-probe": probe = true; break;
                 case "--canary-record" when i + 1 < args.Length: canaryRecord = args[++i]; break;
-                case "--witness-clocks": witness = true; break;
-                case "--touch-canary" when i + 1 < args.Length: touch = args[++i]; break;
-                case "--pass-budget-ms" when TakeMilliseconds(args, ref i, out var passMs): passBudgetMs = passMs; break;
-                case "--copy-budget-ms" when TakeMilliseconds(args, ref i, out var copyMs): copyBudgetMs = copyMs; break;
-                case "--hold-pass1-ms" when TakeMilliseconds(args, ref i, out var hold1): holdPass1Ms = hold1; break;
-                case "--hold-copy-ms" when TakeMilliseconds(args, ref i, out var holdCopy): holdCopyMs = holdCopy; break;
-                case "--hold-pass2-ms" when TakeMilliseconds(args, ref i, out var hold2): holdPass2Ms = hold2; break;
                 default: return Fail($"unknown or incomplete argument '{args[i]}'");
             }
         }
 
         if (repo is null || (solution is null && !probe))
             return Fail("usage: --repo <dir> --solution <file.sln> [--api-probe]");
-        WitnessRequest? clocks = null;
-        if (witness)
-        {
-            if (probe || passBudgetMs is null || copyBudgetMs is null || holdPass1Ms is null || holdCopyMs is null || holdPass2Ms is null
-                || passBudgetMs < 1 || copyBudgetMs < 1)
-                return Fail("witness clocks require --repo, --solution, --pass-budget-ms, --copy-budget-ms, --hold-pass1-ms, --hold-copy-ms and --hold-pass2-ms");
-            clocks = new WitnessRequest(
-                TimeSpan.FromMilliseconds(passBudgetMs.Value),
-                TimeSpan.FromMilliseconds(copyBudgetMs.Value),
-                TimeSpan.FromMilliseconds(holdPass1Ms.Value),
-                TimeSpan.FromMilliseconds(holdCopyMs.Value),
-                TimeSpan.FromMilliseconds(holdPass2Ms.Value),
-                touch);
-        }
-        else if (passBudgetMs is not null || copyBudgetMs is not null || holdPass1Ms is not null || holdCopyMs is not null || holdPass2Ms is not null || touch is not null)
-            return Fail("phase witness arguments require --witness-clocks");
 
         if (!string.IsNullOrEmpty(canaryRecord))
             CanaryRepository.RecordPath = Path.GetFullPath(canaryRecord);
@@ -91,7 +61,7 @@ public static class Program
 
             // This static gate runs before loading MSBuild. A matching pin is only permission
             // to continue to the unchanged evaluation checks, never sufficient for approval.
-            if (!probe && clocks is null)
+            if (!probe)
             {
                 var pinRefusals = new SortedSet<string>(StringComparer.Ordinal);
                 TargetPins.Check(repo, pinRefusals);
@@ -115,7 +85,7 @@ public static class Program
             if (probe)
                 return Evaluation.Probe(instance.Version.ToString(), Console.Out);
 
-            return Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out, clocks);
+            return Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out);
         }
         catch (Exception ex)
         {
@@ -125,13 +95,6 @@ public static class Program
         {
             CanaryRepository.DeleteActive();
         }
-    }
-
-    private static bool TakeMilliseconds(string[] args, ref int index, out int value)
-    {
-        value = 0;
-        if (index + 1 >= args.Length) return false;
-        return int.TryParse(args[++index], NumberStyles.None, CultureInfo.InvariantCulture, out value) && value >= 0;
     }
 
     private static bool PrintBudget(string[] args, out int exitCode)
@@ -166,7 +129,7 @@ public static class Program
         var passMs = measuredPass ?? EvaluationBudget.MeasuredLoadedPassP95Milliseconds;
         var copyMs = measuredCopy ?? EvaluationBudget.MeasuredCopyP95Milliseconds;
         var passSeconds = EvaluationBudget.PassSeconds(passMs, windows ?? OperatingSystem.IsWindows());
-        var copySeconds = EvaluationBudget.CopySeconds(copyMs);
+        var copySeconds = EvaluationBudget.CopySeconds(copyMs, windows ?? OperatingSystem.IsWindows());
         var total = EvaluationBudget.TotalSeconds(passSeconds, EvaluationBudget.Passes, copySeconds);
         var grace = EvaluationBudget.StartupGraceSeconds;
         Console.Out.WriteLine($"pass={passSeconds.ToString(CultureInfo.InvariantCulture)}");
@@ -203,6 +166,6 @@ internal static class Evaluation
     public static int Probe(string sdkVersion, TextWriter output) => ApiProbe.Run(sdkVersion, output);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static int Audit(string repo, string solution, string sdkDirectory, TextWriter output, WitnessRequest? witness = null) =>
-        SolutionAudit.Run(repo, solution, sdkDirectory, output, witness);
+    public static int Audit(string repo, string solution, string sdkDirectory, TextWriter output) =>
+        SolutionAudit.Run(repo, solution, sdkDirectory, output);
 }

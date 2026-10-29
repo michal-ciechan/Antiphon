@@ -17,6 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Antiphon.LandGraphAudit.Core\Antiphon.LandGraphAudit.Core.csproj" />
     <PackageReference Include="Microsoft.Build" Version="18.0.2" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.0.2" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
