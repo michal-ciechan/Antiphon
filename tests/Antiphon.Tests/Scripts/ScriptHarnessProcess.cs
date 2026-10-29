@@ -24,6 +24,7 @@ internal sealed record ScriptHarnessOptions(
         TimeSpan.FromSeconds(300), TimeSpan.FromSeconds(10), PostExitDrainBudget: ProductionPostExitDrain);
 
     // Callers that omit PostExitDrainBudget keep CleanupBudget, so fixtures stay short.
+    // The drain wait also listens to the execution budget, so root exit does not extend it.
     internal TimeSpan EffectivePostExitDrain => PostExitDrainBudget ?? CleanupBudget;
 }
 
@@ -98,14 +99,19 @@ internal static class ScriptHarnessProcess
                             postExit = new CancellationTokenSource(options.EffectivePostExitDrain, clock);
                             options.OnPostExitDrainArmed?.Invoke();
                         }
-                        using var wait = CancellationTokenSource.CreateLinkedTokenSource(
-                            callerToken, drain ? postExit!.Token : execution.Token);
+                        // During the drain the execution budget stays linked, so the
+                        // earlier deadline wins. The drain timer alone would let a root
+                        // that exits near the end of the budget wait the full drain past it.
+                        using var wait = drain
+                            ? CancellationTokenSource.CreateLinkedTokenSource(callerToken, executionBudget.Token, postExit!.Token)
+                            : CancellationTokenSource.CreateLinkedTokenSource(callerToken, execution.Token);
                         Task completed;
                         try
                         {
                             completed = await Task.WhenAny(pending).WaitAsync(wait.Token);
                         }
-                        catch (OperationCanceledException) when (drain && !callerToken.IsCancellationRequested)
+                        catch (OperationCanceledException) when (drain && postExit!.IsCancellationRequested &&
+                            !executionBudget.IsCancellationRequested && !callerToken.IsCancellationRequested)
                         {
                             var open = OpenStreams(stdoutPump, stderrPump);
                             throw new TimeoutException(
