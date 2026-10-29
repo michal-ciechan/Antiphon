@@ -36,7 +36,7 @@ function Get-RcDownstream {
 }
 
 function Read-RcProjectGraph {
-    param([string]$Root, [string]$Sha)
+    param([string]$Root, [string]$Sha, [hashtable]$DocumentCache = @{})
     $reasons=[Collections.Generic.List[string]]::new()
     $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $blobs=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
@@ -68,7 +68,9 @@ function Read-RcProjectGraph {
     foreach ($batch in $catalog.batches) { if (-not $projects.ContainsKey([string]$batch)) { $reasons.Add("unknown-batch:$batch") } }
     # Read literal imports and ancestor Directory.Build inputs conservatively, including
     # all conditional references. Never execute MSBuild or evaluate project expressions.
-    $documents=@{}
+    # Git blob identity binds the immutable XML bytes. Share only parsed documents;
+    # imports, relative paths, edges and inventories are still resolved for each graph.
+    $documents=$DocumentCache
     foreach ($project in $projects.Values) {
         $queue=[Collections.Generic.Queue[string]]::new(); $queue.Enqueue($project.path)
         $ancestor=$project.path -replace '/[^/]+$',''
@@ -87,12 +89,13 @@ function Read-RcProjectGraph {
             if (-not $visited.Add($input)) { continue }
             try {
                 if (-not $blobs.ContainsKey($input)) { throw "missing-input:$input" }
-                if (-not $documents.ContainsKey($input)) {
+                $blob=$blobs[$input]
+                if (-not $documents.ContainsKey($blob)) {
                     $settings=[Xml.XmlReaderSettings]::new(); $settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit; $settings.XmlResolver=$null
                     $reader=[Xml.XmlReader]::Create([IO.StringReader]::new((Get-TestSelectionBlob $Root $Sha $input)), $settings)
-                    try { $document=[Xml.XmlDocument]::new(); $document.XmlResolver=$null; $document.Load($reader); $documents[$input]=$document } finally { $reader.Dispose() }
+                    try { $document=[Xml.XmlDocument]::new(); $document.XmlResolver=$null; $document.Load($reader); $documents[$blob]=$document } finally { $reader.Dispose() }
                 }
-                $document=$documents[$input]
+                $document=$documents[$blob]
                 foreach ($node in $document.SelectNodes("//*[local-name()='ProjectReference']")) {
                     $target=Resolve-RcProjectInput $input $node.GetAttribute('Include') $project.path
                     if (-not $projects.ContainsKey($target)) { throw "missing-reference:$input" }
@@ -155,8 +158,9 @@ function Get-RcProjectSelection {
     foreach ($sha in @($BaselineSha,$CandidateSha)) {
         if ($sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     }
-    $old=Read-RcProjectGraph $RepositoryRoot $BaselineSha
-    $new=Read-RcProjectGraph $RepositoryRoot $CandidateSha
+    $documents=@{}
+    $old=Read-RcProjectGraph $RepositoryRoot $BaselineSha $documents
+    $new=Read-RcProjectGraph $RepositoryRoot $CandidateSha $documents
     $reasons=@($old.fallbackReasons)+@($new.fallbackReasons)
     if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$BaselineSha,$CandidateSha) @(0,1)).Exit -ne 0) { $reasons+='baseline-not-ancestor' }
     # No rename inference: both removed and added ownership must participate.
