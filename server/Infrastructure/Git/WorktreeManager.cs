@@ -150,7 +150,7 @@ public sealed class WorktreeManager : IWorktreeManager
             now,
             now);
 
-        var admin = (await RunGitAsync(worktreePath, ["rev-parse", "--absolute-git-dir"], ct)).Stdout.Trim();
+        var admin = CanonicalGitPath((await RunGitAsync(worktreePath, ["rev-parse", "--absolute-git-dir"], ct)).Stdout);
         await SaveMetadataAsync(intent with { CreationComplete = true, GitDirectory = admin }, ct);
         return info;
     }
@@ -898,6 +898,9 @@ public sealed class WorktreeManager : IWorktreeManager
     private static string NormalizePathForComparison(string path) =>
         Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
+    // rev-parse prints forward slashes. GitDirectory is persisted and compared as an OS path.
+    internal static string CanonicalGitPath(string gitOutput) => gitOutput.Trim();
+
     private static string NormalizeBranchName(string branch)
     {
         const string refsHeadsPrefix = "refs/heads/";
@@ -1086,7 +1089,7 @@ public sealed class WorktreeManager : IWorktreeManager
                 || !PathsEqual(metadata.RepoPath, repoPath) || stale.Branch != "refs/heads/" + metadata.Branch
                 || stale.Locked || !Directory.Exists(metadata.GitDirectory))
                 throw new ConflictException("Stale worktree registration requires creation/recovery ownership evidence; nothing removed.");
-            var common = (await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).Stdout.Trim();
+            var common = CanonicalGitPath((await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).Stdout);
             if (!IsPathUnderRoot(metadata.GitDirectory, Path.Combine(common, "worktrees"))
                 || !PathsEqual((await File.ReadAllTextAsync(Path.Combine(metadata.GitDirectory, "gitdir"), ct)).Trim(), Path.Combine(worktreePath, ".git"))
                 || (await File.ReadAllTextAsync(Path.Combine(metadata.GitDirectory, "HEAD"), ct)).Trim() != "ref: refs/heads/" + metadata.Branch)
@@ -1154,7 +1157,7 @@ public sealed class WorktreeManager : IWorktreeManager
         {
             // No directory: `worktree remove` cannot validate it and a repository-wide prune would
             // also drop other missing registrations, so delete only this registration's admin dir.
-            var common = (await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).Stdout.Trim();
+            var common = CanonicalGitPath((await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).Stdout);
             var marker = Path.Combine(worktreePath, ".git");
             var admins = Directory.Exists(Path.Combine(common, "worktrees"))
                 ? Directory.EnumerateDirectories(Path.Combine(common, "worktrees"))
@@ -1196,9 +1199,10 @@ public sealed class WorktreeManager : IWorktreeManager
         var ahead = await RunGitAsync(repoPath, ["merge-base", "--is-ancestor", intent.InitialSha!, refName], ct, throwOnError: false);
         if (admin.ExitCode != 0 || common.ExitCode != 0 || head.ExitCode != 0 || resolves.ExitCode != 0 || ahead.ExitCode != 0)
             return false;
-        var adminDir = admin.Stdout.Trim();
+        var adminDir = CanonicalGitPath(admin.Stdout);
+        var commonDir = CanonicalGitPath(common.Stdout);
         var gitdirFile = Path.Combine(adminDir, "gitdir");
-        if (!IsPathUnderRoot(adminDir, Path.Combine(common.Stdout.Trim(), "worktrees"))
+        if (!IsPathUnderRoot(adminDir, Path.Combine(commonDir, "worktrees"))
             || !File.Exists(gitdirFile)
             || !PathsEqual((await File.ReadAllTextAsync(gitdirFile, ct)).Trim(), Path.Combine(worktreePath, ".git"))
             || head.Stdout.Trim() != refName

@@ -111,6 +111,16 @@ public class WorktreeManagerTests
             "error: failed to delete '...': Permission denied\n").ShouldBeFalse();
         WorktreeManager.IsAlreadyUnregisteredWorktreeError("").ShouldBeFalse();
     }
+
+    [Test]
+    public void C1502_ForwardSlashDriveLetterGitPathIsOsCanonical()
+    {
+        // Git for Windows prints C:/... . The stored GitDirectory is compared with Path.GetFullPath.
+        const string git = "C:/Users/lndco/AppData/Local/Temp/antiphon-worktree-tests/repo/.git/worktrees/card-task-deadbeef";
+        var canonical = WorktreeManager.CanonicalGitPath(git);
+        canonical.ShouldBe(Path.GetFullPath(git));
+        canonical.ShouldNotBe(git);
+    }
 }
 
 [Category("Unit")]
