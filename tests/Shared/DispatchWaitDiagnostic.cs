@@ -60,6 +60,20 @@ public static class DispatchWaitDiagnostic
         return text.Length <= 700 ? text : text[..700];
     }
 
+    /// <summary>
+    /// C540 reduced-sibling wait. Today this is the exact expected-sibling count: a third
+    /// <c>sibling-inspection-incomplete</c> intent, the product's 5 s budget signal, never settles.
+    /// </summary>
+    public static bool ReducedSiblingDispatchReady(
+        IReadOnlyList<(string Key, string? Detail)> intents,
+        IReadOnlyCollection<string> expectedSiblingKeys)
+    {
+        if (expectedSiblingKeys.Count == 0 || intents.Count != expectedSiblingKeys.Count)
+            return false;
+        var keys = intents.Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
+        return expectedSiblingKeys.All(keys.Contains);
+    }
+
     private static string Flat(string? value)
     {
         if (string.IsNullOrEmpty(value)) return "";

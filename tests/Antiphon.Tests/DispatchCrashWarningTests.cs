@@ -48,6 +48,59 @@ public sealed class DispatchCrashWarningTests
     }
 
     [Test]
+    public void Inspection_timeout_with_no_omission_settles_the_reduced_sibling_wait()
+    {
+        var containing = "sibling:" + Guid.Parse("11111111111111111111111111111111").ToString("N");
+        var divergent = "sibling:" + Guid.Parse("22222222222222222222222222222222").ToString("N");
+        // The split-55 failure: enrichment spent the 5 s budget after every candidate was inspected.
+        const string detail = "Same-card warning inspection incomplete: inspection_timeout; 4 raw, 3 candidates, 3 inspected, 0 omitted, 18 commands.";
+        DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+        [
+            (containing, "task branched from master without the kept branch."),
+            (divergent, "task branched from master without the kept branch."),
+            ("sibling-inspection-incomplete", detail),
+        ], [containing, divergent]).ShouldBeTrue(
+            "the 5 s inspection budget is the product signal; the reduced siblings plus that warning must settle the wait");
+    }
+
+    [Test]
+    public void An_exact_reduced_sibling_pair_settles_without_a_budget_warning()
+    {
+        var containing = "sibling:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var divergent = "sibling:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+            [(containing, "kept"), (divergent, "kept")],
+            [containing, divergent]).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("Same-card warning inspection incomplete: inspection_timeout; 4 raw, 3 candidates, 2 inspected, 1 omitted, 18 commands.")]
+    [Arguments("Same-card warning inspection incomplete: git_inspection_error; 4 raw, 3 candidates, 3 inspected, 0 omitted, 18 commands.")]
+    [Arguments("Same-card warning inspection incomplete: candidate_limit; 4 raw, 3 candidates, 3 inspected, 0 omitted, 18 commands.")]
+    public void A_non_timeout_or_omitting_inspection_does_not_settle_the_sibling_wait(string detail)
+    {
+        var containing = "sibling:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var divergent = "sibling:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+        [
+            (containing, "kept"),
+            (divergent, "kept"),
+            ("sibling-inspection-incomplete", detail),
+        ], [containing, divergent]).ShouldBeFalse();
+    }
+
+    [Test]
+    public void A_missing_expected_sibling_does_not_settle()
+    {
+        var containing = "sibling:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var divergent = "sibling:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+            [(containing, "kept"), ("sibling-inspection-incomplete",
+                "Same-card warning inspection incomplete: inspection_timeout; 4 raw, 3 candidates, 3 inspected, 0 omitted, 18 commands.")],
+            [containing, divergent]).ShouldBeFalse();
+    }
+
+    [Test]
     public void The_failure_text_names_every_observed_warning()
     {
         var text = DispatchWaitDiagnostic.FormatWarnings(
