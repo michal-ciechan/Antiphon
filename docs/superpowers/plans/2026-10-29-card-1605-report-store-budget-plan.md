@@ -42,12 +42,13 @@ Line references are at the inspected source SHA; paths are repository relative.
 | Git already has a 15-second bound. | `server/Application/Services/GitWorkspaceService.cs:1160-1177` acquires the gate and synchronously starts the child before creating its timeout. `GitProcessGate.cs:15-29` defaults to width eight and waits only on its caller token. `GitSettings.cs:6-7` defaults to eight/15. | Merely passing the caller token to preparation could wait indefinitely. Keep a separate finite store-local preparation deadline; do not change the global Git gate or timeout. |
 | Cancellation drops the file. | `AgentReportStore.cs:74-82` maps non-caller cancellation to `io-budget-expired` and removes an owned temporary file. A readback failure after rename can leave canonical bytes on disk but returns no pointer. | Require no successful pointer after deadline and no temporary residue; do not claim every failure means no canonical file exists. |
 | A returned path is durable exact content. | `AgentReportStore.cs:41-69,94-109,112-180` uses full task GUID plus raw UTF-8 SHA-256, durable-root and ignore/tracking checks, sibling WriteThrough temporary write, rename and exact readback. | Preserve these checks, order, path identity, and atomic publication. No retry or root-custody cache. |
-| Caller text is lost. | `AgentTaskReplyService.cs:3660-3702` falls back to legacy spill; small reports may have no spill, and task Result remains. `CardDoneArtifactPreservation.cs:41-54` refuses `artifact_unpreserved`; `AgentTaskLandNotificationService.cs:394-414` refuses `completion_report_unavailable`. | Fix canonical file preservation without changing caller settlement, cleanup admission or delivery semantics. |
+| Caller text is lost. | `AgentTaskReplyService.cs:3660-3702` falls back to legacy spill; small reports may have no spill, and task Result remains. `CardDoneArtifactPreservation.cs:41-54` refuses `artifact_unpreserved`; `AgentTaskLandNotificationService.cs:394-414` refuses `completion_report_unavailable`. | Fix canonical file preservation; keep settlement/cleanup verdicts and bound snapshot regeneration without changing delivery custody. |
 | Moving the deadline leaves caller waits unchanged. | There are three production `StoreAsync` call sites but **four wait sites**, including maintenance settling inline. Settlement holds a per-session semaphore; cleanup waits before admission locks; the notification host reconciles rows sequentially in pages of 128. Maintenance supplies a per-sweep token (default 60 s). | Result/fallback semantics remain, but latency increases. The wait inventory below quantifies both individual stores and cumulative caller waits. |
 | A per-session settlement lock prevents dispatcher-wide waits. | `AgentTaskDispatcher.TickAsync:373-376` awaits maintenance before admission, and maintenance awaits settlement inline. The `IsSettleInFlight` skip at 4807 only covers another path already settling. However, the current `AgentTaskDispatcherHostedService:44,81,101` runs independent admission/maintenance loops; `RunSweepAsync:1961-2125` also bounds each sweep. | Add the missing fourth wait site and accept its 32*k s store contribution subject to the existing sweep deadline. Do not attribute hosted admission isolation to the per-session lock or assert an unqualified fleet-wide 32*k s stall. |
+| Regeneration needs the same 30 s preparation cap as settlement. | `EnsureSnapshotReportAsync:394-414` is followed by durable `RetryPending`, incremented attempts and `NextAttemptAt` at 130-136. `RetrySeconds:459` is 5..300 s with no attempt limit. The outer catch at 372 excludes OCE; the hosted scanner only logs it and continues. | Give only this store call a 5 s total allowance; catch allowance cancellation locally so the existing retry state is saved. Under saturation, a short attempt delays that note instead of spending 32 s ahead of every following row. |
 | Existing tests protect the production deadline. | `tests/Antiphon.Tests/TestHelpers/ReportWorkspace.cs:44-53` supplies 30 seconds. `AgentReportStoreTests.cs:178-211` has a zero-budget row, not a slow-Git-versus-slow-write discriminator. | New witnesses must explicitly use production defaults; existing custody tests retain their purpose. |
 | The 2.5-second write-stall contract can be relaxed. | `docs/superpowers/plans/2026-10-13-card-1032-s8-code-evidence.md:123-146` records the forced write stall returning `io-budget-expired`; CARD-1605 explicitly requires retaining it. | A two-second write deadline and an actual 2.5-second stall witness are acceptance requirements. |
-| A fixed host is needed. | Required GETs `/api/runner-defaults` and `/api/session-runners` succeeded on 2026-10-29; defaults revision 2, no kind overrides, eligible Linux and Windows lanes. | Re-read placement at dispatch. Checkpoints name lanes; omit `-Runner`, and omit `-Platform` unless an OS witness requires it. |
+| A fixed host is needed. | Required GETs `/api/runner-defaults` and `/api/session-runners` succeeded again in round 3 on 2026-10-29; defaults revision 2, no kind overrides, dispatch-eligible Linux and Windows lanes. | Re-read placement at dispatch. Checkpoints name lanes; omit `-Runner`, and omit `-Platform` unless an OS witness requires it. |
 
 ## Decisions
 
@@ -65,7 +66,9 @@ Line references are at the inspected source SHA; paths are repository relative.
   derivation and accepted caller costs below are part of this decision. Dispose
   it at the phase boundary; create the I/O token from the original caller.
   Do not scale it up with configured Git timeouts or reset it per command.
-  CP-5 must meet the concrete loaded-preparation threshold below before acceptance.
+  CP-5 must meet the fixture preparation sanity bound below; this is not
+  production validation of 30 seconds. Snapshot regeneration has D-11's shorter
+  caller allowance because its retry is durable.
   Reject caller-only preparation (unbounded gate wait), a global Git scheduling
   change (unrelated consumers), and a 105-420 s per-store allowance derived by
   granting every command its full timeout (unacceptable lock/scan delays).
@@ -85,10 +88,11 @@ Line references are at the inspected source SHA; paths are repository relative.
   valid-file return, before rename and before final success. Retain owned-temp
   cleanup. Synchronous filesystem calls and Process.Start remain cooperatively
   bounded, not forcibly preemptible; do not implement detached abandoned I/O.
-- **D-5: no retry or new attention workflow.** A retry multiplies Git load and
+- **D-5: no new retry or attention workflow.** An added retry multiplies Git load and
   may repeat a post-rename outcome; it does not repair the wrongly scoped timer.
   Existing warning/fallback/refusal paths remain. An attention item alone would
-  surface the loss without fixing it. Do not add background workers or sessions.
+  surface the loss without fixing it. Preserve regeneration's existing durable
+  retry through D-11; do not add background workers or sessions.
 - **D-6: measure distinct phases.** Extend the store's existing structured
   diagnostics with total and preparation/I/O elapsed times and fixed phase/outcome
   names, including early return and expiry. Record no report bytes, exception
@@ -121,10 +125,27 @@ Line references are at the inspected source SHA; paths are repository relative.
   dispatcher or its sweep settings. Its hosted admission loop already runs
   independently; compatibility `TickAsync` still waits for maintenance. This
   qualification is established from source, not assumed from the lock's scope.
+- **D-11: bound each snapshot-regeneration store call to five seconds total.**
+  In `EnsureSnapshotReportAsync`, start a CTS linked to its caller immediately
+  before `reports.StoreAsync`; use a fixed internal default of **5 s**, covering
+  preparation plus report I/O together, with no per-phase reset. The store still
+  enforces its own two-second I/O ceiling. Five seconds gives a recovering
+  healthy path up to three seconds of preparation plus a full two-second write,
+  or more preparation with less remaining write time. It permits V-1's 2.5 s
+  transient wait but deliberately does not wait through a full 15 s saturated
+  wave. This is a scan-latency policy, not a measured p95 claim.
+  Catch `OperationCanceledException when (!ct.IsCancellationRequested)` locally
+  around that store call and return `completion_report_unavailable`; caller
+  shutdown still propagates. `ReconcileAsync` then saves its existing RetryPending
+  state, attempt count and retry time. Reject retaining 30+2 s here: durable,
+  unlimited retry makes a short refusal recoverable, while 32*m s repeatedly
+  delays all following notes. Reject a new concurrent scanner or per-pass breaker
+  as unnecessary scope for this repair. Keep the existing backoff calculation;
+  this caps each store attempt, not the entire scan or a minimum future cooldown.
 
 These are implementation defaults for independent TestDesign review. The 30 s
-production cap is an explicit policy decision; performance estimates and its
-acceptance measurements are still pending. Nothing here claims execution.
+production cap is an explicit policy decision; performance estimates and fixture
+measurements are still pending. Nothing here claims execution or production-p95 validation.
 
 ### Preparation ceiling derivation and caller wait inventory
 
@@ -164,7 +185,7 @@ production p95 is invented to justify the chosen policy.
 | Settlement: `AgentTaskReplyService.OnTurnEndAsync:88-108` / transcript and watchdog entry paths hold the same `_settleLocks` semaphore through `JudgeOpenTaskAsync`, `ResolveReportFileAsync:1278,3660-3675`. `AgentSessionRuntime:806-840` awaits it; no shorter store-specific outer timer was found on these paths. | Up to **30+2=32 s** of store budgets, versus 2 s today; another callback for that session waits behind it. Expiry falls back to spill/Result; this allowance excludes spill, DB and delivery work. | Accept the additional at-most-30 s active-budget contribution to preserve the authoritative report during a transient Git backlog. A per-session semaphore does **not** prevent a serial caller from blocking unrelated work; maintenance is the separate row below. |
 | Dispatcher maintenance: `RunMaintenanceAsync:435,462` runs dead-session and deferred-report sweeps; their `OnTurnEndAsync` awaits at 3194,4822,4846,4909 are inline. `TickAsync:373-376` waits for all maintenance before dispatching the queued population. | Candidate store contribution **32*k s**, versus **2*k s** today, for k serial sweep settlements (e.g. k=3: 96 s versus 6 s before outer truncation). `IsSettleInFlight:4807` skips only another path's already-held lock. Each sweep's default **60 s** token cancels remaining work; with the production owned-scope path a noncooperative sweep is left owned after a further **30 s** grace. These are per-sweep, not whole-tick bounds. | D-10 accepts longer maintenance/compatibility-tick waits to preserve one-shot reports, retaining the existing outer bounds. Current hosting runs admission and maintenance independently (CARD-1519, commit `339a851f82a2342d2ed54e5ddaaaab4b75c440d5`), so the inline compatibility path's fleet-wide wait must not be claimed for the hosted admission loop. No new scheduling or cancellation change is needed. |
 | Cleanup admission: `CardDoneArtifactPreservation.EnsureAsync:37-50`, called by `CardWorktreeCleanupExecutor.TryAsync:70`. Store happens **before** the transaction/admission lock and card/task row locks at lines 77-87. | Up to **32 s per endpoint** before admission can proceed or return `artifact_unpreserved`; a caller processing k endpoints serially pays up to 32*k s for their stores. Existing pre/post `IsUsableAsync` and deliverable reads are additional caller-token work. | Accept the delay because preservation must precede destructive admission and this wait holds none of those admission/row locks. Never weaken custody to speed cleanup. |
-| Snapshot regeneration: `AgentTaskLandNotificationService.EnsureSnapshotReportAsync:394-414`, awaited in `ReconcileAsync:127`. `AgentTaskLandNotificationHostedService:100-110` awaits rows serially, pages at 128, then sleeps 5 s after the whole scan. | Up to **32 s per missing/unusable snapshot**: three such rows contribute **96 s** (up to 90 s extra versus today), and 128 contribute **4096 s = 68 min 16 s**, plus other work. For m regeneration attempts in a pass the contribution is 32*m s; paging is not a total-run cap. Failure remains `completion_report_unavailable` / RetryPending. Backoff 5..300 s is based on the time captured before regeneration, so early delays may already have elapsed at refusal. The cost can repeat on subsequent eligible passes. | Explicitly accept this worst case for this narrow store-only repair: each row remains finite, bytes must be preserved before delivery, and a small regeneration-only cap would make recovery fail under the same Git contention. This is a conscious head-of-line tradeoff, **not** a scan latency guarantee. If a bounded whole-scan latency becomes required, commission a separately designed fair scan/batching change; do not smuggle concurrency, retries or caller cancellation changes into this card. |
+| Snapshot regeneration: `AgentTaskLandNotificationService.EnsureSnapshotReportAsync:394-414`, awaited in `ReconcileAsync:127`. `AgentTaskLandNotificationHostedService:100-110` awaits rows serially, pages at 128, then sleeps 5 s after the whole scan. | D-11 limits each store attempt to **5 s total**, versus 2 s today and 32 s under the rejected uncapped split. Three rows contribute **15 s** (9 s extra versus today); 128 contribute **640 s = 10 min 40 s**, plus verification/DB/other work. For m eligible attempts the contribution is **5*m s**, not 32*m s. Local timeout handling returns `completion_report_unavailable`, so Reconcile saves RetryPending, advances attempts and sets NextAttemptAt. | Accept this bounded per-row cost because immutable snapshots and unlimited retry retain recovery. Backoff 5..300 s still uses the pre-attempt time; it may already be due when the attempt ends or the next pass begins. No cooldown/fairness or total-scan guarantee is claimed. V-13 proves a timed-out first row does not prevent a ready second row being reconciled in the same pass. |
 
 The 32 s values bound **cooperative active-budget time**, not hard wall time.
 Synchronous `Process.Start`, filesystem calls, disposal and temporary cleanup
@@ -175,12 +196,14 @@ parking/release behavior is introduced.
 
 ## Smallest implementation
 
-Change `server/Infrastructure/Files/AgentReportStore.cs` only for production:
+Change `server/Infrastructure/Files/AgentReportStore.cs` for the phase split:
 split token lifetimes, keep the current I/O default, distinguish timeout reasons,
 and add bounded phase diagnostics. Reuse the injected `GitWorkspaceService` and
 its existing `GitProcessGate` constructor seam for real contention witnesses.
-No production changes to Git scheduling, caller services, Program registration,
-report policy, retention, cleanup execution, or session state are intended.
+The only production caller change is the five-second linked store allowance
+and local cancellation handler in
+`server/Application/Services/AgentTaskLandNotificationService.cs`. Keep Git
+scheduling, Program registration, retention, cleanup execution and session state.
 
 Use two sequential linked cancellation sources. After each awaited preparation
 operation and immediately before leaving preparation, check its token so a Git
@@ -204,6 +227,19 @@ canceled while in I/O => `io-budget-expired`; otherwise OCE => `canceled`.
 All refusal results have null Path and use the existing sanitized warning path.
 Owned-temp cleanup runs in every case. This preserves non-throwing behavior for
 unrelated cancellation while correcting today's misleading budget reason.
+
+In `EnsureSnapshotReportAsync`, leave the preliminary `IsUsableAsync` check under
+the original caller token. Create/dispose the five-second linked source around
+only the awaited StoreAsync attempt; do not use `WaitAsync` to abandon it. Check
+the linked token after the await before accepting a path, and check the original
+caller first when attributing cancellation. Translate local allowance expiry to
+`completion_report_unavailable`, never `preparation-budget-expired` or a new
+notification reason. StoreAsync sees this token as its caller cancellation, so
+its OCE must be handled **here**, not left to ReconcileAsync's excluding catch.
+Keep full-path equality and snapshot raw bytes as the success authority. Return
+to ReconcileAsync with its original live token so it can persist retry state;
+genuine host cancellation must escape. The initial usability read and retry DB
+save are outside the five-second store allowance and must be timed separately.
 
 ## RED witnesses and proposed verification
 
@@ -232,8 +268,9 @@ phase allowances; V-9's I/O-expiry case retains the production default.
 | R-1 existing `AgentReportStoreTests` | 28 | Whole existing class: exact content/full IDs, all 11 root cases, five tracking/ignore cases, two ineffective-ignore cases, atomic publication/reuse/concurrency, path limit and seven failure/cancellation cases. | Preserves custody gates that a tempting fast path or cache could bypass. Do not loosen their assertions or remove the zero-budget witness. |
 | R-2 existing `OutputDistillationDeliveryTests.Storage_failures_leave_a_recoverable_settled_report` and `Host_cancellation_during_storage_can_retry_settlement_once` | 8 | Seven storage failure vectors plus the caller-cancellation settlement retry. | Pins Result retention, fallback delivery and one logical queued note without adding an automatic store retry. |
 | R-3 existing `VerificationRoundDeliveryTests.C544_ReportRegeneratedFromSnapshot` | 1 | Real saved completion snapshot, remove its owned report, mutate current task.Result, restart fixture and deliver. | Verifies snapshot bytes are regenerated and delivered once, not current mutable task bytes. |
-| V-12 new `AgentReportStoreLoadTests.Store_samples_record_normal_and_contended_phases` | 1 | Require `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` and `NativeLinuxGate.Require("CARD-1605 load telemetry requires native Linux")`; otherwise explicitly skip. CP-5 sets the flag. Use production defaults for all 80 samples. Validate every successful pointer/byte sequence, every refusal's null Path/reason/temp cleanup, and retain all phase samples. `io-budget-expired` is a measured allowed refusal, never fabricated success; other refusals fail the acceptance sample. Require observed controlled gate contention and D-2's preparation threshold. | No permanent zero-refusal assertion under the real 2 s I/O budget. Return counts/reasons and censored I/O tails separately; all-refused buckets are inconclusive, not success. CP-5 must execute, not skip. Permanent exact-byte/concurrency coverage is V-10; production timer coverage is V-1..V-5. |
-| R-4 existing classification guards | 2 | `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata` and `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`, compiled in `Antiphon.Tests`. | Catches unregistered Slow classes, invalid allowlist reason layout and missing/contradictory Unit/Integration tags. Source census reconciliation separately checks the two new Linux roster rows. |
+| V-12 new `AgentReportStoreLoadTests.Store_samples_record_normal_and_contended_phases` | 1 | Require `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` and `NativeLinuxGate.Require("CARD-1605 load telemetry requires native Linux")`; otherwise explicitly skip. CP-5 sets the flag. Use production defaults for all 80 samples. Validate every successful pointer/byte sequence, every refusal's null Path/reason/temp cleanup, and retain all phase samples. `io-budget-expired` is a measured allowed refusal, never fabricated success; other refusals fail the fixture sample. Require observed controlled gate contention and D-2's fixture preparation sanity bound. | No permanent zero-refusal assertion under the real 2 s I/O budget. Return counts/reasons and censored I/O tails separately; all-refused buckets are inconclusive, not success. CP-5 must execute, not skip. Permanent exact-byte/concurrency coverage is V-10; production timer coverage is V-1..V-5. |
+| V-13 new `VerificationRoundDeliveryTests.C1605_RegenerationTimeoutAdvancesRetryAndContinuesScan` | 1 | Use the real hosted notification scanner, service and production-default store with a private width-one Git gate. Prepare two eligible profiled completion rows with immutable snapshots and no queue link; inspect their actual database GUID order, remove only the first row's owned report and retain the second row's valid bytes. Hold the gate for the **whole pass**, observe the first store queued, and await the single `notification-scan` boundary. First row must persist RetryPending, exact `completion_report_unavailable`, one incremented EnqueueAttempts, NextAttemptAt equal to the captured attempt time plus `RetrySeconds(newAttempts)`, no queue row, no temporary file and no leaked waiter. Second row must acquire its one keyed queue row and reach AwaitingReceipt in that **same** pass while the gate is still held. Measure the first StoreAsync cancellation at about 5 s, require completion by 6 s including provisional 1 s scheduling tolerance, and time DB persistence separately; the first row is then observed as RetryPending within a finite 10 s pass watchdog. Release leases and stop/join the scanner in `finally`. | Removing/raising the five-second cap after the store split leaves the first row queued at the bounded assertion; removing the local catch leaves attempts/retry time unchanged even if the scanner continues. A fabricated store refusal fails the observed real gate-entry/cancellation requirements. A second blocked regeneration would not prove unrelated progress, hence its valid report. This is not a recipient-receipt claim: no terminal delivery is required. |
+| R-4 existing classification guards | 2 | `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata` and `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`, compiled in `Antiphon.Tests`. | Catches unregistered Slow classes, invalid allowlist reason layout and missing/contradictory Unit/Integration tags. These guards do not validate `tests/linux-test-roster.json`; the separately named Code/Review source census audit below checks its two new rows and the changed delivery-test row. |
 
 Commit/push S1 tests before the production fix. CP-1 must compile and execute
 both intended methods, with two path/preservation assertion failures attributable
@@ -246,7 +283,8 @@ production. Do not make a red test green by changing its I/O allowance.
 TestDesign must bind controls for timer-start placement, missing preparation
 bound, raised I/O bound, per-phase timer reset, swallowed caller cancellation,
 and skipped final token check (both empty-body V-7 cases), lowered I/O bound,
-and rethrown/misclassified unrelated cancellation. These are pending post-land Mutation obligations,
+and rethrown/misclassified unrelated cancellation. Bind V-13 controls for removing
+the regeneration allowance and removing its local OCE catch separately. These are pending post-land Mutation obligations,
 not permission for this Plan to mutate or execute code. Controls must be scoped
 to one exact method per cycle and assert the intended failure.
 
@@ -254,8 +292,8 @@ to one exact method per cycle and assert the intended failure.
 
 | Slice | Files | Outcome and verification |
 |---|---|---|
-| S1: discriminating tests first | New `tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs` with V-1/V-2/V-3; new `tests/Antiphon.Tests/TestHelpers/ReportBudgetWorkspace.cs` for shared seed, owned per-case clones, direct store construction and delayed Linux Git wrapper. Add Budget class Slow reason/name pair to `tests/Antiphon.Tests/slow-tests-allowlist.txt` and its three-method census entry to `tests/linux-test-roster.json`. | No production edits. Commit/push, then CP-1 intentional RED. Keep its failure receipts at the tested SHA. V-3 participates in S2's full green roster. |
-| S2: split deadlines and complete witnesses | `server/Infrastructure/Files/AgentReportStore.cs`; extend S1 class/helper for V-4..V-11; new `tests/Antiphon.Tests/Application/AgentReportStoreLoadTests.cs` for opt-in V-12. Add Load class Slow reason/name pair and finish both Linux census entries. Update `ReportWorkspace.cs` comments only if needed to distinguish its custody-test override. | Commit/push before tests. CP-2..CP-6 require green; exact roster is **49 + 8 + 1 + 1 + 2 = 61** executed results. Keep application callers and global Git behavior unchanged. Record measured phases/refusals against that source. |
+| S1: discriminating tests first | New `tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs` with V-1/V-2/V-3; new `tests/Antiphon.Tests/TestHelpers/ReportBudgetWorkspace.cs` for shared seed, owned per-case clones, direct store construction and delayed Linux Git wrapper. Add V-13 to `tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs` and its fixture support to `tests/Antiphon.Tests/TestHelpers/C544DeliveryRig.cs`. Add Budget class Slow reason/name pair to `tests/Antiphon.Tests/slow-tests-allowlist.txt`, its three-method census entry and the updated delivery-class census to `tests/linux-test-roster.json`. | No production edits. Commit/push all witnesses before their fixes, then CP-1 intentional RED. Keep its failure receipts at the tested SHA. V-3 and V-13 participate in S2's green roster; V-13 protects the new split's regression, not CP-1's old two-second failure. |
+| S2: split deadlines, bound regeneration and complete witnesses | `server/Infrastructure/Files/AgentReportStore.cs`; `server/Application/Services/AgentTaskLandNotificationService.cs`; extend S1 Budget class/helper for V-4..V-11; new `tests/Antiphon.Tests/Application/AgentReportStoreLoadTests.cs` for opt-in V-12. Add Load class Slow reason/name pair and finish the census entries. Update `ReportWorkspace.cs` comments only if needed to distinguish its custody-test override. | Commit/push before tests. CP-2..CP-7 require green; exact roster is **49 + 8 + 1 + 1 + 2 + 1 = 62** executed results. The only caller change is D-11's linked regeneration allowance/local catch; global Git behavior stays unchanged. Record measured phases/refusals against that source. |
 
 The helper uses the assembly-local `ProcessSpawnLimit`, because the delayed
 executable starts a shell as well as Git; `GitProcessSpawnLimit` is insufficient
@@ -263,6 +301,19 @@ for that class. Load tests cap in-method concurrency explicitly as described
 below. No separate test project is justified for this small server/Git boundary;
 CARD-1546 owns broader Git extraction. No session is added or changed to wait
 for input, so the CARD-1083 conditional-release checklist is not triggered.
+
+For V-13, extend C544DeliveryRig with test-only optional report-store/Git-gate
+injection and a bounded one-pass scan option; do not change other cases' defaults.
+Use its real settlement path and re-armable pre-queue fault to leave both
+completion obligations eligible, then clear the fault before scanning. Do not
+edit retry/state/queue rows to manufacture progress. Observe actual SQL GUID
+ordering before deleting the earlier row's owned report, so random identifiers
+cannot reverse the witness. An observing IAgentReportStore decorator may record
+entry/exit/token cancellation around the concrete store; it must delegate all
+outcomes. Bypass the rig's existing 90/120 s scan waits for this witness with the
+10 s pass watchdog and finite joined teardown. It inherits the class's existing
+Integration + Slow, MessageQueue isolation and ProcessSpawnLimit classifications.
+No third new test class or new Slow exemption is needed.
 
 ### Classification and Linux census obligations
 
@@ -301,6 +352,17 @@ NativeLinuxGate and any genuinely reached shared helpers. Reconcile changed
 class/method summary counts with the source census; do not invent hashes, treat
 source-method counts as expanded case counts or reclassify unrelated exclusions.
 
+Refresh the existing `VerificationRoundDeliveryTests` census entry too: its
+direct method count goes from **20 to 21** when V-13 is introduced in S1; preserve
+its current exclusion/owner and update actual source hash/helper closure. The
+named **CARD-1605 source census audit** is a read-only Code/Review check, not a
+test result or CP-6 coverage: recompute SHA-256 from each affected committed
+source (`Get-FileHash -Algorithm SHA256` is sufficient), count direct `[Test]`
+method declarations (Budget 3/11, Load 1, Delivery 21), and compare those values,
+FQNs, sourceFiles, helper closure and affected summary totals to the JSON. Record
+the three row comparisons and source SHA in the report. No executable roster
+consumer was found in this tree, so do not imply an automatic validator exists.
+
 No OS-selected product behavior changes: `SamePath`, `Within` and
 `HasReparseAncestor` stay untouched. The `check-os-witnesses.ps1` declaration
 therefore has no changed-OS-branch obligations. V-2 and V-12 are native Linux
@@ -310,12 +372,12 @@ restarted or credited by this task.
 ### Checkpoints
 
 Proposed closed ordinary scope for TestDesign to freeze. CP-1..CP-5 use the
-**Linux Integration lane**, CP-6 the **Linux Unit classification lane**. The
+**Linux Integration lane**, also used by CP-7; CP-6 uses the **Linux Unit classification lane**. The
 explicit Linux requirements come from V-2's executable and V-12's telemetry,
 not a fleet host name. Other cases are portable. Native Windows
 release qualification is not performed or credited by these rows. The current
 Plan runs no checkpoint. CP-1 is baseline RED only; final green acceptance is
-CP-2..CP-6, including V-1/V-2 again. Each row binds one isolated build (or its
+CP-2..CP-7, including V-1/V-2 again. Each row binds one isolated build (or its
 explicit same-slice reuse) and one exact filter. EstimatedMinutes are provisional
 bounded scheduling estimates, not measured costs.
 
@@ -327,11 +389,13 @@ bounded scheduling estimates, not measured costs.
 | CP-4 | S2 | CP-2 | linux-snapshot-report | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C544_ReportRegeneratedFromSnapshot` | R-3 | all listed, 0 failed/skipped; 1 case | 1 | 2 | true | n/a |
 | CP-5 | S2 | CP-2 | linux-report-load | `/*/Antiphon.Tests.Application/AgentReportStoreLoadTests/Store_samples_record_normal_and_contended_phases` | V-12 | 1 executed, 0 failed/skipped; 80 accounted samples, exact bytes for every success and classified refusals | 1 | 2 | true | `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` |
 | CP-6 | S2 | CP-2 | linux-unit-classification | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-4 | both exact guard methods listed above, 0 failed/skipped; 2 cases | 2 | 1 | true | n/a |
+| CP-7 | S2 | CP-2 | linux-regeneration-scan | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C1605_RegenerationTimeoutAdvancesRetryAndContinuesScan` | V-13 | 1 executed, 0 failed/skipped; both durable row outcomes in one scan | 1 | 2 | true | n/a |
 
 Suffix audit at the inspected SHA found only `AgentReportStoreTests` for that
 class prefix; neither new class exists. Both CP-3 method prefixes and CP-4's
 exact method have exactly one declaration. The new class/method names are
-reserved proposals, not discovered tests. CP-6 class prefixes each match one
+reserved proposals, not discovered tests; CP-7's exact proposed method does not
+exist yet and its class has one declaration. CP-6 class prefixes each match one
 class in the selected Antiphon.Tests assembly; each has exactly the one named
 method (the shared guard is linked into other assemblies, which this row does
 not run). TestDesign and Code must repeat the
@@ -408,15 +472,18 @@ finite caller/test deadline, and byte/lease/cleanup assertions. Thus ordinary
 suite correctness does not depend on eighty production writes beating 2 s on a
 shared runner. The original production-default V-1..V-5 witnesses remain.
 
-New tests initialize and seed a Git template once per test host, clone/copy it
+New store-only tests initialize and seed a Git template once per test host, clone/copy it
 into isolated owned case directories, and share it across the budget/load classes
 when in one host. They require no container, database, migration, web host or real
 runner. Existing CP-2 custody cases retain their small owned Git fixtures; no
-unrelated fixture rewrite. CP-3/CP-4 use `TestDbFixture`'s lazy per-assembly
+unrelated fixture rewrite. CP-3/CP-4/CP-7 use `TestDbFixture`'s lazy per-assembly
 container/migrated template and per-case database clones. Their harness builds a
 service provider, not a real AppHost; the explicit CP-4 restart is the behavior
 being tested and must be timed separately. Do not start containers/migrate per
-case or introduce per-case expensive seeds in the new helper.
+case or introduce per-case expensive seeds in the new helper. V-13 adds two
+rows within one owned delivery rig/schema/repository, not two independent
+database/host startups. Gate entry/cancellation, retry persistence, second-row
+reconciliation and the end-of-pass boundary get separate timing observations.
 
 Use the existing opt-in `TestTiming` recorder for fixture setup, clone, body,
 filesystem, process spawn/wait and teardown; retain `ANTIPHON_TEST_PHASE_*` run,
@@ -437,13 +504,14 @@ platform/load bucket; no extrapolated Windows p95 is claimed.
 |---|---|---|
 | V-1/V-2 and V-3 real-time witnesses | 2.5 s imposed preparation wait or about 2 s I/O expiry, plus fixture/Git overhead; provisional at most 6 s per method | 12 s per test initially; target about 2x observed comparable p95 after the first real samples. A scheduler overrun is diagnostic, never permission to widen the protected I/O bound. |
 | Other new budget methods | 0.1-3 s per case, provisional; V-10 eight-store batch expected <=6 s | 10 s per case for phase-entry and teardown; V-10 12 s finite caller/test deadline. V-11 disables internal phase timers on its test instance so only its finite 10 s caller/test deadline applies. Narrow from observations. Local hooks/leases must be released and all launched work joined in `finally`. |
-| CP-1/CP-2 isolated builds | 1-3 min each, unmeasured here; desired ceiling about 6 min pending p95 | The scheduler has a 15 min build floor; retain it only as the explicit tooling exception below, with the independent run cap still active. No repeated builds for CP-3..CP-6. |
+| V-13 regeneration scan | About 5 s blocked store plus two-row setup/reconciliation/teardown; provisional 6-10 s warm body | Assert cooperative store cancellation by 6 s (5 s policy plus provisional 1 s scheduler tolerance); a 10 s one-pass watchdog bounds the witness body at about 2x its imposed wait. Setup/DB/teardown are measured separately; join the worker under a finite teardown deadline. Never use C544DeliveryRig's generic 90/120 s waits for this case. |
+| CP-1/CP-2 isolated builds | 1-3 min each, unmeasured here; desired ceiling about 6 min pending p95 | The scheduler has a 15 min build floor; retain it only as the explicit tooling exception below, with the independent run cap still active. No repeated builds for CP-3..CP-7. |
 | CP-2 test execution | 20-40 s including new real-time witnesses; existing 28-case class historical p95 7.213 s | 90 s provisional, then about 2x measured execution p95 rounded to supported units. Existing class history cannot price the new witnesses. |
-| CP-3/CP-4 integration rows | Each 30-60 s including shared startup/cloning; unknown current p95 | 2 min execution each initially. Phase collection must show container/readiness, template/migration, clone, provider setup, body and teardown separately. |
+| CP-3/CP-4/CP-7 integration rows | Each 30-60 s including shared startup/cloning; unknown current p95; CP-7 includes V-13's five-second attempt | 2 min execution each initially. Phase collection must show container/readiness, template/migration, clone, provider setup, body and teardown separately. V-13 uses a provisional 120 s whole-test bound including cold DB setup, its 10 s pass watchdog, and 10 s teardown bound; tighten from observations. |
 | CP-5 sample method | 30-60 s for 80 small report stores, provisional | 2 min execution initially, then about 2x measured p95. One scheduled sampling invocation; no repeated battery solely to improve the percentile. |
-| CP-6 classification row | 1-5 s for compiled metadata and source census, provisional | 10 s per method; one-minute row ceiling is the tool's whole-minute granularity exception. Reuse CP-2 build; no host/container startup. |
+| CP-6 classification row | 1-5 s for compiled metadata and lane guards, provisional | 10 s per method; one-minute row ceiling is the tool's whole-minute granularity exception. Reuse CP-2 build; no host/container startup. The separate source census audit is a read-only report check, not included in these two results. |
 | Build-slot admission | Load-dependent, separate from execution | Explicit 5 min acquisition allowance per build/row. Exit 4 is not run; report admission p95 separately from execution. |
-| Complete planned work | Table floor 15 min, including two isolated builds and baseline RED; final S2 group floor 11 min | Provisional 20 min charged execution and a 25 min hard wall for S2; S1 8/13 min. Collection is bounded, not an open-ended stress run. |
+| Complete planned work | Table floor 17 min, including two isolated builds and baseline RED; final S2 group floor 13 min | Provisional 20 min charged execution and a 25 min hard wall for S2; S1 8/13 min. Collection is bounded, not an open-ended stress run. |
 
 All new duration numbers above are provisional CARD-1605 estimates, with the
 named first-row/CP-5 collection obligation. Existing imported defaults
@@ -467,7 +535,7 @@ After the first bounded sample, set test and row ceilings near 2x comparable
 p95; a single new test observation is explicitly provisional, not measured p95.
 Use the permitted at-most-three normal and two loaded proof repetitions only
 when needed to resolve a demonstrated uncertainty, never a whole-suite repeat.
-**Production preparation acceptance is concrete:** for each CP-5 loaded bucket
+**Fixture preparation sanity bound:** for each CP-5 loaded bucket
 (4 KiB and 64 KiB, concurrency 16, gate width eight), collect all 20 preparation
 durations, require no preparation expiry/missing phase, and require nearest-rank
 **p95 <= 15.000 s** and max **< 30.000 s**. The threshold is half the fixed 30 s
@@ -477,6 +545,13 @@ separate comparison evidence. An I/O refusal still supplies a completed
 preparation sample; a canceled/incomplete preparation cannot be dropped from
 the denominator to pass the rule. CP-5 may collect such refusals, but preparation
 expiry makes acceptance incomplete.
+
+This deliberately mild sanity bound checks the controlled Linux fixture; it
+does **not** validate the 30 s production policy, discriminate realistic Windows
+saturation, or establish a production p95. Sixteen stores and short local Git
+commands are expected to sit far below the threshold. Keep the collection and
+limit as fixture regression evidence; the two-wave rationale in D-2 is the
+explicit policy reason, with production/Windows behavior still unmeasured.
 
 TestDesign freezes this rule; Code reports measured values and ordinary Review
 checks them. If either bucket fails, record the refusal and commission focused
@@ -491,7 +566,7 @@ Never alter the mandated two-second I/O ceiling by applying that formula to it.
 The app/category is server + Git operations. R-1/R-2 are Integration; R-3 and
 both new classes are Integration + Slow; CP-6 guards are Unit. New Slow
 registrations and Linux census entries are mandatory slice deliverables above.
-`Antiphon.Tests` directly references `Antiphon.Server`; the store is compiled in
+V-13 inherits Integration + Slow from its existing class. `Antiphon.Tests` directly references `Antiphon.Server`; the store is compiled in
 that server project, which references messaging, Pty, runner contracts, resilience
 and observability. Those projects are dependencies, not changed consumers of
 this implementation. The selected downstream behaviors are canonical storage,
@@ -515,10 +590,14 @@ retrying the broad run.
   current hosting separates the loops. The default 30 s abandonment grace
   applies only to owned scopes, not forced termination. Configured sweep bounds,
   semaphore waits and non-store work prevent treating 32*k as total tick time.
-- The serial notification scan can spend 32*m s in m regeneration attempts;
-  a full 128-row regeneration page can contribute 68 min 16 s. D-2 accepts that
-  store-only latency tradeoff, without promising scan fairness or a total bound.
-  This is product wait analysis, not authorization for an over-30-minute test.
+- The serial notification scan can still spend **5*m s** in m regeneration
+  attempts; a full 128-row page contributes up to **10 min 40 s**, plus initial
+  verification reads and database/queue work. D-11 replaces the rejected 32*m s
+  (68 min 16 s/page) tradeoff and allows a ready later row to progress, but does
+  not promise whole-scan fairness or bounded page count. Sustained Git saturation
+  can prevent that report's recovery and backoff may already have elapsed on the
+  next pass. A broader scanner redesign remains outside this bounded fix.
+  These product waits do not authorize an over-30-minute test.
 - Root discovery/ignore checks contain filesystem I/O too. They remain bounded
   by preparation, not the two-second report-write window. This is an intentional
   contract clarification; retain all checks and independently review it.
@@ -533,9 +612,10 @@ retrying the broad run.
   platform's behavior under the existing release policy; this task neither reads
   desktop evidence nor restarts an ended qualification.
 
-Accept the implementation only with the intended CP-1 RED, CP-2..CP-6 green
+Accept the implementation only with the intended CP-1 RED, CP-2..CP-7 green
 counts/rosters and source-bound receipts, retained two-second/2.5-second refusal,
-bounded preparation cancellation, measured per-store load evidence, and unchanged
+bounded preparation cancellation, measured per-store fixture load evidence,
+V-13's locally handled timeout and same-pass second-row progress, and preserved
 caller custody/fallback outcomes. Independent ordinary Code Review still follows
 implementation. Land to rc and master using their authorized pipelines; require
 the active product host's version to match the intended rc source before claiming
