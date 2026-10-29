@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,6 +21,7 @@ public class CardFilePrivacyPathTests
     [Arguments("root")] [Arguments("cards")] [Arguments("board")]
     public async Task Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes(string placement)
     {
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(CardFilePrivacyPathTests), nameof(Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes));
         await using var world = new CardFilePrivacyWorld(); await world.InitializeAsync(); var id = await world.AddCardAsync();
         var outside = Directory.CreateDirectory(Path.Combine(world.Repo.WorktreeRoot, "outside")).FullName;
         var sentinel = Path.Combine(outside, "sentinel.md"); await File.WriteAllTextAsync(sentinel, "C408_OUTSIDE");
