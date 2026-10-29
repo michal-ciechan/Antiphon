@@ -54,17 +54,17 @@ public static class CommandLineDisclosure
                     sb.Append(text, whitespace, i - whitespace);
                     if (i < text.Length && !char.IsWhiteSpace(text[i]))
                     {
-                        var value = ReadArgument(text, ref i);
-                        sb.Append(Marker(value.Length));
+                        var promptArgument = ReadArgument(text, ref i);
+                        sb.Append(Marker(promptArgument.Length));
                     }
                 }
 
                 continue;
             }
 
-            if (TrySplitPromptEquals(decoded, out var flag, out var value))
+            if (TrySplitPromptEquals(decoded, out var flag, out var equalsValue))
             {
-                sb.Append(flag).Append('=').Append(Marker(value.Length));
+                sb.Append(flag).Append('=').Append(Marker(equalsValue.Length));
                 continue;
             }
 
