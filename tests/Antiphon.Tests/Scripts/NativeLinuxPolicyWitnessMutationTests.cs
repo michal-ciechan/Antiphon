@@ -144,12 +144,11 @@ public class NativeLinuxPolicyWitnessMutationTests
         Has(changedLegacy, "legacy-digest-mismatch", "");
         Lacks(changedLegacy, "policy-hash", "");
 
-        const string frozenStubs = """
-            using TUnit.Core;
-            public class PhoneHomeMirrorJoinTests { [Test] public void Join() {} }
-            public class UnixDelegateLaunchArgvTests { [Test] public void Argv() {} }
-            public class CheckpointBoundedReaderTests { [Test] public void Read() {} }
-            """;
+        const string frozenStubs =
+            "using TUnit.Core;\n" +
+            "public class PhoneHomeMirrorJoinTests { [Test] public void Join() {} }\n" +
+            "public class UnixDelegateLaunchArgvTests { [Test] public void Argv() {} }\n" +
+            "public class CheckpointBoundedReaderTests { [Test] public void Read() {} }\n";
         var stubs = CompileSource("R13Frozen", frozenStubs, true, null);
         var changedReason = InspectAssembly(
             stubs,
