@@ -1121,10 +1121,15 @@ public sealed class RemoteScriptContractTests
     // CARD-0849 round 3. A same-named container the launcher refused is not this
     // run's. A pid-only TERM or INT kills only recorded CIDs. TERM and kill -9
     // reach a pid only while jobs -pr lists it, so a live pid from another shell
-    // survives. A process-group INT, the operator Ctrl-C, may let the probes
-    // stop themselves first: exit 2 or 130 are both cleanup, and an unrelated
-    // pid is not signaled. The slot wait is wall-clock. Offline exit 4 is the
-    // slot timeout.
+    // survives. A process-group INT is the operator Ctrl-C. The fake probes
+    // survive that signal and die only by kill of the recorded cid, never by
+    // name. Exit 130 is the trap. Exit 2 counts only when the trap wrote its
+    // ledger line and the release finished well under the slot deadline. An
+    // unrelated pid planted on the live-probe ledger is not signaled. m1, m5
+    // and m6 are single breaks that fail this group contract. The generated
+    // driver.sh exits 4 at its deadline when go is absent, and writes ready
+    // when go is present. m7 deletes that deadline check and fails the exit-4
+    // leg. The slot wait is wall-clock. Offline exit 4 is the slot timeout.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Refused_launch_keeps_a_foreign_container_and_signals_release_proven_cids()
@@ -1152,6 +1157,15 @@ public sealed class RemoteScriptContractTests
         Fact(output, "signal-INT-group-lease").ShouldBe("1", output);
         Fact(output, "signal-INT-group-volumes").ShouldBe("1", output);
         Fact(output, "signal-INT-group-foreign").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-cid-kills").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-bounded").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-trap").ShouldBe("1", output);
+        Fact(output, "driver-exit4").ShouldBe("1", output);
+        Fact(output, "driver-ready").ShouldBe("1", output);
+        Fact(output, "red-m1").ShouldBe("1", output);
+        Fact(output, "red-m5").ShouldBe("1", output);
+        Fact(output, "red-m6").ShouldBe("1", output);
+        Fact(output, "red-m7").ShouldBe("1", output);
         Fact(output, "slot-wait-bounded").ShouldBe("1", output);
         Fact(output, "slot-wait-code").ShouldBe("4", output);
         Fact(output, "offline-diagnosis").ShouldBe("FixtureBuildSlotTimeout", output);
