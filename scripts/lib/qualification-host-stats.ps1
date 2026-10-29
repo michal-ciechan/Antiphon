@@ -1,6 +1,10 @@
 #requires -Version 5.1
-# CARD-1514 A4. Qualification host samples. ASCII-only library.
-# Not an unattended nightly census entry. Desktop 5.1 and .NET 8 never load the probe.
+# CARD-1514 A4 library. NOT WIRED (deferred to a later slice).
+# Production qualification does not call this file and must not load a probe
+# DLL from the live build output. Entry conditions before any later wiring:
+# sample through the real SampleCount 0 path, pass TimingRoot and key rows by
+# run and attempt, and bind the probe after the qualification build from an
+# immutable copy. Desktop 5.1 and .NET 8 never load the probe.
 
 function Test-QualificationHostRuntime {
     param(
