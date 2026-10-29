@@ -126,8 +126,9 @@ internal sealed class CanaryRepository : IDisposable
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"canary delete failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 }
