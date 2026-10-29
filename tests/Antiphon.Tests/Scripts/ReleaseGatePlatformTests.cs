@@ -31,8 +31,8 @@ public sealed class ReleaseGatePlatformTests
 
     [Test]
     public Task LinuxOnlyWindowsExclusions() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "LinuxOnlyWindowsExclusions", 7,
-            "C1323 every-new-row-has-linux-gate", "C1323 ungated-class-refused",
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "LinuxOnlyWindowsExclusions", 8,
+            "C1323 every-new-row-has-linux-gate", "C1323 ungated-class-refused", "C1323 synthetic-gate-holes-refused",
             "C1323 document-classes-are-excluded-or-decided", "C1323 decision-classes-are-not-class-excluded",
             "C1323 linux-only-rows-leave-census-complete", "C1323 decision-gaps-stay-incomplete",
             "C1323 linux-still-requires-the-rows");
