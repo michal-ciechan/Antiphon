@@ -1119,17 +1119,40 @@ function Read-TestPhaseJsonlFile {
     return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
 }
 
-# Summary-only. The 200 ms / 262144 inline bound stays on Read-TestPhaseJsonlFile.
-# An incomplete inline read is parsed again under a separate finite budget.
+# A6 stated aggregate. The former per-shard 5000 ms ceiling is now the whole
+# summary re-read budget, so 387 shards cannot delay the receipt by about 32 minutes.
+# The 200 ms / 262144 inline bound stays on its own watch. The measured cost is recorded.
+function Get-TestPhaseSummaryBudgetMilliseconds { return 5000 }
+
 function Read-TestPhaseJsonlForSummary {
-    param([string]$Path)
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $watch
-    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $watch
+    param([string]$Path, $BudgetState = $null)
+    $inline = [Diagnostics.Stopwatch]::StartNew()
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $inline
+    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $inline
     if (-not [bool]$parsed.Complete) {
-        $again = [Diagnostics.Stopwatch]::StartNew()
-        $full = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 8388608 -DeadlineMilliseconds 5000 -Watch $again
-        $parsed = ConvertTo-TestPhaseJsonlRecords -Read $full -MaxLines 20000 -DeadlineMilliseconds 5000 -Watch $again
+        $watch = $null
+        $deadline = Get-TestPhaseSummaryBudgetMilliseconds
+        $maxBytes = 8388608
+        if ($null -ne $BudgetState) {
+            $watch = $BudgetState.Watch
+            if ($null -ne $BudgetState.Milliseconds) { $deadline = [int]$BudgetState.Milliseconds }
+            if ($null -ne $BudgetState.BytesRemaining) { $maxBytes = [int]$BudgetState.BytesRemaining }
+        }
+        if ($null -eq $watch) { $watch = New-Object System.Diagnostics.Stopwatch }
+        if ($maxBytes -gt 0 -and $watch.ElapsedMilliseconds -lt $deadline) {
+            if (-not $watch.IsRunning) { $watch.Start() }
+            try {
+                $full = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $maxBytes -DeadlineMilliseconds $deadline -Watch $watch
+                $parsed = ConvertTo-TestPhaseJsonlRecords -Read $full -MaxLines 20000 -DeadlineMilliseconds $deadline -Watch $watch
+                if ($null -ne $BudgetState -and $null -ne $full -and $null -ne $full.Bytes) {
+                    $left = [int]$BudgetState.BytesRemaining - [int]$full.Bytes.Length
+                    if ($left -lt 0) { $left = 0 }
+                    $BudgetState.BytesRemaining = $left
+                }
+            } finally {
+                if ($watch.IsRunning) { $watch.Stop() }
+            }
+        }
     }
     return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
 }
@@ -1264,7 +1287,14 @@ function Write-TestPhasePlannedManifest {
     if ($Suite -match '^[a-z0-9][a-z0-9-]{0,40}$') {
         $suiteFile = 'groups-planned-' + $Suite + '.json'
         Write-TestPhaseTextAtomic -Path (Join-Path $dir $suiteFile) -Text $text
-        Update-TestPhasePlannedIndex -Directory $dir -Suite $Suite -FileName $suiteFile -RunId $RunId -Attempt $Attempt -AssemblyId $AssemblyId
+        $filters = New-Object System.Collections.Generic.List[string]
+        foreach ($plannedRow in @($groupRows)) {
+            if ($null -eq $plannedRow) { continue }
+            $filterText = ''
+            if ($plannedRow.PSObject.Properties.Name -contains 'filter' -and $null -ne $plannedRow.filter) { $filterText = [string]$plannedRow.filter }
+            $filters.Add($filterText)
+        }
+        Update-TestPhasePlannedIndex -Directory $dir -Suite $Suite -FileName $suiteFile -RunId $RunId -Attempt $Attempt -AssemblyId $AssemblyId -SourceDigest $SourceDigest -PolicyDigest $PolicyDigest -CostFileDigest $CostFileDigest -AssemblyDigest $AssemblyDigest -Filters @($filters.ToArray())
     }
     return $path
 }
@@ -1373,7 +1403,7 @@ function Write-TestPhaseExecutedManifest {
     if ($trxIdentity.Kind -eq 'regular') {
         try { $digest = Get-NightlyFileSha256 -Path $TrxPath } catch { $digest = '' }
     }
-    Write-TestPhaseOwnerObservation -Verdict $Verdict -LogRoot $LogRoot -Suite $Suite -Chunk $Chunk
+    Write-TestPhaseOwnerObservation -Verdict $Verdict -LogRoot $LogRoot -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt
     $exitCode = $null
     $coverageComplete = $null
     $testsPassed = $null
@@ -1447,6 +1477,12 @@ function ConvertTo-TestPhaseSummaryRows {
     $quality = New-Object System.Collections.Generic.List[string]
     $torn = 0
     $malformed = 0
+    $budget = [pscustomobject]@{
+        Watch = (New-Object System.Diagnostics.Stopwatch)
+        Milliseconds = [int](Get-TestPhaseSummaryBudgetMilliseconds)
+        BytesRemaining = 8388608
+    }
+    $plannedDocs = @(Read-TestPhasePlannedDocuments -RunDirectory $RunDirectory)
     $shards = @()
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
     if (Test-Path -LiteralPath $timing) {
@@ -1466,17 +1502,28 @@ function ConvertTo-TestPhaseSummaryRows {
     $fixtures = @()
     $seenComplete = @{}
     foreach ($shard in $shards) {
-        $parsed = Read-TestPhaseJsonlForSummary -Path $shard.FullName
+        $parsed = Read-TestPhaseJsonlForSummary -Path $shard.FullName -BudgetState $budget
         $torn += [int]$parsed.Torn
         $malformed += [int]$parsed.Malformed
         $header = $null
         foreach ($rec in @($parsed.Records)) {
             if ([string]$rec.recordKind -eq 'header') { $header = $rec; break }
         }
+        $planForShard = $Planned
+        $headerSuite = ''
+        if ($null -ne $header -and $header.PSObject.Properties.Name -contains 'suite') { $headerSuite = [string]$header.suite }
+        if (-not [string]::IsNullOrWhiteSpace($headerSuite)) {
+            foreach ($plannedDoc in @($plannedDocs)) {
+                if ($null -eq $plannedDoc) { continue }
+                $docSuite = ''
+                if ($plannedDoc.PSObject.Properties.Name -contains 'suite') { $docSuite = [string]$plannedDoc.suite }
+                if ($docSuite -eq $headerSuite) { $planForShard = $plannedDoc; break }
+            }
+        }
         $stale = $false
-        if ($null -ne $header) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$Planned.runId) -and [string]$header.runId -ne [string]$Planned.runId) { $stale = $true }
-            if (-not [string]::IsNullOrWhiteSpace([string]$Planned.assembly) -and [string]$header.assembly -ne [string]$Planned.assembly) { $stale = $true }
+        if ($null -ne $header -and $null -ne $planForShard) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$planForShard.runId) -and [string]$header.runId -ne [string]$planForShard.runId) { $stale = $true }
+            if (-not [string]::IsNullOrWhiteSpace([string]$planForShard.assembly) -and [string]$header.assembly -ne [string]$planForShard.assembly) { $stale = $true }
         }
         if ($stale) {
             if (-not $quality.Contains('stale-input-not-joined')) { $quality.Add('stale-input-not-joined') }
@@ -1712,6 +1759,8 @@ function ConvertTo-TestPhaseSummaryRows {
     foreach ($test in $tests) {
         if ([bool]$test.incomplete) { $complete = $false }
     }
+    $spent = 0
+    if ($null -ne $budget.Watch) { $spent = [int]$budget.Watch.ElapsedMilliseconds }
     return [pscustomobject]@{
         Quality = @($quality.ToArray())
         Torn = $torn
@@ -1719,6 +1768,8 @@ function ConvertTo-TestPhaseSummaryRows {
         Tests = @($tests)
         Shared = @($shared)
         Complete = [bool]$complete
+        SummaryAggregationBudgetMilliseconds = [int]$budget.Milliseconds
+        SummaryAggregationMilliseconds = [int]$spent
     }
 }
 
@@ -1729,12 +1780,22 @@ function Write-TestPhaseSummaryFiles {
         New-Item -ItemType Directory -Path $timing -Force | Out-Null
     }
     $orderedTests = @($Report.Tests | Sort-Object { [string]$_.testId })
+    $aggregationBudget = Get-TestPhaseSummaryBudgetMilliseconds
+    $aggregationSpent = 0
+    if ($null -ne $Report -and $Report.PSObject.Properties.Name -contains 'SummaryAggregationBudgetMilliseconds' -and $null -ne $Report.SummaryAggregationBudgetMilliseconds) {
+        $aggregationBudget = [int]$Report.SummaryAggregationBudgetMilliseconds
+    }
+    if ($null -ne $Report -and $Report.PSObject.Properties.Name -contains 'SummaryAggregationMilliseconds' -and $null -ne $Report.SummaryAggregationMilliseconds) {
+        $aggregationSpent = [int]$Report.SummaryAggregationMilliseconds
+    }
     $summary = [ordered]@{
         version = 1
         complete = [bool]$Report.Complete
         quality = @($Report.Quality)
         tornLines = [int]$Report.Torn
         malformedLines = [int]$Report.Malformed
+        summaryAggregationBudgetMilliseconds = [int]$aggregationBudget
+        summaryAggregationMilliseconds = [int]$aggregationSpent
         tests = @($orderedTests)
         sharedFixtures = @($Report.Shared)
     }
@@ -2400,7 +2461,7 @@ function ConvertTo-TestPhaseOwnerImage {
 }
 
 function Write-TestPhaseOwnerObservation {
-    param($Verdict, [string]$LogRoot, [string]$Suite, [string]$Chunk)
+    param($Verdict, [string]$LogRoot, [string]$Suite, [string]$Chunk, [string]$RunId = '', [string]$Attempt = '')
     try {
         if ($null -eq $Verdict) { return }
         $names = @(
@@ -2466,6 +2527,18 @@ function Write-TestPhaseOwnerObservation {
                 $rows.Add([ordered]@{ pid = $childPid; image = [string]$image; startedAtUtc = $startedText; exitedAtUtc = $exitedText })
             }
         }
+        $seenPid = @{}
+        for ($seenIndex = 0; $seenIndex -lt $rows.Count; $seenIndex++) {
+            $seenPid[[string]$rows[$seenIndex].pid] = $true
+        }
+        foreach ($key in @($missed.Keys)) {
+            if ($seenPid.ContainsKey([string]$key)) { continue }
+            $missedPid = 0
+            $pidOk = $true
+            try { $missedPid = [int]$key } catch { $pidOk = $false }
+            if (-not $pidOk) { continue }
+            $rows.Add([ordered]@{ pid = $missedPid; image = 'unknown'; startedAtUtc = ''; exitedAtUtc = '' })
+        }
         $job = $false
         if (Test-TestPhaseNotePresent -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')) {
             $jobValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')
@@ -2480,18 +2553,61 @@ function Write-TestPhaseOwnerObservation {
         $exitedAt = ''
         $exitedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('rootExitedAtUtc', 'RootExitedAtUtc')
         if ($null -ne $exitedValue) { $exitedAt = [string]$exitedValue }
+        $startedAt = ''
+        $startedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('rootStartedAtUtc', 'RootStartedAtUtc')
+        if ($null -ne $startedValue) { $startedAt = [string]$startedValue }
+        $launch = 0.0
+        $launchValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('launchMilliseconds', 'LaunchMilliseconds')
+        if ($null -ne $launchValue) { $launch = [double]$launchValue }
+        $cleanup = 0.0
+        $cleanupValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('cleanupMilliseconds', 'CleanupMilliseconds')
+        if ($null -ne $cleanupValue) { $cleanup = [double]$cleanupValue }
+        $children = $false
+        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('childrenExited', 'ChildrenExited')) {
+            $childrenValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('childrenExited', 'ChildrenExited')
+            if ($null -ne $childrenValue) { $children = [bool]$childrenValue }
+        }
+        $drained = $false
+        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('outputDrained', 'OutputDrained')) {
+            $drainedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('outputDrained', 'OutputDrained')
+            if ($null -ne $drainedValue) { $drained = [bool]$drainedValue }
+        }
+        $remaining = 0
+        $remainingValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('remainingProcessCount', 'RemainingProcessCount')
+        if ($null -ne $remainingValue) { $remaining = [int]$remainingValue }
+        $missedIds = New-Object System.Collections.Generic.List[int]
+        foreach ($key in @($missed.Keys)) {
+            $listed = 0
+            $listedOk = $true
+            try { $listed = [int]$key } catch { $listedOk = $false }
+            if ($listedOk) { $missedIds.Add($listed) }
+        }
+        $runKey = 'run'
+        if ($RunId -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$') { $runKey = $RunId }
+        $attemptKey = '0'
+        if ($Attempt -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,40}$') { $attemptKey = $Attempt }
         $doc = [ordered]@{
             version = 1
             suite = [string]$Suite
             chunk = [string]$Chunk
+            runId = [string]$runKey
+            attempt = [string]$attemptKey
+            rootStartedAtUtc = $startedAt
             rootExitedAtUtc = $exitedAt
             jobEmpty = [bool]$job
+            launchMilliseconds = $launch
+            cleanupMilliseconds = $cleanup
             drainMilliseconds = $drain
             executionMilliseconds = $execution
+            childrenExited = [bool]$children
+            outputDrained = [bool]$drained
+            remainingProcessCount = [int]$remaining
+            missedDescendantPids = @($missedIds.ToArray())
             descendants = @($rows.ToArray())
         }
         $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-        $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '.json')
+        $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + $runKey + '-' + $attemptKey + '.json')
+        if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') { return }
         Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
     } catch {
         # Owner stamps are diagnostic. A write failure must not change the verdict.
@@ -2505,7 +2621,12 @@ function Update-TestPhasePlannedIndex {
         [string]$FileName,
         [string]$RunId,
         [string]$Attempt,
-        [string]$AssemblyId
+        [string]$AssemblyId,
+        [string]$SourceDigest = '',
+        [string]$PolicyDigest = '',
+        [string]$CostFileDigest = '',
+        [string]$AssemblyDigest = '',
+        $Filters = $null
     )
     if ($Suite -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
     if ($FileName -notmatch '^groups-planned-[a-z0-9][a-z0-9-]{0,40}\.json$') { return }
@@ -2517,15 +2638,36 @@ function Update-TestPhasePlannedIndex {
             foreach ($row in @($existing.suites)) {
                 if ($null -eq $row) { continue }
                 if ([string]$row.suite -eq $Suite) { continue }
+                $keptFilters = New-Object System.Collections.Generic.List[string]
+                if ($row.PSObject.Properties.Name -contains 'filters' -and $null -ne $row.filters) {
+                    foreach ($item in @($row.filters)) { $keptFilters.Add([string]$item) }
+                }
+                $keptSource = ''
+                $keptPolicy = ''
+                $keptCost = ''
+                $keptAssemblyDigest = ''
+                if ($row.PSObject.Properties.Name -contains 'sourceDigest' -and $null -ne $row.sourceDigest) { $keptSource = [string]$row.sourceDigest }
+                if ($row.PSObject.Properties.Name -contains 'policyDigest' -and $null -ne $row.policyDigest) { $keptPolicy = [string]$row.policyDigest }
+                if ($row.PSObject.Properties.Name -contains 'costFileDigest' -and $null -ne $row.costFileDigest) { $keptCost = [string]$row.costFileDigest }
+                if ($row.PSObject.Properties.Name -contains 'assemblyDigest' -and $null -ne $row.assemblyDigest) { $keptAssemblyDigest = [string]$row.assemblyDigest }
                 $kept.Add([ordered]@{
                     suite = [string]$row.suite
                     file = [string]$row.file
                     runId = [string]$row.runId
                     attempt = [string]$row.attempt
                     assembly = [string]$row.assembly
+                    sourceDigest = $keptSource
+                    policyDigest = $keptPolicy
+                    costFileDigest = $keptCost
+                    assemblyDigest = $keptAssemblyDigest
+                    filters = @($keptFilters.ToArray())
                 })
             }
         }
+    }
+    $freshFilters = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Filters) {
+        foreach ($item in @($Filters)) { $freshFilters.Add([string]$item) }
     }
     $kept.Add([ordered]@{
         suite = [string]$Suite
@@ -2533,6 +2675,11 @@ function Update-TestPhasePlannedIndex {
         runId = [string]$RunId
         attempt = [string]$Attempt
         assembly = [string]$AssemblyId
+        sourceDigest = [string]$SourceDigest
+        policyDigest = [string]$PolicyDigest
+        costFileDigest = [string]$CostFileDigest
+        assemblyDigest = [string]$AssemblyDigest
+        filters = @($freshFilters.ToArray())
     })
     $doc = [ordered]@{
         version = 1
@@ -2616,6 +2763,7 @@ function Write-QualificationRunPhase {
 function Get-QualificationSetupAccounting {
     param([string]$LogRoot)
     $setup = 0.0
+    $sum = 0.0
     $overlapped = $false
     $countedOnce = $false
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
@@ -2628,6 +2776,10 @@ function Get-QualificationSetupAccounting {
             foreach ($row in @($existing.phases)) {
                 if ($null -eq $row) { continue }
                 if ($null -ne $row.seconds) { $setup += [double]$row.seconds }
+                $phaseName = [string]$row.name
+                if ($phaseName -eq 'build' -or $phaseName -eq 'npm-build' -or $phaseName -eq 'dotnet-build') {
+                    if ($null -ne $row.seconds) { $sum += [double]$row.seconds }
+                }
                 $startTicks = $null
                 $endTicks = $null
                 try { $startTicks = [datetimeoffset]::Parse([string]$row.startedAt).UtcTicks } catch { $startTicks = $null }
@@ -2641,17 +2793,6 @@ function Get-QualificationSetupAccounting {
     $ordered = @($intervals.ToArray() | Sort-Object StartTicks)
     for ($i = 1; $i -lt $ordered.Count; $i++) {
         if ([int64]$ordered[$i].StartTicks -lt [int64]$ordered[$i - 1].EndTicks) { $overlapped = $true }
-    }
-    $sum = 0.0
-    if (-not [string]::IsNullOrWhiteSpace($LogRoot) -and (Test-Path -LiteralPath $LogRoot)) {
-        foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.timing.json' -File -ErrorAction SilentlyContinue)) {
-            try {
-                $row = [System.IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
-                if ($row.PSObject.Properties.Name -contains 'buildSeconds' -and $null -ne $row.buildSeconds) {
-                    $sum += [double]$row.buildSeconds
-                }
-            } catch { }
-        }
     }
     return [pscustomobject]@{
         countedOnce = [bool]$countedOnce
