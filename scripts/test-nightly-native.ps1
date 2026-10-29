@@ -22,16 +22,7 @@ function Assert-Native([bool]$Condition, [string]$Label) {
     $script:passed++
     Write-Host ('PASS C1039 ' + $Label)
 }
-function Invoke-RcWindowsNativeProcessOwner {
-    param(
-        [string]$FilePath,
-        [string[]]$ArgumentList,
-        [string]$WorkingDirectory,
-        [int]$TimeoutMilliseconds,
-        [string]$LogPath
-    )
-    return [Antiphon.Nightly.NativeProcessOwner]::Start($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $LogPath, $null, $null)
-}
+. (Join-Path $PSScriptRoot 'test-rc-speed-os-witness.ps1')
 function Wait-Native([scriptblock]$Condition, [string]$Label) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
