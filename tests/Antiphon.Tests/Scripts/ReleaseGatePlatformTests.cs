@@ -28,4 +28,12 @@ public sealed class ReleaseGatePlatformTests
             "C1323 c1415-windows-excludes-exactly", "C1323 c1415-windows-launches-only-required",
             "C1323 c1415-windows-census-complete", "C1323 c1415-linux-excludes-exactly",
             "C1323 c1425-pack-methods-required", "C1323 c1415-launched-skips-stay-incomplete");
+
+    [Test]
+    public Task LinuxOnlyWindowsExclusions() =>
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "LinuxOnlyWindowsExclusions", 7,
+            "C1323 every-new-row-has-linux-gate", "C1323 ungated-class-refused",
+            "C1323 document-classes-are-excluded-or-decided", "C1323 decision-classes-are-not-class-excluded",
+            "C1323 linux-only-rows-leave-census-complete", "C1323 decision-gaps-stay-incomplete",
+            "C1323 linux-still-requires-the-rows");
 }

@@ -502,12 +502,272 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
 
+function Test-LinuxOnlyWindowsExclusions {
+    # Windows rc exclusions for skips that are Linux-only by construction. Gap classes stay required.
+    $prefix = 'Linux-only by construction:'
+    $strict = [regex]::new('(?s)if\s*\(\s*!\s*OperatingSystem\.IsLinux\(\)\s*\)[\s\S]{0,300}?(?:throw\s+new\s+(?:[\w.]+\.)?SkipTestException|Skip\.Test)\s*\(|if\s*\(\s*OperatingSystem\.IsWindows\(\)\s*\)[\s\S]{0,300}?(?:throw\s+new\s+(?:[\w.]+\.)?SkipTestException|Skip\.Test)\s*\(|if\s*\(\s*OperatingSystem\.IsLinux\(\)\s*\)\s*return\s+true\s*;|NativeLinuxGate\s*\.\s*Require|RequireNativeLinux\s*\(|RequireLinux(?:Join|Custody)?\s*\(|RequireUnix\s*\(')
+    $forbid = [regex]::new('(?i)unverified|junction|case-sensitive|case-twin|opt-in')
+    $inventory = @(
+        @{ s='antiphon'; c='PhoneHomeMirrorJoinTests'; o='CARD-1032'; m=@() }
+        @{ s='antiphon'; c='UnixDelegateLaunchArgvTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='CheckpointBoundedReaderTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='CheckpointSourceGitBoundsTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='CheckpointVerifierBoundsTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='CheckpointFixtureProcessTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='DetachedLauncherTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='SafeDeleteProcessBoundaryTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='GrokSha256PinTests'; o='CARD-1210'; m=@() }
+        @{ s='antiphon'; c='GithubCredentialHelperTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='GitMinimumVersionGuardTests'; o='CARD-1260'; m=@() }
+        @{ s='antiphon'; c='RetiredTempContainerHostTests'; o='CARD-1050'; m=@() }
+        @{ s='antiphon'; c='HostJqPrerequisiteScriptTests'; o='CARD-1210'; m=@() }
+        @{ s='antiphon'; c='ScriptHarnessLinuxOwnershipTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='RefreshGithubTokenRemoteCommandTests'; o='CARD-1245'; m=@() }
+        @{ s='antiphon'; c='NightlyProbeSupervisorTests'; o='CARD-1375'; m=@() }
+        @{ s='antiphon'; c='RetiredTempContainerDockerTests'; o='CARD-1050'; m=@() }
+        @{ s='antiphon'; c='RollingVolumeRecycleDockerTests'; o='CARD-1050'; m=@() }
+        @{ s='antiphon'; c='RollingVolumeRecycleCensusChurnTests'; o='CARD-1050'; m=@() }
+        @{ s='antiphon'; c='RollingProductionMountTests'; o='CARD-1050'; m=@() }
+        @{ s='antiphon'; c='CheckpointRecoveryLinuxTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='CheckpointFixtureRoutingTests'; o='CARD-1233'; m=@() }
+        @{ s='antiphon'; c='CheckpointInheritedFileTests'; o='CARD-0590'; m=@() }
+        @{ s='pty-host'; c='LinuxCgroupCustodyTests'; o='CARD-0590'; m=@() }
+        @{ s='agents-pty'; c='UnixPtyArgvTests'; o='CARD-0590'; m=@() }
+        @{ s='antiphon'; c='PhoneHomeCompletedCardTransportTests'; o='CARD-1032'; m=@('C1032_TransportQueueRecipientReplay') }
+        @{ s='antiphon'; c='LandGraphEvaluationTests'; o='CARD-1483'; m=@('C1483_S1_UnreadableLinkComponentDenies') }
+        @{ s='antiphon'; c='CheckpointConfinementLedgerTests'; o='CARD-0590'; m=@('unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted') }
+        @{ s='antiphon'; c='CheckpointReceiptSafetyTests'; o='CARD-0590'; m=@('linux_fifo_receipts_refuse_within_four_seconds') }
+        @{ s='antiphon'; c='OutputCleanupTests'; o='CARD-0590'; m=@('external_build_payload_is_adopted_at_seal_and_removed_on_green','file_added_after_seal_is_refused_and_kept','file_modified_after_seal_is_refused_and_kept','symlink_in_a_build_output_is_refused_before_and_after_seal','tracked_file_in_an_adopted_build_output_is_refused_and_kept','adopted_build_output_over_the_entry_cap_is_unsafe_tree','hard_linked_build_file_is_not_adopted_and_outside_bytes_stay','independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it','seal_without_driver_observed_build_exit_adopts_nothing','hanging_git_is_refused_and_killed_within_the_bound') }
+        @{ s='antiphon'; c='AnchoredPathDeleteWitnessTests'; o='CARD-0590'; m=@('linux_colon_in_a_file_name_stays_deletable','hard_link_sibling_survives_anchored_delete','ancestor_symlink_to_a_different_inode_is_refused') }
+        @{ s='antiphon'; c='PlanCoverageHandleTests'; o='CARD-0590'; m=@('hardlinked_selected_file_is_refused','in_repo_fifo_project_is_refused_within_15_seconds') }
+        @{ s='antiphon'; c='CodexRootExecContractTests'; o='CARD-1210'; m=@('Entrypoint_heal_chowns_the_tmp_directory_once','Entrypoint_heal_never_names_a_path_outside_tmp') }
+        @{ s='antiphon'; c='FileUseCaptureTests'; o='CARD-1539'; m=@('C1539_linux_holder','C1539_absent_inputs','C1539_budget_and_caps','C1539_redaction_before_sinks','C1539_persistence_fail_safe','C1539_generation_and_ownership') }
+        @{ s='antiphon'; c='JqRunnerImageContractTests'; o='CARD-1210'; m=@('Version_row_accepts_only_exact_successful_pin_without_stderr','C1054_Jq_row_rejects_home_shadow','C1054_Jq_row_accepts_canonical_file_and_alias','C1054_Jq_row_rejects_canonical_leaf_symlink','C1054_Jq_row_records_found_and_resolved_paths') }
+        @{ s='antiphon'; c='RollingVolumeRecycleScriptTests'; o='CARD-1050'; m=@('C1008_Option_manifest_is_strict','C1008_Documentation_and_transport_pins_match','C1008_Refusal_receipts_do_not_leak_secrets','C1008_Retired_absent_null_is_accepted','C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt','C1594_Cross_sha_cleanup_image_binds_the_retired_temp','C1594_Older_retirement_receipt_is_ignored','C1594_Disagreeing_cross_sha_images_refuse','C1594_Antiphon_evidence_gitdir','C1008_Preview_helper_removal_is_owned') }
+        @{ s='antiphon'; c='RetiredTempContainerScriptTests'; o='CARD-1050'; m=@('C994_Host_strict_volume_admission_remains_independent','C994_Host_resume_never_runs_container_cleanup','C994_Host_bridge_transport_preserves_literal_context') }
+        @{ s='antiphon'; c='BuildSlotScriptTests'; o='CARD-0590'; m=@('C800_WrapperInterruptKillsChildAndReleasesLease') }
+        @{ s='antiphon'; c='C1364BoundLandWaitProofTests'; o='CARD-1050'; m=@('C1364_Host_recycle_admission_reports_waited','C1364_Host_recycle_post_removal_reports_waited','C1364_Host_cleanup_reports_waited') }
+        @{ s='antiphon'; c='RemoteScriptContractTests'; o='CARD-1050'; m=@('C1374_Host_census_recovers_transient_reads','C1087_Host_census_filters_and_names_cause','C1008_Recycle_exact_default_volumes','C1008_Recycle_refuses_references_and_unknown_census','C1008_Recycle_audits_work_as_1654','C1008_Recycle_refuses_unpublished_and_dirty_work','C1008_Recycle_refuses_uninspectable_git','C1008_Recycle_reaps_dirty_scratch','C1008_Recycle_audits_promisor_checkout','C1105_Git_audit_volume_scale','C1105_Jq_argv_limit','C1008_Recycle_preserves_tmp_copyup','C1105_Verify_tmp_accepts_an_absent_pty_host','C1008_Recycle_resume_requires_matching_receipt','C1008_Recycle_receipt_records_disk_and_partial_failure','C1008_Retire_temp_rechecks_absence_and_retirement','C1008_Retire_temp_reclaims_below_cache_disk_gate','C1008_Recycle_dry_run_never_mutates','C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes','C1105_Redeploy_accepts_previous_generation_and_requires_new_bind','C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout','C1105_V218_dry_run_reaches_the_generation_line','C1105_Relative_dry_run_refuses_before_removal','C1105_Generation_identity_refuses_mismatch','C1105_Main_state_init_without_session_runner_refuses','C1105_Compose_cmp_refuses_before_removal','C1105_Resume_identity_refusals','C1105_Resume_state_init_image_follows_the_journal','C1105_Resume_foreign_leftover_is_not_an_image_mismatch','C1105_Resume_digest_pins_previous_sha12','C1105_Resume_post_removal_census_tracks_open_work','C849_Deploy_prepares_and_verifies_before_acceptance','C1105_Git_audit_recovery_tips','C1105_Git_audit_seed_content','C1105_Git_audit_index_content','C1105_Git_audit_object_completeness','C1105_Git_audit_overall_timeout','C1105_Git_audit_resume_preserves_proof','C1105_Git_audit_hidden_locations','C1335_Mirror_owner_stamp_in_linked_admin') }
+        @{ s='antiphon'; c='CheckpointStampSafetyTests'; o='CARD-0590'; m=@('tracked_stamp_shapes_are_bounded_and_leave_results_in_place') }
+        @{ s='antiphon'; c='CheckpointTempRootSweepTests'; o='CARD-0590'; m=@('fifo_or_socket_root_is_reclaimed') }
+        @{ s='antiphon'; c='PlanCoverageCommandTests'; o='CARD-0590'; m=@('outside_project_fifo_is_refused_without_opening') }
+        @{ s='session-runner'; c='CompletedCardWorkspaceRemovalTests'; o='CARD-1032'; m=@('C1032_InspectionR3Mode','C1032_RemovalLinuxIgnoredFifoRefuses') }
+        @{ s='session-runner'; c='HostStatsProbeLiveTests'; o='CARD-0590'; m=@('Linux_probe_reads_live_proc') }
+    )
+    $decisionClasses = @('ClaudeDialogWatchdogCanaryTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointOutputConfinementTests','RunnerWorkspaceBindingTests')
+    $decisionMethods = @(
+        'OutputCleanupTests/parent_symlink_does_not_delete_a_tracked_stamp'
+        'CompletedCardWorkspaceRemovalTests/C1032_InspectionHoldShapes'
+        'PlanCoverageCommandTests/existing_outside_project_is_refused_by_root_boundary'
+        'RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused'
+    )
+    $documentClasses = @(
+        'ClaudeDialogWatchdogCanaryTests','LandGraphEvaluationTests','PhoneHomeCompletedCardTransportTests','PhoneHomeMirrorJoinTests','UnixDelegateLaunchArgvTests','CheckpointConfinementLedgerTests','CheckpointReceiptSafetyTests','CheckpointBoundedReaderTests','OutputCleanupTests','AnchoredPathDeleteWitnessTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointSourceGitBoundsTests','CheckpointVerifierBoundsTests','PlanCoverageHandleTests','CheckpointFixtureProcessTests','DetachedLauncherTests','SafeDeleteProcessBoundaryTests','CodexRootExecContractTests','FileUseCaptureTests','GrokSha256PinTests','JqRunnerImageContractTests','GithubCredentialHelperTests','GitMinimumVersionGuardTests','RollingVolumeRecycleScriptTests','RetiredTempContainerScriptTests','RetiredTempContainerHostTests','BuildSlotScriptTests','HostJqPrerequisiteScriptTests','ScriptHarnessLinuxOwnershipTests','C1364BoundLandWaitProofTests','RollingProductionMountTests','RefreshGithubTokenRemoteCommandTests','NightlyProbeSupervisorTests','RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests','RollingVolumeRecycleCensusChurnTests','RemoteScriptContractTests','CompletedCardWorkspaceRemovalTests','RunnerWorkspaceBindingTests','HostStatsProbeLiveTests','LinuxCgroupCustodyTests','UnixPtyArgvTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointRecoveryLinuxTests','CheckpointStampSafetyTests','CheckpointOutputConfinementTests','CheckpointFixtureRoutingTests','CheckpointInheritedFileTests','CheckpointTempRootSweepTests','PlanCoverageCommandTests'
+    )
+    function Find-Def([System.Collections.Generic.List[string]]$lines, [string]$name) {
+        $rx = [regex]('\b' + [regex]::Escape($name) + '\s*\(')
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if (-not $rx.IsMatch($lines[$i]) -or $lines[$i] -notmatch '\b(public|private|internal|protected)\b') { continue }
+            $idxName = $lines[$i].IndexOf($name)
+            $idxArrow = $lines[$i].IndexOf('=>')
+            if ($idxArrow -ge 0 -and $idxArrow -lt $idxName) { continue }
+            return $i
+        }
+        return -1
+    }
+    function Window([System.Collections.Generic.List[string]]$lines, [int]$at, [int]$n) {
+        $end = [Math]::Min($lines.Count - 1, $at + $n)
+        return ($lines.GetRange($at, $end - $at + 1) -join "`n")
+    }
+    function Test-GatedSlice([string]$slice) { return $strict.IsMatch($slice) }
+    function Read-ClassLines([string]$class) {
+        $rels = @(
+            "tests/Antiphon.Tests/Checkpoints/$class.cs"
+            "tests/Antiphon.Tests/Scripts/$class.cs"
+            "tests/Antiphon.Tests/Infrastructure/$class.cs"
+            "tests/Antiphon.Tests/Application/$class.cs"
+            "tests/Antiphon.SessionRunner.Tests/$class.cs"
+            "tests/Antiphon.PtyHost.Tests/$class.cs"
+            "tests/Antiphon.Agents.Pty.Tests/$class.cs"
+        )
+        if ($class -eq 'CompletedCardWorkspaceRemovalTests') {
+            $rels = @(
+                'tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceInspectionR3Tests.cs'
+                'tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceS5Tests.cs'
+            )
+        }
+        $all = New-Object System.Collections.Generic.List[string]
+        $found = $false
+        foreach ($rel in $rels) {
+            $path = Join-Path $repoRoot $rel
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            $found = $true
+            foreach ($line in [IO.File]::ReadAllLines($path)) { $all.Add($line) }
+        }
+        return @{ Found = $found; Lines = $all }
+    }
+    function Test-RowGated($row) {
+        $loaded = Read-ClassLines $row.c
+        if (-not $loaded.Found) { return @('missing-source') }
+        $lines = $loaded.Lines
+        $problems = @()
+        $before = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '\[Before\((Test|Class)\)\]' -and (Test-GatedSlice (Window $lines $i 12))) { $before = $true }
+        }
+        $methods = @($row.m)
+        if ($methods.Count -eq 0) {
+            $seen = 0
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -notmatch '\[Test(\s*,|\s*\])') { continue }
+                $seen++
+                $def = -1
+                for ($j = $i; $j -lt [Math]::Min($lines.Count, $i + 40); $j++) {
+                    if ($lines[$j] -match '\b(public|internal)\b.+\(') { $def = $j; break }
+                }
+                if ($def -lt 0) { $problems += "no-signature@$i"; continue }
+                $slice = Window $lines $def 25
+                $ok = $before -or (Test-GatedSlice $slice)
+                if (-not $ok) {
+                    foreach ($call in [regex]::Matches($slice, '\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(')) {
+                        $hn = $call.Groups[1].Value
+                        $h = Find-Def $lines $hn
+                        if ($h -ge 0 -and $h -ne $def -and (Test-GatedSlice (Window $lines $h 20))) { $ok = $true; break }
+                    }
+                }
+                if (-not $ok) { $problems += "ungated@$def" }
+                if ($slice -match 'Skip' -and $forbid.IsMatch($slice)) { $problems += "forbid@$def" }
+            }
+            if ($seen -eq 0) { $problems += 'no-tests' }
+        } else {
+            foreach ($m in $methods) {
+                $def = Find-Def $lines $m
+                if ($def -lt 0) { $problems += "missing $m"; continue }
+                $slice = Window $lines $def 30
+                $ok = $before -or (Test-GatedSlice $slice)
+                if (-not $ok) {
+                    foreach ($call in [regex]::Matches($slice, '\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(')) {
+                        $hn = $call.Groups[1].Value
+                        if ($hn -eq $m) { continue }
+                        $h = Find-Def $lines $hn
+                        if ($h -ge 0 -and (Test-GatedSlice (Window $lines $h 25))) { $ok = $true; break }
+                    }
+                }
+                if (-not $ok) { $problems += "ungated $m" }
+                foreach ($s in [regex]::Matches($slice, 'Skip(?:TestException|\.Test)\(\s*(?:@)?\$?"([^"]*)"')) {
+                    if ($forbid.IsMatch($s.Groups[1].Value)) { $problems += "forbid $m" }
+                }
+            }
+        }
+        return $problems
+    }
+    $gateProblems = @()
+    foreach ($row in $inventory) {
+        $problems = @(Test-RowGated $row)
+        if ($problems.Count -gt 0) { $gateProblems += ($row.c + ':' + ($problems -join ',')) }
+    }
+    $noise = Read-ClassLines 'AttentionFeedNoiseTests'
+    $noiseAdmitted = $false
+    if ($noise.Found) {
+        $noiseAdmitted = @((Test-RowGated @{ c = 'AttentionFeedNoiseTests'; m = @() })).Count -eq 0
+    }
+    $synthetic = 'if (!OperatingSystem.IsLinux()) Skip.Test("Windows junction variant is unverified");'
+    $syntheticSkip = [regex]::Match($synthetic, 'Skip\.Test\(\s*"([^"]*)"').Groups[1].Value
+    $syntheticRefused = (Test-GatedSlice $synthetic) -and $forbid.IsMatch($syntheticSkip)
+    Assert-C1323 ((-not $noiseAdmitted) -and $syntheticRefused -and $noise.Found) 'ungated-class-refused' "noise=$noiseAdmitted synthetic=$syntheticRefused"
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
+    $expectedKeys = @()
+    foreach ($row in $inventory) {
+        $methods = @($row.m)
+        $expectedKeys += ($row.s + '|' + $row.c + '|' + ((@($methods) | Sort-Object) -join ','))
+    }
+    $actualKeys = @()
+    $rowProblems = @()
+    foreach ($row in $shippedRows) {
+        $methods = @($row.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $key = ([string]$row.suite) + '|' + ([string]$row.class) + '|' + ((@($methods) | Sort-Object) -join ',')
+        $actualKeys += $key
+        if ([string]$row.platform -cne 'windows') { $rowProblems += "$key platform" }
+        $want = @($inventory | Where-Object { $_.s -ceq [string]$row.suite -and $_.c -ceq [string]$row.class })
+        if ($want.Count -ne 1 -or [string]$want[0].o -cne [string]$row.owner) { $rowProblems += "$key owner" }
+    }
+    $rowsMatch = (Same-C1323Set $actualKeys $expectedKeys) -and $rowProblems.Count -eq 0 -and $gateProblems.Count -eq 0
+    Assert-C1323 $rowsMatch 'every-new-row-has-linux-gate' (($gateProblems + $rowProblems + @('actual=' + $actualKeys.Count + ' expected=' + $expectedKeys.Count)) -join '; ')
+    $excludedClasses = @($shippedRows | ForEach-Object { [string]$_.class })
+    $missingDoc = @($documentClasses | Where-Object { $excludedClasses -cnotcontains $_ -and $decisionClasses -cnotcontains $_ })
+    $extraDoc = @($excludedClasses | Where-Object { $documentClasses -cnotcontains $_ })
+    Assert-C1323 ($missingDoc.Count -eq 0 -and $extraDoc.Count -eq 0) 'document-classes-are-excluded-or-decided' (('missing=' + ($missingDoc -join ',')) + ' extra=' + ($extraDoc -join ','))
+    $decisionHits = @()
+    foreach ($name in $decisionClasses) {
+        $hit = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.class -ceq $name })
+        if ($hit.Count -gt 0) { $decisionHits += $name }
+    }
+    foreach ($pair in $decisionMethods) {
+        $class, $method = $pair.Split('/')
+        foreach ($row in @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.class -ceq $class })) {
+            $methods = @($row.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($methods.Count -eq 0 -or $methods -ccontains $method) { $decisionHits += $pair }
+        }
+    }
+    Assert-C1323 ($decisionHits.Count -eq 0) 'decision-classes-are-not-class-excluded' ($decisionHits -join ',')
+    $nodes = @()
+    foreach ($row in $inventory) {
+        $methods = @($row.m)
+        if ($methods.Count -eq 0) { $methods = @('LinuxOnlyCase') }
+        foreach ($m in $methods) {
+            $nodes += [pscustomobject]@{ Suite = $row.s; Class = $row.c; Method = $m; Uid = ($row.c + '.' + $m); Gap = $false }
+        }
+    }
+    $gaps = @(
+        @{ s='antiphon'; c='ClaudeDialogWatchdogCanaryTests'; m='C680_LiveNudgeRefusesPermissionAndQuestionDialogs' }
+        @{ s='antiphon'; c='OutputCleanupTests'; m='parent_symlink_does_not_delete_a_tracked_stamp' }
+        @{ s='antiphon'; c='CheckpointOwnedOutputTests'; m='changed_inventory_is_refused' }
+        @{ s='antiphon'; c='CheckpointScriptReaderDeadlineTests'; m='script_reader_re_arms_its_stall_window_and_the_stamp_reports_unreadable_apart_from_tampered' }
+        @{ s='session-runner'; c='CompletedCardWorkspaceRemovalTests'; m='C1032_InspectionHoldShapes' }
+        @{ s='antiphon'; c='CheckpointShapeConflictTests'; m='shape_conflict_rule' }
+        @{ s='antiphon'; c='CheckpointTrackedBaselineTests'; m='local_output_property_tampering_is_reported' }
+        @{ s='antiphon'; c='CheckpointOutputConfinementTests'; m='imported_props_build_preserves_the_tracked_dependency' }
+        @{ s='session-runner'; c='RunnerWorkspaceBindingTests'; m='C1032_StoreIdentityRefused' }
+    )
+    foreach ($g in $gaps) { $nodes += [pscustomobject]@{ Suite = $g.s; Class = $g.c; Method = $g.m; Uid = ($g.c + '.' + $g.m); Gap = $true } }
+    $nodes += [pscustomobject]@{ Suite = 'antiphon'; Class = 'PortableCensusSiblingTests'; Method = 'Runs'; Uid = 'PortableCensusSiblingTests.Runs'; Gap = $false }
+    $cache = @{}
+    function Test-ExcludedNode($node, [string]$platform) {
+        $key = $node.Suite + '|' + $platform
+        if (-not $cache.ContainsKey($key)) { $cache[$key] = @(Get-NightlyProfileExclusions $shipped.Object 'rc' $node.Suite -Platform $platform) }
+        $probe = [pscustomobject]@{ ClassName = $node.Class; Type = $node.Class; Method = $node.Method }
+        return (Test-NightlyProfileNodeExcluded $probe $cache[$key])
+    }
+    $linuxOnly = @($nodes | Where-Object { -not $_.Gap -and $_.Class -cne 'PortableCensusSiblingTests' })
+    $windowsLaunched = @($linuxOnly | Where-Object { -not (Test-ExcludedNode $_ 'windows') })
+    $siblingLaunched = @($nodes | Where-Object { $_.Class -ceq 'PortableCensusSiblingTests' -and -not (Test-ExcludedNode $_ 'windows') })
+    $terminal = @($siblingLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'Passed' } })
+    $complete = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $completeReason = @($complete.reasons) -join ','
+    Assert-C1323 ($windowsLaunched.Count -eq 0 -and $siblingLaunched.Count -eq 1 -and $complete.coverageComplete -and $completeReason -notlike '*unexecuted-outcome*') 'linux-only-rows-leave-census-complete' ("launched=" + $windowsLaunched.Count + ' ' + $completeReason)
+    $gapNodes = @($nodes | Where-Object Gap)
+    $gapLaunched = @($gapNodes | Where-Object { -not (Test-ExcludedNode $_ 'windows') })
+    $gapTerminal = @($siblingLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'Passed' } })
+    $gapTerminal += @($gapLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'NotExecuted' } })
+    $incomplete = ConvertTo-NightlyCoverageVerdict -TerminalRows $gapTerminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $incompleteReason = @($incomplete.reasons) -join ','
+    $gapsNamed = $true
+    foreach ($g in $gapLaunched) { if ($incompleteReason -notlike ('*' + $g.Uid + '*')) { $gapsNamed = $false } }
+    $inventoryNamed = $false
+    foreach ($n in $linuxOnly) { if ($incompleteReason -like ('*' + $n.Uid + '*')) { $inventoryNamed = $true } }
+    Assert-C1323 ($gapLaunched.Count -eq $gapNodes.Count -and -not $incomplete.coverageComplete -and $gapsNamed -and -not $inventoryNamed -and $incompleteReason -like '*unexecuted-outcome*') 'decision-gaps-stay-incomplete' $incompleteReason
+    $linuxLaunched = @($linuxOnly | Where-Object { -not (Test-ExcludedNode $_ 'linux') })
+    Assert-C1323 ($linuxLaunched.Count -eq $linuxOnly.Count -and $linuxOnly.Count -gt 0) 'linux-still-requires-the-rows' ("linux=" + $linuxLaunched.Count + ' inventory=' + $linuxOnly.Count)
+}
+
 try {
     switch ($Case) {
         'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
         'C1323_PlatformExecution' { Test-C1323_PlatformExecution }
         'C1415_SkipExclusions' { Test-C1415_SkipExclusions }
         'LinuxSessionRunnerAdmission' { Test-LinuxSessionRunnerAdmission }
+        'LinuxOnlyWindowsExclusions' { Test-LinuxOnlyWindowsExclusions }
         default { throw "unknown case: $Case" }
     }
 } catch {
