@@ -61,10 +61,13 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         services.AddSingleton<LandDeliveryBoundary>(p => new FileBoundary(this, p.GetRequiredService<IServiceScopeFactory>()));
         var lease = services.SingleOrDefault(d => d.ServiceType == typeof(IRepositoryMutationLease));
         if (lease is not null) services.Remove(lease);
-        services.AddSingleton<IRepositoryMutationLease>(p => new MoveDefaultOnLease(
-            new RepositoryMutationLease(p.GetRequiredService<ILandingGit>()),
-            Root,
-            p.GetRequiredService<IServiceScopeFactory>()));
+        services.AddSingleton<IRepositoryMutationLease>(p =>
+        {
+            var git = p.GetRequiredService<ILandingGit>();
+            IRepositoryMutationLease inner = new RepositoryMutationLease(git);
+            inner = new MoveDefaultOnLease(inner, Root, p.GetRequiredService<IServiceScopeFactory>());
+            return new DeleteDefaultOnLease(inner, Root, git);
+        });
         var clock = new LandClock(Root);
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(p, clock));
@@ -104,6 +107,55 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
                     .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, baseBranch), ct);
                 await File.WriteAllTextAsync(Path.Combine(root, "move-default-on-lease.fired.json"),
                     JsonSerializer.Serialize(new { projectId, baseBranch, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
+            }
+            return await inner.TryAcquireAsync(repository, ct);
+        }
+
+        public bool Owns(RepositoryLease lease, string commonDirectory) =>
+            inner.Owns(lease, commonDirectory);
+
+        public Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct) =>
+            inner.DescribeUnavailableAsync(repository, ct);
+    }
+
+    /// <summary>
+    /// Fires once when <c>delete-default-on-lease.json</c> is present: after the pre-lease
+    /// observation and before the locked claim, <c>git branch -D</c> removes the named branch
+    /// so a vanished default still owes the stale-observation and unresolved-default warnings.
+    /// </summary>
+    private sealed class DeleteDefaultOnLease(IRepositoryMutationLease inner, string root, ILandingGit git)
+        : IRepositoryMutationLease
+    {
+        private int _fired;
+
+        public async Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct)
+        {
+            var path = Path.Combine(root, "delete-default-on-lease.json");
+            if (File.Exists(path) && Interlocked.Exchange(ref _fired, 1) == 0)
+            {
+                using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, ct));
+                var branch = doc.RootElement.GetProperty("branch").GetString()!;
+                var start = new ProcessStartInfo("git")
+                {
+                    WorkingDirectory = repository,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                foreach (var arg in new[] { "-c", "gc.auto=0", "branch", "-D", branch })
+                    start.ArgumentList.Add(arg);
+                using var process = Process.Start(start)!;
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync(ct);
+                var error = await stderr;
+                _ = await stdout;
+                if (git is EvidenceGit evidence) evidence.DropCachedReads();
+                await File.WriteAllTextAsync(Path.Combine(root, "delete-default-on-lease.fired.json"),
+                    JsonSerializer.Serialize(new { branch, repository, exit = process.ExitCode, error, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
+                if (process.ExitCode != 0)
+                    throw new IOException($"git branch -D {branch} in {repository} exited {process.ExitCode}: {error}");
             }
             return await inner.TryAcquireAsync(repository, ct);
         }
@@ -214,6 +266,11 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
     /// </summary>
     private sealed class EvidenceGit(string root) : LandingGit
     {
+        public void DropCachedReads()
+        {
+            lock (_gate) { _volatile.Clear(); _sourceObs.Clear(); }
+        }
+
         private readonly object _gate = new();
         private readonly Dictionary<string, LandingGitResult> _stable = new(StringComparer.Ordinal);
         private readonly Dictionary<string, LandingGitResult> _volatile = new(StringComparer.Ordinal);

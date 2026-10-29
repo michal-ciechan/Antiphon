@@ -25,34 +25,31 @@ public class DispatchBaseWarningDeliveryE2ETests
     [Test]
     public async Task C508_MismatchWarningReachesCaller()
     {
-        // CARD-1349 / CARD-1428: the lease-time default edit is re-observed. No stale mismatch
-        // intent is owed, so the caller receives none.
+        // Vanished trunk: the mismatch intent and default-unresolved each reach the idle caller once.
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(dispatch: true); await f.StartMismatchDispatchAsync();
         var intents = await f.WaitForMismatchIntentAsync();
-        intents.ShouldBeEmpty();
         await f.AssertDispatchReceiptsAsync(intents);
     }
 
     [Test]
     public async Task C508_MismatchWarningWaitsForCaller()
     {
-        // The same re-observation, with the caller busy: nothing is queued to deliver on release.
+        // The same vanished default, with the caller busy: both rows stay pending until release.
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(busy: true, dispatch: true); await f.StartMismatchDispatchAsync();
         var intents = await f.WaitForMismatchIntentAsync();
-        intents.ShouldBeEmpty();
         await f.TwoNotificationScansAsync();
         await using (var db = f.CreateContext())
         {
             var rows = await db.SessionQueuedMessages.Where(m => m.SourceTaskId == f.TaskId && m.SourceLandNotificationId != null).ToListAsync();
-            rows.ShouldBeEmpty();
-            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId)).ShouldBe(0);
+            rows.Count.ShouldBe(2); rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+            var notes = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).ToListAsync();
+            notes.Count.ShouldBe(2); notes.ShouldAllBe(n => n.ConfirmedAt == null);
             (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
                 && p.Text!.Contains("[dispatch-base "))).ShouldBe(0);
         }
-        var native = Path.Combine(f.Root, "native");
-        (Directory.Exists(native) ? Directory.GetFiles(native, "updates.jsonl", SearchOption.AllDirectories) : [])
+        Directory.GetFiles(Path.Combine(f.Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
             .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk")
                 && line.Contains("[dispatch-base ")).ShouldBe(0);
         await f.ReleaseBusyAsync(); await f.AssertDispatchReceiptsAsync(intents);
