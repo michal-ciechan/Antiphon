@@ -2,11 +2,13 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.SessionRunner.Tests;
 
 public sealed partial class CompletedCardWorkspaceRemovalTests
 {
+    [NativeLinuxOnly("Unix executable-bit witness requires Unix filesystem modes")]
     [Test]
     [Arguments("add-executable")]
     [Arguments("remove-executable")]

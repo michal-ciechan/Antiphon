@@ -4,9 +4,11 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[NativeLinuxOnly("DetachedLauncher setsid proof runs on Linux; Review runs the Windows half.")]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DetachedLauncherTests : CheckpointTestBase

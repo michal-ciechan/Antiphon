@@ -1,5 +1,6 @@
 using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -101,6 +102,7 @@ public sealed class BuildSlotScriptTests
         "C800 WrapperLaunchesNativeExecutableLiterally passes wildcard argv unchanged",
         "C800 WrapperLaunchesNativeExecutableLiterally keeps the caller directory");
 
+    [NativeLinuxOnly("Linux SIGINT behavior only")]
     [Test]
     public Task C800_WrapperInterruptKillsChildAndReleasesLease()
     {

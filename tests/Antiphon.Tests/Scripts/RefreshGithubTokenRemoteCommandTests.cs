@@ -3,6 +3,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -12,6 +13,7 @@ namespace Antiphon.Tests.Scripts;
 /// Windows checkout produces. The fake ssh records the remote command and, like sh on server2,
 /// fails on a carriage return. No vault, no server2, and the token is synthetic.
 /// </summary>
+[NativeLinuxOnly("CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.")]
 [Timeout(600_000)]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]

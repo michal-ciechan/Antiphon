@@ -4,9 +4,11 @@ using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Agents.Pty.Tests;
 
+[NativeLinuxOnly("Unix PTY argv contract requires a Unix PTY and node")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class UnixPtyArgvTests

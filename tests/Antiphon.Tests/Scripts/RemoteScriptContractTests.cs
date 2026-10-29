@@ -11,6 +11,7 @@ using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 [Timeout(600_000)]
@@ -21,6 +22,7 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1374_Host_census_recovers_transient_reads()
@@ -1855,6 +1857,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1087_Host_census_filters_and_names_cause()
     {
@@ -1985,6 +1988,7 @@ public sealed class RemoteScriptContractTests
         retired.Removed.ShouldBeEmpty();
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_exact_default_volumes()
@@ -2057,6 +2061,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_references_and_unknown_census()
@@ -2226,6 +2231,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_audits_work_as_1654()
@@ -2254,6 +2260,7 @@ public sealed class RemoteScriptContractTests
         observed.ShouldBe(expected, "recycle-audit-uid: every materialized Git layout appears in the audit");
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_unpublished_and_dirty_work()
@@ -2278,6 +2285,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_uninspectable_git()
@@ -2368,6 +2376,7 @@ public sealed class RemoteScriptContractTests
 
     // A clean checkout's consider_dirty payload is larger than C1008_SCRATCH_QUOTA_BYTES.
     // reap_dirty drops it before consider_tips measures scratch, so removal is reached.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_reaps_dirty_scratch()
@@ -2384,6 +2393,7 @@ public sealed class RemoteScriptContractTests
     // checkout is auditable when its commit graph is complete. A missing object, an unpublished
     // tip, a dirty worktree, a failing rev-list, and a failing ls-remote stay refusals, and the
     // helper never lazy-fetches.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_audits_promisor_checkout()
@@ -2541,6 +2551,7 @@ public sealed class RemoteScriptContractTests
         return output;
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("stash")]
     [Arguments("reflog")]
@@ -2555,6 +2566,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_recovery_tips(string variant) => C1105AuditContract(variant);
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("seed")]
     [Arguments("fetch-only")]
@@ -2570,6 +2582,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_seed_content(string variant) => C1105AuditContract(variant);
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("assume")]
     [Arguments("skip")]
@@ -2579,6 +2592,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_index_content(string variant) => C1105AuditContract(variant);
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("missing-commit")]
     [Arguments("missing-tree")]
@@ -2588,6 +2602,7 @@ public sealed class RemoteScriptContractTests
     public void C1105_Git_audit_object_completeness(string variant) => C1105AuditContract(variant);
 
     // CARD-1105 repair 4: the whole audit has one overall budget; running out refuses.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_overall_timeout() => C1105AuditContract("audit-timeout");
@@ -2692,6 +2707,7 @@ public sealed class RemoteScriptContractTests
     // mirror and 250 linked worktrees of 300 tracked files plus ignored build output, is
     // audited within 240 s (measured 22 s on server2-temp); each common directory is read
     // once and each worktree's content once. Setup plus audit can exceed LinuxShell's minute.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Git_audit_volume_scale()
@@ -2709,6 +2725,7 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("PASS volume-scale");
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_resume_preserves_proof() => C1105AuditContract("resume");
@@ -2716,6 +2733,7 @@ public sealed class RemoteScriptContractTests
     // One case per Git-directory location in the fixture's HIDDEN-LOCATIONS table: a
     // private commit stored only there refuses, a published one passes. A new location
     // is one table row.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [MethodDataSource(nameof(C1105HiddenLocations))]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -2724,6 +2742,7 @@ public sealed class RemoteScriptContractTests
     // CARD-1335. A regular antiphon-mirror-owner.json in a linked admin passes. An unknown
     // sibling, a symlink, a directory, a second link, another owner, a file over 4096 bytes
     // and the same name in the common directory refuse gitdir-entry status 0 and name that admin.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("mirror-owner")]
     [Arguments("mirror-owner-bound")]
@@ -2778,6 +2797,7 @@ public sealed class RemoteScriptContractTests
 
     // rawfile and arg are the platform limit. store drives the production audit block
     // with a 200000-byte receipt: the record keeps those bytes and the file is 0600.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("rawfile", "EXIT=0")]
     [Arguments("arg", "EXIT=126")]
@@ -2852,6 +2872,7 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("PASS " + variant);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_preserves_tmp_copyup()
@@ -2872,6 +2893,7 @@ public sealed class RemoteScriptContractTests
         // Recreated asset/mode effects are independently required by RD-1.
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("absent", 0, "")]
     [Arguments("empty", 2, "RecycleTmpAssetsMissing")]
@@ -2902,6 +2924,7 @@ public sealed class RemoteScriptContractTests
         else run.Output.ShouldContain(diagnosis);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_resume_requires_matching_receipt()
@@ -2990,6 +3013,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_receipt_records_disk_and_partial_failure()
@@ -3110,6 +3134,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retire_temp_rechecks_absence_and_retirement()
@@ -3151,6 +3176,7 @@ public sealed class RemoteScriptContractTests
         shared.Exit.ShouldBe(0, "retire-host-proof: shared null refuses and integer zero accepts; " + shared.Output);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retire_temp_reclaims_below_cache_disk_gate()
@@ -3162,6 +3188,7 @@ public sealed class RemoteScriptContractTests
         run.Exit.ShouldBe(0);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_dry_run_never_mutates()
@@ -3187,6 +3214,7 @@ public sealed class RemoteScriptContractTests
     // the intercept calls c1008_recycle before case_retire_temp_runner reads stack.temp.env.
     // compose_temp then exports the empty value over that file, and the temp overlay rejects
     // the missing /state/grok source. The preview must name the four temp volumes and remove nothing.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes()
@@ -3217,6 +3245,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1105 V-2. The running roster is the previous generation; the replacement must carry the new bind.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Redeploy_accepts_previous_generation_and_requires_new_bind()
@@ -3255,6 +3284,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1105 V-4. Preview renders the generation change and still mutates nothing.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout()
@@ -3278,6 +3308,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1105. Host Compose v2.18.1 config shape reaches the generation line on a dry run.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_V218_dry_run_reaches_the_generation_line()
@@ -3313,6 +3344,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1105. target: elsewhere is a real relative mount. Both generations refuse it
     // before stop, rm, or volume rm. The byte comparison cannot see this destination.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Relative_dry_run_refuses_before_removal()
@@ -3352,6 +3384,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1105 V-3. Generation identity refuses before stop, removal, volume deletion, or a journal.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Generation_identity_refuses_mismatch()
@@ -3406,6 +3439,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1139. image_count=0 is a temp-only allowance. Main with a state-init and no
     // session-runner still refuses before stop, removal, volume deletion, or a journal.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Main_state_init_without_session_runner_refuses()
@@ -3458,6 +3492,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1116. A target compose that differs from the checkout refuses before any removal.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Compose_cmp_refuses_before_removal()
@@ -3481,6 +3516,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1117. S2 resume refusals in c1008_bind_generation. A state-init image is not
     // compared with generation.imageId; reconcile pins it.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_identity_refusals()
@@ -3530,6 +3566,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1105. A state-init server image is pinned by the journal, not generation.imageId.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_state_init_image_follows_the_journal()
@@ -3542,6 +3579,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1117. A non-roster leftover is a container-state refusal. Reconcile pins
     // journaled leftovers; generation.imageId is not that check.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_foreign_leftover_is_not_an_image_mismatch()
@@ -3554,6 +3592,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1105. The fixture compose_host ignores deployed_sha12, which hides a resume whose
     // stack.env tag was already rewritten. This compose_host stamps that tag into the model.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("matching", 0)]
     [Arguments("edited-digest", 2)]
@@ -3612,6 +3651,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1105. After phase recreating, a journal task may finish and another runner may open
     // work. One flip from the matching recreating journal per row. Preflight keeps the byte compare.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("matching", 0, "", Categories = ["c1105-matching"])]
     [Arguments("terminal", 0, "", Categories = ["c1105-terminal"])]
@@ -7063,6 +7103,7 @@ public sealed class RemoteScriptContractTests
         Order(Block(remote, "case_deploy_parent"), "c849_budget_gate", "build_server2_images").ShouldBeTrue();
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C849_Deploy_prepares_and_verifies_before_acceptance()

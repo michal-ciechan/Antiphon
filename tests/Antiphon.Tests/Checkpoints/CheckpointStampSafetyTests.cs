@@ -4,6 +4,7 @@ using Antiphon.Checkpoints.Coverage;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -11,6 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointStampSafetyTests : CheckpointTestBase
 {
+    [NativeLinuxOnly("Linux source-shape qualification")]
     [Test]
     [Arguments("tool", "fifo")]
     [Arguments("script", "fifo")]

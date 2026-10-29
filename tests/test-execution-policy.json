@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a7c88a0ab7b92daa0e9a72a8b2f377ca4a8678eaa0d469d22d1d97551c676382",
+  "policyHash": "bf703bb14839c0e93c6f3516b2d5dd69288eea73063c36e02396af9fbcde61f7",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1422,6 +1422,14 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
+    },
+    {
+      "reason": "CARD-1613 native Linux skip probe is an explicit child host launched by NativeLinuxPolicyExecutionTests and staged by Antiphon.Tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj"
     },
     {
       "role": "primary",

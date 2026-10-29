@@ -83,6 +83,7 @@
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
     <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" ReferenceOutputAssembly="false" Private="false"
                       SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net10.0" />
@@ -111,6 +112,7 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" Folder="timing-probe" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" Folder="native-linux-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" Folder="fakeclaude" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Folder="fakegrok" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" HelperTargetFramework="net10.0" />
