@@ -13,7 +13,7 @@ The six design-review defects are accepted for correction. This first pushed ske
 | Review defect | Required correction / pending evidence |
 |---|---|
 | D-1 | Resolved: S3 binds each watchdog to its planned cost and measured estimate error; admission and policy maximum must fit together. See S3 budget procedure and CP-9 boundary witnesses. |
-| D-2 | Bind the S6 diagnostic trial to Windows; Linux evidence cannot discharge the Windows opportunity. |
+| D-2 | Resolved: the S6 measurement dispatch requires `-Platform Windows`; portable CP-16 validates admission logic only. Each trial receipt binds actual Windows identity. |
 | D-3 | Census elapsed assertions and real-time waits sharing the limiter or host; protect sensitive classes, including `C1514T_Overhead`, from width 2. |
 | D-4 | Replace ten-run p95/no-regression claims with paired wall comparisons, deadline margins and explicit finite-sample flake limits. |
 | D-5 | Execute the heartbeat harness and C1397 assertions through named checkpoint wrappers with source-verified counts. |
@@ -33,6 +33,7 @@ Also verify the absent release-authority production wiring, rc log-fix subjects/
 - D-8: Use existing assembly setup sharing and immutable schema caching before designing a run-wide live database. A live mutable fixture shared across processes is not a cheap change and is outside this implementation round.
 - D-9: Trial `ProcessSpawnLimit=2` in a non-credit Debug harness, with normal execution still 1. Reject concurrent native chunks in this round: they need a new scheduler, per-process DB/resource admission and an explicit change to the native-overlap contract. Neither a trial pass nor lower CPU grants that policy change.
 - D-10: Reject a population-wide shortened watchdog. A per-launch cap must cover the admitted estimate and its measured error; retain existing policy until the planner/cap pair is changed and validated atomically. A speed target cannot justify killing an admissible healthy launch.
+- D-11: S6 is a Windows Debug trial (`-Platform Windows`, no host pin). The 657.5 min opportunity is Windows evidence; Linux runs and Windows-only skips earn no trial credit. Live defaults and runners were read again on 2026-10-29; both portable and Windows dispatch are available, subject to a fresh check at dispatch.
 
 ## Ground truth
 
@@ -93,6 +94,8 @@ CP-9 replaces `CapUsesHealthyDistribution` with `CapFitsAdmittedPlannedCost`: on
 ## C. Risky parallelism trial
 
 **S6, after A complete and B baselines stabilize.** Breakdown section 4: 122 serial Antiphon chunks consumed 657.5 min, while the only CPU proxy discarded exited processes. Historical **est. 150-330 min** is a workload opportunity; 657.5/2 = 328.75 min is an idealized ceiling before overhead, resource contention and S2-S5 savings. No measured expected saving exists yet. E2E remains serial; its 220.9 min is not included in the trial benefit.
+
+**Windows lane required (D-2).** Dispatch the whole S6 measurement task with `-Platform Windows`, omit `-Runner`, and record actual OS/version, runtime, processor count, host identity and source/assembly digests in every receipt. Refuse non-Windows before sampling: `NightlyNativeOwnershipTests.RunAsync` explicitly skips there (lines 36-38), and Linux cannot reproduce the measured Job Object/ConPTY costs. CP-16 may execute portable resolver/manifest contracts; it does not discharge this native obligation. Windows native custody controls run serially beside the candidate blocks as described below, never with another native chunk.
 
 Implement a test-only, explicit diagnostic resolver in `tests/Antiphon.Tests/TestHelpers/ProcessSpawnLimit.cs`: default remains 1, candidate is exactly 2, invalid/missing settings refuse the trial or resolve to 1, never arbitrary width. A new `scripts/measure-rc-full-speed.ps1` owns one Debug comparison with a frozen selection and separate evidence roots. It supplies a named trial marker and width only to its test child. Normal `Get-NightlySafeChildEnvironment` strips both; release/nightly paths refuse a trial-marked process for gate credit. TestDesign must fix the exact marker names and bind effective width into the receipt before Code. Do not change the independent GitProcessSpawnLimit or other assemblies' limiters.
 
