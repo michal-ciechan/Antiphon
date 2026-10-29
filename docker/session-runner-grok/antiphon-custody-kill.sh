@@ -13,6 +13,14 @@
 # ASCII only. Never prints a secret or an argument vector.
 set -euo pipefail
 
+# Fixed install. Not a sudo command and not overridable by the caller.
+if [ ! -r /usr/local/lib/antiphon-custody-common.sh ]; then
+  echo "C604_CUSTODY_REFUSED CustodyLibraryMissing" >&2
+  exit 3
+fi
+# shellcheck disable=SC1091
+source /usr/local/lib/antiphon-custody-common.sh
+
 CUSTODY_ROOT=antiphon-custody
 V2_ROOT="/sys/fs/cgroup/$CUSTODY_ROOT"
 V1_PIDS_ROOT="/sys/fs/cgroup/pids/$CUSTODY_ROOT"
@@ -56,20 +64,12 @@ tree_pids() {
 }
 
 drain() {
-  local procs="$1" waited=0
-  while [ "$waited" -lt "$DRAIN_SECONDS" ]; do
-    if [ ! -s "$procs" ]; then
-      return 0
-    fi
-    sleep 1
-    waited=$(( waited + 1 ))
-  done
-  [ -s "$procs" ] && return 1
-  return 0
+  custody_drain "$1" "$DRAIN_SECONDS"
 }
 
 kill_v2() {
-  local id="$1" dir="$V2_ROOT/$id"
+  local id="$1"
+  local dir="$V2_ROOT/$id"
   require_under_root "$dir" "$V2_ROOT"
   if [ ! -d "$dir/tree" ]; then
     echo "C604_CUSTODY_KILL_OK $id empty"
@@ -88,7 +88,10 @@ kill_v2() {
 }
 
 kill_v1() {
-  local id="$1" pids_dir="$V1_PIDS_ROOT/$id" freezer_dir="$V1_FREEZER_ROOT/$id" pid
+  local id="$1"
+  local pids_dir="$V1_PIDS_ROOT/$id"
+  local freezer_dir="$V1_FREEZER_ROOT/$id"
+  local pid
   require_under_root "$pids_dir" "$V1_PIDS_ROOT"
   require_under_root "$freezer_dir" "$V1_FREEZER_ROOT"
   if [ ! -d "$pids_dir/tree" ]; then
