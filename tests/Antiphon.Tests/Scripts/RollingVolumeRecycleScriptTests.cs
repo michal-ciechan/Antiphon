@@ -2792,7 +2792,7 @@ public sealed class RollingVolumeRecycleScriptTests
             publish.Exit.ShouldBe(0, "private-origin: public stand-in; " + publish.Output);
             WriteBoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", started, tip + "\trefs/heads/main\n");
             ResetPreviewTrace(fixture);
-            var ignored = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv, dryRun: true);
+            var ignored = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
             ignored.Exit.ShouldBe(0, "private-origin: a successful ls-remote ignores a mismatched proof; " + ignored.Output);
             ignored.Output.ShouldNotContain("RecycleGitAuditUnknown");
             var restore = await C994ScriptProcess.Run("git", "-C", repo, "remote", "set-url", "origin", "ext::" + origin);
@@ -2800,7 +2800,7 @@ public sealed class RollingVolumeRecycleScriptTests
             WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
 
             ResetPreviewTrace(fixture);
-            var inventory = await fixture.Run("retire-temp-inventory", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation);
+            var inventory = await fixture.Run("retire-temp-inventory", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + PreviewWitnessProbe);
             inventory.Exit.ShouldBe(0, "private-origin: inventory lists the authentication failure; " + inventory.Output);
             var originHash = Sha256Hex(url);
             var proofName = Sha256Hex(repoRel + "\n" + url);
@@ -2918,7 +2918,7 @@ public sealed class RollingVolumeRecycleScriptTests
     private static async Task AssertPrivateRefusal(C1008HostFixture fixture, string extra, string diagnosis, string detail, string because)
     {
         ResetPreviewTrace(fixture);
-        var run = await fixture.Run("retire-temp-runner", extra, dryRun: true);
+        var run = await fixture.Run("retire-temp-runner", extra + "\n" + PreviewWitnessProbe, dryRun: true);
         run.Exit.ShouldBe(2, because + "; " + run.Output);
         run.Output.ShouldContain(diagnosis, Case.Sensitive, because);
         run.Output.ShouldContain(detail, Case.Sensitive, because);
