@@ -125,6 +125,8 @@ SHARD a-rsc5 end rc=0 wall=193s waited=0s  total: 121  failed: 0  succeeded: 121
 SHARD a-rsc1 start 2026-10-29T22:44:21Z
 SHARD c3-AB end rc=0 wall=710s waited=0s  total: 553  failed: 0  succeeded: 550  skipped: 3  duration: 11m 48s 671ms 
 SHARD x-c10-TUV start 2026-10-29T22:47:39Z
+SHARD a-rsc1 end rc=0 wall=251s waited=0s  total: 40  failed: 0  succeeded: 40  skipped: 0  duration: 4m 09s 776ms 
+SHARD x-c11-W start 2026-10-29T22:48:32Z
 ```
 
 Red comparisons:
