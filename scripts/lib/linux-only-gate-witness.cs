@@ -5,21 +5,21 @@ using System.Text.RegularExpressions;
 // Body-scoped witness for Windows rc exclusions that are Linux-only by construction.
 // Each test is judged on its own brace-matched body. Strings, comments and raw
 // literals are not code, so a neighbour test's gate cannot leak into the slice.
-// Forms used by the 45 rows:
-// 1. Top-level if (!OperatingSystem.IsLinux()) skip/throw, including a block that only skips and returns.
-// 2. Top-level if (OperatingSystem.IsWindows()) skip/throw.
-// 3. Top-level NativeLinuxGate.Require or RequireNativeLinux, including a cross-file C1008HostFixture call.
-// 4. Top-level call whose local body is a gate: RequireLinuxJoin, RequireLinuxCustody, RequireUnix,
-//    RunProbeAsync, ExternalBuild, RequireLinuxIntegration, C1105AuditContract.
-// 5. [Before(Test)] whose body is a gate, including expression-bodied RequireNativeLinux()
-//    and RequirePlatform(OperatingSystem.IsLinux() ? "linux" : "other") when that helper throws
-//    SkipTestException unless platform is linux.
-// 6. Top-level construction of a fixture whose instance constructor starts with the skip.
-// 7. Top-level if (!Linux()) return; when Linux() is if (IsLinux()) return true; then an unconditional skip.
-// 8. One straight-line preamble call immediately before form 1 (RequireClient).
-// No row uses a class-level skip attribute. An instance constructor of the test class would count;
-// none of the 45 have one. A return-true helper is accepted only when every other statement skips
-// or returns false. A gate nested under another condition is not a gate.
+// Closed list. A test is gated only when one of these is true. Anything else is refused.
+// 1. The first statement is if (!OperatingSystem.IsLinux()) skip/throw, or a block that only skips and returns.
+// 2. The first statement is if (OperatingSystem.IsWindows()) skip/throw, same block rule.
+// 3. The first statement is exactly Gate(...); or await Gate(...); and every resolved body is itself gated.
+//    Arguments are identifiers, dots, commas and numbers. No lambda, ternary, &&, ||, delegate or new.
+// 4. The same call shape, one level in: RequireLinuxJoin, RequireLinuxCustody, RequireUnix, RunProbeAsync,
+//    ExternalBuild, RequireLinuxIntegration, C1105AuditContract, RequireNativeLinux. The callee is read.
+//    RequirePlatform counts only as RequirePlatform(OperatingSystem.IsLinux() ? "linux" : "other").
+// 5. A [Before(Test)] or [Before(Class)] on that class whose body is one of these forms.
+// 6. The first statement is using var x = new Fixture(...); and every instance constructor of Fixture is gated.
+// 7. The first statement is if (!Linux()) return; and Linux() is if (IsLinux()) return true; then a skip.
+// 8. The first statement is exactly RequireClient(); (the two typeof GetMethod asserts) and the second is form 1.
+//    One spelled nest is also accepted: using var x = JsonDocument.Parse(await RunProbeAsync(...));
+//    and var (a, b, c) = ExternalBuild(...);. An unresolved helper is not a gate. #if/#else refuses.
+//    A char or string the lexer cannot read, or an unbalanced body, refuses the file.
 
 namespace RcPlatformWitness
 {
@@ -32,11 +32,16 @@ namespace RcPlatformWitness
 
         public static List<string> RowProblems(string source, string className, string[] methods)
         {
+            var sources = new string[] { source ?? "" };
+            return RowProblemsMany(sources, className, methods);
+        }
+
+        public static List<string> RowProblemsMany(string[] sources, string className, string[] methods)
+        {
             try
             {
-                var file = new FileModel(source ?? "");
-                file.Parse();
-                return file.Problems(className ?? "", methods);
+                var files = ParseAll(sources);
+                return FileModel.Judge(files, className ?? "", methods);
             }
             catch (Exception ex)
             {
@@ -44,6 +49,42 @@ namespace RcPlatformWitness
                 list.Add("parse-failed " + ex.GetType().Name + " " + ex.Message);
                 return list;
             }
+        }
+
+        static List<FileModel> _cache;
+        static string _cacheKey;
+
+        public static List<string> CachedRowProblems(string cacheKey, string[] sources, string className, string[] methods)
+        {
+            try
+            {
+                var key = cacheKey ?? "";
+                if (_cache == null || _cacheKey != key)
+                {
+                    _cacheKey = key;
+                    _cache = ParseAll(sources);
+                }
+                return FileModel.Judge(_cache, className ?? "", methods);
+            }
+            catch (Exception ex)
+            {
+                var list = new List<string>();
+                list.Add("parse-failed " + ex.GetType().Name + " " + ex.Message);
+                return list;
+            }
+        }
+
+        static List<FileModel> ParseAll(string[] sources)
+        {
+            var files = new List<FileModel>();
+            if (sources == null) return files;
+            foreach (var source in sources)
+            {
+                var file = new FileModel(source ?? "");
+                file.Parse();
+                files.Add(file);
+            }
+            return files;
         }
 
         sealed class Tok
@@ -63,6 +104,7 @@ namespace RcPlatformWitness
 
         sealed class Method
         {
+            public string Namespace;
             public string Class;
             public string Name;
             public bool IsTest;
@@ -71,7 +113,19 @@ namespace RcPlatformWitness
             public bool IsStatic;
             public int BodyA;
             public int BodyB;
+            public int SrcA;
+            public int SrcB;
+            public bool Preprocessor;
+            public FileModel Owner;
             public List<Attr> Attrs;
+        }
+
+        sealed class ClassFact
+        {
+            public string Namespace;
+            public string Name;
+            public string BaseName;
+            public bool Inherits;
         }
 
         sealed class FileModel
@@ -79,7 +133,14 @@ namespace RcPlatformWitness
             readonly string _src;
             readonly List<Tok> _toks = new List<Tok>();
             readonly List<Method> _methods = new List<Method>();
+            readonly List<ClassFact> _facts = new List<ClassFact>();
+            readonly List<int[]> _conds = new List<int[]>();
+            readonly List<string> _condKind = new List<string>();
+            readonly Stack<int> _condOpen = new Stack<int>();
             readonly Stack<string> _classes = new Stack<string>();
+            string _namespace = "";
+            bool _misparse;
+            string _misparseDetail = "";
             int _p;
 
             static readonly HashSet<string> Mods = new HashSet<string>(StringComparer.Ordinal)
@@ -101,9 +162,97 @@ namespace RcPlatformWitness
                 }
             }
 
-            public List<string> Problems(string className, string[] methods)
+            sealed class Group
+            {
+                public string Namespace;
+                public string Name;
+                public bool Inherits;
+                public readonly List<string> Bases = new List<string>();
+                public readonly List<Method> Tests = new List<Method>();
+                public readonly List<Method> Befores = new List<Method>();
+                public readonly List<Method> Ctors = new List<Method>();
+            }
+
+            sealed class GateContext
+            {
+                public List<FileModel> Files;
+                public readonly Dictionary<Method, bool> Cache = new Dictionary<Method, bool>();
+                public readonly Stack<Method> Stack = new Stack<Method>();
+
+                public List<Method> Resolve(Method caller, string qualifier, string name)
+                {
+                    var hits = new List<Method>();
+                    if (caller == null || Files == null) return hits;
+                    foreach (var file in Files)
+                    {
+                        foreach (var method in file._methods)
+                        {
+                            if (method.Name != name) continue;
+                            if (qualifier.Length > 0)
+                            {
+                                if (method.Class == qualifier) hits.Add(method);
+                            }
+                            else if (method.Class == caller.Class && method.Namespace == caller.Namespace) hits.Add(method);
+                        }
+                    }
+                    return hits;
+                }
+
+                public List<Method> Ctors(string typeName)
+                {
+                    var hits = new List<Method>();
+                    if (Files == null) return hits;
+                    foreach (var file in Files)
+                    {
+                        foreach (var method in file._methods)
+                        {
+                            if (method.IsCtor && !method.IsStatic && method.Class == typeName) hits.Add(method);
+                        }
+                    }
+                    return hits;
+                }
+            }
+
+            public static List<string> Judge(List<FileModel> files, string className, string[] methods)
             {
                 var problems = new List<string>();
+                if (files == null) files = new List<FileModel>();
+                for (var n = 0; n < files.Count; n++)
+                {
+                    if (!files[n]._misparse) continue;
+                    problems.Add("misparse " + n + " " + files[n]._misparseDetail);
+                    return problems;
+                }
+                var ctx = new GateContext();
+                ctx.Files = files;
+                var groups = new Dictionary<string, Group>(StringComparer.Ordinal);
+                foreach (var file in files)
+                {
+                    foreach (var fact in file._facts)
+                    {
+                        var group = TakeGroup(groups, fact.Namespace, fact.Name);
+                        if (fact.Inherits) group.Inherits = true;
+                        if (fact.BaseName != null && fact.BaseName.Length > 0 && !group.Bases.Contains(fact.BaseName)) group.Bases.Add(fact.BaseName);
+                    }
+                    foreach (var method in file._methods)
+                    {
+                        var group = TakeGroup(groups, method.Namespace, method.Class);
+                        if (method.IsTest) group.Tests.Add(method);
+                        if (method.IsBefore) group.Befores.Add(method);
+                        if (method.IsCtor && !method.IsStatic) group.Ctors.Add(method);
+                    }
+                }
+                var selected = new List<Group>();
+                foreach (var group in groups.Values)
+                {
+                    if (Same(group.Name, className)) selected.Add(group);
+                }
+                selected.Sort(delegate (Group left, Group right)
+                {
+                    var ns = string.CompareOrdinal(left.Namespace, right.Namespace);
+                    if (ns != 0) return ns;
+                    return string.CompareOrdinal(left.Name, right.Name);
+                });
                 var want = new List<string>();
                 if (methods != null)
                 {
@@ -112,67 +261,114 @@ namespace RcPlatformWitness
                         if (!string.IsNullOrWhiteSpace(name)) want.Add(name);
                     }
                 }
-                var classGated = ClassIsGated(className);
                 if (want.Count == 0)
                 {
                     var seen = 0;
-                    foreach (var method in _methods)
+                    foreach (var group in selected)
                     {
-                        if (!method.IsTest || method.Class != className) continue;
-                        seen++;
-                        Judge(method, classGated, problems);
+                        var tests = Expand(group, groups);
+                        seen += tests.Count;
+                        Note(tests, groups, ctx, problems);
                     }
                     if (seen == 0) problems.Add("no-tests");
                     return problems;
                 }
                 foreach (var name in want)
                 {
-                    Method found = null;
-                    foreach (var method in _methods)
+                    var found = new List<Method>();
+                    foreach (var group in selected)
                     {
-                        if (method.Class == className && method.Name == name && method.IsTest) { found = method; break; }
-                    }
-                    if (found == null)
-                    {
-                        foreach (var method in _methods)
+                        foreach (var test in Expand(group, groups))
                         {
-                            if (method.Class == className && method.Name == name) { found = method; break; }
+                            if (Same(test.Name, name)) found.Add(test);
                         }
                     }
-                    if (found == null) problems.Add("missing " + name);
-                    else Judge(found, classGated, problems);
+                    if (found.Count == 0) problems.Add("missing " + name);
+                    else Note(found, groups, ctx, problems);
                 }
                 return problems;
             }
 
-            void Judge(Method method, bool classGated, List<string> problems)
+            static bool Same(string left, string right)
             {
-                var gated = classGated || MethodIsGated(method);
-                if (!gated) problems.Add("ungated " + method.Name);
-                if (Forbidden(method)) problems.Add("forbid " + method.Name);
+                return string.Equals(left ?? "", right ?? "", StringComparison.OrdinalIgnoreCase);
             }
 
-            bool ClassIsGated(string className)
+            static string Key(string ns, string name)
             {
-                var ctors = new List<Method>();
-                foreach (var method in _methods)
+                return (ns ?? "") + "\n" + (name ?? "");
+            }
+
+            static Group TakeGroup(Dictionary<string, Group> groups, string ns, string name)
+            {
+                var key = Key(ns, name);
+                Group group;
+                if (!groups.TryGetValue(key, out group))
                 {
-                    if (method.Class != className) continue;
-                    if (method.IsBefore && MethodIsGated(method)) return true;
-                    if (method.IsCtor && !method.IsStatic) ctors.Add(method);
+                    group = new Group();
+                    group.Namespace = ns ?? "";
+                    group.Name = name ?? "";
+                    groups[key] = group;
                 }
-                if (ctors.Count == 0) return false;
-                foreach (var ctor in ctors)
+                return group;
+            }
+
+            static List<Method> Expand(Group group, Dictionary<string, Group> groups)
+            {
+                var list = new List<Method>();
+                Collect(group, groups, list, new HashSet<string>(StringComparer.Ordinal));
+                return list;
+            }
+
+            static void Collect(Group group, Dictionary<string, Group> groups, List<Method> list, HashSet<string> seen)
+            {
+                if (group == null || !seen.Add(Key(group.Namespace, group.Name))) return;
+                foreach (var test in group.Tests) list.Add(test);
+                if (!group.Inherits) return;
+                foreach (var baseName in group.Bases)
                 {
-                    if (!MethodIsGated(ctor)) return false;
+                    foreach (var other in groups.Values)
+                    {
+                        if (other.Name == baseName) Collect(other, groups, list, seen);
+                    }
+                }
+            }
+
+            static void Note(List<Method> tests, Dictionary<string, Group> groups, GateContext ctx, List<string> problems)
+            {
+                foreach (var test in tests)
+                {
+                    if (Forbidden(test)) problems.Add("forbid " + test.Name);
+                    if (test.Preprocessor)
+                    {
+                        problems.Add("preprocessor " + test.Name);
+                        continue;
+                    }
+                    Group group;
+                    groups.TryGetValue(Key(test.Namespace, test.Class), out group);
+                    if (!Covered(group, ctx) && !test.Owner.MethodIsGated(test, ctx)) problems.Add("ungated " + test.Name);
+                }
+            }
+
+            static bool Covered(Group group, GateContext ctx)
+            {
+                if (group == null) return false;
+                foreach (var before in group.Befores)
+                {
+                    if (!before.Preprocessor && before.Owner.MethodIsGated(before, ctx)) return true;
+                }
+                if (group.Ctors.Count == 0) return false;
+                foreach (var ctor in group.Ctors)
+                {
+                    if (ctor.Preprocessor || !ctor.Owner.MethodIsGated(ctor, ctx)) return false;
                 }
                 return true;
             }
 
-            bool Forbidden(Method method)
+            static bool Forbidden(Method method)
             {
-                if (method.BodyA >= method.BodyB) return false;
-                var raw = Raw(method.BodyA, method.BodyB);
+                if (method == null || method.Owner == null || method.BodyA >= method.BodyB) return false;
+                var raw = method.Owner.Raw(method.BodyA, method.BodyB);
                 foreach (Match match in SkipMessage.Matches(raw))
                 {
                     if (Forbid.IsMatch(match.Groups[1].Value)) return true;
@@ -180,72 +376,37 @@ namespace RcPlatformWitness
                 return false;
             }
 
-            readonly Stack<Method> _stack = new Stack<Method>();
-            readonly Dictionary<Method, bool> _cache = new Dictionary<Method, bool>();
-
-            bool MethodIsGated(Method method)
+            bool MethodIsGated(Method method, GateContext ctx)
             {
-                if (method == null) return false;
+                if (method == null || method.Preprocessor || ctx == null) return false;
                 bool cached;
-                if (_cache.TryGetValue(method, out cached)) return cached;
-                if (_stack.Contains(method)) return false;
-                _stack.Push(method);
-                var gated = Compute(method);
-                _stack.Pop();
-                _cache[method] = gated;
+                if (ctx.Cache.TryGetValue(method, out cached)) return cached;
+                if (ctx.Stack.Contains(method)) return false;
+                ctx.Stack.Push(method);
+                var gated = Compute(method, ctx);
+                ctx.Stack.Pop();
+                ctx.Cache[method] = gated;
                 return gated;
             }
 
-            bool Compute(Method method)
+            bool Compute(Method method, GateContext ctx)
             {
                 var statements = Statements(method.BodyA, method.BodyB);
                 if (statements.Count == 0) return false;
-                if (StatementIsGate(statements[0], method.Class)) return true;
-                if (statements.Count >= 2 && IsPreamble(statements[0], method.Class) && StatementIsGate(statements[1], method.Class)) return true;
+                if (StatementIsGate(statements[0], method, ctx)) return true;
+                if (statements.Count >= 2 && IsRequireClient(statements[0], method, ctx) && IsOsSkipIf(statements[1])) return true;
                 return false;
             }
 
-            bool StatementIsGate(int[] span, string caller)
+            bool StatementIsGate(int[] span, Method caller, GateContext ctx)
             {
                 if (IsOsSkipIf(span)) return true;
-                if (IsHelperReturnIf(span, caller)) return true;
-                if (!StartsWithControl(span)) return HasGatedCall(span, caller);
+                if (IsHelperReturnIf(span, caller, ctx)) return true;
+                if (IsDirectCall(span, caller, ctx)) return true;
+                if (IsNewFixture(span, ctx)) return true;
+                if (IsDeconstruct(span, caller, ctx)) return true;
+                if (IsParsedProbe(span, caller, ctx)) return true;
                 return false;
-            }
-
-            bool IsPreamble(int[] span, string caller)
-            {
-                if (StartsWithControl(span)) return false;
-                string name;
-                if (!SoleLocalCall(span, out name)) return false;
-                var hits = Resolve("", name, caller);
-                if (hits.Count != 1) return false;
-                return StraightLine(hits[0]);
-            }
-
-            bool StraightLine(Method method)
-            {
-                var statements = Statements(method.BodyA, method.BodyB);
-                foreach (var span in statements)
-                {
-                    if (StartsWithControl(span)) return false;
-                }
-                return statements.Count > 0;
-            }
-
-            bool SoleLocalCall(int[] span, out string name)
-            {
-                name = "";
-                string found = "";
-                var calls = 0;
-                WalkCalls(span, delegate (string qualifier, string called, int index, bool isNew)
-                {
-                    if (isNew || qualifier.Length > 0) calls += 2;
-                    else { calls++; found = called; }
-                });
-                if (calls != 1) return false;
-                name = found;
-                return true;
             }
 
             bool IsOsSkipIf(int[] span)
@@ -264,7 +425,7 @@ namespace RcPlatformWitness
                     || Seq(a, b, "OperatingSystem", ".", "IsWindows", "(", ")");
             }
 
-            bool IsHelperReturnIf(int[] span, string caller)
+            bool IsHelperReturnIf(int[] span, Method caller, GateContext ctx)
             {
                 int open;
                 if (!IfCondition(span, out open)) return false;
@@ -272,25 +433,200 @@ namespace RcPlatformWitness
                 if (close != open + 6 || close > span[1]) return false;
                 if (_toks[open + 1].T != "!" || !IsIdent(_toks[open + 2].T) || _toks[open + 3].T != "(" || _toks[open + 4].T != ")") return false;
                 if (!Seq(close, span[1], "return", ";")) return false;
-                var helper = _toks[open + 2].T;
-                var hits = Resolve("", helper, caller);
+                var hits = ctx.Resolve(caller, "", _toks[open + 2].T);
                 if (hits.Count != 1) return false;
                 return ReturnTrueShape(hits[0]);
             }
 
             bool ReturnTrueShape(Method method)
             {
-                var statements = Statements(method.BodyA, method.BodyB);
+                var owner = method.Owner;
+                var statements = owner.Statements(method.BodyA, method.BodyB);
                 if (statements.Count < 2) return false;
-                if (!IsLinuxReturnTrue(statements[0])) return false;
+                if (!owner.IsLinuxReturnTrue(statements[0])) return false;
                 var skipped = false;
                 for (var n = 1; n < statements.Count; n++)
                 {
-                    if (IsSkipStatement(statements[n][0], statements[n][1])) { skipped = true; continue; }
-                    if (Seq(statements[n][0], statements[n][1], "return", "false", ";")) { skipped = true; continue; }
+                    if (owner.IsSkipStatement(statements[n][0], statements[n][1])) { skipped = true; continue; }
+                    if (owner.Seq(statements[n][0], statements[n][1], "return", "false", ";")) continue;
                     return false;
                 }
                 return skipped;
+            }
+
+            bool IsRequireClient(int[] span, Method caller, GateContext ctx)
+            {
+                if (!Seq(span[0], span[1], "RequireClient", "(", ")", ";")) return false;
+                var hits = ctx.Resolve(caller, "", "RequireClient");
+                if (hits.Count != 1) return false;
+                var owner = hits[0].Owner;
+                var body = owner.Statements(hits[0].BodyA, hits[0].BodyB);
+                if (body.Count != 2) return false;
+                return IsTypeofAssert(owner, body[0]) && IsTypeofAssert(owner, body[1]);
+            }
+
+            static bool IsTypeofAssert(FileModel owner, int[] span)
+            {
+                return owner.Seq(span[0], span[1], "typeof", "(", "PhoneHomeRunnerClient", ")", ".", "GetMethod", "(", ")", ".", "ShouldNotBeNull", "(", ")", ";");
+            }
+
+            bool IsDirectCall(int[] span, Method caller, GateContext ctx)
+            {
+                var a = span[0];
+                var b = span[1];
+                var i = a;
+                if (i < b && _toks[i].T == "await") i++;
+                string qual;
+                string name;
+                int open;
+                if (!CallAt(i, b, out qual, out name, out open)) return false;
+                var close = SkipParens(open, b);
+                if (close != b - 1 || _toks[b - 1].T != ";") return false;
+                if (name == "RequirePlatform" && qual.Length == 0 && PlatformTernary(open - 1, b) && PlatformHelper(caller, ctx)) return true;
+                if (!SimpleArgs(open, close)) return false;
+                var hits = ctx.Resolve(caller, qual, name);
+                if (hits.Count == 0) return false;
+                foreach (var hit in hits)
+                {
+                    if (!hit.Owner.MethodIsGated(hit, ctx)) return false;
+                }
+                return true;
+            }
+
+            bool IsNewFixture(int[] span, GateContext ctx)
+            {
+                var a = span[0];
+                var b = span[1];
+                var i = a;
+                if (i < b && _toks[i].T == "await") i++;
+                if (i < b && _toks[i].T == "using") i++;
+                if (i >= b || _toks[i].T != "var") return false;
+                i++;
+                if (i >= b || !IsIdent(_toks[i].T)) return false;
+                i++;
+                if (i >= b || _toks[i].T != "=") return false;
+                i++;
+                if (i >= b || _toks[i].T != "new") return false;
+                i++;
+                if (i >= b || !IsIdent(_toks[i].T)) return false;
+                var type = _toks[i].T;
+                i++;
+                if (i >= b || _toks[i].T != "(") return false;
+                var close = SkipParens(i, b);
+                if (!SimpleArgs(i, close)) return false;
+                if (close != b - 1 || _toks[b - 1].T != ";") return false;
+                var ctors = ctx.Ctors(type);
+                if (ctors.Count == 0) return false;
+                foreach (var ctor in ctors)
+                {
+                    if (!ctor.Owner.MethodIsGated(ctor, ctx)) return false;
+                }
+                return true;
+            }
+
+            bool IsDeconstruct(int[] span, Method caller, GateContext ctx)
+            {
+                var a = span[0];
+                var b = span[1];
+                if (b - a < 10 || _toks[a].T != "var" || _toks[a + 1].T != "(") return false;
+                var i = a + 2;
+                var parts = 0;
+                while (parts < 3)
+                {
+                    if (i >= b || !IsIdent(_toks[i].T)) return false;
+                    i++;
+                    parts++;
+                    if (parts < 3)
+                    {
+                        if (i >= b || _toks[i].T != ",") return false;
+                        i++;
+                    }
+                }
+                if (i >= b || _toks[i].T != ")") return false;
+                i++;
+                if (i >= b || _toks[i].T != "=") return false;
+                i++;
+                if (i < b && _toks[i].T == "await") i++;
+                string qual;
+                string name;
+                int open;
+                if (!CallAt(i, b, out qual, out name, out open)) return false;
+                var close = SkipParens(open, b);
+                if (!SimpleArgs(open, close)) return false;
+                if (close != b - 1 || _toks[b - 1].T != ";") return false;
+                var hits = ctx.Resolve(caller, qual, name);
+                if (hits.Count == 0) return false;
+                foreach (var hit in hits)
+                {
+                    if (!hit.Owner.MethodIsGated(hit, ctx)) return false;
+                }
+                return true;
+            }
+
+            bool IsParsedProbe(int[] span, Method caller, GateContext ctx)
+            {
+                var a = span[0];
+                var b = span[1];
+                if (b - a < 12) return false;
+                if (_toks[a].T != "using" || _toks[a + 1].T != "var" || !IsIdent(_toks[a + 2].T) || _toks[a + 3].T != "=") return false;
+                if (_toks[a + 4].T != "JsonDocument" || _toks[a + 5].T != "." || _toks[a + 6].T != "Parse" || _toks[a + 7].T != "(") return false;
+                if (_toks[a + 8].T != "await") return false;
+                string qual;
+                string name;
+                int open;
+                if (!CallAt(a + 9, b, out qual, out name, out open)) return false;
+                if (qual.Length != 0 || name != "RunProbeAsync") return false;
+                var close = SkipParens(open, b);
+                if (!SimpleArgs(open, close)) return false;
+                if (close >= b || _toks[close].T != ")") return false;
+                if (close + 1 != b - 1 || _toks[b - 1].T != ";") return false;
+                var hits = ctx.Resolve(caller, "", "RunProbeAsync");
+                if (hits.Count == 0) return false;
+                foreach (var hit in hits)
+                {
+                    if (!hit.Owner.MethodIsGated(hit, ctx)) return false;
+                }
+                return true;
+            }
+
+            bool CallAt(int i, int b, out string qual, out string name, out int open)
+            {
+                qual = "";
+                name = "";
+                open = -1;
+                if (i >= b || !IsIdent(_toks[i].T)) return false;
+                name = _toks[i].T;
+                var j = i;
+                while (j + 2 < b && _toks[j + 1].T == "." && IsIdent(_toks[j + 2].T))
+                {
+                    qual = _toks[j].T;
+                    j += 2;
+                    name = _toks[j].T;
+                }
+                if (j + 1 >= b || _toks[j + 1].T != "(") return false;
+                open = j + 1;
+                return true;
+            }
+
+            bool SimpleArgs(int open, int close)
+            {
+                for (var i = open + 1; i < close - 1; i++)
+                {
+                    var token = _toks[i].T;
+                    if (IsIdent(token) || token == "," || token == "." || IsDigits(token)) continue;
+                    return false;
+                }
+                return true;
+            }
+
+            static bool IsDigits(string token)
+            {
+                if (token == null || token.Length == 0) return false;
+                for (var i = 0; i < token.Length; i++)
+                {
+                    if (token[i] < '0' || token[i] > '9') return false;
+                }
+                return true;
             }
 
             bool IsLinuxReturnTrue(int[] span)
@@ -303,53 +639,6 @@ namespace RcPlatformWitness
                 return Seq(close, span[1], "{", "return", "true", ";", "}");
             }
 
-            bool HasGatedCall(int[] span, string caller)
-            {
-                var gated = false;
-                WalkCalls(span, delegate (string qualifier, string called, int index, bool isNew)
-                {
-                    if (gated) return;
-                    if (isNew)
-                    {
-                        if (AllCtorsGated(called)) gated = true;
-                        return;
-                    }
-                    if (called == "RequirePlatform" && qualifier.Length == 0 && PlatformTernary(index, span[1]) && PlatformHelper(caller))
-                    {
-                        gated = true;
-                        return;
-                    }
-                    var hits = Resolve(qualifier, called, caller);
-                    if (hits.Count > 0)
-                    {
-                        if (AllGated(hits)) gated = true;
-                        return;
-                    }
-                    if (KnownExternal(qualifier, called)) gated = true;
-                });
-                return gated;
-            }
-
-            bool AllGated(List<Method> hits)
-            {
-                if (hits.Count == 0) return false;
-                foreach (var hit in hits)
-                {
-                    if (!MethodIsGated(hit)) return false;
-                }
-                return true;
-            }
-
-            bool AllCtorsGated(string typeName)
-            {
-                var hits = new List<Method>();
-                foreach (var method in _methods)
-                {
-                    if (method.IsCtor && !method.IsStatic && method.Class == typeName && method.Name == typeName) hits.Add(method);
-                }
-                return AllGated(hits);
-            }
-
             bool PlatformTernary(int nameIndex, int limit)
             {
                 if (nameIndex + 1 >= limit || _toks[nameIndex + 1].T != "(") return false;
@@ -358,76 +647,14 @@ namespace RcPlatformWitness
                 return PlatformCall.IsMatch(raw);
             }
 
-            bool PlatformHelper(string caller)
+            bool PlatformHelper(Method caller, GateContext ctx)
             {
-                var hits = Resolve("", "RequirePlatform", caller);
+                var hits = ctx.Resolve(caller, "", "RequirePlatform");
                 if (hits.Count != 1) return false;
-                var statements = Statements(hits[0].BodyA, hits[0].BodyB);
+                var owner = hits[0].Owner;
+                var statements = owner.Statements(hits[0].BodyA, hits[0].BodyB);
                 if (statements.Count == 0) return false;
-                return PlatformSkip.IsMatch(Raw(statements[0][0], statements[0][1]));
-            }
-
-            static bool KnownExternal(string qualifier, string name)
-            {
-                if (name == "Require" && qualifier == "NativeLinuxGate") return true;
-                if (name == "RequireNativeLinux") return true;
-                if (name == "RequireUnix" || name == "RequireLinux" || name == "RequireLinuxJoin" || name == "RequireLinuxCustody") return true;
-                return false;
-            }
-
-            List<Method> Resolve(string qualifier, string name, string caller)
-            {
-                var hits = new List<Method>();
-                if (qualifier.Length > 0)
-                {
-                    foreach (var method in _methods)
-                    {
-                        if (method.Name == name && method.Class == qualifier) hits.Add(method);
-                    }
-                    return hits;
-                }
-                foreach (var method in _methods)
-                {
-                    if (method.Name == name && method.Class == caller) hits.Add(method);
-                }
-                if (hits.Count > 0) return hits;
-                foreach (var method in _methods)
-                {
-                    if (method.Name == name) hits.Add(method);
-                }
-                return hits;
-            }
-
-            delegate void CallSink(string qualifier, string called, int index, bool isNew);
-
-            void WalkCalls(int[] span, CallSink sink)
-            {
-                var brace = 0;
-                var a = span[0];
-                var b = span[1];
-                for (var i = a; i < b; i++)
-                {
-                    var t = _toks[i].T;
-                    if (t == "{") { brace++; continue; }
-                    if (t == "}") { if (brace > 0) brace--; continue; }
-                    if (brace != 0) continue;
-                    var isNew = i > a && _toks[i - 1].T == "new";
-                    if (!IsIdent(t)) continue;
-                    var name = t;
-                    var qualifier = "";
-                    var j = i;
-                    while (j + 2 < b && _toks[j + 1].T == "." && IsIdent(_toks[j + 2].T))
-                    {
-                        qualifier = _toks[j].T;
-                        j += 2;
-                        name = _toks[j].T;
-                    }
-                    var after = j + 1;
-                    if (after < b && _toks[after].T == "<") after = SkipAngles(after, b);
-                    if (after >= b || _toks[after].T != "(") continue;
-                    sink(isNew ? "" : qualifier, isNew ? t : name, isNew ? i : j, isNew);
-                    i = j;
-                }
+                return PlatformSkip.IsMatch(owner.Raw(statements[0][0], statements[0][1]));
             }
 
             bool StartsWithControl(int[] span)
@@ -493,16 +720,26 @@ namespace RcPlatformWitness
 
             bool IsSkipStatement(int a, int b)
             {
-                if (b - a >= 4 && _toks[a].T == "Skip" && _toks[a + 1].T == "." && _toks[a + 2].T == "Test" && _toks[a + 3].T == "(") return true;
-                if (a >= b || _toks[a].T != "throw" || a + 1 >= b || _toks[a + 1].T != "new") return false;
-                var i = a + 2;
-                var last = "";
-                while (i < b && (IsIdent(_toks[i].T) || _toks[i].T == "."))
+                int i;
+                if (b - a >= 4 && _toks[a].T == "Skip" && _toks[a + 1].T == "." && _toks[a + 2].T == "Test" && _toks[a + 3].T == "(")
                 {
-                    if (IsIdent(_toks[i].T)) last = _toks[i].T;
-                    i++;
+                    i = SkipParens(a + 3, b);
                 }
-                return last == "SkipTestException" && i < b && _toks[i].T == "(";
+                else
+                {
+                    if (a >= b || _toks[a].T != "throw" || a + 1 >= b || _toks[a + 1].T != "new") return false;
+                    i = a + 2;
+                    var last = "";
+                    while (i < b && (IsIdent(_toks[i].T) || _toks[i].T == "."))
+                    {
+                        if (IsIdent(_toks[i].T)) last = _toks[i].T;
+                        i++;
+                    }
+                    if (last != "SkipTestException" || i >= b || _toks[i].T != "(") return false;
+                    i = SkipParens(i, b);
+                }
+                if (i < b && _toks[i].T == ";") i++;
+                return i == b;
             }
 
             bool Seq(int a, int b, params string[] expect)
@@ -642,6 +879,7 @@ namespace RcPlatformWitness
                     }
                     i++;
                 }
+                if (depth != 0 && limit >= _toks.Count) Misparse("unbalanced-brace");
                 return i;
             }
 
@@ -661,6 +899,7 @@ namespace RcPlatformWitness
                     }
                     i++;
                 }
+                if (depth != 0 && limit >= _toks.Count) Misparse("unbalanced-paren");
                 return i;
             }
 
@@ -699,7 +938,7 @@ namespace RcPlatformWitness
                 var mods = ModifiersOf();
                 var kw = Tok();
                 if (kw == "namespace") { Namespace(); return; }
-                if (kw == "class" || kw == "struct" || kw == "interface" || kw == "enum" || kw == "record") { TypeDecl(); return; }
+                if (kw == "class" || kw == "struct" || kw == "interface" || kw == "enum" || kw == "record") { TypeDecl(attrs); return; }
                 if (kw == "using" || kw == "extern" || kw == "delegate") { _p = ConsumeSemi(_p, _toks.Count); return; }
                 if (kw == "global" && Tok(1) == "using") { _p = ConsumeSemi(_p, _toks.Count); return; }
                 if (kw == "}") return;
@@ -711,30 +950,62 @@ namespace RcPlatformWitness
             void Namespace()
             {
                 _p++;
-                while (_p < _toks.Count && Tok() != ";" && Tok() != "{") _p++;
-                if (Tok() == ";") { _p++; return; }
+                var parts = new List<string>();
+                while (_p < _toks.Count && Tok() != ";" && Tok() != "{")
+                {
+                    if (IsIdent(Tok())) parts.Add(Take());
+                    else _p++;
+                }
+                var name = string.Join(".", parts.ToArray());
+                var full = _namespace.Length == 0 ? name : _namespace + "." + name;
+                if (Tok() == ";")
+                {
+                    _namespace = full;
+                    _p++;
+                    return;
+                }
                 if (Tok() == "{")
                 {
+                    var previous = _namespace;
+                    _namespace = full;
                     _p++;
                     while (_p < _toks.Count && Tok() != "}") Declaration();
                     if (Tok() == "}") _p++;
+                    _namespace = previous;
                 }
             }
 
-            void TypeDecl()
+            void TypeDecl(List<Attr> attrs)
             {
                 var kind = Take();
                 if (kind == "record" && (Tok() == "class" || Tok() == "struct")) Take();
                 var typeName = Dotted();
                 if (Tok() == "<") _p = SkipAngles(_p, _toks.Count);
                 if (Tok() == "(") _p = SkipParens(_p, _toks.Count);
+                var baseName = "";
+                var sawBase = false;
                 while (Tok() != "{" && Tok() != ";" && Tok() != "" && Tok() != "}")
                 {
                     if (Tok() == "(") { _p = SkipParens(_p, _toks.Count); continue; }
                     if (Tok() == "<") { _p = SkipAngles(_p, _toks.Count); continue; }
                     if (Tok() == "[") { _p = SkipBracesLike(_p, "[", "]"); continue; }
+                    if (Tok() == ":" && !sawBase)
+                    {
+                        sawBase = true;
+                        _p++;
+                        baseName = Dotted();
+                        if (Tok() == "<") _p = SkipAngles(_p, _toks.Count);
+                        continue;
+                    }
+                    if (Tok() == "where") sawBase = true;
                     _p++;
                 }
+                var fact = new ClassFact();
+                fact.Namespace = _namespace;
+                fact.Name = typeName;
+                fact.BaseName = baseName;
+                fact.Inherits = Has(attrs, "InheritsTests") || Has(attrs, "InheritsTestsAttribute");
+                _facts.Add(fact);
                 if (Tok() == ";") { _p++; return; }
                 if (Tok() != "{") return;
                 _p++;
@@ -756,12 +1027,13 @@ namespace RcPlatformWitness
                 var bracket = 0;
                 var lastIdent = "";
                 var sawParen = false;
+                var frozen = false;
                 var method = false;
                 while (_p < _toks.Count)
                 {
                     var t = Tok();
-                    if (t == "<" && paren == 0) { angle++; _p++; continue; }
-                    if (t == ">" && angle > 0 && paren == 0) { angle--; _p++; continue; }
+                    if (t == "<" && paren == 0 && bracket == 0) { angle++; _p++; continue; }
+                    if (t == ">" && angle > 0 && paren == 0 && bracket == 0) { angle--; _p++; continue; }
                     if (t == "[" && angle == 0 && paren == 0) { bracket++; _p++; continue; }
                     if (t == "]" && bracket > 0 && paren == 0) { bracket--; _p++; continue; }
                     if (t == "(" && angle == 0 && bracket == 0) { paren++; _p++; continue; }
@@ -769,11 +1041,15 @@ namespace RcPlatformWitness
                     {
                         paren--;
                         _p++;
-                        if (paren == 0 && angle == 0 && bracket == 0) sawParen = true;
+                        if (paren == 0 && angle == 0 && bracket == 0)
+                        {
+                            sawParen = true;
+                            if (lastIdent.Length > 0) frozen = true;
+                        }
                         continue;
                     }
                     if (angle == 0 && paren == 0 && bracket == 0 && (t == "{" || t == "=" || t == ";" || t == "}")) break;
-                    if (angle == 0 && paren == 0 && bracket == 0 && IsIdent(t))
+                    if (!frozen && angle == 0 && paren == 0 && bracket == 0 && IsIdent(t))
                     {
                         if (sawParen) { lastIdent = t; method = true; sawParen = false; }
                         else lastIdent = t;
@@ -789,6 +1065,8 @@ namespace RcPlatformWitness
                 var cls = _classes.Peek();
                 var bodyA = 0;
                 var bodyB = 0;
+                var srcA = 0;
+                var srcB = 0;
                 var hasBody = false;
                 if (Tok() == "{")
                 {
@@ -799,25 +1077,35 @@ namespace RcPlatformWitness
                     bodyB = _p - 1;
                     if (bodyB < bodyA) bodyB = bodyA;
                     hasBody = true;
+                    srcA = _toks[open].S;
+                    srcB = _p > 0 ? _toks[_p - 1].E : srcA;
                 }
                 else if (Tok() == "=" && Tok(1) == ">")
                 {
+                    var arrow = _p;
                     _p += 2;
                     bodyA = _p;
                     _p = ConsumeSemi(_p, _toks.Count);
                     bodyB = _p;
                     hasBody = true;
+                    srcA = _toks[arrow].S;
+                    srcB = bodyB > bodyA ? _toks[bodyB - 1].E : srcA;
                 }
                 else FinishNonMethod();
                 if (!hasBody) return;
                 var info = new Method();
+                info.Namespace = _namespace;
                 info.Class = cls;
                 info.Name = lastIdent;
                 info.Attrs = attrs;
                 info.BodyA = bodyA;
                 info.BodyB = bodyB;
+                info.SrcA = srcA;
+                info.SrcB = srcB;
+                info.Preprocessor = InConditional(srcA, srcB);
+                info.Owner = this;
                 info.IsStatic = mods.Contains("static");
-                info.IsCtor = lastIdent == cls;
+                info.IsCtor = !mods.Contains("static") && lastIdent == cls;
                 info.IsTest = Has(attrs, "Test") || Has(attrs, "TestAttribute");
                 info.IsBefore = BeforeKind(attrs);
                 _methods.Add(info);
@@ -958,6 +1246,110 @@ namespace RcPlatformWitness
                 return t.Length > 0 && (char.IsLetter(t[0]) || t[0] == '_');
             }
 
+            void Misparse(string detail)
+            {
+                if (_misparse) return;
+                _misparse = true;
+                _misparseDetail = detail ?? "misparse";
+            }
+
+            bool InConditional(int start, int end)
+            {
+                for (var n = 0; n < _conds.Count; n++)
+                {
+                    var span = _conds[n];
+                    if (start < span[1] && span[0] < end) return true;
+                }
+                return false;
+            }
+
+            void NoteDirective(string word, int mark, int lineEnd)
+            {
+                if (word == "if" || word == "elif" || word == "else")
+                {
+                    if ((word == "elif" || word == "else") && _condOpen.Count == 0)
+                    {
+                        Misparse("unmatched-" + word);
+                        return;
+                    }
+                    _conds.Add(new int[] { mark, _src.Length });
+                    _condKind.Add(word);
+                    _condOpen.Push(_conds.Count - 1);
+                    return;
+                }
+                if (word != "endif") return;
+                if (_condOpen.Count == 0)
+                {
+                    Misparse("unmatched-endif");
+                    return;
+                }
+                while (_condOpen.Count > 0)
+                {
+                    var idx = _condOpen.Pop();
+                    _conds[idx][1] = lineEnd;
+                    if (_condKind[idx] == "if") break;
+                }
+            }
+
+            static bool IsHex(char c)
+            {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            }
+
+            bool TakeHex(ref int i, int min, int max)
+            {
+                var n = _src.Length;
+                var count = 0;
+                while (count < max && i < n && IsHex(_src[i]))
+                {
+                    i++;
+                    count++;
+                }
+                return count >= min;
+            }
+
+            bool ConsumeEscape(ref int i)
+            {
+                var n = _src.Length;
+                if (i >= n) return false;
+                var c = _src[i];
+                i++;
+                if (c == 'u') return TakeHex(ref i, 4, 4);
+                if (c == 'U') return TakeHex(ref i, 8, 8);
+                if (c == 'x') return TakeHex(ref i, 1, 4);
+                return true;
+            }
+
+            bool TryChar(ref int i)
+            {
+                var n = _src.Length;
+                if (i >= n || _src[i] != '\'') return false;
+                i++;
+                if (i >= n)
+                {
+                    Misparse("unterminated-char");
+                    return true;
+                }
+                if (_src[i] == '\\')
+                {
+                    i++;
+                    if (!ConsumeEscape(ref i)) Misparse("bad-char-escape");
+                }
+                else if (_src[i] == '\n' || _src[i] == '\r' || _src[i] == '\'')
+                {
+                    Misparse("bad-char");
+                    return true;
+                }
+                else i++;
+                if (i >= n || _src[i] != '\'')
+                {
+                    Misparse("unterminated-char");
+                    return true;
+                }
+                i++;
+                return true;
+            }
+
             void Scan()
             {
                 var n = _src.Length;
@@ -971,7 +1363,14 @@ namespace RcPlatformWitness
                     if (char.IsWhiteSpace(c)) { i++; continue; }
                     if (lineStart && c == '#')
                     {
+                        var mark = i;
+                        i++;
+                        while (i < n && _src[i] != '\n' && char.IsWhiteSpace(_src[i])) i++;
+                        var wordStart = i;
+                        while (i < n && (char.IsLetter(_src[i]) || _src[i] == '_')) i++;
+                        var word = _src.Substring(wordStart, i - wordStart);
                         while (i < n && _src[i] != '\n') i++;
+                        NoteDirective(word, mark, i);
                         continue;
                     }
                     lineStart = false;
@@ -989,14 +1388,7 @@ namespace RcPlatformWitness
                         continue;
                     }
                     if (TryString(ref i)) continue;
-                    if (c == '\'')
-                    {
-                        i++;
-                        if (i < n && _src[i] == '\\') i += 2;
-                        else if (i < n) i++;
-                        if (i < n && _src[i] == '\'') i++;
-                        continue;
-                    }
+                    if (TryChar(ref i)) continue;
                     if (char.IsLetter(c) || c == '_' || (c == '@' && i + 1 < n && char.IsLetter(_src[i + 1])))
                     {
                         var start = i;
@@ -1052,7 +1444,12 @@ namespace RcPlatformWitness
                         continue;
                     }
                     if (interpolated && c == '}' && i + 1 < n && _src[i + 1] == '}') { i += 2; continue; }
-                    if (!verbatim && c == '\\') { i = Math.Min(n, i + 2); continue; }
+                    if (!verbatim && c == '\\')
+                    {
+                        i++;
+                        if (!ConsumeEscape(ref i)) Misparse("bad-escape");
+                        continue;
+                    }
                     if (c == '"')
                     {
                         if (verbatim && i + 1 < n && _src[i + 1] == '"') { i += 2; continue; }
@@ -1061,6 +1458,7 @@ namespace RcPlatformWitness
                     }
                     i++;
                 }
+                Misparse("unterminated-string");
             }
 
             void RawString(ref int i, int quotes, int dollars)
@@ -1082,6 +1480,7 @@ namespace RcPlatformWitness
                     }
                     i++;
                 }
+                Misparse("unterminated-raw");
             }
 
             void Hole(ref int i, int closer)
@@ -1102,14 +1501,7 @@ namespace RcPlatformWitness
                         if (i + 1 < n) i += 2;
                         continue;
                     }
-                    if (c == '\'')
-                    {
-                        i++;
-                        if (i < n && _src[i] == '\\') i += 2;
-                        else if (i < n) i++;
-                        if (i < n && _src[i] == '\'') i++;
-                        continue;
-                    }
+                    if (TryChar(ref i)) continue;
                     if (c == '{') { brace++; i++; continue; }
                     if (c == '(') { paren++; i++; continue; }
                     if (c == '[') { bracket++; i++; continue; }
