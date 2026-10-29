@@ -96,8 +96,10 @@ function Invoke-ReleaseAuthorityGit {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    # A detached auto-gc or auto-maintenance child inherits this process's pipes on Windows.
-    foreach ($a in @('-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', $RepositoryRoot) + @($Arguments)) { [void]$psi.ArgumentList.Add([string]$a) }
+    # Command-line config overrides a system core.fsmonitor=true. These settings
+    # do not identify a Windows pipe holder; desktop C1313_BaselineAuthority still
+    # has to read holder= before that hang can be called fixed.
+    foreach ($a in @('-c', 'core.fsmonitor=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', $RepositoryRoot) + @($Arguments)) { [void]$psi.ArgumentList.Add([string]$a) }
     $proc = $null
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)

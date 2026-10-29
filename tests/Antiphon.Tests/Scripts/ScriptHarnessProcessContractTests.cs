@@ -34,6 +34,9 @@ public sealed class ScriptHarnessProcessContractTests
     {
         ScriptHarnessOptions.Default.ExecutionBudget.ShouldBe(TimeSpan.FromSeconds(300));
         ScriptHarnessOptions.Default.CleanupBudget.ShouldBe(TimeSpan.FromSeconds(10));
+        ScriptHarnessOptions.Default.EffectivePostExitDrain.ShouldBe(TimeSpan.FromSeconds(30));
+        new ScriptHarnessOptions(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2))
+            .EffectivePostExitDrain.ShouldBe(TimeSpan.FromSeconds(2));
         var changed = ScriptHarnessOptions.Default with { ExecutionBudget = TimeSpan.FromSeconds(5) };
         changed.ExecutionBudget.ShouldBe(TimeSpan.FromSeconds(5));
         ScriptHarnessOptions.Default.ExecutionBudget.ShouldBe(TimeSpan.FromSeconds(300));
@@ -90,21 +93,52 @@ public sealed class ScriptHarnessProcessContractTests
     public async Task Root_exit_does_not_reset_deadline()
     {
         var clock = new FakeTimeProvider();
-        // Inline completion arms the post-exit timer before the next clock advance.
-        var owner = new FakeOwner(rootComplete: false, holdStdout: true, completeRootInline: true);
+        var owner = new FakeOwner(rootComplete: false, holdStdout: true);
+        var run = Run(Options(owner, clock));
+        clock.Advance(TimeSpan.FromMilliseconds(800));
+        owner.CompleteRoot();
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        (await Capture(run)).ShouldBeOfType<TimeoutException>();
+        owner.Terminations.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Execution_budget_expires_during_drain_before_drain_budget()
+    {
+        var clock = new FakeTimeProvider();
+        var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var owner = new FakeOwner(rootComplete: false, holdStdout: true);
+        var run = Run(Options(owner, clock) with { OnPostExitDrainArmed = () => armed.TrySetResult() });
+        clock.Advance(TimeSpan.FromMilliseconds(800));
+        owner.CompleteRoot();
+        await armed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        var timeout = (await Capture(run)).ShouldBeOfType<TimeoutException>();
+        timeout.Message.ShouldContain("execution budget");
+        timeout.Message.ShouldNotContain("post-exit drain");
+        owner.Terminations.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Post_exit_drain_expires_before_execution_budget()
+    {
+        var clock = new FakeTimeProvider();
+        var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var owner = new FakeOwner(rootComplete: false, holdStdout: true);
         var run = Run(Options(owner, clock) with
         {
             ExecutionBudget = TimeSpan.FromSeconds(30),
-            PostExitDrainBudget = TimeSpan.FromMilliseconds(200)
+            PostExitDrainBudget = TimeSpan.FromMilliseconds(200),
+            OnPostExitDrainArmed = () => armed.TrySetResult()
         });
         clock.Advance(TimeSpan.FromMilliseconds(800));
         owner.CompleteRoot();
-        // Root completion posts the drain wait. Let that timer arm before the clock moves.
-        await Task.Delay(100);
+        await armed.Task.WaitAsync(TimeSpan.FromSeconds(3));
         clock.Advance(TimeSpan.FromMilliseconds(200));
         var timeout = (await Capture(run)).ShouldBeOfType<TimeoutException>();
         timeout.Message.ShouldContain("post-exit drain");
         timeout.Message.ShouldContain("holder=stdout");
+        timeout.Message.ShouldNotContain("execution budget");
         owner.Terminations.ShouldBe(1);
     }
 
