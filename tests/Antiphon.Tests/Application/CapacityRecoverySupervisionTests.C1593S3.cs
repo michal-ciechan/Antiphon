@@ -1003,23 +1003,32 @@ public partial class CapacityRecoverySupervisionTests
             {
                 // Row-lock waiters are not an ungranted relation lock. The reread is the
                 // other backend whose current statement is FOR UPDATE and is waiting.
-                await using var waiter = new NpgsqlCommand(
-                    """
-                    SELECT 1
-                    FROM pg_stat_activity
-                    WHERE datname = current_database()
-                      AND pid <> pg_backend_pid()
-                      AND state = 'active'
-                      AND wait_event_type = 'Lock'
-                      AND query LIKE '%FOR UPDATE%'
-                    LIMIT 1
-                    """, connection, tx);
-                if (await waiter.ExecuteScalarAsync() is not null)
+                // pg_stat_activity freezes at the first read of this transaction, so the
+                // poll uses its own connection and no open transaction.
+                if (await RereadWaitingAsync())
                     break;
                 await Task.Delay(25);
             }
 
             await tx.CommitAsync();
+        }
+
+        private async Task<bool> RereadWaitingAsync()
+        {
+            await using var probe = new NpgsqlConnection(ConnectionString);
+            await probe.OpenAsync();
+            await using var waiter = new NpgsqlCommand(
+                """
+                SELECT 1
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND state = 'active'
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE '%FOR UPDATE%'
+                LIMIT 1
+                """, probe);
+            return await waiter.ExecuteScalarAsync() is not null;
         }
 
         private async Task<bool> WaitingOnLockAsync(int pid, CancellationToken ct)
@@ -1104,7 +1113,7 @@ public partial class CapacityRecoverySupervisionTests
                 var sawWaiter = false;
                 while (DateTime.UtcNow < safety)
                 {
-                    var waiting = await RereadWaitingAsync(connection, tx);
+                    var waiting = await RereadWaitingAsync();
                     if (waiting)
                         sawWaiter = true;
                     if (sawWaiter && !waiting)
@@ -1150,8 +1159,12 @@ public partial class CapacityRecoverySupervisionTests
             await write.ExecuteNonQueryAsync();
         }
 
-        private async Task<bool> RereadWaitingAsync(NpgsqlConnection connection, NpgsqlTransaction tx)
+        private async Task<bool> RereadWaitingAsync()
         {
+            // pg_stat_activity freezes at the first read of the lock transaction, so a
+            // waiter that starts after that read stays invisible until the 25 s safety.
+            await using var probe = new NpgsqlConnection(ConnectionString);
+            await probe.OpenAsync();
             await using var waiter = new NpgsqlCommand(
                 """
                 SELECT 1
@@ -1162,7 +1175,7 @@ public partial class CapacityRecoverySupervisionTests
                   AND wait_event_type = 'Lock'
                   AND query LIKE '%FOR UPDATE%'
                 LIMIT 1
-                """, connection, tx);
+                """, probe);
             return await waiter.ExecuteScalarAsync() is not null;
         }
 
