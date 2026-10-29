@@ -127,6 +127,9 @@ function Invoke-Snapshot {
     if ($ExtraEnv) {
         foreach ($key in @($ExtraEnv.Keys)) { $psi.Environment[[string]$key] = [string]$ExtraEnv[$key] }
     }
+    # Fixture PATH hides the real coreutils. The docker/age fakes write sized
+    # files through this absolute pwsh instead of /bin/dd.
+    $psi.Environment['CARD1405_PWSH'] = $pwsh
     $proc = [System.Diagnostics.Process]::Start($psi)
     $stdout = $proc.StandardOutput.ReadToEnd()
     $stderr = $proc.StandardError.ReadToEnd()
@@ -524,7 +527,7 @@ case "$cmd" in
         ;;
     cp)
         if [ "$scenario" = "publish" ]; then
-            /bin/dd if=/dev/zero of="$target" bs="$bytes" count=1 status=none 2>/dev/null || exit 1
+            "$CARD1405_PWSH" -NoProfile -Command "[System.IO.File]::WriteAllBytes('$target', (New-Object byte[] $bytes))" || exit 1
         fi
         exit 0
         ;;
@@ -601,7 +604,7 @@ for arg in "$@"; do
 done
 bytes="${CARD1405_PLAIN_BYTES:-16}"
 if [ -n "$out" ]; then
-    /bin/dd if=/dev/zero of="$out" bs="$bytes" count=1 status=none 2>/dev/null || exit 1
+    "$CARD1405_PWSH" -NoProfile -Command "[System.IO.File]::WriteAllBytes('$out', (New-Object byte[] $bytes))" || exit 1
 fi
 exit "${CARD1405_AGE_EXIT:-0}"
 '@
