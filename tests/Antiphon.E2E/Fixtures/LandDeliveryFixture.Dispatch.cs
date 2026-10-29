@@ -68,19 +68,21 @@ public sealed partial class LandDeliveryFixture
     }
 
     /// <summary>
-    /// V-16 amended by CARD-1349 / CARD-1428: zero ordinary sibling warnings. The project's default
-    /// moves under the lease, the frozen observation is refused, and the next inspection cuts from
-    /// <c>project-default</c>. That claim owes no <c>base-observation-stale</c> intent.
+    /// V-16: zero ordinary sibling warnings. The project's <c>trunk</c> default is deleted under
+    /// the claim lease, after the pre-lease observation. The cut falls back to HEAD and owes the
+    /// stale-observation intent plus <c>default-unresolved</c>. A lease edit of the default string
+    /// is a different path: the claim is refused and the next tick re-observes, which
+    /// <c>AgentTaskDispatchBaseGuardTests.C508_GuardRefMismatchWarnedOnce</c> already covers.
     /// </summary>
     public async Task StartMismatchDispatchAsync()
     {
         File.Exists(Path.Combine(Root, "dispatch-task.txt")).ShouldBeTrue("opt-in dispatch setup required");
         Console.WriteLine($"C508 mismatch native evidence: {Root}");
-        await GitAsync(Repository, "branch", "project-default", "master");
+        await GitAsync(Repository, "branch", "trunk", "master");
         await using var db = CreateContext();
         var now = DateTime.UtcNow;
         var project = new Project { Id = Guid.NewGuid(), Name = "C508 mismatch", GitRepositoryUrl = Remote,
-            BaseBranch = "master", CreatedAt = now, UpdatedAt = now };
+            BaseBranch = "trunk", CreatedAt = now, UpdatedAt = now };
         var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "C508 mismatch", CreatedAt = now, UpdatedAt = now };
         var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
             CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now };
@@ -92,8 +94,8 @@ public sealed partial class LandDeliveryFixture
             Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Repository, RepoPath = Repository, Status = AgentTaskStatus.Queued,
             ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = CallerId, CreatedAt = now });
-        await File.WriteAllTextAsync(Path.Combine(Root, "move-default-on-lease.json"),
-            JsonSerializer.Serialize(new { projectId = project.Id, baseBranch = "project-default" }));
+        await File.WriteAllTextAsync(Path.Combine(Root, "delete-default-on-lease.json"),
+            JsonSerializer.Serialize(new { branch = "trunk" }));
         await db.SaveChangesAsync();
     }
 
@@ -136,28 +138,36 @@ public sealed partial class LandDeliveryFixture
 
     public async Task<List<AgentTaskDispatchWarningIntent>> WaitForMismatchIntentAsync()
     {
-        // Count == 1 is unreachable: the lease edit invalidates the frozen observation, the claim
-        // is refused, and the re-observed cut records project-default with no stale-base intent.
-        // The 120 s quiet window renews on dispatch progress (CARD-1359); a stuck host still
-        // reports within one quiet period, and the timeout names the rows it actually saw.
+        // The vanished trunk default is observed, then deleted under the lease. The claim cuts
+        // HEAD and commits the mismatch intent plus default-unresolved. The 120 s quiet window
+        // renews on dispatch progress (CARD-1359); a stuck host still reports within one quiet
+        // period, and the timeout names the rows it actually saw.
         await UntilDispatchAsync(async () =>
         {
             await using var db = CreateContext();
             var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
             owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
-                "the owned dispatch was refused before the re-observed base: " + owned.FailureReason);
+                "the owned dispatch was refused before the vanished-default cut: " + owned.FailureReason);
             owned.Status.ShouldNotBe(AgentTaskStatus.Failed,
-                "the owned dispatch failed before the re-observed base: " + owned.FailureReason);
+                "the owned dispatch failed before the vanished-default cut: " + owned.FailureReason);
             if (owned.Status != AgentTaskStatus.Dispatched) return false;
-            return owned.WorktreeBaseRef == "project-default"
-                && owned.WorktreeBaseSource == WorktreeBaseSource.DefaultBranch
-                && (await DispatchIntentsAsync()).All(i => i.WarningKey != DispatchBaseNotificationPayload.MismatchKey);
-        }, "re-observed project-default dispatch with no stale mismatch intent", 120);
-        File.Exists(Path.Combine(Root, "move-default-on-lease.fired.json"))
-            .ShouldBeTrue("the lease hook must move the project default before the re-observed claim");
-        var intents = await DispatchIntentsAsync();
-        intents.ShouldNotContain(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
-        return intents;
+            var intents = await DispatchIntentsAsync();
+            return owned.WorktreeBaseRef == "HEAD"
+                && owned.WorktreeBaseSource == WorktreeBaseSource.RepoHead
+                && intents.Count == 2
+                && intents.Any(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey)
+                && intents.Any(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey);
+        }, "vanished-default dispatch at HEAD with the mismatch and default-unresolved intents", 120);
+        File.Exists(Path.Combine(Root, "delete-default-on-lease.fired.json"))
+            .ShouldBeTrue("the lease hook must delete trunk before the claim cuts HEAD");
+        var committed = await DispatchIntentsAsync();
+        committed.Count.ShouldBe(2);
+        var mismatch = committed.Single(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
+        mismatch.Detail.ShouldContain("trunk");
+        mismatch.Detail.ShouldContain("HEAD");
+        mismatch.ParentSessionId.ShouldBe(CallerId);
+        committed.ShouldContain(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey);
+        return committed;
     }
 
     /// <summary>Same <see cref="TimeoutException"/>, plus the owned task's status, intent rows and last events.</summary>
@@ -184,7 +194,8 @@ public sealed partial class LandDeliveryFixture
                 rows.Count,
                 rows.Select(i => i.WarningKey).ToArray(),
                 string.Join("; ", rows.Select(i => i.Detail)),
-                File.Exists(Path.Combine(Root, "move-default-on-lease.fired.json")),
+                File.Exists(Path.Combine(Root, "move-default-on-lease.fired.json"))
+                    || File.Exists(Path.Combine(Root, "delete-default-on-lease.fired.json")),
                 string.Join("; ", events.Select(e => e.Type + ":" + e.Detail)));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

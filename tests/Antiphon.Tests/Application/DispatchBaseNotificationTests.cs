@@ -26,7 +26,9 @@ namespace Antiphon.Tests.Application;
 ///
 /// <para>The capture rows drive the REAL dispatcher against a real git repo; the projection rows
 /// drive the real <see cref="DispatchBaseWarningIntentService"/> against a real PostgreSQL schema.
-/// Nothing here asserts native delivery — that is the DE lane's job.</para>
+/// Native PTY delivery stays the DE lane.
+/// <c>C508_VanishedDefaultWarningReachesCaller</c> is the Linux witness that the vanished-default
+/// warning reaches the caller prompt through the session queue.</para>
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]

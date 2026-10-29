@@ -475,6 +475,116 @@ public partial class DispatchBaseNotificationTests
     }
 
     /// <summary>
+    /// D-2: the vanished-default mismatch and unresolved-default warnings reach the caller prompt
+    /// exactly once. Idle delivers on flush. Busy stays Pending with zero attempts until the turn
+    /// ends, then delivers the same rows. A scratch that drops the mismatch prompt leaves the
+    /// complete-prompt count at zero.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    [NotInParallel("AgentQueue")]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C508_VanishedDefaultWarningReachesCaller(bool busy, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-vanished-delivery");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "trunk", "master");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            PreserveDatabaseOnDispose = true,
+            ConnectionString = schema.ConnectionString,
+        });
+        await caller.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "caller baseline before dispatch");
+        await caller.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var projectId = await db.Boards.AsNoTracking().Where(b => b.Id == card.BoardId)
+            .Select(b => b.ProjectId).SingleAsync(ct);
+        await db.Projects.Where(p => p.Id == projectId)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, "trunk"), ct);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, caller.SessionId);
+        task.ProjectId = projectId;
+        await db.SaveChangesAsync(ct);
+
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
+            onLeaseAcquired: async () =>
+            {
+                if ((await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", "refs/heads/trunk")).Ok)
+                    (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
+            }))
+        {
+            await using var scope = provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        }
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseRef.ShouldBe("HEAD");
+        dispatched.ParentSessionId.ShouldBe(caller.SessionId);
+        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
+        intents.Count.ShouldBe(2);
+        var mismatch = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
+        mismatch.Detail.ShouldContain("trunk");
+        mismatch.Detail.ShouldContain("HEAD");
+        mismatch.ParentSessionId.ShouldBe(caller.SessionId);
+        var unresolved = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey);
+        var notes = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == task.Id).ToListAsync(ct);
+        notes.Count.ShouldBe(2);
+
+        if (busy) await caller.MarkWorkingAsync();
+        await using var deliver = CreateContext(schema);
+        var notifier = new AgentTaskLandNotificationService(
+            deliver, caller.Queue, new CompletionNoteFlushQueue(), caller.Runtime, TimeProvider.System);
+        foreach (var note in notes)
+            await notifier.ReconcileAsync(note.Id, ct);
+
+        if (busy)
+        {
+            await caller.Queue.FlushIfIdleAsync(caller.SessionId, ct);
+            deliver.ChangeTracker.Clear();
+            var pending = await deliver.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.SourceTaskId == task.Id && m.SourceLandNotificationId != null).ToListAsync(ct);
+            pending.Count.ShouldBe(2);
+            pending.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+            (await PromptCountAsync(schema.ConnectionString, caller.SessionId, mismatch.Body)).ShouldBe(0);
+            (await PromptCountAsync(schema.ConnectionString, caller.SessionId, unresolved.Body)).ShouldBe(0);
+            caller.Adapter.SubmittedBodies.Count(b => PromptSubmissionMatch.IsCompleteIn(mismatch.Body, b)).ShouldBe(0);
+            await caller.MarkIdleAsync();
+            await caller.Queue.OnTurnEndAsync(caller.SessionId, ct);
+        }
+
+        for (var pass = 0; pass < 4
+            && (await PromptCountAsync(schema.ConnectionString, caller.SessionId, mismatch.Body) < 1
+                || await PromptCountAsync(schema.ConnectionString, caller.SessionId, unresolved.Body) < 1); pass++)
+            await caller.Queue.FlushIfIdleAsync(caller.SessionId, ct);
+
+        (await PromptCountAsync(schema.ConnectionString, caller.SessionId, mismatch.Body))
+            .ShouldBe(1, busy ? "busy release delivers the mismatch prompt once" : "idle delivers the mismatch prompt once");
+        (await PromptCountAsync(schema.ConnectionString, caller.SessionId, unresolved.Body)).ShouldBe(1);
+        caller.Adapter.SubmittedBodies.Count(b => PromptSubmissionMatch.IsCompleteIn(mismatch.Body, b)).ShouldBe(1);
+        caller.Adapter.SubmittedBodies.Count(b => PromptSubmissionMatch.IsCompleteIn(unresolved.Body, b)).ShouldBe(1);
+        await caller.Queue.FlushIfIdleAsync(caller.SessionId, ct);
+        (await PromptCountAsync(schema.ConnectionString, caller.SessionId, mismatch.Body)).ShouldBe(1);
+        caller.Adapter.SubmittedBodies.Count(b => PromptSubmissionMatch.IsCompleteIn(mismatch.Body, b)).ShouldBe(1);
+    }
+
+    private static async Task<int> PromptCountAsync(string connectionString, Guid sessionId, string body)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+            .Select(t => t.Text!).ToListAsync();
+        return prompts.Count(text => PromptSubmissionMatch.IsCompleteIn(body, text));
+    }
+
+    /// <summary>
     /// The same vanished default produces warning drafts, so an after-save fault inside the claim
     /// transaction leaves no final dispatch event, session, or intent.
     /// </summary>
