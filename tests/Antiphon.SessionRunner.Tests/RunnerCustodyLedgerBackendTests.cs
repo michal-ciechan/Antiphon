@@ -43,8 +43,9 @@ public sealed class RunnerCustodyLedgerBackendTests
     }
 
     // The Linux backend is accepted only when the runtime handed the ledger the probe's answer.
-    // On Windows the platform arm also has to agree, so this asserts the refusal an unprobed or
-    // mismatched runner gets rather than a green Linux launch that cannot happen here.
+    // An unprobed runner is refused on every platform. When the probe answered linux-cgroup-v1
+    // and the binding agrees, the Windows platform arm still refuses; Linux accepts and writes
+    // the start intent. CARD-1614 keeps that Windows refusal and records the Linux acceptance.
     [Test]
     public void Linux_backend_accepted_only_when_probe_passed()
     {
@@ -56,14 +57,24 @@ public sealed class RunnerCustodyLedgerBackendTests
                 fixture.Ledger.PrepareStart(fixture.Request(binding), "modern", null))
             .Code.ShouldBe("verification_custody_unsupported_backend");
 
-        // Probe said linux-cgroup-v1, and the binding agrees -- so the backend equality check
-        // passes and what refuses is the Windows platform arm, not the backend comparison.
         using var second = new LedgerFixture();
         var linux = second.Binding(VerificationCustodyBackends.LinuxCgroup);
-        var refusal = Should.Throw<VerificationCustodyException>(() =>
-            second.Ledger.PrepareStart(second.Request(linux), "modern", VerificationCustodyBackends.LinuxCgroup));
-        refusal.Code.ShouldBe("verification_custody_unsupported_backend");
-        second.Ledger.Store.ReadRecord<CustodyFailure>(linux, "unsupported.json").ShouldNotBeNull();
+        if (OperatingSystem.IsWindows())
+        {
+            // Probe said linux-cgroup-v1, and the binding agrees -- so the backend equality check
+            // passes and what refuses is the Windows platform arm, not the backend comparison.
+            var refusal = Should.Throw<VerificationCustodyException>(() =>
+                second.Ledger.PrepareStart(second.Request(linux), "modern", VerificationCustodyBackends.LinuxCgroup));
+            refusal.Code.ShouldBe("verification_custody_unsupported_backend");
+            second.Ledger.Store.ReadRecord<CustodyFailure>(linux, "unsupported.json").ShouldNotBeNull();
+            return;
+        }
+
+        var created = second.Ledger.PrepareStart(
+            second.Request(linux), "modern", VerificationCustodyBackends.LinuxCgroup);
+        created.ShouldBeTrue();
+        second.Ledger.Store.ReadRecord<CustodyStamp>(linux, "runner-start-intent.json")!.Revision.ShouldBe(1);
+        second.Ledger.Store.ReadRecord<CustodyFailure>(linux, "unsupported.json").ShouldBeNull();
     }
 
     // R-16: the Windows lane is byte-for-byte what it was, with the backend now stated explicitly.
