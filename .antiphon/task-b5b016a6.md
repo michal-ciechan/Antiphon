@@ -95,3 +95,32 @@ PCs stay pending for method-scoped SourceLanding Mutation. These scratch runs di
   - Each is a defensive-state seed and is labeled as such.
 - **A-3:** the queue detach now reads the wait twice in a row (`ObsoleteConsumers.cs:136` and `:147`). The CAS makes the second read redundant. It is harmless.
 - **A-4:** V-6's at-most-five reconcile loop (`CapacityObsoleteStandingTests.cs:74-81`) cannot go falsely green: the assertion stays Superseded, and `nostanding`/pre-fix stay red. It accommodates the busy try-lock by design.
+
+## Unit shard log (live, one build bin-rb5b016a/, dotnet exec under build-slot.ps1)
+```
+SHARD a-rsc3 start 2026-10-29T21:32:46Z
+SHARD b1-RollingVRS start 2026-10-29T21:32:46Z
+SHARD b4-Ch1 start 2026-10-29T21:32:46Z
+SHARD b4-Ch1 end rc=0 wall=1081s waited=0s  total: 255  failed: 0  succeeded: 255  skipped: 0  duration: 17m 57s 891ms 
+SHARD b3-Retired start 2026-10-29T21:50:47Z
+SHARD a-rsc3 end rc=0 wall=1691s waited=15s  total: 39  failed: 0  succeeded: 39  skipped: 0  duration: 27m 52s 479ms 
+SHARD b5-Ch2 start 2026-10-29T22:00:57Z
+SHARD b1-RollingVRS end rc=0 wall=1999s waited=0s  total: 77  failed: 0  succeeded: 77  skipped: 0  duration: 33m 16s 455ms 
+SHARD c6-HLM start 2026-10-29T22:06:05Z
+SHARD b3-Retired end rc=0 wall=1157s waited=195s  total: 38  failed: 0  succeeded: 38  skipped: 0  duration: 15m 59s 920ms 
+SHARD a-rsc2 start 2026-10-29T22:10:04Z
+SHARD b5-Ch2 end rc=0 wall=1429s waited=120s  total: 302  failed: 0  succeeded: 301  skipped: 1  duration: 21m 45s 760ms 
+SHARD c1-C1 start 2026-10-29T22:24:46Z
+SHARD c6-HLM end rc=0 wall=1166s waited=30s  total: 740  failed: 0  succeeded: 738  skipped: 2  duration: 18m 53s 288ms 
+SHARD c7-OPQ start 2026-10-29T22:25:31Z
+SHARD a-rsc2 end rc=2 wall=960s waited=60s  total: 216  failed: 1  succeeded: 215  skipped: 0  duration: 14m 56s 469ms 
+SHARD x-c8-R start 2026-10-29T22:26:04Z
+SHARD c1-C1 end rc=0 wall=663s waited=15s  total: 173  failed: 0  succeeded: 170  skipped: 3  duration: 10m 44s 616ms 
+SHARD c3-AB start 2026-10-29T22:35:49Z
+```
+
+Red comparisons:
+```
+RED c1105-master  total: 1  failed: 1  succeeded: 0 
+RED c1105-tip  total: 1  failed: 1  succeeded: 0 
+```
