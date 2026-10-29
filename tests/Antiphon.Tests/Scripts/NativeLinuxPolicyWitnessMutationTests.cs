@@ -143,6 +143,40 @@ public class NativeLinuxPolicyWitnessMutationTests
         var changedLegacy = InspectPolicy(Compile("R13c", "R13-ungated.cs.txt", true), MutateFirstLegacy(Policy()));
         Has(changedLegacy, "legacy-digest-mismatch", "");
         Lacks(changedLegacy, "policy-hash", "");
+
+        const string frozenStubs = """
+            using TUnit.Core;
+            public class PhoneHomeMirrorJoinTests { [Test] public void Join() {} }
+            public class UnixDelegateLaunchArgvTests { [Test] public void Argv() {} }
+            public class CheckpointBoundedReaderTests { [Test] public void Read() {} }
+            """;
+        var stubs = CompileSource("R13Frozen", frozenStubs, true, null);
+        var changedReason = InspectAssembly(
+            stubs,
+            RewriteFrozenRow("PhoneHomeMirrorJoinTests", "\"reason\": \"Linux-only by construction: CP-21 phone-home join requires Linux FIFOs and Unix file modes. The case remains required on Linux.\"", "\"reason\": \"Windows lacks the phone-home FIFOs\""),
+            checkPin: false,
+            baseline: Baseline("PhoneHomeMirrorJoinTests", "Join()", "Linux-only by construction: frozen", true));
+        Has(changedReason, "witnessed-row-reshaped", "PhoneHomeMirrorJoinTests");
+        Has(changedReason, "missing-marker", "Join()");
+
+        var linuxPlatform = InspectAssembly(
+            stubs,
+            RewriteFrozenRow("UnixDelegateLaunchArgvTests", "\"platform\": \"windows\"", "\"platform\": \"linux\""),
+            checkPin: false,
+            baseline: "");
+        Has(linuxPlatform, "witnessed-row-reshaped", "UnixDelegateLaunchArgvTests");
+        Has(linuxPlatform, "missing-marker", "Argv()");
+
+        var allPlatform = InspectAssembly(
+            stubs,
+            RewriteFrozenRow("CheckpointBoundedReaderTests", "\"platform\": \"windows\"", "\"platform\": \"all\""),
+            checkPin: false,
+            baseline: "");
+        Has(allPlatform, "witnessed-row-reshaped", "CheckpointBoundedReaderTests");
+        Has(allPlatform, "missing-marker", "Read()");
+
+        var deleted = InspectAssembly(stubs, RemoveFrozenRow("GitMinimumVersionGuardTests"), checkPin: false, baseline: "");
+        Has(deleted, "witnessed-row-missing", "GitMinimumVersionGuardTests");
     }
 
     [Test]
@@ -371,6 +405,57 @@ public class NativeLinuxPolicyWitnessMutationTests
             }
         }
         throw new InvalidOperationException("unbalanced exclusions");
+    }
+
+    static string RewriteFrozenRow(string className, string from, string to)
+    {
+        var policy = File.ReadAllText(Path.Combine(RepoRoot(), "tests", "test-execution-policy.json"));
+        using var document = JsonDocument.Parse(policy);
+        foreach (var element in document.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions").EnumerateArray())
+        {
+            if ((element.GetProperty("class").GetString() ?? "") != className)
+                continue;
+            var raw = element.GetRawText();
+            var changed = raw.Replace(from, to, StringComparison.Ordinal);
+            changed.ShouldNotBe(raw);
+            var rc = policy.IndexOf("\"rc\":", StringComparison.Ordinal);
+            var at = policy.IndexOf(raw, rc, StringComparison.Ordinal);
+            at.ShouldBeGreaterThanOrEqualTo(0);
+            return NativeLinuxPolicyWitness.SealPolicyHash(policy[..at] + changed + policy[(at + raw.Length)..]);
+        }
+
+        throw new InvalidOperationException("missing frozen row " + className);
+    }
+
+    static string RemoveFrozenRow(string className)
+    {
+        var policy = File.ReadAllText(Path.Combine(RepoRoot(), "tests", "test-execution-policy.json"));
+        using var document = JsonDocument.Parse(policy);
+        foreach (var element in document.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions").EnumerateArray())
+        {
+            if ((element.GetProperty("class").GetString() ?? "") != className)
+                continue;
+            var raw = element.GetRawText();
+            var rc = policy.IndexOf("\"rc\":", StringComparison.Ordinal);
+            var at = policy.IndexOf(raw, rc, StringComparison.Ordinal);
+            at.ShouldBeGreaterThanOrEqualTo(0);
+            var start = at;
+            var end = at + raw.Length;
+            if (end < policy.Length && policy[end] == ',')
+                end++;
+            else
+            {
+                var comma = start - 1;
+                while (comma >= 0 && char.IsWhiteSpace(policy[comma]))
+                    comma--;
+                if (comma >= 0 && policy[comma] == ',')
+                    start = comma;
+            }
+
+            return NativeLinuxPolicyWitness.SealPolicyHash(policy[..start] + policy[end..]);
+        }
+
+        throw new InvalidOperationException("missing frozen row " + className);
     }
 
     static string Row(string klass, string reason, params string[] methods) =>
