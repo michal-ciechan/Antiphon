@@ -5,9 +5,11 @@ using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[NativeLinuxOnly("Linux FIFO admission proof")]
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]

@@ -3,6 +3,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Unit")]
@@ -127,6 +128,7 @@ public sealed class RetiredTempContainerScriptTests
             $s.runnerSessions=0;Assert-ZeroCounters $s 'server2-temp'
             """);run.Exit.ShouldBe(0,"c994-wrapper-strict-null c994-shared-null: "+run.Output);
     }
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_strict_volume_admission_remains_independent(){
         C1008HostFixture.RequireNativeLinux();
@@ -172,6 +174,7 @@ public sealed class RetiredTempContainerScriptTests
         foreach(var present in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;
             var run=await f.Run("retire-temp","-ResumeRecycle","c100800000000000000000000000000000001");run.Exit.ShouldBe(present?2:0,"c994-resume-isolation: "+run.Output);Cases(run.Trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBeFalse("c994-resume-isolation");}
     }
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_resume_never_runs_container_cleanup(){
         C1008HostFixture.RequireNativeLinux();
@@ -313,6 +316,7 @@ public sealed class RetiredTempContainerScriptTests
             }
             """);run.Exit.ShouldBe(0,"c994-bridge-context c994-literal-transport: "+run.Output);
     }
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_bridge_transport_preserves_literal_context(){
         C1008HostFixture.RequireNativeLinux();

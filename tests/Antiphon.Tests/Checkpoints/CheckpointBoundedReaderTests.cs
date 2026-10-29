@@ -3,9 +3,11 @@ using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[NativeLinuxOnly("Linux FIFO and process-group qualification")]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointBoundedReaderTests : CheckpointTestBase

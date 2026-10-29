@@ -5,9 +5,11 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[NativeLinuxOnly("native Linux custody proof requires Linux")]
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]

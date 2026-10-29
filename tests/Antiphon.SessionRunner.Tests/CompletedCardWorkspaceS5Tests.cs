@@ -6,6 +6,7 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -562,6 +563,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         File.ReadAllText(Path.Combine(f.Root, "outside", "sentinel")).ShouldBe("preserve");
     }
     // PC-583: ignored FIFO must refuse without reading it or retaining shared admission.
+    [NativeLinuxOnly("Linux named-pipe inventory witness; native FIFO required")]
     [Test] public async Task C1032_RemovalLinuxIgnoredFifoRefuses()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux named-pipe inventory witness; native FIFO required");

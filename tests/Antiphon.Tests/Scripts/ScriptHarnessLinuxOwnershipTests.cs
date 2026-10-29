@@ -3,9 +3,11 @@ using System.Diagnostics;
 using System.Text;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly("Native Linux process-group ownership qualification requires Linux (procfs, setsid and POSIX signals).")]
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]

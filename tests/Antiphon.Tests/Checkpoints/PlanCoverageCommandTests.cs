@@ -6,6 +6,7 @@ using Antiphon.Checkpoints;
 using Antiphon.Checkpoints.Coverage;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class PlanCoverageCommandTests : CheckpointTestBase
@@ -142,6 +143,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         exit.ShouldBe(0, "coverage-public-cli");
     }
 
+    [NativeLinuxOnly("coverage outside-project FIFO read sentinel requires Linux mkfifo")]
     [Test]
     public async Task outside_project_fifo_is_refused_without_opening()
     {

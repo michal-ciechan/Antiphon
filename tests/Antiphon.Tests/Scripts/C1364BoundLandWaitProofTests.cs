@@ -4,6 +4,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -117,6 +118,7 @@ public sealed class C1364BoundLandWaitProofTests
         Console.WriteLine("C1364_VECTOR " + label + " passed");
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1364_Host_recycle_admission_reports_waited()
     {
@@ -134,6 +136,7 @@ public sealed class C1364BoundLandWaitProofTests
                 main, proof, resumePhase: phase);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1364_Host_recycle_post_removal_reports_waited()
     {
@@ -149,6 +152,7 @@ public sealed class C1364BoundLandWaitProofTests
                 main, proof: 4 + index);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1364_Host_cleanup_reports_waited()
     {
