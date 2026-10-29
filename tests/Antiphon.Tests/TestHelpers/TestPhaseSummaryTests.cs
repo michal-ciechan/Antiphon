@@ -128,13 +128,14 @@ public sealed class TestPhaseSummaryTests
             var path = Path.Combine(C1514Support.RepoRoot(), relative);
             var text = File.ReadAllText(path);
             text.ShouldContain("#requires -Version 5.1", Case.Sensitive);
-            text.ShouldNotContain("??");
-            text.ShouldNotContain("?.");
             text.ShouldNotContain("-AsHashtable");
             text.ShouldNotContain("HashData");
             foreach (var b in System.Text.Encoding.UTF8.GetBytes(text))
                 b.ShouldBeLessThan((byte)128);
         }
+
+        // C# inside the Add-Type here-string contains "??". That text is not a PowerShell token.
+        await AssertPs51OperatorTokensAsync(cancellationToken);
 
         var parser = Path.Combine(Path.GetTempPath(), "c1514-parse-" + Guid.NewGuid().ToString("N") + ".ps1");
         await File.WriteAllTextAsync(parser, """
@@ -177,6 +178,97 @@ public sealed class TestPhaseSummaryTests
         File.ReadAllBytes(Path.Combine(root, "timing", "summary.md")).ShouldBe(markdown);
         Fingerprint(root).ShouldBe(inputs);
     }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1514T_PS51TokenScan(CancellationToken cancellationToken)
+    {
+        await AssertPs51OperatorTokensAsync(cancellationToken);
+    }
+
+    private static async Task AssertPs51OperatorTokensAsync(CancellationToken cancellationToken)
+    {
+        var parser = Path.Combine(Path.GetTempPath(), "c1514-tokens-" + Guid.NewGuid().ToString("N") + ".ps1");
+        await File.WriteAllTextAsync(parser, Ps51TokenScan, cancellationToken);
+        var parsed = await C1514Support.RunProcess(Pwsh(parser, C1514Support.RepoRoot()), cancellationToken);
+        parsed.ExitCode.ShouldBe(0, parsed.Text);
+        parsed.Text.ShouldContain("TOKEN_SCAN_OK");
+        parsed.Text.ShouldNotContain("TOKEN_FORBIDDEN");
+    }
+
+    // pwsh token kinds that Windows PowerShell 5.1 cannot parse. A here-string or quoted
+    // literal containing the same characters does not produce these tokens.
+    private const string Ps51TokenScan = """
+        $ErrorActionPreference = 'Stop'
+        $forbidden = @(
+            'QuestionQuestion',
+            'QuestionQuestionEquals',
+            'QuestionDot',
+            'QuestionLBracket',
+            'QuestionMark',
+            'AndAnd',
+            'OrOr'
+        )
+
+        function Get-Kinds([string]$code) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$tokens, [ref]$errors)
+            $kinds = New-Object System.Collections.Generic.List[string]
+            foreach ($t in $tokens) { $kinds.Add($t.Kind.ToString()) }
+            return $kinds
+        }
+
+        function Assert-Has([string]$code, [string]$kind) {
+            $found = $false
+            foreach ($k in @(Get-Kinds $code)) {
+                if ($k -eq $kind) { $found = $true }
+            }
+            if (-not $found) { throw ('CONTROL_MISS ' + $kind) }
+        }
+
+        function Assert-Lacks([string]$code, [string]$kind) {
+            foreach ($k in @(Get-Kinds $code)) {
+                if ($k -eq $kind) { throw ('CONTROL_HIT ' + $kind) }
+            }
+        }
+
+        Assert-Has '1 ?? 2' 'QuestionQuestion'
+        Assert-Has '$x ??= 1' 'QuestionQuestionEquals'
+        Assert-Has '$obj.Name?.Length' 'QuestionDot'
+        Assert-Has '$obj.Items?[0]' 'QuestionLBracket'
+        Assert-Has '$true ? 1 : 2' 'QuestionMark'
+        Assert-Has 'Get-Date && Get-Date' 'AndAnd'
+        Assert-Has 'Get-Date || Get-Date' 'OrOr'
+        Assert-Lacks 'Write-Output "a ?? b"' 'QuestionQuestion'
+        Assert-Lacks 'Get-ChildItem | ? { $_.Name }' 'QuestionMark'
+        $nl = [char]10
+        $here = '$s = @' + "'" + $nl + 'Name ?? ""' + $nl + "'" + '@' + $nl
+        Assert-Lacks $here 'QuestionQuestion'
+
+        $root = $args[0]
+        $found = $false
+        foreach ($rel in @('scripts/lib/test-phase-evidence.ps1', 'scripts/summarize-test-phases.ps1')) {
+            $path = Join-Path $root $rel
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            if ($errors -and @($errors).Count -gt 0) { throw ($rel + ' ' + $errors[0].ToString()) }
+            foreach ($t in $tokens) {
+                $kind = $t.Kind.ToString()
+                $bad = $false
+                foreach ($name in $forbidden) {
+                    if ($kind -eq $name) { $bad = $true }
+                }
+                if ($bad) {
+                    $found = $true
+                    Write-Output ('TOKEN_FORBIDDEN ' + $rel + ' ' + $kind + ' ' + $t.Extent.StartLineNumber + ':' + $t.Extent.StartColumnNumber)
+                }
+            }
+        }
+        if ($found) { exit 1 }
+        Write-Output 'TOKEN_SCAN_OK'
+        """;
 
     private static void WriteLiteral(string root, string mode)
     {
