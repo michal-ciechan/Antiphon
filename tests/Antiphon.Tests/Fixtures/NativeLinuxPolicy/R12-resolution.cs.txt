@@ -53,3 +53,17 @@ public class OrdinaryOnly
     [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: ordinary only")]
     public void Real() { }
 }
+
+public abstract class BuilderBase
+{
+    [CustomBuilder]
+    public void InheritedBuild() { }
+}
+
+[InheritsTests]
+[Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: inherited builder")]
+public class InheritedBuilder : BuilderBase
+{
+    [Test]
+    public void OrdinaryInherited() { }
+}

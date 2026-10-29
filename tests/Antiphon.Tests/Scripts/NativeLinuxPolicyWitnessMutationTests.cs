@@ -58,12 +58,16 @@ public class NativeLinuxPolicyWitnessMutationTests
         var report = Inspect("R4", "R4-inherited.cs.txt", true,
             Row("Child", Prefix),
             Row("Derived", Prefix),
-            Row("MarkedDerived", Prefix));
+            Row("MarkedDerived", Prefix),
+            Row("HideDerived", Prefix),
+            Row("NewTestDerived", Prefix));
         Has(report, "missing-marker", "FromBase()");
         Has(report, "missing-marker", "Inherited()");
         Has(report, "missing-marker", "Hidden()");
         Has(report, "missing-marker", "PartialSibling()");
+        Has(report, "missing-marker", "row=HideDerived");
         Lacks(report, "missing-marker", "MarkedInherited()");
+        Lacks(report, "missing-marker", "row=NewTestDerived");
         report.Diagnostics.Any(item => item.Code == "missing-marker" && item.Row == "MarkedDerived").ShouldBeFalse(report.Text);
         Lacks(report, "reverse-coverage", "");
     }
@@ -105,6 +109,7 @@ public class NativeLinuxPolicyWitnessMutationTests
             Row("MixedBuilder", Prefix),
             Row("NamesakeOnly", Prefix),
             Row("OrdinaryOnly", Prefix),
+            Row("InheritedBuilder", Prefix),
             OtherSuite("not-a-suite", "Ghost"));
         Has(report, "unresolved-row", "NoSuchType");
         Has(report, "unresolved-row", "AbstractOnly");
@@ -114,6 +119,7 @@ public class NativeLinuxPolicyWitnessMutationTests
         Has(report, "unsupported-test-attribute", "Build()");
         Has(report, "unsupported-test-attribute", "BuildMarked()");
         Has(report, "unsupported-test-attribute", "CustomBuilderAttribute");
+        Has(report, "unsupported-test-attribute", "InheritedBuild()");
         Has(report, "unknown-exclusion", "not-a-suite");
         Lacks(report, "missing-marker", "");
         Lacks(report, "unsupported-test-attribute", "OrdinaryOnly");
