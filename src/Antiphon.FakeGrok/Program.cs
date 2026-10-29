@@ -140,10 +140,11 @@ internal static class Program
         var inputLog = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_LOG");
 
         var stdout = Console.OpenStandardOutput();
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         var outputGate = new object();
         void Write(string s)
         {
-            var bytes = Encoding.UTF8.GetBytes(s);
+            var bytes = utf8.GetBytes(s);
             lock (outputGate)
             {
                 stdout.Write(bytes, 0, bytes.Length);
@@ -320,9 +321,11 @@ internal static class Program
         AppendTiming(Path.Combine(sessionDir, "updates.jsonl"), 0, "\"process-start\"", gaveUp: false);
 
         var stdout = Console.OpenStandardOutput();
+        // Same contract as FakeClaude: explicit UTF-8 bytes, not Console.Out's OEM code page.
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         void Write(string s)
         {
-            var bytes = Encoding.UTF8.GetBytes(s);
+            var bytes = utf8.GetBytes(s);
             stdout.Write(bytes, 0, bytes.Length);
             stdout.Flush();
         }

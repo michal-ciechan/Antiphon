@@ -1772,13 +1772,19 @@ public class FakeClaudeContractTests
                 + "Windows OEM 850 turned E2 90 9F into U+00D4 U+00C9 U+0192. Line was: " + loose);
     }
 
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     /// <summary>
     /// Encoding for the fake's redirected stdout. <paramref name="ambientConsoleEncoding"/> is the
     /// page a Windows console applies when <see cref="ProcessStartInfo.StandardOutputEncoding"/>
-    /// is left unset.
+    /// is left unset (OEM 850 turned U+241F into U+00D4 U+00C9 U+0192). The pipe bytes are UTF-8,
+    /// so that page does not decode the line.
     /// </summary>
     private static Encoding StdoutCaptureEncoding(Encoding ambientConsoleEncoding)
-        => ambientConsoleEncoding;
+    {
+        _ = ambientConsoleEncoding;
+        return Utf8NoBom;
+    }
 
     /// <summary>
     /// Launches the fake with <c>--echo-args</c> and reads the loose argv line under
@@ -1795,7 +1801,7 @@ public class FakeClaudeContractTests
 
         var psi = File.Exists(exe)
             ? new ProcessStartInfo(exe)
-            : new ProcessStartInfo("dotnet") { ArgumentList = { "exec", dll, "--" } };
+            : new ProcessStartInfo("dotnet") { ArgumentList = { "exec", dll } };
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardInput = true;
         psi.UseShellExecute = false;
@@ -1848,6 +1854,7 @@ public class FakeClaudeContractTests
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true,
                 UseShellExecute = false,
+                StandardOutputEncoding = StdoutCaptureEncoding(Console.OutputEncoding),
             },
         };
 
