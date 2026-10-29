@@ -168,12 +168,16 @@ internal static class ScriptHarnessProcessFixture
                 }
             };
         internal Task<ScriptHarnessResult> Start(string caseName, string? payload = null, CancellationToken token = default,
+            Action<ScriptHarnessResult>? validate = null) =>
+            Start(caseName, Options(payload), token, validate);
+
+        internal Task<ScriptHarnessResult> Start(string caseName, ScriptHarnessOptions options, CancellationToken token = default,
             Action<ScriptHarnessResult>? validate = null)
         {
             if (_run is not null) throw new InvalidOperationException("One invocation per fixture.");
             var run = Task.Run(async () =>
             {
-                return await ScriptHarnessProcess.RunAsync("fixture", "C806", caseName, ScriptPath, Options(payload),
+                return await ScriptHarnessProcess.RunAsync("fixture", "C806", caseName, ScriptPath, options,
                     token.CanBeCanceled ? token : _cancel.Token, validate);
             });
             _run = run;

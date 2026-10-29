@@ -23,6 +23,26 @@ public sealed class ScriptHarnessProcessTests
         ScriptHarnessProcessFixture.WithInvocationAsync(fixture => TimeoutTreeAsync(fixture, "ExitedStderr", "stderr"));
 
     [Test]
+    public Task Printed_pass_with_stdout_holder_fails_inside_post_exit_bound() =>
+        ScriptHarnessProcessFixture.WithInvocationAsync(async fixture =>
+        {
+            var clock = Stopwatch.StartNew();
+            // The production execution budget is five minutes. Twenty seconds is enough
+            // to prove a holder is not left on that budget: the base waits it out.
+            var run = fixture.Start("PassHold", fixture.Options() with { ExecutionBudget = TimeSpan.FromSeconds(20) });
+            var tree = await fixture.WaitReadyAsync(run);
+            var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
+            var timeout = error.ShouldBeOfType<TimeoutException>();
+            timeout.Message.ShouldContain("PASS C806 C806 fixture passed");
+            timeout.Message.ShouldContain("stdout=False");
+            timeout.Message.ShouldContain("post-exit drain");
+            timeout.Message.ShouldContain("holder=");
+            timeout.Message.ShouldContain(tree.Grandchild.Pid + ":");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(12));
+            fixture.AssertClean();
+        }, watchdogSeconds: 45);
+
+    [Test]
     public Task Caller_cancellation_kills_tree_before_returning() => ScriptHarnessProcessFixture.WithInvocationAsync(async fixture =>
     {
         using var cancel = new CancellationTokenSource();
