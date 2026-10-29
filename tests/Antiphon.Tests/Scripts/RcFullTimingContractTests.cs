@@ -780,6 +780,17 @@ public sealed class RcFullTimingContractTests
         $problems = New-Object System.Collections.Generic.List[string]
         if ($budget -ne 5000) { $problems.Add(('summary-budget=' + [string]$budget)) }
         if ($spent -lt 0 -or $spent -gt $budget) { $problems.Add(('summary-spent=' + [string]$spent)) }
+        if (-not $early) { $problems.Add('early-missing') }
+        if (-not $late) { $problems.Add('late rows dropped') }
+        if (-not $torn) { $problems.Add('torn-missing') }
+        if ([bool]$summary.complete) { $problems.Add('torn-marked-complete') }
+        if ([int]$shared.Count -ne 2) { $problems.Add(('shared-count=' + [string]$shared.Count)) }
+        $suiteNames = @($shared.ToArray() | Sort-Object)
+        if (($suiteNames -join ',') -ne 'antiphon,e2e') { $problems.Add(('shared-suites=' + ($suiteNames -join ','))) }
+        if ($orphanOutcome -ne 'unknown') { $problems.Add(('orphan-outcome=' + $orphanOutcome)) }
+        if (-not $orphanIncomplete) { $problems.Add('orphan-not-incomplete') }
+        if ($orphanKnown) { $problems.Add('orphan-counts-known') }
+        if ($duplicateJoined) { $problems.Add('duplicate-joined') }
         $exit = 0
         $text = ''
         if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
