@@ -1,9 +1,11 @@
 # CARD-1605: report storage budgets under contention
 
 Plan date: 2026-10-29. Source inspected:
-`802ae96118ef7911ecf74fdc96b51d515abd54a3` (round 2, task `e26fb023`).
+`d68a9d7232acf2840156e48de97ae7c1dc1b7c3f` (round 3, task `4aab494c`).
+Round-2 source: `802ae96118ef7911ecf74fdc96b51d515abd54a3`, task `e26fb023`.
 Round-1 source: `f8bddb6efda7b0e8f50f3b45744087e52188bc66`, task `d8d36ebe`.
-Read the full design review `.antiphon/task-7a77fb91.md` before this revision.
+Round 2 read `.antiphon/task-7a77fb91.md`; round 3 read the full re-review
+`.antiphon/task-141e4c6b.md` and independently checked its two remaining defects.
 Scope: read-only investigation and this plan; no product changes or test execution.
 This is a completed implementation plan with a proposed ordinary verification
 roster. TestDesign remains a separate stage: it must independently review the
@@ -41,7 +43,8 @@ Line references are at the inspected source SHA; paths are repository relative.
 | Cancellation drops the file. | `AgentReportStore.cs:74-82` maps non-caller cancellation to `io-budget-expired` and removes an owned temporary file. A readback failure after rename can leave canonical bytes on disk but returns no pointer. | Require no successful pointer after deadline and no temporary residue; do not claim every failure means no canonical file exists. |
 | A returned path is durable exact content. | `AgentReportStore.cs:41-69,94-109,112-180` uses full task GUID plus raw UTF-8 SHA-256, durable-root and ignore/tracking checks, sibling WriteThrough temporary write, rename and exact readback. | Preserve these checks, order, path identity, and atomic publication. No retry or root-custody cache. |
 | Caller text is lost. | `AgentTaskReplyService.cs:3660-3702` falls back to legacy spill; small reports may have no spill, and task Result remains. `CardDoneArtifactPreservation.cs:41-54` refuses `artifact_unpreserved`; `AgentTaskLandNotificationService.cs:394-414` refuses `completion_report_unavailable`. | Fix canonical file preservation without changing caller settlement, cleanup admission or delivery semantics. |
-| Moving the deadline leaves caller waits unchanged. | There are exactly three production `StoreAsync` call sites. Settlement holds a per-session semaphore; cleanup waits before admission locks; the notification host reconciles rows sequentially in pages of 128. Their tokens do not impose a shorter store deadline. | Result/fallback semantics remain, but latency increases. The wait inventory below explicitly accepts up to 32 s of active store budgets per call and quantifies cumulative delays. |
+| Moving the deadline leaves caller waits unchanged. | There are three production `StoreAsync` call sites but **four wait sites**, including maintenance settling inline. Settlement holds a per-session semaphore; cleanup waits before admission locks; the notification host reconciles rows sequentially in pages of 128. Maintenance supplies a per-sweep token (default 60 s). | Result/fallback semantics remain, but latency increases. The wait inventory below quantifies both individual stores and cumulative caller waits. |
+| A per-session settlement lock prevents dispatcher-wide waits. | `AgentTaskDispatcher.TickAsync:373-376` awaits maintenance before admission, and maintenance awaits settlement inline. The `IsSettleInFlight` skip at 4807 only covers another path already settling. However, the current `AgentTaskDispatcherHostedService:44,81,101` runs independent admission/maintenance loops; `RunSweepAsync:1961-2125` also bounds each sweep. | Add the missing fourth wait site and accept its 32*k s store contribution subject to the existing sweep deadline. Do not attribute hosted admission isolation to the per-session lock or assert an unqualified fleet-wide 32*k s stall. |
 | Existing tests protect the production deadline. | `tests/Antiphon.Tests/TestHelpers/ReportWorkspace.cs:44-53` supplies 30 seconds. `AgentReportStoreTests.cs:178-211` has a zero-budget row, not a slow-Git-versus-slow-write discriminator. | New witnesses must explicitly use production defaults; existing custody tests retain their purpose. |
 | The 2.5-second write-stall contract can be relaxed. | `docs/superpowers/plans/2026-10-13-card-1032-s8-code-evidence.md:123-146` records the forced write stall returning `io-budget-expired`; CARD-1605 explicitly requires retaining it. | A two-second write deadline and an actual 2.5-second stall witness are acceptance requirements. |
 | A fixed host is needed. | Required GETs `/api/runner-defaults` and `/api/session-runners` succeeded on 2026-10-29; defaults revision 2, no kind overrides, eligible Linux and Windows lanes. | Re-read placement at dispatch. Checkpoints name lanes; omit `-Runner`, and omit `-Platform` unless an OS witness requires it. |
@@ -110,6 +113,14 @@ Line references are at the inspected source SHA; paths are repository relative.
   are Integration + Slow with the assembly-local `ProcessSpawnLimit`. Register
   each in the Slow allowlist and Linux census as specified below; CP-6 verifies
   metadata and lane classification. This is part of S1/S2, not optional cleanup.
+- **D-10: retain the longer settlement allowance in maintenance.** Accept up to
+  32*k s of candidate store work for k serial sweep settlements, versus 2*k s
+  today, subject to the existing per-sweep cancellation and ownership rules below.
+  Settlement has a lossy spill/Result fallback, so an extra short store cap there
+  would reintroduce the preservation failure this card fixes. Do not change the
+  dispatcher or its sweep settings. Its hosted admission loop already runs
+  independently; compatibility `TickAsync` still waits for maintenance. This
+  qualification is established from source, not assumed from the lock's scope.
 
 These are implementation defaults for independent TestDesign review. The 30 s
 production cap is an explicit policy decision; performance estimates and its
@@ -150,7 +161,8 @@ production p95 is invented to justify the chosen policy.
 
 | Wait site and enclosing ownership | Accepted incremental store wait and failure behavior | Why this choice |
 |---|---|---|
-| Settlement: `AgentTaskReplyService.OnTurnEndAsync:88-108` / transcript and watchdog entry paths hold the same `_settleLocks` semaphore through `JudgeOpenTaskAsync`, `ResolveReportFileAsync:1278,3660-3675`. `AgentSessionRuntime:806-840` and dispatcher turn-end paths await it; no shorter outer timer was found. | Up to **30+2=32 s** of store budgets, versus 2 s today; another callback for that session waits behind it. `IsSettleInFlight` lets the dispatcher skip that seat instead of blocking its tick. Expiry falls back to spill/Result; this allowance excludes spill, DB and delivery work. | Accept the additional at-most-30 s active-budget contribution to preserve the authoritative report during a transient Git backlog. The lock is per session, not a fleet lock. Do not claim settlement latency is unchanged. |
+| Settlement: `AgentTaskReplyService.OnTurnEndAsync:88-108` / transcript and watchdog entry paths hold the same `_settleLocks` semaphore through `JudgeOpenTaskAsync`, `ResolveReportFileAsync:1278,3660-3675`. `AgentSessionRuntime:806-840` awaits it; no shorter store-specific outer timer was found on these paths. | Up to **30+2=32 s** of store budgets, versus 2 s today; another callback for that session waits behind it. Expiry falls back to spill/Result; this allowance excludes spill, DB and delivery work. | Accept the additional at-most-30 s active-budget contribution to preserve the authoritative report during a transient Git backlog. A per-session semaphore does **not** prevent a serial caller from blocking unrelated work; maintenance is the separate row below. |
+| Dispatcher maintenance: `RunMaintenanceAsync:435,462` runs dead-session and deferred-report sweeps; their `OnTurnEndAsync` awaits at 3194,4822,4846,4909 are inline. `TickAsync:373-376` waits for all maintenance before dispatching the queued population. | Candidate store contribution **32*k s**, versus **2*k s** today, for k serial sweep settlements (e.g. k=3: 96 s versus 6 s before outer truncation). `IsSettleInFlight:4807` skips only another path's already-held lock. Each sweep's default **60 s** token cancels remaining work; with the production owned-scope path a noncooperative sweep is left owned after a further **30 s** grace. These are per-sweep, not whole-tick bounds. | D-10 accepts longer maintenance/compatibility-tick waits to preserve one-shot reports, retaining the existing outer bounds. Current hosting runs admission and maintenance independently (CARD-1519, commit `339a851f82a2342d2ed54e5ddaaaab4b75c440d5`), so the inline compatibility path's fleet-wide wait must not be claimed for the hosted admission loop. No new scheduling or cancellation change is needed. |
 | Cleanup admission: `CardDoneArtifactPreservation.EnsureAsync:37-50`, called by `CardWorktreeCleanupExecutor.TryAsync:70`. Store happens **before** the transaction/admission lock and card/task row locks at lines 77-87. | Up to **32 s per endpoint** before admission can proceed or return `artifact_unpreserved`; a caller processing k endpoints serially pays up to 32*k s for their stores. Existing pre/post `IsUsableAsync` and deliverable reads are additional caller-token work. | Accept the delay because preservation must precede destructive admission and this wait holds none of those admission/row locks. Never weaken custody to speed cleanup. |
 | Snapshot regeneration: `AgentTaskLandNotificationService.EnsureSnapshotReportAsync:394-414`, awaited in `ReconcileAsync:127`. `AgentTaskLandNotificationHostedService:100-110` awaits rows serially, pages at 128, then sleeps 5 s after the whole scan. | Up to **32 s per missing/unusable snapshot**: three such rows contribute **96 s** (up to 90 s extra versus today), and 128 contribute **4096 s = 68 min 16 s**, plus other work. For m regeneration attempts in a pass the contribution is 32*m s; paging is not a total-run cap. Failure remains `completion_report_unavailable` / RetryPending. Backoff 5..300 s is based on the time captured before regeneration, so early delays may already have elapsed at refusal. The cost can repeat on subsequent eligible passes. | Explicitly accept this worst case for this narrow store-only repair: each row remains finite, bytes must be preserved before delivery, and a small regeneration-only cap would make recovery fail under the same Git contention. This is a conscious head-of-line tradeoff, **not** a scan latency guarantee. If a bounded whole-scan latency becomes required, commission a separately designed fair scan/batching change; do not smuggle concurrency, retries or caller cancellation changes into this card. |
 
@@ -497,6 +509,12 @@ retrying the broad run.
   hard wall guarantee for synchronous Process.Start, File.Move, directory access,
   stream disposal or temporary deletion. Test hooks prove cooperative stalls;
   hard cancellation of kernel filesystem calls is outside this fix.
+- Sweep settlement contributes up to 32*k s of candidate store work instead of
+  2*k s, cut short by the existing 60 s per-sweep cancellation by default. A
+  compatibility `TickAsync` caller waits for those sweeps before admission;
+  current hosting separates the loops. The default 30 s abandonment grace
+  applies only to owned scopes, not forced termination. Configured sweep bounds,
+  semaphore waits and non-store work prevent treating 32*k as total tick time.
 - The serial notification scan can spend 32*m s in m regeneration attempts;
   a full 128-row regeneration page can contribute 68 min 16 s. D-2 accepts that
   store-only latency tradeoff, without promising scan fairness or a total bound.
