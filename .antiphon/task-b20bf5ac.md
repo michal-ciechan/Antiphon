@@ -51,10 +51,7 @@ Cleanup: all 34 inventoried worktree bin-b20bf5ac directories plus the external 
 
 No assigned test failure remains. This is not a full native qualification or land approval: the broader land-graph/C1313 gaps from task 7783f346 were outside this brief and were not rerun. git fetch origin master followed by git merge-tree --write-tree found 15 conflicts against e30ba1237a0a975220782f73eb74c1d90700efc1; the same comparison at this task's base has 14. The additional conflict is CheckpointExecutorLogTests.cs. Both read-only comparisons are preserved externally; no merge/rebase was performed. The evidence-history guard and git diff --check passed. No tags, publication, canonical checkout edits, stack restarts or foreign process termination occurred. The caller's standing authority covered the fixes; no further approval was needed.
 
---- next stage ---
-next: review
-handoff: Review the state-publication serialization and missing checkpoint process limiters at tested code tip 7e067f8a0955d2b5dc9d19a66411bf1fe276deb1, retaining historical red evidence and the broader qualification/merge limitations. Final follow-up changes only this report.
-artifact: C:\Antiphon\worktrees\card-task-b20bf5ac\.antiphon\task-b20bf5ac.md
+
 
 Historical diagnosis notes follow unchanged:
 # Windows checkpoint debugging — b20bf5ac
@@ -77,3 +74,7 @@ At 997fea8826f42519283267489f2d2442348bf350, the new exact-method witness failed
 
 The diagnostic 95-case batch at the same witness source completed 91/4. Failures: slot publication; note_returns_when_the_sink_resumes_on_the_caller_context; C1531_inputs_resolve_without_disabling_bounds (expected 4, got watchdog cancellation 130); concurrent_callbacks_append_each_line_once_without_overlap (60-second test timeout). The latter is additional retained evidence, not silently discarded. CheckpointExecutorLogTests, CheckpointAdmissionContractTests and CheckpointAppTests all reach CheckpointApp -> HostSnapshot(dotnet --version) and GitSnapshot(real git), yet lacked the mandatory ProcessSpawnLimit. Their scheduling repair is a separate slice.
 
+--- next stage ---
+next: review
+handoff: Review the state-publication serialization and missing checkpoint process limiters at tested code tip 7e067f8a0955d2b5dc9d19a66411bf1fe276deb1, retaining historical red evidence and the broader qualification/merge limitations. Final follow-up changes only this report.
+artifact: C:\Antiphon\worktrees\card-task-b20bf5ac\.antiphon\task-b20bf5ac.md
