@@ -304,7 +304,10 @@ Use this order for the changed recovery/release domain:
 
 Converge `TerminalRunnerSeatReleaseService.LockIdentityAsync`,
 `AgentTaskService.LockReleasedAnswerAsync` and the intersecting task/release
-claims with `AppDbContext`'s session-before-task fence. Audit callers for outer
+claims with `AppDbContext`'s session-before-task fence. Late settlement records
+post-commit release work for the existing coordinator and drains it only after
+releasing the settle gate; it must not call a queue-gated release inline while
+still holding that gate. Audit callers for outer
 task locks; merely reversing the helper is insufficient. A path that arrives
 already owning the inverse order must release/re-enter through a fresh scope and
 CAS or defer, never nest. Do not touch host capacity/repository locks unless a
@@ -416,9 +419,22 @@ Focused pre-existing regression roster (source names, not executed here):
   and `Explicit_operator_release_keeps_its_contract`.
 - R-3: `TaskDeadlinePolicyTests.a_token_count_does_not_reset_the_role_ceiling`
   and `a_token_count_does_not_reset_the_local_tool_clock`.
-- R-4: TestDesign chooses the existing exact dead-session missing-failure-note
-  recovery method and deferred-action changed-attempt method after inspecting
-  their assertions; add them to the manifest before Code, never run whole classes.
+- R-4: `DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt`
+  has three results (eligible, busy, crash); the crash arm fails the parent-note
+  insert after Failed commits, then recovers exactly one full receipt.
+  `SessionRuntimeActionRecoveryTests.C1259_admitted_task_attempt_cannot_settle_its_replacement`
+  has two results (catchup false/true), proving old accepted actions cannot settle
+  a replacement attempt. Both source assertions were inspected.
+- R-5: replace the contradictory janitor test with
+  `AgentTaskPoolTests.C1610_Janitor_retains_working_after_full_ttl`; one result,
+  retaining its existing setup and reversing the kill oracle under the explicit
+  policy correction. Keep the original base failure in the red receipt.
+- V-23: `client/src/features/attention/FailedTaskSessionHeld.test.tsx` contains
+  three focused cases: held-session label/navigation, Unknown evidence, and no
+  destructive action button. Include `client/src/api/attention.ts`,
+  `client/src/features/attention/attentionVisuals.ts` and any existing exhaustive
+  enum mappings in S1's files. Red uses a fixture item through the actual
+  attention component; adding only a type declaration cannot satisfy the oracle.
 
 Positive-control design seeds for separate post-land Mutation: remove operator
 auth/consent; omit task-attempt/store/generation comparisons individually; turn
@@ -468,11 +484,19 @@ escaped. Inspect executed TRX names, not list-tests, for suffix over-selection.
 | CP-19 | S3-server | CP-17 | server-s3-regression | `/*/*/TaskDeadlinePolicyTests/(a_token_count_does_not_reset_the_role_ceiling*)\|(a_token_count_does_not_reset_the_local_tool_clock*)` | R-3 | 2 passed, 0 failed/skipped | 2 | 1 |
 | CP-20 | S4-red | `tests/Antiphon.Tests -> bin-c1610-s4-red/` | server-s4-red | `/*/*/FailedTaskLateReportTests/C1610_S4_*` | V-16..V-20 | 5 executed; eligible correction/retention assertion reds, negative controls preserved | 5 | 7 |
 | CP-21 | S4 | `tests/Antiphon.Tests -> bin-c1610-s4/` | server-s4 | `/*/*/FailedTaskLateReportTests/C1610_S4_*` | V-16..V-20 | 5 passed, 0 failed/skipped | 5 | 7 |
+| CP-22 | S4 | CP-21 | server-s4-failure-note | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1161_Failed_caller_note_has_one_complete_user_prompt` | R-4 | 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-23 | S4 | CP-21 | server-s4-attempt-fence | `/*/*/SessionRuntimeActionRecoveryTests/C1259_admitted_task_attempt_cannot_settle_its_replacement` | R-4 | 2 passed, 0 failed/skipped | 2 | 2 |
+| CP-24 | S1 | CP-3 | server-s1-janitor | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-5 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-25 | S1-client-red | n/a | client-held-red | `pwsh -NoProfile -File scripts/test-client.ps1 FailedTaskSessionHeld.test.tsx` | V-23 | 3 Vitest cases execute; held-label assertion red | n/a | 2 |
+| CP-26 | S1-client | n/a | client-held | `pwsh -NoProfile -File scripts/test-client.ps1 FailedTaskSessionHeld.test.tsx` | V-23 | 3 Vitest cases passed, 0 failed/skipped; real exit 0 | n/a | 2 |
+| CP-27 | S1-red | CP-1 | server-s1-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-5 | 1 executed; stale-Working kill assertion red at base | 1 | 1 |
 
-R-4 is explicitly pending TestDesign selection, so this table does not yet grant
-Code a complete verification profile. TestDesign also adds exact post-change
-execution of the renamed contradictory janitor test. Do not silently count
-either obligation as covered by the proposed new tests.
+Execute only the requested After group, in table order within that group; CP-24
+therefore runs with S1, not after S4. The ordinary witness roster is fully named;
+the separate TestDesign stage still owns its guard/PC inventory, inspected test
+construction and refined cost manifest before Code. Client rows are portable
+client/Vitest, use the checkpoint command row's slot, and share dependency setup
+once per run. Preserve the client JSON/exit receipt as well as TUnit TRX.
 
 Use the checkpoint tool's `run --plan <this-path> --after <group>` bound to the
 full committed source SHA, then `wait` with at most 45-second foreground windows
@@ -512,11 +536,16 @@ merely to manufacture a percentile.
 | Test host setup | 1-5 seconds shared per run/fixture | 10 seconds provisional, record HTTP readiness separately |
 | Bodies + teardown, server group | 30-120 seconds | Row execution 4 minutes; barriers and cancellation replace minute/hour sleeps |
 | Bodies + teardown, runner group | 10-60 seconds | Row execution 2 minutes; owned process termination/join is part of proof |
-| Complete one-project invocation | 3-8 minutes execution plus admission | Explicit total charged-execution cap 14 minutes server / 6 minutes runner; admission remains separate |
+| Complete one-project invocation | 3-10 minutes execution plus admission | Explicit total charged-execution cap 14 minutes server / 6 minutes runner; manifest HardWallMinutes=29 bounds all acquisition waits plus execution; SlotWaitMinutes=15 per acquisition |
 
-The table's ordinary estimate is **71 minutes cumulatively**, before the small
-R-4/renamed-test additions and admission waits. It spans separate red/green
-invocations, not one 71-minute test command. Under R1 the aggregate campaign also
+The table's ordinary estimate is **80 minutes cumulatively**, before admission
+waits. It spans separate red/green invocations, not one 80-minute test command.
+The 29-minute wall bound may end a later reused-build row before it starts;
+report it not run and schedule only that missing row, never repeat green work.
+Client dependency installation is shared and timed separately, with a 5-minute
+provisional startup bound; test bodies target under 15 seconds per three-case file
+and a 30-second execution bound, subject to the same p95 collection rule.
+Under R1 the aggregate campaign also
 deserves a timing/Debug assessment before Code, particularly given the incident's
 10-25-minute slot waits. The caller must commission that scoped assessment rather
 than repeatedly paying a long batch; no Debug delegate is spawned from this Plan.
@@ -626,6 +655,6 @@ authorize any live destructive operation.
   absent release. The measured orphan=false already has a source-backed explanation.
 - The brief requested design review by a different company's model. Perform that
   review before Code, with particular scrutiny of D-3/D-6/D-7/D-9, and finish the
-  separate TestDesign stage (R-4, guard/PC inventory, costs and exact rosters).
+  separate TestDesign stage (guard/PC inventory, costs and exact rosters).
   Stage-contract next is **test-design**; its handoff carries the independent
   design review requirement. This Plan is not an executable verification approval.
