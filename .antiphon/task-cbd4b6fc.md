@@ -24,4 +24,9 @@ SHARD c2-Cother end rc=0 wall=1141s  total: 374  failed: 0  succeeded: 371  skip
 SHARD a2-RSC-C110 end rc=0 wall=772s  total: 216  failed: 0  succeeded: 216  skipped: 0  duration: 12m 51s 587ms 
 SHARD c3-GHI end rc=0 wall=499s  total: 654  failed: 0  succeeded: 642  skipped: 12  duration: 8m 17s 870ms 
 SHARD a3-RSC-C111x end rc=0 wall=342s  total: 50  failed: 0  succeeded: 50  skipped: 0  duration: 5m 40s 048ms 
+SHARD c4-misc end rc=0 wall=310s  total: 704  failed: 0  succeeded: 701  skipped: 3  duration: 5m 08s 534ms 
+SHARD b2-Ch end rc=0 wall=1299s  total: 547  failed: 0  succeeded: 546  skipped: 1  duration: 21m 38s 318ms 
+SHARD a4-RSC-rest end rc=0 wall=261s  total: 121  failed: 0  succeeded: 121  skipped: 0  duration: 4m 20s 147ms 
+LANE A done 2026-10-29T13:49:41Z
+SHARD c5-OP end rc=0 wall=304s  total: 753  failed: 0  succeeded: 745  skipped: 8  duration: 5m 02s 394ms 
 ```
