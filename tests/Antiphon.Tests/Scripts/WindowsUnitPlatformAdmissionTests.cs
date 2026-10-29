@@ -433,13 +433,10 @@ public sealed class WindowsUnitPlatformAdmissionTests
         if (!OperatingSystem.IsWindows()) throw new SkipTestException("CARD-1210: the child skip-roster audit requires Windows placement.");
         var assembly = typeof(WindowsUnitPlatformAdmissionTests).Assembly;
         var executable = Path.Combine(Path.GetDirectoryName(assembly.Location)!, "Antiphon.Tests.exe");
-        var output = Antiphon.Checkpoints.CheckpointBuildBinding.NormalizeDirectory(AppContext.BaseDirectory);
-        if (!File.Exists(Path.Combine(output, "checkpoint-build-source.json"))) output = Directory.GetParent(output)!.FullName;
         var source = new Antiphon.Checkpoints.SourceSnapshot().Capture(DelegateScriptRunner.RepoRoot);
         source.DirtyFiles.ShouldBe(0, "c1210-child-source-stamp: clean source");
         source.CaptureStatus.ShouldBe("known", "c1210-child-source-stamp");
-        var binding = Antiphon.Checkpoints.CheckpointBuildBinding.Expected(DelegateScriptRunner.RepoRoot, "tests/Antiphon.Tests",
-            Path.GetRelativePath(Path.Combine(DelegateScriptRunner.RepoRoot, "tests/Antiphon.Tests"), output), [], source);
+        var binding = OuterRowBuildStamp.EnsureForBuildOutput(AppContext.BaseDirectory, DelegateScriptRunner.RepoRoot, source);
         var psi = new ProcessStartInfo(executable)
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,

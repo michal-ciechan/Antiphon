@@ -125,12 +125,9 @@ public sealed class C1008PlatformContractTests
         var assemblyPath = assembly.Location;
         var executable = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "Antiphon.Tests.exe");
         File.Exists(executable).ShouldBeTrue("c1050-child-apphost: already built native host");
-        var stampPath = Path.Combine(AppContext.BaseDirectory, "checkpoint-build-source.json");
-        // OutputPath is the producer root; TargetFramework may add one directory below it.
-        if (!File.Exists(stampPath))
-            stampPath = Path.Combine(Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))!.FullName,
-                "checkpoint-build-source.json");
-        File.Exists(stampPath).ShouldBeTrue("c1050-child-source: outer row build stamp required");
+        var source = new Antiphon.Checkpoints.SourceSnapshot().Capture(DelegateScriptRunner.RepoRoot);
+        var binding = OuterRowBuildStamp.EnsureForBuildOutput(AppContext.BaseDirectory, DelegateScriptRunner.RepoRoot, source);
+        var stampPath = binding.PathName;
         var stamp = Path.Combine(root, "checkpoint-build-source.json");
         File.Copy(stampPath, stamp);
         var psi = new ProcessStartInfo(executable)
