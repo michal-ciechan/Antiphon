@@ -229,8 +229,12 @@ public sealed class RemoteScriptContractTests
         Order(prepare, link, probe).ShouldBeTrue("PC-08 still consumes the self-link");
         Order(prepare, probe, unlink).ShouldBeTrue(".fixture-escape is left behind after PC-08");
         Order(prepare, unlink, "c849_fixture_control PC-09").ShouldBeTrue(".fixture-escape survives into the next control");
-        var trap = Commands(fixture).Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        trap.ShouldContain("c849_fixture_exit");
+        var exitTrap = Commands(fixture).Single(command =>
+            command.StartsWith("trap ", StringComparison.Ordinal) && command.EndsWith(" EXIT", StringComparison.Ordinal));
+        exitTrap.ShouldContain("c849_fixture_exit");
+        Commands(fixture).Single(command => command == "trap 'c849_fixture_on_signal INT' INT");
+        Commands(fixture).Single(command => command == "trap 'c849_fixture_on_signal TERM' TERM");
+        fixture.Contains("eval \"trap ", StringComparison.Ordinal).ShouldBeFalse("the signal trap is a plain trap line");
         var finalizer = Block(Remote(), "c849_fixture_finalize");
         var unlinkAt = finalizer.IndexOf(unlink, StringComparison.Ordinal);
         var cleanupAt = finalizer.IndexOf("c849_fixture_export_logs", StringComparison.Ordinal);
@@ -743,9 +747,13 @@ public sealed class RemoteScriptContractTests
     [Test]
     public void C1191_Fixture_failure_records_unhandled_exit_without_seed_receipt()
     {
-        var trap = Commands(Block(Remote(), "c849_fixture"))
-            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        var fixture = Block(Remote(), "c849_fixture");
+        var trap = Commands(fixture)
+            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal)
+                && command.EndsWith(" EXIT", StringComparison.Ordinal));
         trap.ShouldStartWith("trap 'ec=$?;");
+        Commands(fixture).Single(command => command == "trap 'c849_fixture_on_signal INT' INT");
+        Commands(fixture).Single(command => command == "trap 'c849_fixture_on_signal TERM' TERM");
         var exit = Block(Remote(), "c849_fixture_exit");
         exit.ShouldContain("write_result false \"UnhandledExit $ec\" \"$ec\"");
         Order(exit, "c849_fixture_finalize", "UnhandledExit").ShouldBeTrue("failure receipt follows finalization");
@@ -1107,8 +1115,37 @@ public sealed class RemoteScriptContractTests
         Fact(output, "waited-live").ShouldBe("0", output);
         Fact(output, "probes-removed").ShouldBe("1", output);
         Fact(output, "lease-released").ShouldBe("1", output);
-        Fact(output, "signal-trap").ShouldBe("1", output);
         Fact(output, "volumes-removed").ShouldBe("1", output);
+    }
+
+    // CARD-0849 round 2. A same-named container the launcher refused is not this
+    // run's. TERM and INT kill only recorded CIDs, the slot wait is wall-clock,
+    // offline exit 4 is the slot timeout, and kill -9 stays on jobs -pr.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Refused_launch_keeps_a_foreign_container_and_signals_release_proven_cids()
+    {
+        var output = C1192Run("slot-round2");
+        Fact(output, "foreign-survived").ShouldBe("1", output);
+        Fact(output, "foreign-killed").ShouldBe("0", output);
+        Fact(output, "foreign-residue").ShouldBe("1", output);
+        Fact(output, "foreign-ledger").ShouldBe("1", output);
+        Fact(output, "foreign-diagnosis").ShouldBe("FixtureRestoreBarrierFailed", output);
+        foreach (var sig in new[] { "TERM", "INT" })
+        {
+            var expected = sig == "INT" ? "130" : "143";
+            Fact(output, "signal-" + sig + "-installed").ShouldBe("1", output);
+            Fact(output, "signal-" + sig + "-exit").ShouldBe(expected, output);
+            Fact(output, "signal-" + sig + "-cid-kills").ShouldBe("1", output);
+            Fact(output, "signal-" + sig + "-lease").ShouldBe("1", output);
+            Fact(output, "signal-" + sig + "-volumes").ShouldBe("1", output);
+        }
+        Fact(output, "slot-wait-bounded").ShouldBe("1", output);
+        Fact(output, "slot-wait-code").ShouldBe("4", output);
+        Fact(output, "offline-diagnosis").ShouldBe("FixtureBuildSlotTimeout", output);
+        Fact(output, "offline-code").ShouldBe("2", output);
+        Fact(output, "reap-owned-escalated").ShouldBe("1", output);
+        Fact(output, "reap-unowned-escalated").ShouldBe("0", output);
     }
 
     // CARD-1192 S2. Shared scratch blocks the waiter until release. Private scratch is already eligible.

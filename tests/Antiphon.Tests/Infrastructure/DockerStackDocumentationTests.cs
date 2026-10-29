@@ -407,9 +407,12 @@ public sealed class DockerStackDocumentationTests
         {
             "slot-held",
             "FixtureBuildSlotTimeout",
+            "FixtureOfflineRestoreFailed",
             "FixtureRestoreBarrierFailed",
             "30-second",
-            "45 minutes"
+            "45 minutes",
+            "INT exits 130",
+            "does not release that slot to retry"
         })
             text.ShouldContain(pin, Case.Sensitive, pin);
     }
