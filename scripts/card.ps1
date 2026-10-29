@@ -260,10 +260,20 @@ function Invoke-Antiphon {
         # Surface the server's own message - it names the field, the ceiling and the actual length,
         # or explains the 409, and that is the actionable part. Prefer detail + candidates over
         # the raw problem-details JSON (CARD-0218).
+        # HttpWebResponse (5.1) and HttpResponseMessage (7) both expose StatusCode.
+        $status = $null
+        $response = $_.Exception.Response
+        if ($null -eq $response -and $null -ne $_.Exception.InnerException) {
+            $response = $_.Exception.InnerException.Response
+        }
+        if ($null -ne $response -and $null -ne $response.StatusCode) {
+            $status = [int]$response.StatusCode
+        }
         $raw = $_.ErrorDetails.Message
         if ([string]::IsNullOrWhiteSpace($raw)) { $raw = $_.Exception.Message }
         $parsed = $null
         try { $parsed = $raw | ConvertFrom-Json } catch { $parsed = $null }
+        $lines = $null
         if ($null -ne $parsed -and $parsed.detail) {
             $lines = @($parsed.detail)
             if ($parsed.code) { $lines += ("code {0}" -f $parsed.code) }
@@ -275,6 +285,23 @@ function Invoke-Antiphon {
             foreach ($c in @($parsed.candidates)) {
                 $lines += ("  {0}  {1}  {2}  {3}" -f $c.boardName, $c.id, $c.status, $c.title)
             }
+        }
+        # ConciseView on a wide console inserts a column marker and ANSI colours inside a
+        # Write-Error message, which splits a 404 detail such as "Relationship route unavailable".
+        # A missing route stays plain text on the error stream.
+        if ($status -eq 404) {
+            if ($null -ne $lines) {
+                [Console]::Error.WriteLine(("Antiphon {0} {1} failed: {2}" -f $Method, $Path, $lines[0]))
+                for ($i = 1; $i -lt $lines.Count; $i++) {
+                    [Console]::Error.WriteLine([string]$lines[$i])
+                }
+            }
+            else {
+                [Console]::Error.WriteLine("Antiphon $Method $Path failed: $raw")
+            }
+            exit 1
+        }
+        if ($null -ne $lines) {
             Write-Error ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
         }
         else {
