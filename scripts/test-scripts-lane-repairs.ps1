@@ -80,8 +80,17 @@ public static class File {
         Copy-Item -LiteralPath $owned -Destination $copy -Recurse
         $ledger = Join-Path $copy '.checkpoint-output-ledger.json'
         if (-not [IO.File]::Exists($ledger)) { throw 'copy dropped the ledger' }
-        $foreignInode = (& stat -c %i -- $copy).Trim()
-        if ([string]::IsNullOrWhiteSpace($foreignInode)) { throw 'foreign inode unavailable' }
+        # Directory identity is the Linux inode or the NTFS file index. CustodyStat
+        # reads it in-process, so this witness does not call coreutils stat.
+        function Get-ScriptsLaneDirectoryIdentity([string]$Path) {
+            $io = [Antiphon.HostCleanup.Checkpoints.CheckpointNativeIo]::new()
+            $observed = $io.CustodyStat($Path)
+            if ($observed.Kind -ne 'directory' -or $observed.Inode -eq 0) {
+                throw "directory identity unavailable for $Path (kind=$($observed.Kind) inode=$($observed.Inode))"
+            }
+            return ('{0}:{1}' -f $observed.Device, $observed.Inode)
+        }
+        $foreignIdentity = Get-ScriptsLaneDirectoryIdentity $copy
         $aside = Join-Path $root 'bin-owned-real'
         Move-Item -LiteralPath $owned -Destination $aside
         Move-Item -LiteralPath $copy -Destination $owned
@@ -90,7 +99,7 @@ public static class File {
         & "$PSScriptRoot/cleanup-build-junk.ps1" -RepoRoot $root -SkipIfModifiedWithinMinutes 0 -CleanupContext $context
         if (-not [IO.Directory]::Exists($owned)) { throw 'replacement directory was deleted' }
         if (-not [IO.Directory]::Exists($aside)) { throw 'original owned directory was deleted' }
-        if ((& stat -c %i -- $owned).Trim() -ne $foreignInode) { throw 'replacement inode was not preserved' }
+        if ((Get-ScriptsLaneDirectoryIdentity $owned) -ne $foreignIdentity) { throw 'replacement identity was not preserved' }
         if ([IO.File]::ReadAllText((Join-Path $owned 'payload.txt')) -cne 'regenerable') { throw 'replacement payload changed' }
         if ([IO.File]::ReadAllText((Join-Path $aside 'payload.txt')) -cne 'regenerable') { throw 'original payload changed' }
         'PASS replaced: foreign directory survived a stale custody record'
