@@ -54,7 +54,6 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
     [Arguments(true)]
     public async Task healthy_receipts_complete_with_every_pool_worker_occupied(bool embedded)
     {
-        if (!OperatingSystem.IsLinux()) Skip.Test("Linux scheduling witness; no native Windows qualification");
         var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-pool-saturation.ps1"),
                      "-Repository", CheckpointFixtures.RepoRoot, "-Scratch", TempDir(), "-Assembly", typeof(CheckpointFileReader).Assembly.Location })
