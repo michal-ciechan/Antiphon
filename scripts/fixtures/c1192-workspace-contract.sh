@@ -3149,46 +3149,49 @@ mode_cleanup_probe() {
     esac
     local outcomes='absent daemon exit2 present timeout empty permission socket unrecognized rm-lie exit2-absent other-name other-kind mixed'
     [ "$PROBE_BOUNDARY" != all ] || outcomes=daemon
+    # The remote function text does not change between outcomes. Reading it once
+    # keeps the fourteen fixture runs from scanning c590-remote.sh on every pass
+    # (that scan is a /mnt read when Windows drives this bash through WSL).
+    S7_SCENARIO=success
+    s7_groups
+    # Exercise the real evidence marker/census path. Only its external
+    # inventory and payload producers are substituted for this cleanup proof.
+    source <(awk '/^c849_fixture_evidence\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+    case_runner_cache_inventory() {
+        printf '{}\n' > "$CASE_DIR/server2-status.json"
+        printf '{}\n' > "$CASE_DIR/server2-temp-status.json"
+    }
+    c849_fixture_evidence_payloads() { :; }
+    # Execute the real receipt writer, not the older S7 text substitute.
+    source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+    source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')
+    c849_fixture_seed() {
+        c1192_probe_seed
+        printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/negative.yml"
+        plant_container "c849-${RUN}-restore-p1" c849-fixture "$RUN" consumer "$ADMITTED" ""
+        printf '%s\n' "$(cat "$C1192_ROOT/containers/c849-${RUN}-restore-p1/id")" > "$CASE_DIR/.fixture-id-c849-${RUN}-restore-p1"
+        plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
+        printf '%s\n' "c849-${RUN}-masked" >> "$CASE_DIR/.fixture-helpers"
+        plant_volume "c849${RUN}-packages" local null server2-runner "$RUN" nuget-packages
+        printf '1\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-schema"
+        printf 'nuget-packages\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-cache-role"
+        printf '%s\n' "c849${RUN}-packages" >> "$CASE_DIR/.fixture-volumes"
+        printf '%s\n' "c849-${RUN}-npm" > "$CASE_DIR/.fixture-network"
+        : > "$C1192_ROOT/network"
+        s7_roster
+        sed -i '$d' "$CASE_DIR/fixture-groups.txt"
+        if [ "$PROBE_OUTCOME" = absent ]; then
+            case "$PROBE_KIND" in
+                volume) rm -rf "$C1192_ROOT/volumes/$PROBE_NAME" ;;
+                container) rm -rf "$C1192_ROOT/containers/$PROBE_NAME" ;;
+                network) rm -f "$C1192_ROOT/network" ;;
+            esac
+        fi
+    }
     for outcome in $outcomes; do
         reset_runtime
         rm -f "$C1192_ROOT/teardown-done" "$CASE_DIR/.fixture-network" "$CASE_DIR/c590-result.json" "$CASE_DIR/fixture-cleanup-ledger.txt"
         PROBE_OUTCOME=$outcome
-        S7_SCENARIO=success
-        s7_groups
-        # Exercise the real evidence marker/census path. Only its external
-        # inventory and payload producers are substituted for this cleanup proof.
-        source <(awk '/^c849_fixture_evidence\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
-        case_runner_cache_inventory() {
-            printf '{}\n' > "$CASE_DIR/server2-status.json"
-            printf '{}\n' > "$CASE_DIR/server2-temp-status.json"
-        }
-        c849_fixture_evidence_payloads() { :; }
-        # Execute the real receipt writer, not the older S7 text substitute.
-        source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
-        source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')
-        c849_fixture_seed() {
-            c1192_probe_seed
-            printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/negative.yml"
-            plant_container "c849-${RUN}-restore-p1" c849-fixture "$RUN" consumer "$ADMITTED" ""
-            printf '%s\n' "$(cat "$C1192_ROOT/containers/c849-${RUN}-restore-p1/id")" > "$CASE_DIR/.fixture-id-c849-${RUN}-restore-p1"
-            plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
-            printf '%s\n' "c849-${RUN}-masked" >> "$CASE_DIR/.fixture-helpers"
-            plant_volume "c849${RUN}-packages" local null server2-runner "$RUN" nuget-packages
-            printf '1\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-schema"
-            printf 'nuget-packages\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-cache-role"
-            printf '%s\n' "c849${RUN}-packages" >> "$CASE_DIR/.fixture-volumes"
-            printf '%s\n' "c849-${RUN}-npm" > "$CASE_DIR/.fixture-network"
-            : > "$C1192_ROOT/network"
-            s7_roster
-            sed -i '$d' "$CASE_DIR/fixture-groups.txt"
-            if [ "$PROBE_OUTCOME" = absent ]; then
-                case "$PROBE_KIND" in
-                    volume) rm -rf "$C1192_ROOT/volumes/$PROBE_NAME" ;;
-                    container) rm -rf "$C1192_ROOT/containers/$PROBE_NAME" ;;
-                    network) rm -f "$C1192_ROOT/network" ;;
-                esac
-            fi
-        }
         # No conditional call: retain real set -e behavior in the wrapper/EXIT.
         set +e
         ( set -e; c849_fixture ) > "$C1192_ROOT/probe-output" 2>&1
