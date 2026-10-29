@@ -67,7 +67,7 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
             }
         });
         var completed = await Task.WhenAny(finished.Task, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken));
-        completed.ShouldBe(finished.Task);
+        completed.ShouldBe(finished.Task, sink.Diagnostic);
         await finished.Task;
         sink.Lines.Count.ShouldBe(1);
         sink.Lines[0].EndsWith("id=caller-context", StringComparison.Ordinal).ShouldBeTrue();
@@ -341,15 +341,22 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
     private sealed class CallerContextSink : IExecutorLogSink
     {
         public List<string> Lines { get; } = [];
+        public string Diagnostic => $"sink entered={Entered:O} completion={Completed:O} context={Context}";
+        private DateTimeOffset Entered;
+        private DateTimeOffset Completed;
+        private string? Context;
 
         public async Task AppendAsync(string line, CancellationToken cancellationToken)
         {
             var context = SynchronizationContext.Current;
+            Entered = DateTimeOffset.UtcNow;
+            Context = context?.GetType().Name ?? "thread-pool";
             var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Complete() { Completed = DateTimeOffset.UtcNow; done.TrySetResult(); }
             if (context is not null)
-                context.Post(_ => done.TrySetResult(), null);
+                context.Post(_ => Complete(), null);
             else
-                ThreadPool.QueueUserWorkItem(_ => done.TrySetResult());
+                ThreadPool.QueueUserWorkItem(_ => Complete());
             await done.Task;
             cancellationToken.ThrowIfCancellationRequested();
             Lines.Add(line);

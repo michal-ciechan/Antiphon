@@ -13,6 +13,85 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointStatePublicationTests : CheckpointTestBase
 {
     [Test]
+    public async Task concurrent_state_publications_preserve_each_verified_generation()
+    {
+        var path = Path.Combine(TempDir(), "state.json");
+        using var firstPublished = new ManualResetEventSlim();
+        using var releaseFirst = new ManualResetEventSlim();
+        using var secondPublished = new ManualResetEventSlim();
+        var io = new InterleavedPublicationIo(path, firstPublished, releaseFirst, secondPublished);
+        var store = new RunStateStore(new CheckpointCleanupContext(io, new CheckpointNativeGitRunner()));
+        store.Write(path, new RunState { RunId = "concurrent", Marker = "initial" }).ShouldBeNull();
+        io.Armed = true;
+
+        Exception? Write(string generation)
+        {
+            try
+            {
+                store.Write(path, new RunState { RunId = "concurrent", Marker = generation }).ShouldBeNull();
+                return null;
+            }
+            catch (Exception error) { return error; }
+        }
+
+        // Dedicated producers keep this filesystem interleaving independent of pool load.
+        var first = Task.Factory.StartNew(() => Write("first"), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task<Exception?>? second = null;
+        try
+        {
+            firstPublished.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue("first native replacement completed");
+            second = Task.Factory.StartNew(() => Write("second"), CancellationToken.None,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            // Without serialization, the second replacement completes before the first
+            // verifies its bytes. With serialization it waits until we release the first.
+            secondPublished.Wait(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            releaseFirst.Set();
+            await first;
+            if (second is not null) await second;
+        }
+
+        (await first).ShouldBeNull("a sibling publication must not invalidate the first generation");
+        (await second!).ShouldBeNull();
+        store.TryRead(path)!.Marker.ShouldBe("second");
+        File.ReadAllLines(Path.Combine(Path.GetDirectoryName(path)!, "state.history.jsonl"))
+            .Select(line => JsonSerializer.Deserialize<RunState>(line, RunStateStore.Json)!.Marker)
+            .ShouldBe(new[] { "initial", "first", "second" });
+        Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
+        Directory.GetFiles(Path.GetDirectoryName(path)!, "*.bak").ShouldBeEmpty();
+    }
+
+    private sealed class InterleavedPublicationIo(string path, ManualResetEventSlim firstPublished,
+        ManualResetEventSlim releaseFirst, ManualResetEventSlim secondPublished) : ForwardingNativeIo
+    {
+        private int _moves;
+        public bool Armed { get; set; }
+
+        public override void Move(string source, string destination, bool overwrite)
+        {
+            if (!Armed || destination != path) { base.Move(source, destination, overwrite); return; }
+            var generation = JsonSerializer.Deserialize<RunState>(File.ReadAllText(source), RunStateStore.Json)!.Marker;
+            var number = Interlocked.Increment(ref _moves);
+            base.Move(source, destination, overwrite);
+            Console.WriteLine($"PUBLICATION_NATIVE pid={Environment.ProcessId} thread={Environment.CurrentManagedThreadId} "
+                + $"move={number} generation={generation} result=success path={destination}");
+            if (number == 1)
+            {
+                firstPublished.Set();
+                releaseFirst.Wait();
+                using var stream = new FileStream(destination, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                Console.WriteLine("PUBLICATION_NATIVE first-verification-observes="
+                    + JsonSerializer.Deserialize<RunState>(stream, RunStateStore.Json)!.Marker);
+            }
+            else secondPublished.Set();
+        }
+    }
+
+    [Test]
     public async Task state_publication_survives_contention_and_preserves_completed_rows()
     {
         foreach (var failure in new Exception[]
