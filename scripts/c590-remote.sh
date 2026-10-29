@@ -3208,31 +3208,70 @@ c849_fixture_launch() {
     fi
     state=0
     c849_fixture_helper_lookup "$name" || state=$?
-    [ "$state" = 0 ] || return 2
+    if [ "$state" != 0 ]; then
+        # The name is already taken. A probe must not record it for deletion.
+        if [ "$state" = 1 ] && [ "${C849_PROBE_TRACK:-}" = 1 ]; then
+            c849_fixture_note_unproven_probe "$name" || return 2
+        fi
+        return 2
+    fi
     [ "$name" != "c849-${RUN}-donor" ] || role=donor
     cid_dir=$(umask 077; mktemp -d .fixture-cid.XXXXXXXX) || return 2
+    # Publish the cidfile while docker is still running so a refusal can release
+    # this container by the recorded id. A name collision never reaches here.
     docker "$verb" --cidfile "$cid_dir/id" --label io.antiphon.owner=c849-fixture \
-        --label "io.antiphon.fixture-run=$RUN" --label "io.antiphon.fixture-role=$role" "$@" || code=$?
-    if c849_fixture_metadata_regular "$cid_dir/id"; then
-        c849_fixture_write "$file" create cat -- "$cid_dir/id" || { rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir"; return 2; }
-        rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || return 2
-        identity="$(cat -- "$file")" || identity=''
-        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
-            state=0
-            c849_fixture_resource_state container "$identity" || state=$?
-            case "$state" in
-                0) local fingerprint
-                    fingerprint="$(c849_fixture_container_fingerprint "$identity")" || {
-                        c849_fixture_cleanup_unknown container "$name"; return 2; }
-                    c849_fixture_write "$fingerprint_file" create printf '%s\n' "$fingerprint" || {
-                        c849_fixture_fingerprint_refuse "$name"; return 2; } ;;
-                1) ;;
-                *) c849_fixture_cleanup_unknown container "$name"; return 2 ;;
-            esac
-            return "$code"
+        --label "io.antiphon.fixture-run=$RUN" --label "io.antiphon.fixture-role=$role" "$@" &
+    local docker_pid=$! identity="" spins=0
+    while [ "$spins" -lt 200 ]; do
+        if [ -f "$cid_dir/id" ] && [ ! -L "$cid_dir/id" ]; then
+            identity="$(cat -- "$cid_dir/id" 2>/dev/null || true)"
+            if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
+                break
+            fi
+            identity=""
+        fi
+        if ! kill -0 "$docker_pid" 2>/dev/null; then
+            break
+        fi
+        spins=$((spins + 1))
+        sleep 0.05
+    done
+    if [[ "$identity" =~ ^[0-9a-f]{64}$ ]] && [ ! -e "$file" ] && [ ! -L "$file" ]; then
+        c849_fixture_write "$file" create printf '%s\n' "$identity" || {
+            kill "$docker_pid" 2>/dev/null || true
+            wait "$docker_pid" 2>/dev/null || true
+            rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+            return 2
+        }
+        if [ "${C849_PROBE_TRACK:-}" = 1 ]; then
+            c849_fixture_publish_live_probe "$name" "$identity" || true
+        fi
+    fi
+    wait "$docker_pid" || code=$?
+    if [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]] && c849_fixture_metadata_regular "$cid_dir/id"; then
+        identity="$(cat -- "$cid_dir/id" 2>/dev/null || true)"
+        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]] && [ ! -e "$file" ] && [ ! -L "$file" ]; then
+            c849_fixture_write "$file" create printf '%s\n' "$identity" || {
+                rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+                return 2
+            }
         fi
     fi
     rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+    if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
+        state=0
+        c849_fixture_resource_state container "$identity" || state=$?
+        case "$state" in
+            0) local fingerprint
+                fingerprint="$(c849_fixture_container_fingerprint "$identity")" || {
+                    c849_fixture_cleanup_unknown container "$name"; return 2; }
+                c849_fixture_write "$fingerprint_file" create printf '%s\n' "$fingerprint" || {
+                    c849_fixture_fingerprint_refuse "$name"; return 2; } ;;
+            1) ;;
+            *) c849_fixture_cleanup_unknown container "$name"; return 2 ;;
+        esac
+        return "$code"
+    fi
     c849_fixture_cleanup_unknown container "$name"
     [ "$code" != 0 ] || code=2
     return "$code"
@@ -4086,6 +4125,9 @@ c849_fixture_volume_read() {
 
 c849_fixture_restore_container() {
     local image="$1" project="$2" packages="$3" scratch="$4" driver="$5" work_mount
+    if [ "${C849_PROBE_TRACK:-}" = 1 ]; then
+        C849_PROBE_PID=$BASHPID
+    fi
     c849_fixture_cache_mount_ok "$packages" nuget-packages || write_result false CacheVolumeForeign 2
     c849_fixture_cache_mount_ok "$scratch" nuget-scratch || write_result false CacheVolumeForeign 2
     work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
@@ -4106,6 +4148,9 @@ c849_fixture_restore_container() {
 
 c849_fixture_lock_container() {
     local image="$1" scratch="$2" mode="$3" generation="$4" work_mount
+    if [ "${C849_PROBE_TRACK:-}" = 1 ]; then
+        C849_PROBE_PID=$BASHPID
+    fi
     # NuGet locks $NUGET_SCRATCH/lock/<hash>. The same HOME and NUGET_SCRATCH as the restore
     # containers; without them the holder and waiter each lock a private /tmp.
     c849_fixture_cache_mount_ok "$scratch" nuget-scratch || write_result false CacheVolumeForeign 2
@@ -4206,7 +4251,9 @@ PS
 
 # 45 minutes matches scripts/build-slot.ps1 -SlotWaitMinutes. A digit-only
 # C589_SLOT_WAIT_SECONDS is that gate's own seconds override, so the probe's
-# exit 4 and this deadline describe the same wait.
+# exit 4 and this deadline describe the same wait. The first granted slot stays
+# held until the second grant or this deadline. Releasing it to retry would
+# drop the grant and reopen the 30-second arrival window, so there is no retry.
 c849_fixture_slot_deadline_seconds() {
     case "${C589_SLOT_WAIT_SECONDS:-}" in
         ''|*[!0-9]*) printf '2700' ;;
@@ -4214,8 +4261,50 @@ c849_fixture_slot_deadline_seconds() {
     esac
 }
 
-c849_fixture_track_probe() {
-    printf '%s %s\n' "$1" "$2" >> "$CASE_DIR/.fixture-live-probes"
+c849_fixture_probe_role() {
+    case "$1" in
+        "c849-${RUN}-restore-p1"|"c849-${RUN}-restore-p2"|"c849-${RUN}-restore-p3"|\
+        "c849-${RUN}-lock-holder-shared"|"c849-${RUN}-lock-waiter-shared"|\
+        "c849-${RUN}-lock-holder-private"|"c849-${RUN}-lock-waiter-private")
+            printf 'consumer' ;;
+        *) return 1 ;;
+    esac
+}
+
+# 0 when this run recorded the id and the live container still carries this
+# run's owner, fixture-run and role, and the name matches. Anything else is
+# not ours to kill.
+c849_fixture_probe_proven() {
+    local name="$1" cid="$2" expect owner run role actual
+    c849_fixture_probe_name_ok "$name" || return 1
+    [[ "$cid" =~ ^[0-9a-f]{64}$ ]] || return 1
+    expect="$(c849_fixture_probe_role "$name")" || return 1
+    owner="$(docker inspect -f '{{index .Config.Labels "io.antiphon.owner"}}' "$cid" 2>/dev/null)" || return 1
+    run="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-run"}}' "$cid" 2>/dev/null)" || return 1
+    role="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$cid" 2>/dev/null)" || return 1
+    actual="$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null)" || return 1
+    [ "$owner" = c849-fixture ] && [ "$run" = "$RUN" ] && [ "$role" = "$expect" ] && [ "$actual" = "/$name" ]
+}
+
+c849_fixture_note_unproven_probe() {
+    local name="$1"
+    c849_fixture_probe_name_ok "$name" || return 0
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched container %s\n' "$name" || return 2
+}
+
+# Record pid, cid and name only after launch has stored the cid and the labels match.
+c849_fixture_publish_live_probe() {
+    local name="$1" cid="$2" pid="${C849_PROBE_PID:-}" file="$CASE_DIR/.fixture-live-probes"
+    [ -n "$pid" ] || return 0
+    case "$pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    c849_fixture_probe_proven "$name" "$cid" || return 1
+    if [ -f "$file" ] && [ ! -L "$file" ] && grep -F " $cid " "$file" >/dev/null 2>&1; then
+        return 0
+    fi
+    printf '%s %s %s\n' "$pid" "$cid" "$name" >> "$file"
 }
 
 c849_fixture_clear_live_probes() {
@@ -4254,7 +4343,10 @@ c849_fixture_reap_probe() {
     esac
     if ! c849_fixture_probe_exited "$pid"; then
         kill "$pid" 2>/dev/null || true
-        kill -9 "$pid" 2>/dev/null || true
+        # A pid that has left the job table may already belong to something else.
+        if c849_fixture_job_pid "$pid"; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
     fi
     i=0
     while [ "$i" -lt 50 ]; do
@@ -4292,14 +4384,26 @@ c849_fixture_release_slot_leases() {
     done
 }
 
+c849_fixture_job_pid() {
+    local pid="$1" listed
+    while IFS= read -r listed || [ -n "${listed:-}" ]; do
+        [ "$listed" = "$pid" ] && return 0
+    done < <(jobs -pr 2>/dev/null || true)
+    return 1
+}
+
 c849_fixture_release_live_probes() {
-    local file="$CASE_DIR/.fixture-live-probes" pid name
+    local file="$CASE_DIR/.fixture-live-probes" pid cid name
     [ -f "$file" ] && [ ! -L "$file" ] || return 0
-    while read -r pid name || [ -n "${pid:-}" ]; do
-        [ -n "${name:-}" ] || continue
+    while read -r pid cid name || [ -n "${pid:-}" ]; do
+        [ -n "${cid:-}" ] && [ -n "${name:-}" ] || continue
         c849_fixture_probe_name_ok "$name" || continue
-        docker kill -- "$name" >/dev/null 2>&1 || true
-        docker rm -f -- "$name" >/dev/null 2>&1 || true
+        if c849_fixture_probe_proven "$name" "$cid"; then
+            docker kill -- "$cid" >/dev/null 2>&1 || true
+            docker rm -f -- "$cid" >/dev/null 2>&1 || true
+        else
+            c849_fixture_note_unproven_probe "$name" || true
+        fi
         c849_fixture_reap_probe "$pid"
     done < "$file"
     c849_fixture_release_slot_leases || true
@@ -4308,11 +4412,11 @@ c849_fixture_release_live_probes() {
 
 # 0 when both slot-held markers exist. 4 is a slot deadline or probe exit 4.
 # 1 is any other probe death. The 30s ready window has not started.
+# The bound is wall-clock seconds from date, not loop iterations.
 c849_fixture_wait_slot_markers() {
-    local left="$1" right="$2" a="$3" b="$4" deadline i status pid
-    deadline=$(c849_fixture_slot_deadline_seconds)
-    i=0
-    while [ "$i" -lt $((deadline * 5)) ]; do
+    local left="$1" right="$2" a="$3" b="$4" deadline_at status pid
+    deadline_at=$(( $(date +%s) + $(c849_fixture_slot_deadline_seconds) ))
+    while [ "$(date +%s)" -lt "$deadline_at" ]; do
         if c849_fixture_volume_test_file "/fixture/race/$left/slot-held" \
             && c849_fixture_volume_test_file "/fixture/race/$right/slot-held"; then
             return 0
@@ -4325,7 +4429,6 @@ c849_fixture_wait_slot_markers() {
                 return 1
             fi
         done
-        i=$((i + 1))
         sleep 0.2
     done
     for pid in "$a" "$b"; do
@@ -4340,17 +4443,19 @@ c849_fixture_wait_slot_markers() {
 }
 
 c849_fixture_on_signal() {
+    local sig="${1:-TERM}"
     trap '' INT TERM
     c849_fixture_release_live_probes || true
-    exit 143
+    case "$sig" in
+        INT) exit 130 ;;
+        *) exit 143 ;;
+    esac
 }
 
 c849_fixture_race_restore_barrier() {
     local image="$1" packages="$2" scratch="$3" a b slot=0
-    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
-    c849_fixture_track_probe "$a" "c849-${RUN}-restore-p1"
-    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
-    c849_fixture_track_probe "$b" "c849-${RUN}-restore-p2"
+    C849_PROBE_TRACK=1 c849_fixture_restore_container "$image" p1 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
+    C849_PROBE_TRACK=1 c849_fixture_restore_container "$image" p2 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
     c849_fixture_wait_slot_markers p1 p2 "$a" "$b" || slot=$?
     if [ "$slot" != 0 ]; then
         c849_fixture_release_live_probes || true
@@ -4380,26 +4485,33 @@ c849_fixture_race_restore_barrier() {
 
 c849_fixture_race_lock_probe() {
     local image="$1" scratch="$2" private_scratch="$3" holder waiter
-    c849_fixture_lock_container "$image" "$scratch" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
-    c849_fixture_track_probe "$holder" "c849-${RUN}-lock-holder-shared"
+    C849_PROBE_TRACK=1 c849_fixture_lock_container "$image" "$scratch" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
     c849_fixture_wait_file /fixture/race/shared-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
-    c849_fixture_lock_container "$image" "$scratch" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
-    c849_fixture_track_probe "$waiter" "c849-${RUN}-lock-waiter-shared"
+    C849_PROBE_TRACK=1 c849_fixture_lock_container "$image" "$scratch" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
     sleep 2
     c849_fixture_lock_assert /fixture/race/shared-waiter-entered || write_result false NuGetLockNotShared 2
     c849_fixture_volume_touch /fixture/race/shared-release || write_result false FixtureNuGetLockProbeFailed 2
     wait "$holder" && wait "$waiter" && c849_fixture_volume_test_exists /fixture/race/shared-waiter-entered \
         || write_result false FixtureNuGetLockProbeFailed 2
-    c849_fixture_lock_container "$image" "$scratch" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
-    c849_fixture_track_probe "$holder" "c849-${RUN}-lock-holder-private"
+    C849_PROBE_TRACK=1 c849_fixture_lock_container "$image" "$scratch" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
     c849_fixture_wait_file /fixture/race/private-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
-    c849_fixture_lock_container "$image" "$private_scratch" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
-    c849_fixture_track_probe "$waiter" "c849-${RUN}-lock-waiter-private"
+    C849_PROBE_TRACK=1 c849_fixture_lock_container "$image" "$private_scratch" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
     c849_fixture_wait_file /fixture/race/private-waiter-entered || write_result false ControlNotSensitive 2
     c849_fixture_control PC-17 NuGetLockNotShared c849_fixture_lock_assert /fixture/race/private-waiter-entered
     c849_fixture_volume_touch /fixture/race/private-release || write_result false FixtureNuGetLockProbeFailed 2
     wait "$holder" && wait "$waiter" || write_result false FixtureNuGetLockProbeFailed 2
     c849_fixture_clear_live_probes
+}
+
+# Exit 4 is the build-slot gate. Any other failure stays the offline diagnosis.
+c849_fixture_offline_restore() {
+    local image="$1" packages="$2" scratch="$3" code=0
+    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" offline.sh \
+        > "$SERVER2_ROOT/race-offline.log" 2>&1 || code=$?
+    if [ "$code" = 4 ]; then
+        write_result false FixtureBuildSlotTimeout 2
+    fi
+    [ "$code" = 0 ] || write_result false FixtureOfflineRestoreFailed 2
 }
 
 c849_fixture_nuget_race() {
@@ -4429,8 +4541,7 @@ c849_fixture_nuget_race() {
     C849_SCRATCH="$scratch"
     c849_fixture_race_materialize "$image"
     c849_fixture_race_restore_barrier "$image" "$packages" "$scratch"
-    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" offline.sh \
-        > "$SERVER2_ROOT/race-offline.log" 2>&1 || write_result false FixtureOfflineRestoreFailed 2
+    c849_fixture_offline_restore "$image" "$packages" "$scratch"
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
         --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
         -c 'test -s /cache/c849.probe/1.0.0/.nupkg.metadata && grep -Fxq C849_PACKAGE_SENTINEL /cache/c849.probe/1.0.0/content/probe.txt' \
@@ -5482,7 +5593,8 @@ c849_fixture() {
     C849_FIXTURE_FINALIZED=0
     c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" replace true || return 2
     c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" replace true || return 2
-    eval "trap 'c849_fixture_on_signal' INT TERM"
+    trap 'c849_fixture_on_signal INT' INT
+    trap 'c849_fixture_on_signal TERM' TERM
     trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
     c849_fixture_workspace_init
     mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2

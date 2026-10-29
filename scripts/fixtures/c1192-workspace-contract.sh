@@ -351,7 +351,12 @@ reset_runtime() {
     rm -f "$CASE_DIR"/.fixture-id-* "$CASE_DIR/.fixture-network" "$CASE_DIR/.fixture-donor" "$CASE_DIR/.fixture-busy" "$CASE_DIR/.fixture-npm-server" "$CASE_DIR/.fixture-prune-smoke"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
         "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" "$CASE_DIR/.fixture-controller-identity" "$CASE_DIR/result" \
-        "$CASE_DIR/.control-PC-26" "$CASE_DIR/.fixture-volumes.workspace"
+        "$CASE_DIR/.control-PC-26" "$CASE_DIR/.fixture-volumes.workspace" \
+        "$CASE_DIR/.fixture-live-probes"
+    local stale
+    for stale in "$C1192_ROOT"/killed-*; do
+        rm -f -- "$stale"
+    done
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     C849_FIXTURE_FINALIZED=0
@@ -4099,7 +4104,15 @@ mode_slot_refusal() {
     printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >> "$C1192_ROOT/curls"' 'exit 0' > "$C1192_ROOT/bin/curl"
     chmod 755 "$C1192_ROOT/bin/curl"
     wait() {
-        local pid stat live=0
+        local pid stat live=0 frame
+        # Launch waits for its own docker child so the cid can be published
+        # while that child is still running. That is not the barrier hang.
+        for frame in "${FUNCNAME[@]}"; do
+            if [ "$frame" = c849_fixture_launch ]; then
+                command wait "$@"
+                return
+            fi
+        done
         for pid in "$@"; do
             case "$pid" in
                 ''|*[!0-9]*) continue ;;
@@ -4141,7 +4154,8 @@ c1192_slot_curl() {
 }
 
 c1192_fixture_traps() {
-    declare -f c849_fixture | sed -n 's/^    \(trap .*\)$/\1/p'
+    # declare -f prints a trailing semicolon that the source line does not have.
+    declare -f c849_fixture | sed -n 's/^    \(trap .*\)/\1/p' | sed 's/;$//'
 }
 
 # Plant one foreign restore-p1, then run the barrier. Release may kill only a
@@ -4214,8 +4228,9 @@ c1192_signal_witness() {
     while [ "$i" -lt 100 ]; do
         if [ -f "$CASE_DIR/.fixture-live-probes" ] \
             && [ -f "$SERVER2_ROOT/race-p1.log" ] \
-            && grep -q 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log"; then
-            n=$(grep -c 'restore-p' "$CASE_DIR/.fixture-live-probes" || true)
+            && grep -q 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log" \
+            && cp -f -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before"; then
+            n=$(grep -c 'restore-p' "$C1192_ROOT/live-before" 2>/dev/null || true)
             [ "${n:-0}" -ge 2 ] && break
         fi
         command sleep 0.05
@@ -4232,7 +4247,6 @@ c1192_signal_witness() {
         c1192_kill_jobs
         return 0
     fi
-    cp -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before"
     kill -s "$sig" "$pid" 2>/dev/null || true
     wait "$pid" || code=$?
     emit "signal-${sig}-exit" "$code"
@@ -4257,8 +4271,6 @@ c1192_signal_witness() {
     emit "signal-${sig}-volumes" "$volumes"
     unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
     c1192_kill_jobs
-    key="$expected"
-    [ "$code" = "$key" ] || true
 }
 
 # A slow reader must not multiply the slot deadline. Exit 4 inside a few
