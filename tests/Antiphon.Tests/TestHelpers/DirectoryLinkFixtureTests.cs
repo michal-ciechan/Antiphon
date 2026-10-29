@@ -270,6 +270,7 @@ public sealed class DirectoryLinkFixtureTests
             Output.Release(); Error.Release();
             Stdout.Dispose(); Stderr.Dispose();
         }
+        public string DescribePipeHolders() => "unidentified";
         public void Dispose() => Disposed.TrySetResult();
         internal Task BothStartedAsync() => Task.WhenAll(Output.Started.Task, Error.Started.Task).WaitAsync(TimeSpan.FromSeconds(3));
         internal void ReleaseAll()

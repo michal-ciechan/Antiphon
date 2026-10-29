@@ -309,6 +309,61 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         _ => throw NativeError("Process death observation")
     };
 
+    public string DescribePipeHolders()
+    {
+        try
+        {
+            var names = new List<string>(8);
+            foreach (var pid in JobProcessIds())
+            {
+                if (names.Count == 8) break;
+                if (pid <= 0 || pid == Environment.ProcessId) continue;
+                names.Add(pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + ProcessImageName(pid));
+            }
+            return names.Count == 0 ? "unidentified" : string.Join(",", names);
+        }
+        catch
+        {
+            return "unidentified";
+        }
+    }
+
+    private int[] JobProcessIds()
+    {
+        var bytes = 256;
+        while (true)
+        {
+            var buffer = Marshal.AllocHGlobal(bytes);
+            try
+            {
+                if (!QueryInformationJobObject(_job, JobObjectBasicProcessIdList, buffer, bytes, IntPtr.Zero))
+                {
+                    if (Marshal.GetLastWin32Error() != 234 || bytes > 1_048_576) return [];
+                    bytes = checked(bytes * 2);
+                    continue;
+                }
+                var count = Marshal.ReadInt32(buffer, 4);
+                if (count <= 0) return [];
+                var ids = new int[count];
+                for (var index = 0; index < count; index++)
+                    ids[index] = checked((int)Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size));
+                return ids;
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+    }
+
+    private static string ProcessImageName(int pid)
+    {
+        using var handle = OpenProcess(0x1000, false, pid);
+        if (handle.IsInvalid) return "unknown";
+        var buffer = new StringBuilder(1024);
+        var size = buffer.Capacity;
+        if (!QueryFullProcessImageName(handle, 0, buffer, ref size) || size <= 0) return "unknown";
+        var file = Path.GetFileName(buffer.ToString(0, size));
+        return string.IsNullOrEmpty(file) ? "unknown" : file;
+    }
+
     public void CloseStreams()
     {
         _stdout.Dispose();
@@ -453,6 +508,8 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         SafeFileHandle job, int informationClass, IntPtr buffer, int length, IntPtr returned);
     [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeFileHandle OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool QueryFullProcessImageName(SafeFileHandle process, int flags, StringBuilder name, ref int size);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(
         IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess, out SafeFileHandle copy, uint access, bool inherit, uint options);
 }

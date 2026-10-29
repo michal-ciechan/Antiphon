@@ -96,7 +96,8 @@ function Invoke-ReleaseAuthorityGit {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    foreach ($a in @('-C', $RepositoryRoot) + @($Arguments)) { [void]$psi.ArgumentList.Add([string]$a) }
+    # A detached auto-gc or auto-maintenance child inherits this process's pipes on Windows.
+    foreach ($a in @('-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', $RepositoryRoot) + @($Arguments)) { [void]$psi.ArgumentList.Add([string]$a) }
     $proc = $null
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)

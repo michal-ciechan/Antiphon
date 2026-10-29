@@ -11,9 +11,14 @@ internal sealed record ScriptHarnessOptions(
     string? ExecutablePath = null,
     IReadOnlyList<string>? AdditionalArguments = null,
     Func<ScriptProcessRequest, IOwnedScriptProcess>? OwnerFactory = null,
-    TimeProvider? Clock = null)
+    TimeProvider? Clock = null,
+    TimeSpan? PostExitDrainBudget = null)
 {
     internal static ScriptHarnessOptions Default => new(TimeSpan.FromSeconds(300), TimeSpan.FromSeconds(10));
+
+    // After the root exits, a descendant still holding a redirected pipe must not
+    // consume whatever remains of the execution budget.
+    internal TimeSpan EffectivePostExitDrain => PostExitDrainBudget ?? CleanupBudget;
 }
 
 internal sealed record ScriptProcessRequest(string Executable, string Script, string CaseName,
@@ -30,6 +35,7 @@ internal interface IOwnedScriptProcess : IDisposable
     Task TerminateAsync(CancellationToken cancellationToken);
     Task ConfirmDeadAsync(CancellationToken cancellationToken);
     void CloseStreams();
+    string DescribePipeHolders();
 }
 
 internal static class ScriptHarnessProcess
@@ -40,6 +46,7 @@ internal static class ScriptHarnessProcess
     {
         ValidateBudget(options.ExecutionBudget, nameof(options.ExecutionBudget));
         ValidateBudget(options.CleanupBudget, nameof(options.CleanupBudget));
+        ValidateBudget(options.EffectivePostExitDrain, nameof(options.PostExitDrainBudget));
         callerToken.ThrowIfCancellationRequested();
 
         var invocation = Guid.NewGuid().ToString("N");
@@ -74,11 +81,37 @@ internal static class ScriptHarnessProcess
             {
                 // WhenAny observes a faulted reader before the other reader reaches EOF.
                 var pending = new List<Task> { root, stdoutPump, stderrPump };
-                while (pending.Count != 0)
+                CancellationTokenSource? postExit = null;
+                try
                 {
-                    var completed = await Task.WhenAny(pending).WaitAsync(execution.Token);
-                    await completed;
-                    pending.Remove(completed);
+                    while (pending.Count != 0)
+                    {
+                        var drain = !pending.Contains(root);
+                        if (drain && postExit is null)
+                            postExit = new CancellationTokenSource(options.EffectivePostExitDrain, clock);
+                        using var wait = CancellationTokenSource.CreateLinkedTokenSource(
+                            callerToken, drain ? postExit!.Token : execution.Token);
+                        Task completed;
+                        try
+                        {
+                            completed = await Task.WhenAny(pending).WaitAsync(wait.Token);
+                        }
+                        catch (OperationCanceledException) when (drain && !callerToken.IsCancellationRequested)
+                        {
+                            var open = OpenStreams(stdoutPump, stderrPump);
+                            throw new TimeoutException(
+                                $"ScriptHarness {harness} case {caseName} root exited but {open} stayed open past the " +
+                                $"{options.EffectivePostExitDrain.ToString("c", System.Globalization.CultureInfo.InvariantCulture)} post-exit drain. " +
+                                $"completion root={root.IsCompleted} stdout={stdoutPump.IsCompleted} stderr={stderrPump.IsCompleted} " +
+                                $"holder={owner.DescribePipeHolders()}");
+                        }
+                        await completed;
+                        pending.Remove(completed);
+                    }
+                }
+                finally
+                {
+                    postExit?.Dispose();
                 }
                 exitCode = await root;
                 validate?.Invoke(new ScriptHarnessResult(exitCode, stdout.ToString(), stderr.ToString()));
@@ -162,6 +195,14 @@ internal static class ScriptHarnessProcess
 
     private static TimeoutException Timeout(string harness, string caseName, TimeSpan budget) =>
         new($"ScriptHarness {harness} case {caseName} exceeded {budget} execution budget.");
+
+    private static string OpenStreams(Task stdoutPump, Task stderrPump)
+    {
+        var open = new List<string>(2);
+        if (!stdoutPump.IsCompleted) open.Add("stdout");
+        if (!stderrPump.IsCompleted) open.Add("stderr");
+        return open.Count == 0 ? "none" : string.Join("+", open);
+    }
 
     private static async Task PumpAsync(StreamReader reader, StringBuilder output)
     {

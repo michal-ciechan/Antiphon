@@ -324,6 +324,7 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         public Task TerminateAsync(CancellationToken cancellationToken) => process.TerminateAsync(cancellationToken);
         public Task ConfirmDeadAsync(CancellationToken cancellationToken) => process.ConfirmDeadAsync(cancellationToken);
         public void CloseStreams() => process.CloseStreams();
+        public string DescribePipeHolders() => process.DescribePipeHolders();
         public void Dispose() => process.Dispose();
     }
 
