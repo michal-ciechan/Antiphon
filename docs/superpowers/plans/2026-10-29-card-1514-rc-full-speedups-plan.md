@@ -2,7 +2,7 @@
 
 Task `e197fb96`; planning base `e4e65f69078f6340ba5fb8e0cee27f6778d58802`.
 CARD-1514 is the existing timing/fixture workstream, not a newly assigned card identity.
-Status: round-3 Plan under task `0c83b6cd`, based on `6e3282ea12f8eb4386caaca060c03e52a2622a69` and independent re-review `88500c23`. This is the final commissioned plan round; verification design is folded in and the handoff is Code, based on `origin/rc/2026-10-27`. Optimization measurements and promotion retain the gates below.
+Status: round-3 Plan complete under task `0c83b6cd`, based on `6e3282ea12f8eb4386caaca060c03e52a2622a69` and independent re-review `88500c23`. This is the final commissioned plan round; verification design is folded in and the handoff is Code, based on `origin/rc/2026-10-27`. Optimization measurements and promotion retain the gates below.
 
 Evidence: [run 28bbb58e breakdown](../../investigations/2026-10-29-rc-run-28bbb58e-time-breakdown.md), read in full. Its historical Windows run lasted 1378.1 minutes: setup 11.0, chunks 1365.7, inter-chunk gaps 1.4. No desktop files were read by this task.
 
@@ -15,7 +15,6 @@ Re-review `88500c23` confirmed round-1 D-2 through D-6, the checkpoint import/co
 | D-1 failed walls and unpriced launches | S3 now includes every complete non-watchdog wall regardless of test outcome, defines an exact stratum and minimum 20 independent launches, pins error factors under policyHash, and retains the existing watchdog for unmeasured inputs. CP-9 adds deterministic failure-tail and 9.2 s/node witnesses; native measurements remain owed. |
 | D-2 release-intent boundary | S4 explicitly distinguishes PRESENT / ABSENT / MALFORMED intent. Non-release nightly/rc Debug retains its legacy partition with no gate credit; present intent freezes authority before execution, malformed or missing required intent refuses. CP-12 adds two methods, bringing the plan to 179 results / 99 estimated minutes, still 19 rows / 8 builds. |
 | A-1 census omissions | Added the three embedded sleep/poll files and 34 missing GitProcessSpawnLimit files: 1653 distinct paths; all 111 GitProcessSpawnLimit annotation/fixture-text files listed. The two-method pilot roster and strict limits are unchanged. |
-
 | A-2 host runtime | Require a compatible Core PowerShell/.NET host and successful pinned net9.0 probe load for A4 acceptance; CP-2 records and uses the actual production qualification host. Unsupported hosts report explicit unavailability and cannot satisfy S1 instrumentation or S6 load evidence. No new probe process. |
 | A-3 / A-4 integration and inherited report | S4 enforces frozen authority at runtime even across separate commits. The already tracked round-1 and round-2 Markdown review reports remain historical evidence; retain them through landing rather than deleting/rewriting prior verdicts. They grant no current verification credit. |
 
@@ -220,7 +219,7 @@ Retain raw TRX, diagnostics, owner observations, exact planned/executed membersh
 
 ## Verification design
 
-Verification design is folded into this round so independent plan Review can hand off executable slices to Code. No production tests have been run by this Plan task. All new names below are proposed requirements; conditional optimizations stay behind their explicit measurement gates.
+Verification design is folded into this final plan round so Code can execute the named slices after the completed plan-review cycle. No production tests have been run by this Plan task. All new names below are proposed requirements; conditional optimizations stay behind their explicit measurement gates.
 
 ### OS and optional-input witnesses (D-6)
 
@@ -280,6 +279,6 @@ Ordinary floor: **99 provisional minutes**, 19 checkpoint rows and 8 isolated bu
 
 ### Plan validation
 
-Round-2 validation is recorded after the final table is frozen: 19 rows, 97 estimated minutes, ten cells per row, canonical parenthesized/starred OR operands with escaped table pipes. Recheck selected classes and the five checkpoint OR methods plus the two trial methods against the complete source/discovery universe for suffix collisions. New classes remain proposed and require discovery/actual-TRX census after implementation. Plan-only OS inventory validation cannot discharge native execution; retained final lint/import results are reported with their source SHA. This Plan produces no qualification receipt.
+Round-3 validation uses the final table: 19 rows, 8 builds, 179 minimum executed results, 99 estimated minutes, ten cells per row, canonical parenthesized/starred OR operands with escaped table pipes. Recheck selected classes and the five checkpoint OR methods plus the two trial methods against the complete source/discovery universe for suffix collisions. New classes remain proposed and require discovery/actual-TRX census after implementation. Plan-only OS inventory validation cannot discharge native execution; retained final lint/import results are reported with their source SHA. This Plan produces no qualification receipt.
 
 Validation performed during round 2 at `aea103d2b8aa0a060de883604d3b7725d7c0b867`: static table/reuse/filter audit passed (19 rows, 97 min, 8 builds; no selected suffix collisions); `check-os-witnesses.ps1` passed for the Markdown-only diff, with future execution expressly pending; checkpoint `import --plan` accepted 19 rows with no duplicate-build warnings. The importer first refused reuse of its earlier output as `unrecorded-existing`; import to a fresh ignored path succeeded. Bootstrap was one build-slot-gated checkpoint-tool build, 7 s, 0 errors / 5 compiler warnings in unchanged source. No product test/checkpoint rows or native qualification executed. `check-evidence-diff.ps1` found 0 violations, and merge-tree against fetched `origin/master` (`0dbbbe4902fa50efc17c888ab34012640387d37c`) had no conflicts. Final documentation-only refinements are rechecked at the final pushed SHA; they add the S4 C1397 wrapper regression (execution floor now 177, still 97 min), without claiming new runtime evidence.
