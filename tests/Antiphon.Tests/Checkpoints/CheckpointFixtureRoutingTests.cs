@@ -2,9 +2,11 @@ using System.Diagnostics;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[NativeLinuxOnly("CARD-1233 S8 requires Linux process identities and FIFO probes.")]
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]

@@ -1,5 +1,6 @@
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -10,6 +11,7 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration")]
 public class HostStatsProbeLiveTests
 {
+    [NativeLinuxOnly("Linux /proc probe; this lane is Windows, where Windows_probe_reads_live_system_times runs.")]
     [Test]
     public async Task Linux_probe_reads_live_proc()
     {

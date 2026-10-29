@@ -5,6 +5,7 @@ using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Application;
 
@@ -238,6 +239,7 @@ public sealed partial class LandGraphEvaluationTests
 
     // Review 8e9f68b4 D-1: on Linux FileInfo.LinkTarget is null when readlink fails (EACCES), the same as
     // for a plain path, so a link inside an unreadable directory must fail the evaluation, never approve.
+    [NativeLinuxOnly("CARD-1483: Unix mode 000 has no Windows equivalent")]
     [Test]
     [Timeout(300_000)]
     public async Task C1483_S1_UnreadableLinkComponentDenies()

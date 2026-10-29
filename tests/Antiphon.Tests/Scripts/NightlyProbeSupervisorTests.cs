@@ -1,8 +1,10 @@
 using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly("CARD-1375 native expiry qualification requires Linux.")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyProbeSupervisorTests

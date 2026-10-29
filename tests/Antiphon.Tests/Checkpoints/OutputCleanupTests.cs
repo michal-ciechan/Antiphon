@@ -7,6 +7,7 @@ using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -174,6 +175,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
     // CARD-1242: red at 15a9071fa with output-ledger-mismatch on app.dll; the build child's
     // files had no creation record, so every green build run ended exit 2 (cleanup_refused).
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void external_build_payload_is_adopted_at_seal_and_removed_on_green()
     {
@@ -191,6 +193,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
     // CARD-1242: adoption happens at seal, not at cleanup. Red at 15a9071fa because the refusal
     // named an unrecorded build file instead of the late addition.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void file_added_after_seal_is_refused_and_kept()
     {
@@ -234,6 +237,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     // CARD-1242: the seal record holds size and SHA-256; a same-size rewrite must still refuse.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void file_modified_after_seal_is_refused_and_kept()
     {
@@ -250,6 +254,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     // CARD-1242: a link written by the build fails the seal; one added after the seal refuses cleanup.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void symlink_in_a_build_output_is_refused_before_and_after_seal()
     {
@@ -286,6 +291,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     // CARD-1242: adoption gives no authority over a tracked path inside the output.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void tracked_file_in_an_adopted_build_output_is_refused_and_kept()
     {
@@ -303,6 +309,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     // CARD-1242: adoption does not lift the entry cap; a pathological tree is still unsafe-tree.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void adopted_build_output_over_the_entry_cap_is_unsafe_tree()
     {
@@ -344,6 +351,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     // process created. The build runs through the real ProcessDriver; a separate process writes after
     // the driver-observed exit. The build's file is adopted; the late file and its changed directory
     // are not, cleanup refuses and the bytes stay.
+    [NativeLinuxOnly("seal-time custody needs statx")]
     [Test]
     public async Task independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it()
     {
@@ -374,6 +382,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
     // CARD-1242 F1: the reviewer's probe. Red at 2b293e51f. Without a driver-observed build exit the
     // seal cannot bound custody, so a pre-seal write by a separate process is not adopted.
+    [NativeLinuxOnly("seal-time custody needs statx")]
     [Test]
     public void seal_without_driver_observed_build_exit_adopts_nothing()
     {
@@ -395,6 +404,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
     // CARD-1242 F1: a hard link made inside the build window is not adopted; the outside bytes stay.
     // Green at 2b293e51f too (the confined reader already refused it); kept as a custody control.
+    [NativeLinuxOnly("this helper needs Linux statx")]
     [Test]
     public void hard_linked_build_file_is_not_adopted_and_outside_bytes_stay()
     {
@@ -766,6 +776,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         text.ShouldNotContain("deleted ");
     }
 
+    [NativeLinuxOnly("hanging-git proof runs on Linux")]
     [Test]
     [Timeout(45_000)]
     public void hanging_git_is_refused_and_killed_within_the_bound(CancellationToken cancellationToken)

@@ -7,6 +7,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -601,6 +602,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Option_manifest_is_strict()
@@ -697,6 +699,7 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Exit.ShouldBe(0);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Documentation_and_transport_pins_match()
@@ -716,6 +719,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 .ShouldBeTrue("recycle-doc-contract: ASCII transport " + script);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
@@ -777,6 +781,7 @@ public sealed class RollingVolumeRecycleScriptTests
         return (proc.ExitCode, await stdout + await stderr);
     }
 
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retired_absent_null_is_accepted(CancellationToken cancellationToken)
@@ -813,6 +818,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // and label belong to this preview run. That helper is the only container a
     // preview may start. The host does not invoke Git. An unbound scan still starts
     // no container. Apply still requires a dryRun false receipt.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
@@ -968,6 +974,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // A temp retired at SHA A keeps its completed cleanup image. Preview and apply at
     // SHA B must audit with that image. A different retirement, a missing image, and
     // no record do not.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1594_Cross_sha_cleanup_image_binds_the_retired_temp()
@@ -1127,6 +1134,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     // A receipt from another retirement is history. The same retirement's completed
     // cross-SHA image still binds. Partial and dry-run cross-SHA receipts do not.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1594_Older_retirement_receipt_is_ignored()
@@ -1200,6 +1208,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     // Two completed receipts from other SHAs for this retirement must agree.
     // The newest image is not a tie-break when they differ.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1594_Disagreeing_cross_sha_images_refuse()
@@ -1233,6 +1242,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // unreadable file, fifo, outside hard link, or the same directory name in a
     // linked admin refuses gitdir-entry and names that entry. antiphon/ is not
     // walked, so an interior symlink still passes.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("antiphon-evidence")]
     [Arguments("antiphon-evidence-symlink")]
@@ -1576,6 +1586,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // Timeout and abort must kill and remove the helper this run created. A name
     // that already belongs to another container is refused and left in place.
     // The hang stub ignores SIGTERM, so a client-only timeout leaves it running.
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Preview_helper_removal_is_owned()
