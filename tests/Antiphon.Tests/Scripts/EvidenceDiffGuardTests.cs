@@ -226,6 +226,30 @@ public sealed class EvidenceDiffGuardTests
     }
 
     [Test]
+    public async Task Reports_non_ascii_paths_when_console_encoding_is_legacy()
+    {
+        await using var f = await EvidenceGitFixture.CreateAsync();
+        const string path = ".antiphon/a b\t\n\u00e9.json";
+        var head = await f.AddCommitAsync(f.Base, path, Text("PAYLOAD-C1015-PRIVATE-CANARY"));
+        var policy = Path.Combine(EvidenceGitFixture.Source, "scripts", "lib", "evidence-policy.ps1");
+        // Windows pwsh leaves Console.OutputEncoding on the ANSI/OEM page. Simulate that
+        // before the policy loads so a guard that does not reassert UTF-8 loses U+00E9.
+        var body = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding('iso-8859-1')\n" +
+            "$OutputEncoding = [Console]::OutputEncoding\n" +
+            ". " + EvidenceGitFixture.Quote(policy) + "\n" +
+            "$code = Invoke-EvidenceHistory -Repository " + EvidenceGitFixture.Quote(f.Repo) +
+            " -BaseRef " + EvidenceGitFixture.Quote(f.Base) + " -HeadRef " + EvidenceGitFixture.Quote(head) + "\n" +
+            "exit $code\n";
+        var r = await f.RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand",
+            Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
+        r.Exit.ShouldBe(1, "c1015-legacy-encoding");
+        r.Output.ShouldNotContain("PAYLOAD-C1015-PRIVATE-CANARY", customMessage: "c1015-legacy-encoding");
+        var line = r.Output.Split('\n').Single(x => x.StartsWith("EVIDENCE violation ", StringComparison.Ordinal));
+        var encoded = line[(line.IndexOf("path=", StringComparison.Ordinal) + 5)..line.IndexOf(" bytes=", StringComparison.Ordinal)];
+        JsonSerializer.Deserialize<string>(encoded).ShouldBe(path, "c1015-legacy-encoding");
+    }
+
+    [Test]
     public async Task Refuses_unverifiable_ranges_and_objects()
     {
         await using var f = await EvidenceGitFixture.CreateAsync();
