@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -176,6 +177,95 @@ public sealed class CardRelationshipScriptTests
             "GET /api/cards/CARD-0051",
             "POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"
         });
+    }
+
+    // Windows qualification renders this failure through ConciseView on a ~120-column
+    // console. The view breaks the detail with a " | " marker and ANSI colors, so a
+    // whitespace collapse no longer contains the server phrase. Linux pipes report
+    // width 80 and stay green without this pty.
+    [Test]
+    public async Task Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("The 120-column concise-view witness needs a Linux pty.");
+
+        using var stub = CreateStub();
+        var respond = stub.Respond!;
+        stub.Respond = (call, index) => call.Path.EndsWith("/relationships")
+            ? new(404, """{"detail":"Relationship route unavailable","code":"relationship_route_missing"}""")
+            : respond(call, index);
+
+        var run = await RunInWidePtyAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049");
+
+        run.ExitCode.ShouldNotBe(0, run.Output);
+        var error = System.Text.RegularExpressions.Regex.Replace(run.Output, @"\s+", " ");
+        error.ShouldContain("Relationship route unavailable");
+        error.ShouldContain("code relationship_route_missing");
+        stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
+        {
+            "GET /api/cards/CARD-0051",
+            "POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"
+        });
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunInWidePtyAsync(Stub stub, params string[] args)
+    {
+        var work = Directory.CreateTempSubdirectory("card404pty").FullName;
+        try
+        {
+            var perl = Path.Combine(work, "winsize.pl");
+            var driver = Path.Combine(work, "drive.ps1");
+            var typescript = Path.Combine(work, "out.txt");
+            await File.WriteAllTextAsync(perl, """
+                use strict;
+                use warnings;
+                my $ws = pack('S4', 40, 120, 0, 0);
+                ioctl(STDIN, 0x5414, $ws) or die "ioctl: $!";
+                exec @ARGV or die "exec: $!";
+                """);
+            await File.WriteAllTextAsync(driver, """
+                $ProgressPreference = 'SilentlyContinue'
+                $ErrorView = 'ConciseView'
+                if ($null -ne $PSStyle) { $PSStyle.OutputRendering = 'Ansi' }
+                & $env:CARD_PS1 @args
+                exit $LASTEXITCODE
+                """);
+            var command = "perl " + perl + " pwsh -NoProfile -NonInteractive -File " + driver;
+            foreach (var arg in args) command += " " + arg;
+            var start = new ProcessStartInfo("script")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            start.ArgumentList.Add("-q");
+            start.ArgumentList.Add("-e");
+            start.ArgumentList.Add("-f");
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(command);
+            start.ArgumentList.Add(typescript);
+            start.Environment["TERM"] = "xterm-256color";
+            start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
+            start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
+            start.Environment["CARD_PS1"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1");
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("script did not start");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try { await process.WaitForExitAsync(timeout.Token); }
+            catch
+            {
+                process.Kill(entireProcessTree: true);
+                throw;
+            }
+            var output = File.Exists(typescript) ? await File.ReadAllTextAsync(typescript) : "";
+            if (output.Length == 0) output = (await stdout) + (await stderr);
+            return (process.ExitCode, output);
+        }
+        finally
+        {
+            try { Directory.Delete(work, true); } catch { }
+        }
     }
 
     private static void AssertCardWithoutRelationships(string stdout)
