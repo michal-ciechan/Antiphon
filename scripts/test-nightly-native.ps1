@@ -213,6 +213,12 @@ try {
             $result = Complete-Native $r
             Assert-Native ($child.WaitForExit(1000) -and $result.RemainingProcessCount -eq 0) 'independent child handle and zero job count'
             Assert-Native ($result.DescendantIdentities.Count -gt 0) 'descendant start identities recorded'
+            $childImages = @(for ($i = 0; $i -lt $result.DescendantIdentities.Count; $i++) {
+                if ($result.DescendantIdentities[$i].StartsWith([string]$child.Id + ':')) {
+                    $result.DescendantImages[$i]
+                }
+            })
+            Assert-Native ($childImages.Count -eq 1 -and $childImages[0] -ceq [IO.Path]::GetFileNameWithoutExtension($FixtureExecutable)) 'descendant image survives process exit'
             $r = New-NativeRun 'root wait held' 'root-held' @('root-wait') $false $true
             Wait-Native { Test-Path (Join-Path $r.Root 'root-wait.entered') } 'root wait barrier'
             $rootHandle = [Diagnostics.Process]::GetProcessById($r.Owner.Observation.Pid)
