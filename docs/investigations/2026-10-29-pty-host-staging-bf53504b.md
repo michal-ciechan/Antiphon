@@ -52,7 +52,11 @@ the two directory-handle cases; a non-Windows skip is not qualification.
 
 ## Results
 
-Pending native red witness and repair verification.
+Initial native probe at `cfbf06753365ba65cbee4c7cdd99fd77a0fad2ff`: build passed
+(one pre-existing nullable warning), test 0 passed / 1 failed. The failure was the
+fixture premise: a metadata-only (desired access zero) directory handle did not
+block rename. This is not product-red evidence. The corrected probe requests
+GENERIC_READ while withholding delete sharing. Native red/repair results follow.
 
 --- next stage ---
 next: review
