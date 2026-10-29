@@ -1152,6 +1152,9 @@ function Read-TestPhaseJsonlForSummary {
             } finally {
                 if ($watch.IsRunning) { $watch.Stop() }
             }
+            if ($null -ne $BudgetState -and $null -ne $BudgetState.Watch -and $BudgetState.Watch.PSObject.Methods.Name -contains 'OnFullRead') {
+                $BudgetState.Watch.OnFullRead()
+            }
         }
     }
     return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
@@ -1477,8 +1480,10 @@ function ConvertTo-TestPhaseSummaryRows {
     $quality = New-Object System.Collections.Generic.List[string]
     $torn = 0
     $malformed = 0
+    $watch = New-Object System.Diagnostics.Stopwatch
+    if ($null -ne $script:TestPhaseSummaryReReadWatch) { $watch = $script:TestPhaseSummaryReReadWatch }
     $budget = [pscustomobject]@{
-        Watch = (New-Object System.Diagnostics.Stopwatch)
+        Watch = $watch
         Milliseconds = [int](Get-TestPhaseSummaryBudgetMilliseconds)
         BytesRemaining = 8388608
     }
@@ -1497,6 +1502,7 @@ function ConvertTo-TestPhaseSummaryRows {
             $shards += @(Get-ChildItem -LiteralPath $chunkDir.FullName -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
         }
     }
+    $shards = @($shards | Sort-Object { [string]$_.Name })
     $completes = @{}
     $starts = @{}
     $fixtures = @()
