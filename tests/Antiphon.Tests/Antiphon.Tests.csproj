@@ -152,6 +152,21 @@
   </Target>
 
   <ItemGroup>
+    <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
+    <Compile Include="..\..\tools\Antiphon.NativeLinuxMigrationAudit\NativeLinuxWindowsReasonAudit.cs" Link="TestSupport\NativeLinuxWindowsReasonAudit.cs" />
+    <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Shared\NativeLinuxWindowsBaseline.json">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxWindowsBaseline.json</LogicalName>
+    </EmbeddedResource>
+    <!-- AssignCulture reads the .cs infix of *.cs.txt as Czech (cs) and emits a satellite. -->
+    <None Remove="Fixtures\NativeLinuxPolicy\*.cs.txt" />
+    <EmbeddedResource Include="Fixtures\NativeLinuxPolicy\*.cs.txt">
+      <LogicalName>NativeLinuxPolicy.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <Compile Include="../Antiphon.Agents.Pty.Tests/EffortTestScreen.cs" Link="Agents/EffortTestScreen.cs" />
     <Compile Include="../Antiphon.Messaging.Tests/KestrelLoopback.cs" Link="TestHelpers/KestrelLoopback.cs" />
     <Compile Include="../Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs" Link="TestHelpers/FakeSlackServer.cs" />
@@ -163,6 +178,16 @@
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json" LogicalName="Card0449.EffortCaptures.json" />
   </ItemGroup>
+  <!-- *.cs.txt is a Czech culture name to AssignCulture. Force the fixtures into the main assembly. -->
+  <Target Name="KeepNativeLinuxPolicyFixturesInMainAssembly" AfterTargets="SplitResourcesByCulture">
+    <ItemGroup>
+      <EmbeddedResource Update="@(EmbeddedResource)" Condition="$([System.String]::Copy('%(Identity)').Contains('NativeLinuxPolicy'))">
+        <WithCulture>false</WithCulture>
+        <Culture></Culture>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
+
   <!-- The detached pty-host relaunches Environment.ProcessPath. Build its real
        native apphost even when a Linux checkpoint uses UseAppHost=false. -->
   <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">

@@ -1,0 +1,8 @@
+using TUnit.Core;
+
+public class ReasonHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: frozen")]
+    public void Run(int value) { }
+}

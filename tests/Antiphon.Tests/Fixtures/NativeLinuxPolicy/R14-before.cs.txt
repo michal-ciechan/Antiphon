@@ -1,0 +1,10 @@
+using TUnit.Core;
+
+public class BodyHost
+{
+    [Test]
+    public void Run()
+    {
+        var n = 1;
+    }
+}
