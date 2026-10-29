@@ -74,6 +74,16 @@ passing and `PublishStagingDirectory` throwing IOException access denied. Its
 single `Directory.Move` is the unchanged base operation, extracted for direct
 native testing. No failure was hidden by an assertion or timeout adjustment.
 
+Repair `d08054d7bf35060f19336cab981870c9a6559475` passed the affected class:
+14 passed / 0 failed / 1 skipped (the existing Linux execute-mode assertion).
+The native transient test completed all 15 cycles in 4.123 seconds; the persistent
+denial remained an IOException with the original HRESULT in 1.106 seconds.
+The destination-overwrite control passed in 0.110 seconds. Green build: 0 errors,
+one pre-existing nullable warning. Fresh TRX, logs and SHA-256 hashes are under
+`.antiphon/task-bf53504b-evidence/green*`. Client install and rebuild also passed
+through the slot gate; npm audit advisories and the existing Vite chunk warning
+were not changed. E2E cold-start verification follows on the same product source.
+
 --- next stage ---
 next: review
 handoff: Review the final staging repair and native evidence; original handle-owner attribution remains limited by retained logs.
