@@ -372,3 +372,8 @@ Antiphon.Tests.TestHelpers.TestTimingChokePointTests
 Antiphon.Tests.Application.AgentReportStoreBudgetTests
 # CARD-1605: opt-in 80-store production-budget sampler takes approximately 30-60 seconds.
 Antiphon.Tests.Application.AgentReportStoreLoadTests
+# CARD-1603: real PostgreSQL queue flush, cancellation and capacity reconcile on an isolated schema.
+Antiphon.Tests.Application.CapacityObsoleteQueueTests
+
+# CARD-1603: real PostgreSQL standing start, supervisor tick and capacity reconcile on an isolated schema.
+Antiphon.Tests.Application.CapacityObsoleteStandingTests
