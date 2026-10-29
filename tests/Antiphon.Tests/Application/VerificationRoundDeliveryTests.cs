@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -1022,6 +1023,86 @@ public sealed class VerificationRoundDeliveryTests
             await AssertReceivedOnceAsync(rig, taskId, row, FinalHeaderBits, expectKind: "raw", expectSpill: false);
             rig.Caller.SubmittedBodies.Count.ShouldBe(1, row + ": nothing retyped");
         }
+    }
+
+    /// <summary>
+    /// CARD-1605 V-13. A five-second regeneration allowance returns the first missing report to
+    /// RetryPending and still reconciles a later ready row in the same pass.
+    /// </summary>
+    [Test]
+    public async Task C1605_RegenerationTimeoutAdvancesRetryAndContinuesScan()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true,
+            replyInlineMaxChars: 4_000, reportStore: true, privateReportGate: true);
+        var watch = rig.ReportWatch.ShouldNotBeNull();
+        rig.Fault.Rearm("settled-committed");
+        var (left, _) = await rig.SettleReviewAsync(padding: 400);
+        rig.Fault.Throws.ShouldBe(1, "the first pre-queue cut committed the obligation");
+        rig.Fault.Rearm("settled-committed");
+        var (right, _) = await rig.SettleReviewAsync(padding: 400);
+        rig.Fault.Throws.ShouldBe(1, "the second pre-queue cut committed the obligation");
+        rig.Fault.Cut = null;
+
+        await using var db = rig.World.CreateContext();
+        var notes = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => (n.TaskId == left || n.TaskId == right) && n.Kind == LandNotificationKind.TaskCompletion)
+            .OrderBy(n => n.Id)
+            .ToListAsync();
+        notes.Count.ShouldBe(2);
+        var first = notes[0];
+        var second = notes[1];
+        var firstSnapshot = TaskCompletionNotification.TryReadSnapshot(first.CompletionSnapshotJson).ShouldNotBeNull();
+        var secondSnapshot = TaskCompletionNotification.TryReadSnapshot(second.CompletionSnapshotJson).ShouldNotBeNull();
+        var firstReport = firstSnapshot.ReportFilePath.ShouldNotBeNull();
+        var secondReport = secondSnapshot.ReportFilePath.ShouldNotBeNull();
+        File.Exists(secondReport).ShouldBeTrue("the later row keeps a valid report");
+        var attemptsBefore = first.EnqueueAttempts;
+        (await rig.RowsAsync(first.TaskId)).ShouldBeEmpty();
+        (await rig.RowsAsync(second.TaskId)).ShouldBeEmpty();
+        File.Delete(firstReport);
+
+        watch.Rearm();
+        var lease = await watch.Gate.EnterAsync(CancellationToken.None);
+        var pass = Stopwatch.StartNew();
+        try
+        {
+            var scan = rig.ScanAsync(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(10));
+            var queued = await WaitForQueueAsync(watch);
+            queued.ShouldBeTrue("the first regeneration must queue on the held gate");
+            await scan;
+            pass.Stop();
+            var savedFirst = (await rig.NotificationAsync(first.TaskId)).ShouldNotBeNull();
+            var savedSecond = (await rig.NotificationAsync(second.TaskId)).ShouldNotBeNull();
+            savedFirst.State.ShouldBe(LandNotificationState.RetryPending);
+            savedFirst.LastErrorCode.ShouldBe("completion_report_unavailable");
+            savedFirst.EnqueueAttempts.ShouldBe(attemptsBefore + 1);
+            savedFirst.NextAttemptAt.ShouldBe(savedFirst.LastErrorAt!.Value.AddSeconds(
+                AgentTaskLandNotificationService.RetrySeconds(savedFirst.EnqueueAttempts)));
+            (await rig.RowsAsync(first.TaskId)).ShouldBeEmpty();
+            Directory.EnumerateFiles(Path.GetDirectoryName(firstReport)!, "*.tmp", SearchOption.AllDirectories).ShouldBeEmpty();
+            watch.Gate.Waiting.ShouldBe(0);
+            watch.Gate.InFlight.ShouldBe(1, "only the test lease remains");
+            savedSecond.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+            (await rig.RowsAsync(second.TaskId)).Count.ShouldBe(1);
+            watch.FirstCanceled.ShouldBeTrue("the allowance cancels the blocked store");
+            watch.FirstElapsedMs.ShouldNotBeNull();
+            watch.FirstElapsedMs!.Value.ShouldBeGreaterThanOrEqualTo(4500);
+            watch.FirstElapsedMs.Value.ShouldBeLessThanOrEqualTo(6000);
+            pass.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10));
+            File.Exists(secondReport).ShouldBeTrue();
+        }
+        finally { lease.Dispose(); }
+    }
+
+    private static async Task<bool> WaitForQueueAsync(C544ReportStoreWatch watch)
+    {
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < until)
+        {
+            if (watch.Gate.Waiting >= 1) return true;
+            await Task.Delay(20);
+        }
+        return watch.Gate.Waiting >= 1;
     }
 
     // ---- shared assertions ------------------------------------------------------------------------

@@ -5,11 +5,11 @@
   "sourceCommit": "ceff11d83eee33b1ebbd45dee64a1821cd753dde",
   "scope": "Frozen source-level admission roster; compiled discovery must reconcile all classes before execution. Source method counts are lower bounds, not expanded TUnit case counts. Unknown/duplicate/stale/missing classes fail, never silently narrow.",
   "summary": {
-    "backendClasses": 698,
-    "backendIncluded": 503,
-    "backendExcluded": 195,
-    "backendSourceMethods": 7038,
-    "includedSourceMethods": 4657,
+    "backendClasses": 700,
+    "backendIncluded": 504,
+    "backendExcluded": 196,
+    "backendSourceMethods": 7048,
+    "includedSourceMethods": 4663,
     "messagingClasses": 24,
     "messagingSourceMethods": 206,
     "plannedClasses": 9,
@@ -2321,6 +2321,32 @@
       ],
       "sourceSha256": {
         "tests/Antiphon.Tests/Application/AgentReportStoreTests.cs": "85b12e12b61fa5bd12f70f4c2ce54ccc5bf8abc3c5d62e0809217b69fa20b682"
+      },
+      "auditSignals": {
+        "spawn": [
+          "ProcessSpawnLimit"
+        ]
+      }
+    },
+    {
+      "assembly": "Antiphon.Tests",
+      "class": "Antiphon.Tests.Application.AgentReportStoreBudgetTests",
+      "sourceFiles": [
+        "tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs"
+      ],
+      "directTestMethods": 3,
+      "disposition": "exclude",
+      "lane": null,
+      "shard": null,
+      "boundary": "spawn: Antiphon.Tests.Application.AgentReportStoreBudgetTests; owned Git plus native Linux shell wrapper and per-method NativeLinuxGate",
+      "owner": "CARD-1605 explicit native/process checkpoints",
+      "testHelperClosure": [
+        "Antiphon.Tests.TestHelpers.NativeLinuxGate",
+        "Antiphon.Tests.TestHelpers.ProcessSpawnLimit",
+        "Antiphon.Tests.TestHelpers.ReportBudgetWorkspace"
+      ],
+      "sourceSha256": {
+        "tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs": "4f4350a5f9ce3b00970a3610d32530c9df8a653c416a5eff50e028d0f49b5f88"
       },
       "auditSignals": {
         "spawn": [
@@ -16598,7 +16624,7 @@
       "sourceFiles": [
         "tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs"
       ],
-      "directTestMethods": 20,
+      "directTestMethods": 21,
       "disposition": "exclude",
       "lane": null,
       "shard": null,
@@ -16613,6 +16639,7 @@
         "Antiphon.Tests.TestHelpers.C544Clock",
         "Antiphon.Tests.TestHelpers.C544DeliveryFault",
         "Antiphon.Tests.TestHelpers.C544DeliveryRig",
+        "Antiphon.Tests.TestHelpers.C544ReportStoreWatch",
         "Antiphon.Tests.TestHelpers.C544World",
         "Antiphon.Tests.TestHelpers.ControlledInterimReadiness",
         "Antiphon.Tests.TestHelpers.ControlledLandingGit",
@@ -16632,7 +16659,7 @@
         "Antiphon.Tests.TestHelpers.TurnSeeding"
       ],
       "sourceSha256": {
-        "tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs": "d5ba9363b2bc1ede7b93749170569cc7ef9a26a9483c4599961121441038eee8"
+        "tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs": "ce6bbeba6c5fcf8ecf9346f40399e701fc83da60994279da9dd2957ce50ec96b"
       },
       "auditSignals": {
         "spawn": [

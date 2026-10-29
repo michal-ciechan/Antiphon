@@ -1,8 +1,11 @@
+using System.Diagnostics;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
@@ -10,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -34,17 +38,20 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     public const string Summary = "C544 distilled summary: the review found nothing; land after Final.";
 
     public static async Task<C544DeliveryRig> CreateAsync(bool busy, bool spill = false, bool distill = false,
-        int replyInlineMaxChars = 20_000, bool reportStore = false)
+        int replyInlineMaxChars = 20_000, bool reportStore = false, bool privateReportGate = false)
     {
-        var rig = new C544DeliveryRig { Busy = busy, _reportStore = reportStore };
-        if (reportStore)
+        var rig = new C544DeliveryRig { Busy = busy, _reportStore = reportStore || privateReportGate };
+        if (rig._reportStore)
         {
             // The store refuses TEMP roots; the CARD-0419 fixture is a persistent, owned Git checkout.
             rig.Reports = new ReportWorkspace();
             await rig.Reports.InitializeAsync();
         }
+        if (privateReportGate)
+            rig.ReportWatch = new C544ReportStoreWatch(new GitProcessGate(1));
         rig.World = await C544World.CreateAsync(rig.Fault, configure: rig.Configure, delegation: d =>
         {
+            rig.BoundDelegation = d;
             if (rig.Reports is not null) d.ReportStorageRoot = Path.Combine(rig.Reports.Main, ".antiphon", "reports");
             d.PtySingleChunkBytes = spill ? 400 : 43_200;
             d.ModernPtySingleWriteMaxBytes = spill ? 400 : 86_400;
@@ -61,12 +68,22 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
 
     private bool _reportStore;
     public ReportWorkspace? Reports { get; private set; }
+    public C544ReportStoreWatch? ReportWatch { get; private set; }
+    private DelegationSettings? BoundDelegation { get; set; }
 
     private void Configure(IServiceCollection services)
     {
         // The production canonical report store (repo-local .antiphon/reports), for report regeneration rows.
-        if (_reportStore)
-            services.AddSingleton<Antiphon.Server.Application.Interfaces.IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
+        // A private gate registers one observing store around production defaults. Later registrations win.
+        if (ReportWatch is not null)
+        {
+            var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance, ReportWatch.Gate);
+            var inner = new AgentReportStore(git, Options.Create(BoundDelegation ?? new DelegationSettings()),
+                NullLogger<AgentReportStore>.Instance);
+            services.AddSingleton<IAgentReportStore>(new C544ObservingReportStore(inner, ReportWatch));
+        }
+        else if (_reportStore)
+            services.AddSingleton<IAgentReportStore, AgentReportStore>();
         services.AddSingleton<LandDeliveryBoundary>(Boundary);
         services.AddSingleton(DistillQueue);
     }
@@ -187,17 +204,29 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     }
 
     /// <summary>One pass of the production notification scanner (boot scan) on the current provider.</summary>
-    public async Task ScanAsync()
+    public Task ScanAsync() => ScanOnceAsync(TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(120), teardown: null);
+
+    /// <summary>One pass with an explicit body watchdog and a joined teardown budget.</summary>
+    public Task ScanAsync(TimeSpan pass, TimeSpan stopAfter, TimeSpan teardown) =>
+        ScanOnceAsync(pass, stopAfter, teardown);
+
+    private async Task ScanOnceAsync(TimeSpan pass, TimeSpan stopAfter, TimeSpan? teardown)
     {
         Boundary.ResetScan();
         var worker = new AgentTaskLandNotificationHostedService(World.Services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandNotificationHostedService>.Instance);
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var stop = new CancellationTokenSource(stopAfter);
         await worker.StartAsync(stop.Token);
-        try { await Boundary.Scanned.Task.WaitAsync(TimeSpan.FromSeconds(90)); }
+        try { await Boundary.Scanned.Task.WaitAsync(pass); }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            if (teardown is TimeSpan budget)
+            {
+                using var join = new CancellationTokenSource(budget);
+                await worker.StopAsync(join.Token);
+            }
+            else
+                await worker.StopAsync(CancellationToken.None);
             worker.Dispose();
         }
     }
@@ -280,6 +309,16 @@ internal sealed class C544DeliveryFault : SaveChangesInterceptor, IDbTransaction
     private bool _afterCommit;
     private bool _beforeCommit;
 
+    /// <summary>Arm the same one-shot cut again. The default path still fires at most once.</summary>
+    public void Rearm(string cut)
+    {
+        Throws = 0;
+        Cut = cut;
+        _afterSave = false;
+        _afterCommit = false;
+        _beforeCommit = false;
+    }
+
     private static bool Matches(Guid? taskId, Guid candidate) => taskId is null || taskId == candidate;
 
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
@@ -351,5 +390,66 @@ internal sealed class C544DeliveryFault : SaveChangesInterceptor, IDbTransaction
         var cut = Cut;
         Cut = null;
         throw new IOException("c544 completion persistence cut: " + cut);
+    }
+}
+
+/// <summary>Records the next store attempt after <see cref="Rearm"/> without replacing its result.</summary>
+internal sealed class C544ReportStoreWatch
+{
+    public GitProcessGate Gate { get; }
+    public int Generation;
+    public int StoreCalls;
+    public long? FirstElapsedMs;
+    public bool FirstCanceled;
+    public DateTime? FirstEnteredUtc;
+    public TaskCompletionSource FirstEntered { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public C544ReportStoreWatch(GitProcessGate gate) => Gate = gate;
+
+    public void Rearm()
+    {
+        Generation++;
+        StoreCalls = 0;
+        FirstElapsedMs = null;
+        FirstCanceled = false;
+        FirstEnteredUtc = null;
+        FirstEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+}
+
+internal sealed class C544ObservingReportStore(IAgentReportStore inner, C544ReportStoreWatch watch) : IAgentReportStore
+{
+    public Task<bool> IsUsableAsync(string? path, string raw, CancellationToken ct) =>
+        inner.IsUsableAsync(path, raw, ct);
+
+    public async Task<AgentReportStorageResult> StoreAsync(AgentTask task, CancellationToken ct)
+    {
+        var generation = Volatile.Read(ref watch.Generation);
+        var call = Interlocked.Increment(ref watch.StoreCalls);
+        var watchThis = call == 1;
+        var elapsed = Stopwatch.StartNew();
+        if (watchThis)
+        {
+            watch.FirstEnteredUtc = DateTime.UtcNow;
+            watch.FirstEntered.TrySetResult();
+        }
+        try
+        {
+            return await inner.StoreAsync(task, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            if (watchThis && Volatile.Read(ref watch.Generation) == generation)
+            {
+                watch.FirstCanceled = ct.IsCancellationRequested;
+                watch.FirstElapsedMs = elapsed.ElapsedMilliseconds;
+            }
+            throw;
+        }
+        finally
+        {
+            if (watchThis && Volatile.Read(ref watch.Generation) == generation && watch.FirstElapsedMs is null)
+                watch.FirstElapsedMs = elapsed.ElapsedMilliseconds;
+        }
     }
 }
