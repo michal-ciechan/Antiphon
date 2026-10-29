@@ -113,6 +113,14 @@ function Find-CheckpointGitDir {
     return $null
 }
 
+function ConvertFrom-CheckpointGitUtf8 {
+    param([byte[]]$Bytes)
+    # CARD-1608: -z paths are raw UTF-8. A replacement fallback would rename the path and
+    # the content stamp would miss it. Invalid bytes fail closed.
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
+    return [System.Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
+}
+
 function Invoke-CheckpointGit {
     param([string]$WorkDir, [string[]]$GitArgs)
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -126,10 +134,20 @@ function Invoke-CheckpointGit {
     foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
         if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
     }
-    try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($psi, 15000, $true, [Threading.CancellationToken]::None) }
+    # Raw bytes, then strict UTF-8. CheckpointProcessRunner.Run follows the console code page.
+    try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes($psi, 15000, $true, [Threading.CancellationToken]::None) }
     catch { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
     if ($result.TimedOut) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' } }
-    return @{ Exit = $result.Exit; Stdout = $result.Stdout; Stderr = $result.Stderr; Reason = $null }
+    try { $stdout = ConvertFrom-CheckpointGitUtf8 -Bytes ([byte[]]$result.Stdout) }
+    catch {
+        $inner = $_.Exception
+        while ($null -ne $inner -and $inner -isnot [System.Text.DecoderFallbackException]) { $inner = $inner.InnerException }
+        if ($inner -is [System.Text.DecoderFallbackException]) {
+            return @{ Exit = 128; Stdout = ''; Stderr = [string]$result.Stderr; Reason = 'git-encoding' }
+        }
+        return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' }
+    }
+    return @{ Exit = $result.Exit; Stdout = $stdout; Stderr = $result.Stderr; Reason = $null }
 }
 
 function Test-CheckpointComponentLink {
