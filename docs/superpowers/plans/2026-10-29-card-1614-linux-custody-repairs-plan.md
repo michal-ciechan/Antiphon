@@ -104,7 +104,67 @@ Investigation samples are small, not measured p95: isolated tracked PID body/tea
 
 ## Verification design
 
-The first six checkpoint rows will be the missing exact baseline methods, followed by red-first witnesses and targeted green qualification. Native Linux and Windows lanes will remain explicit. Pending importer validation.
+This section supplies the executable test design for plan review. All IDs below are ordinary verification, including committed red-first evidence; post-land controls are separately listed. No native Windows run was performed by this Plan, and the caller's ended Windows rc run is not credited here.
+
+| Requirement | Observable verdict and regression obligation |
+|---|---|
+| V-1–6 | Six missing baseline methods in the investigation's exact order below, unchanged `UseAppHost=false` layout, installed baseline helper hashes retained |
+| V-7 | Same payload/root identity across live cgroup accounting, launch response, manifest and journal; no sudo supervisor identity substitution |
+| V-8/9 | Explicit seal really terminates and observes zero/drain; second seal returns identical bytes; helper probes execute successfully |
+| V-10 | Root exit plus live descendant: host and runner ordinary reads remain Draining, child alive, no seal/receipt until explicit release |
+| V-11/12 | Natural descendant exit yields exact terminal/accepted receipt without termination; tracked observer outlives short test linger while descendants live |
+| V-13 | Windows inbox refusal preserved; OS/backend mismatch refused before any native intent/payload and never certified NeverStarted |
+| V-14/15 | All five launcher behaviors plus staged executable/library layout; one cold-cache build exercises restore/staging |
+| V-16 | New/changed classes classified, OS exclusions exact, policy hash current, expected roster equals execution plus justified exclusions |
+| R-1 | Existing no-new-privileges, detached membership, lost-host, generation mismatch and immutable receipt contracts |
+| R-2 | Windows nonterminating seal, output failure, receipt-before-ack, adoption/restart and unknown-on-loss remain valid |
+| R-3 | Backend/probe/argv contracts and ordinary untracked linger remain valid |
+
+Extend the new runner class to exactly three native tests: `C1614_Installed_helpers_advertise_custody`, `C1614_Root_exit_read_does_not_seal_live_descendant`, and `C1614_Natural_completion_accepts_exact_receipt_and_allows_shutdown`. Use an isolated `SessionRunnerRuntime`, unique store/generation/pipe/scratch and the real launcher, with no fake positive capability. Before P-2, real admission refuses on the failed probe; therefore CP-13's runner RED is deliberately after S2's helper repair, with the buggy managed lifecycle unchanged. CP-8 supplies the direct-host RED on today's product. Native natural-completion tests require `TerminationSucceeded` absent and no explicit release before finality, so calling the kill helper even against an already-empty tree is detectable.
+
+**Execution protocol.** First run only CP-1–6 on unchanged source. Their predicted outcomes are failures (Draining for the two custody methods; missing apphost for four launcher methods); if a row differs, preserve the actual assertion/artifact and investigate rather than forcing an expected failure. The checkpoint tool returns nonzero for intentional RED; `Expect` prose does not change that. Preserve the nonzero result and assertion as baseline evidence; never relabel it green. S1 red and S2 prerequisite groups are likewise separate committed runs. Every final green row must execute its intended methods with zero failures and no unplanned skips.
+
+Run the tool with `run --plan <this-plan> --rows <lane-row-list>` (or the imported bounded manifest described below), then `wait --run <id>` until exit is not 75. Do not execute the entire multi-platform table in one invocation. Exact groups: S0 CP-1–6; S1 CP-7–10; S2 CP-11–13; S3 Linux v1 CP-14,16,18–21; Linux v2 CP-15,17; Windows CP-22,23,29,30; S4 CP-24–27,31; cold staging CP-28. The `Group` column names each lane. A v2 lane must actually expose native cgroup v2, not a mock filesystem; refusal/unavailability is an incomplete gate. The new runner fixture cannot qualify against installed old helpers: image digest and helper/policy source hashes must match its slice.
+
+**Rosters and evidence.** Preserve source/build SHA, clean-tree checks, image/helper hashes, runtime RID, cgroup version, exact method/argument names, TRX outcomes, phase JSONL, unedited CHECKPOINT lines, classification/census outputs and ownership census under `.antiphon/evidence/card-1614/<run-id>/` and tool-owned `.antiphon/checkpoints/<run-id>/` (ignored). No `--list-tests` credit. Single exact methods need no wildcard. Class/method ORs below use a star on every operand; the table escapes each pipe. Compare discovered names with these intended classes before execution and the fresh TRX afterwards. New classes must not introduce prefix siblings. Parameterized totals below count executions, not assertions; full expected roster remains mandatory even where Min is a conservative floor.
+
+**Method-scoped post-land controls.** Restore each independent defect at its production line and demand the named assertion: PC-1 omit `!pam_setcred` -> V-7 identity (candidate image lane); PC-2 same-statement `local` -> V-8 helper termination; PC-3 restore host exit-to-seal -> V-10 direct host; PC-4 restore runner `HasExited` -> V-10 runner; PC-5 re-enable tracked linger -> V-12; PC-6 remove native staging -> V-14 shadow payload; PC-7 remove host platform check -> V-13. Controls that need an immutable image variant must be separately commissioned with exact image/source provenance; no mutation of an installed shared helper or SourceLanding snapshot through an external executor. Ordinary Code/Review does not run these controls. No green mutation credit until each expected assertion fails, restoration is recorded and the exact method is green.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S0 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-baseline/` | linux-v1-baseline-seal | `/*/*/LinuxCgroupCustodyTests/Seal_terminates_and_observes_zero` | V-1,V-8 | 1 executed; record baseline assertion RED | 1 | 6 | true |
+| CP-2 | S0 | CP-1 | linux-v1-baseline-idempotence | `/*/*/LinuxCgroupCustodyTests/Second_seal_is_idempotent` | V-2,V-9 | 1 executed; record first-seal RED | 1 | 5 | true |
+| CP-3 | S0 | CP-1 | linux-baseline-detach | `/*/*/LinuxPtyHostLauncherTests/Detach_creates_a_new_session` | V-3 | 1 executed; record missing apphost RED | 1 | 1 | true |
+| CP-4 | S0 | CP-1 | linux-baseline-detach-failure | `/*/*/LinuxPtyHostLauncherTests/Detach_failure_exits_without_pipe_readiness` | V-4 | 1 executed; record missing apphost RED | 1 | 1 | true |
+| CP-5 | S0 | CP-1 | linux-baseline-eof | `/*/*/LinuxPtyHostLauncherTests/Intermediary_pipes_reach_eof_while_host_lives` | V-5 | 1 executed; record missing apphost RED | 1 | 1 | true |
+| CP-6 | S0 | CP-1 | linux-baseline-cancel | `/*/*/LinuxPtyHostLauncherTests/Canceled_launch_leaves_no_owned_host` | V-6 | 1 executed; record missing apphost RED | 1 | 1 | true |
+| CP-7 | S1 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-red/` | linux-v1-red-identity | `/*/*/LinuxCgroupCustodyTests/Tracked_launch_places_child_in_tree` | V-7 | 1 executed; intended identity assertion RED | 1 | 3 | true |
+| CP-8 | S1 | CP-7 | linux-v1-red-root-exit | `/*/*/LinuxCgroupCustodyTests/Root_exit_with_live_descendants_is_draining_until_seal` | V-10 | 1 executed; unintended seal/survival assertion RED | 1 | 1 | true |
+| CP-9 | S1 | CP-7 | linux-v1-red-natural-linger | `/*/*/LinuxCgroupCustodyTests/(C1614_Natural_descendant_exit_finalizes_without_release*)\|(C1614_Root_exit_retains_observer_past_linger*)` | V-11,V-12 | both methods; preserve intended assertion RED | 2 | 2 | true |
+| CP-10 | S1 | CP-7 | linux-red-host-binding | `/*/*/HostCustodyPlatformTests/C1614_Foreign_platform_binding_is_refused_before_native_start` | V-13 | 1 executed; native-intent/admission assertion RED | 1 | 1 | true |
+| CP-11 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-prereq-runner/` | linux-v1-helper-probe | `/*/*/LinuxRunnerCustodyLifecycleTests/C1614_Installed_helpers_advertise_custody` | V-8,V-9 | 1 passed, 0 failed/skipped | 1 | 2 | true |
+| CP-12 | S2 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-prereq-host/` | linux-v1-identity-green | `/*/*/LinuxCgroupCustodyTests/Tracked_launch_places_child_in_tree` | V-7 | 1 passed, 0 failed/skipped | 1 | 2 | true |
+| CP-13 | S2 | CP-11 | linux-v1-red-runner-read | `/*/*/LinuxRunnerCustodyLifecycleTests/C1614_Root_exit_read_does_not_seal_live_descendant` | V-10 | 1 executed; unintended seal/survival assertion RED | 1 | 1 | true |
+| CP-14 | S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-v1-host/` | linux-v1-custody-green | `/*/*/LinuxCgroupCustodyTests/*` | V-7–12,R-1 | all 10 methods passed, 0 failed/skipped | 10 | 3 | true |
+| CP-15 | S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-v2-host/` | linux-v2-custody-green | `/*/*/LinuxCgroupCustodyTests/*` | V-7–12,R-1 | all 10 methods passed on native v2 | 10 | 3 | true |
+| CP-16 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-v1-runner/` | linux-v1-runner-green | `/*/*/LinuxRunnerCustodyLifecycleTests/*` | V-8–11,R-1 | all 3 methods passed, 0 failed/skipped | 3 | 3 | true |
+| CP-17 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-v2-runner/` | linux-v2-runner-green | `/*/*/LinuxRunnerCustodyLifecycleTests/*` | V-8–11,R-1 | all 3 methods passed on native v2 | 3 | 3 | true |
+| CP-18 | S3 | CP-14 | linux-launcher-green | `/*/*/LinuxPtyHostLauncherTests/*` | V-14,V-15 | all 6 methods passed, 0 failed/skipped | 6 | 1 | true |
+| CP-19 | S3 | CP-14 | linux-host-contracts | `/*/*/(HostCustodyPlatformTests*)\|(CustodyReceiptBackendTests*)\|(VerificationCustodyStoreTests*)/*` | V-13,R-1 | all classes and arguments; >=26 passed, 0 failed/skipped | 26 | 1 | true |
+| CP-20 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1614-linux-pty/` | linux-pty-contracts | `/*/*/(LinuxCgroupContainmentTests*)\|(UnixPtyArgvTests*)/*` | R-1,R-3 | all classes and arguments; >=24 passed, 0 failed/skipped | 24 | 2 | true |
+| CP-21 | S3 | CP-16 | linux-runner-contracts | `/*/*/(LinuxCustodyProbeTests*)\|(RunnerCustodyLedgerBackendTests*)/*` | R-1,R-3 | all 11 methods passed, 0 failed/skipped | 11 | 1 | true |
+| CP-22 | S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-windows-host/` | windows-host-custody | `/*/*/(HostCustodyTests*)\|(HostCustodyPlatformTests*)/*` | V-13,R-2 | all classes and arguments; >=18 passed, 0 failed/skipped | 18 | 3 | true |
+| CP-23 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1614-windows-pty/` | windows-pty-custody | `/*/*/PtyCustodyTests/*` | R-2 | all methods and arguments; >=30 passed, 0 failed/skipped | 30 | 3 | true |
+| CP-24 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-host-classification/` | linux-host-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
+| CP-25 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-runner-classification/` | linux-runner-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
+| CP-26 | S4 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1614-pty-classification/` | linux-pty-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
+| CP-27 | S4 | n/a | portable-platform-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusions` | V-16 | exit 0; all named C1323 assertions passed; retain harness count | n/a | 1 | true |
+| CP-28 | S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-cold-host/` | linux-cold-payload | `/*/*/LinuxPtyHostLauncherTests/Shadow_host_exchanges_bytes_and_exits` | V-14,V-15 | 1 passed with newly empty owned NuGet cache | 1 | 4 | true |
+| CP-29 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-windows-runner/` | windows-runner-custody | `/*/*/(RunnerCustodyTests*)\|(RunnerCustodyCrashTests*)/*` | R-2 | all methods and arguments; >=25 passed, 0 failed/skipped | 25 | 4 | true |
+| CP-30 | S3 | CP-22 | windows-untracked-linger | `/*/*/PtyHostLauncherTests/A_host_whose_exit_manifest_cannot_be_saved_still_exits_on_its_linger_TTL` | R-3 | 1 passed, 0 failed/skipped | 1 | 1 | true |
+| CP-31 | S4 | n/a | portable-policy-hash-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case C1323_PlatformPolicy` | V-16 | exit 0; all named C1323 assertions passed; retain harness count | n/a | 1 | true |
 
 ## Safe residue cleanup and release
 
