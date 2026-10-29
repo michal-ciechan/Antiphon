@@ -23,6 +23,12 @@ Status: partial. Adversarial read, D-1 repro and mutations are complete. The Uni
   - method run m1: `session-busy`, 2142 < 2217
   - class run c1: `agent-busy`, 982 < 2747
   - m2, m3 and c2 were green.
+- **Diagnostic:** I added a scratch print of every logged statement that mentions `AgentSessions`, `FROM "Agents"`, `FOR UPDATE` or `pg_try_advisory`, then ran 3 method runs, all green.
+  - The log held **0** `FOR UPDATE` statements.
+  - The first `AgentSessions` match was an AgentSessions entity select (#0).
+  - The first `FROM "Agents"` match was an unrelated `WHERE a."AlwaysOn"` sweep query (#7).
+  - The only lock in the log was the provider try-lock (#23).
+  - The plan's V-8 oracle ("successful session/agent lock acquisition preceding that command") is not implemented.
 - **Why it matters:**
   - CP-2 is a closed checkpoint row, and the method-scoped Mutation/SourceLanding stage will flip on it at random.
   - The check does not witness the session(4) -> agent(5) -> provider(7) order it claims (plan V-8: "successful session/agent lock acquisition preceding that command").
