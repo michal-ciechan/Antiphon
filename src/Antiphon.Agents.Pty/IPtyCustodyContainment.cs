@@ -161,6 +161,16 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
         }
     }
 
+    /// <summary>
+    /// Accounting file for one execution. The namespace id is part of the contract; the path
+    /// still uses the global custody root.
+    /// </summary>
+    public static string ResolveProcsPath(Guid namespaceId, Guid containerId)
+    {
+        _ = namespaceId;
+        return TreeProcsPath(containerId);
+    }
+
     private static string TreeProcsPath(Guid containerId)
     {
         var id = containerId.ToString("D");
