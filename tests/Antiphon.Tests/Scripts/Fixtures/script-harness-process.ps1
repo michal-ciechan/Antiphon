@@ -35,9 +35,10 @@ if ($IsWindows -and $Case -eq 'HandleProbe') {
     exit 0
 }
 
-if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent','Race')) {
+if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent','Race','PassHold')) {
     $held = switch ($Case) {
         'ExitedStdout' { 'stdout' }
+        'PassHold' { 'stdout' }
         'ExitedStderr' { 'stderr' }
         'Silent' { 'none' }
         default { 'both' }
@@ -63,6 +64,11 @@ if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent'
             Start-Sleep -Milliseconds 20
         }
         if ([System.IO.File]::ReadAllText((Join-Path $observer 'observed')) -cne $Nonce) { throw 'Release nonce mismatch.' }
+    }
+    if ($Case -eq 'PassHold') {
+        # PASS is flushed, then the root exits while the child still owns stdout.
+        Write-Output 'PASS C806 C806 fixture passed'
+        exit 0
     }
     if ($Case -in @('LiveRoot','Cancellation')) { Start-Sleep -Seconds 20 }
     if ($Case -eq 'Race') {
