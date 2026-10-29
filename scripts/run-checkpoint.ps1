@@ -113,14 +113,6 @@ function Find-CheckpointGitDir {
     return $null
 }
 
-function ConvertFrom-CheckpointGitUtf8 {
-    param([byte[]]$Bytes)
-    # CARD-1608: -z paths are raw UTF-8. A replacement fallback would rename the path and
-    # the content stamp would miss it. Invalid bytes fail closed.
-    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
-    return [System.Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
-}
-
 function Invoke-CheckpointGit {
     param([string]$WorkDir, [string[]]$GitArgs)
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -134,15 +126,28 @@ function Invoke-CheckpointGit {
     foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
         if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
     }
-    # Raw bytes, then strict UTF-8. CheckpointProcessRunner.Run follows the console code page.
+    # Raw bytes, then strict UTF-8 in this function. A loader that imports only
+    # Invoke-CheckpointGit must still fail closed. CheckpointProcessRunner.Run follows the console code page.
     try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes($psi, 15000, $true, [Threading.CancellationToken]::None) }
     catch { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
     if ($result.TimedOut) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' } }
-    try { $stdout = ConvertFrom-CheckpointGitUtf8 -Bytes ([byte[]]$result.Stdout) }
-    catch {
+    $stdout = ''
+    try {
+        # CARD-1608: -z paths are raw UTF-8. A replacement fallback would rename the path and
+        # the content stamp would miss it. Invalid bytes fail closed. A leading U+FEFF is kept.
+        $bytes = $null
+        if ($null -ne $result.Stdout) { $bytes = [byte[]]$result.Stdout }
+        if ($null -ne $bytes -and $bytes.Length -gt 0) {
+            $stdout = [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+        }
+    } catch {
         $inner = $_.Exception
         while ($null -ne $inner -and $inner -isnot [System.Text.DecoderFallbackException]) { $inner = $inner.InnerException }
         if ($inner -is [System.Text.DecoderFallbackException]) {
+            # A real git failure keeps its own exit. Encoding is the reason only when git exited 0.
+            if ([int]$result.Exit -ne 0) {
+                return @{ Exit = [int]$result.Exit; Stdout = ''; Stderr = [string]$result.Stderr; Reason = $null }
+            }
             return @{ Exit = 128; Stdout = ''; Stderr = [string]$result.Stderr; Reason = 'git-encoding' }
         }
         return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' }
@@ -835,7 +840,11 @@ function Get-CheckpointTrackedSnapshot {
     if ($headCall.Reason -or [int]$headCall.Exit -ne 0) { return @{ Error = 'git-head'; Index = ''; Hashes = $null; Head = $null; Repository = $repo; Untracked = $null } }
     $head = ([string]$headCall.Stdout).Trim()
     $listed = Invoke-CheckpointGit $repo @('ls-files', '-z', '-s')
-    if ($listed.Reason -or [int]$listed.Exit -ne 0) { return @{ Error = 'git-ls-files'; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
+    if ($listed.Reason -or [int]$listed.Exit -ne 0) {
+        $listingError = 'git-ls-files'
+        if ([string]$listed.Reason -ceq 'git-encoding') { $listingError = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+        return @{ Error = $listingError; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null }
+    }
     $raw = [string]$listed.Stdout
     $hashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($record in $raw.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
@@ -944,9 +953,17 @@ function Get-CheckpointUnreadableReason {
 function Get-CheckpointUntrackedManifest {
     param([string]$Repo)
     $ordinary = Invoke-CheckpointGit $Repo @('ls-files', '-z', '--others', '--exclude-standard')
-    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) { return @{ Error = 'git-ls-files'; Files = $null } }
+    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) {
+        $listingError = 'git-ls-files'
+        if ([string]$ordinary.Reason -ceq 'git-encoding') { $listingError = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+        return @{ Error = $listingError; Files = $null }
+    }
     $listed = Invoke-CheckpointGit $Repo @('ls-files', '-z', '--others', '--ignored', '--exclude-standard')
-    if ($listed.Reason -or [int]$listed.Exit -ne 0) { return @{ Error = 'git-ls-files'; Files = $null } }
+    if ($listed.Reason -or [int]$listed.Exit -ne 0) {
+        $listingError = 'git-ls-files'
+        if ([string]$listed.Reason -ceq 'git-encoding') { $listingError = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+        return @{ Error = $listingError; Files = $null }
+    }
     $files = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($relative in ([string]($ordinary.Stdout + $listed.Stdout)).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
         if ($relative.StartsWith('.antiphon/', [StringComparison]::Ordinal)) { continue }
@@ -982,7 +999,11 @@ function Complete-CheckpointBaseline {
         if (-not $Baseline.Hashes.ContainsKey($key) -or -not $again.Hashes.ContainsKey($key) -or $Baseline.Hashes[$key] -cne $again.Hashes[$key]) { [void]$paths.Add([string]$key) }
     }
     $ordinary = Invoke-CheckpointGit $Baseline.Repository @('ls-files', '-z', '--others', '--exclude-standard')
-    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: git-ls-files' } }
+    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) {
+        $listingDetail = 'refused: git-ls-files'
+        if ([string]$ordinary.Reason -ceq 'git-encoding') { $listingDetail = 'refused: git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+        return @{ Kind = 'tracked-snapshot'; Detail = $listingDetail }
+    }
     foreach ($path in ([string]$ordinary.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
         if (-not $path.StartsWith('.antiphon/', [StringComparison]::Ordinal) -and -not $Baseline.Untracked.ContainsKey($path)) { [void]$paths.Add($path) }
     }
