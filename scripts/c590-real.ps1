@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'c1008-host-proof.ps1')
 
 $script:C590LiveCases = @(
     # CARD-0604 S4 host-lane cases. They run on server2's own shell against the HOST daemon and are
@@ -336,6 +337,97 @@ function Assert-C1008BridgeContext {
         ($Context.dryRun -and $Context.resume)) { throw 'RecycleContextInvalid' }
 }
 
+# CARD-1607. Inventory is a separate remote case. Its private-origin list comes
+# back as a file. The desktop ls-remote runs here, and only ref lines cross back.
+function Get-C1008RetireProofExports {
+    param(
+        [Parameter(Mandatory = $true)][string]$EvidenceRoot,
+        [Parameter(Mandatory = $true)][string]$Run,
+        [Parameter(Mandatory = $true)][string]$RecycleOperation,
+        [Parameter(Mandatory = $true)][string]$InventoryRemote
+    )
+    if ($Run -cnotmatch '^[a-z0-9]+$' -or $RecycleOperation -cnotmatch '^c1008[0-9a-f]{32}$') {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    $code = Invoke-C590Ssh $InventoryRemote -ReceiptPath (Join-Path $EvidenceRoot 'inventory-remote-output.txt')
+    $inventoryParent = $EvidenceRoot
+    & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $Run + "/retire-temp-inventory") $inventoryParent
+    if ($LASTEXITCODE -ne 0) {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+    }
+    $inventoryDir = Join-Path $EvidenceRoot 'retire-temp-inventory'
+    $resultPath = Join-Path $inventoryDir 'c590-result.json'
+    if (-not (Test-Path -LiteralPath $resultPath)) {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+    if ($code -ne 0 -or -not [bool]$result.accepted) {
+        $diagnosis = [string]$result.diagnosis
+        if (-not (Test-C1008SafeAuditDiagnosis -Diagnosis $diagnosis)) { $diagnosis = 'RecycleGitAuditUnknown' }
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis $diagnosis -ExitCode 2
+    }
+    $listPath = Join-Path $inventoryDir 'private-origins.txt'
+    if (-not (Test-Path -LiteralPath $listPath)) {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    try {
+        $rows = @(Read-C1008PrivateOriginLines -Text ([System.IO.File]::ReadAllText($listPath)))
+    }
+    catch {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    if ($rows.Count -eq 0) { return @() }
+    $started = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $startedText = $started.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $remoteName = 'c1008-proof-' + $RecycleOperation + '-' + $startedText
+    $remoteDir = '/home/mc/antiphon-c590/' + $remoteName
+    if ($remoteName -cnotmatch '^c1008-proof-c1008[0-9a-f]{32}-[0-9]+$' -or
+        $remoteDir -cnotmatch '^/home/mc/antiphon-c590/c1008-proof-c1008[0-9a-f]{32}-[0-9]+$') {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    $localDir = Join-Path $EvidenceRoot $remoteName
+    if (Test-Path -LiteralPath $localDir) {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    [void](New-Item -ItemType Directory -Path $localDir)
+    $mkdirCode = Invoke-C590Ssh ('mkdir ' + $remoteDir + ' && chmod 755 ' + $remoteDir)
+    if ($mkdirCode -ne 0) {
+        Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+    }
+    $logPath = Join-Path $localDir 'host-proof.log'
+    foreach ($row in $rows) {
+        try {
+            Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath
+        }
+        catch {
+            $msg = [string]$_.Exception.Message
+            if ($msg -cnotmatch '^RecycleGitAuditUnknown audit check=host-ls-remote status=[0-9]+ repo=[A-Za-z0-9._/-]+$') {
+                $msg = 'RecycleGitAuditUnknown'
+            }
+            Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis $msg -ExitCode 2
+        }
+        if ($row.ProofName -cnotmatch '^[0-9a-f]{64}$') {
+            Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+        }
+        $proofFile = Join-Path $localDir ([string]$row.ProofName)
+        if (-not (Test-Path -LiteralPath $proofFile)) {
+            Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+        }
+        & scp -o BatchMode=yes $proofFile ('mc@server2:' + $remoteDir + '/' + $row.ProofName)
+        if ($LASTEXITCODE -ne 0) {
+            Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+        }
+        $chmodCode = Invoke-C590Ssh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName)
+        if ($chmodCode -ne 0) {
+            Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+        }
+    }
+    return @(
+        ("export C1008_HOST_PROOF='" + $remoteDir + "'"),
+        ("export C1008_OPERATION_STARTED='" + $startedText + "'")
+    )
+}
+
 function Invoke-C590LiveCase {
     param(
         [Parameter(Mandatory = $true)][string]$Case,
@@ -498,7 +590,7 @@ function Invoke-C590LiveCase {
         if ($Case -eq 'runner-cache-seed') {
             & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c849-import-saved-donor.ps1') mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1
         }
-        $remote = (@($cleanupExports) + @(
+        $bridgeExports = @($cleanupExports) + @(
             "export C590_CASE='$Case'"
             "export C590_SHA='$sha'"
             "export C590_RUN='$run'"
@@ -525,9 +617,20 @@ function Invoke-C590LiveCase {
             "export C1008_DRY_RUN='$recycleDryRun'"
             "export C1008_RESUME='$recycleResume'"
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
-        ) + $auditTimeoutExport + @(
-            "bash /home/mc/antiphon-c590/c590-remote.sh"
-        )) -join '; '
+        ) + $auditTimeoutExport
+        $retireProofExports = @()
+        if ($Case -ceq 'retire-temp-runner' -and $recycleContext -ceq 'default') {
+            $inventoryExports = @(foreach ($export in $bridgeExports) {
+                if ($export -ceq "export C590_CASE='$Case'") { "export C590_CASE='retire-temp-inventory'" }
+                elseif ($export -ceq "export C1008_DRY_RUN='$recycleDryRun'") { "export C1008_DRY_RUN='0'" }
+                elseif ($export -ceq "export C1008_RESUME='$recycleResume'") { "export C1008_RESUME='0'" }
+                else { $export }
+            })
+            if ($recycleDryRun -ceq '1') { $inventoryExports += "export C1008_INVENTORY_ALLOW_PREVIEW='1'" }
+            $inventoryRemote = ($inventoryExports + @('bash /home/mc/antiphon-c590/c590-remote.sh')) -join '; '
+            $retireProofExports = @(Get-C1008RetireProofExports -EvidenceRoot $root -Run $run -RecycleOperation $recycleOperation -InventoryRemote $inventoryRemote)
+        }
+        $remote = ($bridgeExports + $retireProofExports + @('bash /home/mc/antiphon-c590/c590-remote.sh')) -join '; '
         $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null

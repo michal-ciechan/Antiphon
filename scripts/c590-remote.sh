@@ -7224,15 +7224,155 @@ unpublished_detail() {
     fi
     printf 'proof=%s commits=%s tips=%s gone-tracking=%s unadvertised-local=%s' "$proof" "$commits" "$tips" "$tracking" "$local_refs"
 }
+# CARD-1607. The same scrub on the desktop (scripts/c1008-host-proof.ps1): drop
+# userinfo only when it holds a password or a token prefix, then refuse if a
+# token-shaped substring remains. git@ and scp-style URLs stay intact.
+c1008_scrub_origin() {
+    local url="$1" scheme rest userinfo lower
+    case "$url" in
+        *[[:space:]]*|*[[:cntrl:]]*) return 1 ;;
+    esac
+    c1008_scrubbed="$url"
+    case "$url" in
+        *://*@*)
+            scheme="${url%%://*}"
+            rest="${url#*://}"
+            userinfo="${rest%%@*}"
+            rest="${rest#*@}"
+            case "$userinfo" in
+                *:*)
+                    c1008_scrubbed="${scheme}://${rest}"
+                    ;;
+                ghp_*|gho_*|ghu_*|ghs_*|ghr_*|github_pat_*|*ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*)
+                    c1008_scrubbed="${scheme}://${rest}"
+                    ;;
+            esac
+            ;;
+    esac
+    lower="$(printf '%s' "$c1008_scrubbed" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+        *token*|*password*|*secret*|ghp_*|*ghp_*|gho_*|*gho_*|ghu_*|*ghu_*|ghs_*|*ghs_*|ghr_*|*ghr_*|*github_pat_*)
+            return 1
+            ;;
+    esac
+    return 0
+}
+c1008_sha256() {
+    printf '%s' "$1" | sha256sum | cut -d' ' -f1
+}
+c1008_proof_name() {
+    printf '%s\n%s' "$1" "$2" | sha256sum | cut -d' ' -f1
+}
+c1008_rel_safe() {
+    case "$1" in
+        ''|'?'|*'REDACTED'*|*'..'*|/*|*//*|*' '*) return 1 ;;
+    esac
+    [[ "$1" =~ ^[A-Za-z0-9._/-]+$ ]]
+}
+# Success leaves $scratch/origin. Authentication failure returns 3 and deletes
+# the captured stderr. Every other failure refuses without a reason suffix.
+# Git stderr never reaches the receipt.
+c1008_ls_remote_status() {
+    local status=0
+    timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads --tags origin > "$scratch/origin" 2>"$scratch/ls-remote.err" || status=$?
+    if [ "$status" = 0 ]; then
+        rm -f -- "$scratch/ls-remote.err"
+        return 0
+    fi
+    if [ "$status" = 128 ] && grep -q -e 'could not read Username' -e 'Authentication failed' -e 'terminal prompts disabled' -- "$scratch/ls-remote.err"; then
+        rm -f -- "$scratch/ls-remote.err"
+        return 3
+    fi
+    rm -f -- "$scratch/ls-remote.err"
+    fail "$status"
+}
+# Load one bound proof into $scratch/origin. An unset proof directory refuses
+# with no reason, the same text as an unauthenticated ls-remote. A supplied
+# directory whose file is missing, empty, or not a regular file names proof-missing.
+c1008_apply_host_proof() {
+    local rel url file name line1 line2 line3 line4 line5 op oh rp created started expect n=0 lower skip line
+    rel="$(rel_repo "$audit_repo")"
+    if [ -z "${C1008_HOST_PROOF:-}" ]; then
+        fail 128
+    fi
+    c1008_rel_safe "$rel" || fail 128 " reason=proof-repo"
+    path_of git --git-dir="$top" remote get-url origin 2>/dev/null || fail 128
+    url="$path_out"
+    c1008_scrub_origin "$url" || fail 128 " reason=proof-origin"
+    name="$(c1008_proof_name "$rel" "$c1008_scrubbed")"
+    file="${C1008_HOST_PROOF}/${name}"
+    if [ -L "$file" ] || [ ! -f "$file" ] || [ ! -r "$file" ] || [ ! -s "$file" ]; then
+        fail 128 " reason=proof-missing"
+    fi
+    if grep -q $'\r' -- "$file"; then
+        fail 128 " reason=proof-parse"
+    fi
+    line1=''; line2=''; line3=''; line4=''; line5=''
+    {
+        IFS= read -r line1 || true
+        IFS= read -r line2 || true
+        IFS= read -r line3 || true
+        IFS= read -r line4 || true
+        IFS= read -r line5 || true
+    } < "$file"
+    [ "$line1" = 'c1008-host-proof 1' ] || fail 128 " reason=proof-parse"
+    case "$line2" in
+        'operation '*) op="${line2#operation }" ;;
+        *) fail 128 " reason=proof-parse" ;;
+    esac
+    [ "$op" = "${C1008_OPERATION:-}" ] || fail 128 " reason=proof-operation"
+    case "$line3" in
+        'origin '*) oh="${line3#origin }" ;;
+        *) fail 128 " reason=proof-parse" ;;
+    esac
+    [[ "$oh" =~ ^[0-9a-f]{64}$ ]] || fail 128 " reason=proof-parse"
+    expect="$(c1008_sha256 "$c1008_scrubbed")"
+    [ "$oh" = "$expect" ] || fail 128 " reason=proof-origin"
+    case "$line4" in
+        'repo '*) rp="${line4#repo }" ;;
+        *) fail 128 " reason=proof-parse" ;;
+    esac
+    [ "$rp" = "$rel" ] || fail 128 " reason=proof-repo"
+    case "$line5" in
+        'created '*) created="${line5#created }" ;;
+        *) fail 128 " reason=proof-parse" ;;
+    esac
+    [[ "$created" =~ ^[0-9]+$ ]] || fail 128 " reason=proof-stale"
+    started="${C1008_OPERATION_STARTED:-}"
+    [[ "$started" =~ ^[0-9]+$ ]] || fail 128 " reason=proof-stale"
+    [ "$created" -ge "$started" ] || fail 128 " reason=proof-stale"
+    : > "$scratch/origin"
+    skip=5
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$skip" -gt 0 ]; then
+            skip=$((skip - 1))
+            continue
+        fi
+        [ -n "$line" ] || fail 128 " reason=proof-parse"
+        [[ "$line" =~ ^[0-9a-f]{40}$'\t''refs/(heads|tags)/[^[:space:]]+$ ]] || fail 128 " reason=proof-parse"
+        lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+        case "$lower" in
+            *ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*|*token*|*password*|*secret*)
+                fail 128 " reason=proof-parse"
+                ;;
+        esac
+        printf '%s\n' "$line" >> "$scratch/origin"
+        n=$((n + 1))
+    done < "$file"
+    [ "$n" -ge 1 ] || fail 128 " reason=proof-parse"
+}
 # One pass per common directory, shared by every entry that uses it.
 consider_common() {
-    local rep="${common_repo[$top]}" oid ref type lines tip admin count hash proof
+    local rep="${common_repo[$top]}" oid ref type lines tip admin count hash proof ls_status=0
     audit_repo="$rep"
     audit_check=bare
     top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
     case "$top_bare" in true|false) ;; *) refuse_unknown bare 2 "$rep" ;; esac
     audit_check=ls-remote
-    timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads --tags origin > "$scratch/origin" 2>/dev/null || fail $?
+    c1008_ls_remote_status || ls_status=$?
+    if [ "$ls_status" = 3 ]; then
+        c1008_apply_host_proof
+    fi
     audit_check=origin-parse
     sort "$scratch/origin" > "$scratch/origin-sorted" || fail $?
     [ -s "$scratch/origin-sorted" ] || refuse_unknown origin-empty 0 "$rep"
@@ -7375,6 +7515,18 @@ dirty_parallel="$(nproc 2>/dev/null)" || dirty_parallel=1
 audit_check=readlink-root
 path_of readlink -e /work || fail $?
 root="$path_out"
+# A shell-supplied mode must not turn the publication audit into a pass.
+# Inventory and a host proof are mutually exclusive.
+if [ -n "${C1008_AUDIT_MODE:-}" ] && [ "${C1008_AUDIT_MODE}" != inventory ]; then
+    audit_check=audit-mode
+    audit_repo="$root"
+    fail 2
+fi
+if [ "${C1008_AUDIT_MODE:-}" = inventory ] && [ -n "${C1008_HOST_PROOF:-}" ]; then
+    audit_check=audit-mode
+    audit_repo="$root"
+    fail 2
+fi
 if [ -n "${C1008_TMP_MOUNT:-}" ]; then
     audit_check=readlink-tmp
     path_of readlink -e -- "$C1008_TMP_MOUNT" || fail $?
@@ -7463,7 +7615,13 @@ while IFS= read -r -d '' entry; do
     audit_check=bare
     bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
     case "$bare" in
-        false) queue_dirty "$repo" status ;;
+        false)
+            # Inventory only classifies ls-remote. A dirty tree is still a
+            # publication refusal, so the proof path keeps queue_dirty.
+            if [ "${C1008_AUDIT_MODE:-}" != inventory ]; then
+                queue_dirty "$repo" status
+            fi
+            ;;
         true) ;;
         *) refuse_unknown bare 2 "$repo" ;;
     esac
@@ -7474,6 +7632,33 @@ while IFS= read -r -d '' entry; do
         commons+=("$top")
     fi
 done < "$scratch/repositories"
+# Inventory lists authentication failures and exits before publication, dirty
+# drain, and link checks. Any other ls-remote failure already refused above.
+if [ "${C1008_AUDIT_MODE:-}" = inventory ]; then
+    for top in "${commons[@]}"; do
+        audit_repo="${common_repo[$top]}"
+        audit_check=ls-remote
+        ls_status=0
+        c1008_ls_remote_status || ls_status=$?
+        if [ "$ls_status" = 0 ]; then
+            continue
+        fi
+        if [ "$ls_status" != 3 ]; then
+            fail "$ls_status"
+        fi
+        rel="$(rel_repo "$audit_repo")"
+        c1008_rel_safe "$rel" || fail 128
+        path_of git --git-dir="$top" remote get-url origin 2>/dev/null || fail 128
+        url="$path_out"
+        c1008_scrub_origin "$url" || fail 128
+        origin_hash="$(c1008_sha256 "$c1008_scrubbed")"
+        proof_name="$(c1008_proof_name "$rel" "$c1008_scrubbed")"
+        [[ "$origin_hash" =~ ^[0-9a-f]{64}$ ]] && [[ "$proof_name" =~ ^[0-9a-f]{64}$ ]] || fail 128
+        printf 'C1008_PRIVATE_ORIGIN repo=%s origin=%s originHash=%s proofName=%s\n' \
+            "$rel" "$c1008_scrubbed" "$origin_hash" "$proof_name"
+    done
+    exit 0
+fi
 drain_dirty
 for top in "${commons[@]}"; do
     consider_common
@@ -7637,6 +7822,40 @@ c1008_verify_tmp() {
         >/dev/null 2>&1 || c1008_refuse RecycleTmpAssetsMissing
 }
 
+# CARD-1607. Optional read-only host proof. Absent proof leaves the docker
+# arguments unchanged. A shell-exported audit mode refuses before docker.
+c1008_forward_host_proof() {
+    local -n _mounts="$1"
+    local mode="${2:-}" proof started
+    if [ -n "${C1008_AUDIT_MODE:-}" ]; then
+        printf 'audit check=audit-mode status=2 repo=.\n'
+        return 2
+    fi
+    if [ -n "$mode" ] && [ "$mode" != inventory ]; then
+        printf 'audit check=audit-mode status=2 repo=.\n'
+        return 2
+    fi
+    if [ "$mode" = inventory ]; then
+        if [ -n "${C1008_HOST_PROOF:-}" ]; then
+            printf 'audit check=audit-mode status=2 repo=.\n'
+            return 2
+        fi
+        _mounts+=(--env C1008_AUDIT_MODE=inventory)
+        return 0
+    fi
+    [ -z "${C1008_HOST_PROOF:-}" ] && return 0
+    proof="$C1008_HOST_PROOF"
+    started="${C1008_OPERATION_STARTED:-}"
+    [[ "$proof" =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ "$proof" != *..* ]] && [[ "$proof" != *//* ]] \
+        && [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] \
+        && [[ "$started" =~ ^[0-9]+$ ]] && [ -d "$proof" ] && [ ! -L "$proof" ] \
+        || { printf 'audit check=host-proof status=2 repo=.\n'; return 2; }
+    _mounts+=(--mount "type=bind,source=$proof,target=/c1008-host-proof,readonly")
+    _mounts+=(--env C1008_HOST_PROOF=/c1008-host-proof)
+    _mounts+=(--env "C1008_OPERATION=$C1008_OPERATION")
+    _mounts+=(--env "C1008_OPERATION_STARTED=$started")
+}
+
 c1008_audit() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image helper output code=0 program
     local -a mounts=()
@@ -7674,6 +7893,7 @@ c1008_audit() {
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
+    c1008_forward_host_proof mounts || return 2
     program="$(c1008_git_program)"
     helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
         "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" \
@@ -7830,6 +8050,7 @@ c1008_audit_readonly() {
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
+    c1008_forward_host_proof mounts "${1:-}" || return 2
     [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] || {
         printf 'audit check=preview-name status=2 repo=.\n'
         return 2
@@ -8124,6 +8345,8 @@ c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
     require_lane host
+    # Inventory is a docker --env only. A shell export must not reach the helper.
+    if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
     [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
     [[ "${C1008_PROJECT_ID:-}" =~ ^[0-9a-f-]{36}$ ]] && [ "${C1008_CONTEXT:-}" = default ] \
         || write_result false RecycleContextInvalid 2
@@ -8968,6 +9191,61 @@ case_retire_temp_containers() {
     c994_summary; write_result true '' 0
 }
 
+# CARD-1607. Lists private origins into the case evidence directory. It does not
+# write the recycle journal and does not remove a volume. An unpinned preview
+# writes an empty list so the existing unpinned preview still skips the audit.
+case_retire_temp_inventory() {
+    require_lane host
+    if [ -n "${C1008_AUDIT_MODE:-}" ] || [ -n "${C1008_HOST_PROOF:-}" ]; then
+        write_result false RecycleContextInvalid 2
+    fi
+    [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
+    [[ "${C1008_PROJECT_ID:-}" =~ ^[0-9a-f-]{36}$ ]] && [ "${C1008_CONTEXT:-}" = default ] \
+        || write_result false RecycleContextInvalid 2
+    C1008_PROJECT="$TEMP_PROJECT"
+    C994_PROJECT_ID="$C1008_PROJECT_ID"
+    C994_STAMP="$(date -u -d "${C590_TEMP_RETIRED_AT:-}" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" \
+        || write_result false RecycleGitAuditUnknown 2
+    local lookup_status=0 image='' out='' code=0 detail=''
+    if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
+        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || lookup_status=$?
+    else
+        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || lookup_status=$?
+    fi
+    if [ "$lookup_status" != 0 ]; then
+        write_result false RecycleGitAuditUnknown 2
+    fi
+    image="${C994_IMAGE:-}"
+    if [ -z "$image" ]; then
+        case "${C994_LOOKUP:-}" in
+            unpinned)
+                if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
+                    : > "$CASE_DIR/private-origins.txt"
+                    write_result true '' 0
+                fi
+                image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
+                    || write_result false RecycleGitAuditUnknown 2
+                ;;
+            *) write_result false RecycleGitAuditUnknown 2 ;;
+        esac
+    fi
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false RecycleGitAuditUnknown 2
+    C1008_RECORD="$(jq -cn --arg image "$image" '{image:$image}')" || write_result false RecycleGitAuditUnknown 2
+    out="$(c1008_audit_readonly inventory)" || code=$?
+    if [ "$code" != 0 ]; then
+        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/{p;q;}')"
+        [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+        case "$code" in
+            3) write_result false "RecycleUnpublishedWork $detail" 2 ;;
+            4) write_result false "RecycleWorktreeDirty $detail" 2 ;;
+            *) write_result false "RecycleGitAuditUnknown $detail" 2 ;;
+        esac
+    fi
+    printf '%s\n' "$out" | grep '^C1008_PRIVATE_ORIGIN ' > "$CASE_DIR/private-origins.txt" || true
+    printf '%s\n' "$out"
+    write_result true '' 0
+}
+
 case_retire_temp_runner() {
     require_lane host
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
@@ -9198,12 +9476,13 @@ if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
             RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
             c1008_recycle "$TEMP_PROJECT"
             ;;
+        retire-temp-inventory) case_retire_temp_inventory ;;
         *) write_result false RecycleContextInvalid 2 ;;
     esac
 fi
 case "$CASE" in
     retire-temp-containers) c849_evidence_dir ;;
-    deploy-parent|retire-temp-runner)
+    deploy-parent|retire-temp-runner|retire-temp-inventory)
         if [ "${C1008_CONTEXT:-}" = default ]; then c849_evidence_dir; else ensure_dirs; fi
         ;;
     runner-cache-inventory|runner-cache-fixture|runner-cache-seed|runner-cache-reset|verify-runner-caches|verify-runner-caches-retired|runner-cache-prune-preview|runner-cache-prune)
@@ -9253,6 +9532,7 @@ case "$CASE" in
     deploy-parent) case_deploy_parent ;;
     deploy-temp-runner) case_deploy_temp_runner ;;
     retire-temp-containers) case_retire_temp_containers ;;
+    retire-temp-inventory) case_retire_temp_inventory ;;
     retire-temp-runner) case_retire_temp_runner ;;
     runner-cache-seed) c849_seed ;;
     runner-cache-reset) c849_reset ;;
