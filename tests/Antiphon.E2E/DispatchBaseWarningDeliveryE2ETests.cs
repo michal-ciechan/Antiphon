@@ -66,7 +66,8 @@ public class DispatchBaseWarningDeliveryE2ETests
         await using (var db = f.CreateContext())
         {
             var rows = await db.SessionQueuedMessages.Where(m => m.SourceTaskId == f.TaskId && m.SourceLandNotificationId != null).ToListAsync();
-            rows.Count.ShouldBe(2); rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+            rows.Count.ShouldBe(intents.Count, "every committed warning, including a 5 s inspection-budget warning, stays pending");
+            rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
             (await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).ToListAsync()).ShouldAllBe(n => n.ConfirmedAt == null);
             (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
                 && (p.Text!.Contains("[dispatch-base ") || p.Text.Contains("kept branch")))).ShouldBe(0);
@@ -175,7 +176,7 @@ public class DispatchBaseWarningDeliveryE2ETests
             }
             else if (cut == "pre-enqueue")
             {
-                (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId)).ShouldBe(2);
+                (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId)).ShouldBe(intents.Count);
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == f.TaskId && m.SourceLandNotificationId != null)).ShouldBe(0);
             }
             else if (cut == "queue")

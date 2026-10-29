@@ -60,19 +60,38 @@ public static class DispatchWaitDiagnostic
         return text.Length <= 700 ? text : text[..700];
     }
 
+    public const string SiblingInspectionIncompleteKey = "sibling-inspection-incomplete";
+
     /// <summary>
-    /// C540 reduced-sibling wait. Today this is the exact expected-sibling count: a third
-    /// <c>sibling-inspection-incomplete</c> intent, the product's 5 s budget signal, never settles.
+    /// C540 reduced-sibling wait. The expected sibling keys are the product signal.
+    /// GitSettings.WorktreeBaseInspectionTimeoutSeconds is 5 seconds and stays there.
+    /// When enrichment spends that budget after every admitted candidate was inspected,
+    /// dispatch also commits sibling-inspection-incomplete for inspection_timeout with
+    /// zero omissions. That warning is the budget's own signal, so the wait settles.
+    /// A timeout that omitted candidates, or any other extra key, does not.
     /// </summary>
     public static bool ReducedSiblingDispatchReady(
         IReadOnlyList<(string Key, string? Detail)> intents,
         IReadOnlyCollection<string> expectedSiblingKeys)
     {
-        if (expectedSiblingKeys.Count == 0 || intents.Count != expectedSiblingKeys.Count)
-            return false;
-        var keys = intents.Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
-        return expectedSiblingKeys.All(keys.Contains);
+        if (expectedSiblingKeys.Count == 0) return false;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var budgetWarning = false;
+        foreach (var (key, detail) in intents)
+        {
+            if (!seen.Add(key)) return false;
+            if (expectedSiblingKeys.Contains(key)) continue;
+            if (budgetWarning || key != SiblingInspectionIncompleteKey || !IsSettledInspectionTimeout(detail))
+                return false;
+            budgetWarning = true;
+        }
+        return expectedSiblingKeys.All(seen.Contains);
     }
+
+    private static bool IsSettledInspectionTimeout(string? detail) =>
+        detail is not null
+        && detail.Contains("Same-card warning inspection incomplete: inspection_timeout;", StringComparison.Ordinal)
+        && detail.Contains(", 0 omitted,", StringComparison.Ordinal);
 
     private static string Flat(string? value)
     {
