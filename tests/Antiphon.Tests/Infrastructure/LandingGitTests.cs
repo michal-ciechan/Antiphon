@@ -859,6 +859,111 @@ public sealed class LandingGitTests
         (await git.RunAsync(repo.Path, ["show-ref", "--verify", pin], ct)).Succeeded.ShouldBeFalse("the batch applied");
     }
 
+    // Review 22c9afa6 D-1. update-ref --stdin that exits before reading faults the write with
+    // EPIPE. That fault is not a descendant. The base cleared the journal; the round-2 drain
+    // left it, and a dead root then fences every later land.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_UpdateRefsStdinBreakClearsTheJournal(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX stand-in that closes stdin so the batch write gets EPIPE.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-epipe");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new StdinBreakGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        // Larger than the pipe buffer, so the write cannot succeed before the stand-in closes stdin.
+        var oid = new string('b', 40);
+        var deletes = new (string Ref, string Oid)[2048];
+        for (var i = 0; i < deletes.Length; i++)
+            deletes[i] = ($"refs/antiphon/land/{Guid.NewGuid():N}/source", oid);
+
+        Exception? thrown = null;
+        LandingGitResult? result = null;
+        try { result = await git.UpdateRefsAsync(repo.Path, deletes, ct); }
+        catch (Exception ex) { thrown = ex; }
+
+        Console.WriteLine($"C1076_EPIPE thrown={thrown?.GetType().Name}: {thrown?.Message} resultExit={result?.ExitCode} resultError={result?.Diagnostic}");
+        thrown.ShouldBeOfType<IOException>("the base surfaces the broken-pipe write, not a swallowed success");
+        result.ShouldBeNull();
+        JournalFiles(children).ShouldBeEmpty(
+            "an EPIPE write with both reads at EOF and the root exited must drop the journal, as the base did");
+    }
+
+    // Review 22c9afa6 A-2. The batch path's budget is the fixed five minutes, so cancellation
+    // is the kill. A detached stdout holder keeps the journal until that pipe reaches EOF.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_UpdateRefsCancellationKeepsJournalUntilStdoutHolderExits(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX double-fork witness for the update-ref --stdin abandon path.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-batch-pipe");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var script = Path.Combine(repo.Path, "holder.sh");
+        await File.WriteAllTextAsync(script, BatchStdoutHolderGit.Script(pidFile), ct);
+        var git = new BatchStdoutHolderGit(script);
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        var pin = $"refs/antiphon/land/{Guid.NewGuid():N}/source";
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var call = git.UpdateRefsAsync(repo.Path, [(pin, new string('c', 40))], cancel.Token);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var ready = false;
+            while (watch.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                if (File.Exists(pidFile) && JournalFiles(children).Length > 0)
+                {
+                    ready = true;
+                    break;
+                }
+                if (call.IsCompleted) break;
+                await Task.Delay(50, ct);
+            }
+
+            ready.ShouldBeTrue("the batch journal is recorded while the child is still running");
+            cancel.Cancel();
+            var thrown = await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            watch.Stop();
+            Console.WriteLine($"C1076_BATCH_PIPE elapsed={watch.Elapsed} error={thrown.GetType().Name}");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15),
+                "cancellation returns inside the kill grace, not the stand-in's own sleep");
+            var holder = int.Parse((await File.ReadAllTextAsync(pidFile, ct)).Trim());
+            HolderAlive(holder).ShouldBeTrue(
+                "the reparented grandchild still holds stdout after the batch call has returned");
+            JournalFiles(children).ShouldNotBeEmpty(
+                "a live pipe holder keeps the batch journal until the abandoned reads close");
+            KillHolder(pidFile);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0)
+            {
+                if (cleared.Elapsed > TimeSpan.FromSeconds(5)) break;
+                await Task.Delay(50, ct);
+            }
+            JournalFiles(children).ShouldBeEmpty(
+                "once the holder exits, the abandon continuation removes the batch journal");
+        }
+        finally
+        {
+            watch.Stop();
+            cancel.Cancel();
+            KillHolder(pidFile);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+        }
+    }
+
     private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
     {
         var hooks = Path.Combine(repository, ".git", "hooks");
@@ -931,6 +1036,53 @@ public sealed class LandingGitTests
             return DetachedPipeHolderGit.StartHolder(start, scriptPath);
         }
     }
+
+    /// <summary>An update-ref --stdin stand-in that closes stdin and exits 3 without reading.</summary>
+    private sealed class StdinBreakGit : LandingGit
+    {
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (!IsUpdateRefStdin(start)) return base.StartProcess(start);
+            var standIn = RedirectedShell(start);
+            standIn.ArgumentList.Add("-c");
+            standIn.ArgumentList.Add("exec 0<&-; sleep 0.2; exit 3");
+            return Process.Start(standIn);
+        }
+    }
+
+    /// <summary>An update-ref --stdin stand-in whose reparented grandchild keeps stdout open.</summary>
+    private sealed class BatchStdoutHolderGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile) =>
+            "#!/bin/sh\n" +
+            "(\n" +
+            "trap '' HUP\n" +
+            "sh -c 'trap \"\" HUP; echo $$ > \"" + pidFile + "\"; exec sleep 20' </dev/null &\n" +
+            ") &\n" +
+            "sleep 30\n" +
+            "exit 0\n";
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (!IsUpdateRefStdin(start)) return base.StartProcess(start);
+            var standIn = RedirectedShell(start);
+            standIn.ArgumentList.Add(scriptPath);
+            return Process.Start(standIn);
+        }
+    }
+
+    private static bool IsUpdateRefStdin(ProcessStartInfo start) =>
+        start.ArgumentList.Count >= 2 && start.ArgumentList[0] == "update-ref" && start.ArgumentList[1] == "--stdin";
+
+    private static ProcessStartInfo RedirectedShell(ProcessStartInfo start) => new("/bin/sh")
+    {
+        WorkingDirectory = start.WorkingDirectory,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardInput = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+    };
 
     private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
     {
