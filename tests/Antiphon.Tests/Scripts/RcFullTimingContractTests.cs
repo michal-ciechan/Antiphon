@@ -214,18 +214,19 @@ public sealed class RcFullTimingContractTests
                 if ($text.IndexOf('rootExitedAtUtc') -lt 0) { continue }
                 $found = $true
                 $doc = $text | ConvertFrom-Json
-                if ($doc.PSObject.Properties.Name -contains 'rootExitedAtUtc') { $exited = [string]$doc.rootExitedAtUtc }
+                $exitedMatch = [regex]::Match($text, '"rootExitedAtUtc"\s*:\s*"([^"]*)"')
+                if ($exitedMatch.Success) { $exited = $exitedMatch.Groups[1].Value }
                 if ($doc.PSObject.Properties.Name -contains 'jobEmpty') { $jobEmpty = [bool]$doc.jobEmpty }
                 if ($doc.PSObject.Properties.Name -contains 'drainMilliseconds') { $drain = [double]$doc.drainMilliseconds }
                 if ($doc.PSObject.Properties.Name -contains 'executionMilliseconds') { $execution = [double]$doc.executionMilliseconds }
                 if ($doc.PSObject.Properties.Name -contains 'descendants') {
                     foreach ($row in @($doc.descendants)) {
-                        $pid = 0
-                        if ($row.PSObject.Properties.Name -contains 'pid') { $pid = [int]$row.pid }
+                        $rowPid = 0
+                        if ($row.PSObject.Properties.Name -contains 'pid') { $rowPid = [int]$row.pid }
                         $rowImage = ''
                         if ($row.PSObject.Properties.Name -contains 'image') { $rowImage = [string]$row.image }
-                        if ($pid -eq 43) { $image = $rowImage }
-                        if ($pid -eq 44) { $missedImage = $rowImage }
+                        if ($rowPid -eq 43) { $image = $rowImage }
+                        if ($rowPid -eq 44) { $missedImage = $rowImage }
                     }
                 }
             }
