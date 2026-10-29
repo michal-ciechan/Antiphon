@@ -191,9 +191,12 @@ internal static class Program
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
+        // UTF-8 without a BOM. Console.Out would encode with the OEM code page, and a capture
+        // that inherits that page turns U+241F (E2 90 9F) into U+00D4 U+00C9 U+0192.
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         void Write(string s)
         {
-            var bytes = Encoding.UTF8.GetBytes(s);
+            var bytes = utf8.GetBytes(s);
             stdout.Write(bytes, 0, bytes.Length);
             stdout.Flush();
         }
