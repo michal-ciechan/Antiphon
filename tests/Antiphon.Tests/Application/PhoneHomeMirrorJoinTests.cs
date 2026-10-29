@@ -28,6 +28,8 @@ namespace Antiphon.Tests.Application;
 /// (<c>/usr/bin/mkfifo</c>, <c>/bin/sh</c>) and <c>File.SetUnixFileMode</c>.
 /// Windows skips these methods. That skip is not acceptance, and this class
 /// does not supply a portable barrier.
+/// Each task branch is <c>DelegateBranchName.Legacy</c> for that task id.
+/// CARD-1213 refuses any other name before the runner is asked.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -75,9 +77,7 @@ public sealed class PhoneHomeMirrorJoinTests
         // red: partialBindingLeft.ShouldBeFalse() — the waiting task gains a runner record or a completed server binding.
         await using var world = await JoinWorld.StartAsync(cancellationToken, hook: true);
         var first = await world.SeedAsync();
-        const string secondBranch = "feat/card-task-join-b";
-        await world.AddBranchAsync(secondBranch, cancellationToken);
-        var second = await world.SeedAsync(branch: secondBranch);
+        var second = await world.SeedAsync();
         world.ArmHold();
         world.Begin(first);
         (await world.Entered(cancellationToken)).ShouldBe("x");
@@ -85,12 +85,24 @@ public sealed class PhoneHomeMirrorJoinTests
         var occupied = world.InFlight;
         world.Begin(second);
         var warnings = new List<string>();
-        while (world.InFlight <= occupied && warnings.Count == 0)
+        using (var gate = LoadTimeoutWait.Open(
+            clock: null, budget: null, wallCap: LoadWallCap, cancellationToken: cancellationToken,
+            label: "second mirror admission"))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            warnings = await world.WarningsAsync(second);
-            if (warnings.Count == 0)
-                await Task.Delay(20, cancellationToken);
+            try
+            {
+                while (world.InFlight <= occupied && warnings.Count == 0)
+                {
+                    gate.Token.ThrowIfCancellationRequested();
+                    warnings = await world.WarningsAsync(second);
+                    if (warnings.Count == 0)
+                        await Task.Delay(20, gate.Token);
+                }
+            }
+            catch (OperationCanceledException) when (gate.WallElapsed)
+            {
+                gate.ThrowIfTimedOut();
+            }
         }
 
         var secondRows = await world.BindingsAsync(second);
@@ -187,6 +199,7 @@ public sealed class PhoneHomeMirrorJoinTests
         var ownerPreparation = Guid.Parse("aaaaaaaa-0000-4000-8000-0000000000a1");
         var foreignPreparation = Guid.Parse("bbbbbbbb-0000-4000-8000-0000000000b2");
         var workspace = world.Workspace();
+        await world.EnsureBranchAsync(ownerId, cancellationToken);
         var created = await workspace.MirrorAsync(world.MirrorRequest(ownerId, ownerPreparation), cancellationToken);
         var ownerStamp = File.ReadAllBytes(RunnerWorkspaceBindingStore.OwnerStampPath(
             workspace.OpenBindingStore().Read(ownerPreparation).Record!.GitDirectory));
@@ -202,9 +215,9 @@ public sealed class PhoneHomeMirrorJoinTests
             RunnerStoreId = world.StoreId.ToString("D"),
             BindingId = generation,
             RepositoryIdentity = world.OriginUrl,
-            Branch = JoinWorld.Branch,
+            Branch = JoinWorld.BranchFor(foreignId),
             Name = "task-" + foreignId.ToString("N")[..8],
-            SourceFullRef = "refs/heads/" + JoinWorld.Branch,
+            SourceFullRef = "refs/heads/" + JoinWorld.BranchFor(foreignId),
             CreationBaselineSha = world.Sha,
             WorktreePath = created.Path,
             CommonDirectory = world.Clone,
@@ -246,6 +259,7 @@ public sealed class PhoneHomeMirrorJoinTests
         var taskId = Guid.Parse("deadbeef-0000-4000-8000-000000000021");
         var preparationId = Guid.Parse("cccccccc-0000-4000-8000-000000000003");
         var workspace = world.Workspace();
+        await world.EnsureBranchAsync(taskId, cancellationToken);
         var created = await workspace.MirrorAsync(world.MirrorRequest(taskId, preparationId), cancellationToken);
         var originalBindingId = created.Binding!.BindingId;
         var removed = await workspace.RemoveAsync(
@@ -299,6 +313,9 @@ public sealed class PhoneHomeMirrorJoinTests
         warnings.ShouldContain(detail => detail.Contains("runner_store_mismatch", StringComparison.Ordinal));
     }
 
+    /// <summary>A hook that never runs fails here, not at the two-minute test ceiling.</summary>
+    private static readonly TimeSpan LoadWallCap = TimeSpan.FromSeconds(45);
+
     /// <summary>CP-21 executes on Linux. A Windows skip is not a passing result.</summary>
     private static void RequireLinuxJoin()
     {
@@ -309,7 +326,6 @@ public sealed class PhoneHomeMirrorJoinTests
 
     private sealed class JoinWorld : IAsyncDisposable
     {
-        public const string Branch = "feat/card-task-join";
         private readonly CancellationTokenSource _runnerStop = new();
         private ServiceProvider? _provider;
         private Task<string>? _entered;
@@ -348,9 +364,22 @@ public sealed class PhoneHomeMirrorJoinTests
             }
         }
 
-        public async Task<Guid> SeedAsync(Guid? id = null, string? branch = null)
+        public static string BranchFor(Guid taskId) => DelegateBranchName.Legacy(taskId);
+
+        public async Task EnsureBranchAsync(Guid taskId, CancellationToken ct)
+        {
+            var name = BranchFor(taskId);
+            var (code, _, _) = await RunCaptureAsync(
+                "git", _origin!, ct, "show-ref", "--verify", "--quiet", "refs/heads/" + name);
+            if (code == 0)
+                return;
+            await GitAsync(_origin!, ct, "branch", name);
+        }
+
+        public async Task<Guid> SeedAsync(Guid? id = null)
         {
             var taskId = id ?? Guid.NewGuid();
+            await EnsureBranchAsync(taskId, CancellationToken.None);
             await using var db = NewDb();
             var now = Clock.GetUtcNow().UtcDateTime;
             db.AgentTasks.Add(new AgentTask
@@ -359,15 +388,12 @@ public sealed class PhoneHomeMirrorJoinTests
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.Grok,
                 ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = Clone, RepoPath = Clone, WorktreePath = Clone,
-                WorktreeBranch = branch ?? Branch, RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
+                WorktreeBranch = BranchFor(taskId), RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
             });
             await db.SaveChangesAsync();
             return taskId;
         }
-
-        public Task AddBranchAsync(string name, CancellationToken ct) =>
-            GitAsync(_origin!, ct, "branch", name);
 
         public async Task InsertIncompleteAsync(
             Guid taskId, Guid preparationId, RunnerWorkspaceBindingRecord? copy = null)
@@ -386,7 +412,7 @@ public sealed class PhoneHomeMirrorJoinTests
                 CommonDirectory = "",
                 GitDirectory = "",
                 WorktreePath = "",
-                SourceFullRef = copy?.SourceFullRef ?? "refs/heads/" + Branch,
+                SourceFullRef = copy?.SourceFullRef ?? "refs/heads/" + BranchFor(taskId),
                 CreationBaselineSha = copy?.CreationBaselineSha ?? Sha,
                 CreatedAt = DateTime.UtcNow,
             });
@@ -395,7 +421,11 @@ public sealed class PhoneHomeMirrorJoinTests
 
         public void Begin(Guid taskId) => Preparer.TryBegin(taskId, RunnerId).ShouldBeTrue();
 
-        public Task Idle(CancellationToken ct) => Preparer.WhenIdleAsync(ct);
+        public Task Idle(CancellationToken ct) =>
+            LoadTimeoutWait.UntilSignaledAsync(
+                token => Preparer.WhenIdleAsync(token),
+                clock: null, budget: null, wallCap: LoadWallCap, cancellationToken: ct,
+                label: "mirror join idle");
 
         public RunnerWorkspaceService Workspace()
         {
@@ -404,10 +434,13 @@ public sealed class PhoneHomeMirrorJoinTests
             return service;
         }
 
-        public PhoneHomeWorkspaceMirrorRequest MirrorRequest(Guid taskId, Guid preparationId) =>
-            new(Branch, Sha, "task-" + taskId.ToString("N")[..8], OriginUrl,
+        public PhoneHomeWorkspaceMirrorRequest MirrorRequest(Guid taskId, Guid preparationId)
+        {
+            var branch = BranchFor(taskId);
+            return new(branch, Sha, "task-" + taskId.ToString("N")[..8], OriginUrl,
                 new PhoneHomeWorkspaceMirrorBinding(
-                    taskId, 1, preparationId, RunnerId, StoreId.ToString("D"), "refs/heads/" + Branch));
+                    taskId, 1, preparationId, RunnerId, StoreId.ToString("D"), "refs/heads/" + branch));
+        }
 
         public BindingRead Ledger(Guid preparationId) => Workspace().OpenBindingStore().Read(preparationId);
 
@@ -450,7 +483,10 @@ public sealed class PhoneHomeMirrorJoinTests
                 var read = stream.Read(buffer, 0, buffer.Length);
                 return System.Text.Encoding.ASCII.GetString(buffer, 0, read);
             }, ct);
-            return _entered.WaitAsync(ct);
+            return LoadTimeoutWait.UntilSignaledAsync(
+                token => _entered.WaitAsync(token),
+                clock: null, budget: null, wallCap: LoadWallCap, cancellationToken: ct,
+                label: "checkout hook");
         }
 
         public void ReleaseHold()
@@ -480,14 +516,15 @@ public sealed class PhoneHomeMirrorJoinTests
                 File.ReadAllText(path), new JsonSerializerOptions(JsonSerializerDefaults.Web));
         }
 
-        public static async Task UntilAsync(Func<bool> ready, CancellationToken ct)
-        {
-            while (!ready())
+        public static Task UntilAsync(Func<bool> ready, CancellationToken ct) =>
+            LoadTimeoutWait.UntilSignaledAsync(async token =>
             {
-                ct.ThrowIfCancellationRequested();
-                await Task.Delay(20, ct);
-            }
-        }
+                while (!ready())
+                {
+                    token.ThrowIfCancellationRequested();
+                    await Task.Delay(20, token);
+                }
+            }, clock: null, budget: null, wallCap: LoadWallCap, cancellationToken: ct, label: "binding ledger");
 
         public async ValueTask DisposeAsync()
         {
@@ -535,7 +572,6 @@ public sealed class PhoneHomeMirrorJoinTests
             await File.WriteAllTextAsync(Path.Combine(origin, "README"), "c1032\n", ct);
             await GitAsync(origin, ct, "add", "README");
             await GitAsync(origin, ct, "commit", "-m", "init");
-            await GitAsync(origin, ct, "branch", Branch);
             await GitAsync(_root, ct, "clone", origin, Clone);
             Sha = (await GitOutAsync(origin, ct, "rev-parse", "HEAD")).Trim();
             OriginUrl = (await GitOutAsync(Clone, ct, "remote", "get-url", "origin")).Trim();
