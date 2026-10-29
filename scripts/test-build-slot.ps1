@@ -245,7 +245,20 @@ function Test-C800_WrapperInterruptKillsChildAndReleasesLease {
             }
             Start-Sleep -Milliseconds 100
         }
-        if ($childPid -gt 0) { & /bin/sh -c 'kill -INT "$1"' _ $running.Process.Id }
+        if ($childPid -gt 0) {
+            if (-not ('Antiphon.C800Signal' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+namespace Antiphon {
+    public static class C800Signal {
+        [DllImport("libc", SetLastError = true)]
+        public static extern int kill(int pid, int sig);
+    }
+}
+'@
+            }
+            [void][Antiphon.C800Signal]::kill([int]$running.Process.Id, 2)
+        }
         $quickExit = $running.Process.WaitForExit(5000)
         $gone = $false
         if ($childPid -gt 0) {

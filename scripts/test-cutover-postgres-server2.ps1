@@ -79,22 +79,79 @@ function New-C1407SmartFake {
     '' | Set-Content -LiteralPath $trace -Encoding ascii
     $body = @'
 #!/bin/sh
-name=$(basename "$0")
+name=${0##*/}
 trace="$C1407_TRACE"
 stdin_dir="$C1407_STDIN"
 if [ -z "$trace" ] || [ -z "$stdin_dir" ]; then
   echo "c1407 fake is missing its trace paths" >&2
   exit 99
 fi
+nl='
+'
+tab=$(printf '\t')
+flatten() {
+  src=$1
+  out=
+  while [ -n "$src" ]; do
+    rest=${src#?}
+    first=${src%"$rest"}
+    case "$src" in
+      "$nl"*|"$tab"*) out="${out} " ;;
+      *) out="${out}${first}" ;;
+    esac
+    src=$rest
+  done
+  printf '%s' "$out"
+}
+has_text() {
+  hay=$1
+  needle=$2
+  case "$hay" in
+    *"$needle"*) return 0 ;;
+  esac
+  return 1
+}
+parent_dir() {
+  src=$1
+  parent=${src%/*}
+  if [ "$parent" = "$src" ]; then
+    parent=.
+  elif [ -z "$parent" ]; then
+    parent=/
+  fi
+  printf '%s' "$parent"
+}
+read_stdin() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line"
+  done
+}
+flatten_lines() {
+  src_file=$1
+  out=
+  started=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$started" = 0 ]; then
+      out=$line
+      started=1
+    else
+      out="$out $line"
+    fi
+  done < "$src_file"
+  if [ "$started" = 1 ]; then
+    out="${out} "
+  fi
+  printf '%s' "$out"
+}
 line=$name
 for arg in "$@"; do
-  flat=$(printf '%s' "$arg" | tr '\n\t' '  ')
+  flat=$(flatten "$arg")
   line=$(printf '%s\t%s' "$line" "$flat")
 done
 printf '%s\n' "$line" >> "$trace"
 stdin_file="$stdin_dir/$name.$$.in"
 if [ -p /dev/stdin ]; then
-  cat > "$stdin_file"
+  read_stdin > "$stdin_file"
 fi
 if [ "$name" = "pwsh" ]; then
   maint=0
@@ -111,7 +168,7 @@ if [ "$name" = "pwsh" ]; then
   done
   if [ "$maint" = 1 ] && [ "$enter" = 1 ]; then
     if [ -n "$C1407_ENTER_MARKER" ]; then
-      mkdir -p "$(dirname "$C1407_ENTER_MARKER")"
+      mkdir -p "$(parent_dir "$C1407_ENTER_MARKER")"
       printf '%s\n' 'down-on-purpose c1417-enter' > "$C1407_ENTER_MARKER"
     fi
     if [ -n "$C1407_MAINTENANCE_EXIT" ]; then
@@ -131,31 +188,31 @@ if [ "$name" = "pwsh" ] && [ "$C1407_FAIL_MAINTENANCE" = "1" ]; then
 fi
 sql=""
 if [ -f "$stdin_file" ]; then
-  sql=$(tr '\n' ' ' < "$stdin_file")
+  sql=$(flatten_lines "$stdin_file")
 fi
 emit_sql() {
   count="$1"
-  if printf '%s' "$sql" | grep -F -q 'client_addr'; then
+  if has_text "$sql" 'client_addr'; then
     printf '%s\n' '1'
-  elif printf '%s' "$sql" | grep -F -q 'pg_stat_activity'; then
+  elif has_text "$sql" 'pg_stat_activity'; then
     if [ "$name" = "docker" ] && [ -n "$C1407_SOURCE_SESSIONS" ]; then
       printf '%s\n' "$C1407_SOURCE_SESSIONS"
     else
       printf '%s\n' '0'
     fi
-  elif printf '%s' "$sql" | grep -F -q 'pg_class'; then
+  elif has_text "$sql" 'pg_class'; then
     printf '%s\n' 'public.Sample'
-  elif printf '%s' "$sql" | grep -F -q 'indisprimary'; then
+  elif has_text "$sql" 'indisprimary'; then
     printf '%s\n' 'Id'
-  elif printf '%s' "$sql" | grep -F -q 'min('; then
+  elif has_text "$sql" 'min('; then
     printf '%s\n' "$count 1 $count"
-  elif printf '%s' "$sql" | grep -F -q 'count(*)'; then
+  elif has_text "$sql" 'count(*)'; then
     printf '%s\n' "$count"
-  elif printf '%s' "$sql" | grep -F -q 'pg_sequences'; then
+  elif has_text "$sql" 'pg_sequences'; then
     printf '%s\n' 'public.sample_seq 1 true'
-  elif printf '%s' "$sql" | grep -F -q 'pg_extension'; then
+  elif has_text "$sql" 'pg_extension'; then
     printf '%s\n' 'plpgsql 1.0'
-  elif printf '%s' "$sql" | grep -F -q 'MigrationId'; then
+  elif has_text "$sql" 'MigrationId'; then
     printf '%s\n' '20261021000000_Init'
   else
     printf '\n'
@@ -165,7 +222,7 @@ case "$name" in
   docker)
     joined=$(printf '%s ' "$@")
     if [ -n "$C1407_FOREIGN_MARKER" ] && [ ! -f "$C1407_FOREIGN_MARKER" ]; then
-      mkdir -p "$(dirname "$C1407_FOREIGN_MARKER")"
+      mkdir -p "$(parent_dir "$C1407_FOREIGN_MARKER")"
       printf '%s\n' 'down-on-purpose foreign' > "$C1407_FOREIGN_MARKER"
     fi
     if [ "$C1407_FAIL_COMPOSE_START" = "1" ]; then
@@ -175,21 +232,21 @@ case "$name" in
         fi
       done
     fi
-    if [ "$C1407_FAIL_DUMP" = "1" ] && printf '%s' "$joined" | grep -F -q 'pg_dump'; then
+    if [ "$C1407_FAIL_DUMP" = "1" ] && has_text "$joined" 'pg_dump'; then
       exit 1
     fi
-    if printf '%s' "$joined" | grep -F -q 'psql'; then
+    if has_text "$joined" 'psql'; then
       emit_sql "${C1407_SOURCE_COUNT:-3}"
-    elif printf '%s' "$joined" | grep -F -q 'volume ls'; then
+    elif has_text "$joined" 'volume ls'; then
       printf '%s\n' 'antiphon_pgdata'
-    elif printf '%s' "$joined" | grep -F -q 'inspect'; then
+    elif has_text "$joined" 'inspect'; then
       printf '%s\n' 'exited'
     fi
     exit 0
     ;;
   ssh)
     joined=$(printf '%s ' "$@")
-    if printf '%s' "$joined" | grep -F -q 'psql'; then
+    if has_text "$joined" 'psql'; then
       emit_sql "${C1407_TARGET_COUNT:-3}"
     fi
     exit 0
