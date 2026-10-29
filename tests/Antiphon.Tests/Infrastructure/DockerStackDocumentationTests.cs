@@ -398,6 +398,22 @@ public sealed class DockerStackDocumentationTests
         text.Contains("Worktree + Grok only", StringComparison.Ordinal).ShouldBeFalse();
     }
 
+    // CARD-0849. Slot acquisition is outside the 30s arrival window. Exit 4 is its own diagnosis.
+    [Test]
+    public void Fixture_gate_slot_wait_is_outside_the_arrival_window()
+    {
+        var text = Read("docs/docker-stack.md");
+        foreach (var pin in new[]
+        {
+            "slot-held",
+            "FixtureBuildSlotTimeout",
+            "FixtureRestoreBarrierFailed",
+            "30-second",
+            "45 minutes"
+        })
+            text.ShouldContain(pin, Case.Sensitive, pin);
+    }
+
     /// <summary>
     /// Prose wraps. Asserting a phrase against the raw bytes makes the guard fail the moment a
     /// paragraph is rewrapped, which says nothing about whether the doc still means what it must,

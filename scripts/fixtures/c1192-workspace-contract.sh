@@ -517,8 +517,9 @@ simulate_restore() {
         return $?
     fi
     mkdir -p "$data/race/$project"
-    printf '1\n' > "$data/race/$project/ready"
+    printf '1\n' > "$data/race/$project/slot-held"
     wait_for_volume_file "$data/race/go" || return 1
+    printf '1\n' > "$data/race/$project/ready"
     if [ "${C1192_FAULT:-}" = "restore-$project" ]; then
         return 1
     fi
