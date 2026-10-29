@@ -101,26 +101,38 @@ if ($Mode -eq 'tamper') {
     [void][IO.Directory]::CreateDirectory($root)
     $shims = Join-Path $Root 'shims'
     [void][IO.Directory]::CreateDirectory($shims)
-    # Production starts FileName 'git'. Windows resolves git.cmd; Linux execs a mode-0700 sh script.
+    # Production starts FileName 'git' without a shell. Windows needs git.exe;
+    # a git.cmd shim would be bypassed in favour of the installed native executable.
     # File.SetUnixFileMode stays in-process so the witness does not need chmod.
     if ($IsWindows) {
-        $pwsh = [string](Get-Process -Id $PID).Path
-        $cmd = @"
-@echo off
-setlocal EnableExtensions
-:skipc
-if /I not "%~1"=="-c" goto afterc
-shift
-shift
-goto skipc
-:afterc
-if /I "%~1"=="config" exit /b 0
-"$pwsh" -NoProfile -NonInteractive -Command "[Console]::OpenStandardOutput().WriteByte(255)"
-exit /b %ERRORLEVEL%
-"@
-        $shimPath = Join-Path $shims 'git.cmd'
-        $cmdText = $cmd.Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n")
-        [IO.File]::WriteAllText($shimPath, $cmdText)
+        $shimPath = Join-Path $shims 'git.exe'
+        $sourcePath = Join-Path $shims 'GitShim.cs'
+        [IO.File]::WriteAllText($sourcePath, @'
+public static class GitShim {
+    public static int Main(string[] args) {
+        foreach (string arg in args) if (arg == "config") return 0;
+        System.Console.OpenStandardOutput().WriteByte(255);
+        return 0;
+    }
+}
+'@)
+        # Windows PowerShell's compiler emits a directly runnable .NET Framework exe.
+        $compilerPath = Join-Path $shims 'compile.ps1'
+        [IO.File]::WriteAllText($compilerPath, @'
+param([string]$Source, [string]$Output)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $Source -OutputAssembly $Output -OutputType ConsoleApplication
+'@)
+        $compiler = [Diagnostics.ProcessStartInfo]::new(
+            (Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe'))
+        foreach ($arg in @('-NoProfile','-NonInteractive','-File',$compilerPath,'-Source',$sourcePath,'-Output',$shimPath)) {
+            $compiler.ArgumentList.Add($arg)
+        }
+        [void]$compiler.Environment.Remove('PSModulePath')
+        $built = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($compiler, 30000, $false)
+        if ($built.Exit -ne 0 -or -not [IO.File]::Exists($shimPath)) {
+            throw "native git shim build failed: $($built.Stdout) $($built.Stderr)"
+        }
     } else {
         $shim = @'
 #!/bin/sh
