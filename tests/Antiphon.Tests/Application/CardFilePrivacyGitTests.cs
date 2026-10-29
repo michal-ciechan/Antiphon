@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -78,6 +79,7 @@ public class CardFilePrivacyGitTests
     [Arguments("board")]
     public async Task Junction_ancestors_refuse_root_and_managed_file_aliases(string placement)
     {
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(CardFilePrivacyGitTests), nameof(Junction_ancestors_refuse_root_and_managed_file_aliases));
         using var repo = new ScratchGitRepo("c408");
         var outside = Directory.CreateDirectory(Path.Combine(repo.Path, "outside")).FullName;
         var sentinel = Path.Combine(outside, "sentinel.md");

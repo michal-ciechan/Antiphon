@@ -199,4 +199,20 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Absolute_secret_target_keeps_the_base_rule", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Malformed_secret_target_is_refused", 1, ExistingReason),
     ];
+
+    // NTFS junctions are not a Linux reparse point. C1210 closure scans NativeLinuxGate
+    // and C1008HostFixture only; these rows stay out of that frozen inventory.
+    internal const string WindowsJunctionReason = "NTFS junction fixtures require Windows reparse points; Linux has no junction type.";
+    internal static readonly Entry[] WindowsOnly =
+    [
+        new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
+        new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
+    ];
+
+    internal static void SkipOnLinux(string className, string method)
+    {
+        var entry = WindowsOnly.Single(item => item.Class == className && item.Method == method);
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException(entry.Reason);
+    }
 }
