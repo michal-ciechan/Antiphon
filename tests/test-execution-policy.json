@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "bf703bb14839c0e93c6f3516b2d5dd69288eea73063c36e02396af9fbcde61f7",
+  "policyHash": "1e5507472b335df2d7c5609063a7ce6f1ebae2ec08f59cb0b9ff1c467150f47e",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -491,6 +491,16 @@
         },
         {
           "suite": "pty-host",
+          "class": "HostCustodyTests",
+          "methods": [
+            "Inbox_is_unsupported_and_never_becomes_no_start_proof"
+          ],
+          "platform": "linux",
+          "reason": "Windows job-object inbox fixture. The method remains required on Windows.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "pty-host",
           "class": "Card0490NativeHandoffTests",
           "reason": "QEMU/native placeholder control",
           "owner": "CARD-0490"
@@ -820,6 +830,20 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Unix PTY argv contract requires a Unix PTY and node. The case remains required on Linux.",
           "owner": "CARD-0590"
+        },
+        {
+          "suite": "session-runner",
+          "class": "LinuxRunnerCustodyLifecycleTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux custody lifecycle executes on Linux only. The case remains required on Linux.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "session-runner",
+          "class": "CustodyNamespaceBootstrapTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",
+          "owner": "CARD-1614"
         },
         {
           "suite": "antiphon",

@@ -899,6 +899,12 @@ the transcript mutation gate. Activation requires both server and runner support
   [application continuation](investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
   and [inherited runtime evidence](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md).
 
+- **Linux containment termination is not Windows job release (CARD-1614).** Terminal-task
+  CleanupVerification can terminate a Linux cgroup tree. A Windows seal does not terminate
+  the job; the existing 24-hour tracked linger and kill-on-close close remain that fallback.
+  Linux custody stays unadvertised until native qualification. A successful kill is not a
+  receipt and is not a source-clean verdict.
+
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
   enqueue, including a Fresh target whose row did not exist before the reservation.

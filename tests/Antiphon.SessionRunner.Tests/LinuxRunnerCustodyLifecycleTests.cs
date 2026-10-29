@@ -10,6 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// namespace methods. Root-exit, natural completion and lost-host release stay out.
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 [NotInParallel("LinuxCustody")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LinuxRunnerCustodyLifecycleTests

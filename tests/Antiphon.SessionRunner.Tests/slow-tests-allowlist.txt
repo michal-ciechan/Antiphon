@@ -11,3 +11,5 @@ Antiphon.SessionRunner.Tests.BuildSlotEndToEndTests
 Antiphon.SessionRunner.Tests.CompletedCardWorkspaceRemovalTests
 # CARD-1032 repair: real scratch Git removal/pruning and deterministic gate races.
 Antiphon.SessionRunner.Tests.LegacyWorkspaceRemovalGateTests
+# CARD-1614: installed-helper and namespace probes need the session-testing image; measured native rows exceed 5s.
+Antiphon.SessionRunner.Tests.LinuxRunnerCustodyLifecycleTests
