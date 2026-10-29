@@ -185,7 +185,8 @@ function Get-NightlyOriginUrl {
     if (-not (Test-Path -LiteralPath $config)) { return '' }
     # Let Git decode quoted/escaped config values, and select origin specifically.
     # --file reads only this clone's config; includes and global config grant no authority.
-    $value = & git config --file $config --no-includes --get remote.origin.url 2>$null
+    # -c overrides do not change the origin url this function returns.
+    $value = & git -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false config --file $config --no-includes --get remote.origin.url 2>$null
     if ($LASTEXITCODE -eq 0) { return ($value -join "`n") }
     return ''
 }
@@ -522,7 +523,10 @@ function Invoke-NightlyGit {
         if ($r -is [hashtable] -or $r.PSObject) { return $r }
         return [pscustomobject]@{ ExitCode = 0; Output = [string]$r }
     }
-    $output = & git -C $WorkingDirectory @Arguments 2>&1
+    # -c overrides a system core.fsmonitor=true without writing repo config.
+    # Object ids, refs and the caller's arguments are unchanged. This does not
+    # identify a Windows pipe holder.
+    $output = & git -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -C $WorkingDirectory @Arguments 2>&1
     return [pscustomobject]@{
         ExitCode = [int]$LASTEXITCODE
         Output = ($output | Out-String)

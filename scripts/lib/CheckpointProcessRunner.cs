@@ -100,8 +100,10 @@ namespace Antiphon.Checkpoints
             start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             start.Environment["GIT_CONFIG_GLOBAL"] = nullPath;
-            // gc.auto=0 and maintenance.auto=false stop a detached git child from inheriting
-            // the caller's pipes. On Windows that child keeps ScriptHarness from seeing EOF.
+            // Disable fsmonitor, hooks, external diff, attributes, auto-gc and
+            // auto-maintenance for this child. These settings do not identify or
+            // remove a Windows pipe holder. Desktop C1313_BaselineAuthority still
+            // has to read holder= before that hang can be called fixed.
             foreach (var setting in new[] { "core.fsmonitor=false", "core.hooksPath=" + nullPath, "diff.external=", "core.attributesFile=" + nullPath, "gc.auto=0", "maintenance.auto=false" })
             { start.ArgumentList.Insert(0, setting); start.ArgumentList.Insert(0, "-c"); }
         }

@@ -311,6 +311,11 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
 
     public string DescribePipeHolders()
     {
+        // QueryInformationJobObject lists job members, not the processes that hold
+        // the redirected pipes. A holder outside the job stays unidentified.
+        // Desktop ChangeAwareReleaseTests.C1313_BaselineAuthority reads holder= from
+        // the timeout text to name the member to investigate. This list is that clue.
+        // It does not mean the Windows hang is fixed.
         try
         {
             var names = new List<string>(8);
@@ -320,11 +325,13 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 if (pid <= 0 || pid == Environment.ProcessId) continue;
                 names.Add(pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + ProcessImageName(pid));
             }
-            return names.Count == 0 ? "unidentified" : string.Join(",", names);
+            return names.Count == 0
+                ? "unidentified (job members, not confirmed pipe holders)"
+                : "job-members (not confirmed pipe holders): " + string.Join(",", names);
         }
         catch
         {
-            return "unidentified";
+            return "unidentified (job members, not confirmed pipe holders)";
         }
     }
 
