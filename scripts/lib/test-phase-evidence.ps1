@@ -3,8 +3,17 @@
 # TRX stays authoritative. This file never edits TRX, LogRoot summary.json, receipts,
 # selection, the cost cache, or the release manifest.
 
-if ($script:TestPhaseEvidenceLoaded) { return }
-$script:TestPhaseEvidenceLoaded = $true
+# Visibility, not the script flag. A function-scoped dot-source used to set the
+# flag and drop Resolve-QualificationTimingRoot when that call returned, and the
+# next lock decision then failed with command-not-found.
+if ($script:TestPhaseEvidenceLoading) { return }
+$script:TestPhaseEvidenceResolver = $null
+try { $script:TestPhaseEvidenceResolver = Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue } catch { $script:TestPhaseEvidenceResolver = $null }
+if ($script:TestPhaseEvidenceResolver) {
+    $script:TestPhaseEvidenceLoaded = $true
+    return
+}
+$script:TestPhaseEvidenceLoading = $true
 
 if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'nightly-common.ps1')
@@ -2601,3 +2610,6 @@ function Get-QualificationTimingReport {
         Timeline = @($timeline)
     }
 }
+
+$script:TestPhaseEvidenceLoading = $false
+$script:TestPhaseEvidenceLoaded = $true

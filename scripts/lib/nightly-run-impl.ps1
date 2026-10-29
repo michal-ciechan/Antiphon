@@ -10,6 +10,14 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 
+# The resolver has to be defined in this scope. Loading it inside
+# Invoke-AntiphonNightlyRunCore kept the function only for that call and left
+# the evidence loaded flag set, so the next in-process lock decision could not
+# find Resolve-QualificationTimingRoot.
+if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+}
+
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 
 function New-NightlyRunDirectoryName {
