@@ -19,12 +19,16 @@ internal static class EvaluationBudget
     // tracked set (9138 paths, 182462478 bytes): 1957, 2253, 2249 ms. Userspace
     // read/write, so this is slower than File.Copy. Nearest-rank p95 for n=3 is
     // rank 3, so 2253. Twice that, rounded up, is 5 s on Linux.
-    // PROVISIONAL Windows ceiling: WindowsCopyMeasurementMultiplier times this
-    // Linux measurement, rounded up to seconds, until a native Windows plain-copy
-    // p95 replaces it. See docs/orchestration-loop.md.
+    // PROVISIONAL calibration from three native Windows CanaryRepository.Create runs,
+    // DESKTOP-KTLKPIF, 2026-10-29, task 0a72f317, tool SHA-256
+    // 5EBF83ADDF00F41391AC6AD5C19EF19FA754BE215F70A06560E3922817C853BB:
+    // 33515.1436, 25745.3282, 25641.6397 ms. Nearest-rank p95 is 33515.1436 ms.
+    // Ceiling(2 * p95 / 2253) = 30; the resulting 68s budget rounds up twice
+    // the measured native copy. The old multiplier 5 (12s) timed out on this tree.
+    // Re-measure on the next native qualification; see docs/orchestration-loop.md.
     public const int MeasuredCopyP95Milliseconds = 2253;
 
-    public const int WindowsCopyMeasurementMultiplier = 5;
+    public const int WindowsCopyMeasurementMultiplier = 30;
 
     // Run 28bbb58e finished one pass inside the old combined ceiling and then refused.
     // Windows keeps that 120s as a per-pass floor until a Windows pass duration is recorded.
