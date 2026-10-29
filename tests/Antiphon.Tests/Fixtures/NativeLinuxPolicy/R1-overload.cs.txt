@@ -1,0 +1,11 @@
+using TUnit.Core;
+
+public class OverloadHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: marked overload")]
+    public void Target(int value) { }
+
+    [Test]
+    public void Target(string value) { }
+}

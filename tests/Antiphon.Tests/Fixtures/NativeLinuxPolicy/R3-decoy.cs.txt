@@ -1,0 +1,27 @@
+using TUnit.Core;
+
+namespace Decoy
+{
+    public class Real
+    {
+        [Test]
+        public void Go() { }
+    }
+
+    public class Real<T>
+    {
+        [Test]
+        [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: generic")]
+        public void Go() { }
+    }
+
+    public class Outer
+    {
+        public class Inner
+        {
+            [Test]
+            [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: nested")]
+            public void Go() { }
+        }
+    }
+}

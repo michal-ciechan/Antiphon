@@ -1,0 +1,22 @@
+using TUnit.Core;
+
+public class SiblingHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: selected")]
+    public void Selected() { }
+
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: sibling")]
+    public void Sibling() { }
+}
+
+[Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: wholesale")]
+public class Wholesale
+{
+    [Test]
+    public void InRow() { }
+
+    [Test]
+    public void OutOfRow() { }
+}

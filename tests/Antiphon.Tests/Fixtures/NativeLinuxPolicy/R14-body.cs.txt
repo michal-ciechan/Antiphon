@@ -1,0 +1,12 @@
+using Antiphon.TestSupport;
+using TUnit.Core;
+
+public class BodyHost
+{
+    [Test]
+    [NativeLinuxOnly("Linux-only by construction: body")]
+    public void Run()
+    {
+        var n = 2;
+    }
+}
