@@ -10,7 +10,7 @@ using System.Text;
 
 namespace Antiphon.Tests.Application;
 
-// Native Windows rows must fail visibly when selected on the wrong host.
+// Native Windows rows skip on any other host. The assertions below stay Windows-only.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetWindowsTests
@@ -189,7 +189,7 @@ public sealed class AgentTaskLandHalfResetWindowsTests
     private static void RequireWindows()
     {
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("CP-5 requires native Windows Git and NTFS path semantics");
+            throw new TUnit.Core.Exceptions.SkipTestException("CP-5 requires native Windows Git and NTFS path semantics");
     }
 
     private static async Task CheckoutTrackedFixtureFilesWithCrLfAsync(LandingGitFixture fixture)
