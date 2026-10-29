@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Xml.Linq;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -23,10 +24,33 @@ public sealed class NativeLinuxPolicyExecutionTests
         ("portable.body", 1),
     ];
 
+    private static readonly string[] ProbeMarkerReasons =
+    [
+        "direct class runs on Linux",
+        "direct method runs on Linux",
+        "inherited method runs on Linux",
+        "marked derived class runs on Linux",
+        "nested class runs on Linux",
+        "generic class runs on Linux",
+        "overload int runs on Linux",
+        "overload string runs on Linux",
+    ];
+
+    private static readonly XNamespace TrxNamespace = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+
     [Test]
     [Timeout(60_000)]
     public async Task Linux_child_runs_nine_nodes_and_records_side_effects(CancellationToken cancellationToken)
     {
+        const string portableSentinel = "portable.body\n";
+        JudgeWindowsTrx(WindowsProbeTrx(ProbeMarkerReasons, markedRuns: false), portableSentinel).ShouldBeEmpty();
+        var wrongReasons = (string[])ProbeMarkerReasons.Clone();
+        wrongReasons[0] = "not the marker";
+        string.Join("\n", JudgeWindowsTrx(WindowsProbeTrx(wrongReasons, markedRuns: false), portableSentinel))
+            .ShouldContain("skip-reason");
+        string.Join("\n", JudgeWindowsTrx(WindowsProbeTrx(ProbeMarkerReasons, markedRuns: true), portableSentinel))
+            .ShouldContain("windows-counts");
+
         var dll = Path.Combine(AppContext.BaseDirectory, "native-linux-probe", "Antiphon.NativeLinuxPolicy.Probe.dll");
         File.Exists(dll).ShouldBeTrue(dll);
         var root = Directory.CreateTempSubdirectory("c1613-probe-").FullName;
@@ -110,5 +134,52 @@ public sealed class NativeLinuxPolicyExecutionTests
         }
 
         return seen;
+    }
+
+    private static List<string> JudgeWindowsTrx(string trxXml, string sentinel)
+    {
+        var root = Directory.CreateTempSubdirectory("c1613-trx-").FullName;
+        try
+        {
+            var path = Path.Combine(root, "probe.trx");
+            File.WriteAllText(path, trxXml);
+            var trx = TrxReport.Parse(path);
+            trx.Ok.ShouldBeTrue(trx.Error);
+            return Problems(linux: false, trx.Passed, trx.Failed, trx.Skipped, trx.Results.Count, sentinel);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static string WindowsProbeTrx(string[] reasons, bool markedRuns)
+    {
+        var definitions = new List<XElement>();
+        var results = new List<XElement>();
+        for (var i = 0; i < reasons.Length; i++)
+        {
+            var id = "marked-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var runs = markedRuns && i == 0;
+            definitions.Add(new XElement(TrxNamespace + "UnitTest", new XAttribute("id", id),
+                new XElement(TrxNamespace + "TestMethod", new XAttribute("className", "Probe.Marked" + i), new XAttribute("name", "Run"))));
+            results.Add(new XElement(TrxNamespace + "UnitTestResult", new XAttribute("testId", id), new XAttribute("outcome", runs ? "Passed" : "NotExecuted"),
+                runs ? null : new XElement(TrxNamespace + "Output", new XElement(TrxNamespace + "DebugTrace", "Skipped: " + reasons[i]))));
+        }
+
+        definitions.Add(new XElement(TrxNamespace + "UnitTest", new XAttribute("id", "portable"),
+            new XElement(TrxNamespace + "TestMethod", new XAttribute("className", "Probe.Portable"), new XAttribute("name", "Portable"))));
+        results.Add(new XElement(TrxNamespace + "UnitTestResult", new XAttribute("testId", "portable"), new XAttribute("outcome", "Passed")));
+        var passed = markedRuns ? 2 : 1;
+        var executed = passed;
+        return new XDocument(new XElement(TrxNamespace + "TestRun",
+            new XElement(TrxNamespace + "TestDefinitions", definitions),
+            new XElement(TrxNamespace + "Results", results),
+            new XElement(TrxNamespace + "ResultSummary", new XElement(TrxNamespace + "Counters",
+                new XAttribute("total", "9"),
+                new XAttribute("executed", executed.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new XAttribute("passed", passed.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new XAttribute("failed", "0"))))).ToString();
     }
 }
