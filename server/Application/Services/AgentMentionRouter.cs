@@ -28,10 +28,18 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
     private int _disposed;
+    private TimeProvider _clock = TimeProvider.System;
 
     // Test seam. Production leaves both null; a set gate pauses ProcessAsync before the route.
     internal TaskCompletionSource? BeforeRouteGate { get; set; }
     internal TaskCompletionSource? RouteGateEntered { get; set; }
+
+    // Tests replace this so the 300 ms pending-line debounce can fire without a wall-clock sleep.
+    internal TimeProvider Clock
+    {
+        get => _clock;
+        set => _clock = value ?? TimeProvider.System;
+    }
 
     public AgentMentionRouter(
         IServiceScopeFactory scopeFactory,
@@ -199,7 +207,7 @@ public sealed class AgentMentionRouter : IDisposable
         Record(sourceSessionId, MentionRouteDiagnostics.DebounceDelayStarted, $"version={version}");
         try
         {
-            await Task.Delay(PendingMentionDebounce, _cts.Token);
+            await Task.Delay(PendingMentionDebounce, _clock, _cts.Token);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
         {
