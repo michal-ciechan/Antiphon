@@ -4539,18 +4539,19 @@ c1192_signal_witness() {
         started=$(date +%s)
         # One group SIGINT is discarded while the slot poll is inside sleep,
         # the same way a pid-only SIGINT is. Repeat it until the trap records
-        # that it ran. Probes ignore SIGINT, so only the trap's cid kill
-        # stops them. Stop once the ledger line exists so a handler that
-        # returns without releasing is not signaled for the rest of the wait.
+        # that it ran. The gap is longer than that sleep so the next signal
+        # is not delivered while the handler is still finalizing: a second
+        # SIGINT in that window nests the trap and skips volume removal.
+        # Probes ignore SIGINT, so only the trap's cid kill stops them.
         i=0
-        while [ "$i" -lt 400 ]; do
+        while [ "$i" -lt 40 ]; do
             c849_fixture_probe_exited "$pid" && break
             if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
                 && grep -Fxq "trap-ran INT" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
                 break
             fi
             kill -s INT -- -"$pid" 2>/dev/null || true
-            command sleep 0.02
+            command sleep 0.3
             i=$((i + 1))
         done
     elif [ "$sig" = INT ]; then
