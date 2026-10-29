@@ -62,6 +62,16 @@ public class LinuxCgroupCustodyTests
         var pids = await world.WaitForTreeAsync(atLeast: 1);
         pids.ShouldContain(launched.ChildPid,
             "the shim writes its own pid before it execs, so the spawned pid is the tracked root");
+        var tracking = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json");
+        tracking.ShouldNotBeNull();
+        tracking!.Pid.ShouldBe(launched.ChildPid);
+        var trackedStart = Process.GetProcessById(launched.ChildPid).StartTime.ToUniversalTime();
+        Math.Abs((tracking.StartTimeUtc - trackedStart).TotalSeconds).ShouldBeLessThan(2);
+        var manifest = world.Store.ReadRecord<PtyHostManifest>(world.Binding, "running-manifest.json");
+        manifest.ShouldNotBeNull();
+        manifest!.ChildPid.ShouldBe(launched.ChildPid);
+        foreach (var members in ActiveHierarchyMembers(tracking.ContainerId))
+            members.ShouldContain(launched.ChildPid);
         // The seam reads the same file the container owns, not a process-name census.
         world.Containment.ReadActive().Count.ShouldBeGreaterThanOrEqualTo(1u);
         (await world.CustodyAsync()).State.ShouldBe(VerificationCustodyState.Tracking);
@@ -287,6 +297,26 @@ public class LinuxCgroupCustodyTests
         var line = lines.LastOrDefault(l => l.StartsWith(key + "=", StringComparison.Ordinal))
             ?? throw new InvalidOperationException("the payload reported no '" + key + "' outcome");
         return int.Parse(line[(key.Length + 1)..].Trim());
+    }
+
+    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId)
+    {
+        var id = containerId.ToString("D");
+        var roots = File.Exists("/sys/fs/cgroup/cgroup.controllers")
+            ? new[] { "/sys/fs/cgroup/" + CustodyRootName }
+            : new[]
+            {
+                "/sys/fs/cgroup/pids/" + CustodyRootName,
+                "/sys/fs/cgroup/freezer/" + CustodyRootName,
+            };
+        foreach (var root in roots)
+        {
+            var procs = Path.Combine(root, id, "tree", "cgroup.procs");
+            yield return File.ReadAllLines(procs)
+                .Where(line => line.Length != 0)
+                .Select(int.Parse)
+                .ToArray();
+        }
     }
 
     /// <summary>Session id from /proc/&lt;pid&gt;/stat, parsed after the comm field's closing paren.</summary>

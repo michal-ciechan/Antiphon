@@ -97,6 +97,22 @@ public sealed class LinuxCgroupContainmentTests
     }
 
     [Test]
+    public void C1614_Namespace_identity_cannot_cross_container_roots()
+    {
+        var execution = Guid.NewGuid();
+        var current = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        var currentPath = LinuxCustodyOperations.ResolveProcsPath(current, execution);
+        var otherPath = LinuxCustodyOperations.ResolveProcsPath(other, execution);
+        var legacyPath = LinuxCustodyOperations.ResolveProcsPath(Guid.Empty, execution);
+
+        currentPath.ShouldContain(current.ToString("D"));
+        otherPath.ShouldContain(other.ToString("D"));
+        currentPath.ShouldNotBe(otherPath);
+        legacyPath.ShouldNotBe(currentPath);
+    }
+
+    [Test]
     public void The_helper_paths_are_absolute_and_image_owned()
     {
         LinuxCgroupContainment.EnterHelper.ShouldBe("/usr/local/bin/antiphon-custody-enter");

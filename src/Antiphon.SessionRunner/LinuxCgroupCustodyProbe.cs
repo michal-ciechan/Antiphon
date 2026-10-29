@@ -24,6 +24,8 @@ public static class LinuxCgroupCustodyProbe
     public static string? Detect(ILinuxCustodyEnvironment? environment = null)
     {
         var env = environment ?? LinuxCustodyEnvironment.Real;
+        _ = env.Qualified;
+        _ = env.Hierarchy;
         if (!env.IsLinux) return null;
         if (!env.CustodyRootExists(CustodyRootName)) return null;
         // /proc/self/status reports NoNewPrivs: 1 once the bit is set, and it is irreversible.
@@ -48,6 +50,20 @@ public interface ILinuxCustodyEnvironment
 
     /// <summary>`sudo -n &lt;helper&gt; --probe` exited 0.</summary>
     bool HelperProbeSucceeds(string helperPath);
+
+    /// <summary>True only when this runtime was explicitly qualified for Linux custody.</summary>
+    bool Qualified { get; }
+
+    /// <summary>The cgroup hierarchy this environment will admit. v2 and unknown stay unadvertised.</summary>
+    LinuxCustodyHierarchy Hierarchy { get; }
+}
+
+/// <summary>Which cgroup hierarchy a custody probe is allowed to admit.</summary>
+public enum LinuxCustodyHierarchy
+{
+    V1,
+    V2,
+    Unknown,
 }
 
 internal sealed class LinuxCustodyEnvironment : ILinuxCustodyEnvironment
@@ -55,6 +71,13 @@ internal sealed class LinuxCustodyEnvironment : ILinuxCustodyEnvironment
     public static readonly LinuxCustodyEnvironment Real = new();
 
     public bool IsLinux => OperatingSystem.IsLinux();
+
+    public bool Qualified => false;
+
+    public LinuxCustodyHierarchy Hierarchy =>
+        File.Exists("/sys/fs/cgroup/cgroup.controllers")
+            ? LinuxCustodyHierarchy.V2
+            : LinuxCustodyHierarchy.V1;
 
     public bool CustodyRootExists(string rootName) =>
         File.Exists("/sys/fs/cgroup/cgroup.controllers")

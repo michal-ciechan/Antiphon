@@ -266,6 +266,8 @@ public sealed class UnixPtyArgvAdmissionTests
         public bool CustodyRootExists(string rootName) => false;
         public int NoNewPrivs => 0;
         public bool HelperProbeSucceeds(string helperPath) => false;
+        public bool Qualified => false;
+        public LinuxCustodyHierarchy Hierarchy => LinuxCustodyHierarchy.V1;
     }
 
     private static RunnerLaunchRequest Launch(string root) => new(Guid.NewGuid(), "/bin/sh", [],
