@@ -88,8 +88,13 @@ public sealed class AgentMentionRouter : IDisposable
         for (var i = 0; i < completedLineCount; i++)
             ready.AddRange(MentionsToEnqueue(sourceSessionId, lines[i], skipPendingDuplicate: true));
 
+        // The liveness read is a database round trip. Claim these targets under the
+        // debounce gate first, or that timer queues the partial line while the read waits.
+        // A failed or not-live read still enqueues the claim; only cancellation skips it.
+        var claimed = ClaimCompletedMentions(sourceSessionId, ready);
+
         MentionSourceLiveness? observed = null;
-        if (capture is not null && ready.Count > 0)
+        if (capture is not null && claimed.Count > 0)
         {
             try
             {
@@ -105,7 +110,7 @@ public sealed class AgentMentionRouter : IDisposable
             }
         }
 
-        foreach (var mention in ready)
+        foreach (var mention in claimed)
             EnqueueCommand(sourceSessionId, mention, observed);
         for (var i = 0; i < completedLineCount; i++)
             _pendingStates.TryRemove(sourceSessionId, out _);
@@ -267,6 +272,30 @@ public sealed class AgentMentionRouter : IDisposable
                 EnqueueCommand(sourceSessionId, mention, observed: null);
             }
         }
+    }
+
+    private List<AgentMention> ClaimCompletedMentions(Guid sourceSessionId, List<AgentMention> ready)
+    {
+        if (ready.Count == 0 || !_pendingStates.TryGetValue(sourceSessionId, out var state))
+            return ready;
+
+        var claimed = new List<AgentMention>(ready.Count);
+        lock (state.Gate)
+        {
+            state.Version++;
+            foreach (var mention in ready)
+            {
+                if (state.RoutedKeys.Add(PendingRouteKey(mention)))
+                {
+                    claimed.Add(mention);
+                    continue;
+                }
+
+                Record(sourceSessionId, MentionRouteDiagnostics.CommandSkippedDuplicate, $"target={mention.Target}");
+            }
+        }
+
+        return claimed;
     }
 
     private bool PendingRouteExists(Guid sourceSessionId, AgentMention mention)
