@@ -1,7 +1,9 @@
 # CARD-1605: report storage budgets under contention
 
 Plan date: 2026-10-29. Source inspected:
-`f8bddb6efda7b0e8f50f3b45744087e52188bc66`. Task: `d8d36ebe`.
+`802ae96118ef7911ecf74fdc96b51d515abd54a3` (round 2, task `e26fb023`).
+Round-1 source: `f8bddb6efda7b0e8f50f3b45744087e52188bc66`, task `d8d36ebe`.
+Read the full design review `.antiphon/task-7a77fb91.md` before this revision.
 Scope: read-only investigation and this plan; no product changes or test execution.
 This is a completed implementation plan with a proposed ordinary verification
 roster. TestDesign remains a separate stage: it must independently review the
@@ -39,6 +41,7 @@ Line references are at the inspected source SHA; paths are repository relative.
 | Cancellation drops the file. | `AgentReportStore.cs:74-82` maps non-caller cancellation to `io-budget-expired` and removes an owned temporary file. A readback failure after rename can leave canonical bytes on disk but returns no pointer. | Require no successful pointer after deadline and no temporary residue; do not claim every failure means no canonical file exists. |
 | A returned path is durable exact content. | `AgentReportStore.cs:41-69,94-109,112-180` uses full task GUID plus raw UTF-8 SHA-256, durable-root and ignore/tracking checks, sibling WriteThrough temporary write, rename and exact readback. | Preserve these checks, order, path identity, and atomic publication. No retry or root-custody cache. |
 | Caller text is lost. | `AgentTaskReplyService.cs:3660-3702` falls back to legacy spill; small reports may have no spill, and task Result remains. `CardDoneArtifactPreservation.cs:41-54` refuses `artifact_unpreserved`; `AgentTaskLandNotificationService.cs:394-414` refuses `completion_report_unavailable`. | Fix canonical file preservation without changing caller settlement, cleanup admission or delivery semantics. |
+| Moving the deadline leaves caller waits unchanged. | There are exactly three production `StoreAsync` call sites. Settlement holds a per-session semaphore; cleanup waits before admission locks; the notification host reconciles rows sequentially in pages of 128. Their tokens do not impose a shorter store deadline. | Result/fallback semantics remain, but latency increases. The wait inventory below explicitly accepts up to 32 s of active store budgets per call and quantifies cumulative delays. |
 | Existing tests protect the production deadline. | `tests/Antiphon.Tests/TestHelpers/ReportWorkspace.cs:44-53` supplies 30 seconds. `AgentReportStoreTests.cs:178-211` has a zero-budget row, not a slow-Git-versus-slow-write discriminator. | New witnesses must explicitly use production defaults; existing custody tests retain their purpose. |
 | The 2.5-second write-stall contract can be relaxed. | `docs/superpowers/plans/2026-10-13-card-1032-s8-code-evidence.md:123-146` records the forced write stall returning `io-budget-expired`; CARD-1605 explicitly requires retaining it. | A two-second write deadline and an actual 2.5-second stall witness are acceptance requirements. |
 | A fixed host is needed. | Required GETs `/api/runner-defaults` and `/api/session-runners` succeeded on 2026-10-29; defaults revision 2, no kind overrides, eligible Linux and Windows lanes. | Re-read placement at dispatch. Checkpoints name lanes; omit `-Runner`, and omit `-Platform` unless an OS witness requires it. |
@@ -52,15 +55,17 @@ Line references are at the inspected source SHA; paths are repository relative.
   rename and final exact readback. It is one shared deadline, never reset between
   those operations. This also bounds the existing-file fast path. Reject starting
   it only inside `WriteAsync`, which would leave verification unbounded.
-- **D-2: bound preparation independently.** Propose a store-local internal
-  `PreparationBudget`, default 30 seconds, linked to the caller token. Dispose it
-  at the phase boundary; create the I/O token from the caller, not the expired
-  preparation token. Thirty seconds is a provisional engineering ceiling, not a
-  measured p95: it allows queue/start overhead around the existing 15-second Git
-  command allowance. Measurement below must validate or narrow it before Code
-  acceptance. Reject caller-only preparation (unbounded gate wait), a global Git
-  timeout change (unrelated consumers), and resetting the preparation deadline
-  per command (unbounded aggregate queueing).
+- **D-2: bound the aggregate preparation, including every gate re-entry.** Use a
+  store-local internal `PreparationBudget`, default **30 seconds = 2 x the
+  default 15-second Git command allowance**, linked to the caller token. This is
+  a latency policy, not enough time to exhaust every command timeout: the
+  derivation and accepted caller costs below are part of this decision. Dispose
+  it at the phase boundary; create the I/O token from the original caller.
+  Do not scale it up with configured Git timeouts or reset it per command.
+  CP-5 must meet the concrete loaded-preparation threshold below before acceptance.
+  Reject caller-only preparation (unbounded gate wait), a global Git scheduling
+  change (unrelated consumers), and a 105-420 s per-store allowance derived by
+  granting every command its full timeout (unacceptable lock/scan delays).
 - **D-3: preserve refusal semantics.** Keep `DefaultIoBudget == 2 seconds` and
   `io-budget-expired` for the report I/O phase. Use a distinct
   `preparation-budget-expired` for the store's preparation deadline. Caller
@@ -90,9 +95,55 @@ Line references are at the inspected source SHA; paths are repository relative.
   Master publication alone is not activation. This Plan pushes only its assigned
   branch and authorizes no deployment, tag, promotion or release-gate shortcut.
 
-These are proposed implementation decisions under the card's scope, with D-2
-explicitly provisional pending measured preparation timings and independent
-review. They are not evidence that the implementation or acceptance has run.
+These are implementation defaults for independent TestDesign review. The 30 s
+production cap is an explicit policy decision; performance estimates and its
+acceptance measurements are still pending. Nothing here claims execution.
+
+### Preparation ceiling derivation and caller wait inventory
+
+At this source, a successful ordinary path issues **seven sequential Git
+commands**: `GetWorkspaceInfoAsync` does root/common-dir discovery and branch
+discovery (two), the primary-checkout proof adds one, and `EnsureIgnoredAsync`
+does toplevel, tracked-file check and two independent ignore checks (four).
+A conservative maximum path is **14**: two distinct candidates at three each,
+one configured-root query, then seven custody queries when the ignore proof
+requires resolving `info/exclude` and rechecking both names. Short-circuits can
+reduce that count; none of these calls share a gate lease.
+
+With default gate width W=8 and child timeout T=15 s, own child execution alone
+could consume N*T = **105-210 s**. If a finite competing wave has up to eight
+children ahead at every admission, an illustrative bound is N*(T+T) =
+**210-420 s**, before synchronous start, teardown and filesystem overhead.
+More generally each admission adds roughly `ceil(Q_i/8)*15 s` for Q_i children
+ahead under a bounded/FIFO model. `SemaphoreSlim` promises no FIFO fairness,
+the queue has no such cap, and process start precedes the child timer; this
+formula is capacity arithmetic, **not a real queue-wait guarantee**.
+
+Choose instead a fixed **two-wave aggregate allowance, 30 s**: at most one
+default-duration saturated wave (15 s) plus 15 s for *all remaining* preparation.
+That remaining budget must cover seven to fourteen commands, averaging at most
+2.14-1.07 s each if the initial wave consumes its full allowance; repeated
+queueing also spends it. With 16 contenders and W=8, a fair steady-state model
+would need about `2*N*t`, so 30 s accommodates mean command service t at most
+2.14 s (N=7) or 1.07 s (N=14), not fifteen-second commands throughout.
+This gives healthy short metadata commands time to recover from a transient
+wave while refusing prolonged contention. It deliberately does not guarantee
+preservation during arbitrary saturation. A 15 s aggregate cap would leave no
+time after one full wave; 105-420 s would make caller waits excessive. No
+production p95 is invented to justify the chosen policy.
+
+| Wait site and enclosing ownership | Accepted incremental store wait and failure behavior | Why this choice |
+|---|---|---|
+| Settlement: `AgentTaskReplyService.OnTurnEndAsync:88-108` / transcript and watchdog entry paths hold the same `_settleLocks` semaphore through `JudgeOpenTaskAsync`, `ResolveReportFileAsync:1278,3660-3675`. `AgentSessionRuntime:806-840` and dispatcher turn-end paths await it; no shorter outer timer was found. | Up to **30+2=32 s** of store budgets, versus 2 s today; another callback for that session waits behind it. `IsSettleInFlight` lets the dispatcher skip that seat instead of blocking its tick. Expiry falls back to spill/Result; this allowance excludes spill, DB and delivery work. | Accept the additional at-most-30 s active-budget contribution to preserve the authoritative report during a transient Git backlog. The lock is per session, not a fleet lock. Do not claim settlement latency is unchanged. |
+| Cleanup admission: `CardDoneArtifactPreservation.EnsureAsync:37-50`, called by `CardWorktreeCleanupExecutor.TryAsync:70`. Store happens **before** the transaction/admission lock and card/task row locks at lines 77-87. | Up to **32 s per endpoint** before admission can proceed or return `artifact_unpreserved`; a caller processing k endpoints serially pays up to 32*k s for their stores. Existing pre/post `IsUsableAsync` and deliverable reads are additional caller-token work. | Accept the delay because preservation must precede destructive admission and this wait holds none of those admission/row locks. Never weaken custody to speed cleanup. |
+| Snapshot regeneration: `AgentTaskLandNotificationService.EnsureSnapshotReportAsync:394-414`, awaited in `ReconcileAsync:127`. `AgentTaskLandNotificationHostedService:100-110` awaits rows serially, pages at 128, then sleeps 5 s after the whole scan. | Up to **32 s per missing/unusable snapshot**: three such rows contribute **96 s** (up to 90 s extra versus today), and 128 contribute **4096 s = 68 min 16 s**, plus other work. For m regeneration attempts in a pass the contribution is 32*m s; paging is not a total-run cap. Failure remains `completion_report_unavailable` / RetryPending. Backoff 5..300 s is based on the time captured before regeneration, so early delays may already have elapsed at refusal. The cost can repeat on subsequent eligible passes. | Explicitly accept this worst case for this narrow store-only repair: each row remains finite, bytes must be preserved before delivery, and a small regeneration-only cap would make recovery fail under the same Git contention. This is a conscious head-of-line tradeoff, **not** a scan latency guarantee. If a bounded whole-scan latency becomes required, commission a separately designed fair scan/batching change; do not smuggle concurrency, retries or caller cancellation changes into this card. |
+
+The 32 s values bound **cooperative active-budget time**, not hard wall time.
+Synchronous `Process.Start`, filesystem calls, disposal and temporary cleanup
+can overrun; standalone caller verification reads are outside StoreAsync.
+Pre-call semaphore wait is also outside it. Caller cancellation still wins.
+No report-reason consumer branches on the string. No new session/input wait or
+parking/release behavior is introduced.
 
 ## Smallest implementation
 
@@ -297,11 +348,26 @@ After the first bounded sample, set test and row ceilings near 2x comparable
 p95; a single new test observation is explicitly provisional, not measured p95.
 Use the permitted at-most-three normal and two loaded proof repetitions only
 when needed to resolve a demonstrated uncertainty, never a whole-suite repeat.
-The production preparation ceiling D-2 needs a recorded p95/reference and
-independent acceptance: prefer roughly 2x loaded preparation p95 with documented
-allowance for the existing Git command bound. Retaining 30 s requires a stated
-CARD-1605 exception if measurements do not justify it. Never alter the mandated
-two-second I/O ceiling by applying the test-timeout formula to it.
+**Production preparation acceptance is concrete:** for each CP-5 loaded bucket
+(4 KiB and 64 KiB, concurrency 16, gate width eight), collect all 20 preparation
+durations, require no preparation expiry/missing phase, and require nearest-rank
+**p95 <= 15.000 s** and max **< 30.000 s**. The threshold is half the fixed 30 s
+aggregate cap, giving at least 2x the measured p95; use the worse payload bucket,
+never a merged or successful-only preparation sample. Normal buckets remain
+separate comparison evidence. An I/O refusal still supplies a completed
+preparation sample; a canceled/incomplete preparation cannot be dropped from
+the denominator to pass the rule. CP-5 may collect such refusals, but preparation
+expiry makes acceptance incomplete.
+
+TestDesign freezes this rule; Code reports measured values and ordinary Review
+checks them. If either bucket fails, record the refusal and commission focused
+Debug/Plan analysis; do not automatically raise the default or retry until green.
+If a separately justified decision changes the preparation value after CP-5,
+commit it and rerun **CP-2 and CP-5 at the new SHA**, updating all caller-wait
+figures; old receipts do not validate the new value. A value far above observed
+2x p95 is explicitly the D-2 two-wave *product policy*, not a test-timeout
+exception. Per-test/per-row budgets still follow measured 2x p95 independently.
+Never alter the mandated two-second I/O ceiling by applying that formula to it.
 
 The app/category is server + Git operations, Integration (R-3 also Slow).
 `Antiphon.Tests` directly references `Antiphon.Server`; the store is compiled in
@@ -322,6 +388,10 @@ retrying the broad run.
   hard wall guarantee for synchronous Process.Start, File.Move, directory access,
   stream disposal or temporary deletion. Test hooks prove cooperative stalls;
   hard cancellation of kernel filesystem calls is outside this fix.
+- The serial notification scan can spend 32*m s in m regeneration attempts;
+  a full 128-row regeneration page can contribute 68 min 16 s. D-2 accepts that
+  store-only latency tradeoff, without promising scan fairness or a total bound.
+  This is product wait analysis, not authorization for an over-30-minute test.
 - Root discovery/ignore checks contain filesystem I/O too. They remain bounded
   by preparation, not the two-second report-write window. This is an intentional
   contract clarification; retain all checks and independently review it.
