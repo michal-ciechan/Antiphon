@@ -242,7 +242,13 @@ internal sealed class ModernConPtyConnection : IPtySession
                 ref startupInfo,
                 out processInfo);
             if (!created)
-                throw LastError($"Could not start terminal process {commandLine}");
+            {
+                // The raw command line carries --append-system-prompt. Log and throw only the
+                // redacted form so a later LogError of this exception cannot copy the instructions.
+                var redacted = CommandLineDisclosure.Redact(commandLine);
+                Trace.WriteLine($"Could not start terminal process {redacted}");
+                throw LastError("Could not start terminal process " + redacted);
+            }
 
             if (custody is null)
             {
