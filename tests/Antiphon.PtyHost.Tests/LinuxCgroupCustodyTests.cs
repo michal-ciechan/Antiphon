@@ -27,6 +27,7 @@ namespace Antiphon.PtyHost.Tests;
 /// executed.</para>
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 [NotInParallel("LinuxCustody")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class LinuxCgroupCustodyTests
@@ -56,7 +57,7 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        var launched = await world.LaunchAsync("echo placed-marker", "sleep 120");
+        var launched = await world.LaunchAsync("echo placed-marker", world.HoldLine());
         launched.ChildPid.ShouldBeGreaterThan(0);
 
         var pids = await world.WaitForTreeAsync(atLeast: 1);
@@ -86,9 +87,11 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
         var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
         await world.LaunchAsync(
-            "setsid sh -c 'echo $$ > \"" + daemonPidFile + "\"; exec sleep 120' < /dev/null > /dev/null 2>&1 &",
-            "sleep 120");
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            world.HoldLine());
 
         var daemonPid = await WaitForPidFileAsync(daemonPidFile);
         SessionIdOf(daemonPid).ShouldBe(daemonPid, "setsid must actually have made it a session leader");
@@ -108,8 +111,10 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
         var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
         await world.LaunchAsync(
-            "setsid sh -c 'echo $$ > \"" + daemonPidFile + "\"; exec sleep 120' < /dev/null > /dev/null 2>&1 &",
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
             "exit 0");
 
         var daemonPid = await WaitForPidFileAsync(daemonPidFile);
@@ -137,7 +142,7 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        await world.LaunchAsync("echo still-running", "sleep 300");
+        await world.LaunchAsync("echo still-running", world.HoldLine());
         var pids = await world.WaitForTreeAsync(atLeast: 1);
 
         var status = await world.CustodyAsync(seal: true);
@@ -168,7 +173,7 @@ public class LinuxCgroupCustodyTests
             "echo $$ > \"" + root + "/cgroup.procs\" 2>/dev/null; echo root=$? >> \"" + report + "\"",
             "echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; echo unified=$? >> \"" + report + "\"",
             "echo done >> \"" + report + "\"",
-            "sleep 120");
+            world.HoldLine());
 
         var lines = await WaitForLineAsync(report, "done");
         Outcome(lines, "sudo").ShouldNotBe(0, "no_new_privs must make sudo inert inside the tree");
@@ -189,7 +194,7 @@ public class LinuxCgroupCustodyTests
         var world = await CustodyWorld.StartAsync();
         try
         {
-            await world.LaunchAsync("echo tracked", "sleep 300");
+            await world.LaunchAsync("echo tracked", world.HoldLine());
             await world.WaitForTreeAsync(atLeast: 1);
             File.Exists(world.StorePath("tracking.json")).ShouldBeTrue();
 
@@ -230,7 +235,7 @@ public class LinuxCgroupCustodyTests
         world.Store.Reserve(foreign);
         world.Store.WriteRecord(foreign, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
 
-        (await world.Host.Session.LaunchAsync(world.Spec(foreign, "sleep 120"), CancellationToken.None))
+        (await world.Host.Session.LaunchAsync(world.Spec(foreign, "true"), CancellationToken.None))
             .ShouldBeOfType<ErrorMessage>();
         File.Exists(world.StorePath("native-start-intent.json", foreign)).ShouldBeFalse();
         Directory.Exists(Path.Combine(CustodyRoot(), foreign.ExecutionId.ToString("D"))).ShouldBeFalse(
@@ -244,7 +249,7 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        await world.LaunchAsync("echo idempotent-marker", "sleep 300");
+        await world.LaunchAsync("echo idempotent-marker", world.HoldLine());
         await world.WaitForTreeAsync(atLeast: 1);
 
         var first = await world.CustodyAsync(seal: true);
@@ -344,7 +349,19 @@ public class LinuxCgroupCustodyTests
         public VerificationCustodyStore Store { get; }
         public VerificationExecutionBinding Binding { get; }
         public string Scratch { get; }
+        public string ReleasePath => Path.Combine(Scratch, "release");
         public int RootPid { get; private set; }
+
+        /// <summary>Hold at most 10s, or until <see cref="ReleasePath"/> appears.</summary>
+        public string HoldLine() =>
+            "i=0; while [ ! -f \"" + ReleasePath + "\" ] && [ \"$i\" -lt 100 ]; do i=$((i+1)); sleep 0.1; done";
+
+        /// <summary>setsid child redirects stdio, then publishes its pid and a nonce, then holds.</summary>
+        public string DetachedHold(string pidFile, string nonceFile) =>
+            "setsid sh -c 'exec </dev/null >/dev/null 2>&1; echo $$ > \"" + pidFile + "\"; echo ready > \"" + nonceFile + "\"; " + HoldLine() + "' &";
+
+        public string WaitForNonce(string nonceFile) =>
+            "j=0; while [ ! -f \"" + nonceFile + "\" ] && [ \"$j\" -lt 100 ]; do j=$((j+1)); sleep 0.1; done";
 
         private Guid? TrackedContainerId => Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
 
@@ -448,30 +465,67 @@ public class LinuxCgroupCustodyTests
 
         public async ValueTask DisposeAsync()
         {
-            // Never leave a populated cgroup behind: the next execution's "exists and is empty"
-            // precondition would refuse for a reason nobody could see.
-            try
+            try { File.WriteAllText(ReleasePath, "release"); }
+            catch (IOException) { }
+
+            var released = await WaitUntilGoneAsync(TimeSpan.FromSeconds(10));
+            if (!released)
             {
-                var containerId = TrackedContainerId;
-                if (containerId is not null)
+                try
                 {
-                    using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                    var containerId = TrackedContainerId;
+                    if (containerId is not null)
                     {
-                        ArgumentList = { "-n", KillHelper, containerId.Value.ToString("D") },
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                    });
-                    kill?.WaitForExit(45_000);
+                        using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                        {
+                            ArgumentList = { "-n", KillHelper, containerId.Value.ToString("D") },
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                        });
+                        kill?.WaitForExit(10_000);
+                    }
                 }
-            }
-            catch
-            {
-                // Teardown is best-effort; the case's own assertions are the verdict.
+                catch (InvalidOperationException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // The watchdog below reports a tree the helper could not start against.
+                }
+
+                released = await WaitUntilGoneAsync(TimeSpan.FromSeconds(10));
             }
 
-            // The lost-host case disposes the harness itself, so a second dispose is expected.
-            try { await Host.DisposeAsync(); } catch (ObjectDisposedException) { }
+            try { await Host.DisposeAsync(); }
+            catch (ObjectDisposedException) { }
+
+            if (!released)
+                throw new InvalidOperationException("custody fixture residue survived the 10s watchdog");
+        }
+
+        private async Task<bool> WaitUntilGoneAsync(TimeSpan bound)
+        {
+            if (RootPid <= 0)
+                return true;
+            var deadline = DateTime.UtcNow + bound;
+            while (DateTime.UtcNow < deadline)
+            {
+                var rootGone = !Directory.Exists("/proc/" + RootPid);
+                var treeEmpty = true;
+                if (TrackedContainerId is not null)
+                {
+                    var pids = await ReadTreeAsync();
+                    treeEmpty = pids.Count == 0;
+                }
+
+                if (rootGone && treeEmpty)
+                    return true;
+                await Task.Delay(100);
+            }
+
+            return false;
         }
     }
 }

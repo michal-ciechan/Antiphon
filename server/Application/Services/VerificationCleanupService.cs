@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>Explicit cleanup seals launch admission; it never stops or kills a process.</summary>
+/// <summary>Explicit cleanup seals launch admission. It can terminate Linux containment. A Windows seal does not terminate; the existing linger and kill-on-close job remain. A successful kill is not a receipt.</summary>
 public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerDirectory runners,
     IRepositoryMutationLease leases, IWorktreeManager worktrees, TimeProvider clock,
     IVerificationWorkspaceDirectory? workspaces = null)

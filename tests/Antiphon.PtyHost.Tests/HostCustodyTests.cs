@@ -214,6 +214,8 @@ public class HostCustodyTests
     [Test]
     public async Task Inbox_is_unsupported_and_never_becomes_no_start_proof()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Requires Windows job-object inbox custody.");
         await using var host = CreateHost("inbox");
         var (store, binding) = Reserve(host);
         var marker = Path.Combine(binding.Creation.WorktreePath, "payload-ran");
