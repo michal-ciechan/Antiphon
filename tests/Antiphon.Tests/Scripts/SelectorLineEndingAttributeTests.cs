@@ -48,7 +48,7 @@ public sealed class SelectorLineEndingAttributeTests
 
         var preserved = (await Git(root, "check-attr", "-z", "text", "eol", "--", PreservedBytes))
             .Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        preserved.ShouldBe([PreservedBytes, "text", "unset", PreservedBytes, "eol", "unspecified"]);
+        preserved.ShouldBe([PreservedBytes, "text", "unset", PreservedBytes, "eol", "unset"]);
     }
 
     private static async Task<string> Git(string root, params string[] arguments)
