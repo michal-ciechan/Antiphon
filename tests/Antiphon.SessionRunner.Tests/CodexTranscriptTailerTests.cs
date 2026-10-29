@@ -529,8 +529,14 @@ public class CodexTranscriptTailerTests
         await using var writerHandle = new FileStream(
             fixture.Path, FileMode.Open, FileAccess.Write, FileShare.Read);
 
-        Should.Throw<IOException>(() => File.ReadAllLines(fixture.Path))
-            .Message.ShouldContain("another process");
+        // Share-mode denial is mandatory on Windows. Linux lets the naive read succeed;
+        // the tailer below must still read the rollout while this writer holds it.
+        if (OperatingSystem.IsWindows())
+        {
+            Should.Throw<IOException>(() => File.ReadAllLines(fixture.Path))
+                .Message.ShouldContain("another process");
+        }
+        else File.ReadAllLines(fixture.Path).Length.ShouldBeGreaterThan(0);
 
         var input = new SessionInputLog();
         input.Append(TuiFixturePrompt);

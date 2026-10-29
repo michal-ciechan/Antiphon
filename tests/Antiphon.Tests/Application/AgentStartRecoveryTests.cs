@@ -30,9 +30,17 @@ public class AgentStartRecoveryTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
+    private static void RequireWindowsCmd()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException(
+                "Agent start recovery's live executable is cmd.exe from the Windows system directory; Linux has no cmd.exe.");
+    }
+
     [Test]
     public async Task Interactive_start_failure_marks_agent_failed_not_working()
     {
+        RequireWindowsCmd();
         var tempRoot = NewTempRoot();
         try
         {
@@ -115,6 +123,7 @@ public class AgentStartRecoveryTests
     public async Task Observed_exit_closes_session_and_resets_agent(
         int exitCode, AgentStatus expectedAgentStatus, SessionStatus expectedSessionStatus)
     {
+        RequireWindowsCmd();
         var tempRoot = NewTempRoot();
         try
         {
