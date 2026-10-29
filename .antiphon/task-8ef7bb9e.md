@@ -36,10 +36,27 @@ SHARD b3-Retired end rc=0 wall=913s waited=30s  total: 38  failed: 0  succeeded:
 SHARD a-rsc2 end rc=2 wall=881s waited=120s  total: 216  failed: 1  succeeded: 215  skipped: 0  duration: 12m 38s 563ms 
 SHARD c4-D end rc=0 wall=860s waited=210s  total: 580  failed: 0  succeeded: 574  skipped: 6  duration: 10m 46s 744ms 
 SHARD b4-Ch1 end rc=0 wall=1080s waited=135s  total: 255  failed: 0  succeeded: 255  skipped: 0  duration: 15m 42s 320ms 
+SHARD c5-EFGIJK end rc=0 wall=784s waited=30s  total: 492  failed: 0  succeeded: 479  skipped: 13  duration: 12m 31s 371ms 
+SHARD a-rsc3 end rc=0 wall=1715s waited=270s  total: 39  failed: 0  succeeded: 39  skipped: 0  duration: 24m 03s 678ms 
+SHARD a-rsc4 end rc=0 wall=184s waited=30s  total: 83  failed: 0  succeeded: 83  skipped: 0  duration: 2m 31s 066ms 
+SHARD b5-Ch2 end rc=0 wall=1510s waited=285s  total: 302  failed: 0  succeeded: 301  skipped: 1  duration: 20m 21s 921ms 
+LANE B done 2026-10-29T19:51:39Z
+SHARD a-rsc5 end rc=0 wall=465s waited=180s  total: 121  failed: 0  succeeded: 121  skipped: 0  duration: 4m 43s 015ms 
+LANE A done 2026-10-29T19:51:57Z
 ```
-## Red comparisons so far
+## Red comparisons
 ```
 RED c1364-master rc=0 wall=377s  total: 6  failed: 0  succeeded: 6  skipped: 0 
 RED c1364-tip rc=0 wall=371s  total: 6  failed: 0  succeeded: 6  skipped: 0 
 RED c1008legacy-master rc=0 wall=701s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED c1008legacy-tip rc=0 wall=624s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED v6stamped-tip-1 rc=0 wall=28s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED v6stamped-tip-2 rc=0 wall=27s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED v6stamped-tip-3 rc=0 wall=28s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED v6stamped-tip-4 rc=0 wall=24s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+RED v6stamped-tip-5 rc=0 wall=27s  total: 4  failed: 0  succeeded: 4  skipped: 0 
+REDBATCH done 2026-10-29T19:35:02Z
+RED c1105resume-master rc=2 wall=3s  total: 1  failed: 1  succeeded: 0  skipped: 0 
+RED c1105resume-tip rc=2 wall=3s  total: 1  failed: 1  succeeded: 0  skipped: 0 
+RED2BATCH done 2026-10-29T19:35:19Z
 ```
