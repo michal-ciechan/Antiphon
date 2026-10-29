@@ -28,6 +28,7 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
     private int _disposed;
+    private long _pendingGeneration;
     private TimeProvider _clock = TimeProvider.System;
 
     // Test seam. Production leaves both null; a set gate pauses ProcessAsync before the route.
@@ -84,16 +85,21 @@ public sealed class AgentMentionRouter : IDisposable
             .Replace('\r', '\n')
             .Split('\n');
         var completedLineCount = combined.EndsWith('\n') ? lines.Length : Math.Max(0, lines.Length - 1);
-        var ready = new List<AgentMention>();
-        for (var i = 0; i < completedLineCount; i++)
-            ready.AddRange(MentionsToEnqueue(sourceSessionId, lines[i], skipPendingDuplicate: true));
+        // Debounce keys name the partial already delivered. Only the first completed
+        // line continues that partial. Every later completed line is a new message.
+        var continuation = completedLineCount > 0
+            ? MentionsToEnqueue(sourceSessionId, lines[0], skipPendingDuplicate: true)
+            : new List<AgentMention>();
+        var later = new List<AgentMention>();
+        for (var i = 1; i < completedLineCount; i++)
+            later.AddRange(MentionsToEnqueue(sourceSessionId, lines[i], skipPendingDuplicate: false));
 
         // The liveness read is a database round trip. Claim these targets under the
         // debounce gate first, or that timer queues the partial line while the read waits.
         // A failed, not-live, or cancelled read still enqueues the claim with no stamp.
         // The pump cancels this token when a runner connection is replaced; the router
         // keeps running, so cancellation settles the line and then rethrows.
-        var claimed = ClaimCompletedMentions(sourceSessionId, ready);
+        var claimed = ClaimCompletedMentions(sourceSessionId, continuation, later);
 
         MentionSourceLiveness? observed = null;
         if (capture is not null && claimed.Count > 0)
@@ -133,7 +139,7 @@ public sealed class AgentMentionRouter : IDisposable
                 }
             }
 
-            for (var i = 0; i < completedLineCount; i++)
+            if (completedLineCount > 0)
                 _pendingStates.TryRemove(sourceSessionId, out _);
 
             var remainder = completedLineCount < lines.Length ? lines[^1] : string.Empty;
@@ -222,7 +228,9 @@ public sealed class AgentMentionRouter : IDisposable
         lock (state.Gate)
         {
             state.Text = line;
-            version = ++state.Version;
+            // A recreated state must not restart at 1, or the previous state's
+            // debounce matches it and delivers the new partial early.
+            version = state.Version = NextPendingGeneration();
         }
 
         Record(sourceSessionId, MentionRouteDiagnostics.PendingScheduled, $"version={version} remainderChars={line.Length}");
@@ -296,19 +304,31 @@ public sealed class AgentMentionRouter : IDisposable
         }
     }
 
-    private List<AgentMention> ClaimCompletedMentions(Guid sourceSessionId, List<AgentMention> ready)
+    private List<AgentMention> ClaimCompletedMentions(
+        Guid sourceSessionId,
+        List<AgentMention> continuation,
+        List<AgentMention> later)
     {
-        if (ready.Count == 0 || !_pendingStates.TryGetValue(sourceSessionId, out var state))
-            return ready;
+        if ((continuation.Count == 0 && later.Count == 0)
+            || !_pendingStates.TryGetValue(sourceSessionId, out var state))
+        {
+            if (continuation.Count == 0)
+                return later;
 
-        var claimed = new List<AgentMention>(ready.Count);
+            var combined = new List<AgentMention>(continuation.Count + later.Count);
+            combined.AddRange(continuation);
+            combined.AddRange(later);
+            return combined;
+        }
+
+        var claimed = new List<AgentMention>(continuation.Count + later.Count);
         lock (state.Gate)
         {
-            state.Version++;
-            // Skip only targets the debounce already queued. A later mention of the
-            // same target in this chunk is a separate message and still queues.
+            state.Version = NextPendingGeneration();
+            // The snapshot is the debounce's deliveries. It applies only to the
+            // continuation line. Later lines in this chunk always queue.
             var already = new HashSet<string>(state.RoutedKeys, StringComparer.OrdinalIgnoreCase);
-            foreach (var mention in ready)
+            foreach (var mention in continuation)
             {
                 if (already.Contains(PendingRouteKey(mention)))
                 {
@@ -319,10 +339,18 @@ public sealed class AgentMentionRouter : IDisposable
                 state.RoutedKeys.Add(PendingRouteKey(mention));
                 claimed.Add(mention);
             }
+
+            foreach (var mention in later)
+            {
+                state.RoutedKeys.Add(PendingRouteKey(mention));
+                claimed.Add(mention);
+            }
         }
 
         return claimed;
     }
+
+    private long NextPendingGeneration() => Interlocked.Increment(ref _pendingGeneration);
 
     private void ReleaseUnqueuedClaim(Guid sourceSessionId, List<AgentMention> claimed, int firstUnqueued)
     {
