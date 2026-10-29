@@ -16,9 +16,9 @@ the production runner and canonical checkout are outside this investigation.
 `EnsureCurrent` creates a GUID-qualified staging directory, copies the payload,
 then publishes it with one `Directory.Move`. Its only recovery handles an
 `IOException` when another publisher already created the destination. A native
-Windows handle without delete sharing can instead make the rename throw access
-denied on the staging directory. The red witness extracts that exact rename into
-an internal method without changing behavior, acquires a real Windows directory
+Windows payload-file handle without delete sharing can instead make the rename
+throw access denied on the staging directory. The red witness extracts that exact
+rename into an internal method without changing behavior, acquires a real Windows file
 handle, proves the native denial, and requires publication after that handle is
 released. It does not inject filesystem results or exceptions.
 
@@ -48,7 +48,7 @@ stop repetition before spending 30 minutes on one batch. No existing timeout is
 widened. TRX records per-test duration; opt-in phase records will be retained for
 E2E, with unavailable phases explicitly unknown. Each run records source SHA,
 selection, timing, platform and build identity. Native Windows is required for
-the two directory-handle cases; a non-Windows skip is not qualification.
+the two file-handle cases; a non-Windows skip is not qualification.
 
 ## Results
 
@@ -56,7 +56,16 @@ Initial native probe at `cfbf06753365ba65cbee4c7cdd99fd77a0fad2ff`: build passed
 (one pre-existing nullable warning), test 0 passed / 1 failed. The failure was the
 fixture premise: a metadata-only (desired access zero) directory handle did not
 block rename. This is not product-red evidence. The corrected probe requests
-GENERIC_READ while withholding delete sharing. Native red/repair results follow.
+GENERIC_READ while withholding delete sharing. That second probe at
+`32bef229940eede3dbe5b0c4541b058e26cbc79b` failed the expected exception premise
+too: a directory read handle yields an IOException sharing violation, not access
+denied. Both fixture-premise failures remain recorded and are not product-red.
+
+A gated native probe holding a *payload file* with `File.OpenRead` reproduced
+`System.IO.IOException`, HRESULT `80070005`, and the original message naming the
+parent `.copying` directory. The regression now uses this real native condition.
+The original handle owner remains unknown; a matching failure mechanism is
+established, not antivirus or competing-runner attribution.
 
 --- next stage ---
 next: review
