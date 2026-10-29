@@ -315,20 +315,23 @@ red row is fixed and rerun as the same row.
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1087-a/` | wrapper-reads-project | `/*/*/RollingVolumeRecycleScriptTests/(C1087_Read_failures_name_their_cause*)\|(C1087_Project_resolves_by_repository_identity*)\|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)` | V-1, V-2, R-1 | exact 4 methods, 0 failed/skipped | 4 | 10 | true |
 | CP-2 | S1-S3 | CP-1 | server-land-pending | `/*/*/AgentTaskScopedListEndpointTests/*` | V-3, R-2 | exact 11 methods (10 existing + Land_pending_filter_selects_pending_rows), 0 failed/skipped | 11 | 6 | true |
 | CP-3 | all | `tests/Antiphon.Tests -> bin-c1087-b/` | wrapper-census | `/*/*/RollingVolumeRecycleScriptTests/(C1087_Read_failures_name_their_cause*)\|(C1087_Project_resolves_by_repository_identity*)\|(C1087_Census_filters_open_work_and_pending_lands*)\|(C1087_Check_census_phase_is_read_only*)` | V-1, V-2, V-4, V-7 | exact 4 C1087_* methods, 0 failed/skipped | 4 | 6 | true |
-| CP-3b | all | CP-3 | wrapper-census-rest | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Legacy_rolling_and_jq_rosters_remain*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Transport_scripts_are_ascii*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt*)\|(C1008_Preview_helper_removal_is_owned*)` | R-1 | exact 14 existing C1008_* methods, 0 failed/skipped | 14 | 8 | true |
+| CP-3b | all | CP-3 | wrapper-census-rest | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Legacy_rolling_and_jq_rosters_remain*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Transport_scripts_are_ascii*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)` | R-1 | exact 16 C1008_* methods, 0 failed/skipped | 16 | 8 | true |
 | CP-4 | all | CP-3 | wrapper-vectors | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-5, R-3 | exact 13 existing methods, 0 failed/skipped | 13 | 6 | true |
 | CP-5 | all | CP-3 | host-census | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | R-4 | exact 3 methods, 0 failed/skipped, native Linux | 3 | 14 | true |
 | CP-5b | all | CP-3 | host-census-rest | `/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)\|(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_dry_run_never_mutates*)` | V-6, R-4 | exact 9 methods (8 existing C1008_* + C1087_Host_census_filters_and_names_cause), 0 failed/skipped, native Linux | 9 | 9 | true |
 | CP-6 | all | CP-3 | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-5 | exact 13 methods (12 existing + Recycle_census_preflight_is_documented), 0 failed/skipped | 13 | 1 | true |
 | CP-7 | all | CP-3 | real-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | R-6 | 1 result; all RD outcomes as recorded by the fixture, 0 failed/skipped, owned residue=0 | 1 | 12 | true |
 
-CP-3 and CP-3b are the same eighteen wrapper methods. The combined row's tests
-took 1164 seconds at `bda3990189d1b2971abc80f494ff225c7a990ef3` (1125.8 seconds
-at `9c0fa80459cfc60e8c78a069d1d4e987f008ec41`) and one attempt was killed at the
+CP-3 and CP-3b together name every `C1087_*` and `C1008_*` method on
+`RollingVolumeRecycleScriptTests`. CARD-1087 measured eighteen (four plus
+fourteen). Those combined tests took 1164 seconds at
+`bda3990189d1b2971abc80f494ff225c7a990ef3` (1125.8 seconds at
+`9c0fa80459cfc60e8c78a069d1d4e987f008ec41`) and one attempt was killed at the
 1200-second row cap with no TRX. CP-3 is the four `C1087_*` methods (V-1, V-2,
-V-4, V-7). CP-3b is the fourteen `C1008_*` methods (R-1). EstimatedMinutes 6 and 8
-allocate the previous combined 14; per-method durations for this class were not
-retained. Neither row's timeout is raised.
+V-4, V-7). CP-3b is the sixteen `C1008_*` methods (R-1), including the two
+CARD-1607 host-proof methods. EstimatedMinutes 6 and 8 allocate the previous
+combined 14; per-method durations for this class were not retained. Neither
+row's timeout is raised.
 
 CP-5 and CP-5b are the same twelve host methods. Isolated TUnit durations at
 `9c0fa80459cfc60e8c78a069d1d4e987f008ec41` sum to 1327 seconds, past the unchanged
