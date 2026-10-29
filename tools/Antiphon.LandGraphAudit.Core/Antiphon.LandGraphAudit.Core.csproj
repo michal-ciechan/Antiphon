@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Clock and approval orchestration for the land-graph audit. No MSBuild types: Antiphon.Tests
+    (net9.0) calls this directly, and the net10.0 tool supplies the real evaluator and clock.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.LandGraphAudit</RootNamespace>
+    <AssemblyName>Antiphon.LandGraphAudit.Core</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.LandGraphAudit" />
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+  </ItemGroup>
+
+</Project>

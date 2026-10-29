@@ -16,104 +16,95 @@ internal static class SolutionAudit
     private const string SolutionConfiguration = "Debug";
     private const string SolutionPlatform = "Any CPU";
 
-    public static int Run(string repo, string solution, string sdkDirectory, TextWriter output, WitnessRequest? witness = null)
+    public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
     {
         // Each pass has its own budget. The old single wait covered both passes and the copy.
-        var passBudget = witness?.Pass ?? EvaluationBudget.PassTimeout;
-        var copyBudget = witness?.Copy ?? EvaluationBudget.CopyTimeout;
+        var passBudget = EvaluationBudget.PassTimeout;
+        var copyBudget = EvaluationBudget.CopyTimeout;
         string[]? tracked = null;
         string? artifacts = null;
         EvaluationSnapshot? baseline = null;
-        var first = PhaseClock.Bound(passBudget, solution, "pass 1", () =>
-        {
-            if (witness is not null)
-            {
-                if (witness.HoldPass1 > TimeSpan.Zero) Thread.Sleep(witness.HoldPass1);
-                return Program.Approved;
-            }
-
-            // Locator has registered the SDK before this method is entered. Inspect every
-            // repository evaluation expression, including inactive branches and metadata.
-            var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
-            EvaluationExpressionPolicy.Check(repo, expressionRefusals);
-            if (expressionRefusals.Count > 0)
-            {
-                foreach (var refusal in expressionRefusals) output.WriteLine(refusal);
-                return Program.Refused;
-            }
-
-            tracked = BuildInputPolicy.TrackedFiles(repo);
-            artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
-            baseline = new EvaluationSnapshot(repo, repo);
-            return RunPass(repo, solution, sdkDirectory, output, tracked, artifacts, baseline);
-        });
-        if (first != Program.Approved) return first;
-
-        using var canary = PhaseClock.BoundCopy(copyBudget, solution, () =>
-        {
-            var created = CanaryRepository.Create(repo);
-            if (witness is { HoldCopy: var hold } && hold > TimeSpan.Zero) Thread.Sleep(hold);
-            return created;
-        });
-        if (witness?.TouchRelative is { } touch) TouchCanary(canary.Root, touch, output);
-        if (witness is not null)
-        {
-            var witnessed = PhaseClock.Bound(passBudget, solution, "pass 2", () =>
-            {
-                output.WriteLine("phase=pass2");
-                output.Flush();
-                if (witness.HoldPass2 > TimeSpan.Zero) Thread.Sleep(witness.HoldPass2);
-                return Program.Approved;
-            }, () => { try { canary.Dispose(); } catch (Exception) { } });
-            if (witnessed != Program.Approved) return witnessed;
-            output.WriteLine("approved");
-            return Program.Approved;
-        }
-
-        var changed = new EvaluationSnapshot(canary.Root, repo);
+        CanaryRepository? canary = null;
+        using var diagnostics = new StringWriter();
         try
         {
-            using var diagnostics = new StringWriter();
-            var second = PhaseClock.Bound(passBudget, solution, "pass 2", () =>
-                RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked!, artifacts!, changed),
-                () => { try { canary.Dispose(); } catch (Exception) { } });
-            if (second != Program.Approved)
-            {
-                output.WriteLine($"refused: differential canary evaluation refused: {Program.OneLine(diagnostics.ToString())}");
-                return Program.Refused;
-            }
-        }
-        catch (Exception ex)
-        {
-            // A previously successful evaluation that fails after changing only documentation
-            // is itself a dependency witness (not an approval and not a baseline load failure).
-            output.WriteLine($"refused: differential canary evaluation failed: {Program.OneLine(Program.Describe(ex))}");
-            return Program.Refused;
-        }
+            return AuditPhases.Run(
+                solution,
+                output,
+                new WallClock(),
+                passBudget,
+                copyBudget,
+                pass1: () =>
+                {
+                    // Locator has registered the SDK before this method is entered. Inspect every
+                    // repository evaluation expression, including inactive branches and metadata.
+                    var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
+                    EvaluationExpressionPolicy.Check(repo, expressionRefusals);
+                    if (expressionRefusals.Count > 0)
+                    {
+                        foreach (var refusal in expressionRefusals) output.WriteLine(refusal);
+                        return Program.Refused;
+                    }
 
-        if (baseline is null) return Program.Fail("evaluation produced no baseline");
-        var difference = baseline.Difference(changed);
-        if (difference is not null)
-        {
-            output.WriteLine($"refused: differential {difference}");
-            return Program.Refused;
-        }
-        output.WriteLine("approved");
-        return Program.Approved;
-    }
+                    tracked = BuildInputPolicy.TrackedFiles(repo);
+                    artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
+                    baseline = new EvaluationSnapshot(repo, repo);
+                    return RunPass(repo, solution, sdkDirectory, output, tracked, artifacts, baseline);
+                },
+                copy: () =>
+                {
+                    canary = CanaryRepository.Create(repo);
+                    return Program.Approved;
+                },
+                pass2: () =>
+                {
+                    output.WriteLine("phase=pass2");
+                    output.Flush();
+                    if (canary is null || baseline is null || tracked is null || artifacts is null)
+                        return Program.Fail("evaluation produced no baseline");
+                    var changed = new EvaluationSnapshot(canary.Root, repo);
+                    try
+                    {
+                        var second = RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked, artifacts, changed);
+                        if (second != Program.Approved)
+                        {
+                            output.WriteLine($"refused: differential canary evaluation refused: {Program.OneLine(diagnostics.ToString())}");
+                            return Program.Refused;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // A previously successful evaluation that fails after changing only documentation
+                        // is itself a dependency witness (not an approval and not a baseline load failure).
+                        output.WriteLine($"refused: differential canary evaluation failed: {Program.OneLine(Program.Describe(ex))}");
+                        return Program.Refused;
+                    }
 
-    private static void TouchCanary(string root, string relative, TextWriter output)
-    {
-        if (Path.IsPathRooted(relative) || relative.Contains("..", StringComparison.Ordinal))
-            throw new IOException("canary touch path escapes the canary");
-        var destination = Path.GetFullPath(Path.Combine(root, relative));
-        if (!destination.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new IOException("canary touch path escapes the canary");
-        const string sentinel = "canary-independent-copy";
-        File.WriteAllText(destination, sentinel);
-        if (!string.Equals(File.ReadAllText(destination), sentinel, StringComparison.Ordinal))
-            throw new IOException("canary write did not stay in the canary");
-        output.WriteLine("canary-independent: " + relative.Replace('\\', '/'));
+                    var difference = baseline.Difference(changed);
+                    if (difference is not null)
+                    {
+                        output.WriteLine($"refused: differential {difference}");
+                        return Program.Refused;
+                    }
+
+                    return Program.Approved;
+                },
+                onTimeout: () =>
+                {
+                    try { canary?.Dispose(); }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"canary delete failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+
+                    CanaryRepository.DeleteActive();
+                },
+                copyClock: new WallClock(cancelCopy: true));
+        }
+        finally
+        {
+            canary?.Dispose();
+        }
     }
 
     private static int RunPass(string repo, string solution, string sdkDirectory, TextWriter output,
@@ -323,24 +314,11 @@ internal static class SolutionAudit
     /// Missing components are kept as written; one that cannot be read throws. Windows folds <c>..</c> lexically before the file system
     /// sees it, so there this only over-approximates (another candidate, never fewer refusals).
     /// </summary>
-    internal static string RealPath(string path) => RealPath(path, null);
-
-    /// <summary>
-    /// <paramref name="directoryCache"/> remembers the real path of a lexical parent so a
-    /// sibling file does not stat that parent again. The cached value is <see cref="RealPath(string)"/>
-    /// of the parent, never inferred from a child that may itself be a link.
-    /// </summary>
-    internal static string RealPath(string path, Dictionary<string, string>? directoryCache)
+    internal static string RealPath(string path)
     {
         var combined = Path.Combine(Environment.CurrentDirectory, path);
-        var parent = Path.GetDirectoryName(combined);
-        if (directoryCache is not null && parent is not null && directoryCache.TryGetValue(parent, out var realParent))
-            return Walk(realParent, [Path.GetFileName(combined)]);
         var root = Path.GetPathRoot(combined)!;
-        var real = Walk(Path.GetFullPath(root), Components(combined[root.Length..]));
-        if (directoryCache is not null && parent is not null && !directoryCache.ContainsKey(parent))
-            directoryCache[parent] = RealPath(parent);
-        return real;
+        return Walk(Path.GetFullPath(root), Components(combined[root.Length..]));
     }
 
     private static string Walk(string current, IEnumerable<string> components)

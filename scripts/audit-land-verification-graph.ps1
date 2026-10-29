@@ -11,7 +11,9 @@
 # The evaluator's own clocks bound each solution pass and the canary copy. This script's
 # wait is the tool's printed ceiling (phase total plus EvaluationBudget.StartupGraceSeconds).
 # That grace constant lives only in the tool. -EvaluationBudgetSeconds overrides that wait
-# for witnesses and is exact. A killed tool's canary is removed from the recorded path.
+# and is exact: it never skips evaluation and never approves by itself. A killed tool's
+# canary is removed from the recorded path. A canary left behind when this process dies
+# is not swept on the next run.
 # ASCII-only and Windows PowerShell 5.1 compatible.
 [CmdletBinding()]
 param(
@@ -19,7 +21,6 @@ param(
     [switch]$Update,
     [string]$ToolPath,
     [int]$EvaluationBudgetSeconds = 0,
-    [string]$WitnessClock = '',
     [string]$RemoveRecordedCanary = '',
     [string]$RemoveRecordedCanaryRepo = '')
 
@@ -141,19 +142,29 @@ function Remove-RecordedCanary([string]$RecordPath, [string]$RepositoryRoot) {
     if ([string]::IsNullOrWhiteSpace($RecordPath)) { return }
     if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { return }
     if (-not [System.IO.File]::Exists($RecordPath)) { return }
-    $recorded = [System.IO.File]::ReadAllText($RecordPath).Trim()
+    $recordedRaw = [System.IO.File]::ReadAllText($RecordPath)
+    if ($recordedRaw.IndexOf("`n") -ge 0 -or $recordedRaw.IndexOf("`r") -ge 0) { return }
+    $recorded = $recordedRaw.Trim()
     if ([string]::IsNullOrWhiteSpace($recorded)) { return }
-    $full = [System.IO.Path]::GetFullPath($recorded)
-    $name = [System.IO.Path]::GetFileName($full)
-    if ($name -cnotmatch '\Aantiphon-landgraph-canary-[0-9a-f]{32}\z') { return }
-    $parent = [System.IO.Path]::GetDirectoryName($full)
+    $hasTrailingSeparator = $recorded.EndsWith('/') -or $recorded.EndsWith('\')
+    $stripped = $recorded.TrimEnd('/', '\')
+    if ([string]::IsNullOrWhiteSpace($stripped)) { return }
+    $strippedFull = [System.IO.Path]::GetFullPath($stripped)
+    $name = [System.IO.Path]::GetFileName($strippedFull)
+    if ($name -cnotmatch '\Aantiphon-landgraph-canary-[0-9a-f]{32}\z') { return } # guard:name
+    $parent = [System.IO.Path]::GetDirectoryName($strippedFull)
     $expectedParent = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($RepositoryRoot))
-    if (-not [string]::Equals($parent, $expectedParent, [System.StringComparison]::Ordinal)) { return }
-    $rebuilt = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($expectedParent, $name))
-    if (-not [string]::Equals($full, $rebuilt, [System.StringComparison]::Ordinal)) { return }
-    if ([string]::Equals($full, [System.IO.Path]::GetFullPath($RepositoryRoot), [System.StringComparison]::Ordinal)) { return }
-    if ([System.IO.Directory]::Exists($full)) {
-        [System.IO.Directory]::Delete($full, $true)
+    if (-not [string]::Equals($parent, $expectedParent, [System.StringComparison]::Ordinal)) { return } # guard:parent
+    $roundTrip = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($parent, $name))
+    if ($hasTrailingSeparator -or -not [string]::Equals($strippedFull, $roundTrip, [System.StringComparison]::Ordinal)) { return } # guard:rebuilt
+    if ([string]::Equals($strippedFull, [System.IO.Path]::GetFullPath($RepositoryRoot), [System.StringComparison]::Ordinal)) { return } # guard:repo-root
+    if (-not [System.IO.Directory]::Exists($strippedFull)) { return }
+    $link = ([System.IO.File]::GetAttributes($strippedFull) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    try {
+        if ($link) { [System.IO.Directory]::Delete($strippedFull, $false) }
+        else { [System.IO.Directory]::Delete($strippedFull, $true) }
+    } catch {
+        [Console]::Error.WriteLine('canary delete failed: ' + $_.Exception.Message)
     }
 }
 
@@ -163,22 +174,10 @@ function Assert-EvaluatedGraph([string]$EvaluatorPath) {
     }
     if (-not [System.IO.File]::Exists($EvaluatorPath)) { throw ('built evaluator missing: ' + $EvaluatorPath) }
     $budget = Get-EvaluatorBudgetSeconds $EvaluatorPath
-    # The printed ceiling already includes the tool's one startup grace. An explicit witness budget is exact.
+    # The printed ceiling already includes the tool's one startup grace. An explicit budget is exact.
     $timeoutMs = $budget * 1000
     $record = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-landgraph-canary-record-' + [Guid]::NewGuid().ToString('N') + '.txt')
     $toolArguments = @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln', '--canary-record', $record)
-    if (-not [string]::IsNullOrEmpty($WitnessClock)) {
-        if ($EvaluationBudgetSeconds -le 0) { throw 'witness clocks require -EvaluationBudgetSeconds' }
-        $parts = $WitnessClock.Split(',')
-        if ($parts.Length -ne 5) { throw 'witness clock must be five integers' }
-        $names = @('--pass-budget-ms', '--copy-budget-ms', '--hold-pass1-ms', '--hold-copy-ms', '--hold-pass2-ms')
-        $toolArguments += '--witness-clocks'
-        for ($i = 0; $i -lt 5; $i++) {
-            $parsed = 0
-            if (-not [int]::TryParse($parts[$i], [ref]$parsed) -or $parsed -lt 0) { throw 'witness clock must be five integers' }
-            $toolArguments += @($names[$i], [string]$parsed)
-        }
-    }
     try {
         $evaluation = Invoke-AuditChild 'dotnet' $toolArguments -TimeoutMs $timeoutMs -EvaluationTimeout
         if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }

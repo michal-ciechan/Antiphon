@@ -307,17 +307,17 @@ public sealed partial class LandGraphEvaluationTests
 
         var windows = await PrintBudgetAsync(22328, 8000, true);
         windows.Pass.ShouldBe(120);
-        windows.Copy.ShouldBe(16);
-        windows.Total.ShouldBe(256);
+        windows.Copy.ShouldBe(40);
+        windows.Total.ShouldBe(280);
         windows.Grace.ShouldBe(60);
-        windows.Ceiling.ShouldBe(316);
+        windows.Ceiling.ShouldBe(340);
 
         var wider = await PrintBudgetAsync(70000, 1000, true);
         wider.Pass.ShouldBe(140);
-        wider.Copy.ShouldBe(2);
-        wider.Total.ShouldBe(282);
+        wider.Copy.ShouldBe(5);
+        wider.Total.ShouldBe(285);
         wider.Grace.ShouldBe(60);
-        wider.Ceiling.ShouldBe(342);
+        wider.Ceiling.ShouldBe(345);
 
         var floor = await PrintBudgetAsync(0, 0, false);
         floor.Pass.ShouldBe(1);
@@ -328,20 +328,23 @@ public sealed partial class LandGraphEvaluationTests
 
         var host = await PrintBudgetAsync(null, null, null);
         host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
-        host.Copy.ShouldBe(5);
+        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 12 : 5);
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
         host.Grace.ShouldBe(60);
         host.Ceiling.ShouldBe(host.Total + host.Grace);
         var script = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"));
         script.ShouldContain("StartsWith('ceiling=')", Case.Sensitive);
         script.ShouldNotContain("$grace = 30", Case.Sensitive);
+        script.ShouldNotContain("WitnessClock", Case.Sensitive);
         var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
+        budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 5;", Case.Sensitive);
+        budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
     }
 
     [Test]
     [Timeout(180_000)]
-    public async Task EvaluationBudgetRefusesSlowDotnetAndAcceptsFastDotnet()
+    public async Task EvaluationBudgetRefusesSlowDotnet()
     {
         if (OperatingSystem.IsWindows())
             throw new SkipTestException("The slow evaluator is a PATH shim named dotnet; Windows process start resolves dotnet.exe.");
@@ -356,62 +359,10 @@ public sealed partial class LandGraphEvaluationTests
         slow.Text.ShouldContain("evaluation-failed: evaluating Antiphon.sln exceeded 1 s", Case.Sensitive);
         slow.Text.ShouldContain("land graph evaluation refused (exit 2)", Case.Sensitive);
         slow.Text.ShouldNotContain("approved", Case.Sensitive);
-
-        var fast = await RunCheckWithFakeDotnetAsync(repo.Root, sdk, sleepSeconds: 0, budgetSeconds: 30);
-        fast.ExitCode.ShouldBe(0, fast.Text);
-        fast.Text.ShouldContain("approved", Case.Sensitive);
-    }
-
-    // 70% + 70% exceeds one pass budget and fits two separate pass clocks.
-    [Test]
-    [Timeout(120_000)]
-    public async Task PerPassClocksApproveWhenEachPassUsesSeventyPercent()
-    {
-        await using var repo = await TinyAuditRepoAsync();
-        var run = await repo.RunToolAsync(WitnessArgs(2000, 10_000, 1400, 0, 1400));
-        run.ExitCode.ShouldBe(0, run.Text);
-        run.Text.ShouldContain("approved", Case.Sensitive);
-        run.Text.ShouldNotContain("exceeded", Case.Sensitive);
-        AbsentCanary(run.Text);
     }
 
     [Test]
-    [Timeout(120_000)]
-    public async Task Pass1TimeoutExits2AndNamesThePass()
-    {
-        await using var repo = await TinyAuditRepoAsync();
-        var run = await repo.RunToolAsync(WitnessArgs(1000, 10_000, 2500, 0, 0));
-        run.ExitCode.ShouldBe(2, run.Text);
-        run.Text.ShouldContain("pass 1 exceeded", Case.Sensitive);
-        run.Text.ShouldNotContain("approved", Case.Sensitive);
-    }
-
-    [Test]
-    [Timeout(120_000)]
-    public async Task Pass2TimeoutExits2NamesThePassAndRemovesCanary()
-    {
-        await using var repo = await TinyAuditRepoAsync();
-        var run = await repo.RunToolAsync(WitnessArgs(1000, 10_000, 0, 0, 2500));
-        run.ExitCode.ShouldBe(2, run.Text);
-        run.Text.ShouldContain("pass 2 exceeded", Case.Sensitive);
-        run.Text.ShouldNotContain("approved", Case.Sensitive);
-        AbsentCanary(run.Text);
-    }
-
-    [Test]
-    [Timeout(120_000)]
-    public async Task CopyTimeoutExits2NamesTheCopyAndRemovesCanary()
-    {
-        await using var repo = await TinyAuditRepoAsync();
-        var run = await repo.RunToolAsync(WitnessArgs(10_000, 1000, 0, 4000, 0));
-        run.ExitCode.ShouldBe(2, run.Text);
-        run.Text.ShouldContain("copy exceeded", Case.Sensitive);
-        run.Text.ShouldNotContain("approved", Case.Sensitive);
-        AbsentCanary(run.Text);
-    }
-
-    [Test]
-    [Timeout(120_000)]
+    [Timeout(180_000)]
     public async Task CanaryCopyIsIndependentOfTheSource()
     {
         const string original = "class Program { static void Main() {} }\n";
@@ -420,14 +371,16 @@ public sealed partial class LandGraphEvaluationTests
             ["App/Program.cs"] = original,
             ["App/App.csproj"] = SdkProject(""),
         });
-        var run = await repo.RunToolAsync([.. WitnessArgs(5000, 15_000, 0, 0, 0), "--touch-canary", "App/Program.cs"]);
+        var run = await repo.RunToolAsync();
         run.ExitCode.ShouldBe(0, run.Text);
-        run.Text.ShouldContain("canary-independent: App/Program.cs", Case.Sensitive);
+        run.Text.ShouldContain("approved", Case.Sensitive);
         (await File.ReadAllTextAsync(repo.Full("App/Program.cs"))).ShouldBe(original);
+        repo.AssertUntouched();
+        AbsentCanary(run.Text);
     }
 
     [Test]
-    [Timeout(120_000)]
+    [Timeout(300_000)]
     public async Task KillDuringPass2LeavesParentListingUnchanged()
     {
         var parent = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c1483-parent-" + Guid.NewGuid().ToString("N")[..12])).FullName;
@@ -446,7 +399,6 @@ public sealed partial class LandGraphEvaluationTests
                 UseShellExecute = false,
             };
             psi.ArgumentList.Add(ToolDll());
-            foreach (var arg in WitnessArgs(180_000, 60_000, 0, 0, 60_000)) psi.ArgumentList.Add(arg);
             psi.ArgumentList.Add("--canary-record");
             psi.ArgumentList.Add(record);
             psi.ArgumentList.Add("--repo");
@@ -457,7 +409,7 @@ public sealed partial class LandGraphEvaluationTests
             var stderr = process.StandardError.ReadToEndAsync();
             string? canary = null;
             var enteredPass2 = false;
-            using var sawPass2 = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            using var sawPass2 = new CancellationTokenSource(TimeSpan.FromSeconds(180));
             while (await process.StandardOutput.ReadLineAsync(sawPass2.Token) is { } line)
             {
                 if (line.StartsWith("canary=", StringComparison.Ordinal)) canary = line["canary=".Length..].Trim();
@@ -511,10 +463,12 @@ public sealed partial class LandGraphEvaluationTests
             var before = Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray();
             var update = await RunScriptAsync(moved, "-Update");
             update.ExitCode.ShouldBe(0, update.Text);
-            var check = await RunCheckWitnessAsync(moved, 45, "180000,60000,0,0,120000");
+            Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before, update.Text);
+            // One second can expire during pass 1. The script still has to exit 1 and leave no canary.
+            var check = await RunGraphScriptAsync(moved, ["-Check", "-EvaluationBudgetSeconds", "1"], timeoutSeconds: 120);
             check.ExitCode.ShouldBe(1, check.Text);
-            check.Text.ShouldContain("phase=pass2", Case.Sensitive);
-            check.Text.ShouldContain("land graph evaluation refused (exit 2)", Case.Sensitive);
+            check.Text.ShouldContain("audit refused", Case.Sensitive);
+            check.Text.ShouldNotContain("approved", Case.Sensitive);
             Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before);
         }
         finally
@@ -531,16 +485,6 @@ public sealed partial class LandGraphEvaluationTests
             ["App/App.csproj"] = SdkProject(""),
         });
 
-    private static string[] WitnessArgs(int passBudget, int copyBudget, int hold1, int holdCopy, int hold2) =>
-    [
-        "--witness-clocks",
-        "--pass-budget-ms", passBudget.ToString(CultureInfo.InvariantCulture),
-        "--copy-budget-ms", copyBudget.ToString(CultureInfo.InvariantCulture),
-        "--hold-pass1-ms", hold1.ToString(CultureInfo.InvariantCulture),
-        "--hold-copy-ms", holdCopy.ToString(CultureInfo.InvariantCulture),
-        "--hold-pass2-ms", hold2.ToString(CultureInfo.InvariantCulture),
-    ];
-
     private static void AbsentCanary(string text)
     {
         var line = text.Split('\n').Select(item => item.Trim()).First(item => item.StartsWith("canary=", StringComparison.Ordinal));
@@ -549,7 +493,8 @@ public sealed partial class LandGraphEvaluationTests
         Directory.Exists(path).ShouldBeFalse(path);
     }
 
-    private static async Task<ToolRun> RunCheckWitnessAsync(string root, int budgetSeconds, string witnessClock)
+    internal static async Task<ToolRun> RunGraphScriptAsync(string root, IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string?>? environment = null, int timeoutSeconds = 360)
     {
         var start = new ProcessStartInfo("pwsh")
         {
@@ -558,20 +503,33 @@ public sealed partial class LandGraphEvaluationTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
-        var command = "Set-StrictMode -Version Latest; & '" + script.Replace("'", "''") + "' -Check -EvaluationBudgetSeconds "
-            + budgetSeconds.ToString(CultureInfo.InvariantCulture) + " -WitnessClock '" + witnessClock + "'";
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
+        foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                if (value is null) start.Environment.Remove(key);
+                else start.Environment[key] = value;
+            }
+        }
+
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         try { await process.WaitForExitAsync(deadline.Token); }
         catch
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             throw;
         }
+
         return new ToolRun(process.ExitCode, await stdout + await stderr);
     }
 
@@ -619,7 +577,9 @@ public sealed partial class LandGraphEvaluationTests
         var shimDir = Path.Combine(Path.GetTempPath(), "c1483-dotnet-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(shimDir);
         var shim = Path.Combine(shimDir, "dotnet");
-        await File.WriteAllTextAsync(shim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' \"" + sdk + "\"\n  exit 0\nfi\nif [ \"" + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\" != \"0\" ]; then\n  sleep " + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\nfi\nprintf 'approved\\n'\nexit 0\n");
+        var shimBody = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' \"" + sdk + "\"\n  exit 0\nfi\nif [ \"" + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\" != \"0\" ]; then\n  sleep " + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\nfi\nprintf 'refused\\n'\nexit 1\n";
+        shimBody.ShouldNotContain("approved", Case.Sensitive);
+        await File.WriteAllTextAsync(shim, shimBody);
         File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         try
         {
