@@ -7,6 +7,11 @@ public sealed record CustodyStamp(long Revision, DateTime AtUtc);
 public sealed record CustodyRoot(long Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId);
 public sealed record CustodyFailure(string Reason, DateTime AtUtc);
 
+/// <summary>
+/// CARD-1614. The namespace observed before native intent. Guid.Empty is a legacy or unreadable marker.
+/// </summary>
+public sealed record LinuxNamespaceRecord(int Revision, Guid NamespaceId, Guid ContainerId);
+
 /// <summary>External I/O seam for durable custody writes, including the pre-rename fault boundary.</summary>
 public interface IVerificationCustodyFiles
 {
