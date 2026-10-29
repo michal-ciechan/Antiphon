@@ -390,6 +390,9 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     /// snapshot's raw result. A missing or different file is regenerated from the snapshot through
     /// the existing report store; a regenerated path that differs from the one the note names
     /// leaves delivery unresolved rather than pointing at other content.
+    /// CARD-1605 bounds that one store attempt at five seconds. The preliminary usability read
+    /// stays on the caller token. Allowance expiry becomes completion_report_unavailable so the
+    /// existing retry row can be saved; caller shutdown still propagates.
     /// </summary>
     private async Task<string?> EnsureSnapshotReportAsync(TaskCompletionNotification.Snapshot snapshot, CancellationToken ct)
     {
@@ -400,18 +403,29 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             return await FileHasSha256Async(snapshot.ReportFilePath, snapshot.RawSha256, ct) ? null : "completion_report_unavailable";
         if (await reports.IsUsableAsync(snapshot.ReportFilePath, snapshot.RawResult, ct))
             return null;
-        var regenerated = await reports.StoreAsync(new AgentTask
+        using var allowance = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        allowance.CancelAfter(SnapshotReportStoreAllowance);
+        try
         {
-            Id = snapshot.TaskId,
-            RootTaskId = snapshot.RootTaskId,
-            Result = snapshot.RawResult,
-            RepoPath = snapshot.RepoPath,
-            WorkingDirectory = snapshot.WorkingDirectory,
-            WorktreePath = snapshot.WorktreePath,
-        }, ct);
-        return regenerated.Path is { } path
-            && string.Equals(Path.GetFullPath(path), Path.GetFullPath(snapshot.ReportFilePath), StringComparison.OrdinalIgnoreCase)
-            ? null : "completion_report_unavailable";
+            var regenerated = await reports.StoreAsync(new AgentTask
+            {
+                Id = snapshot.TaskId,
+                RootTaskId = snapshot.RootTaskId,
+                Result = snapshot.RawResult,
+                RepoPath = snapshot.RepoPath,
+                WorkingDirectory = snapshot.WorkingDirectory,
+                WorktreePath = snapshot.WorktreePath,
+            }, allowance.Token);
+            if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+            if (allowance.IsCancellationRequested) return "completion_report_unavailable";
+            return regenerated.Path is { } path
+                && string.Equals(Path.GetFullPath(path), Path.GetFullPath(snapshot.ReportFilePath), StringComparison.OrdinalIgnoreCase)
+                ? null : "completion_report_unavailable";
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return "completion_report_unavailable";
+        }
     }
 
     internal static async Task<bool> FileHasSha256Async(string path, string? sha256, CancellationToken ct)
@@ -457,4 +471,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     }
 
     internal static int RetrySeconds(int attempt) => (int)Math.Min(300, 5 * Math.Pow(2, Math.Clamp(attempt - 1, 0, 10)));
+
+    /// <summary>Total preparation-plus-I/O allowance for one snapshot regeneration store attempt.</summary>
+    private static readonly TimeSpan SnapshotReportStoreAllowance = TimeSpan.FromSeconds(5);
 }
