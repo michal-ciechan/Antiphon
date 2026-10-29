@@ -22,7 +22,7 @@ public sealed class AgentTaskLandRegistrationSafetyWindowsTests
     private static Task AssertSpacedBoundaryAsync(bool adoption, bool afterMove)
     {
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("CP-5 requires native Windows Git and path semantics");
+            throw new TUnit.Core.Exceptions.SkipTestException("CP-5 requires native Windows Git and path semantics");
         var root = Path.Combine(Path.GetTempPath(), "antiphon-c448-" + Guid.NewGuid().ToString("N") + " with spaces");
         // The shared scenario uses Git-written .git/admin paths and asserts the boundary,
         // exact CAS/reset command counts, captured source/observer bytes and remote refs,

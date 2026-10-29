@@ -74,12 +74,18 @@ public sealed class PostLandMutationCustodyTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         var link = Path.Combine(world.Host.Fixture.Repository, "alias-outside");
         // The fixture owns both target and link; only the link is removed before fixture disposal.
-        using var command = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        // A junction is the Windows reparse point. Linux has the same escaping-link property via a
+        // directory symlink, which Canonicalize follows as a reparse point.
+        if (OperatingSystem.IsWindows())
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            ArgumentList = { "/d", "/c", "mklink", "/J", link, world.Host.Fixture.Observer },
-        })!;
-        await command.WaitForExitAsync(); command.ExitCode.ShouldBe(0);
+            using var command = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                ArgumentList = { "/d", "/c", "mklink", "/J", link, world.Host.Fixture.Observer },
+            })!;
+            await command.WaitForExitAsync(); command.ExitCode.ShouldBe(0);
+        }
+        else Directory.CreateSymbolicLink(link, world.Host.Fixture.Observer);
         try
         {
             await using var scope = world.Host.Services.CreateAsyncScope();
@@ -87,7 +93,11 @@ public sealed class PostLandMutationCustodyTests
             await admission.RequireAuthorizedDirectoryAsync(world.Host.Fixture.Repository, world.Host.Fixture.Repository, [], default);
             await Should.ThrowAsync<ForbiddenException>(() => admission.RequireAuthorizedDirectoryAsync(link, world.Host.Fixture.Repository, [], default));
         }
-        finally { Directory.Delete(link); }
+        finally
+        {
+            if (OperatingSystem.IsWindows()) Directory.Delete(link);
+            else File.Delete(link);
+        }
     }
 
     [Test]

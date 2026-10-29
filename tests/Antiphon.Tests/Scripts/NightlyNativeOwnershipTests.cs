@@ -33,7 +33,9 @@ public sealed class NightlyNativeOwnershipTests
 
     private static async Task RunAsync(string name, string? witness = null)
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("This native checkpoint requires Windows; missing prerequisites are not skips.");
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException(
+                "This native checkpoint requires Windows (OwnedChild.exe, pwsh.exe, and a Windows job).");
         var fixture = Path.Combine(AppContext.BaseDirectory, "nightly-owned-child", "OwnedChild.exe");
         File.Exists(fixture).ShouldBeTrue("The checkpoint build must stage the executable, never compile inside the test.");
         var root = Path.Combine(Path.GetTempPath(), "c1039-native-" + Guid.NewGuid().ToString("N"));
