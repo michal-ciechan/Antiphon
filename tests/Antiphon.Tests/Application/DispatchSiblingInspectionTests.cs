@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -452,6 +453,54 @@ public class DispatchSiblingInspectionTests
             result.Reason.ShouldBe(scenario == "64 divergent" ? "candidate_limit" : "inspection_timeout");
             if (scenario == "enrichment deadline") fired.ShouldBeTrue();
         }
+    }
+
+    /// <summary>
+    /// The C540 gate flake: enrichment spends <see cref="GitSettings.WorktreeBaseInspectionTimeoutSeconds"/>
+    /// (5 s) after the candidates are inspected. The product keeps the reduced warnings and adds
+    /// <c>sibling-inspection-incomplete</c>. The delivery wait must treat that as settled.
+    /// </summary>
+    [Test]
+    public async Task C540_LoadedHostInspectionTimeoutSettlesTheReducedSiblingWait()
+    {
+        using var repo = new ScratchGitRepo("c540-inspection-budget");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var left = await SourceAsync(db, repo, card.Id, "containing", "master");
+        var right = await SourceAsync(db, repo, card.Id, "divergent", "master");
+        await db.SaveChangesAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var slowed = false;
+        var git = new RecordingGit
+        {
+            Rewrite = (args, result) =>
+            {
+                // Ancestor checks run only in the enrichment loop, after the warnings exist.
+                if (!slowed && args.Count > 0 && args[0] == "merge-base")
+                {
+                    slowed = true;
+                    clock.Advance(TimeSpan.FromSeconds(new GitSettings().WorktreeBaseInspectionTimeoutSeconds));
+                }
+                return result;
+            },
+        };
+        var request = NewRequest(repo, card.Id);
+        var result = await new CardSiblingInspectionService(db, git, Options.Create(new GitSettings()),
+            clock, new GitProcessGate()).InspectAsync(request, default);
+        slowed.ShouldBeTrue("the witness must inject the slow enrichment, not a fast inspection");
+        result.Reason.ShouldBe("inspection_timeout");
+        result.OmittedCandidates.ShouldBe(0);
+        result.Warnings.Select(w => w.TaskId).Order().ShouldBe(new[] { left.Id, right.Id }.Order());
+        var incomplete =
+            $"Same-card warning inspection incomplete: {result.Reason}; {result.RawRows} raw, {result.ExpensiveCandidates} candidates, {result.InspectedCandidates} inspected, {result.OmittedCandidates} omitted, {result.GitCommands} commands.";
+        var expected = result.Warnings.Select(w => DispatchBaseNotificationPayload.SiblingKey(w.TaskId)).ToArray();
+        DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+            result.Warnings.Select(w => (DispatchBaseNotificationPayload.SiblingKey(w.TaskId), (string?)w.WarningDetail(request.Id)))
+                .Append(("sibling-inspection-incomplete", incomplete)).ToList(),
+            expected).ShouldBeTrue(
+            "a loaded host that spends the 5 s inspection budget still settles the reduced sibling warnings");
     }
 
     private sealed class BudgetGit(FakeTimeProvider clock, string scenario) : LandingGit
