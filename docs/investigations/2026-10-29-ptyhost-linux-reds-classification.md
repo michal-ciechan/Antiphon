@@ -1,6 +1,8 @@
 # CARD-1614: PtyHost Linux red classification
 
-Status: investigation in progress. No product, test, helper, image or host configuration changes.
+Classification report complete; the requested isolated execution matrix is incomplete: 9/15 mode-specific invocations executed (4 passed, 5 failed, 0 skipped), 6 not run within the 60-minute budget. Two builds passed. No product/test/helper/image/host configuration fix was made.
+
+The original five launcher reds are missing build artifacts; a valid Linux apphost build gives 4 passes and exposes a readiness race in the fifth. The inbox fixture is Windows-specific. Real custody defects are confirmed in root identity, termination and automatic sealing; the old missing-daemon symptom also involves an unsynchronized fixture. The live runner currently advertises no custody backend.
 
 Assigned source: `8edda999623a473be2d1970727c172bfb5088d59`; branch `feat/card-task-19964ed5`.
 Date: 2026-10-29 UTC. Native host: server2 runner container, Linux x86_64, kernel
@@ -56,9 +58,7 @@ check is at `PtyAgentRunner.cs:149`; non-Windows tracked launches use cgroups at
 validation concern retained for the final report. Runner admission separately
 checks platform/backend correspondence (`RunnerCustodyLedger.cs:142`).
 
-Remaining isolated executions and apphost comparison are pending. A classification will be called
-confirmed only when the failing mechanism is reproduced or reconstructed from retained
-test output, fixture records and source. Remaining uncertainties will remain explicit.
+The final execution matrix distinguishes fresh runs from reconstructed historical failures. Mechanisms and remaining uncertainties are recorded below.
 
 ## Confirmed custody mechanisms
 
@@ -119,6 +119,13 @@ exits without a readiness handshake (`LinuxCgroupCustodyTests.cs:101`). That
 fixture does not establish that the detached process has installed its session
 and written its PID before the parent exits. The exact signal/scheduling history
 of the old run is unavailable; no missing executable or privilege is established.
+The prior report records exactly four failures and four passes in this eight-method,
+non-parameterized class. Its complete failed-method set therefore implies that
+`Double_fork_and_setsid_stay_in_tree` passed in the same sweep; that companion uses
+the same daemon command but keeps the root alive with `sleep 120` (lines 79-81).
+This is a reconstruction from the stored class counts and failure roster, not a
+new per-method receipt. It supports a root-exit/setup race rather than missing
+`setsid` or a generally unwritable scratch directory.
 
 On the unchanged source, the isolated rerun wrote `daemon.pid=19989`, passed
 its live-descendant membership assertion at line 107, then failed at line 111:
@@ -158,7 +165,7 @@ A second isolated build uses `UseAppHost=true --runtime linux-x64`, matching the
 native RID used by the runner Docker publishes
 (`docker/session-runner-grok/Dockerfile:39`). It succeeded with 0 errors and the
 same inherited warning; wait 75 s, held 11 s. It was built at documentation-only
-commit `d67393258`, with unchanged product/test bytes from the assigned base.
+commit `d67393258334d6255fd5da217fedd5c62f991f80`, with unchanged product/test bytes from the assigned base.
 Both the executable and root native library are present. The first native launcher
 method, `Shadow_host_exchanges_bytes_and_exits`, passed alone (1/1, no skips,
 1.408 s run, wait 30 s). The next method, `Detach_creates_a_new_session`, failed alone despite the correct
@@ -170,7 +177,7 @@ PID at `Program.cs:14`, and `PtyHostLauncher.cs:160` waits for the intermediary,
 not detached-child readiness. The test reads `getsid` immediately at
 `LinuxPtyHostLauncherTests.cs:107`. This is a test readiness race masked by the
 original missing apphost. Production separately connects to the child pipe before
-using the session (`SessionRunnerRuntime.cs:3231`). Remaining results are pending.
+using the session (`SessionRunnerRuntime.cs:3231`). The other two methods also passed alone: pipe EOF/stdio (0.872 s run) and canceled launch/cleanup (1.780 s run). The apphost comparison is complete: 4 passed, 1 failed, 0 skipped.
 
 The live runner also already has `/app/Antiphon.PtyHost` and
 `/app/libporta_pty.so` (`live-launcher-layout.log`). Its production launcher
@@ -193,9 +200,97 @@ that boundary. The single repair note below is for the next stage.
 | L.Shadow_host_exchanges_bytes_and_exits | **ENVIRONMENT** (test build artifacts): missing apphost at L:35 in original output; native apphost/RID build passes this method alone. | Yes, observed with apphost and root native library. | Deferred to Plan | Linux test build/staging owner | Low for this original failure; ordinary native byte exchange is now witnessed. |
 | L.Detach_creates_a_new_session | **ENVIRONMENT** originally (missing apphost); **TEST DEFECT** newly exposed: fresh native host session ID still equals parent ID at L:108 because no child-readiness wait precedes getsid. | Artifacts remove the original error, but this method remains racy. | Deferred to Plan | Linux test build/staging + launcher test owners | Medium: a timing check was masked; production waits for a pipe connection. |
 | L.Detach_failure_exits_without_pipe_readiness | **ENVIRONMENT**: original Process.Start cannot find executable at L:136. Fresh apphost run passes alone. | Yes, observed. | Deferred to Plan | Linux test build/staging owner | Low for original red; this assertion alone does not qualify every native detach failure. |
-| L.Intermediary_pipes_reach_eof_while_host_lives | **ENVIRONMENT**: original Process.Start lacks apphost at L:172; pending native comparison. | Native comparison pending. | Deferred to Plan | Linux test build/staging owner | Medium until native EOF witness completes. |
-| L.Canceled_launch_leaves_no_owned_host | **ENVIRONMENT**: original FileNotFoundException precedes expected cancellation at L:210; pending native comparison. | Native comparison pending. | Deferred to Plan | Linux test build/staging owner | Medium until native cancellation/cleanup witness completes. |
+| L.Intermediary_pipes_reach_eof_while_host_lives | **ENVIRONMENT**: original Process.Start lacks apphost at L:172; fresh native apphost run passes alone (1/1). | Yes, observed. | Deferred to Plan | Linux test build/staging owner | Original red was artifact-related; native EOF/stdio assertions now execute. |
+| L.Canceled_launch_leaves_no_owned_host | **ENVIRONMENT**: original FileNotFoundException precedes expected cancellation at L:210; fresh apphost run passes alone (1/1). | Yes, observed. | Deferred to Plan | Linux test build/staging owner | Original red was artifact-related; native cancellation/cleanup assertions now execute. |
+
+## Windows gate and qualification limits
+
+The brief's Linux-only description applies to the two Linux classes, not the mixed
+`HostCustodyTests` class. Direct TUnit execution on Windows skips all eight cgroup
+methods with `The linux-cgroup-v1 backend executes on Linux only.`, and all five
+launcher methods with `Linux native pty-host methods execute on Linux only.`
+(`LinuxCgroupCustodyTests.cs:42`; `LinuxPtyHostLauncherTests.cs:20`). The Windows rc
+profile instead has explicit excluded roster rows owned by CARD-0590
+(`tests/test-execution-policy.json:479`, `:812`); the latter is also covered by the
+platform inventory at `scripts/test-rc-platform.ps1:538`. Neither is a Windows pass.
+`.github/workflows/ci.yml:44` runs the PtyHost assembly on windows-latest with the
+default apphost-producing build. No native Windows receipt was obtained for the inbox
+method, which remains admitted there and targets Windows behavior.
+
+Confirmed means a mechanism was reproduced or reconstructed from the stored evidence;
+it does not mean repaired or fully qualified. Remaining limits:
+
+- The old missing-daemon run has no retained syscall/signal trace. Its unacknowledged
+  background-start race is visible in the fixture; the fresh run proves it can get past
+  that point and expose the separate automatic-seal defect. No claim of the exact old
+  death signal is made.
+- cgroup v2 was not executed. Its same-statement local-variable expansion issue is
+  source reconstruction, not native v2 qualification.
+- Native Windows behavior of the inbox method was not rerun. The two Linux classes
+  provide skips/exclusions there, not green Linux custody evidence.
+- Live capabilities and installed helper hashes were observed directly. The running
+  server/runner assembly SHA and outcomes of existing production sessions were not
+  established; no deployment or restart occurred.
+- Apphost comparison intentionally changes both `UseAppHost` and RID, because the
+  launcher fixture requires a root native library as well as the executable. It is a
+  comparison with the production Linux payload layout, not a single-variable toggle.
+- Isolated execution coverage is reported below independently of reconstructed causes.
+
+## Execution matrix and requested runs left incomplete
+
+Every fresh invocation selected one exact method and acquired its own build slot. No broad rerun, unleased driver, host reconfiguration or product/test mutation was used. The final queue admission was bounded by the remaining task budget; a slot timeout is not a test failure.
+
+| UseAppHost / RID | Exact method | Fresh result | TRX test duration | Slot wait |
+|---|---|---|---|---|
+| false | HostCustodyTests.Inbox_is_unsupported_and_never_becomes_no_start_proof | Failed | 00:00:00.2293844 | 180 s |
+| false | LinuxCgroupCustodyTests.Tracked_launch_places_child_in_tree | Failed | 00:02:00.1996002 | 345 s |
+| false | LinuxCgroupCustodyTests.Root_exit_with_live_descendants_is_draining_until_seal | Failed | 00:00:00.4014752 | 435 s |
+| false | LinuxCgroupCustodyTests.Seal_terminates_and_observes_zero | NOT RUN | — | budget exhausted |
+| false | LinuxCgroupCustodyTests.Second_seal_is_idempotent | NOT RUN | — | budget exhausted |
+| false | LinuxPtyHostLauncherTests.Shadow_host_exchanges_bytes_and_exits | Failed | 00:00:00.0982686 | 240 s |
+| false | LinuxPtyHostLauncherTests.Detach_creates_a_new_session | NOT RUN | — | slot wait timed out |
+| false | LinuxPtyHostLauncherTests.Detach_failure_exits_without_pipe_readiness | NOT RUN | — | budget exhausted |
+| false | LinuxPtyHostLauncherTests.Intermediary_pipes_reach_eof_while_host_lives | NOT RUN | — | budget exhausted |
+| false | LinuxPtyHostLauncherTests.Canceled_launch_leaves_no_owned_host | NOT RUN | — | budget exhausted |
+| true + linux-x64 | LinuxPtyHostLauncherTests.Shadow_host_exchanges_bytes_and_exits | Passed | 00:00:00.8535627 | 30 s |
+| true + linux-x64 | LinuxPtyHostLauncherTests.Detach_creates_a_new_session | Failed | 00:00:00.2433394 | 165 s |
+| true + linux-x64 | LinuxPtyHostLauncherTests.Detach_failure_exits_without_pipe_readiness | Passed | 00:00:00.2404907 | 270 s |
+| true + linux-x64 | LinuxPtyHostLauncherTests.Intermediary_pipes_reach_eof_while_host_lives | Passed | 00:00:00.3573759 | 300 s |
+| true + linux-x64 | LinuxPtyHostLauncherTests.Canceled_launch_leaves_no_owned_host | Passed | 00:00:01.2498896 | 330 s |
+
+The original sweep remains separate: 91 total, 10 failed, 56 passed, 25 skipped, 21m 25s 778ms. Its unedited terminal log records `BUILD SLOT granted lease=5a7b6e77-c2b3-4741-8ac6-8770b049cc6c waited=0s maxcpucount=6` and `BUILD SLOT released lease=5a7b6e77-c2b3-4741-8ac6-8770b049cc6c held=1287s`. It is not substituted for the 6 requested isolated invocations that did not execute.
+
+To complete exactly those rows, rebuild through the same gate and run their one-method filters. Baseline build:
+
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1614-noapp-build -- dotnet build tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj --property:OutputPath=bin-card1614-noapp/ --property:UseAppHost=false -nodeReuse:false`
+
+Native payload build:
+
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1614-app-build -- dotnet build tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj --property:OutputPath=bin-card1614-app/ --property:UseAppHost=true --runtime linux-x64 -nodeReuse:false`
+
+Each baseline method uses:
+
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1614-one -- dotnet run --project tests/Antiphon.PtyHost.Tests --no-build --property:OutputPath=bin-card1614-noapp/ --property:UseAppHost=false -- --treenode-filter '/*/*/<Class>/<ExactMethod>' --report-trx --report-trx-filename <unique>.trx --results-directory <owned-evidence>`
+
+For the apphost comparison use `bin-card1614-app/`, `UseAppHost=true` and `--runtime linux-x64` before the test-argument separator. Fixture evidence was retained with `ANTIPHON_PTYHOST_TESTS_KEEP=1` and an owned short TMPDIR. Each TRX and log has a unique mode/class/method filename in the evidence root. No source tests were altered to change their result or their 120/300-second fixture waits.
+
+Pending exact rows:
+
+- `noapp-LinuxCgroupCustodyTests.Seal_terminates_and_observes_zero`
+- `noapp-LinuxCgroupCustodyTests.Second_seal_is_idempotent`
+- `noapp-LinuxPtyHostLauncherTests.Detach_creates_a_new_session`
+- `noapp-LinuxPtyHostLauncherTests.Detach_failure_exits_without_pipe_readiness`
+- `noapp-LinuxPtyHostLauncherTests.Intermediary_pipes_reach_eof_while_host_lives`
+- `noapp-LinuxPtyHostLauncherTests.Canceled_launch_leaves_no_owned_host`
+
+## Provenance and cleanup
+
+The baseline build is stamped at `8edda999623a473be2d1970727c172bfb5088d59`; the apphost build at documentation-only `d67393258334d6255fd5da217fedd5c62f991f80`. Build provenance JSON records the SHA-256 of all seven Antiphon assemblies in each output. Only this report and its card-named index changed in Git. Generated logs, TRX, fixture records and observations remain ignored. Essential outcomes, timestamps, identities and source locations are retained here.
+
+The recovered provider log is the exact path named by normalized transcript sequence 126: `/state/grok/sessions/%2Fwork%2Fworktrees%2Ftask-fbe4de0e/7dc92c8d-6cae-4a84-8e12-b11d4772c444/terminal/call-0da101b4-c42e-466e-acc0-efc4ca1924fc-75.log`. The server transcript is retained as `prior-transcript.json` (169 entries). No unrelated provider/session files were read.
+
+No test-owned detached hosts or populated test cgroups remained in the ownership census. Three empty execution cgroup trees remain in both v1 hierarchies because the shipped cleanup helper fails: `d4c73def-3815-4d72-ad24-a30681fc5203`, `200a8ca3-5671-4bfb-b9ad-a19640904da6`, `dead6b31-ec07-42d8-9b71-82730c2d5a57`. They were not manually deleted outside scratch. Alternate output cleanup is recorded in `cleanup.json`; raw evidence remains in the assigned ignored evidence root.
 
 ## Not done, noted
 
-No fix designed or implemented; repair choices and ordering await the completed evidence.
+Suggested order for Plan (not designed or implemented): restore the custody termination/root-identity contracts, resolve automatic root-exit sealing and host platform-binding validation, then address native fixture synchronization and the Linux apphost build/staging contract.
