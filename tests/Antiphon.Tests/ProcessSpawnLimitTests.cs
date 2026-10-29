@@ -81,6 +81,8 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointTempLifecycleTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointTempUsageTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests),
+        typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
+        typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests),
         typeof(Antiphon.Tests.Checkpoints.BuildSlotClientTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests),
