@@ -2433,9 +2433,13 @@ shared one 120 s wait. That Windows 120 s floor is provisional until a Windows p
 duration is recorded. The canary is a plain byte copy, not a hard link. Its Linux budget is
 twice the plain-copy p95 measured on server2 on 2026-10-29 (samples 1957 ms, 2253 ms and 2249 ms;
 nearest-rank p95 2253 ms, so 5 s; see `EvaluationBudget.MeasuredCopyP95Milliseconds`).
-The Windows copy budget is PROVISIONAL: `EvaluationBudget.WindowsCopyMeasurementMultiplier`
-(5) times that same Linux measurement, rounded up to seconds (12 s), until a native Windows
-plain-copy p95 replaces it. A canary directory left when the audit script process itself dies
+The Windows copy budget is PROVISIONAL with three native samples: task `0a72f317` on
+DESKTOP-KTLKPIF measured the existing `CanaryRepository.Create` at 33515.1436, 25745.3282
+and 25641.6397 ms on 2026-10-29. The prior 12 s budget failed on the combined tree.
+Nearest-rank p95 is 33515.1436 ms; `EvaluationBudget.WindowsCopyMeasurementMultiplier`
+is `ceil(2 * 33515.1436 / 2253) = 30`, giving 68 s after rounding. Evidence is retained at
+`C:\Antiphon\releases\task-0a72f317\copy-samples.json`; remeasure on the next native
+qualification. A canary directory left when the audit script process itself dies
 is not swept on the next run. Raise the Windows pass floor by editing
 `EvaluationBudget.WindowsPassFloorSeconds`, the Linux copy measurement by editing
 `EvaluationBudget.MeasuredCopyP95Milliseconds`, and the provisional Windows multiplier by

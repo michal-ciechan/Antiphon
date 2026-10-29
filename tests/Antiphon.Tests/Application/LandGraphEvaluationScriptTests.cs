@@ -307,17 +307,17 @@ public sealed partial class LandGraphEvaluationTests
 
         var windows = await PrintBudgetAsync(22328, 8000, true);
         windows.Pass.ShouldBe(120);
-        windows.Copy.ShouldBe(40);
-        windows.Total.ShouldBe(280);
+        windows.Copy.ShouldBe(240);
+        windows.Total.ShouldBe(480);
         windows.Grace.ShouldBe(60);
-        windows.Ceiling.ShouldBe(340);
+        windows.Ceiling.ShouldBe(540);
 
         var wider = await PrintBudgetAsync(70000, 1000, true);
         wider.Pass.ShouldBe(140);
-        wider.Copy.ShouldBe(5);
-        wider.Total.ShouldBe(285);
+        wider.Copy.ShouldBe(30);
+        wider.Total.ShouldBe(310);
         wider.Grace.ShouldBe(60);
-        wider.Ceiling.ShouldBe(345);
+        wider.Ceiling.ShouldBe(370);
 
         var floor = await PrintBudgetAsync(0, 0, false);
         floor.Pass.ShouldBe(1);
@@ -328,7 +328,7 @@ public sealed partial class LandGraphEvaluationTests
 
         var host = await PrintBudgetAsync(null, null, null);
         host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
-        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 12 : 5);
+        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 68 : 5);
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
         host.Grace.ShouldBe(60);
         host.Ceiling.ShouldBe(host.Total + host.Grace);
@@ -338,7 +338,7 @@ public sealed partial class LandGraphEvaluationTests
         script.ShouldNotContain("WitnessClock", Case.Sensitive);
         var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
-        budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 5;", Case.Sensitive);
+        budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 30;", Case.Sensitive);
         budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
     }
 
