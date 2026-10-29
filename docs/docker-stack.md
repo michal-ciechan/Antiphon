@@ -408,8 +408,7 @@ default bridge, the same mode as apply's `docker create`. The audit's
 `--rm`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user 1654:1654`,
 and `--init`. Apply's helper receives `C1008_AUDIT_TIMEOUT_SECONDS`,
 `C1008_SCRATCH_QUOTA_BYTES` when that variable is set, and `C1008_TMP_MOUNT` when
-`runner-tmp` is mounted. The preview passes that same environment and nothing
-further. No GitHub token, SSH agent, or git credential helper is passed. State
+`runner-tmp` is mounted. When no host proof is supplied, the preview passes that same environment and nothing further. No GitHub token, SSH agent, or git credential helper is passed. A private origin whose in-container `git ls-remote` fails only for authentication is proved by the desktop, which runs `git ls-remote` with ambient credentials and passes only ref names and object ids through a read-only bind. No credential enters the container. Any other ls-remote failure stays a refusal. The proof is bound to operation id, operation start, repository path, and origin URL hash; a missing, empty, unreadable, stale, or mismatched proof refuses `RecycleGitAuditUnknown`. Apply asks the desktop again rather than reusing the preview proof. State
 and auth volumes are not mounted. The audit program sets `GIT_CONFIG_SYSTEM` and
 `GIT_CONFIG_GLOBAL` to `/dev/null`. The helper name is
 `c1008-preview-<operation id>-<16 hex token>` and its label is
@@ -449,7 +448,7 @@ receipt matches, the preview prints
 `auditPending=true`, does not audit, and starts no container. Apply prints that
 same warning. It still audits with `antiphon-server2/session-testing:<sha12>`
 when that image is present, and refuses `RecycleGitAuditUnknown` when it is not.
-Apply keeps its own helper, obtains fresh proofs,
+Apply keeps its own helper, asks the desktop again for fresh proofs,
 stops and removes only inspected owned container IDs, and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root

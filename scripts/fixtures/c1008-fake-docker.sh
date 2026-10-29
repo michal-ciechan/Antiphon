@@ -11,6 +11,39 @@ fs.appendFileSync(trace, JSON.stringify(args)+'\n');
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const out = x => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x));
 const fail = () => process.exit(2);
+// Optional host-proof bind and inventory mode. With neither present, mounts and
+// forwarded env stay the production set (timeout, optional scratch quota, runner-tmp).
+const classifyAudit = (mounts, envs) => {
+  const proofEnvs = envs.filter(e => /^(C1008_HOST_PROOF|C1008_OPERATION|C1008_OPERATION_STARTED)=/.test(e));
+  const inventoryEnv = envs.filter(e => e.startsWith('C1008_AUDIT_MODE='));
+  let auditMounts = mounts;
+  let proofSource = '';
+  if (inventoryEnv.length || proofEnvs.length) {
+    if (inventoryEnv.length && proofEnvs.length) return null;
+    if (inventoryEnv.length) {
+      if (inventoryEnv.length !== 1 || inventoryEnv[0] !== 'C1008_AUDIT_MODE=inventory') return null;
+      if (mounts.some(m => m.includes('c1008-host-proof'))) return null;
+    }
+    if (proofEnvs.length) {
+      if (proofEnvs.length !== 3) return null;
+      const keys = new Set(proofEnvs.map(e => e.slice(0, e.indexOf('='))));
+      if (keys.size !== 3) return null;
+      if (!proofEnvs.includes('C1008_HOST_PROOF=/c1008-host-proof')) return null;
+      if (!proofEnvs.some(e => /^C1008_OPERATION=c1008[0-9a-f]{32}$/.test(e))) return null;
+      if (!proofEnvs.some(e => /^C1008_OPERATION_STARTED=[0-9]+$/.test(e))) return null;
+      const last = mounts[mounts.length - 1] || '';
+      const matched = /^type=bind,source=(\/[A-Za-z0-9._/-]+),target=\/c1008-host-proof,readonly$/.exec(last);
+      if (!matched || matched[1].includes('..') || matched[1].includes('//')) return null;
+      let st;
+      try { st = fs.lstatSync(matched[1]); } catch (err) { return null; }
+      if (!st.isDirectory() || st.isSymbolicLink()) return null;
+      proofSource = matched[1];
+      auditMounts = mounts.slice(0, -1);
+    }
+  }
+  const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp' && !proofEnvs.includes(e) && !inventoryEnv.includes(e));
+  return {mounts: auditMounts, extra, proofSource};
+};
 // CARD-1105. Run the pty-host probe against one fixture shape. tmpAssets===false
 // stays a probe exit 1 and is not an absent directory.
 const ptyProbe = (shape, script) => {
@@ -104,17 +137,21 @@ const previewRun = () => {
   const vol = (mount.match(/source=([^,]+)/) || [])[1];
   if (!vol || !state.volumes[vol]) reason('preview work volume missing');
   if (mounts[1] !== 'type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648') reason('preview tmpfs refused');
+  const classified = classifyAudit(mounts, envs);
+  if (!classified) reason('preview mount set refused');
+  const auditMounts = classified.mounts;
+  const proofSource = classified.proofSource;
   const tmpVol = vol.replace(/_work$/, '_runner-tmp');
   const mountEnv = envs.filter(e => e === 'C1008_TMP_MOUNT=/runner-tmp');
-  const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp');
+  const extra = classified.extra;
   const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))
     && new Set(extra.map(e => e.split('=', 1)[0])).size === extra.length;
-  if (!mounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(',readonly'))) reason('preview volume mount is writable');
+  if (!auditMounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(',readonly'))) reason('preview volume mount is writable');
   let tmpMount = '';
-  if (mounts.length === 3) {
-    if (mounts[2] !== 'type=volume,source=' + tmpVol + ',target=/runner-tmp,readonly' || !state.volumes[tmpVol] || mountEnv.length !== 1 || !forwarded) reason('preview runner-tmp mount refused');
+  if (auditMounts.length === 3) {
+    if (auditMounts[2] !== 'type=volume,source=' + tmpVol + ',target=/runner-tmp,readonly' || !state.volumes[tmpVol] || mountEnv.length !== 1 || !forwarded) reason('preview runner-tmp mount refused');
     tmpMount = state.volumes[tmpVol].Mountpoint;
-  } else if (mounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
+  } else if (auditMounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
   if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
   if (fs.existsSync(path.join(root, 'preview-hang'))) {
@@ -157,6 +194,7 @@ const previewRun = () => {
   if (offline) env.PATH = path.join(root, 'git-shim') + ':' + (process.env.PATH || '/usr/bin:/bin');
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
+  if (proofSource) env.C1008_SIM_PROOF = proofSource;
   const outer = [
     'set -euo pipefail',
     'mount --make-rprivate /',
@@ -190,6 +228,11 @@ const previewRun = () => {
     '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE$C1008_SIM_TMP"',
     '  mount --bind -- "$C1008_SIM_TMP" "$C1008_SIM_STAGE/runner-tmp"',
     '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE/runner-tmp"',
+    'fi',
+    'if [ -n "${C1008_SIM_PROOF:-}" ]; then',
+    '  mkdir -p -- "$C1008_SIM_STAGE/c1008-host-proof"',
+    '  mount --bind -- "$C1008_SIM_PROOF" "$C1008_SIM_STAGE/c1008-host-proof"',
+    '  mount -o remount,bind,ro -- "$C1008_SIM_STAGE/c1008-host-proof"',
     'fi',
     'exec unshare --user --map-root-user -- chroot "$C1008_SIM_STAGE" /bin/bash -c "$C1008_SIM_PROGRAM"',
   ].join('\n');
@@ -340,13 +383,15 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  if(mounts[1]!=='type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648')fail();
  const tmpVol=vol.replace(/_work$/,'_runner-tmp'),Mounts=[{Type:'volume',Name:vol,Source:state.volumes[vol].Mountpoint,Destination:'/work'}];
  // The host always forwards the audit cap. C1008_SCRATCH_QUOTA_BYTES is optional and unset in production.
+ const classified=classifyAudit(mounts,envs);if(!classified)fail();
+ const auditMounts=classified.mounts,proofSource=classified.proofSource;
  const mountEnv=envs.filter(e=>e==='C1008_TMP_MOUNT=/runner-tmp');
- const extra=envs.filter(e=>e!=='C1008_TMP_MOUNT=/runner-tmp');
+ const extra=classified.extra;
  const forwarded=extra.every(e=>/^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e)||/^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))&&new Set(extra.map(e=>e.split('=',1)[0])).size===extra.length;
- if(mounts.length===3){if(mounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||mountEnv.length!==1||!forwarded)fail();
+ if(auditMounts.length===3){if(auditMounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||mountEnv.length!==1||!forwarded)fail();
   Mounts.push({Type:'volume',Name:tmpVol,Source:state.volumes[tmpVol].Mountpoint,Destination:'/runner-tmp'});}
- else if(mounts.length!==2||mountEnv.length||!forwarded||state.volumes[tmpVol])fail();
- const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.auditEnv=envs;state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts});save();out(id+'\n');
+ else if(auditMounts.length!==2||mountEnv.length||!forwarded||state.volumes[tmpVol])fail();
+ const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.auditEnv=envs;state.proofSource=proofSource;state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts});save();out(id+'\n');
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
@@ -364,7 +409,7 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');
  // The runner-tmp volume is the fixture's runner-tmp directory.
- const auditEnv={};for(const e of state.auditEnv||[]){const [k,v]=e.split('=');auditEnv[k]=v==='/runner-tmp'?path.join(root,'runner-tmp'):v;}
+ const auditEnv={};for(const e of state.auditEnv||[]){const eq=e.indexOf('=');const k=e.slice(0,eq),v=e.slice(eq+1);auditEnv[k]=(k==='C1008_TMP_MOUNT'&&v==='/runner-tmp')?path.join(root,'runner-tmp'):(k==='C1008_HOST_PROOF'&&v==='/c1008-host-proof'&&state.proofSource)?state.proofSource:v;}
  if(auditEnv.C1008_TMP_MOUNT)fs.mkdirSync(auditEnv.C1008_TMP_MOUNT,{recursive:true});
  const run=cp.spawnSync('bash',['-c',program],{env:{...process.env,PATH:gitPath,...auditEnv},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {

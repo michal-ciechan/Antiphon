@@ -246,7 +246,7 @@ public sealed class RetiredTempContainerScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Verifier_manifest_is_strict(){
         using var f=new C1008WrapperFixture();
-        foreach(var name in new[]{"c590-command.ps1","c590-real.ps1"})File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts",name),Path.Combine(f.Root,name));
+        foreach(var name in new[]{"c590-command.ps1","c590-real.ps1","c1008-host-proof.ps1"})File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts",name),Path.Combine(f.Root,name));
         var verifier=File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts/verify-docker-stack.ps1"));
         // Intercept only the outbound bridge; keep each actual verifier admission check.
         var boundary=". (Join-Path $PSScriptRoot 'c590-real.ps1')";
