@@ -367,3 +367,9 @@ Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests
 Antiphon.Tests.Infrastructure.FileUseCaptureTests
 # CARD-1514: real PostgreSQL clone, web host and scratch Git phase attribution.
 Antiphon.Tests.TestHelpers.TestTimingChokePointTests
+
+# CARD-1603: real PostgreSQL queue flush, cancellation and capacity reconcile on an isolated schema.
+Antiphon.Tests.Application.CapacityObsoleteQueueTests
+
+# CARD-1603: real PostgreSQL standing start, supervisor tick and capacity reconcile on an isolated schema.
+Antiphon.Tests.Application.CapacityObsoleteStandingTests
