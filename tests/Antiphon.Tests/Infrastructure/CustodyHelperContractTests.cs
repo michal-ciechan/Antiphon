@@ -58,10 +58,11 @@ public sealed class CustodyHelperContractTests
         text.ShouldContain("refuse InvalidExecutionId");
         text.ShouldContain("require_guid \"$EXECUTION_ID\"");
         text.ShouldContain("refuse CustodyTreeNotEmpty");
+        text.ShouldContain("refuse CustodyTreeUnreadable");
         text.ShouldContain("require_under_root");
 
-        // Both hierarchies get the same emptiness check on v1; neither may be skipped.
-        Occurrences(text, "refuse CustodyTreeNotEmpty").ShouldBe(2);
+        // Both hierarchies get the same emptiness check; neither prepare may skip it.
+        Occurrences(text, "require_empty_tree \"").ShouldBe(2);
         Order(text, "require_guid \"$EXECUTION_ID\"", "prepare_tree_v2 \"$EXECUTION_ID\"")
             .ShouldBeTrue("the id is validated before any tree is created");
     }
@@ -125,7 +126,9 @@ public sealed class CustodyHelperContractTests
     public void Kill_helper_never_kills_outside_tree()
     {
         var text = Kill();
-        text.ShouldContain("for pid in $(tree_pids \"$pids_dir/tree/cgroup.procs\" || true); do");
+        text.ShouldContain("pids=\"$(tree_pids \"$pids_dir/tree/cgroup.procs\")\"");
+        text.ShouldContain("for pid in $pids; do");
+        text.ShouldNotContain("tree_pids \"$pids_dir/tree/cgroup.procs\" || true");
         text.ShouldContain("kill -KILL \"$pid\"");
         Occurrences(text, "kill -KILL").ShouldBe(1, "exactly one signalling site");
 

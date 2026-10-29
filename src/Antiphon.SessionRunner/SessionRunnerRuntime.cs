@@ -78,7 +78,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private string? DetectCustodyBackend() => BackendPlatformIsWindows
         ? BackendDecision.Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
-        : LinuxCgroupCustodyProbe.Detect(CustodyEnvironment);
+        : LinuxCgroupCustodyProbe.Detect(
+            CustodyEnvironment ?? new LinuxCustodyEnvironment(_settings.LinuxCustodyQualified));
 
     /// <summary>Test seam for the Linux probe. Production leaves it null and probes for real.</summary>
     internal ILinuxCustodyEnvironment? CustodyEnvironment { get; init; }

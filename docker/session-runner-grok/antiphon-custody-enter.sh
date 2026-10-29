@@ -61,9 +61,26 @@ is_v2() {
 
 # Creates the execution's tree if it is absent and returns once it exists and is empty. The
 # custody root is root-owned 0755 so uid 1654 can never do this for itself.
+require_empty_tree() {
+  local procs="$1" pop=0
+  if custody_procs_populated "$procs"; then
+    pop=0
+  else
+    pop=$?
+  fi
+  if [ "$pop" -eq 0 ]; then
+    refuse CustodyTreeNotEmpty
+  fi
+  if [ "$pop" -ne 1 ]; then
+    refuse CustodyTreeUnreadable
+  fi
+}
+
 prepare_tree_v2() {
   local id="$1"
-  local dir="$V2_ROOT/$id"
+  local ns dir
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  dir="$V2_ROOT/$ns/$id"
   require_under_root "$dir" "$V2_ROOT"
   mkdir -p "$dir"
   chmod 0755 "$dir"
@@ -73,24 +90,22 @@ prepare_tree_v2() {
   if [ ! -f "$dir/tree/cgroup.procs" ]; then
     refuse CustodyTreeUnavailable
   fi
-  if custody_procs_populated "$dir/tree/cgroup.procs"; then
-    refuse CustodyTreeNotEmpty
-  fi
+  require_empty_tree "$dir/tree/cgroup.procs"
 }
 
 prepare_tree_v1() {
-  local id="$1" hierarchy dir
+  local id="$1"
+  local ns hierarchy dir
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
   for hierarchy in "$V1_PIDS_ROOT" "$V1_FREEZER_ROOT"; do
-    dir="$hierarchy/$id"
+    dir="$hierarchy/$ns/$id"
     require_under_root "$dir" "$hierarchy"
     mkdir -p "$dir/tree"
     chmod 0755 "$dir" "$dir/tree"
     if [ ! -f "$dir/tree/cgroup.procs" ]; then
       refuse CustodyTreeUnavailable
     fi
-    if custody_procs_populated "$dir/tree/cgroup.procs"; then
-      refuse CustodyTreeNotEmpty
-    fi
+    require_empty_tree "$dir/tree/cgroup.procs"
   done
 }
 
@@ -99,25 +114,29 @@ prepare_tree_v1() {
 # D-17 -- a post-hoc "place the child once it exists" would have one.
 enter_tree_v2() {
   local id="$1"
-  echo $$ > "$V2_ROOT/$id/tree/cgroup.procs" || refuse CustodyPlacementFailed
+  local ns
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  echo $$ > "$V2_ROOT/$ns/$id/tree/cgroup.procs" || refuse CustodyPlacementFailed
 }
 
 enter_tree_v1() {
-  local id="$1" hierarchy
+  local id="$1" ns hierarchy
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
   for hierarchy in "$V1_PIDS_ROOT" "$V1_FREEZER_ROOT"; do
-    echo $$ > "$hierarchy/$id/tree/cgroup.procs" || refuse CustodyPlacementFailed
+    echo $$ > "$hierarchy/$ns/$id/tree/cgroup.procs" || refuse CustodyPlacementFailed
   done
 }
 
 remove_tree() {
-  local id="$1" hierarchy
+  local id="$1" ns hierarchy
+  ns="$(custody_read_namespace)" || return 0
   if is_v2; then
-    rmdir "$V2_ROOT/$id/tree" 2>/dev/null || true
-    rmdir "$V2_ROOT/$id" 2>/dev/null || true
+    rmdir "$V2_ROOT/$ns/$id/tree" 2>/dev/null || true
+    rmdir "$V2_ROOT/$ns/$id" 2>/dev/null || true
   else
     for hierarchy in "$V1_PIDS_ROOT" "$V1_FREEZER_ROOT"; do
-      rmdir "$hierarchy/$id/tree" 2>/dev/null || true
-      rmdir "$hierarchy/$id" 2>/dev/null || true
+      rmdir "$hierarchy/$ns/$id/tree" 2>/dev/null || true
+      rmdir "$hierarchy/$ns/$id" 2>/dev/null || true
     done
   fi
 }
@@ -129,6 +148,7 @@ if [ "${1:-}" = "--probe" ]; then
   if [ "$#" -ne 1 ]; then
     refuse ProbeTakesNoArguments
   fi
+  custody_acquire_probe_lock || refuse ProbeLockUnavailable
   if is_v2; then
     [ -d "$V2_ROOT" ] || refuse CustodyRootMissing
     prepare_tree_v2 "$PROBE_ID"

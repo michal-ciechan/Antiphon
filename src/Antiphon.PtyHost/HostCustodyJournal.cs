@@ -31,6 +31,22 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         Identity = new(store.StoreId, hostInstanceId, Guid.NewGuid(), host.Id, host.StartTime.ToUniversalTime());
         // A second host cannot replace a former host/job, even if its root or manifest disappeared.
         store.WriteRecord(binding, "host-identity.json", Identity);
+        store.WriteRecord(binding, "linux-namespace.json",
+            new LinuxNamespaceRecord(1, ReadLinuxNamespace(), Identity.ContainerId));
+    }
+
+    private static Guid ReadLinuxNamespace()
+    {
+        const string marker = "/run/antiphon-custody/namespace";
+        try
+        {
+            var text = File.ReadAllText(marker).Trim();
+            return Guid.TryParseExact(text, "D", out var id) ? id : Guid.Empty;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Guid.Empty;
+        }
     }
 
     public void RecordStartIntent()

@@ -131,6 +131,8 @@ public sealed class HostSession : IAsyncDisposable
                              _options.LogFile ?? _options.ManifestDir, launch.AnsiLogPath })
                     store.RequireOutsideSnapshot(path, binding);
                 _custody = new(store, binding, _hostInstanceId);
+                if (!PlatformAdmitsBackend(binding.Backend))
+                    throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
             }
             if (launch.GrokRulesReceipt is not null || _custody is not null || launch.AcceptedStartedAt is not null)
             {
@@ -307,6 +309,11 @@ public sealed class HostSession : IAsyncDisposable
     public HelloAckMessage GetHelloAck(string hostVersion) =>
         new(PtyHostProtocol.Version, hostVersion, _options.SessionId, Status,
             AdvertisesCustody ? ["verificationCustodyV1"] : [], _hostInstanceId);
+
+    private static bool PlatformAdmitsBackend(string backend) =>
+        OperatingSystem.IsWindows()
+            ? backend == VerificationCustodyBackends.WindowsJob
+            : backend == VerificationCustodyBackends.LinuxCgroup;
 
     private bool AdvertisesCustody => _options.CustodyStoreRoot is not null
         && _options.CustodyBackend is { } backend

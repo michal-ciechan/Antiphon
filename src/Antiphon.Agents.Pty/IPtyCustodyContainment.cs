@@ -167,8 +167,12 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
     /// </summary>
     public static string ResolveProcsPath(Guid namespaceId, Guid containerId)
     {
-        _ = namespaceId;
-        return TreeProcsPath(containerId);
+        var ns = namespaceId.ToString("D");
+        var id = containerId.ToString("D");
+        var root = LinuxCgroupContainment.CustodyRootName;
+        return File.Exists("/sys/fs/cgroup/cgroup.controllers")
+            ? $"/sys/fs/cgroup/{root}/{ns}/{id}/tree/cgroup.procs"
+            : $"/sys/fs/cgroup/pids/{root}/{ns}/{id}/tree/cgroup.procs";
     }
 
     private static string TreeProcsPath(Guid containerId)
