@@ -552,6 +552,22 @@ function Invoke-CardCollection {
     Write-Error 'Card enumeration exceeded the page safety limit; restart.'; exit 1
 }
 
+# Display join for the server's repository path. Windows keeps Join-Path.
+# Windows PowerShell 5.1 has no $IsWindows; Desktop edition is that host.
+# A drive-letter root is not a local drive on Linux, and Join-Path then
+# throws "Cannot find drive". The line is the server path, not a local one.
+function Join-CardFileTarget {
+    param([string]$RepositoryPath, [string]$Relative)
+    $onWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ($IsWindows -eq $true)
+    if ($onWindows -or $RepositoryPath -notmatch '^[A-Za-z]:') {
+        return Join-Path $RepositoryPath ($Relative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+    }
+    $leaf = $Relative.Replace('/', '\')
+    $root = $RepositoryPath.TrimEnd('\', '/')
+    if ([string]::IsNullOrEmpty($leaf)) { return $root }
+    return ($root + '\' + $leaf.TrimStart('\'))
+}
+
 function Write-CardFileStatus {
     param($TheCard)
     $s = $TheCard.cardFileStatus
@@ -566,7 +582,7 @@ function Write-CardFileStatus {
     else { Write-Output "card files  NOT WRITTEN: $($s.reason)" }
     if ($s.repositoryPath -and $s.directory) {
         $relative = if ($s.eligible -and $s.relativeFile) { $s.relativeFile } else { $s.directory }
-        $target = Join-Path $s.repositoryPath ($relative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+        $target = Join-CardFileTarget $s.repositoryPath $relative
         $visibility = if ($s.repositoryVisibility -eq 'Unknown') { 'Unknown repository visibility; not checked' } else { "configured $($s.repositoryVisibility) repository" }
         Write-Output "target      $target ($visibility)"
     }
