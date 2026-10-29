@@ -40,7 +40,11 @@ public sealed partial class LandGraphEvaluationTests
 
         var run = await repo.RunToolAsync("--api-probe");
 
-        run.ExitCode.ShouldBe(0, run.Text);
+        run.ExitCode.ShouldBe(3, run.Text);
+        run.StandardOutput.ShouldNotContain("approved", Case.Sensitive);
+        run.StandardError.ShouldContain("api: Microsoft.Build.Evaluation.Project.GetAllGlobs() ok", Case.Sensitive);
+        run.StandardOutput.ShouldNotContain("api:", Case.Sensitive);
+        run.Lines.ShouldNotContain("approved");
         foreach (var member in new[]
                  {
                      "Microsoft.Build.Evaluation.Project.GetAllGlobs()",
@@ -435,6 +439,10 @@ public sealed partial class LandGraphEvaluationTests
 
     internal sealed record ToolRun(int ExitCode, string Text)
     {
+        public string StandardOutput { get; init; } = "";
+
+        public string StandardError { get; init; } = "";
+
         public string PathText => Text.Replace('\\', '/');
 
         public IReadOnlyList<string> Lines { get; } =
@@ -544,9 +552,14 @@ public sealed partial class LandGraphEvaluationTests
                 throw;
             }
 
-            var text = await stdout + await stderr;
+            var outText = await stdout;
+            var errText = await stderr;
             Console.WriteLine($"LAND_GRAPH_EVALUATION repo={root} elapsedMs={clock.ElapsedMilliseconds} exit={process.ExitCode}");
-            return new ToolRun(process.ExitCode, text);
+            return new ToolRun(process.ExitCode, outText + errText)
+            {
+                StandardOutput = outText,
+                StandardError = errText,
+            };
         }
 
         /// <summary>The tool writes nothing into the repo: same files, and no obj directory anywhere.</summary>

@@ -107,7 +107,8 @@ public sealed partial class LandGraphEvaluationTests
         var root = RepoRoot();
         var files = Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit"), "*.cs")
             .Concat(Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit.Core"), "*.cs"))
-            .Append(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+            .Append(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"))
+            .Append(Path.Combine(root, "scripts", "lib", "land-graph-canary-removal.ps1"));
         foreach (var file in files)
         {
             var text = await File.ReadAllTextAsync(file);
@@ -133,6 +134,50 @@ public sealed partial class LandGraphEvaluationTests
         names.Single().ShouldBe("NUGET_PACKAGES");
     }
 
+    [Test]
+    public void ClockThatSkipsWorkCannotApprove()
+    {
+        var output = new StringWriter();
+        var code = PhaseClock.Bound(new SkippingClock(), TimeSpan.FromSeconds(1), "Antiphon.sln", "pass 1", () => 0, output);
+        code.ShouldBe(PhaseClock.Refusal);
+        output.ToString().ShouldNotContain("approved", Case.Sensitive);
+    }
+
+    [Test]
+    public void ProductionWallClockApprovesOnlyFinishedWork()
+    {
+        var finished = new WallClock();
+        var ran = 0;
+        finished.TryComplete(TimeSpan.FromSeconds(2), () => ran++).ShouldBeTrue();
+        ran.ShouldBe(1);
+
+        var output = new StringWriter();
+        var approved = PhaseClock.Bound(new WallClock(), TimeSpan.FromSeconds(2), "Antiphon.sln", "pass 1", () => 0, output);
+        approved.ShouldBe(0);
+        ApprovedLines(output).ShouldBe(0);
+
+        var release = new ManualResetEventSlim(false);
+        var expired = 0;
+        var stalled = new WallClock(() =>
+        {
+            expired++;
+            release.Set();
+        });
+        stalled.TryComplete(TimeSpan.FromMilliseconds(50), () => release.Wait(TimeSpan.FromSeconds(5))).ShouldBeFalse();
+        expired.ShouldBe(1);
+
+        var refused = new StringWriter();
+        var code = PhaseClock.Bound(new WallClock(), TimeSpan.FromMilliseconds(50), "Antiphon.sln", "pass 1",
+            () =>
+            {
+                Thread.Sleep(2000);
+                return 0;
+            }, refused);
+        code.ShouldBe(PhaseClock.Refusal);
+        refused.ToString().ShouldContain("evaluation-failed: evaluating Antiphon.sln pass 1 exceeded 0 s", Case.Sensitive);
+        refused.ToString().ShouldNotContain("approved", Case.Sensitive);
+    }
+
     private static int ApprovedLines(StringWriter output) =>
         output.ToString().Split('\n').Count(line => line.Trim() == "approved");
 
@@ -152,6 +197,12 @@ public sealed partial class LandGraphEvaluationTests
     }
 
     private readonly record struct PhaseTimeout(int Code, string Text, int Timeouts, bool Pass2Ran);
+
+    /// <summary>Reports completion without running the work. Approval must stay refused.</summary>
+    private sealed class SkippingClock : IPhaseClock
+    {
+        public bool TryComplete(TimeSpan budget, Action work) => true;
+    }
 
     /// <summary>Elapsed time moves only when the fake evaluator advances it. This clock cannot approve.</summary>
     private sealed class ManualPhaseClock : IPhaseClock

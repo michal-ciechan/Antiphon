@@ -1,11 +1,11 @@
 namespace Antiphon.LandGraphAudit;
 
-/// <summary>Wall-clock phase waits. A copy timeout cancels the copy and gives it a moment to stop.</summary>
+/// <summary>Wall-clock phase waits. The copy clock's callback cancels an overrun copy.</summary>
 internal sealed class WallClock : IPhaseClock
 {
-    private readonly bool _cancelCopy;
+    private readonly Action? _onExpire;
 
-    public WallClock(bool cancelCopy = false) => _cancelCopy = cancelCopy;
+    public WallClock(Action? onExpire = null) => _onExpire = onExpire;
 
     public bool TryComplete(TimeSpan budget, Action work)
     {
@@ -16,9 +16,9 @@ internal sealed class WallClock : IPhaseClock
             return true;
         }
 
-        if (_cancelCopy)
+        if (_onExpire is not null)
         {
-            CanaryRepository.CancelCopy();
+            _onExpire();
             try { task.Wait(TimeSpan.FromSeconds(2)); }
             catch (Exception) { }
         }
