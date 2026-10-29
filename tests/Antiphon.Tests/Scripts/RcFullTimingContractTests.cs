@@ -139,6 +139,21 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("summaryAggregationMilliseconds").GetInt32().ShouldBeLessThanOrEqualTo(5000);
     }
 
+    [Test]
+    [Timeout(90_000)]
+    public async Task SummaryReReadSharesOneBudget(CancellationToken cancellationToken)
+    {
+        var root = FreshRoot();
+        var observed = await Run(BudgetScript, cancellationToken, root);
+        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
+        observed.GetProperty("firstLate").GetBoolean().ShouldBeTrue("first over-budget shard was not re-read");
+        observed.GetProperty("secondLate").GetBoolean().ShouldBeFalse("second shard was re-read after the shared budget was exhausted");
+        observed.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
+        var spent = observed.GetProperty("summaryAggregationMilliseconds").GetInt32();
+        spent.ShouldBeGreaterThan(0, "aggregate re-read recorded no time");
+        spent.ShouldBeLessThanOrEqualTo(5000, "aggregate re-read exceeded the shared budget");
+    }
+
     private static string[] Uids(JsonElement observed, string name)
     {
         var values = new List<string>();
@@ -795,6 +810,75 @@ public sealed class RcFullTimingContractTests
             orphanIncomplete = [bool]$orphanIncomplete
             orphanCountsKnown = [bool]$orphanKnown
             duplicateJoined = [bool]$duplicateJoined
+            summaryAggregationBudgetMilliseconds = [int]$budget
+            summaryAggregationMilliseconds = [int]$spent
+        }
+        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
+        """;
+
+    private const string BudgetScript = """
+        $ErrorActionPreference = 'Stop'
+        $repo = $args[0]
+        $work = $args[1]
+        $lib = Join-Path $repo 'scripts/lib'
+        . (Join-Path $lib 'nightly-common.ps1')
+        . (Join-Path $lib 'test-phase-evidence.ps1')
+        $timing = Join-Path $work 'timing'
+        New-Item -ItemType Directory -Path $timing -Force | Out-Null
+        $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"SUITE","assembly":"Antiphon.Tests"}'
+        function Complete-Line([string]$id, [string]$outcome) {
+            return '{"recordKind":"complete","testId":"' + $id + '","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"' + $outcome + '","phases":[],"processes":[],"exclusive":{"db":1,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
+        }
+        function Write-OverBudgetShard([string]$name, [string]$suite, [string]$earlyId, [string]$lateId) {
+            $sb = New-Object System.Text.StringBuilder
+            [void]$sb.Append(($header.Replace('SUITE', $suite) + "`n"))
+            [void]$sb.Append((Complete-Line $earlyId 'Passed') + "`n")
+            $pad = Complete-Line 'pad-case' 'Passed'
+            while ($sb.Length -lt 270000) { [void]$sb.Append($pad + "`n") }
+            [void]$sb.Append((Complete-Line $lateId 'Passed') + "`n")
+            [IO.File]::WriteAllText((Join-Path $timing $name), $sb.ToString())
+        }
+        Write-OverBudgetShard 'cases-a-budget.jsonl' 'antiphon' 'early-a' 'late-a'
+        Write-OverBudgetShard 'cases-b-budget.jsonl' 'e2e' 'early-b' 'late-b'
+        $script:TestPhaseSummaryReReadWatch = New-Object psobject
+        $script:TestPhaseSummaryReReadWatch | Add-Member NoteProperty ElapsedMilliseconds 0
+        $script:TestPhaseSummaryReReadWatch | Add-Member NoteProperty IsRunning $false
+        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod Start { $this.IsRunning = $true }
+        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod Stop { $this.IsRunning = $false }
+        $script:TestPhaseSummaryReReadWatch | Add-Member ScriptMethod OnFullRead { $this.ElapsedMilliseconds = 5000 }
+        [IO.File]::WriteAllText((Join-Path $timing 'groups-planned.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}')
+        [IO.File]::WriteAllText((Join-Path $timing 'groups-planned-e2e.json'), '{"version":1,"runId":"run-1","attempt":"1","suite":"e2e","assembly":"Antiphon.E2E","groups":[]}')
+        Invoke-TestPhaseRunSummary -RunDirectory $work -Top 20
+        $summary = [IO.File]::ReadAllText((Join-Path $timing 'summary.json')) | ConvertFrom-Json
+        $firstLate = $false
+        $secondLate = $false
+        foreach ($test in @($summary.tests)) {
+            $id = [string]$test.testId
+            if ($id -eq 'late-a') { $firstLate = $true }
+            if ($id -eq 'late-b') { $secondLate = $true }
+        }
+        $budget = -1
+        $spent = -1
+        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationBudgetMilliseconds' -and $null -ne $summary.summaryAggregationBudgetMilliseconds) {
+            $budget = [int]$summary.summaryAggregationBudgetMilliseconds
+        }
+        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationMilliseconds' -and $null -ne $summary.summaryAggregationMilliseconds) {
+            $spent = [int]$summary.summaryAggregationMilliseconds
+        }
+        $problems = New-Object System.Collections.Generic.List[string]
+        if (-not $firstLate) { $problems.Add('first-shard-not-reread') }
+        if ($secondLate) { $problems.Add('second-shard-reread') }
+        if ($spent -le 0) { $problems.Add(('summary-spent-zero=' + [string]$spent)) }
+        if ($budget -ne 5000) { $problems.Add(('summary-budget=' + [string]$budget)) }
+        if ($spent -gt 5000) { $problems.Add(('summary-spent-over=' + [string]$spent)) }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
+        $out = [ordered]@{
+            exitCode = [int]$exit
+            text = [string]$text
+            firstLate = [bool]$firstLate
+            secondLate = [bool]$secondLate
             summaryAggregationBudgetMilliseconds = [int]$budget
             summaryAggregationMilliseconds = [int]$spent
         }
