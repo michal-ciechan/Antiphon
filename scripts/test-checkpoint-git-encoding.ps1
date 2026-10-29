@@ -101,17 +101,41 @@ if ($Mode -eq 'tamper') {
     [void][IO.Directory]::CreateDirectory($root)
     $shims = Join-Path $Root 'shims'
     [void][IO.Directory]::CreateDirectory($shims)
-    $shim = @'
+    # Production starts FileName 'git'. Windows resolves git.cmd; Linux execs a mode-0700 sh script.
+    # File.SetUnixFileMode stays in-process so the witness does not need chmod.
+    if ($IsWindows) {
+        $pwsh = [string](Get-Process -Id $PID).Path
+        $cmd = @"
+@echo off
+setlocal EnableExtensions
+:skipc
+if /I not "%~1"=="-c" goto afterc
+shift
+shift
+goto skipc
+:afterc
+if /I "%~1"=="config" exit /b 0
+"$pwsh" -NoProfile -NonInteractive -Command "[Console]::OpenStandardOutput().WriteByte(255)"
+exit /b %ERRORLEVEL%
+"@
+        $shimPath = Join-Path $shims 'git.cmd'
+        $cmdText = $cmd.Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n")
+        [IO.File]::WriteAllText($shimPath, $cmdText)
+    } else {
+        $shim = @'
 #!/bin/sh
 set -eu
 while [ "$1" = -c ]; do shift 2; done
 if [ "$1" = config ]; then exit 0; fi
 printf '\377'
 '@
-    $shimPath = Join-Path $shims 'git'
-    [IO.File]::WriteAllText($shimPath, $shim.Replace("`r`n", "`n").Replace("`r", "`n"))
-    & chmod +x $shimPath
-    if ($LASTEXITCODE) { throw 'chmod failed' }
+        $shimPath = Join-Path $shims 'git'
+        [IO.File]::WriteAllText($shimPath, $shim.Replace("`r`n", "`n").Replace("`r", "`n"))
+        $mode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
+        [IO.File]::SetUnixFileMode($shimPath, [IO.UnixFileMode]$mode)
+        $set = [IO.File]::GetUnixFileMode($shimPath)
+        if (($set -band [IO.UnixFileMode]::UserExecute) -eq 0) { throw 'git shim is not executable' }
+    }
     $env:PATH = $shims + [IO.Path]::PathSeparator + $env:PATH
     $listed = Invoke-CheckpointGit $root @('status')
     $stdout = [string]$listed.Stdout
@@ -120,6 +144,9 @@ printf '\377'
         if (-not [string]::IsNullOrEmpty($stdout)) { $hex = [Convert]::ToHexString($script:Utf8.GetBytes($stdout)) }
         throw "invalid UTF-8 accepted reason=$($listed.Reason) exit=$($listed.Exit) stdoutHex=$hex"
     }
+    $manifest = Get-CheckpointUntrackedManifest $root
+    $expected = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)'
+    if ([string]$manifest.Error -cne $expected) { throw "encoding refusal text: $($manifest.Error)" }
     Write-Host 'C1608 encoding PASS'
 } else {
     throw "unknown mode $Mode"
