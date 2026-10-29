@@ -43,6 +43,13 @@ Run the [plan's exact native lane rows](superpowers/plans/2026-10-04-card-1049-w
 through the checkpoint tool; the production readiness deadlines/retries are unchanged.
 
 
+CARD-1613: the rc Linux-only Windows exclusions are pinned `[NativeLinuxOnly]` markers
+witnessed by reflection in each of the four suites (`NativeLinuxPolicyWitnessTests`).
+`scripts/lib/linux-only-gate-witness.cs` is retired. `test-rc-platform.ps1 -Case
+LinuxOnlyWindowsExclusionPolicy` checks the shipped rows and census gaps; the old
+`-Case LinuxOnlyWindowsExclusions` refuses. The native child is
+`tests/Antiphon.NativeLinuxPolicy.Probe`, staged for `NativeLinuxPolicyExecutionTests`.
+
 ## Performance standards
 
 [Test performance standards](test-performance-standards.md) owns the standing engineering rules.
