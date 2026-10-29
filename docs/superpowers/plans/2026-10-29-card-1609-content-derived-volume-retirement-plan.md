@@ -1,6 +1,6 @@
 # CARD-1609: content-derived volume retirement
 
-Status: early draft, investigation and verification design in progress. Plan task
+Status: draft; source/prototype investigation complete, verification design in progress. Plan task
 `dcbf1d18`; assigned base `f8bddb6efda7b0e8f50f3b45744087e52188bc66`.
 
 ## Problem and evidence
@@ -9,7 +9,28 @@ Retired volumes must be removable using current audit tooling when their content
 is proven safe. CARD-1609, CARD-1607 and CARD-1594 were read from the Antiphon
 board on 2026-10-29. Current retirement couples content audit to cleanup receipt,
 Compose generation and image identity. The manual 2026-10-29 prototype and the
-CARD-1607 branch are being examined before this draft is finalized.
+CARD-1607 branch have been examined; see the prototype findings below.
+
+### Prototype findings
+
+Read both complete API file responses (not truncated) from the canonical desktop
+workspace: `manual-retire-20261029T022320Z/manifest.json` (1,249,870 characters)
+and `proof.md` (25,284 characters), plus Deploy task a04846da's full report.
+The JSON was parsed in full: 4,102 Antiphon publication rows and 9 school-revision
+rows all say equal or ancestor; all 59 worktree status records say clean.
+The prototype excludes 32 reflog-only commits and displays peeled annotated-tag
+commits. It does not record Docker volume creation identity. Those omissions must
+not become the permanent authorizing contract. State includes an ambiguous
+111-byte session `.key` name; the permanent classifier must state its policy.
+Nested Docker was inspected read-only from the host because uid 1654 cannot read
+its root-owned directory. Preserve that separation; never make the helper root.
+
+`scripts/c1008-host-proof.ps1` was read at
+`d301a70ba8855e8180708d85b3bafecbbd838420` on `feat/card-task-b7de5a59`.
+It supplies advertised refs after classified authentication failure, not a full
+host ancestry proof. Its timestamp lower bound alone is not a bounded freshness
+window. CARD-1609 requires an offline container plus current host proof for all
+origins, with explicit proof coverage, upper age bound and incarnation binding.
 
 ## Ground truth
 
