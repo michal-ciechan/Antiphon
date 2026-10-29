@@ -84,6 +84,14 @@ public class CapacityObsoleteQueueTests
             var due = fx.Now.AddSeconds((121 * 2) + 30);
             await db.CapacityRecoveryWaits.Where(w => w.Id == competitor.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(w => w.DueAt, due));
+            if (arm == "schedule-supersession")
+            {
+                // Y is already queued, so the same reconcile would grant it. Keep this
+                // wait due later; DeliverRetainedScheduledAsync advances to that due time.
+                var waitDue = fx.Now.AddMinutes(10);
+                await db.CapacityRecoveryWaits.Where(w => w.Id == wait.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(w => w.DueAt, waitDue));
+            }
         }
 
         await fx.Recovery.ReconcileAsync(CancellationToken.None);
@@ -223,10 +231,15 @@ public class CapacityObsoleteQueueTests
         var messageId = await fx.SelectByFailedDeliveryAsync(leadingUi: true);
         await fx.Queue.CancelAsync(fx.SessionId, messageId, CancellationToken.None);
         var before = await fx.ReloadWaitAsync(wait.Id);
+        var faultArmed = false;
         boundary.OnReached = (name, waitId, _, _) =>
         {
-            if (name == "capacity-obsolete-before-finish" && waitId == wait.Id)
+            if (!faultArmed && name == "capacity-obsolete-before-finish" && waitId == wait.Id)
+            {
+                faultArmed = true;
                 fail.Remaining = 1;
+            }
+
             return Task.CompletedTask;
         };
 
