@@ -43,6 +43,9 @@ public class HostCustodyTests
     [Test]
     public void C478_V14_HostIntermediaryBreakawayDeniedFallback()
     {
+        // kernel32 CreateProcessW job breakaway. Windows stays admitted; Linux has no job object.
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Requires Windows job-object breakaway");
         var pid = Win32ProcessSpawner.StartDetachedWithFallback(
             Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "ping -n 2 127.0.0.1 > nul"]);
         pid.ShouldBeGreaterThan(0);
