@@ -4313,12 +4313,20 @@ c1192_dump_shell_state() {
 # shell starts with SIGINT default, and an operator Ctrl-C is delivered to
 # that process group. INT does not reach a fixture that was itself started
 # with & from a non-interactive shell, because the ignored disposition is
-# inherited at exec and `trap` cannot undo it. TERM is not in that pair, so
-# it still arrives. This witness execs the barrier through perl so the test
-# delivers INT even when this harness was started in the background.
+# inherited at exec and `trap` cannot undo it. setsid does not clear that
+# inherited ignore. TERM is not in that pair, so a pid-only TERM still
+# arrives. This witness execs the barrier through perl, which sets SIGINT
+# back to the default before exec, so the test can deliver INT even when
+# this harness was started in the background.
+#
+# A pid-only SIGINT after that is still discarded while bash waits on a
+# foreground child that does not itself die from SIGINT (the slot poll's
+# sleep). Monitor mode makes the child its own process group, and the
+# witness signals that group. That is the same delivery as the operator
+# Ctrl-C, and it does not signal this fixture's own group.
 c1192_signal_witness() {
     local sig="$1" expected="$2" packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key child armed
+    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key child armed monitor=0
     traps="$(c1192_fixture_traps)"
     if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
         || ! c1192_has_exact_line "trap 'c849_fixture_on_signal TERM' TERM" "$traps"; then
@@ -4359,6 +4367,10 @@ c1192_signal_witness() {
     } > "$child"
     # perl inherits an ignored SIGINT when this harness was backgrounded, then
     # puts the default back before exec. The bash pid is the same process.
+    # Monitor mode is on only for this launch so the child is a process-group
+    # leader. Restored before this function returns.
+    case $- in *m*) monitor=1 ;; esac
+    set -m
     perl -e '$SIG{INT}="DEFAULT"; $SIG{QUIT}="DEFAULT"; exec @ARGV or die $!' -- \
         bash "$child" > "$C1192_ROOT/signal-out" 2>>"$C1192_ROOT/scenario.err" &
     pid=$!
@@ -4380,8 +4392,9 @@ c1192_signal_witness() {
         i=$((i + 1))
     done
     if [ "$armed" != 1 ]; then
-        kill -s TERM "$pid" 2>/dev/null || true
+        kill -s TERM -- -"$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
+        [ "$monitor" = 1 ] || set +m
         emit "signal-${sig}-installed" 0
         emit "signal-${sig}-exit" 0
         emit "signal-${sig}-cid-kills" 0
@@ -4392,8 +4405,9 @@ c1192_signal_witness() {
         return 0
     fi
     emit "signal-${sig}-installed" 1
-    kill -s "$sig" "$pid" 2>/dev/null || true
+    kill -s "$sig" -- -"$pid" 2>/dev/null || true
     wait "$pid" || code=$?
+    [ "$monitor" = 1 ] || set +m
     emit "signal-${sig}-exit" "$code"
     cid_kills=1
     while read -r _ cid name || [ -n "${cid:-}" ]; do
