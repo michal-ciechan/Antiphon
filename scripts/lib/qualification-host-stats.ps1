@@ -22,12 +22,14 @@ function Test-QualificationHostRuntime {
             decision = 'incompatible-runtime'
             measurementAdmission = $false
             diagnosticComplete = $true
+            loadReason = ''
         }
     }
     return [pscustomobject]@{
         decision = 'compatible'
         measurementAdmission = $false
         diagnosticComplete = $true
+        loadReason = ''
     }
 }
 
@@ -41,7 +43,24 @@ function Invoke-QualificationHostSampler {
     $index = 0
     while ($index -lt $SampleCount) {
         $index++
-        $sample = & $Probe
+        $sample = $null
+        $failed = $false
+        try {
+            $sample = & $Probe
+        } catch {
+            $failed = $true
+        }
+        if ($failed) {
+            $sample = [pscustomobject]@{
+                at = ''
+                cpuPercent = $null
+                cores = $null
+                memoryAvailableBytes = $null
+                memoryCommittedBytes = $null
+                diskQueue = $null
+                reason = 'sample-failed'
+            }
+        }
         if ($null -eq $sample) { break }
         $samples.Add($sample)
     }
@@ -67,11 +86,18 @@ function New-QualificationHostStatsProvider {
             measurementAdmission = $false
             diagnosticComplete = $true
             probe = $null
+            loadReason = ''
         }
     }
     $loaded = $null
+    $loadReason = ''
     if ($null -ne $Loader -and -not [string]::IsNullOrWhiteSpace($AssemblyPath)) {
-        $loaded = & $Loader
+        try {
+            $loaded = & $Loader
+        } catch {
+            $loaded = $null
+            $loadReason = 'loader-failed'
+        }
     }
     $admitted = $false
     if ($null -ne $loaded) { $admitted = $true }
@@ -80,5 +106,6 @@ function New-QualificationHostStatsProvider {
         measurementAdmission = [bool]$admitted
         diagnosticComplete = $true
         probe = $loaded
+        loadReason = [string]$loadReason
     }
 }

@@ -8,6 +8,9 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
 }
+if (-not (Get-Command New-QualificationHostStatsProvider -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'qualification-host-stats.ps1')
+}
 
 # CARD-0599 D-6: kept as the pre-existing nightly inventory. Native ownership is now
 # decided from the suite definition itself (Test-NightlySuiteIsNative) so a profile can
@@ -569,6 +572,8 @@ function Add-NightlyOwnerObservation {
     if ($null -eq $Verdict -or $null -eq $Run) { return }
     $names = @($Run.PSObject.Properties.Name)
     $map = @(
+        @('RootStartedAtUtc', 'rootStartedAtUtc'),
+        @('rootStartedAtUtc', 'rootStartedAtUtc'),
         @('RootExitedAtUtc', 'rootExitedAtUtc'),
         @('rootExitedAtUtc', 'rootExitedAtUtc'),
         @('JobEmptyObserved', 'jobEmpty'),
@@ -621,6 +626,329 @@ function Write-NightlyMeasuredPhase {
         $ended = $started.AddSeconds([double]$Seconds)
         Write-QualificationRunPhase -LogRoot $LogRoot -Name $Name -StartedAt $started.ToString('o') -EndedAt $ended.ToString('o') -Seconds ([double]$Seconds)
     } catch { }
+}
+
+function Resolve-NightlyProductionChunkDiscovery {
+    param(
+        [double]$SuiteDiscoverySeconds,
+        $ChunkMarkerSeconds,
+        [switch]$SupplementalLaunch
+    )
+    $resolvedDiscovery = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds $SuiteDiscoverySeconds -ChunkMarkerSeconds $ChunkMarkerSeconds -SupplementalLaunch:$SupplementalLaunch
+    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
+    return [pscustomobject]@{
+        chunkDiscoverySeconds = $chunkDiscoverySeconds
+        copiedFromSuite = [bool]$resolvedDiscovery.copiedFromSuite
+        suiteDiscoverySeconds = [double]$SuiteDiscoverySeconds
+    }
+}
+
+function Write-NightlyPrerequisitePhases {
+    param(
+        [string]$LogRoot,
+        $NpmCiStarted,
+        $NpmCiSeconds,
+        $NpmBuildStarted,
+        $NpmBuildSeconds,
+        $LintStarted,
+        $LintSeconds,
+        $DotnetStarted,
+        $DotnetSeconds
+    )
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-ci' -StartedAt $NpmCiStarted -Seconds $NpmCiSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-build' -StartedAt $NpmBuildStarted -Seconds $NpmBuildSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'lint' -StartedAt $LintStarted -Seconds $LintSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'dotnet-build' -StartedAt $DotnetStarted -Seconds $DotnetSeconds
+}
+
+function Publish-NightlyChunkObservation {
+    param(
+        $Run,
+        [string]$LogRoot,
+        [string]$TrxPath,
+        [string]$Suite,
+        [string]$Chunk,
+        [string]$RunId,
+        [string]$Attempt,
+        [double]$HostWallSeconds = 0,
+        $CoverageComplete = $false,
+        $TestsPassed = $false
+    )
+    $exitCode = 0
+    if ($null -ne $Run -and $Run.PSObject.Properties.Name -contains 'ExitCode' -and $null -ne $Run.ExitCode) { $exitCode = [int]$Run.ExitCode }
+    $coverage = $false
+    $passed = $false
+    if ($null -ne $CoverageComplete) { $coverage = [bool]$CoverageComplete }
+    if ($null -ne $TestsPassed) { $passed = [bool]$TestsPassed }
+    $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$exitCode; coverageComplete = [bool]$coverage; testsPassed = [bool]$passed }
+    Add-NightlyOwnerObservation -Verdict $phaseVerdict -Run $Run
+    Write-TestPhaseExecutedManifest -Verdict $phaseVerdict -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
+    return $phaseVerdict
+}
+
+function Write-NightlyHostRuntimeReceipt {
+    param([string]$LogRoot, [string]$AssemblyPath, [string]$LoadReason = '')
+    $executable = ''
+    $executableReason = ''
+    try {
+        $procPath = ''
+        $proc = Get-Process -Id $PID -ErrorAction Stop
+        if ($null -ne $proc -and -not [string]::IsNullOrWhiteSpace([string]$proc.Path)) { $procPath = [string]$proc.Path }
+        if (-not [string]::IsNullOrWhiteSpace($procPath)) { $executable = [IO.Path]::GetFileName($procPath) }
+        if ([string]::IsNullOrWhiteSpace($executable)) { $executableReason = 'unavailable' }
+    } catch {
+        $executableReason = 'unavailable'
+    }
+    $digest = ''
+    $digestReason = ''
+    if ([string]::IsNullOrWhiteSpace($AssemblyPath) -or -not (Test-Path -LiteralPath $AssemblyPath)) {
+        $digestReason = 'assembly-missing'
+    } else {
+        try {
+            if (Get-Command Get-NightlyFileSha256 -ErrorAction SilentlyContinue) {
+                $digest = Get-NightlyFileSha256 -Path $AssemblyPath
+            } else {
+                $sha = [System.Security.Cryptography.SHA256]::Create()
+                $stream = [System.IO.File]::OpenRead($AssemblyPath)
+                try {
+                    $hash = $sha.ComputeHash($stream)
+                    $sb = New-Object System.Text.StringBuilder
+                    foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
+                    $digest = $sb.ToString()
+                } finally {
+                    $stream.Dispose()
+                    $sha.Dispose()
+                }
+            }
+        } catch {
+            $digestReason = 'digest-failed'
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LoadReason) -and [string]::IsNullOrWhiteSpace($digest) -and [string]::IsNullOrWhiteSpace($digestReason)) {
+        $digestReason = [string]$LoadReason
+    }
+    $doc = [ordered]@{
+        version = 1
+        executable = [string]$executable
+        executableReason = [string]$executableReason
+        psEdition = [string]$PSVersionTable.PSEdition
+        psVersion = [string]$PSVersionTable.PSVersion
+        frameworkDescription = [string][Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+        assemblyDigest = [string]$digest
+        assemblyReason = [string]$digestReason
+    }
+    $dir = Join-Path $LogRoot 'timing'
+    if (Get-Command Get-TestPhaseTimingDirectory -ErrorAction SilentlyContinue) {
+        $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $text = $doc | ConvertTo-Json -Compress -Depth 4
+    if (Get-Command ConvertTo-TestPhaseJsonText -ErrorAction SilentlyContinue) {
+        $text = ConvertTo-TestPhaseJsonText -Value $doc
+    }
+    $path = Join-Path $dir 'host-runtime.json'
+    if (Get-Command Write-TestPhaseTextAtomic -ErrorAction SilentlyContinue) {
+        Write-TestPhaseTextAtomic -Path $path -Text $text
+    } else {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($path, $text, $utf8)
+    }
+    return [pscustomobject]@{ written = $true }
+}
+
+function Write-NightlyHostSampleFile {
+    param([string]$LogRoot, $Samples)
+    $dir = Join-Path $LogRoot 'timing'
+    if (Get-Command Get-TestPhaseTimingDirectory -ErrorAction SilentlyContinue) {
+        $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $doc = [ordered]@{ version = 1; samples = @($Samples) }
+    $text = $doc | ConvertTo-Json -Compress -Depth 6
+    if (Get-Command ConvertTo-TestPhaseJsonText -ErrorAction SilentlyContinue) {
+        $text = ConvertTo-TestPhaseJsonText -Value $doc
+    }
+    $path = Join-Path $dir 'host-samples.json'
+    if (Get-Command Write-TestPhaseTextAtomic -ErrorAction SilentlyContinue) {
+        Write-TestPhaseTextAtomic -Path $path -Text $text
+    } else {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($path, $text, $utf8)
+    }
+}
+
+function Invoke-NightlyHostInstrumentation {
+    param(
+        [string]$LogRoot,
+        [string]$AssemblyPath,
+        [scriptblock]$Loader,
+        [scriptblock]$Probe,
+        [int]$SampleCount,
+        [scriptblock]$OwnerCompleted
+    )
+    $null = Write-NightlyHostRuntimeReceipt -LogRoot $LogRoot -AssemblyPath $AssemblyPath
+    $provider = $null
+    $loadReason = ''
+    if ($null -ne $Loader) {
+        try {
+            $provider = New-QualificationHostStatsProvider -AssemblyPath $AssemblyPath -Loader $Loader -Edition ([string]$PSVersionTable.PSEdition) -FrameworkDescription ([string][Runtime.InteropServices.RuntimeInformation]::FrameworkDescription)
+            if ($null -ne $provider -and $provider.PSObject.Properties.Name -contains 'loadReason') { $loadReason = [string]$provider.loadReason }
+        } catch {
+            $loadReason = 'loader-failed'
+        }
+    }
+    $samples = @()
+    if ($null -ne $Probe -and $SampleCount -gt 0) {
+        $sampled = Invoke-QualificationHostSampler -Probe $Probe -SampleCount $SampleCount -OwnerCompleted $OwnerCompleted
+        if ($null -ne $sampled) { $samples = @($sampled.samples) }
+    }
+    try { Write-NightlyHostSampleFile -LogRoot $LogRoot -Samples $samples } catch { }
+    $decision = 'unloaded'
+    $admitted = $false
+    if ($null -ne $provider) {
+        $decision = [string]$provider.decision
+        $admitted = [bool]$provider.measurementAdmission
+    }
+    return [pscustomobject]@{
+        decision = $decision
+        measurementAdmission = [bool]$admitted
+        loadReason = [string]$loadReason
+        sampleCount = [int]@($samples).Count
+        readsAfterStop = 0
+        receiptWritten = $true
+    }
+}
+
+function Stop-NightlyHostSampling {
+    $stop = $script:NightlyHostSamplingStop
+    $ps = $script:NightlyHostSamplingPowerShell
+    $handle = $script:NightlyHostSamplingHandle
+    $rs = $script:NightlyHostSamplingRunspace
+    $script:NightlyHostSamplingStop = $null
+    $script:NightlyHostSamplingPowerShell = $null
+    $script:NightlyHostSamplingHandle = $null
+    $script:NightlyHostSamplingRunspace = $null
+    try { if ($null -ne $stop) { [void]$stop.Set() } } catch { }
+    try {
+        if ($null -ne $ps -and $null -ne $handle) {
+            $done = $handle.AsyncWaitHandle.WaitOne(1000)
+            if (-not $done) {
+                try { $ps.Stop() } catch { }
+                [void]$handle.AsyncWaitHandle.WaitOne(1000)
+            }
+            try { $null = $ps.EndInvoke($handle) } catch { }
+        }
+    } catch { }
+    try { if ($null -ne $ps) { $ps.Dispose() } } catch { }
+    try { if ($null -ne $rs) { $rs.Dispose() } } catch { }
+    try { if ($null -ne $stop) { $stop.Dispose() } } catch { }
+}
+
+function Start-NightlyHostSamplingLoop {
+    param([string]$LogRoot, [string]$AssemblyPath, [int]$IntervalMilliseconds, [int]$SampleBudgetMilliseconds)
+    if ($IntervalMilliseconds -lt 1) { $IntervalMilliseconds = 1 }
+    if ($SampleBudgetMilliseconds -lt 1) { $SampleBudgetMilliseconds = 1 }
+    if ($null -ne $script:NightlyHostSamplingPowerShell) { Stop-NightlyHostSampling }
+    $stop = New-Object System.Threading.ManualResetEvent $false
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.Open()
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    $workerLines = @(
+        'param($Lib, $LogRoot, $AssemblyPath, $Interval, $Budget, $Stop)',
+        '$ErrorActionPreference = ''Continue''',
+        'try {',
+        '  . (Join-Path $Lib ''qualification-host-stats.ps1'')',
+        '  . (Join-Path $Lib ''nightly-common.ps1'')',
+        '  . (Join-Path $Lib ''test-phase-evidence.ps1'')',
+        '  $probe = $null',
+        '  try {',
+        '    $provider = New-QualificationHostStatsProvider -AssemblyPath $AssemblyPath -Loader {',
+        '      if ([string]::IsNullOrWhiteSpace($AssemblyPath) -or -not (Test-Path -LiteralPath $AssemblyPath)) { return $null }',
+        '      Add-Type -Path $AssemblyPath',
+        '      $settings = New-Object Antiphon.SessionRunner.HostStatsSettings',
+        '      return (New-Object Antiphon.SessionRunner.SystemHostStatsProbe $settings)',
+        '    } -Edition ([string]$PSVersionTable.PSEdition) -FrameworkDescription ([string][Runtime.InteropServices.RuntimeInformation]::FrameworkDescription)',
+        '    if ($null -ne $provider) { $probe = $provider.probe }',
+        '  } catch { $probe = $null }',
+        '  $cap = 2880',
+        '  $taken = 0',
+        '  while ($taken -lt $cap) {',
+        '    if ($Stop.WaitOne(0)) { break }',
+        '    $reason = ''unavailable''',
+        '    $cpu = $null',
+        '    $cores = $null',
+        '    $memoryAvailable = $null',
+        '    $watch = [Diagnostics.Stopwatch]::StartNew()',
+        '    try {',
+        '      if ($null -ne $probe) {',
+        '        $raw = $probe.Read()',
+        '        if ($watch.ElapsedMilliseconds -le $Budget -and $null -ne $raw) {',
+        '          $reason = [string]::Empty'
+        '          if ($null -ne $raw.CpuPercent) { $cpu = $raw.CpuPercent }',
+        '          if ($null -ne $raw.Cores) { $cores = $raw.Cores }',
+        '          if ($null -ne $raw.MemoryAvailableBytes) { $memoryAvailable = $raw.MemoryAvailableBytes }',
+        '        } else { $reason = ''sample-budget'' }',
+        '      }',
+        '    } catch { $reason = ''sample-failed'' }',
+        '    if ($Stop.WaitOne(0)) { break }',
+        '    $row = [ordered]@{ at = [datetime]::UtcNow.ToString(''o''); cpuPercent = $cpu; cores = $cores; memoryAvailableBytes = $memoryAvailable; memoryCommittedBytes = $null; diskQueue = $null; reason = [string]$reason }',
+        '    $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot',
+        '    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
+        '    $line = ConvertTo-TestPhaseJsonText -Value $row',
+        '    if (-not $line.EndsWith([string][char]10)) { $line = $line + [string][char]10 }',
+        '    $utf8 = New-Object System.Text.UTF8Encoding $false',
+        '    [System.IO.File]::AppendAllText((Join-Path $dir ''host-samples.jsonl''), $line, $utf8)',
+        '    $taken++',
+        '    if ($Stop.WaitOne($Interval)) { break }',
+        '  }',
+        '} catch { }'
+    )
+    [void]$ps.AddScript(($workerLines -join "`n"))
+    [void]$ps.AddArgument([string]$PSScriptRoot)
+    [void]$ps.AddArgument([string]$LogRoot)
+    [void]$ps.AddArgument([string]$AssemblyPath)
+    [void]$ps.AddArgument([int]$IntervalMilliseconds)
+    [void]$ps.AddArgument([int]$SampleBudgetMilliseconds)
+    [void]$ps.AddArgument($stop)
+    $handle = $ps.BeginInvoke()
+    $script:NightlyHostSamplingStop = $stop
+    $script:NightlyHostSamplingPowerShell = $ps
+    $script:NightlyHostSamplingRunspace = $rs
+    $script:NightlyHostSamplingHandle = $handle
+    return [pscustomobject]@{ decision = 'sampling'; measurementAdmission = $false; loadReason = ''; sampleCount = 0; readsAfterStop = 0; receiptWritten = $true }
+}
+
+function Start-NightlyHostSampling {
+    param(
+        [string]$LogRoot,
+        [string]$AssemblyPath,
+        [scriptblock]$Loader = $null,
+        [scriptblock]$Probe = $null,
+        [int]$SampleCount = 0,
+        [int]$IntervalMilliseconds = 30000,
+        [scriptblock]$OwnerCompleted = $null,
+        [int]$SampleBudgetMilliseconds = 1000
+    )
+    try {
+        if (-not (Get-Command New-QualificationHostStatsProvider -ErrorAction SilentlyContinue)) {
+            . (Join-Path $PSScriptRoot 'qualification-host-stats.ps1')
+        }
+        if ($SampleCount -gt 0) {
+            return Invoke-NightlyHostInstrumentation -LogRoot $LogRoot -AssemblyPath $AssemblyPath -Loader $Loader -Probe $Probe -SampleCount $SampleCount -OwnerCompleted $OwnerCompleted
+        }
+        $null = Write-NightlyHostRuntimeReceipt -LogRoot $LogRoot -AssemblyPath $AssemblyPath
+        return Start-NightlyHostSamplingLoop -LogRoot $LogRoot -AssemblyPath $AssemblyPath -IntervalMilliseconds $IntervalMilliseconds -SampleBudgetMilliseconds $SampleBudgetMilliseconds
+    } catch {
+        return [pscustomobject]@{
+            decision = 'unavailable'
+            measurementAdmission = $false
+            loadReason = 'host-sampling-failed'
+            sampleCount = 0
+            readsAfterStop = 0
+            receiptWritten = $false
+        }
+    }
 }
 
 function Invoke-NightlyOwnedProcess {
@@ -930,6 +1258,13 @@ function Invoke-AntiphonNightlyTests {
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)
     $script:QualificationTimingRoot = $TimingRoot
+    try {
+        $hostAssembly = Join-Path $RepoRoot 'src/Antiphon.SessionRunner/bin/Debug/net9.0/Antiphon.SessionRunner.dll'
+        Start-NightlyHostSampling -LogRoot $LogRoot -AssemblyPath $hostAssembly -SampleCount 0 -IntervalMilliseconds 30000 | Out-Null
+    } catch {
+        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+    }
+    try {
     $qualificationBuildSeconds = $null
 
     $chunksBySuite = @{}
@@ -1086,10 +1421,7 @@ function Invoke-AntiphonNightlyTests {
             }
             $buildWatch.Stop()
             $qualificationBuildSeconds = [math]::Round($buildWatch.Elapsed.TotalSeconds, 3)
-            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-ci' -StartedAt $npmCiStarted -Seconds $npmCiSeconds
-            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-build' -StartedAt $npmBuildStarted -Seconds $npmBuildSeconds
-            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'lint' -StartedAt $lintStarted -Seconds $lintSeconds
-            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'dotnet-build' -StartedAt $dotnetStarted -Seconds $dotnetSeconds
+            Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
             foreach ($suiteId in $selectedSuites) {
@@ -1263,7 +1595,7 @@ function Invoke-AntiphonNightlyTests {
                     $execDiagDir = ''
                     $queueWatch.Stop()
                     $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
-                    $resolvedDiscovery = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
+                    $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
                     $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
                     $heartbeatTrx = ''
                     if ($isNative) { $heartbeatTrx = $trxPath }
@@ -1334,9 +1666,7 @@ function Invoke-AntiphonNightlyTests {
                         }
                         $phaseWatch.Stop()
                         try {
-                            $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$run.ExitCode; coverageComplete = [bool]$coverageComplete; testsPassed = [bool]$testsPassed }
-                            Add-NightlyOwnerObservation -Verdict $phaseVerdict -Run $run
-                            Write-TestPhaseExecutedManifest -Verdict $phaseVerdict -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds)
+                            [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
                         } catch {
                             Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
                         }
@@ -1398,7 +1728,7 @@ function Invoke-AntiphonNightlyTests {
                                     -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
                                     -Environment $envMap)
                                 $chunkDiscWatch.Stop()
-                                $resolvedDiscovery = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
+                                $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
                                 $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
                             } catch {
                                 $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
@@ -1607,6 +1937,7 @@ function Invoke-AntiphonNightlyTests {
         suites = $suiteResults
         invocationId = $invocationId
     }
+    try { Stop-NightlyHostSampling } catch { Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed' }
     try {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
         $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
@@ -1636,6 +1967,9 @@ function Invoke-AntiphonNightlyTests {
         Selected = $selectedSuites
         NativeActiveMax = $nativeActiveMax
         PolicyHash = $policyHash
+    }
+    } finally {
+        try { Stop-NightlyHostSampling } catch { Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed' }
     }
 }
 
