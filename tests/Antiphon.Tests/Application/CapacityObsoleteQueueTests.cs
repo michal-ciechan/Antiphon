@@ -142,6 +142,119 @@ public class CapacityObsoleteQueueTests
     }
 
     [Test]
+    [Arguments("finished-drop")]
+    [Arguments("finished-parked")]
+    [Arguments("gate-busy-past-expiry")]
+    [Arguments("demand-loss-key-mismatch-past-expiry")]
+    public async Task C1603_finished_wait_with_obsolete_selection_releases_grant(string arm)
+    {
+        var parked = arm == "finished-parked";
+        await using var fx = await QueueFixture.OpenAsync(maxDeliveryAttempts: parked ? 1 : 3);
+        await fx.SeedWallAsync();
+        var wait = await fx.EnsureLiveWaitAsync();
+        if (arm == "demand-loss-key-mismatch-past-expiry")
+        {
+            await fx.AssertKeyMismatchExpiryAsync(wait.Id);
+            return;
+        }
+
+        await fx.Recovery.GrantReadyAsync(CancellationToken.None);
+        var messageId = await fx.SelectByFailedDeliveryAsync(leadingUi: true);
+        if (parked)
+        {
+            // The non-held head keeps the grant. Stamp the delivery cap on that real
+            // selection so it is parked Pending without a redeem that would clear it.
+            await using var db = fx.Ctx();
+            await db.SessionQueuedMessages.Where(m => m.Id == messageId).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.Status, QueuedMessageStatus.Pending)
+                .SetProperty(m => m.DeliveryAttempts, 1));
+        }
+
+        if (arm != "gate-busy-past-expiry")
+        {
+            await fx.Recovery.ObserveTranscriptAsync(
+                fx.SessionId, TranscriptKinds.TurnEnd, false, CancellationToken.None,
+                stopReason: TranscriptKinds.StopReasons.EndTurn);
+            (await fx.ReloadWaitAsync(wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Progressed);
+        }
+
+        if (!parked)
+            await fx.Queue.CancelAsync(fx.SessionId, messageId, CancellationToken.None);
+
+        var before = await fx.ReloadWaitAsync(wait.Id);
+        before.SelectedMessageId.ShouldBe(messageId);
+        await using (var linked = fx.Ctx())
+        {
+            var row = await linked.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == messageId);
+            row.CapacityWaitId.ShouldBe(wait.Id);
+            row.CapacityRecoveryActionKey.ShouldBe(before.ActionKey);
+            if (parked)
+            {
+                row.Status.ShouldBe(QueuedMessageStatus.Pending);
+                row.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(1);
+            }
+            else
+            {
+                row.Status.ShouldBe(QueuedMessageStatus.Canceled);
+            }
+
+            (await linked.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(wait.Id);
+        }
+
+        var competitor = await fx.SeedCompetitorAsync(fx.Now.AddMinutes(-1));
+        if (arm == "gate-busy-past-expiry")
+        {
+            var gate = fx.Queue.GetLock(fx.SessionId);
+            (await gate.WaitAsync(TimeSpan.Zero, CancellationToken.None)).ShouldBeTrue();
+            try
+            {
+                fx.Advance(TimeSpan.FromSeconds(121));
+                await fx.Recovery.ReconcileAsync(CancellationToken.None);
+                var held = await fx.ReloadWaitAsync(wait.Id);
+                held.SelectedMessageId.ShouldBe(messageId);
+                held.ActionKey.ShouldBe(before.ActionKey);
+                held.State.ShouldBe(before.State);
+                held.Version.ShouldBe(before.Version);
+                await using var db = fx.Ctx();
+                (await db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                    .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(competitor.Id);
+            }
+            finally
+            {
+                gate.Release();
+            }
+
+            return;
+        }
+
+        var stillHeld = false;
+        DateTime? grantedAt = null;
+        for (var window = 0; window < 3; window++)
+        {
+            fx.Advance(TimeSpan.FromSeconds(121));
+            await fx.Recovery.ReconcileAsync(CancellationToken.None);
+            await using var db = fx.Ctx();
+            var grant = await db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                .SingleOrDefaultAsync(s => s.Kind == AgentKind.ClaudeCode);
+            if (grant?.GrantedWaitId == wait.Id)
+            {
+                stillHeld = true;
+                grantedAt = grant.GrantedAt;
+            }
+        }
+
+        var finished = await fx.ReloadWaitAsync(wait.Id);
+        finished.State.ShouldBe(CapacityRecoveryWaitState.Progressed);
+        finished.ActionKey.ShouldBe(before.ActionKey);
+        finished.Version.ShouldBe(before.Version);
+        stillHeld.ShouldBeFalse($"finished wait kept the grant at {grantedAt:o}");
+        await using var end = fx.Ctx();
+        (await end.Set<CapacityRecoveryProviderState>().AsNoTracking()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(competitor.Id);
+    }
+
+    [Test]
     [Arguments("pending-below-cap-and-due")]
     [Arguments("sent")]
     [Arguments("missing-selected-row")]
@@ -1152,6 +1265,43 @@ public class CapacityObsoleteQueueTests
             await using var sent = Ctx();
             (await sent.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == SessionId
                 && m.Status == QueuedMessageStatus.Sent)).ShouldBeGreaterThan(0);
+        }
+
+        public async Task AssertKeyMismatchExpiryAsync(Guid waitId)
+        {
+            var message = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-mismatch");
+            await Recovery.GrantReadyAsync(CancellationToken.None);
+            var granted = await ReloadWaitAsync(waitId);
+            var rotated = CapacityRecoveryPolicy.ActionKey(waitId, granted.ActionOrdinal + 1);
+            await using (var db = Ctx())
+            {
+                await db.CapacityRecoveryWaits.Where(w => w.Id == waitId).ExecuteUpdateAsync(s => s
+                    .SetProperty(w => w.ActionKey, rotated));
+            }
+
+            await Queue.CancelAsync(SessionId, message, CancellationToken.None);
+            await using (var held = Ctx())
+            {
+                (await held.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                    .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(waitId);
+            }
+
+            var competitor = await SeedCompetitorAsync(Now.AddMinutes(-1));
+            await Recovery.GrantReadyAsync(CancellationToken.None);
+            var early = await ReloadProviderAsync();
+            early.GrantedWaitId.ShouldBe(waitId);
+            var lost = await ReloadWaitAsync(waitId);
+            lost.ActionKey.ShouldBe(rotated);
+            lost.State.ShouldBe(CapacityRecoveryWaitState.Ready);
+            lost.OutcomeReason.ShouldBe("queue-demand-lost");
+
+            Advance(TimeSpan.FromSeconds(121));
+            await Recovery.ReconcileAsync(CancellationToken.None);
+            var released = await ReloadWaitAsync(waitId);
+            released.ActionKey.ShouldBe(rotated);
+            released.State.ShouldBe(CapacityRecoveryWaitState.Ready);
+            released.OutcomeReason.ShouldBe("queue-demand-lost");
+            (await ReloadProviderAsync()).GrantedWaitId.ShouldBe(competitor.Id);
         }
 
         public async Task AssertDemandLossAsync(string arm)
