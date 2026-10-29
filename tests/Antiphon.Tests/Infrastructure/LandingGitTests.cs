@@ -560,22 +560,41 @@ public sealed class LandingGitTests
         await repo.CommitFileAsync("README.md", "seed\n");
         await repo.AddBareOriginAsync();
         await repo.CommitFileAsync("more.md", "more\n");
-        var hook = await InstallExecutableHookAsync(repo.Path, "pre-push", "#!/bin/sh\nsleep 30\nexit 0\n", ct);
+        // The sleeper records its pid so the test can close the pipe. Tree kill does not reach a
+        // reparented msys grandchild, so the journal clear follows the holder, not the return.
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var hook = await InstallExecutableHookAsync(repo.Path, "pre-push",
+            "#!/bin/sh\necho $$ > \"" + pidFile.Replace('\\', '/') + "\"\nsleep 30\nexit 0\n", ct);
         var git = new LandingGit();
 
         var watch = Stopwatch.StartNew();
-        var thrown = await Should.ThrowAsync<TimeoutException>(async () => await git.RunAsync(repo.Path,
-            ["push", "origin", "master"], new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct));
-        watch.Stop();
+        try
+        {
+            var thrown = await Should.ThrowAsync<TimeoutException>(async () => await git.RunAsync(repo.Path,
+                ["push", "origin", "master"], new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct));
+            watch.Stop();
 
-        Console.WriteLine($"C1076_BUDGET elapsed={watch.Elapsed} error={thrown}");
+            Console.WriteLine($"C1076_BUDGET elapsed={watch.Elapsed} error={thrown}");
 
-        thrown.Message.ShouldBe("git_timeout");
-        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
-        var common = await git.CommonDirectoryAsync(repo.Path, ct);
-        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty();
-        File.Delete(hook);
-        (await git.RunAsync(repo.Path, ["push", "origin", "master"], ct)).Succeeded.ShouldBeTrue();
+            thrown.Message.ShouldBe("git_timeout");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15) + LandingGit.KillDrainGrace);
+            var common = await git.CommonDirectoryAsync(repo.Path, ct);
+            var children = Path.Combine(common, "antiphon", "children");
+            KillHolder(pidFile);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0)
+            {
+                if (cleared.Elapsed > TimeSpan.FromSeconds(5)) break;
+                await Task.Delay(50, ct);
+            }
+            JournalFiles(children).ShouldBeEmpty();
+            File.Delete(hook);
+            (await git.RunAsync(repo.Path, ["push", "origin", "master"], ct)).Succeeded.ShouldBeTrue();
+        }
+        finally
+        {
+            KillHolder(pidFile);
+        }
     }
 
     // CARD-1076. Windows qualification 28bbb58e: the 2s push budget did not return until 30.5s,
@@ -612,12 +631,94 @@ public sealed class LandingGitTests
             HolderAlive(holder).ShouldBeTrue(
                 "the reparented grandchild still holds stdout; waiting for pipe EOF would run out its sleep");
             var common = await git.CommonDirectoryAsync(repo.Path, ct);
-            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty();
+            var children = Path.Combine(common, "antiphon", "children");
+            // The call has returned and the Process handle is done. The holder is still alive,
+            // so the journal must still fence admission until both redirected pipes reach EOF.
+            JournalFiles(children).ShouldNotBeEmpty(
+                "a live pipe holder keeps the repository child journal until the abandoned streams close");
+            var preview = await RunRecoveryAsync(repo.Path);
+            preview.Exit.ShouldBe(3, preview.Output);
+            preview.Output.ShouldContain("retained (");
+            preview.Output.ShouldNotContain("recovered (");
+            JournalFiles(children).ShouldNotBeEmpty("preview recovery leaves a live descendant's journal");
+            var execute = await RunRecoveryAsync(repo.Path, "-Execute");
+            execute.Exit.ShouldBe(3, execute.Output);
+            execute.Output.ShouldNotContain("recovered (");
+            JournalFiles(children).ShouldNotBeEmpty(
+                "-Execute without -ConfirmDescendantsExited still treats the descendant as owned");
+            KillHolder(pidFile);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0)
+            {
+                if (cleared.Elapsed > TimeSpan.FromSeconds(5)) break;
+                await Task.Delay(50, ct);
+            }
+            JournalFiles(children).ShouldBeEmpty(
+                "once the holder exits, the abandon continuation removes the journal");
         }
         finally
         {
             watch.Stop();
             KillHolder(pidFile);
+        }
+    }
+
+    // CARD-1076 D-2. A root that exits 0 must not become git_timeout because a reparented
+    // grandchild keeps stdout open past the remaining budget. The journal stays until that close.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_NormalExitWaitsForADetachedPipeHolderPastTheBudget(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX double-fork witness for a normal exit whose grandchild keeps stdout.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-normal");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var script = Path.Combine(repo.Path, "holder.sh");
+        await File.WriteAllTextAsync(script, NormalExitPipeHolderGit.Script(pidFile), ct);
+        var git = new NormalExitPipeHolderGit(script);
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        var call = git.RunAsync(repo.Path, ["push", "origin", "master"],
+            new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var pastKillWindow = false;
+            while (watch.Elapsed < TimeSpan.FromSeconds(12))
+            {
+                if (call.IsCompleted) break;
+                if (File.Exists(pidFile)
+                    && int.TryParse((await File.ReadAllTextAsync(pidFile, ct)).Trim(), out var holder)
+                    && HolderAlive(holder)
+                    && watch.Elapsed > TimeSpan.FromSeconds(2) + LandingGit.KillDrainGrace + TimeSpan.FromMilliseconds(500))
+                {
+                    JournalFiles(children).ShouldNotBeEmpty(
+                        "a successful exit keeps the journal until the detached holder closes stdout");
+                    pastKillWindow = true;
+                    break;
+                }
+                await Task.Delay(50, ct);
+            }
+
+            pastKillWindow.ShouldBeTrue("the call stays in flight past the budget and the kill grace");
+            var result = await call;
+            watch.Stop();
+            Console.WriteLine($"C1076_NORMAL elapsed={watch.Elapsed} exit={result.ExitCode} error={result.Diagnostic}");
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            watch.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(2));
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+            JournalFiles(children).ShouldBeEmpty();
+        }
+        finally
+        {
+            watch.Stop();
+            KillHolder(pidFile);
+            try { await call; } catch { /* observe a red timeout so it is not unobserved */ }
         }
     }
 
@@ -638,10 +739,38 @@ public sealed class LandingGitTests
             if (!File.Exists(pidFile)) return;
             if (!int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid) || pid <= 0) return;
             using var process = Process.GetProcessById(pid);
-            if (!process.HasExited) process.Kill();
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
         { }
+    }
+
+    private static string[] JournalFiles(string children) =>
+        Directory.Exists(children) ? Directory.EnumerateFiles(children).ToArray() : [];
+
+    private static async Task<(int Exit, string Output)> RunRecoveryAsync(string repository, params string[] options)
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
+        root.ShouldNotBeNull();
+        var start = new ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"));
+        start.ArgumentList.Add("-Repository");
+        start.ArgumentList.Add(repository);
+        foreach (var option in options) start.ArgumentList.Add(option);
+        using var process = Process.Start(start)!;
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var output = stdout + stderr;
+        Console.WriteLine($"C1076_RECOVERY exit={process.ExitCode} output={output}");
+        return (process.ExitCode, output);
     }
 
     // CARD-1076 V-2. The live push journal names the task and purpose, then the owner deletes it on exit.
@@ -758,6 +887,11 @@ public sealed class LandingGitTests
         {
             if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "push")
                 return base.StartProcess(start);
+            return StartHolder(start, scriptPath);
+        }
+
+        internal static Process? StartHolder(ProcessStartInfo start, string scriptPath)
+        {
             var standIn = new ProcessStartInfo("/bin/sh")
             {
                 WorkingDirectory = start.WorkingDirectory,
@@ -770,6 +904,31 @@ public sealed class LandingGitTests
             };
             standIn.ArgumentList.Add(scriptPath);
             return Process.Start(standIn);
+        }
+    }
+
+    /// <summary>A push stand-in that exits 0 at once while a reparented grandchild keeps stdout.</summary>
+    private sealed class NormalExitPipeHolderGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile) =>
+            "#!/bin/sh\n" +
+            "trap '' HUP\n" +
+            "(\n" +
+            "trap '' HUP\n" +
+            "sh -c 'trap \"\" HUP; echo $$ > \"" + pidFile + "\"; exec sleep 8' </dev/null &\n" +
+            ") &\n" +
+            "i=0\n" +
+            "while [ ! -s \"" + pidFile + "\" ] && [ \"$i\" -lt 100 ]; do\n" +
+            "  i=$((i+1))\n" +
+            "  sleep 0.05\n" +
+            "done\n" +
+            "exit 0\n";
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "push")
+                return base.StartProcess(start);
+            return DetachedPipeHolderGit.StartHolder(start, scriptPath);
         }
     }
 
