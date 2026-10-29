@@ -25,28 +25,34 @@ public class DispatchBaseWarningDeliveryE2ETests
     [Test]
     public async Task C508_MismatchWarningReachesCaller()
     {
+        // CARD-1349 / CARD-1428: the lease-time default edit is re-observed. No stale mismatch
+        // intent is owed, so the caller receives none.
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(dispatch: true); await f.StartMismatchDispatchAsync();
         var intents = await f.WaitForMismatchIntentAsync();
+        intents.ShouldBeEmpty();
         await f.AssertDispatchReceiptsAsync(intents);
     }
 
     [Test]
     public async Task C508_MismatchWarningWaitsForCaller()
     {
+        // The same re-observation, with the caller busy: nothing is queued to deliver on release.
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(busy: true, dispatch: true); await f.StartMismatchDispatchAsync();
         var intents = await f.WaitForMismatchIntentAsync();
+        intents.ShouldBeEmpty();
         await f.TwoNotificationScansAsync();
         await using (var db = f.CreateContext())
         {
             var rows = await db.SessionQueuedMessages.Where(m => m.SourceTaskId == f.TaskId && m.SourceLandNotificationId != null).ToListAsync();
-            rows.Count.ShouldBe(1); rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
-            (await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).ToListAsync()).ShouldAllBe(n => n.ConfirmedAt == null);
+            rows.ShouldBeEmpty();
+            (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId)).ShouldBe(0);
             (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
                 && p.Text!.Contains("[dispatch-base "))).ShouldBe(0);
         }
-        Directory.GetFiles(Path.Combine(f.Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
+        var native = Path.Combine(f.Root, "native");
+        (Directory.Exists(native) ? Directory.GetFiles(native, "updates.jsonl", SearchOption.AllDirectories) : [])
             .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk")
                 && line.Contains("[dispatch-base ")).ShouldBe(0);
         await f.ReleaseBusyAsync(); await f.AssertDispatchReceiptsAsync(intents);
@@ -94,7 +100,14 @@ public class DispatchBaseWarningDeliveryE2ETests
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync(cut: "enqueue-errors", dispatch: true); await f.StartDispatchAsync();
         var intents = await f.WaitForDispatchIntentsAsync();
-        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(Directory.GetFiles(f.Root, "enqueue-failure-*.json").Length == 2), "two owned enqueue failures");
+        try
+        {
+            await LandDeliveryFixture.UntilAsync(() => Task.FromResult(Directory.GetFiles(f.Root, "enqueue-failure-*.json").Length == 2), "two owned enqueue failures");
+        }
+        catch (TimeoutException ex)
+        {
+            throw await f.DispatchTimeoutAsync(ex);
+        }
         await using (var db = f.CreateContext())
         {
             var notes = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).ToListAsync();

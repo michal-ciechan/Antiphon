@@ -115,6 +115,34 @@ public sealed class ProgressAwareWaitTests
     }
 
     [Test]
+    public void Dispatch_timeout_names_status_rows_and_problem()
+    {
+        var message = DispatchWaitDiagnostic.Append("one committed mismatch dispatch intent",
+            new DispatchWaitDiagnostic.Snapshot(
+                "Queued", "base moved\r\nunder the lease", "master", "Unset",
+                0, [], null, true, "Held:sibling inspection pending"));
+        message.ShouldBe(
+            "one committed mismatch dispatch intent | status=Queued failure=base moved under the lease"
+            + " baseRef=master baseSource=Unset intents=0 keys= details= hookFired=true"
+            + " events=Held:sibling inspection pending");
+    }
+
+    [Test]
+    public void Dispatch_timeout_lists_every_intent_key()
+    {
+        var message = DispatchWaitDiagnostic.Append("wait",
+            new DispatchWaitDiagnostic.Snapshot(
+                "Dispatched", null, "HEAD", "RepoHead", 2,
+                ["base-observation-stale", "default-unresolved"],
+                "trunk -> HEAD", false, null));
+        message.ShouldContain("intents=2");
+        message.ShouldContain("keys=base-observation-stale,default-unresolved");
+        message.ShouldContain("details=trunk -> HEAD");
+        message.ShouldContain("hookFired=false");
+        message.ShouldContain("failure=");
+    }
+
+    [Test]
     public async Task A_satisfied_predicate_returns_before_any_deadline()
     {
         var d = new Drive { GrowUntilStep = 0 };

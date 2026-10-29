@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
+using Antiphon.TestSupport;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -67,8 +68,9 @@ public sealed partial class LandDeliveryFixture
     }
 
     /// <summary>
-    /// V-16 / PC-50: zero ordinary sibling warnings; the project's default is moved under the
-    /// lease so capture owes exactly one <c>base-observation-stale</c> intent.
+    /// V-16 amended by CARD-1349 / CARD-1428: zero ordinary sibling warnings. The project's default
+    /// moves under the lease, the frozen observation is refused, and the next inspection cuts from
+    /// <c>project-default</c>. That claim owes no <c>base-observation-stale</c> intent.
     /// </summary>
     public async Task StartMismatchDispatchAsync()
     {
@@ -103,16 +105,23 @@ public sealed partial class LandDeliveryFixture
 
     public async Task<List<AgentTaskDispatchWarningIntent>> WaitForDispatchIntentsAsync()
     {
-        await UntilProtocolAsync(async () =>
+        try
         {
-            // CARD-1305: a dispatch refusal (CARD-0442 blocks the task instead of selecting a base)
-            // must fail the wait at the first poll with its reason, not spend the quiet deadline.
-            await using var db = CreateContext();
-            var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
-            owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
-                $"the owned dispatch was refused before any warning intent: {owned.FailureReason}");
-            return (await DispatchIntentsAsync()).Count == 2;
-        }, "two committed reduced dispatch intents");
+            await UntilProtocolAsync(async () =>
+            {
+                // CARD-1305: a dispatch refusal (CARD-0442 blocks the task instead of selecting a base)
+                // must fail the wait at the first poll with its reason, not spend the quiet deadline.
+                await using var db = CreateContext();
+                var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+                owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
+                    $"the owned dispatch was refused before any warning intent: {owned.FailureReason}");
+                return (await DispatchIntentsAsync()).Count == 2;
+            }, "two committed reduced dispatch intents");
+        }
+        catch (TimeoutException ex)
+        {
+            throw await DispatchTimeoutAsync(ex);
+        }
         var intents = await DispatchIntentsAsync();
         foreach (var expected in ExpectedDispatchSiblings)
         {
@@ -127,14 +136,62 @@ public sealed partial class LandDeliveryFixture
 
     public async Task<List<AgentTaskDispatchWarningIntent>> WaitForMismatchIntentAsync()
     {
-        await UntilAsync(async () => (await DispatchIntentsAsync()).Count == 1, "one committed mismatch dispatch intent", 120);
+        // Count == 1 is unreachable: the lease edit invalidates the frozen observation, the claim
+        // is refused, and the re-observed cut records project-default with no stale-base intent.
+        // The 120 s quiet window renews on dispatch progress (CARD-1359); a stuck host still
+        // reports within one quiet period, and the timeout names the rows it actually saw.
+        await UntilDispatchAsync(async () =>
+        {
+            await using var db = CreateContext();
+            var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+            owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
+                "the owned dispatch was refused before the re-observed base: " + owned.FailureReason);
+            owned.Status.ShouldNotBe(AgentTaskStatus.Failed,
+                "the owned dispatch failed before the re-observed base: " + owned.FailureReason);
+            if (owned.Status != AgentTaskStatus.Dispatched) return false;
+            return owned.WorktreeBaseRef == "project-default"
+                && owned.WorktreeBaseSource == WorktreeBaseSource.DefaultBranch
+                && (await DispatchIntentsAsync()).All(i => i.WarningKey != DispatchBaseNotificationPayload.MismatchKey);
+        }, "re-observed project-default dispatch with no stale mismatch intent", 120);
+        File.Exists(Path.Combine(Root, "move-default-on-lease.fired.json"))
+            .ShouldBeTrue("the lease hook must move the project default before the re-observed claim");
         var intents = await DispatchIntentsAsync();
-        intents.ShouldHaveSingleItem();
-        intents[0].WarningKey.ShouldBe(DispatchBaseNotificationPayload.MismatchKey);
-        intents[0].Detail.ShouldContain("master");
-        intents[0].Detail.ShouldContain("project-default");
-        intents[0].ParentSessionId.ShouldBe(CallerId);
+        intents.ShouldNotContain(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
         return intents;
+    }
+
+    /// <summary>Same <see cref="TimeoutException"/>, plus the owned task's status, intent rows and last events.</summary>
+    public async Task<TimeoutException> DispatchTimeoutAsync(TimeoutException ex) =>
+        new(DispatchWaitDiagnostic.Append(ex.Message, await CaptureDispatchWaitAsync()), ex);
+
+    private async Task<DispatchWaitDiagnostic.Snapshot> CaptureDispatchWaitAsync()
+    {
+        try
+        {
+            await using var db = CreateContext();
+            var owned = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == TaskId);
+            var rows = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+                .Where(i => i.TaskId == TaskId).OrderBy(i => i.WarningKey)
+                .Select(i => new { i.WarningKey, i.Detail }).ToListAsync();
+            var events = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == TaskId).OrderByDescending(e => e.At).Take(6)
+                .Select(e => new { e.Type, e.Detail }).ToListAsync();
+            return new DispatchWaitDiagnostic.Snapshot(
+                owned?.Status.ToString() ?? "missing",
+                owned?.FailureReason,
+                owned?.WorktreeBaseRef,
+                owned?.WorktreeBaseSource.ToString(),
+                rows.Count,
+                rows.Select(i => i.WarningKey).ToArray(),
+                string.Join("; ", rows.Select(i => i.Detail)),
+                File.Exists(Path.Combine(Root, "move-default-on-lease.fired.json")),
+                string.Join("; ", events.Select(e => e.Type + ":" + e.Detail)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new DispatchWaitDiagnostic.Snapshot(
+                "unreadable", ex.GetType().Name + ":" + ex.Message, null, null, 0, [], null, false, null);
+        }
     }
 
     public Task WaitForBoundaryAsync(string boundary) => UntilProtocolAsync(() =>
@@ -186,7 +243,11 @@ public sealed partial class LandDeliveryFixture
                 return await predicate();
             }, evidence, quietSeconds, () => ProtocolProgress() + dispatch);
         }
-        catch (TimeoutException) { outcome = "timeout"; throw; }
+        catch (TimeoutException ex)
+        {
+            outcome = "timeout";
+            throw await DispatchTimeoutAsync(ex);
+        }
         finally
         {
             var elapsed = (DateTime.UtcNow - started).TotalSeconds;
@@ -247,11 +308,18 @@ public sealed partial class LandDeliveryFixture
             $"the {boundary} barrier must arrive more than the quiet window after the last protocol-git observation");
     }
 
-    public Task TwoNotificationScansAsync()
+    public async Task TwoNotificationScansAsync()
     {
         var scans = Directory.GetFiles(Root, "notification-scan-*.observation.json").Length;
-        return UntilAsync(() => Task.FromResult(Directory.GetFiles(Root, "notification-scan-*.observation.json").Length >= scans + 2),
-            "two completed notification scans");
+        try
+        {
+            await UntilAsync(() => Task.FromResult(Directory.GetFiles(Root, "notification-scan-*.observation.json").Length >= scans + 2),
+                "two completed notification scans");
+        }
+        catch (TimeoutException ex)
+        {
+            throw await DispatchTimeoutAsync(ex);
+        }
     }
 
     public async Task AssertDispatchReceiptsAsync(IReadOnlyList<AgentTaskDispatchWarningIntent> original)
@@ -268,15 +336,27 @@ public sealed partial class LandDeliveryFixture
             }
         }
         foreach (var intent in original)
-            await ReceiptAsync(LandNotificationKind.DispatchBase, notificationId: intent.NotificationId);
+        {
+            try
+            {
+                await ReceiptAsync(LandNotificationKind.DispatchBase, notificationId: intent.NotificationId);
+            }
+            catch (TimeoutException ex)
+            {
+                throw await DispatchTimeoutAsync(ex);
+            }
+        }
         await TwoNotificationScansAsync();
         await using var check = CreateContext();
         var current = await DispatchIntentsAsync();
         current.Select(i => (i.Id, i.NotificationId, i.WarningKey, i.Body)).ShouldBe(
             original.Select(i => (i.Id, i.NotificationId, i.WarningKey, i.Body)));
         var prompts = await check.TranscriptEntries.Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
-        var native = Directory.GetFiles(Path.Combine(Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
-            .SelectMany(File.ReadAllLines).Select(line => JsonDocument.Parse(line)).ToList();
+        var nativeDir = Path.Combine(Root, "native");
+        var native = (Directory.Exists(nativeDir)
+                ? Directory.GetFiles(nativeDir, "updates.jsonl", SearchOption.AllDirectories).SelectMany(File.ReadAllLines)
+                : [])
+            .Select(line => JsonDocument.Parse(line)).ToList();
         try
         {
             var nativePrompts = native.Where(d => d.RootElement.TryGetProperty("params", out var p)
@@ -339,13 +419,20 @@ public sealed partial class LandDeliveryFixture
         // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep (60 s
         // default period) once the row is eligible: two sweep periods plus host warm-up.
         List<SessionQueuedMessage> rows = [];
-        await UntilAsync(async () =>
+        try
         {
-            await using var db = CreateContext();
-            rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => attemptsByRow.Keys.Contains(m.Id)).ToListAsync();
-            return rows.Count == attemptsByRow.Count && rows.All(m => m.DeliveryVerdict != null || m.Status != QueuedMessageStatus.Sent
-                || m.DeliveryAttempts != attemptsByRow[m.Id]);
-        }, "interrupted post-prompt queue rows recovered after eligibility", 150);
+            await UntilAsync(async () =>
+            {
+                await using var db = CreateContext();
+                rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => attemptsByRow.Keys.Contains(m.Id)).ToListAsync();
+                return rows.Count == attemptsByRow.Count && rows.All(m => m.DeliveryVerdict != null || m.Status != QueuedMessageStatus.Sent
+                    || m.DeliveryAttempts != attemptsByRow[m.Id]);
+            }, "interrupted post-prompt queue rows recovered after eligibility", 150);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await DispatchTimeoutAsync(ex);
+        }
         await File.WriteAllTextAsync(Path.Combine(Root, "interrupted-attempt-recovery.json"), JsonSerializer.Serialize(new
         { rows = rows.Select(m => new { m.Id, m.Status, m.DeliveryVerdict, m.DeliveryVerdictAt, m.DeliveryAttempts,
             originalAttempts = attemptsByRow[m.Id], m.LastDeliveryStartedAt }), observedAt = DateTime.UtcNow }));
