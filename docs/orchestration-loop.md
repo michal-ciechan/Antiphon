@@ -2368,7 +2368,14 @@ requires a built evaluator (`-ToolPath` or the documented default path) and succ
 real evaluation under the checking host's SDK before accepting, even when the recorded
 SDK matches that host. This catches docs reached by SDK imports, items or globs, without
 rewriting any approval records. Updating the record still requires successful real
-evaluation and records the SDK used. This policy
+evaluation and records the SDK used. The evaluator does not restore and does not run a
+target. It evaluates each solution pass on its own clock: twice the loaded Linux pass p95
+measured on server2 at `8004259c` (22.328 s to the first `not-built` line under 8 CPU
+burners, so 45 s), and on Windows at least the 120 s one-pass floor from qualification
+`28bbb58e`, which finished a pass and then refused because both passes and the canary copy
+shared one 120 s wait. The canary copy is a same-volume hard link (provisional copy budget
+16 s, under the loaded second-phase samples). A timeout still exits 2. `not-built` lines
+stay informational and do not refuse. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.
 
 A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with
