@@ -39,17 +39,23 @@ switch ($Case) {
     'C1545_Closure' {
         Put 'src/Messaging/Message.cs' 'changed'; $a=Commit
         $script:ProjectBlobReads=0
+        $script:InvalidSharedReads=0
         $script:OriginalSelectionBlob=${function:Get-TestSelectionBlob}
         function Get-TestSelectionBlob {
             param([string]$Root,[string]$Sha,[string]$Path)
             if ($Path.EndsWith('.csproj',[StringComparison]::Ordinal)) { $script:ProjectBlobReads++ }
+            if ($Path -ceq 'Directory.Build.props') { $script:InvalidSharedReads++ }
             return & $script:OriginalSelectionBlob $Root $Sha $Path
         }
         $s=Get-RcProjectSelection $root $b $a
         $projectReads=$script:ProjectBlobReads
+        Put 'Directory.Build.props' 'not XML'; $invalidBase=Commit
+        Put 'src/Messaging/Message.cs' 'invalid shared input candidate'; $invalidCandidate=Commit
+        $invalid=Get-RcProjectSelection $root $invalidBase $invalidCandidate
         ${function:Get-TestSelectionBlob}=$script:OriginalSelectionBlob
         $projectBlobs=@((Git @('ls-tree','-r',$a)).Split("`n") | Where-Object { $_.EndsWith('.csproj',[StringComparison]::Ordinal) } | ForEach-Object { ($_ -split '\s+',4)[2] } | Sort-Object -Unique)
-        Check ($projectReads -eq $projectBlobs.Count) 'immutable-blob-read-once'
+        Check ($projectReads -eq $projectBlobs.Count -and $script:InvalidSharedReads -eq 1 -and
+            $invalid.mode -ceq 'Full' -and @($invalid.fallbackReasons | Where-Object { $_.StartsWith('graph:Directory.Build.props:',[StringComparison]::Ordinal) }).Count -gt 0) 'immutable-blob-read-once'
         Check ($s.mode -ceq 'Scoped') 'scoped'
         Check (Same $s.changedProjects @('src/Messaging/Messaging.csproj')) 'owners'
         Check (Same $s.affectedProjects @('src/Messaging/Messaging.csproj','src/Server/Server.csproj','src/Runner/Runner.csproj','tests/Server/Server.csproj','tests/Runner/Runner.csproj')) 'downstream'
