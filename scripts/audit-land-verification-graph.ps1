@@ -12,19 +12,29 @@
 # wait is the tool's printed ceiling (phase total plus EvaluationBudget.StartupGraceSeconds).
 # That grace constant lives only in the tool. -EvaluationBudgetSeconds overrides that wait
 # and is exact: it never skips evaluation and never approves by itself. A killed tool's
-# canary is removed from the recorded path. A canary left behind when this process dies
-# is not swept on the next run.
+# canary is removed from the recorded path by scripts/lib/land-graph-canary-removal.ps1.
+# That function is called on the kill, tool-watchdog, timeout and exception paths. It is
+# not a parameter. Exit 0 means both evaluation passes, the canary copy and the comparison
+# approved. Any other tool exit, including the api-probe code 3, refuses. A canary left
+# behind when this process dies is not swept on the next run.
 # ASCII-only and Windows PowerShell 5.1 compatible.
 [CmdletBinding()]
 param(
     [switch]$Check,
     [switch]$Update,
     [string]$ToolPath,
-    [int]$EvaluationBudgetSeconds = 0,
-    [string]$RemoveRecordedCanary = '',
-    [string]$RemoveRecordedCanaryRepo = '')
+    [int]$EvaluationBudgetSeconds = 0)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/land-graph-canary-removal.ps1')
+
+$script:AuditCanaryRecord = ''
+$script:AuditCanaryRepo = ''
+
+function Clear-AuditCanary {
+    if ([string]::IsNullOrEmpty($script:AuditCanaryRecord)) { return }
+    Remove-RecordedCanary $script:AuditCanaryRecord $script:AuditCanaryRepo
+}
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $RecordDirectory = Join-Path $RepoRoot 'server/Application/Services'
 $ManifestRelative = 'server/Application/Services/LandVerificationBuildGraph.manifest.txt'
@@ -68,6 +78,7 @@ function Invoke-AuditChild([string]$Executable, [string[]]$Arguments, [int]$Time
                 $note = 'evaluation-failed: evaluating Antiphon.sln exceeded ' + $seconds + ' s'
                 try { $process.Kill($true) } catch { try { $process.Kill() } catch { } }
                 try { [void]$process.WaitForExit(10000) } catch { }
+                Clear-AuditCanary
                 $partial = ''
                 try { if ($stdout.Wait(5000)) { $partial = $stdout.Result } } catch { }
                 try { if ($stderr.Wait(5000)) { $partial = $partial + $stderr.Result } } catch { }
@@ -85,6 +96,7 @@ function Invoke-AuditChild([string]$Executable, [string[]]$Arguments, [int]$Time
             if (-not $process.HasExited) {
                 try { $process.Kill($true) } catch { $process.Kill() }
                 [void]$process.WaitForExit(10000)
+                Clear-AuditCanary
             }
         } finally { $process.Dispose() }
     }
@@ -138,36 +150,6 @@ function Get-EvaluatorBudgetSeconds([string]$EvaluatorPath) {
     throw 'evaluation budget probe did not report ceiling'
 }
 
-function Remove-RecordedCanary([string]$RecordPath, [string]$RepositoryRoot) {
-    if ([string]::IsNullOrWhiteSpace($RecordPath)) { return }
-    if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { return }
-    if (-not [System.IO.File]::Exists($RecordPath)) { return }
-    $recordedRaw = [System.IO.File]::ReadAllText($RecordPath)
-    if ($recordedRaw.IndexOf("`n") -ge 0 -or $recordedRaw.IndexOf("`r") -ge 0) { return }
-    $recorded = $recordedRaw.Trim()
-    if ([string]::IsNullOrWhiteSpace($recorded)) { return }
-    $hasTrailingSeparator = $recorded.EndsWith('/') -or $recorded.EndsWith('\')
-    $stripped = $recorded.TrimEnd('/', '\')
-    if ([string]::IsNullOrWhiteSpace($stripped)) { return }
-    $strippedFull = [System.IO.Path]::GetFullPath($stripped)
-    $name = [System.IO.Path]::GetFileName($strippedFull)
-    if ($name -cnotmatch '\Aantiphon-landgraph-canary-[0-9a-f]{32}\z') { return } # guard:name
-    $parent = [System.IO.Path]::GetDirectoryName($strippedFull)
-    $expectedParent = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($RepositoryRoot))
-    if (-not [string]::Equals($parent, $expectedParent, [System.StringComparison]::Ordinal)) { return } # guard:parent
-    $roundTrip = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($parent, $name))
-    if ($hasTrailingSeparator -or -not [string]::Equals($strippedFull, $roundTrip, [System.StringComparison]::Ordinal)) { return } # guard:rebuilt
-    if ([string]::Equals($strippedFull, [System.IO.Path]::GetFullPath($RepositoryRoot), [System.StringComparison]::Ordinal)) { return } # guard:repo-root
-    if (-not [System.IO.Directory]::Exists($strippedFull)) { return }
-    $link = ([System.IO.File]::GetAttributes($strippedFull) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
-    try {
-        if ($link) { [System.IO.Directory]::Delete($strippedFull, $false) }
-        else { [System.IO.Directory]::Delete($strippedFull, $true) }
-    } catch {
-        [Console]::Error.WriteLine('canary delete failed: ' + $_.Exception.Message)
-    }
-}
-
 function Assert-EvaluatedGraph([string]$EvaluatorPath) {
     if ([string]::IsNullOrEmpty($EvaluatorPath)) {
         $EvaluatorPath = Join-Path $RepoRoot 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
@@ -177,16 +159,21 @@ function Assert-EvaluatedGraph([string]$EvaluatorPath) {
     # The printed ceiling already includes the tool's one startup grace. An explicit budget is exact.
     $timeoutMs = $budget * 1000
     $record = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-landgraph-canary-record-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    $script:AuditCanaryRecord = $record
+    $script:AuditCanaryRepo = $RepoRoot
     $toolArguments = @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln', '--canary-record', $record)
     try {
         $evaluation = Invoke-AuditChild 'dotnet' $toolArguments -TimeoutMs $timeoutMs -EvaluationTimeout
+        # The tool watchdog exits the child on its own ceiling. Drop the recorded canary here too.
+        if ($evaluation.Text.IndexOf('the audit exceeded') -ge 0) { Clear-AuditCanary }
         if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }
         if ($evaluation.Code -ne 0) { throw ('land graph evaluation refused (exit ' + $evaluation.Code + ')') }
     } finally {
-        Remove-RecordedCanary $record $RepoRoot
+        Clear-AuditCanary
         if (-not [string]::IsNullOrEmpty($record) -and [System.IO.File]::Exists($record)) {
             [System.IO.File]::Delete($record)
         }
+        $script:AuditCanaryRecord = ''
     }
 }
 
@@ -196,15 +183,6 @@ function Publish-Record([string]$Source, [string]$Destination) {
     } else {
         [System.IO.File]::Move($Source, $Destination)
     }
-}
-
-if (-not [string]::IsNullOrEmpty($RemoveRecordedCanary)) {
-    if ([string]::IsNullOrEmpty($RemoveRecordedCanaryRepo)) {
-        [Console]::Error.WriteLine('audit refused: recorded canary removal needs the repository')
-        exit 1
-    }
-    Remove-RecordedCanary $RemoveRecordedCanary $RemoveRecordedCanaryRepo
-    exit 0
 }
 
 $temporaryManifest = $null
@@ -260,6 +238,7 @@ try {
         Assert-HeadSource $head
     }
 } catch {
+    Clear-AuditCanary
     [Console]::Error.WriteLine('audit refused: ' + $_.Exception.Message)
     exit 1
 } finally {
