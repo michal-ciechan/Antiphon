@@ -209,6 +209,51 @@ public sealed class CardRelationshipScriptTests
         });
     }
 
+    // A 404 must stay a terminating error for an in-process caller. pwsh -File already
+    // exits 1; these two launch the script with -Command against the same stub.
+    [Test]
+    public async Task Get_404_stops_an_in_process_command_chain()
+    {
+        using var stub = CreateStub();
+        var run = await RunInProcessAsync(stub, "& $env:CARD_PS1 get CARD-9999; 'NEXT_RAN'");
+        run.ExitCode.ShouldBe(1, run.Stdout + "\n" + run.Stderr);
+        run.Stdout.ShouldNotContain("NEXT_RAN");
+        run.Stderr.ShouldContain("Unexpected request");
+    }
+
+    [Test]
+    public async Task Get_404_is_caught_by_an_in_process_try()
+    {
+        using var stub = CreateStub();
+        var run = await RunInProcessAsync(stub, "try { & $env:CARD_PS1 get CARD-9999 } catch { 'CAUGHT' }");
+        run.Stdout.ShouldContain("CAUGHT");
+        run.ExitCode.ShouldBe(0, run.Stdout + "\n" + run.Stderr);
+        run.Stderr.ShouldContain("Unexpected request");
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunInProcessAsync(Stub stub, string command)
+    {
+        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(command);
+        start.Environment["ANTIPHON_API"] = stub.BaseUrl.TrimEnd('/');
+        start.Environment["ANTIPHON_TASK_TOKEN"] = "synthetic-task-token";
+        start.Environment["CARD_PS1"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "card.ps1");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch
+        {
+            process.Kill(entireProcessTree: true);
+            throw;
+        }
+        return (process.ExitCode, await stdout, await stderr);
+    }
+
     private static async Task<(int ExitCode, string Output)> RunInWidePtyAsync(Stub stub, params string[] args)
     {
         var work = Directory.CreateTempSubdirectory("card404pty").FullName;
