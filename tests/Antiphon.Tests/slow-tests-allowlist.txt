@@ -370,3 +370,5 @@ Antiphon.Tests.TestHelpers.TestTimingChokePointTests
 
 # CARD-1605: real 2-2.5 second cancellation barriers plus isolated Git setup can exceed five seconds.
 Antiphon.Tests.Application.AgentReportStoreBudgetTests
+# CARD-1605: opt-in 80-store production-budget sampler takes approximately 30-60 seconds.
+Antiphon.Tests.Application.AgentReportStoreLoadTests

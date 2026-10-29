@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -20,37 +21,82 @@ public sealed class AgentReportStore(
     internal Func<CancellationToken, Task>? BeforePublishAsync { get; set; }
     internal Func<string, CancellationToken, Task>? BeforeIoAsync { get; set; }
 
-    // Hung-IO refusal for the whole store, including git custody and the write-through.
-    // Tests assign a longer value; production keeps this default.
+    // Two-wave preparation policy: one default Git allowance plus one more for every remaining command.
+    // This is not scaled from configured Git timeouts and is not a measured p95.
+    internal static readonly TimeSpan DefaultPreparationBudget = TimeSpan.FromSeconds(30);
+    internal TimeSpan PreparationBudget { get; set; } = DefaultPreparationBudget;
+
+    // Report-file I/O only. The timer starts at the existing-file check and is shared through readback.
     internal static readonly TimeSpan DefaultIoBudget = TimeSpan.FromSeconds(2);
     internal TimeSpan IoBudget { get; set; } = DefaultIoBudget;
 
     public async Task<AgentReportStorageResult> StoreAsync(AgentTask task, CancellationToken ct)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(IoBudget);
-        var token = budget.Token;
         var watch = Stopwatch.StartNew();
-        var phase = "root";
+        var preparationWatch = Stopwatch.StartNew();
+        var ioWatch = new Stopwatch();
+        var phases = new List<string>();
+        string? outcome = null;
+        string? reason = null;
         string? temporary = null;
+        long? preparationMs = null;
+        long? ioMs = null;
+        long? cleanupMs = null;
+        var ioStarted = false;
+        CancellationTokenSource? preparation = null;
+        CancellationTokenSource? io = null;
         try
         {
-            if (BeforeIoAsync is not null) await BeforeIoAsync(phase, token);
-            var root = await ResolveRootAsync(task, token);
-            if (root is null) return Unavailable("no-durable-root");
+            preparation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            preparation.CancelAfter(PreparationBudget);
+            var prep = preparation.Token;
+
+            Enter("root");
+            if (BeforeIoAsync is not null) await BeforeIoAsync("root", prep);
+            prep.ThrowIfCancellationRequested();
+            var root = await ResolveRootAsync(task, prep);
+            prep.ThrowIfCancellationRequested();
+            if (root is null) return Refuse("no-durable-root");
             var raw = task.Result ?? "";
             var bytes = new UTF8Encoding(false, true).GetBytes(raw);
             var digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
             var path = Path.Combine(root, task.Id.ToString("D"), digest + ".md");
-            if (path.Length > 1000) return Unavailable("path-too-long");
+            if (path.Length > 1000) return Refuse("path-too-long");
             temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            phase = "custody";
-            if (!await EnsureIgnoredAsync(root, path, temporary, token))
-                return Unavailable("not-ignored-or-tracked");
-            if (HasReparseAncestor(path)) return Unavailable("redirected-path");
-            if (await IsUsableAsync(path, raw, token)) return new(path, null);
-            phase = "write";
-            if (BeforeIoAsync is not null) await BeforeIoAsync(phase, token);
+            Enter("custody");
+            if (!await EnsureIgnoredAsync(root, path, temporary, prep))
+            {
+                prep.ThrowIfCancellationRequested();
+                return Refuse("not-ignored-or-tracked");
+            }
+            prep.ThrowIfCancellationRequested();
+            if (HasReparseAncestor(path)) return Refuse("redirected-path");
+            prep.ThrowIfCancellationRequested();
+
+            preparationWatch.Stop();
+            preparationMs = preparationWatch.ElapsedMilliseconds;
+            preparation.Dispose();
+            preparation = null;
+
+            io = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            io.CancelAfter(IoBudget);
+            ioStarted = true;
+            ioWatch.Start();
+            var token = io.Token;
+            token.ThrowIfCancellationRequested();
+
+            Enter("existing-read");
+            if (BeforeIoAsync is not null) await BeforeIoAsync("existing-read", token);
+            if (await IsUsableAsync(path, raw, token))
+            {
+                token.ThrowIfCancellationRequested();
+                outcome = "reused";
+                return new(path, null);
+            }
+            token.ThrowIfCancellationRequested();
+
+            Enter("write");
+            if (BeforeIoAsync is not null) await BeforeIoAsync("write", token);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
                 FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
@@ -58,37 +104,112 @@ public sealed class AgentReportStore(
                 await stream.WriteAsync(bytes, token);
                 await stream.FlushAsync(token);
             }
-            phase = "publish";
+            Enter("publish");
             if (BeforePublishAsync is not null) await BeforePublishAsync(token);
-            if (BeforeIoAsync is not null) await BeforeIoAsync(phase, token);
+            if (BeforeIoAsync is not null) await BeforeIoAsync("publish", token);
             token.ThrowIfCancellationRequested();
             File.Move(temporary, path, overwrite: true);
             temporary = null;
-            phase = "readback";
-            if (BeforeIoAsync is not null) await BeforeIoAsync(phase, token);
-            if (!await IsUsableAsync(path, raw, token)) return Unavailable("verification-failed");
-            logger.LogInformation("Report storage task {TaskId} phase {Phase} duration {DurationMs}ms succeeded",
-                task.Id, phase, watch.ElapsedMilliseconds);
+            Enter("readback");
+            if (BeforeIoAsync is not null) await BeforeIoAsync("readback", token);
+            if (!await IsUsableAsync(path, raw, token)) return Refuse("verification-failed");
+            token.ThrowIfCancellationRequested();
+            outcome = "stored";
             return new(path, null);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        { return Unavailable("io-budget-expired"); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            outcome = "caller-canceled";
+            reason = "caller-canceled";
+            throw;
+        }
+        catch (OperationCanceledException) when (!ioStarted && preparation is { IsCancellationRequested: true })
+        { return Refuse("preparation-budget-expired"); }
+        catch (OperationCanceledException) when (ioStarted && io is { IsCancellationRequested: true })
+        { return Refuse("io-budget-expired"); }
+        catch (OperationCanceledException)
+        { return Refuse("canceled"); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
             or NotSupportedException or InvalidOperationException)
-        { return Unavailable(ex.GetType().Name); }
+        { return Refuse(ex.GetType().Name); }
         finally
         {
-            if (temporary is not null)
-                try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (preparationWatch.IsRunning)
+            {
+                preparationWatch.Stop();
+                preparationMs ??= preparationWatch.ElapsedMilliseconds;
+            }
+            if (ioWatch.IsRunning)
+            {
+                ioWatch.Stop();
+                ioMs = ioWatch.ElapsedMilliseconds;
+            }
+            if (temporary is not null && File.Exists(temporary))
+            {
+                var cleanup = Stopwatch.StartNew();
+                try { File.Delete(temporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                cleanupMs = cleanup.ElapsedMilliseconds;
+            }
+            LogOutcome(task.Id, phases, outcome, reason, preparationMs, ioMs, cleanupMs, watch.ElapsedMilliseconds);
+            preparation?.Dispose();
+            io?.Dispose();
         }
 
-        AgentReportStorageResult Unavailable(string reason)
+        void Enter(string name) => phases.Add(name);
+
+        AgentReportStorageResult Refuse(string why)
         {
-            // Exception messages and raw text are deliberately excluded from custody diagnostics.
-            logger.LogWarning("Report storage task {TaskId} phase {Phase} duration {DurationMs}ms unavailable: {Reason}",
-                task.Id, phase, watch.ElapsedMilliseconds, reason);
-            return new(null, reason);
+            outcome = why;
+            reason = why;
+            return new(null, why);
         }
+    }
+
+    private void LogOutcome(Guid taskId, List<string> phases, string? outcome, string? reason,
+        long? preparationMs, long? ioMs, long? cleanupMs, long totalMs)
+    {
+        var phase = phases.Count == 0 ? "none" : phases[^1];
+        var succeeded = outcome is "stored" or "reused";
+        var resolvedOutcome = outcome ?? "unavailable";
+        var message = succeeded
+            ? $"Report storage task {taskId:D} phase {phase} duration {totalMs}ms succeeded"
+            : $"Report storage task {taskId:D} phase {phase} duration {totalMs}ms unavailable: {reason}";
+        var fields = new List<KeyValuePair<string, object?>>
+        {
+            new("TaskId", taskId),
+            new("Phase", phase),
+            new("Outcome", resolvedOutcome),
+            new("Phases", string.Join(',', phases)),
+            new("TotalMs", totalMs),
+            new("DurationMs", totalMs),
+        };
+        if (preparationMs is not null)
+            fields.Add(new("PreparationMs", preparationMs.Value));
+        if (ioMs is not null)
+            fields.Add(new("IoMs", ioMs.Value));
+        if (cleanupMs is not null)
+            fields.Add(new("CleanupMs", cleanupMs.Value));
+        if (reason is not null)
+            fields.Add(new("Reason", reason));
+        fields.Add(new("{OriginalFormat}", succeeded
+            ? "Report storage task {TaskId} phase {Phase} duration {DurationMs}ms succeeded"
+            : "Report storage task {TaskId} phase {Phase} duration {DurationMs}ms unavailable: {Reason}"));
+        var state = new StoreLogState(message, fields);
+        logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning, new EventId(0), state, null,
+            static (value, _) => value.Message);
+    }
+
+    /// <summary>Structured store outcome. Values are durations and fixed names, never report bytes or paths.</summary>
+    private sealed class StoreLogState(string message, List<KeyValuePair<string, object?>> items)
+        : IReadOnlyList<KeyValuePair<string, object?>>
+    {
+        public string Message { get; } = message;
+        public int Count => items.Count;
+        public KeyValuePair<string, object?> this[int index] => items[index];
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator() => items.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => items.GetEnumerator();
     }
 
     public async Task<bool> IsUsableAsync(string? path, string raw, CancellationToken ct)
