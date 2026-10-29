@@ -1,7 +1,9 @@
-# CARD-1603: retire canceled queue selections and supersede replaced standing consumers
+# CARD-1603: retire canceled or parked queue selections and supersede replaced standing consumers
 
-Plan round 2, task `c404bdc3`, revises round 1 (`2cebeca1`) in place after design
-Review `b7762633`. Task base: `d553e70106c92d9e4e7b92df7d1c12d81e200c84`.
+Plan round 3, task `71d5ca7f`, revises round 2 (`c404bdc3`) in place after
+re-review `8db4c0fe`. Task base: `169583fecc77d15ac020de20c9e4daad725013f1`.
+Round 2 followed design Review `b7762633`; its confirmed standing design, lock
+order, S3-A dependency, classification and performance obligations are retained.
 Product source inspected at
 `f8bddb6efda7b0e8f50f3b45744087e52188bc66` on 2026-10-29.
 No product code is changed by this Plan task. Verification is designed here for
@@ -34,7 +36,10 @@ All paths below are relative to `server/Application/Services/` unless stated oth
 | Card assumption | Verified behavior at the inspected source |
 |---|---|
 | Expiring an optional brief cancels a capacity-selected row | **False.** ApplyCapacityHoldAsync selects only Channel/Scheduled (SessionMessageQueueService.cs:5534-5573); brief expiry requires ExecutionTaskId (:2206-2209, :2235-2236). Production execution briefs are Delegation (SessionMessageQueueService.DispatchBrief.cs:228-230; AgentTaskDispatcher.cs:5372-5380,5455-5461,8996-8998; AgentSessionService.cs:1132-1134). Delivery batches never mix origins (:2601-2625). StampQueueActionAsync has only test callers; it cannot establish this alleged production cause. |
-| A canceled selected Channel/Scheduled message leaves a reusable grant | **True.** Human Drop CancelAsync (:1205-1208), CancelParkedIfStaleAsync (:1389-1392), and RemoteSpillCourier.CancelUndeliverableAsync / MarkUndeliverable (:253-282) can cancel such rows. Drop works before redemption or after a redeemed delivery attempt has reverted to Pending. None detaches the selected row from its wait. |
+| A canceled selected Channel/Scheduled message leaves a reusable grant | **True.** Human Drop CancelAsync (:1205-1208), schedule supersession CancelPendingBySourceScheduleAsync (:1360-1384), and RemoteSpillCourier.CancelUndeliverableAsync / MarkUndeliverable (:262-286) can cancel such rows. ScheduleService.FireAsync's prompt arm (:298-309) automatically cancels the previous Pending, never-typed Scheduled copy through CancelPendingIfUntypedAsync, then enqueues its replacement. Drop also works after a redeemed delivery attempt reverts to Pending. None detaches the selected row from its wait. |
+| The stale-park sweep automatically cancels Channel/Scheduled | **False; corrects both earlier plan rounds and round-1 Review.** CancelParkedIfStaleAsync has one production caller: ParkedMessageSweepService.ScanAsync (:49-102), restricted to Delegation/System/Check/Supervision, SourceTaskId null and no active task. Calling it on a Channel row in V-1 was a test-only transition. |
+| A parked or future-held Pending row is demand | **False.** Flush excludes DeliveryAttempts >= Math.Max(1, DeliveryVerification.MaxDeliveryAttempts), future HoldUntil and LegacyUnclassified maintenance (:2417-2424). A parked selected row remains Pending/keyed; the selected-ID receipt plus free revalidation repeats indefinitely unless selection is retired. Delivery-attempt and capacity-episode caps are different settings. |
+| Losing demand can use the generic grant-revoke transition | **False.** RecordRevokedGrantAsync (:1180-1201; S3-A :1282-1303) turns an unexpired ActionPending/Ready/Admitted wait Deferred, preserving any earlier reason via ??=. Ordinary grant candidates exclude Deferred, and no general demand-arrival transition readies it. An unselected dropped Y can therefore strand later Z if the new demand check uses that branch. |
 | The orphan sweep catches that cancellation | CapacityRecoveryService.cs:665-680 checks terminal/missing session and task owners only. It does not inspect SelectedMessageId or queued-message status. A live session with a canceled selected message passes through. |
 | Expiry eventually exhausts the leak | Before redemption, D-12 calls RearmRevokedGrantOnAsync / PrepareNextAttemptOnAsync (:1203-1223,1370-1408): canceled rows are re-keyed without a status filter and count stays 0. After redemption, CapacityRecoveryPolicy.HasExecutionReceipt treats the selected row as a receipt; :1347-1355 requests free revalidation, count stays 1. The default 120 seconds bounds each grant, not repetition. A later successful report-boundary turn **can** end a LiveSession wait via ObserveTranscriptAsync (:879-905); the reproducer must not emit that progress. |
 | The wait belongs only to its selected row | **False.** It serves the whole held session queue. While no grant is held, a new Pending Channel/Scheduled row can be Held and unselected (SessionMessageQueueService.cs:5544-5573). Canceling the wait strands that row and later held input. |
@@ -65,32 +70,40 @@ existing bad rows, other queue cancellation writers, and a crash after cancellat
 commits but before the callback. Rejected: cancel on age, runner absence or an
 agent's `Running` flag. Those are not proof that this wait has lost its consumer.
 
-**D-2 - Retire the stale selection, keep the session's wait.** A candidate must
-be unfinished, be LiveSession or PendingQueue, have SelectedMessageId resolving
-to an actual Canceled Channel/Scheduled row, and have matching message
-CapacityWaitId, CapacityRecoveryActionKey and session identity. Missing rows,
-uncommitted expiry, Pending and Sent are not evidence. Keep a wait with a
+**D-2 - Retire a canceled or parked selection, keep the session's wait.** A candidate
+must be unfinished, be LiveSession or PendingQueue, have SelectedMessageId
+resolving to an actual Channel/Scheduled row that is either Canceled or Pending
+at the delivery-attempt cap, and have matching message CapacityWaitId,
+CapacityRecoveryActionKey and session identity. Use
+`Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts)`, exactly the
+queue's MaxAttempts, never CapacityRecoveryService.MaxAttempts (the episode cap).
+Missing rows, uncommitted expiry, Pending below that cap and Sent are not evidence.
+Keep a wait with a
 launch/dispatch receipt (LaunchSessionId, LaunchReceipt, DispatchAttemptId) or
 confirmed prompt: it still represents admitted execution. Also keep a linked
 Queued task or Working task with CapacityWaitRetained that can independently
 redeem. The terminal-task sweep still owns ended tasks. No QueuedTask or
 RoutingBlockedTask wait is changed by this queue cleanup.
 
-Under D-4's gate/transaction, conditionally detach only the canceled message's
+Under D-4's gate/transaction, conditionally detach only that obsolete message's
 CapacityWaitId, CapacityWaitVersion and CapacityRecoveryActionKey, then clear the
 wait's SelectedMessageId and NeedsRevalidationGrant. Retire its action: increment
 ActionOrdinal, derive a new ActionKey, increment Version exactly once, and stamp
-UpdatedAt / OutcomeReason = selected-message-canceled. For ActionPending,
+UpdatedAt / OutcomeReason = selected-message-canceled or selected-message-parked.
+The parked row stays Pending at its existing attempts cap: do not cancel it,
+reset attempts, erase delivery/transcript facts or make it automatically retry.
+Send-now and late confirmation retain their queue semantics; a status/attempt
+change that wins the locked recheck prevents cleanup. For ActionPending,
 Admitted or Ready, use State/Outcome = Ready and a due time no earlier than the
 old due time or normal jitter eligibility for this reset. Deferred with reason
 grant-revoked may return to Ready; preserve other deferrals and WaitingForHold /
 Reheld so cleanup cannot bypass an unrelated prerequisite. No new state/migration.
 Do **not** call PrepareNextAttemptOnAsync here: at this base it would rewrite
-queue rows under the provider lock. Only the exact canceled row is detached.
+queue rows under the provider lock. Only the exact obsolete row is detached.
 
 Clear the provider grant only if it still names this wait and old action. Keep
 AdmissionCount, provider LastActionKey/LastActionAt, NextAdmissionAt, wave fields,
-and the canceled row's delivery/cancellation facts. A spent admission is not
+and the message's delivery/cancellation facts. A spent admission is not
 refunded. Keep provider ExpectedWaitVersion/ExpectedOwnerId handling consistent
 with ClearGrant; no stale expected stamp constitutes a held grant. Log old wait/action/message IDs and disposition without body text.
 Normal attempt caps still apply when new work is admitted; an already exhausted
@@ -98,18 +111,55 @@ episode is outside the new delivery guarantee. No admission is spent merely to
 retire a selection.
 
 Add one shared **queue-demand predicate** to GrantReadyAsync, both its candidate
-query **before Take(batch)** and outstanding-grant validation. A LiveSession or
-PendingQueue wait without an independent execution receipt/task can receive or
-retain a grant only if its session has a Pending Channel/Scheduled row eligible
-for that wait (unkeyed, or linked to this wait/current action). Do not use the
-display-only NoteHeader == Held. Existing selected Pending/Sent/unknown receipt
-shapes, launch/dispatch receipts and independently redeemable tasks keep their
-semantics. Resolve a legacy missing SessionId through the exact session consumer
-key; unresolved identity stays conservative. Use SQL existence reads, never a
-queue semaphore under the provider lock. Recheck the winner before writing;
-a later cancellation is handled next tick. An empty wait remains Ready but is
-skipped without repeated version/ordinal changes. This also covers direct
-GrantReadyAsync callers, not only ReconcileAsync.
+query **before Take(batch)** and outstanding-grant validation. For a resolved
+LiveSession/PendingQueue consumer without an independent execution receipt/task,
+demand is a Pending Channel/Scheduled row eligible for this wait (unkeyed, or
+linked to this wait/current action), with **DeliveryAttempts below the delivery
+cap, HoldUntil null or <= the same captured now, and MaintenanceKind !=
+LegacyUnclassified**. Mirror the flush's deferred-run generation eligibility if
+those fields are present, using the current session generation. Do not use the
+display-only NoteHeader == Held, treat Send-now's explicit hold override as
+automatic demand, or count a selected ID alone as deliverable demand.
+
+Known selected Pending rows obey these rules; a future-held selected row keeps
+its selection but cannot alone reserve capacity before due. A positively
+canceled/parked selection must pass through the detach above before another
+queue grant, even if Y is already waiting (direct GrantReadyAsync must not reuse
+X's obsolete receipt for Y). Selected Sent, missing/unknown selection identity,
+launch/dispatch receipts, confirmed prompts and independently redeemable tasks
+keep their conservative existing semantics. Resolve a legacy missing SessionId
+through the exact session consumer key; unresolved identity stays conservative.
+Use SQL existence reads, never a queue semaphore under the provider lock.
+Recheck the winner before writing; a later cancellation is handled next tick.
+An empty/parked-only/future-held-only wait is skipped without repeated
+version/ordinal changes. This covers direct GrantReadyAsync callers too.
+
+**Outstanding grant loses demand:** handle this as a distinct cause, not a new
+false return routed into RecordRevokedGrantAsync's Deferred branch. Under the
+existing provider transaction, reread the matching wait/action and demand.
+For an otherwise grant-candidate queue wait with proven absent demand and no
+independent/unknown receipt, clear only its own provider grant and set
+State/Outcome = Ready, OutcomeReason = queue-demand-lost, UpdatedAt = now and
+Version += 1. Keep ActionKey/ActionOrdinal, selection/linkage, AdmissionCount,
+NeedsRevalidationGrant, DueAt and all provider admission-clock/wave/history
+fields. A receipt-backed revalidation flag stays set until obsolete-selection
+cleanup retires it; a future-held retry is not charged a second admission merely
+because its grant was released. Do not call PrepareNextAttemptOnAsync, re-key
+queue rows or acquire their semaphore/row locks under the provider lock.
+Use the same conditional state/version/action write discipline; if it loses,
+leave the grant for the next reconciler. The reason is stamped explicitly even
+when the previous reason was grant-expired or new-wall-wave.
+
+This cause takes precedence over expiry for a matching, otherwise eligible wait
+whose demand is proven absent, so expiry does not rotate an empty action first.
+Other invalidations, independent live consumers and uncertain evidence keep the
+existing handling; never turn a genuine Deferred/Reheld/WaitingForHold wait into
+Ready via this new branch. The normal candidate filter immediately skips the
+empty wait, allows an eligible competitor at the unchanged provider clock, and
+later Z uses the same wait without a human prompt or cursor rewind. With no
+held grant, repeated empty ticks make no further reset. If a known obsolete X
+still needs detaching, the maintenance pass does that once under D-4; this
+grant-only transition does not bypass its lock order.
 
 An unselected held row Y already present when X is canceled remains eligible;
 a later held row wakes the **same** wait on the ordinary grant tick. No enqueue
@@ -121,8 +171,11 @@ absent from the composer. Keep genuine post-Sent retries and retained returns.
 
 Rejected: ending the wait (drops existing/later held work); finishing plus a new
 enqueue-time registration path (larger lifecycle change); !Pending (Sent is valid);
-resetting the episode count; age-based cleanup; and retaining the canceled
-selection as a receipt (perpetuates free revalidation).
+resetting the episode count; age-based cleanup; retaining a canceled/parked
+selection as a receipt (perpetuates free revalidation); and generic Deferred on
+demand loss (strands later input). Letting D-12 expire one last empty grant is a
+safe fallback but rejected here because a distinct Ready-preserving release is
+small, directly testable and frees proven unused capacity on the next tick.
 
 **D-3 - Supersede a standing wait when a different accepted generation replaced
 its consumer.** Restrict this path to unfinished `StandingStart` waits with no
@@ -178,7 +231,7 @@ scanned/detached/superseded/deferred counts and elapsed time, with no message bo
 
 | Path | Lock and transaction order | Reason |
 |---|---|---|
-| Canceled selection | Lazily resolve the existing singleton queue; try GetLock(message.AgentSessionId).WaitAsync(0, ct). Open a fresh transaction only after the gate. Lock the exact message row FOR UPDATE NOWAIT, recheck Canceled/origin/session/wait/key and conditionally clear its linkage **before** trying provider advisory (7). Reload the wait, recheck selection/state/version/key/independent consumer, CAS capacity rows (8), commit. Any failed check or busy provider rolls back the message detach. Release gate in finally. | Same semaphore as selection/cancellation (SessionMessageQueueService.cs:57,6047), without a new dictionary or constructor cycle. Prelocking the message and writing its linkage before rank 7 avoids reversing a queue-row -> provider order if S3-B is present; all post-provider writes remain capacity-only. No queue is resolved with zero queue candidates. |
+| Canceled/parked selection | Lazily resolve the existing singleton queue; try GetLock(message.AgentSessionId).WaitAsync(0, ct). Open a fresh transaction only after the gate. Lock the exact message row FOR UPDATE NOWAIT, recheck (Canceled OR Pending at delivery cap)/origin/session/wait/key and conditionally clear its linkage **before** trying provider advisory (7). Reload the wait, recheck selection/state/version/key/independent consumer, CAS capacity rows (8), commit. Any failed check or busy provider rolls back the message detach. Release gate in finally. | Same semaphore as selection/cancellation (SessionMessageQueueService.cs:57,6047), without a new dictionary or constructor cycle. Prelocking the message and writing its linkage before rank 7 avoids reversing a queue-row -> provider order if S3-B is present; all post-provider writes remain capacity-only. No queue is resolved with zero queue candidates. |
 | Standing replacement | Fresh transaction; current session `FOR UPDATE NOWAIT` (4), then agent `FOR UPDATE NOWAIT` (5). Reload pointer; if it differs from discovery, abandon this candidate. Prove ownership. Try provider advisory (7), reload wait, conditionally finish capacity rows (8), commit. | Same session-before-agent order as `AgentControlService.cs:543-549`, same connection throughout. S3 capacity start commits pointer and wait together. This pass writes no session or agent row. |
 
 Use `pg_try_advisory_xact_lock` for the new pass's provider acquisition; false is
@@ -193,11 +246,12 @@ Update using a conditional write over the just-read unfinished state, `Version`,
 is not the compare-and-set. Zero affected rows means skip; never clear a grant
 after losing that compare-and-set. Message detach, selection reset and its grant
 clearance commit together; standing supersede and its grant clearance commit
-together. The message write includes Status == Canceled and exact linkage; its
+together. The message write includes the exact canceled/parked predicate and linkage; its
 row lock stays held to commit. DeferResumeAbsenceAsync currently can reset rows
 to Pending without a status predicate (SessionMessageQueueService.ResumeReceipt.cs:122-127).
-If such a writer won first, cleanup skips; a later Pending write is fresh demand,
-not authority to restore a canceled action. Do not rely solely on the local
+If such a writer won first, cleanup skips unless the row still meets the parked
+predicate; a later Pending write is fresh demand only below the delivery cap and
+when due, never authority to restore a retired action. Do not rely solely on the local
 semaphore as proof against that writer. One fresh context per candidate avoids stale tracked entities after
 rollback. S1 Rule P is preserved: all writes after provider acquisition are rank 8.
 
@@ -550,15 +604,19 @@ and make the same correction to S3 plan Risk 8, with this text (no generated
 files under docs/cards are edited by this task):
 
 > A capacity-selected Channel/Scheduled message can be canceled by human Drop
-> (CancelAsync), parked-stale cancellation (CancelParkedIfStaleAsync), or a missing
+> (CancelAsync), schedule supersession (CancelPendingBySourceScheduleAsync), or a missing
 > remote spill body (RemoteSpillCourier.MarkUndeliverable). Before redemption,
 > expiry re-keys the canceled row without spending an admission; after redemption,
 > SelectedMessageId is treated as an execution receipt and revalidation can repeat
 > without another admission. A later successful session turn can end the wait.
 > Brief-expiry cancellation concerns Delegation rows and cannot cause this case.
-> Detach the canceled selection and suppress empty-queue grants while retaining
+> Detach the canceled selection and suppress grants without deliverable demand while retaining
 > the session's wait, so already-held and later Channel/Scheduled input remain
-> deliverable. Human-started standing waits are a separate supersede path.
+> deliverable. Also clear a selected Pending row's selection/linkage once it is
+> parked at the delivery-attempt cap; preserve its Pending status and attempts,
+> and do not count it or a future HoldUntil as automatic demand. If a held grant
+> loses its demand, release it while leaving the wait Ready, never stranded in
+> Deferred. Human-started standing waits are a separate supersede path.
 
 The title and Risk 9 premise remain valid. This is a precise handoff amendment,
 not a claim that the live card or the S3 branch was changed.
