@@ -91,10 +91,18 @@ function Read-RcProjectGraph {
                 if (-not $blobs.ContainsKey($input)) { throw "missing-input:$input" }
                 $blob=$blobs[$input]
                 if (-not $documents.ContainsKey($blob)) {
+                    $inputText=Get-TestSelectionBlob $Root $Sha $input
                     $settings=[Xml.XmlReaderSettings]::new(); $settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit; $settings.XmlResolver=$null
-                    $reader=[Xml.XmlReader]::Create([IO.StringReader]::new((Get-TestSelectionBlob $Root $Sha $input)), $settings)
-                    try { $document=[Xml.XmlDocument]::new(); $document.XmlResolver=$null; $document.Load($reader); $documents[$blob]=$document } finally { $reader.Dispose() }
+                    try {
+                        $reader=[Xml.XmlReader]::Create([IO.StringReader]::new($inputText), $settings)
+                        try { $document=[Xml.XmlDocument]::new(); $document.XmlResolver=$null; $document.Load($reader); $documents[$blob]=$document } finally { $reader.Dispose() }
+                    } catch {
+                        # Invalid immutable XML has the same failure at every import site.
+                        # Keep the failure, then attach each site's own graph diagnostic below.
+                        $documents[$blob]=$_.Exception
+                    }
                 }
+                if ($documents[$blob] -is [Exception]) { throw $documents[$blob] }
                 $document=$documents[$blob]
                 foreach ($node in $document.SelectNodes("//*[local-name()='ProjectReference']")) {
                     $target=Resolve-RcProjectInput $input $node.GetAttribute('Include') $project.path
