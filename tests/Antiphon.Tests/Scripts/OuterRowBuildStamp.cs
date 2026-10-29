@@ -24,8 +24,29 @@ internal static class OuterRowBuildStamp
     public static CheckpointBuildBinding EnsureForBuildOutput(string baseDirectory, string repositoryRoot, SourceObservation source)
     {
         var binding = Binding(repositoryRoot, OutputDirectory(baseDirectory), source);
+        // A row-built stamp stays where the runner wrote it, including a corrupt or stale one.
+        // Qualification output has none: CheckpointBuildBinding.Write records this build.
+        if (!File.Exists(binding.PathName))
+            WriteMissing(binding);
         AssertPresent(binding);
         return binding;
+    }
+
+    // Write() seals the output and returns output-owner-missing unless the owner file
+    // CreateFreshDirectory leaves is already present. A qualification directory already
+    // exists, so that fresh-directory call cannot mint the owner. The owner text is the
+    // same SafeWrite.Text call; the stamp bytes come only from CheckpointBuildBinding.Write.
+    private static void WriteMissing(CheckpointBuildBinding binding)
+    {
+        var owner = Path.Combine(binding.OutputPath, ".checkpoint-output-owner.json");
+        if (!File.Exists(owner))
+        {
+            var owned = SafeWrite.Text(owner, Guid.NewGuid().ToString("N"), SafeWrite.Under(binding.OutputPath));
+            owned.ShouldBeNull("c1050-child-source: checkpoint output owner");
+        }
+        var written = binding.Write();
+        if (written == "pre-existing-build-source") return;
+        written.ShouldBeNull("c1050-child-source: checkpoint build stamp writer");
     }
 
     public static void AssertPresent(CheckpointBuildBinding binding) =>
