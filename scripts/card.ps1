@@ -299,7 +299,7 @@ function Invoke-Antiphon {
             else {
                 [Console]::Error.WriteLine("Antiphon $Method $Path failed: $raw")
             }
-            exit 1
+            throw ("Antiphon {0} {1} failed (HTTP 404)" -f $Method, $Path)
         }
         if ($null -ne $lines) {
             Write-Error ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
