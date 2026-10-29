@@ -676,12 +676,20 @@ deliberately empty package cache or downgrade the SDK to get past it.
 The restore race does not count build-slot wait against its 30-second arrival window. Each
 restore probe writes `slot-held` only after `scripts/build-slot.ps1` grants the slot, and the
 barrier starts that window only once both probes hold slots. Slot acquisition uses the build-slot
-timeout (default 45 minutes). A probe that exits 4, or a wait that reaches that deadline while a
-slot is still ungranted, is `FixtureBuildSlotTimeout`. Once both slots are held, both restores
+timeout (default 45 minutes), measured with `date +%s` so a slow reader cannot stretch the wait
+past that deadline. A probe that exits 4, or a wait that reaches that deadline while a
+slot is still ungranted, is `FixtureBuildSlotTimeout`. The offline p3 restore uses the same
+gate: exit 4 is `FixtureBuildSlotTimeout`, and any other offline failure stays
+`FixtureOfflineRestoreFailed`. Once both slots are held, both restores
 must start within the existing 30-second window or the diagnosis stays `FixtureRestoreBarrierFailed`.
-A refusal, a slot timeout, or INT/TERM kills `c849-${RUN}-restore-p1` and `c849-${RUN}-restore-p2`
-(and the other named restore and lock probes) by exact name, DELETEs any granted build-slot lease,
-removes the fixture volumes, and does not wait on those probes.
+The first granted slot stays held until the second grant or that 45-minute deadline. The fixture
+does not release that slot to retry; a retry would drop the grant and reopen the arrival window.
+A refusal, a slot timeout, or INT/TERM releases only a probe whose container id this run recorded
+after launch and whose labels are `io.antiphon.owner=c849-fixture`, `io.antiphon.fixture-run` for
+this run, and the probe role. The release kills and removes that id. A same-named container the
+launcher refused is left untouched and recorded as residue. INT exits 130 and TERM exits 143.
+The release also DELETEs any granted build-slot lease, removes the fixture volumes, and does not
+wait on a probe that is still running. `kill -9` is sent only to a pid `jobs -pr` still lists.
 
 The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
 ` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
