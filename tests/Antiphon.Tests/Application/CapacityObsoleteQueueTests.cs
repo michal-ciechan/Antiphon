@@ -137,6 +137,9 @@ public class CapacityObsoleteQueueTests
     {
         await using var fx = await QueueFixture.OpenAsync();
         var wait = await fx.SeedPreservedConsumerAsync(arm);
+        var seeded = await fx.ReloadWaitAsync(wait.Id);
+        if (arm is not ("confirmed-prompt" or "unselected-canceled-row"))
+            await fx.HoldMatchingGrantAsync(seeded);
         var before = await fx.ReloadWaitAsync(wait.Id);
         await fx.Recovery.ReconcileAsync(CancellationToken.None);
         var after = await fx.ReloadWaitAsync(wait.Id);
@@ -527,6 +530,7 @@ public class CapacityObsoleteQueueTests
                 SessionId, "c1603-selected", MessageSendMode.WhenIdle, CancellationToken.None,
                 origin: origin, conversationKey: "telegram:-1001", deliverIfIdle: false,
                 onCreated: created => id = created);
+            await Recovery.GrantReadyAsync(CancellationToken.None);
             await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
             return id;
         }
@@ -559,6 +563,7 @@ public class CapacityObsoleteQueueTests
                 await db.SaveChangesAsync();
             }
 
+            await Recovery.GrantReadyAsync(CancellationToken.None);
             await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
             return id;
         }
@@ -570,6 +575,13 @@ public class CapacityObsoleteQueueTests
                 origin: QueuedMessageOrigin.Ui, deliverIfIdle: false);
             var scheduleId = await SeedScheduleAsync("c1603-schedule-original");
             await FireScheduleAsync(scheduleId);
+            if ((await ReloadSelectedWaitAsync()).SelectedMessageId is null)
+            {
+                await Recovery.GrantReadyAsync(CancellationToken.None);
+                ShowEmptyComposer();
+                await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
+            }
+
             Guid selected;
             await using (var db = Ctx())
             {
@@ -974,6 +986,26 @@ public class CapacityObsoleteQueueTests
             return row;
         }
 
+        public async Task HoldMatchingGrantAsync(CapacityRecoveryWait wait)
+        {
+            await using var db = Ctx();
+            var state = await db.Set<CapacityRecoveryProviderState>()
+                .SingleOrDefaultAsync(s => s.Kind == wait.ExecutionKind);
+            if (state is null)
+            {
+                state = new CapacityRecoveryProviderState { Kind = wait.ExecutionKind, UpdatedAt = Now };
+                db.Set<CapacityRecoveryProviderState>().Add(state);
+            }
+
+            state.GrantedWaitId = wait.Id;
+            state.GrantedActionKey = wait.ActionKey;
+            state.GrantedAt = Now;
+            state.ExpectedWaitVersion = wait.Version;
+            state.ExpectedOwnerId = wait.TaskId ?? wait.AgentId ?? wait.SessionId;
+            state.UpdatedAt = Now;
+            await db.SaveChangesAsync();
+        }
+
         public async Task SeedExcludedQueueWaitsAsync(string arm)
         {
             for (var i = 0; i < 3; i++)
@@ -1052,6 +1084,7 @@ public class CapacityObsoleteQueueTests
         {
             await SeedWallAsync();
             var wait = await EnsureLiveWaitAsync();
+            var message = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-drop-me");
             await Recovery.GrantReadyAsync(CancellationToken.None);
             var granted = await ReloadWaitAsync(wait.Id);
             var reason = arm.EndsWith("new-wall-wave", StringComparison.Ordinal) ? "new-wall-wave" : "grant-expired";
@@ -1061,7 +1094,6 @@ public class CapacityObsoleteQueueTests
                     .SetProperty(w => w.OutcomeReason, reason));
             }
 
-            var message = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-drop-me");
             await Queue.CancelAsync(SessionId, message, CancellationToken.None);
             var competitor = await SeedCompetitorAsync(Now.AddMinutes(30));
             await using (var db = Ctx())
@@ -1122,6 +1154,7 @@ public class CapacityObsoleteQueueTests
                     .SetProperty(w => w.NeedsRevalidationGrant, false));
             }
 
+            await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-cap-demand");
             await Recovery.GrantReadyAsync(CancellationToken.None);
             var capped = await ReloadWaitAsync(wait.Id);
             capped.AdmissionCount.ShouldBe(3);

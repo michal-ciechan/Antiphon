@@ -29,11 +29,14 @@ public class CapacityRecoveryAcceptanceTests
             CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true,
             blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-10)), CancellationToken.None);
+        var youngerSession = Guid.NewGuid();
         var younger = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
-            $"session:{Guid.NewGuid():N}",
+            $"session:{youngerSession:N}",
             CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true,
+            sessionId: youngerSession,
             blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-1)), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, youngerSession);
 
         var granted = await service.GrantReadyAsync(CancellationToken.None);
         granted.ShouldBe(1);
@@ -222,11 +225,14 @@ public class CapacityRecoveryAcceptanceTests
             CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true,
             blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-10)), CancellationToken.None);
+        var youngerSession = Guid.NewGuid();
         var younger = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
-            $"session:{Guid.NewGuid():N}",
+            $"session:{youngerSession:N}",
             CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true,
+            sessionId: youngerSession,
             blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-1)), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, youngerSession);
         await service.GrantReadyAsync(CancellationToken.None);
         var wallAt = time.GetUtcNow().UtcDateTime;
         await service.BumpWaveAsync(AgentKind.ClaudeCode, wallAt, CancellationToken.None);
@@ -308,11 +314,14 @@ public class CapacityRecoveryAcceptanceTests
         }
 
         var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema, intervalSeconds: 1, jitterSeconds: 0);
+        var sessionId = Guid.NewGuid();
         var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
-            $"session:{Guid.NewGuid():N}",
+            $"session:{sessionId:N}",
             CapacityWaitConsumerKind.LiveSession,
             holdId: holdId,
-            holdAlreadyCleared: true), CancellationToken.None);
+            holdAlreadyCleared: true,
+            sessionId: sessionId), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, sessionId);
         wait.ObservedClearCauses.ShouldContain("Expired");
         await service.GrantReadyAsync(CancellationToken.None);
         var grant = await CapacityRecoveryTestSupport.CreateContext(schema)
@@ -336,10 +345,13 @@ public class CapacityRecoveryAcceptanceTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema, intervalSeconds: 1, jitterSeconds: 0);
+        var sessionId = Guid.NewGuid();
         var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
-            $"session:{Guid.NewGuid():N}",
+            $"session:{sessionId:N}",
             CapacityWaitConsumerKind.LiveSession,
-            holdAlreadyCleared: true), CancellationToken.None);
+            holdAlreadyCleared: true,
+            sessionId: sessionId), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, sessionId);
         wait.ObservedClearCauses.ShouldContain("Expired");
         await service.GrantReadyAsync(CancellationToken.None);
         var grant = await CapacityRecoveryTestSupport.CreateContext(schema)

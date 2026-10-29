@@ -89,6 +89,52 @@ internal static class CapacityRecoveryTestSupport
         return await service.EnsureWaitAsync(registration, ct);
     }
 
+    /// <summary>
+    /// A due Pending Channel row is the flush's own deliverable demand. LiveSession and
+    /// PendingQueue waits with a session and no such row are no longer grant candidates.
+    /// </summary>
+    public static async Task SeedHeldChannelDemandAsync(
+        IsolatedTestSchema schema, Guid sessionId, CancellationToken ct = default)
+    {
+        await using var db = CreateContext(schema);
+        await SeedHeldChannelDemandAsync(db, sessionId, ct);
+    }
+
+    public static async Task SeedHeldChannelDemandAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct = default)
+    {
+        if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId, ct))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                CreatedAt = DateTime.UtcNow,
+                StartedAt = DateTime.UtcNow,
+                Cwd = "/tmp",
+            });
+        }
+
+        var sequence = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId)
+            .Select(m => (long?)m.Sequence)
+            .MaxAsync(ct) ?? 0;
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = sequence + 1,
+            Body = "c1603 held demand",
+            Origin = QueuedMessageOrigin.Channel,
+            Status = QueuedMessageStatus.Pending,
+            DeliveryAttempts = 0,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
     public static ModelAvailabilityHold Hold(
         Guid id,
         string alias = "opus",

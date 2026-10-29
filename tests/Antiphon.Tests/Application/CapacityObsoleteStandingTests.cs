@@ -237,7 +237,8 @@ public class CapacityObsoleteStandingTests
     [Arguments("provider-busy")]
     public async Task C1603_standing_cleanup_is_bounded_and_provider_busy_safe(string arm)
     {
-        await using var fx = await StandingFixture.OpenAsync(batch: 2);
+        var commands = arm == "provider-busy" ? new CommandLog { ExpectedCompletedTries = 2 } : null;
+        await using var fx = await StandingFixture.OpenAsync(commands: commands, batch: 2);
         var ids = new List<Guid>();
         for (var i = 0; i < 3; i++)
         {
@@ -260,15 +261,25 @@ public class CapacityObsoleteStandingTests
                 "SELECT pg_advisory_xact_lock(hashtext(@key))", connection, tx);
             command.Parameters.AddWithValue("key", "antiphon.capacity.kind.ClaudeCode");
             await command.ExecuteScalarAsync();
+            var released = false;
+            var reconcile = fx.Recovery.ReconcileAsync(CancellationToken.None);
             try
             {
-                await fx.Recovery.ReconcileAsync(CancellationToken.None);
+                // Cleanup's try-lock must return false while this transaction holds the
+                // provider. GrantReady's blocking lock waits behind it, so release only
+                // after those tries have finished and before that wait can time out.
+                var completed = await Task.WhenAny(commands!.TriesCompleted, Task.Delay(TimeSpan.FromSeconds(20)));
+                completed.ShouldBe(commands.TriesCompleted, string.Join("\n", commands.Texts));
                 foreach (var id in ids)
                     (await fx.ReloadWaitAsync(id)).State.ShouldNotBe(CapacityRecoveryWaitState.Superseded);
+                await tx.RollbackAsync();
+                released = true;
+                await reconcile;
             }
             finally
             {
-                await tx.RollbackAsync();
+                if (!released)
+                    await tx.RollbackAsync();
             }
         }
 
@@ -509,7 +520,14 @@ public class CapacityObsoleteStandingTests
 
     private sealed class CommandLog : DbCommandInterceptor
     {
+        private int _completedTries;
+        private readonly TaskCompletionSource _triesCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public List<string> Texts { get; } = [];
+
+        public int ExpectedCompletedTries { get; init; }
+
+        public Task TriesCompleted => _triesCompleted.Task;
 
         public override InterceptionResult<DbDataReader> ReaderExecuting(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
@@ -524,6 +542,17 @@ public class CapacityObsoleteStandingTests
         {
             Texts.Add(command.CommandText);
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (ExpectedCompletedTries > 0
+                && command.CommandText.Contains("pg_try_advisory_xact_lock", StringComparison.Ordinal)
+                && Interlocked.Increment(ref _completedTries) >= ExpectedCompletedTries)
+                _triesCompleted.TrySetResult();
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
         }
     }
 }
