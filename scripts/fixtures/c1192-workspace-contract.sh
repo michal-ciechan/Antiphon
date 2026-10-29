@@ -4384,13 +4384,14 @@ c1192_dump_shell_state() {
 # so the trap's proven-cid kill is what removes them. The lease is deleted
 # and the volumes that were present are removed afterwards.
 #
-# delivery=group sends one SIGINT to the child's process group, which is how
-# an operator Ctrl-C reaches a foreground `bash c590-remote.sh`. The fake
-# probes ignore SIGINT and die only when docker kill records their cid. Exit
-# 130 is the trap. Exit 2 is accepted only when the trap wrote its ledger
-# line, every live cid was killed by that id and not by name, and the wait
-# finished well under C589_SLOT_WAIT_SECONDS. An unrelated pid is planted on
-# the live-probe ledger and must survive.
+# delivery=group signals the child's process group, which is how an operator
+# Ctrl-C reaches a foreground `bash c590-remote.sh`. Bash can drop that SIGINT
+# while the slot poll waits on sleep, so it is repeated until the trap writes
+# its ledger line. The fake probes ignore SIGINT and die only when docker kill
+# records their cid. Exit 130 is the trap. Exit 2 is accepted only when that
+# ledger line is present, every live cid was killed by that id and not by
+# name, and the wait finished well under C589_SLOT_WAIT_SECONDS. An unrelated
+# pid is planted on the live-probe ledger and must survive.
 #
 # INT does not reach a fixture that was itself started with & from a
 # non-interactive shell: the ignored disposition is inherited and trap cannot
@@ -4536,7 +4537,22 @@ c1192_signal_witness() {
             planted=0
         fi
         started=$(date +%s)
-        kill -s INT -- -"$pid" 2>/dev/null || true
+        # One group SIGINT is discarded while the slot poll is inside sleep,
+        # the same way a pid-only SIGINT is. Repeat it until the trap records
+        # that it ran. Probes ignore SIGINT, so only the trap's cid kill
+        # stops them. Stop once the ledger line exists so a handler that
+        # returns without releasing is not signaled for the rest of the wait.
+        i=0
+        while [ "$i" -lt 400 ]; do
+            c849_fixture_probe_exited "$pid" && break
+            if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+                && grep -Fxq "trap-ran INT" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+                break
+            fi
+            kill -s INT -- -"$pid" 2>/dev/null || true
+            command sleep 0.02
+            i=$((i + 1))
+        done
     elif [ "$sig" = INT ]; then
         # One pid-only SIGINT is discarded while the slot poll is inside sleep.
         # Repeat it until the shell is between children and the trap runs.
