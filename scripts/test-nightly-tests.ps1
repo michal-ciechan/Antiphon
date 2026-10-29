@@ -2264,7 +2264,7 @@ function Test-C1410_MeasuredCostGroups {
     # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
     # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
     # anywhere doubles. After the 44a6e14e measured merge this fixed
-    # fixture estimates 29.59 h in 155 launches (not a measured wall-clock SLA); every
+    # fixture estimates 29.54 h in 154 launches (not a measured wall-clock SLA); every
     # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
@@ -2424,16 +2424,19 @@ function Test-C1410_MeasuredCostGroups {
         $launches = @($plan).Count
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
         # Task 44a6e14e merges 702 measured rows (695 new, seven 9a16e2cb rows
-        # replaced by the slower 79b742de totals) into the same listing. The
-        # independent sum is 106516.3397645542 s. Listing launches are 151;
-        # the four suffix probes stay, so the plan is 155. Before this merge
-        # the same listing was 110 real launches and 59699.10480689747 s.
+        # replaced by the slower 79b742de totals) into the same listing. That
+        # independent sum was 106516.3397645542 s in 151 listing launches, 155
+        # with the four suffix probes. The Linux-only Windows rc exclusions
+        # remove 164 listing nodes (172.5 s) and one listing launch. The
+        # independent sum is now 106343.8397645542 s. Listing launches are 150;
+        # the four suffix probes stay, so the plan is 154. Before the measured
+        # merge the same listing was 110 real launches and 59699.10480689747 s.
         # Three listing counts stay below the journal denominators, so those
         # fixture prices remain the journal per-node rate times the listing
         # count: DelegateBranchDelivery 3/7, RepairSourceDispatch 39/41,
         # CompletedCardWorktreeRemoval 36/37.
-        if ($launches -ne 155) { [void]$reasons.Add('launch-count') }
-        if ([Math]::Abs($suiteSeconds - 106516.3397645542) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        if ($launches -ne 154) { [void]$reasons.Add('launch-count') }
+        if ([Math]::Abs($suiteSeconds - 106343.8397645542) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
