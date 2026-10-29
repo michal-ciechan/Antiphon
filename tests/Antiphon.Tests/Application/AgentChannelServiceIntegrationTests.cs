@@ -196,6 +196,9 @@ public class AgentChannelServiceIntegrationTests
             await WaitUntilAsync(
                 () => targetAdapter.SubmittedBodies.Count == 1,
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
+            await WaitUntilAsync(
+                () => RouteAttemptsSettled(harness.RouteDiagnostics, sourceSession.Id),
+                () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
 
             CountOccurrences(targetAdapter.SentInput, "[channel from lead]").ShouldBe(1);
             targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
@@ -273,10 +276,11 @@ public class AgentChannelServiceIntegrationTests
                 }
             });
 
-            var finished = await Task.WhenAny(pumpDone.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-            finished.ShouldBe(pumpDone.Task,
-                $"the next observe on the same pump was still blocked after {(DateTime.UtcNow - started).TotalMilliseconds:F0}ms."
-                + DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter));
+            await WaitUntilAsync(
+                () => pumpDone.Task.IsCompleted,
+                () => $"the next observe on the same pump was still blocked after {(DateTime.UtcNow - started).TotalMilliseconds:F0}ms."
+                    + DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter),
+                TimeSpan.FromSeconds(5));
             await pumpDone.Task;
 
             await WaitUntilAsync(
@@ -342,10 +346,16 @@ public class AgentChannelServiceIntegrationTests
             {
                 var observe = harness.Runtime.ObserveOutputAsync(
                     sourceSession.Id, 1, "@helper one\n@other two\n", CancellationToken.None);
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await WaitUntilAsync(
+                    () => entered.Task.IsCompleted,
+                    () => DescribeChannelPipeline(harness, sourceSession.Id),
+                    TimeSpan.FromSeconds(5));
                 router.Dispose();
-                var finished = await Task.WhenAny(observe, Task.Delay(TimeSpan.FromSeconds(3)));
-                finished.ShouldBe(observe, "a command still queued at dispose left the observer waiting");
+                await WaitUntilAsync(
+                    () => observe.IsCompleted,
+                    () => "a command still queued at dispose left the observer waiting"
+                        + DescribeChannelPipeline(harness, sourceSession.Id),
+                    TimeSpan.FromSeconds(3));
                 await observe;
             }
             catch (Exception ex)
@@ -410,7 +420,10 @@ public class AgentChannelServiceIntegrationTests
             {
                 var observe = harness.Runtime.ObserveOutputAsync(
                     sourceSession.Id, 1, "@helper hello\n", CancellationToken.None);
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await WaitUntilAsync(
+                    () => entered.Task.IsCompleted,
+                    () => DescribeChannelPipeline(harness, sourceSession.Id),
+                    TimeSpan.FromSeconds(5));
                 var started = sourceSession.StartedAt.AddMinutes(5);
                 await using (var edit = CreateContext())
                 {
@@ -426,7 +439,11 @@ public class AgentChannelServiceIntegrationTests
                 FreshMention(helper.Id, "hello").ShouldBeNull();
                 harness.RouteDiagnostics.Snapshot().ShouldContain(e =>
                     e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=false reason=other-agent");
-                await observe.WaitAsync(TimeSpan.FromSeconds(5));
+                await WaitUntilAsync(
+                    () => observe.IsCompleted,
+                    () => DescribeChannelPipeline(harness, sourceSession.Id, helperAdapter),
+                    TimeSpan.FromSeconds(5));
+                await observe;
             }
             finally
             {
