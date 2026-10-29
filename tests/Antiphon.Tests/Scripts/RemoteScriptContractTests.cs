@@ -1119,9 +1119,12 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-0849 round 3. A same-named container the launcher refused is not this
-    // run's. TERM and INT kill only recorded CIDs. TERM and kill -9 reach a pid
-    // only while jobs -pr lists it, so a live pid from another shell survives.
-    // The slot wait is wall-clock. Offline exit 4 is the slot timeout.
+    // run's. A pid-only TERM or INT kills only recorded CIDs. TERM and kill -9
+    // reach a pid only while jobs -pr lists it, so a live pid from another shell
+    // survives. A process-group INT, the operator Ctrl-C, may let the probes
+    // stop themselves first: exit 2 or 130 are both cleanup, and an unrelated
+    // pid is not signaled. The slot wait is wall-clock. Offline exit 4 is the
+    // slot timeout.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Refused_launch_keeps_a_foreign_container_and_signals_release_proven_cids()
@@ -1141,6 +1144,14 @@ public sealed class RemoteScriptContractTests
             Fact(output, "signal-" + sig + "-lease").ShouldBe("1", output);
             Fact(output, "signal-" + sig + "-volumes").ShouldBe("1", output);
         }
+        var groupExit = Fact(output, "signal-INT-group-exit");
+        (groupExit == "2" || groupExit == "130").ShouldBeTrue(output);
+        Fact(output, "signal-INT-group-accepted").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-containers").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-procs").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-lease").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-volumes").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-foreign").ShouldBe("1", output);
         Fact(output, "slot-wait-bounded").ShouldBe("1", output);
         Fact(output, "slot-wait-code").ShouldBe("4", output);
         Fact(output, "offline-diagnosis").ShouldBe("FixtureBuildSlotTimeout", output);
