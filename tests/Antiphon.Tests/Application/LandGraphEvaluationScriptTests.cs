@@ -422,19 +422,8 @@ public sealed partial class LandGraphEvaluationTests
             await process.WaitForExitAsync();
             try { await stderr; } catch (Exception) { }
             Directory.Exists(canary).ShouldBeTrue("SIGKILL leaves the canary for the script");
-            var script = Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1");
-            var cleanup = new ProcessStartInfo("pwsh")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-RemoveRecordedCanary", record, "-RemoveRecordedCanaryRepo", moved })
-                cleanup.ArgumentList.Add(arg);
-            using var cleaner = Process.Start(cleanup)!;
-            var cleanupText = await cleaner.StandardOutput.ReadToEndAsync() + await cleaner.StandardError.ReadToEndAsync();
-            await cleaner.WaitForExitAsync();
-            cleaner.ExitCode.ShouldBe(0, cleanupText);
+            var cleanup = await RemoveRecordedCanaryAsync(CanaryRemovalLibrary(), canary!, moved);
+            cleanup.ExitCode.ShouldBe(0, cleanup.Text);
             Directory.Exists(canary).ShouldBeFalse(canary);
             Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before);
         }
@@ -616,6 +605,7 @@ public sealed partial class LandGraphEvaluationTests
     {
         files[PinsFile] = "";
         files["scripts/audit-land-verification-graph.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/audit-land-verification-graph.ps1"));
+        files["scripts/lib/land-graph-canary-removal.ps1"] = await File.ReadAllTextAsync(CanaryRemovalLibrary());
         var precheck = Path.Combine(RepoRoot(), "scripts/audit-land-verification-precheck.ps1");
         if (File.Exists(precheck)) files["scripts/audit-land-verification-precheck.ps1"] = await File.ReadAllTextAsync(precheck);
         var repo = await AuditRepo.CreateAsync(files);

@@ -16,6 +16,9 @@ public static class Program
     public const int Refused = 1;
     public const int EvaluationFailed = 2;
 
+    /// <summary>API probe only. Not an evaluation and not an approval. The audit script treats every non-zero code as refusal.</summary>
+    public const int ProbeOnly = 3;
+
     private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(EvaluationBudget.ToolCeilingSeconds);
 
     public static int Main(string[] args)
@@ -40,7 +43,7 @@ public static class Program
         }
 
         if (repo is null || (solution is null && !probe))
-            return Fail("usage: --repo <dir> --solution <file.sln> [--api-probe]");
+            return Fail("usage: --repo <dir> --solution <file.sln>");
 
         if (!string.IsNullOrEmpty(canaryRecord))
             CanaryRepository.RecordPath = Path.GetFullPath(canaryRecord);
@@ -83,7 +86,18 @@ public static class Program
             MSBuildLocator.RegisterInstance(instance);
 
             if (probe)
-                return Evaluation.Probe(instance.Version.ToString(), Console.Out);
+            {
+                // Members are reported on stderr. Exit 0 is reserved for a finished graph evaluation.
+                var probed = Evaluation.Probe(instance.Version.ToString(), Console.Error);
+                if (probed == Approved)
+                {
+                    Console.Error.WriteLine("api-probe: not a graph evaluation");
+                    Console.Error.Flush();
+                    return ProbeOnly;
+                }
+
+                return probed;
+            }
 
             return Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out);
         }
