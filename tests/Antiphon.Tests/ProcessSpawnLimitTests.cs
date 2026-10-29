@@ -84,6 +84,10 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests),
         typeof(Antiphon.Tests.Checkpoints.BuildSlotClientTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests),
+        // ExecuteAsync captures host and Git evidence even when the row driver is fake.
+        typeof(Antiphon.Tests.Checkpoints.CheckpointAppTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointAdmissionContractTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests),
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
