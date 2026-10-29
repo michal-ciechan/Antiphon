@@ -2,9 +2,24 @@
 
 Task `e197fb96`; planning base `e4e65f69078f6340ba5fb8e0cee27f6778d58802`.
 CARD-1514 is the existing timing/fixture workstream, not a newly assigned card identity.
-Status: complete Plan for independent review, followed by separate TestDesign; not Code authorization.
+Status: round-2 revision in progress under task `acbb52cb`; review base `ec893877a59a3490bc2aa83c8e6ebd3303ecd910`. The final revision folds verification design into this plan for independent Review, then Code; this skeleton is not execution authorization.
 
 Evidence: [run 28bbb58e breakdown](../../investigations/2026-10-29-rc-run-28bbb58e-time-breakdown.md), read in full. Its historical Windows run lasted 1378.1 minutes: setup 11.0, chunks 1365.7, inter-chunk gaps 1.4. No desktop files were read by this task.
+
+## Round-2 revision ledger
+
+The six design-review defects are accepted for correction. This first pushed skeleton preserves the confirmed instrumentation, savings limits, UID accounting and native serialization contracts. Each row will be replaced by the verified decision and its verification obligation before settlement.
+
+| Review defect | Required correction / pending evidence |
+|---|---|
+| D-1 | Size S3 per admitted planned cost with estimate-error allowance; prove the 2400 s ordinary and 1800 s E2E ceilings fit; retain healthy g103. |
+| D-2 | Bind the S6 diagnostic trial to Windows; Linux evidence cannot discharge the Windows opportunity. |
+| D-3 | Census elapsed assertions and real-time waits sharing the limiter or host; protect sensitive classes, including `C1514T_Overhead`, from width 2. |
+| D-4 | Replace ten-run p95/no-regression claims with paired wall comparisons, deadline margins and explicit finite-sample flake limits. |
+| D-5 | Execute the heartbeat harness and C1397 assertions through named checkpoint wrappers with source-verified counts. |
+| D-6 | Name OS/environment witnesses, discriminating inputs and production factories; run `scripts/check-os-witnesses.ps1` against the final plan. |
+
+Also verify the absent release-authority production wiring, rc log-fix subjects/cherry-picks, suffix-safe filters and same-source/same-platform build reuse. No product code is changed by this Plan task.
 
 ## Decisions
 
