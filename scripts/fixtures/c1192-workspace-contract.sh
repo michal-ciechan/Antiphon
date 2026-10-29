@@ -4304,37 +4304,54 @@ c1192_dump_shell_state() {
     done < <(compgen -v)
 }
 
-# Run the barrier under the fixture's own trap lines. TERM must exit 143 and
-# INT 130, both probes die by the recorded CID, the lease is deleted, and the
-# volumes that were present are removed afterwards.
+# Run the barrier under the fixture's own trap lines.
 #
-# INT reaches the fixture when it is the foreground of the deploy ssh session
-# (Invoke-C590Ssh runs `bash c590-remote.sh` with no trailing &): the remote
-# shell starts with SIGINT default, and an operator Ctrl-C is delivered to
-# that process group. INT does not reach a fixture that was itself started
-# with & from a non-interactive shell, because the ignored disposition is
-# inherited at exec and `trap` cannot undo it. setsid does not clear that
-# inherited ignore. TERM is not in that pair, so a pid-only TERM still
-# arrives. This witness execs the barrier through perl, which sets SIGINT
-# back to the default before exec, so the test can deliver INT even when
-# this harness was started in the background.
+# delivery=pid (the default) signals only the fixture shell. TERM exits 143.
+# INT exits 130 and both probes die by the recorded CID. Bash drops a single
+# SIGINT that arrives while the shell waits on the slot poll's sleep, so the
+# pid-only INT is repeated until the trap runs. The probes are not signaled,
+# so the trap's proven-cid kill is what removes them. The lease is deleted
+# and the volumes that were present are removed afterwards.
 #
-# A pid-only SIGINT after that is still discarded while bash waits on a
-# foreground child that does not itself die from SIGINT (the slot poll's
-# sleep). Monitor mode makes the child its own process group, and the
-# witness signals that group. That is the same delivery as the operator
-# Ctrl-C, and it does not signal this fixture's own group.
+# delivery=group sends one SIGINT to the child's process group, which is how
+# an operator Ctrl-C reaches a foreground `bash c590-remote.sh`. The probes
+# are in that group and can stop their own containers, so the barrier may
+# exit 2 before the trap's exit 130. Either exit is accepted. The invariants
+# are: both probe containers are gone, both probe processes are dead, the
+# lease is deleted, the fixture volumes are removed, and an unrelated pid is
+# not signaled.
+#
+# INT does not reach a fixture that was itself started with & from a
+# non-interactive shell: the ignored disposition is inherited and trap cannot
+# re-arm it. setsid does not clear that ignore. This witness execs the
+# barrier through perl, which sets SIGINT back to the default before exec.
+# TERM is not in that pair, so a pid-only TERM still arrives. Monitor mode
+# makes the child its own process group and is restored before return. The
+# group signal is that child's group, not this fixture's group.
 c1192_signal_witness() {
-    local sig="$1" expected="$2" packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key child armed monitor=0
+    local sig="$1" expected="$2" delivery="${3:-pid}"
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local prefix="signal-${sig}" traps pid i code=0 present=0 cid_kills=0 volumes=0 released=0
+    local child armed monitor=0 foreign="" probe_pid cid name nrestore=0 containers=0 procs=0
+    local accepted=0 foreign_ok=0
+    [ "$delivery" = group ] && prefix="signal-${sig}-group"
     traps="$(c1192_fixture_traps)"
     if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
         || ! c1192_has_exact_line "trap 'c849_fixture_on_signal TERM' TERM" "$traps"; then
-        emit "signal-${sig}-installed" 0
-        emit "signal-${sig}-exit" 0
-        emit "signal-${sig}-cid-kills" 0
-        emit "signal-${sig}-lease" 0
-        emit "signal-${sig}-volumes" 0
+        emit "${prefix}-installed" 0
+        emit "${prefix}-exit" 0
+        if [ "$delivery" = group ]; then
+            emit "${prefix}-accepted" 0
+            emit "${prefix}-containers" 0
+            emit "${prefix}-procs" 0
+            emit "${prefix}-lease" 0
+            emit "${prefix}-volumes" 0
+            emit "${prefix}-foreign" 0
+        else
+            emit "${prefix}-cid-kills" 0
+            emit "${prefix}-lease" 0
+            emit "${prefix}-volumes" 0
+        fi
         return 0
     fi
     c1192_slot_plant "$packages" "$scratch"
@@ -4395,39 +4412,98 @@ c1192_signal_witness() {
         kill -s TERM -- -"$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
         [ "$monitor" = 1 ] || set +m
-        emit "signal-${sig}-installed" 0
-        emit "signal-${sig}-exit" 0
-        emit "signal-${sig}-cid-kills" 0
-        emit "signal-${sig}-lease" 0
-        emit "signal-${sig}-volumes" 0
+        emit "${prefix}-installed" 0
+        emit "${prefix}-exit" 0
+        if [ "$delivery" = group ]; then
+            emit "${prefix}-accepted" 0
+            emit "${prefix}-containers" 0
+            emit "${prefix}-procs" 0
+            emit "${prefix}-lease" 0
+            emit "${prefix}-volumes" 0
+            emit "${prefix}-foreign" 0
+        else
+            emit "${prefix}-cid-kills" 0
+            emit "${prefix}-lease" 0
+            emit "${prefix}-volumes" 0
+        fi
         unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
         c1192_kill_jobs
         return 0
     fi
-    emit "signal-${sig}-installed" 1
-    kill -s "$sig" -- -"$pid" 2>/dev/null || true
+    emit "${prefix}-installed" 1
+    if [ "$delivery" = group ]; then
+        # A sleeper from another shell is not in this child's process group.
+        foreign=$(bash -c 'command sleep 120 >/dev/null 2>&1 & echo $!; exit 0')
+        kill -s INT -- -"$pid" 2>/dev/null || true
+    elif [ "$sig" = INT ]; then
+        # One pid-only SIGINT is discarded while the slot poll is inside sleep.
+        # Repeat it until the shell is between children and the trap runs.
+        # This never signals the process group, so the probes stay up.
+        i=0
+        while [ "$i" -lt 400 ]; do
+            c849_fixture_probe_exited "$pid" && break
+            kill -s INT "$pid" 2>/dev/null || true
+            command sleep 0.02
+            i=$((i + 1))
+        done
+    else
+        kill -s "$sig" "$pid" 2>/dev/null || true
+    fi
     wait "$pid" || code=$?
     [ "$monitor" = 1 ] || set +m
-    emit "signal-${sig}-exit" "$code"
-    cid_kills=1
-    while read -r _ cid name || [ -n "${cid:-}" ]; do
-        [ -n "${cid:-}" ] && [ -n "${name:-}" ] || continue
-        grep -Fxq "kill $cid" "$C1192_ROOT/order" || cid_kills=0
-        container_exists "$name" && cid_kills=0
-        if grep -F "kill $name" "$C1192_ROOT/order" >/dev/null 2>&1; then
-            cid_kills=0
-        fi
-    done < "$C1192_ROOT/live-before"
-    emit "signal-${sig}-cid-kills" "$cid_kills"
+    emit "${prefix}-exit" "$code"
     if grep -q 'DELETE' "$C1192_ROOT/curls" \
         && grep -q '11111111-1111-1111-1111-111111111111' "$C1192_ROOT/curls"; then
         released=1
     fi
-    emit "signal-${sig}-lease" "$released"
     if c1192_volumes_removed "$present"; then
         volumes=1
     fi
-    emit "signal-${sig}-volumes" "$volumes"
+    if [ "$delivery" = group ]; then
+        case "$code" in
+            2|130) accepted=1 ;;
+        esac
+        containers=1
+        procs=1
+        nrestore=0
+        while read -r probe_pid cid name || [ -n "${probe_pid:-}" ]; do
+            case "${name:-}" in
+                *restore-p*) ;;
+                *) continue ;;
+            esac
+            nrestore=$((nrestore + 1))
+            container_exists "$name" && containers=0
+            c849_fixture_probe_exited "$probe_pid" || procs=0
+        done < "$C1192_ROOT/live-before"
+        [ "$nrestore" -ge 2 ] || containers=0
+        [ "$nrestore" -ge 2 ] || procs=0
+        if [ -n "$foreign" ] && ! c849_fixture_probe_exited "$foreign"; then
+            foreign_ok=1
+        fi
+        if [ -n "$foreign" ]; then
+            command kill "$foreign" 2>/dev/null || true
+            command wait "$foreign" 2>/dev/null || true
+        fi
+        emit "${prefix}-accepted" "$accepted"
+        emit "${prefix}-containers" "$containers"
+        emit "${prefix}-procs" "$procs"
+        emit "${prefix}-lease" "$released"
+        emit "${prefix}-volumes" "$volumes"
+        emit "${prefix}-foreign" "$foreign_ok"
+    else
+        cid_kills=1
+        while read -r _ cid name || [ -n "${cid:-}" ]; do
+            [ -n "${cid:-}" ] && [ -n "${name:-}" ] || continue
+            grep -Fxq "kill $cid" "$C1192_ROOT/order" || cid_kills=0
+            container_exists "$name" && cid_kills=0
+            if grep -F "kill $name" "$C1192_ROOT/order" >/dev/null 2>&1; then
+                cid_kills=0
+            fi
+        done < "$C1192_ROOT/live-before"
+        emit "${prefix}-cid-kills" "$cid_kills"
+        emit "${prefix}-lease" "$released"
+        emit "${prefix}-volumes" "$volumes"
+    fi
     unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
     c1192_kill_jobs
 }
@@ -4565,6 +4641,7 @@ mode_slot_round2() {
     c1192_foreign_witness
     c1192_signal_witness TERM 143
     c1192_signal_witness INT 130
+    c1192_signal_witness INT 130 group
     c1192_deadline_witness
     c1192_offline_witness
     c1192_reap_witness
