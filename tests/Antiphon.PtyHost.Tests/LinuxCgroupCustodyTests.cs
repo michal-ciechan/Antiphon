@@ -5,6 +5,7 @@ using System.Diagnostics;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.PtyHost.Tests;
 
@@ -26,6 +27,7 @@ namespace Antiphon.PtyHost.Tests;
 /// so everything else skips. A skip here is not a pass: CP-17 requires each method to have
 /// executed.</para>
 /// </summary>
+[NativeLinuxOnly("The linux-cgroup-v1 backend executes on Linux only.")]
 [Category("Integration")]
 [NotInParallel("LinuxCustody")]
 [ParallelLimiter<ProcessSpawnLimit>]

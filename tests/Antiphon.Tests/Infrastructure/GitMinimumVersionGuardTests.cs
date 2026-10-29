@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -9,6 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 // that the server and runner images both run at build time. Debian bookworm's 2.39.5, and any
 // version below 2.43 by version order (not string order), must fail the build; the floor itself and
 // the pinned 2.47.3 pass. Without an argument the guard reads the installed `git --version`.
+[NativeLinuxOnly("CARD-1260: the Git floor guard runs under /bin/sh with GNU sort -V, as in the Debian images; Windows skips explicitly.")]
 [Timeout(600_000)]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Application;
 
@@ -61,6 +62,7 @@ public sealed class PhoneHomeCompletedCardTransportTests
     }
 
     // PC-589: bypass MutationLock or reply before durable receipt -> busy ordering/durable/physical oracles fail.
+    [NativeLinuxOnly("Real phone-home runner join qualified on Linux")]
     [Test] public async Task C1032_TransportQueueRecipientReplay()
     {
         RequireClient();
