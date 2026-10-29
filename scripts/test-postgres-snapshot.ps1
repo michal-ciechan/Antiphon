@@ -33,6 +33,31 @@ function Assert-True {
     if ($Cond) { Write-Pass $Name } else { Write-Fail $Name $Detail }
 }
 
+function Set-SnapshotHarnessMode {
+    param([string]$Path, [string]$Octal)
+    if ($env:OS -eq 'Windows_NT') { throw 'unix mode is not a Windows property' }
+    $bits = [Convert]::ToInt32($Octal, 8)
+    [System.IO.File]::SetUnixFileMode($Path, [System.IO.UnixFileMode]$bits)
+}
+
+function Get-SnapshotHarnessMode {
+    param([string]$Path)
+    if ($env:OS -eq 'Windows_NT') { throw 'unix mode is not a Windows property' }
+    $bits = [int][System.IO.File]::GetUnixFileMode($Path)
+    return [Convert]::ToString($bits, 8)
+}
+
+function New-SnapshotHarnessLink {
+    param([string]$Link, [string]$Target)
+    try {
+        New-Item -ItemType SymbolicLink -Path $Link -Target $Target -ErrorAction Stop | Out-Null
+        return
+    } catch {
+        if ($env:OS -ne 'Windows_NT') { throw }
+    }
+    New-Item -ItemType Junction -Path $Link -Target $Target -ErrorAction Stop | Out-Null
+}
+
 function New-Fixture {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-' + [guid]::NewGuid().ToString('N'))
     $sync = Join-Path $root 'sync'
@@ -41,7 +66,7 @@ function New-Fixture {
     $bin = Join-Path $root 'bin'
     $marker = Join-Path $root 'tool-called'
     New-Item -ItemType Directory -Path $sync, $dest, $stage, $bin -Force | Out-Null
-    if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $stage }
+    if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $stage '700' }
     $canary = 'CANARY-RECIPIENT-VALUE-1405'
     $identityCanary = 'CANARY-IDENTITY-VALUE-1405'
     $recipient = Join-Path $root 'recipient.txt'
@@ -57,7 +82,7 @@ function New-Fixture {
                 'printf "%s\n" "$0 $*" >> "$CARD1405_TOOL_MARKER"',
                 'exit 99'
             ) | Set-Content -LiteralPath $tool -Encoding ASCII
-            & chmod +x $tool
+            Set-SnapshotHarnessMode $tool '755'
         } else {
             $tool = Join-Path $bin ($name + '.cmd')
             @(
@@ -585,7 +610,8 @@ exit "${CARD1405_AGE_EXIT:-0}"
     $agePath = Join-Path $Fixture.Bin 'age'
     [System.IO.File]::WriteAllText($dockerPath, $docker.Replace("`r`n", "`n"), $encoding)
     [System.IO.File]::WriteAllText($agePath, $age.Replace("`r`n", "`n"), $encoding)
-    & chmod +x $dockerPath $agePath
+    Set-SnapshotHarnessMode $dockerPath '755'
+    Set-SnapshotHarnessMode $agePath '755'
 }
 
 function Invoke-DrillCase {
@@ -822,14 +848,14 @@ function Test-StagingHygiene {
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-stage-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir | Out-Null
     try {
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $dir }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $dir '700' }
         Set-Content -LiteralPath (Join-Path $dir 'old.dump') -Value 'x' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'keep.dump.age') -Value 'y' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'notes.txt') -Value 'z' -Encoding ASCII
         $priorName = 'run-' + ('ab' * 16)
         $prior = Join-Path $dir $priorName
         New-Item -ItemType Directory -Path $prior | Out-Null
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $prior }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $prior '700' }
         Set-Content -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump') -Value 'owned' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'notes.txt') -Value 'keep' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump') -Value 'keep' -Encoding ASCII
@@ -845,9 +871,9 @@ function Test-StagingHygiene {
         $created = @(Get-ChildItem -LiteralPath $dir -Force -Directory | Where-Object { $_.Name -match '^run-[0-9a-f]{32}$' -and $_.Name -ne $priorName })
         Assert-True ($created.Count -eq 1) 'staging opens one run directory' ("count=$($created.Count)")
         if ($env:OS -ne 'Windows_NT' -and $created.Count -eq 1) {
-            $mode = (& stat -c %a -- $created[0].FullName).Trim()
+            $mode = Get-SnapshotHarnessMode $created[0].FullName
             Assert-True ($mode -eq '700') 'run directory is 0700' $mode
-            $parent = (& stat -c %a -- $dir).Trim()
+            $parent = Get-SnapshotHarnessMode $dir
             Assert-True ($parent -eq '700') 'staging root mode is unchanged' $parent
         }
     } finally {
@@ -962,13 +988,14 @@ function Test-StagingRefusesLink {
         if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingRefusesLink script exists' $scriptPath; return }
         $outside = Join-Path $fx.Root 'outside'
         New-Item -ItemType Directory -Path $outside | Out-Null
-        & chmod 0755 -- $outside
+        $unix = -not ($env:OS -eq 'Windows_NT')
+        if ($unix) { Set-SnapshotHarnessMode $outside '755' }
         $dump = Join-Path $outside 'other.dump'
         $notes = Join-Path $outside 'notes.txt'
         Set-Content -LiteralPath $dump -Value 'outside dump' -Encoding ASCII
         Set-Content -LiteralPath $notes -Value 'outside notes' -Encoding ASCII
         $link = Join-Path $fx.Root 'stage-link'
-        New-Item -ItemType SymbolicLink -Path $link -Target $outside | Out-Null
+        New-SnapshotHarnessLink $link $outside
         $result = Invoke-Snapshot -Fixture $fx -Arguments @(
             '-Execute', '-RecipientFile', $fx.Recipient,
             '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $link
@@ -977,8 +1004,12 @@ function Test-StagingRefusesLink {
         Assert-True ($result.Out -match 'reason=staging-link') 'symlink staging reason' $result.Out
         Assert-True (Test-Path -LiteralPath $dump) 'symlink staging keeps the outside dump' $dump
         Assert-True (Test-Path -LiteralPath $notes) 'symlink staging keeps outside notes' $notes
-        $mode = (& stat -c %a -- $outside).Trim()
-        Assert-True ($mode -eq '755') 'symlink staging leaves the outside mode' $mode
+        if ($unix) {
+            $mode = Get-SnapshotHarnessMode $outside
+            Assert-True ($mode -eq '755') 'symlink staging leaves the outside mode' $mode
+        } else {
+            Write-Host 'SKIP symlink staging leaves the outside mode: unix mode bits are not a Windows property'
+        }
         Assert-NoDocker $result 'symlink staging'
         Assert-NoSecret $result $fx 'symlink staging'
     } finally { Remove-Fixture $fx }
@@ -1131,6 +1162,10 @@ function Test-DockerDaemonPinned {
 }
 
 function Test-StagingRefusesForeignRoot {
+    if ($env:OS -eq 'Windows_NT') {
+        Write-Host 'SKIP StagingRefusesForeignRoot unix mode bits, sticky bit, and POSIX owner: Windows ACL coverage is WindowsAclRules'
+        return
+    }
     $fx = New-Fixture
     try {
         if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingRefusesForeignRoot script exists' $scriptPath; return }
@@ -1145,20 +1180,20 @@ function Test-StagingRefusesForeignRoot {
         Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
         $loose = Join-Path $fx.Root 'loose'
         New-Item -ItemType Directory -Path $loose | Out-Null
-        & chmod 0755 -- $loose
+        Set-SnapshotHarnessMode $loose '755'
         $mode = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $loose))
         Assert-True ($mode.Exit -eq 3) 'group-readable staging exits 3' "exit=$($mode.Exit) $($mode.Out)"
         Assert-True ($mode.Out -match 'reason=staging-mode') 'group-readable staging reason' $mode.Out
         Assert-NoDocker $mode 'group-readable staging'
-        Assert-True ((& stat -c %a -- $loose).Trim() -eq '755') 'group-readable staging mode is unchanged' 'mode changed'
+        Assert-True ((Get-SnapshotHarnessMode $loose) -eq '755') 'group-readable staging mode is unchanged' 'mode changed'
         $looseRuns = @(Get-ChildItem -LiteralPath $loose -Force -Directory -ErrorAction SilentlyContinue)
         Assert-True ($looseRuns.Count -eq 0) 'group-readable staging opens no run directory' "count=$($looseRuns.Count)"
         Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
         $open = Join-Path $fx.Root 'open'
         $under = Join-Path $open 'stage'
         New-Item -ItemType Directory -Path $under -Force | Out-Null
-        & chmod 0777 -- $open
-        & chmod 0700 -- $under
+        Set-SnapshotHarnessMode $open '777'
+        Set-SnapshotHarnessMode $under '700'
         $parent = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $under))
         Assert-True ($parent.Exit -eq 3) 'world-writable parent exits 3' "exit=$($parent.Exit) $($parent.Out)"
         Assert-True ($parent.Out -match 'reason=staging-parent') 'world-writable parent reason' $parent.Out
@@ -1167,8 +1202,8 @@ function Test-StagingRefusesForeignRoot {
         $sticky = Join-Path $fx.Root 'sticky'
         $underSticky = Join-Path $sticky 'stage'
         New-Item -ItemType Directory -Path $underSticky -Force | Out-Null
-        & chmod 1777 -- $sticky
-        & chmod 0700 -- $underSticky
+        Set-SnapshotHarnessMode $sticky '1777'
+        Set-SnapshotHarnessMode $underSticky '700'
         $stickyRun = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $underSticky))
         Assert-True ($stickyRun.Out -notmatch 'reason=staging-') 'sticky parent passes the staging checks' $stickyRun.Out
         Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
@@ -1177,7 +1212,7 @@ function Test-StagingRefusesForeignRoot {
         Assert-True ($created.Out -notmatch 'reason=staging-') 'absent staging root passes the staging checks' $created.Out
         Assert-True (Test-Path -LiteralPath $fresh -PathType Container) 'absent staging root is created' $fresh
         if (Test-Path -LiteralPath $fresh) {
-            Assert-True ((& stat -c %a -- $fresh).Trim() -eq '700') 'created staging root is 0700' (& stat -c %a -- $fresh)
+            Assert-True ((Get-SnapshotHarnessMode $fresh) -eq '700') 'created staging root is 0700' (Get-SnapshotHarnessMode $fresh)
         }
     } finally { Remove-Fixture $fx }
 }
@@ -1191,29 +1226,29 @@ function Test-StagingSkipsLiveRun {
     }
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1413-live-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir | Out-Null
-    if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $dir }
+    if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $dir '700' }
     $old = [datetime]::UtcNow.AddHours(-8)
     $dumpName = 'antiphon-20261021T010101Z.dump'
     $lock = $null
     try {
         $stale = Join-Path $dir ('run-' + ('aa' * 16))
         New-Item -ItemType Directory -Path $stale | Out-Null
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $stale }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $stale '700' }
         Set-Content -LiteralPath (Join-Path $stale $dumpName) -Value 'stale' -Encoding ASCII
         (Get-Item -LiteralPath $stale -Force).LastWriteTimeUtc = $old
         $live = Join-Path $dir ('run-' + ('bb' * 16))
         New-Item -ItemType Directory -Path $live | Out-Null
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $live }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $live '700' }
         Set-Content -LiteralPath (Join-Path $live $dumpName) -Value 'live' -Encoding ASCII
         $lock = [System.IO.File]::Open((Join-Path $live 'run.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         (Get-Item -LiteralPath $live -Force).LastWriteTimeUtc = $old
         $fresh = Join-Path $dir ('run-' + ('cc' * 16))
         New-Item -ItemType Directory -Path $fresh | Out-Null
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $fresh }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $fresh '700' }
         Set-Content -LiteralPath (Join-Path $fresh $dumpName) -Value 'fresh' -Encoding ASCII
         $mixed = Join-Path $dir ('run-' + ('dd' * 16))
         New-Item -ItemType Directory -Path $mixed | Out-Null
-        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $mixed }
+        if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $mixed '700' }
         Set-Content -LiteralPath (Join-Path $mixed $dumpName) -Value 'mixed' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $mixed 'notes.txt') -Value 'keep' -Encoding ASCII
         (Get-Item -LiteralPath $mixed -Force).LastWriteTimeUtc = $old
@@ -1495,12 +1530,29 @@ $all = @(
     'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
     'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules'
 )
+$script:SnapshotPosixFakeCases = @(
+    'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
+    'DrillRefusesSourceMount', 'DrillRefusesProductionLikeName', 'DrillRefusesScratchDatabase',
+    'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
+    'DrillRefusesOwnVolume', 'DrillRefusesForeignVolume', 'DrillRefusesVolumeMismatch', 'DrillRefusesPgHost',
+    'StagingPreservesOperatorFiles', 'DrillRemovesScratch',
+    'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned',
+    'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure'
+)
+function Invoke-SnapshotCase {
+    param([string]$Name)
+    if (($env:OS -eq 'Windows_NT') -and ($script:SnapshotPosixFakeCases -contains $Name)) {
+        Write-Host ("SKIP {0} POSIX sh docker/age fake: the executable bit is not a Windows property" -f $Name)
+        return
+    }
+    & ('Test-{0}' -f $Name)
+}
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }
-    & $fn
+    Invoke-SnapshotCase $Case
 } else {
-    foreach ($id in $all) { & ('Test-{0}' -f $id) }
+    foreach ($id in $all) { Invoke-SnapshotCase $id }
 }
 
 Write-Host ''
