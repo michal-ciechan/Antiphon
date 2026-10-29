@@ -12,12 +12,18 @@ internal sealed record ScriptHarnessOptions(
     IReadOnlyList<string>? AdditionalArguments = null,
     Func<ScriptProcessRequest, IOwnedScriptProcess>? OwnerFactory = null,
     TimeProvider? Clock = null,
-    TimeSpan? PostExitDrainBudget = null)
+    TimeSpan? PostExitDrainBudget = null,
+    Action? OnPostExitDrainArmed = null)
 {
-    internal static ScriptHarnessOptions Default => new(TimeSpan.FromSeconds(300), TimeSpan.FromSeconds(10));
+    // 30s is the production post-exit floor. A 10s drain failed healthy Windows
+    // stalls of 20-40s. It is still far under the 300s execution budget, and it
+    // does not mean a Windows pipe holder has been identified or removed.
+    internal static readonly TimeSpan ProductionPostExitDrain = TimeSpan.FromSeconds(30);
 
-    // After the root exits, a descendant still holding a redirected pipe must not
-    // consume whatever remains of the execution budget.
+    internal static ScriptHarnessOptions Default => new(
+        TimeSpan.FromSeconds(300), TimeSpan.FromSeconds(10), PostExitDrainBudget: ProductionPostExitDrain);
+
+    // Callers that omit PostExitDrainBudget keep CleanupBudget, so fixtures stay short.
     internal TimeSpan EffectivePostExitDrain => PostExitDrainBudget ?? CleanupBudget;
 }
 
@@ -88,7 +94,10 @@ internal static class ScriptHarnessProcess
                     {
                         var drain = !pending.Contains(root);
                         if (drain && postExit is null)
+                        {
                             postExit = new CancellationTokenSource(options.EffectivePostExitDrain, clock);
+                            options.OnPostExitDrainArmed?.Invoke();
+                        }
                         using var wait = CancellationTokenSource.CreateLinkedTokenSource(
                             callerToken, drain ? postExit!.Token : execution.Token);
                         Task completed;
