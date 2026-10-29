@@ -10,6 +10,9 @@ No product code is changed by this Plan task. Verification is designed here for
 execution after independent plan Review; this is not a claim of passing tests.
 S3-A inspected separately at `6564c5757dd0ec7c347fe50275f1334498f9e073`;
 its presence on a remote task ref is not a landed-prerequisite claim.
+Code (task `1d5d34a3`) re-anchored the service line citations below to master
+`e65343132e877ce20bd26540d440eff3867d9798`, where CARD-1593 S3-A is present.
+The inspected-source sentences above stay as the plan-time record.
 
 ## Inputs and dependency
 
@@ -31,6 +34,9 @@ dependency lands; it is not evidence that the dependency is already present.
 S3-A must first receive its approving Full Review; the inspected remote tip is
 neither that approval nor a land. This round-3 plan revision also needs approval
 before the Code handoff is actionable.
+That dependency has since landed: master `e65343132` contains S3-A, and this
+Code task implements against that base. The pre-start `RedeemAsync` sentence
+above is the plan-time base, not the tree this Code task compiles.
 
 ## Ground truth
 
@@ -42,14 +48,14 @@ All paths below are relative to `server/Application/Services/` unless stated oth
 | A canceled selected Channel/Scheduled message leaves a reusable grant | **True.** Human Drop CancelAsync (:1205-1208), schedule supersession CancelPendingBySourceScheduleAsync (:1360-1384), and RemoteSpillCourier.CancelUndeliverableAsync / MarkUndeliverable (:262-286) can cancel such rows. ScheduleService.FireAsync's prompt arm (:298-309) automatically cancels the previous Pending, never-typed Scheduled copy through CancelPendingIfUntypedAsync, then enqueues its replacement. Drop also works after a redeemed delivery attempt reverts to Pending. None detaches the selected row from its wait. |
 | The stale-park sweep automatically cancels Channel/Scheduled | **False; corrects both earlier plan rounds and round-1 Review.** CancelParkedIfStaleAsync has one production caller: ParkedMessageSweepService.ScanAsync (:49-102), restricted to Delegation/System/Check/Supervision, SourceTaskId null and no active task. Calling it on a Channel row in V-1 was a test-only transition. |
 | A parked or future-held Pending row is demand | **False.** Flush excludes DeliveryAttempts >= Math.Max(1, DeliveryVerification.MaxDeliveryAttempts), future HoldUntil and LegacyUnclassified maintenance (:2417-2424). A parked selected row remains Pending/keyed; the selected-ID receipt plus free revalidation repeats indefinitely unless selection is retired. Delivery-attempt and capacity-episode caps are different settings. |
-| Losing demand can use the generic grant-revoke transition | **False.** RecordRevokedGrantAsync (:1180-1201; S3-A :1282-1303) turns an unexpired ActionPending/Ready/Admitted wait Deferred, preserving any earlier reason via ??=. Ordinary grant candidates exclude Deferred, and no general demand-arrival transition readies it. An unselected dropped Y can therefore strand later Z if the new demand check uses that branch. |
-| The orphan sweep catches that cancellation | CapacityRecoveryService.cs:665-680 checks terminal/missing session and task owners only. It does not inspect SelectedMessageId or queued-message status. A live session with a canceled selected message passes through. |
-| Expiry eventually exhausts the leak | Before redemption, D-12 calls RearmRevokedGrantOnAsync / PrepareNextAttemptOnAsync (:1203-1223,1370-1408): canceled rows are re-keyed without a status filter and count stays 0. After redemption, CapacityRecoveryPolicy.HasExecutionReceipt treats the selected row as a receipt; :1347-1355 requests free revalidation, count stays 1. The default 120 seconds bounds each grant, not repetition. A later successful report-boundary turn **can** end a LiveSession wait via ObserveTranscriptAsync (:879-905); the reproducer must not emit that progress. |
+| Losing demand can use the generic grant-revoke transition | **False.** RecordRevokedGrantAsync (CapacityRecoveryService.cs:1282-1303 on master e65343132) turns an unexpired ActionPending/Ready/Admitted wait Deferred, preserving any earlier reason via ??=. Ordinary grant candidates exclude Deferred, and no general demand-arrival transition readies it. An unselected dropped Y can therefore strand later Z if the new demand check uses that branch. |
+| The orphan sweep catches that cancellation | CapacityRecoveryService.cs:767-782 checks terminal/missing session and task owners only. It does not inspect SelectedMessageId or queued-message status. A live session with a canceled selected message passes through. |
+| Expiry eventually exhausts the leak | Before redemption, D-12 calls RearmRevokedGrantOnAsync / PrepareNextAttemptOnAsync (:1305-1325,1480-1518): canceled rows are re-keyed without a status filter and count stays 0. After redemption, CapacityRecoveryPolicy.HasExecutionReceipt treats the selected row as a receipt; :1457-1465 requests free revalidation, count stays 1. The default 120 seconds bounds each grant, not repetition. A later successful report-boundary turn **can** end a LiveSession wait via ObserveTranscriptAsync (:981-1007); the reproducer must not emit that progress. |
 | The wait belongs only to its selected row | **False.** It serves the whole held session queue. While no grant is held, a new Pending Channel/Scheduled row can be Held and unselected (SessionMessageQueueService.cs:5544-5573). Canceling the wait strands that row and later held input. |
-| Compatibility will recreate a finished wait for later input | **False.** ReconcileCompatibilityAsync (:988-1132) filters keys after its persisted cursor and keeps the cursor when empty; it does not revisit an already-scanned session. Keep the existing wait as the consumer. |
-| A human start progresses a standing wait | `AgentControlService.cs:833-863` commits the accepted session pointer and resets human-start supervision state. The wait moves only in the capacity-specific branch at `:804-816`. Transcript progress looks up the wait by `SessionId` (`CapacityRecoveryService.cs:885-890`). |
-| A running agent will eventually consume the old standing grant | `AgentSupervisorService.cs:175-207` handles the live session and returns before the capacity branch at `:213`. `OrphanedWaits` excludes `StandingStart` entirely. |
-| Every standing wait includes the old session generation | False: `AgentSupervisorService.cs:393-404` creates model-hold waits with `AgentId` and `BlockedAt`, but no `SessionId` or `SessionStartedAt`. The design must handle that production shape, not just a fully stamped test row. |
+| Compatibility will recreate a finished wait for later input | **False.** ReconcileCompatibilityAsync (:1090-1234) filters keys after its persisted cursor and keeps the cursor when empty; it does not revisit an already-scanned session. Keep the existing wait as the consumer. |
+| A human start progresses a standing wait | `AgentControlService.cs:951-980` commits the accepted session pointer and resets human-start supervision state. The wait is redeemed only when that start carries a capacity admission (`ConsumeAdmittedStartAsync`, `:843-859`). Transcript progress looks up the wait by `SessionId` (`CapacityRecoveryService.cs:987-992`). |
+| A running agent will eventually consume the old standing grant | `AgentSupervisorService.cs:171-212` handles the live session and returns before the capacity branch at `:218`. `OrphanedWaits` excludes `StandingStart` entirely. |
+| Every standing wait includes the old session generation | False: `AgentSupervisorService.cs:434-445` creates model-hold waits with `AgentId` and `BlockedAt`, but no `SessionId` or `SessionStartedAt`. The design must handle that production shape, not just a fully stamped test row. |
 | Canceling a capacity wait releases a process seat | False. These are provider-admission rows. Finishing one must not kill, park, or detach a session. |
 
 ## Decisions
@@ -154,6 +160,18 @@ Use the same conditional state/version/action write discipline; if it loses,
 leave the grant for the next reconciler. The reason is stamped explicitly even
 when the previous reason was grant-expired or new-wall-wave.
 
+Review A-2, recorded at Code. A selected Pending row whose HoldUntil is still
+in the future is a seeded guard in V-12: production sets HoldUntil only at
+enqueue (SessionMessageQueueService.cs:795) and later only clears it, so that
+arm cannot occur as a live transition. An Admitted consumer with
+NeedsRevalidationGrant and proven-absent demand still becomes Ready with
+OutcomeReason queue-demand-lost. ConfirmPromptOnAsync
+(CapacityRecoveryService.cs:1023-1037 on master e65343132) returns immediately
+for Ready and does not stamp PromptConfirmed. NeedsRevalidationGrant stays set,
+so a later due retry is not a second admission. RedeemOnAsync refuses Ready
+(:354-356); GrantReady sets Ready back to ActionPending and leaves the flag
+(:222-223), so that consume does not increment AdmissionCount.
+
 This cause takes precedence over expiry for a matching, otherwise eligible wait
 whose demand is proven absent, so expiry does not rotate an empty action first.
 Other invalidations, independent live consumers and uncertain evidence keep the
@@ -200,7 +218,7 @@ pass waited. Apply this table to the persisted data:
 | Either generation field absent (the production model-hold shape) | Current `StartedAt > wait.BlockedAt`, and the session's `CapacityRecoveryActionKey` is not any action of this wait (`<wait-id:N>:` prefix). An old accepted action from this episode is conservative evidence to retain the wait, even after re-arm changed its ordinal. |
 
 `StartedAt` changes inside the accepted reservation on resume
-(`AgentControlService.cs:652-687`); a preflight that merely tried to start changes
+(`AgentControlService.cs:694-732`); a preflight that merely tried to start changes
 nothing. S3 round A stamps both wait generation fields in that same reservation
 for capacity starts, so a legitimately admitted replacement is retained. Do not
 require the new session still to be Running: a committed human start that quickly
@@ -238,7 +256,7 @@ release in structured logs, without counting a busy lock as a lifecycle deferral
 | Path | Lock and transaction order | Reason |
 |---|---|---|
 | Canceled/parked selection | Lazily resolve the existing singleton queue; try GetLock(message.AgentSessionId).WaitAsync(0, ct). Open a fresh transaction only after the gate. Lock the exact message row FOR UPDATE NOWAIT, recheck (Canceled OR Pending at delivery cap)/origin/session/wait/key and conditionally clear its linkage **before** trying provider advisory (7). Reload the wait, recheck selection/state/version/key/independent consumer, CAS capacity rows (8), commit. Any failed check or busy provider rolls back the message detach. Release gate in finally. | Same semaphore as selection/cancellation (SessionMessageQueueService.cs:57,6047), without a new dictionary or constructor cycle. Prelocking the message and writing its linkage before rank 7 avoids reversing a queue-row -> provider order if S3-B is present; all post-provider writes remain capacity-only. No queue is resolved with zero queue candidates. |
-| Standing replacement | Fresh transaction; current session `FOR UPDATE NOWAIT` (4), then agent `FOR UPDATE NOWAIT` (5). Reload pointer; if it differs from discovery, abandon this candidate. Prove ownership. Try provider advisory (7), reload wait, conditionally finish capacity rows (8), commit. | Same session-before-agent order as `AgentControlService.cs:543-549`, same connection throughout. S3 capacity start commits pointer and wait together. This pass writes no session or agent row. |
+| Standing replacement | Fresh transaction; current session `FOR UPDATE NOWAIT` (4), then agent `FOR UPDATE NOWAIT` (5). Reload pointer; if it differs from discovery, abandon this candidate. Prove ownership. Try provider advisory (7), reload wait, conditionally finish capacity rows (8), commit. | Same session-before-agent order as `AgentControlService.cs:575-581`, same connection throughout. S3 capacity start commits pointer and wait together. This pass writes no session or agent row. |
 
 Use `pg_try_advisory_xact_lock` for the new pass's provider acquisition; false is
 a deferred candidate, not cancellation. A row `NOWAIT` 55P03 rolls back that
@@ -568,10 +586,11 @@ No desktop files or native Windows runs are needed for this plan.
 ## Risks and limits
 
 1. **S3-A is a real prerequisite.** Running the standing predicate against a
-   pre-S3 supervisor can misclassify its separately committed start. Code must
-   confirm atomic consume plus wait generation stamps on both resume and fresh
-   arms, and keep CP-4/CP-5 green. This plan does not amend S3's card-spawn
-   post-commit consume window; card-bound sessions are excluded by ownership.
+   pre-S3 supervisor can misclassify its separately committed start. S3-A is on
+   master `e65343132` before this Code task. Code must confirm atomic consume
+   plus wait generation stamps on both resume and fresh arms, and keep CP-4/CP-5
+   green. This plan does not amend S3's card-spawn post-commit consume window;
+   card-bound sessions are excluded by ownership.
 2. **Unknown is retained.** A missing selected message is not a canceled message;
    a missing/ambiguous standing owner is not an accepted replacement. The legacy
    incomplete-generation/inherited-key case in D-3 remains diagnostic debt.
@@ -636,8 +655,8 @@ files under docs/cards are edited by this task):
 > loses its demand, release it while leaving the wait Ready, never stranded in
 > Deferred. Human-started standing waits are a separate supersede path.
 
-The title and Risk 9 premise remain valid. This is a precise handoff amendment,
-not a claim that the live card or the S3 branch was changed.
+The title and Risk 9 premise remain valid. Code applied this wording to the S3
+plan copy and did not edit the generated card file or the live card.
 
 ## Completion and handoff
 

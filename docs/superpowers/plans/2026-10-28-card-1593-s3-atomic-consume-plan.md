@@ -877,10 +877,19 @@ Not run:
    failing pre-`Sent` exit (spill hold) holds the provider up to 120 s per cycle with no attempt
    cap. The queue's own withhold counters bound the message. The plan records this as a residual,
    and Code reports the withhold path that ends it.
-8. **Residual (review A-2, pre-existing).** A message selected after the spend can be canceled
-   by an expired brief (`:2753`, `:2758-2761`). Its wait then re-arms as revalidation and is
-   regranted on every expiry with no consumer. This needs a follow-up card that finishes the
-   wait when its selected message is canceled. The orchestrator files it.
+8. **Residual (review A-2, corrected by CARD-1603).** A capacity-selected Channel/Scheduled
+   message can be canceled by human Drop (CancelAsync), schedule supersession
+   (CancelPendingBySourceScheduleAsync), or a missing remote spill body
+   (RemoteSpillCourier.MarkUndeliverable). Before redemption, expiry re-keys the canceled row
+   without spending an admission; after redemption, SelectedMessageId is treated as an execution
+   receipt and revalidation can repeat without another admission. A later successful session turn
+   can end the wait. Brief-expiry cancellation concerns Delegation rows and cannot cause this case.
+   Detach the canceled selection and suppress grants without deliverable demand while retaining
+   the session's wait, so already-held and later Channel/Scheduled input remain deliverable. Also
+   clear a selected Pending row's selection/linkage once it is parked at the delivery-attempt cap;
+   preserve its Pending status and attempts, and do not count it or a future HoldUntil as automatic
+   demand. If a held grant loses its demand, release it while leaving the wait Ready, never stranded
+   in Deferred. Human-started standing waits are a separate supersede path.
 9. **Residual (review A-6, pre-existing).** An S-0 skip for an agent that a human started fresh
    cycles the grant every expiry until that agent dies (progress keys on `wait.SessionId`, and
    `OrphanedWaits` never cancels standing waits). This needs a follow-up card.
