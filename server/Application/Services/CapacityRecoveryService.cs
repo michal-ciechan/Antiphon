@@ -154,20 +154,37 @@ public sealed partial class CapacityRecoveryService
                 var current = await db.Set<CapacityRecoveryWait>()
                     .FirstOrDefaultAsync(w => w.Id == outstanding, ct);
                 // A canceled or parked selection is not demand, and releasing or rotating it
-                // here would skip the queue-gate lock. Leave that grant until cleanup detaches.
+                // here would skip the queue-gate lock. Hold that grant only for an unfinished
+                // candidate whose grant has not expired. A finished wait, or any expired grant,
+                // is cleared with no re-arm and no queue re-key.
                 if (current is not null && await ObsoleteSelectionAttachedAsync(db, current, ct))
                 {
-                    skipGrant = true;
+                    if (!IsFinished(current)
+                        && CapacityRecoveryPolicy.IsGrantCandidate(current)
+                        && !GrantExpired(state, now))
+                    {
+                        skipGrant = true;
+                    }
+                    else
+                    {
+                        ClearGrant(state, now);
+                    }
                 }
                 else if (current is not null && await DemandIsProvenAbsentAsync(db, current, now, ct))
                 {
                     // Precedence over expiry: an empty action must not rotate through Deferred.
-                    if (await ApplyDemandLossAsync(db, current, now, ct)
+                    var lost = await ApplyDemandLossAsync(db, current, now, ct);
+                    if (lost)
+                        db.Entry(current).State = EntityState.Detached;
+                    if (lost
                         && state.GrantedWaitId == current.Id
                         && state.GrantedActionKey == current.ActionKey)
                     {
                         ClearGrant(state, now);
-                        db.Entry(current).State = EntityState.Detached;
+                    }
+                    else if (GrantExpired(state, now))
+                    {
+                        ClearGrant(state, now);
                     }
                     else
                     {
