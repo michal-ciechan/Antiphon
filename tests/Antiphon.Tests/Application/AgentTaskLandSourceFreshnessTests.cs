@@ -1,16 +1,13 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
-using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
-using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -176,6 +173,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
         targetCheck.Passed.ShouldBeTrue(targetCheck.Description);
         AssertFreshProbeReport(targetArtifacts);
         witness.AssertScriptNotInvoked();
+        var slots = recording.BuildSlots.ShouldBeOfType<ImmediateBuildSlotGate>();
+        slots.Acquires.ShouldBe(2);
+        slots.Releases.ShouldBe(2);
     }
 
     [Test]
@@ -241,6 +241,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
         h.Fixture.Git.Trace.Any(command => command[0] == "push"
             && command[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal)).ShouldBeFalse();
         witness.AssertScriptNotInvoked();
+        var slots = recording.BuildSlots.ShouldBeOfType<ImmediateBuildSlotGate>();
+        slots.Acquires.ShouldBe(1);
+        slots.Releases.ShouldBe(1);
     }
 
     [Test]
@@ -1230,26 +1233,39 @@ public sealed class AgentTaskLandSourceFreshnessTests
         }
     }
 
+    // Grants immediately. The real SessionRunnerBuildSlotGate would take a second host lease
+    // while this test run already holds one.
+    private sealed class ImmediateBuildSlotGate : IBuildSlotGate
+    {
+        public int Acquires { get; private set; }
+        public int Releases { get; private set; }
+
+        public Task<BuildSlotHold> AcquireAsync(string label, Action<string> report, CancellationToken ct)
+        {
+            Acquires++;
+            report("BUILD SLOT unlimited maxcpucount=2");
+            return Task.FromResult(new BuildSlotHold(BuildSlotHoldOutcome.Unlimited, null, 2, TimeSpan.Zero));
+        }
+
+        public Task ReleaseAsync(BuildSlotHold hold, Action<string> report, CancellationToken ct)
+        {
+            Releases++;
+            return Task.CompletedTask;
+        }
+    }
+
     private static RecordingRealVerifier ConfigureRealVerifier(LandingSafetyHarness h)
     {
         var recorder = new RecordingRealVerifier(h.Fixture.Git, h.Fixture.Root);
+        var slots = new ImmediateBuildSlotGate();
         h.ConfigureServices = services =>
         {
             services.RemoveAll<ILandingVerifier>();
-            services.AddHttpClient();
-            var slotsUrl = Environment.GetEnvironmentVariable("ANTIPHON_BUILD_SLOTS_URL")
-                ?? "http://127.0.0.1:8080/build-slots";
-            var baseUrl = new Uri(slotsUrl).GetLeftPart(UriPartial.Authority);
-            services.AddSingleton(sp => new SessionRunnerHttpClient(new HttpClient(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                Options.Create(new SessionRunnerSettings { BaseUrl = baseUrl })));
-            services.AddSingleton<IBuildSlotGate>(sp => new SessionRunnerBuildSlotGate(
-                sp.GetRequiredService<SessionRunnerHttpClient>(), TimeProvider.System,
-                Options.Create(new LandingSettings())));
-            services.AddSingleton<ILandingVerifier>(sp =>
+            services.AddSingleton<IBuildSlotGate>(slots);
+            services.AddSingleton<ILandingVerifier>(_ =>
             {
-                recorder.BuildSlots = sp.GetRequiredService<IBuildSlotGate>();
-                recorder.Inner = new LandingVerifier(buildSlots: recorder.BuildSlots);
+                recorder.BuildSlots = slots;
+                recorder.Inner = new LandingVerifier(buildSlots: slots);
                 return recorder;
             });
         };
