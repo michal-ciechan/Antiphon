@@ -85,7 +85,7 @@ public sealed class CheckpointVerifierBoundsTests : CheckpointTestBase
               [ -z "${GIT_CONFIG_COUNT-}" ] && [ -z "${GIT_CONFIG_PARAMETERS-}" ] &&
               [ -z "${GIT_DIR-}" ] && [ -z "${GIT_WORK_TREE-}" ] && [ -z "${GIT_INDEX_FILE-}" ] ||
                 exit 90
-              for setting in core.fsmonitor=false core.hooksPath=/dev/null diff.external= core.attributesFile=/dev/null; do
+              for setting in core.fsmonitor=false core.hooksPath=/dev/null diff.external= core.attributesFile=/dev/null gc.auto=0 maintenance.auto=false; do
                 case "$settings" in *"|$setting|"*) ;; *) exit 91 ;; esac
               done
             fi

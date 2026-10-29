@@ -90,12 +90,21 @@ public sealed class ScriptHarnessProcessContractTests
     public async Task Root_exit_does_not_reset_deadline()
     {
         var clock = new FakeTimeProvider();
-        var owner = new FakeOwner(rootComplete: false, holdStdout: true);
-        var run = Run(Options(owner, clock));
+        // Inline completion arms the post-exit timer before the next clock advance.
+        var owner = new FakeOwner(rootComplete: false, holdStdout: true, completeRootInline: true);
+        var run = Run(Options(owner, clock) with
+        {
+            ExecutionBudget = TimeSpan.FromSeconds(30),
+            PostExitDrainBudget = TimeSpan.FromMilliseconds(200)
+        });
         clock.Advance(TimeSpan.FromMilliseconds(800));
         owner.CompleteRoot();
+        // Root completion posts the drain wait. Let that timer arm before the clock moves.
+        await Task.Delay(100);
         clock.Advance(TimeSpan.FromMilliseconds(200));
-        (await Capture(run)).ShouldBeOfType<TimeoutException>();
+        var timeout = (await Capture(run)).ShouldBeOfType<TimeoutException>();
+        timeout.Message.ShouldContain("post-exit drain");
+        timeout.Message.ShouldContain("holder=stdout");
         owner.Terminations.ShouldBe(1);
     }
 
@@ -442,7 +451,7 @@ public sealed class ScriptHarnessProcessContractTests
 
     private sealed class FakeOwner : IOwnedScriptProcess
     {
-        private readonly TaskCompletionSource<int> _root = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<int> _root;
         private readonly BlockingStream? _stdoutBlock;
         private readonly BlockingStream? _stderrBlock;
         private readonly TaskCompletionSource _termination = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -463,8 +472,11 @@ public sealed class ScriptHarnessProcessContractTests
         public StreamReader Stderr { get; }
 
         internal FakeOwner(bool rootComplete = true, bool holdStdout = false, bool holdStderr = false,
-            string? stdoutText = "", string? stderrText = "", int exitCode = 0)
+            string? stdoutText = "", string? stderrText = "", int exitCode = 0, bool completeRootInline = false)
         {
+            _root = completeRootInline
+                ? new TaskCompletionSource<int>()
+                : new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (rootComplete) _root.SetResult(exitCode);
             _stdoutBlock = holdStdout || stdoutText is null ? new BlockingStream() : null;
             _stderrBlock = holdStderr || stderrText is null ? new BlockingStream() : null;
@@ -494,6 +506,13 @@ public sealed class ScriptHarnessProcessContractTests
             StreamsClosed = true;
             _stdoutBlock?.Release(); _stderrBlock?.Release();
             Stdout.Dispose(); Stderr.Dispose();
+        }
+        public string DescribePipeHolders()
+        {
+            var held = new List<string>(2);
+            if (_stdoutBlock is not null) held.Add("stdout");
+            if (_stderrBlock is not null) held.Add("stderr");
+            return held.Count == 0 ? "none" : string.Join("+", held);
         }
         public void Dispose()
         {
