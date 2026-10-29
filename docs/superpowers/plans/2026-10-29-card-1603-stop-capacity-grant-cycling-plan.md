@@ -91,7 +91,8 @@ queue rows under the provider lock. Only the exact canceled row is detached.
 Clear the provider grant only if it still names this wait and old action. Keep
 AdmissionCount, provider LastActionKey/LastActionAt, NextAdmissionAt, wave fields,
 and the canceled row's delivery/cancellation facts. A spent admission is not
-refunded. Log old wait/action/message IDs and disposition without body text.
+refunded. Keep provider ExpectedWaitVersion/ExpectedOwnerId handling consistent
+with ClearGrant; no stale expected stamp constitutes a held grant. Log old wait/action/message IDs and disposition without body text.
 Normal attempt caps still apply when new work is admitted; an already exhausted
 episode is outside the new delivery guarantee. No admission is spent merely to
 retire a selection.
@@ -224,11 +225,22 @@ company's model, as commissioned. After approval, the verification section and
 checkpoint table make this plan executable by Code without another design stage.
 These D-n choices are the plan's stated defaults, not additional permission asks.
 
+**D-7 - Classify slow work explicitly and honor the commissioned verification profile.**
+Both new classes use Integration + Slow and get exact fully qualified entries with
+adjacent CARD-1603 reason comments in tests/Antiphon.Tests/slow-tests-allowlist.txt.
+Their DB/real queue/start/barrier work is provisionally 3-30 seconds per result;
+this avoids treating a known >=5-second path as unexpectedly fast. Retain the
+actual duration-tripwire results and review classification after measurements;
+Slow does not exempt any named checkpoint. No NativeLinuxGate: there is no
+OS-selected behavior. tests/linux-test-roster.json needs no entry: it is the
+frozen CARD-0590 roster, not an enforced admission list (current CapacityLockOrderTests
+is already absent). Do not edit it or add a native gate to manufacture coverage.
+
 ## Slices
 
 Commit and push both slices' test witnesses (including V-11/V-12) before either production fix, then
 commit/push S1 and S2 separately. The two product slices form one final checkpoint
-group, so their final green verification shares one build. Tests call existing
+group, so their final affected-integration verification shares one build. Tests call existing
 production entry points at the red commit; an absent new helper or build failure
 is never the RED witness.
 
@@ -236,6 +248,14 @@ is never the RED witness.
 |---|---|---|
 | S1 | `server/Application/Services/CapacityRecoveryService.cs`; new `server/Application/Services/CapacityRecoveryService.ObsoleteConsumers.cs`; new `tests/Antiphon.Tests/Application/CapacityObsoleteQueueTests.cs` | D-1/D-2/D-4 queue path, queue-demand predicate, conditional reset helper, integration/selection-race/rollback guards V-1 through V-5 and V-11/V-12. Existing orphan and live-grant expiry suites stay unchanged. |
 | S2 | Same production files; new `tests/Antiphon.Tests/Application/CapacityObsoleteStandingTests.cs` | D-3/D-4 standing path; real human Start, null generation, legitimate admitted start, replaced generation and row-lock/refusal guards V-6 through V-10. No change to AgentControlService, queue cancellation semantics or live process ownership. |
+
+Both test commits also update `tests/Antiphon.Tests/slow-tests-allowlist.txt`
+with the D-7 classification. S1 may adjust only the affected existing capacity
+fixtures / `tests/Antiphon.Tests/TestHelpers/CapacityRecoveryTestSupport.cs` when
+a grant witness previously seeded a real live queue owner with no demand: add a
+real Pending held row for that invariant, retain its assertions and result count,
+and report the changed setup. Never bypass the demand predicate in production
+or add fictitious selected receipts to make old grant assertions pass.
 
 Test support stays local to these two classes unless an existing helper needs a
 small optional interceptor argument. Use `CapacityRecoveryTestSupport`,
@@ -252,20 +272,24 @@ builds. All following estimates are for Code, not measurements made by this task
 reports S1 Linux capacity methods at 1.2-11.4 seconds, first-test shared DB startup
 about 10-11 seconds, and leased test builds at 217-399 seconds (220-520 including
 slot wait). It supplies no comparable sample count, load or raw per-row p95 for
-these new selections. Therefore **measured p95 is unavailable** for CP-1..CP-5;
+these new selections. Therefore **measured p95 is unavailable** for CP-1..CP-8;
 none of the estimates below is labeled measured. CARD-1603 owns collection in
-the first Code round; CARD-1404/1563 own broader budget tooling. Preserve these
+the commissioned performance Debug and first Code round; CARD-1404/1563 own broader budget tooling. Preserve these
 historical ranges rather than treating them as evidence for a new timeout.
 
 **Setup and category.** These are `Antiphon.Tests`, namespace
-`Antiphon.Tests.Application`, `[Category("Integration")]`, server/capacity and
+`Antiphon.Tests.Application`, `[Category("Integration")]` plus `[Category("Slow")]`
+for both new classes, server/capacity and
 in-process queue-delivery batches. Both new classes are `[NotInParallel]`.
-Use the assembly's shared Postgres/template once per host; clone the template
+Use TestDbFixture's shared Postgres/template once per TUnit test-host session
+(each checkpoint invocation has its own host; record each startup); clone the template
 per test with `TestDbFixture.CreateIsolatedSchemaAsync`. No container/migration
 per class or per test. Build each per-test fake service harness once; this is
 cheap DI/runtime state, not an AppHost/web host. Queue cases use the real queue
 with a fake adapter; standing cases use `AgentSupervisionTests.BuildHarness`.
-No provider CLI, production runner, real broker, browser or native Pty process.
+No provider CLI, production runner, real broker, browser or native Pty process
+for the new witnesses. Existing lifecycle/lock-order regressions retain their
+scratch workspace/dispatcher fixtures; record those IO phases as well.
 Advance `FakeTimeProvider` across 121-second expiry windows; no real-time sleeps.
 
 The direct production subject is `server/Antiphon.Server.csproj`, compiled by
@@ -280,33 +304,58 @@ this small service-only change (R2 considered).
 | Phase/selection | Provisional expected duration | Initial bounded allowance |
 |---|---|---|
 | Tool bootstrap, if its built executable is unavailable | 1-2 minutes, separately accounted | 4 minutes execution through the build slot |
-| One isolated Antiphon.Tests build | 4-7 minutes | 15 minutes: existing tool floor, about twice the reported upper range; provisional CARD-1603 exception described below |
+| One isolated Antiphon.Tests build | 4-7 minutes | 25 minutes derived from CP-5; tooling-imposed CARD-1603 exception described below, not a measured 2x allowance |
 | Slot admission | Unknown; load dependent, outside execution | `build.slotWaitMinutes = 10`; report busy/HTTP time separately; exit 4 is not a test failure or permission to run unleased |
 | Postgres start/readiness + template/migrations | About 11 seconds once per test host from the S3 report | 30 seconds target; if existing shared-fixture guards are larger, record that inherited exception and actual phase under CARD-1603; do not silently change the shared fixture |
 | Clone + seed | 1-3 seconds per test, provisional | 10-second operation target; retain actual DB spans and inherited Npgsql command deadline |
 | New simple queue/DB test incl. clone and teardown | 3-15 seconds | 30 seconds per test |
 | New real-start or concurrent-boundary test incl. clone and teardown | 10-30 seconds | 60 seconds per test; retain the existing 10-second launch-queue/barrier waits rather than increasing them |
 | Teardown, fake adapter/runtime and isolated DB | 1-5 seconds per test | 10-second join/cleanup target; failure leaves diagnostic evidence |
-| CP-1 test execution (27 new queue results) | About 2 minutes | 4 minutes, excluding its build |
-| CP-2 test execution (18 new standing results) | About 3 minutes | 6 minutes |
-| CP-3 test execution (32 existing results) | About 5 minutes | 10 minutes |
-| CP-4 test execution (20 S3-A supervision results) | About 3 minutes | 6 minutes |
-| CP-5 test execution (3 standing capacity results) | About 1 minute | 2 minutes |
+| CP-1 test execution (27 new queue results) | 5-8 minutes | 16 minutes |
+| CP-2 test execution (18 new standing results) | 5 minutes central; 7.5-9 minutes at the 30-second per-result upper estimate | **10 minutes**, replacing the invalid 6-minute cap; provisional 2x central estimate, narrow headroom at the upper estimate must be measured |
+| CP-3 test execution (32 existing results) | 3-6 minutes | 12 minutes |
+| CP-4 test execution (24 S3-A supervision results) | 3-6 minutes | 12 minutes |
+| CP-5 test execution (52 complete standing restart results) | 8-16 minutes | 25 minutes; provisional, measure nested four-combination loops separately |
+| CP-6 test execution (28 acceptance/persistence/transcript results) | 2-5 minutes | 10 minutes |
+| CP-7 test execution (28 complete lifecycle results) | 5-9 minutes | 18 minutes |
+| CP-8 test execution (29 compatibility/refusal/attention/lock results) | 3-6 minutes | 12 minutes |
 
-Final green selection: about **21 minutes execution including one 7-minute
-build**, excluding admission and optional bootstrap. Set a 29-minute charged
-execution cap and 39-minute independent wall cap (29 + one 10-minute admission
-allowance). At 30 minutes expected or observed for any selection/batch/run,
-preserve timings and commission Debug; do not repeat or raise a timeout. A busy
-slot may end the bounded run without any failed test. Importer defaults
-`max(15, 3 * estimate)` are not this budget: import the plan to ignored YAML and
-pin each checkpoint's `timeoutMinutes` to 4, 6, 10, 6, 2 respectively, with
-`build.slotWaitMinutes: 10` and `timeouts.rowMinutes: 15`. Rows' timeout pins cover
-test execution. The tool derives the build deadline as the largest row/default
-with a 15-minute floor (`RunScheduler.BuildDeadlineMinutes`, CARD-1356); there is
-no `build.timeoutMinutes` field. Accept that 15-minute build-only exception under
-CARD-1603 pending measured timings; do not use `--row-timeout` to widen every test
-row. Pass `--total-timeout 29m --hard-wall-timeout 39m`. No schema changes.
+The expanded integration selection is **238 results**, provisionally **34-65
+minutes of tests + 4-7 minutes for one build = 38-72 minutes execution**. This is
+an honest revised estimate, not the superseded round-1 21-minute claim. Individual
+rows stay below 30 minutes; the complete selection does not. **R1 therefore
+requires the caller to commission a performance Debug for this expanded selection
+under CARD-1603 before Code executes it**, using this estimate and the S3 timings
+as the initial evidence. Debug must decide measured packing/setup repair and
+retain its task ID/findings with Code's report. Splitting rows alone does not
+waive the over-30-minute selection obligation. Do not run or repeat a long sweep
+without that obligation being commissioned; never omit affected classes to fit
+the old cap. No performance Debug or test execution is claimed by this Plan task.
+
+Initial collection ceilings (subject to that Debug's findings, not measured p95):
+import to ignored YAML; set row timeoutMinutes to **16, 10, 12, 12, 25, 10, 18, 12**
+for CP-1..CP-8, build.slotWaitMinutes = 10, and timeouts.rowMinutes = 15. The tool
+derives its shared build deadline from the largest dependent row, hence **25
+minutes**, not 15; there is no build.timeoutMinutes field. That tooling-imposed
+build ceiling is a named provisional CARD-1603 exception to R5 (historical build
+range 217-399 seconds; 25 minutes is not claimed to be 2x p95). Debug should avoid
+repeating this allowance without a measured repair. Do not use --row-timeout to
+widen every row. Use --total-timeout 90m --hard-wall-timeout 100m as finite first
+collection ceilings after commissioning Debug. The global ceiling need not equal
+the sum of row ceilings. Report execution and admission separately; exit 4 is a
+slot timeout, not a failed test and never permission to run unleased.
+
+The commissioned Code/Review profile remains authoritative. A **Final** sweep
+also requires the Unit lane; CP-1..CP-8 are the complete affected Integration list,
+not a Full ordinary-scope claim. The caller must bind the current Unit manifest
+and its independent build/provenance and cost before execution. This plan does
+not waive it, silently credit a partial shard set, or authorize an unbounded full
+assembly. The existing Unit-lane >30-minute / incomplete-shard issue is documented
+under testing-and-build.md#unit-lane-checkpoint-shards-card-1573; commission its
+required Debug/complete selection under that owner policy. Unit counts and costs
+are **unknown here**, excluded from 238/38-72, and must be reported separately.
+Any absent required Unit execution keeps the Final gate incomplete. No native
+Windows run or desktop evidence is part of these portable service changes.
 
 Bounded sample collection: reuse the required two RED methods, one final green
 checkpoint run, and later method-scoped positive controls. Retain per-test and
@@ -356,8 +405,8 @@ result; loops/extra assertions do not inflate the checkpoint floor.
 
 | ID / method | Arguments / results | Setup, oracle and why a stub fails |
 |---|---|---|
-| V-1 C1603_canceled_selected_message_stops_regranting | human-drop-before-redeem, human-drop-after-redeem, parked-stale, spill-undeliverable / **4** | Real queue, live session, terminal wall, Channel/Scheduled row with no ExecutionTaskId. Obtain selection through ApplyCapacityHoldAsync reached by FlushIfIdleAsync, never StampQueueActionAsync. Before-redeem arm uses a one-shot SaveChanges interceptor that stops the flush **after the committed selection save** (a crash/cancellation boundary), joins the flush/releases its gate, then calls real CancelAsync; assert count 0. After-redeem arm lets the production failed-delivery path revert to Pending before Drop; assert count 1. Parked arm drives failed attempts to the existing cap then calls CancelParkedIfStaleAsync; spill arm uses a selected owned pointer with missing durable/staged bytes and real FlushIfIdleAsync -> CancelUndeliverableAsync, not a direct MarkUndeliverable call. Prove each production cancellation, actual original selection/key and unchanged live session. Do not emit a successful report-boundary turn (disable the fake adapter's automatic TurnEnd); no successful submission is claimed. Reconcile; assert canceled row detached, SelectedMessageId null, unfinished Ready wait/new action, preserved count/clock/wave, no revalidation, and another eligible waiter advancing when due. Advance three 121-second windows with empty queue: old action is never granted again, same wait remains usable, no repeated reset. **RED:** current code keeps the canceled selection and cycles its action; no-op cleanup fails exact detach/provider assertions. |
-| V-2 C1603_queue_cleanup_preserves_real_consumers | pending, sent, missing-selected-row, unselected-canceled-row, retained-task, queued-task, launch-receipt, confirmed-prompt / **8** | Seed a matching held grant and the named legitimate/unknown consumer state; clocks are not due/expired. Reconcile: keep state/count/key/selection and ownership. Retained-task is Working + retained; queued-task is independently redeemable; launch/confirmed-prompt represent active work. PC: remove the Canceled/independent-receipt predicates; real consumer data is detached and the method fails. Missing selected IDs used by grant-liveness tests stay conservative. |
+| V-1 C1603_canceled_selected_message_stops_regranting | human-drop-before-redeem, human-drop-after-redeem, parked-stale, spill-undeliverable / **4** | Real queue, live session, terminal wall, Channel/Scheduled row with no ExecutionTaskId. Obtain selection through ApplyCapacityHoldAsync reached by FlushIfIdleAsync, never StampQueueActionAsync. Before-redeem arm uses a one-shot SaveChanges interceptor that stops the flush **after the committed selection save** (a crash/cancellation boundary), joins the flush/releases its gate, then calls real CancelAsync; assert count 0. After-redeem arm lets the production failed-delivery path revert to Pending before Drop; assert count 1. Parked arm drives failed attempts to the existing cap then calls CancelParkedIfStaleAsync; spill arm uses an owned pointer with missing durable/staged bytes and real FlushIfIdleAsync -> selection -> CancelUndeliverableAsync, not a direct MarkUndeliverable call. At S3-A this spends 1 before spill validation; if S3-B is present its pre-Sent spill cancellation spends 0. Assert the applicable count, not either value. Prove each production cancellation, actual original selection/key and unchanged live session. Do not emit a successful report-boundary turn (disable the fake adapter's automatic TurnEnd); no successful submission is claimed. Reconcile; assert canceled row detached, SelectedMessageId null, unfinished Ready wait/new action, preserved count/clock/wave, no revalidation, and another eligible waiter advancing when due. Advance three 121-second windows with empty queue: old action is never granted again, same wait remains usable, no repeated reset. **RED:** current code keeps the canceled selection and cycles its action; no-op cleanup fails exact detach/provider assertions. |
+| V-2 C1603_queue_cleanup_preserves_real_consumers | pending, sent, missing-selected-row, unselected-canceled-row, retained-task, queued-task, launch-receipt, confirmed-prompt / **8** | Seed the named legitimate/unknown lifecycle state, with a matching held grant only where grantable; clocks are not due/expired. Confirmed-prompt uses PromptConfirmed with no held grant. Reconcile: keep state/count/key/selection; preserve ownership where grantable and assert the ordinary no-grant outcome for PromptConfirmed. Retained-task is Working + retained; queued-task is independently redeemable; launch/confirmed-prompt represent active work. PC: remove the Canceled/independent-receipt predicates; real consumer data is detached and the method fails. Missing selected IDs used by grant-liveness tests stay conservative. |
 | V-3 C1603_queue_cleanup_rechecks_selection_and_grant | replacement-selection, other-grant, already-progressed, resurrected-pending, message-busy / **5** | At discovery, replace selection with Y under the real gate, move ownership to another wait, finish Progressed, or change X back to Pending from a separate context. Reread must retain Y/Progressed/Pending; other-grant permits detach but never clears that grant. Busy arm holds X's row from another connection: NOWAIT defers promptly and a later call after release succeeds. Assert exact row linkage, selected ID, state, version and owner. PC: remove reload/CAS or the conditional Canceled message write; replacement/progress/resurrection arms fail. PC blocking row acquisition fails busy deadline. |
 | V-4 C1603_queue_cleanup_rolls_back_and_releases_gate | none / **1** | Inject a transaction-commit failure after both tentative message detach and wait reset. A separate context must see original selection/message key/wait/grant and unchanged count. Remove fault; another call detaches exactly once and the real gate can be acquired. Record queue-gate hold duration. No-op fails the retry; dropping the transaction fails persisted rollback. |
 | V-5 C1603_queue_cleanup_is_bounded_and_idempotent | none / **1** | Batch 2, three canceled selections plus live controls. First/second/third calls detach 2/1/0 selections, leaving all three waits unfinished. Each reset increments version/ordinal once; no repeated empty grant or re-key. Preserve future NextAdmissionAt and unrelated grant. Removing Take(batch) detaches three first time; stub detaches zero. |
@@ -366,7 +415,7 @@ result; loops/extra assertions do not inflate the checkpoint floor.
 | V-8 `C1603_standing_cleanup_serializes_with_acceptance` | `capacity-commit`, `human-rollback`, `session-busy`, `agent-busy` / **4** | Use a second connection and existing start reservation interceptors. Capacity commit completes before locked recheck: updated wait tuple is retained. Human rollback leaves old tuple/grant; no supersede. Hold the session or agent row: sweep defers promptly with no provider lock and no mutation, then a subsequent pass after release ends a genuinely replaced wait. A DbCommandInterceptor records zero provider-acquisition commands on busy-row calls, and successful session/agent lock acquisition preceding that command otherwise; post-rollback pg_locks alone cannot prove the order. Assert DB outcomes and completed/joined calls. PC moving provider acquisition ahead of row acquisition fails the command-order assertion; PC dropping the pointer/tuple reread fails the capacity-commit case. |
 | V-9 `C1603_standing_cleanup_is_bounded_and_provider_busy_safe` | `free`, `provider-busy` / **2** | Batch 2 with three positively replaced standing consumers; finish 2/1/0, one version bump each, all admission counts unchanged. Busy arm holds the provider on a second connection: pass returns promptly with no changes; after release it obeys the same batch bound. Stub finishes zero; blocking provider acquisition fails the prompt-return assertion. |
 | V-10 `C1603_obsolete_cleanup_loses_compare_and_set_safely` | none / **1** | At before-finish boundary, a separate context advances the wait to Progressed/version+1 while leaving the grant for its normal reconciler. Finish must affect zero rows and leave that grant intact; inspect before the later ordinary grant pass, using an interceptor or boundary snapshot, then assert normal reconciliation revokes it. No dirty tracker replays the old state. PC removing the state/version CAS overwrites Progressed and fails. |
-| V-11 C1603_cleanup_keeps_held_input_deliverable | unselected-held-pending-channel, unselected-held-pending-scheduled, later-held-input-after-cleanup-channel, later-held-input-after-cleanup-scheduled / **4** | Start from V-1's real selected X/Drop with admission below cap. Advance compatibility cursor beyond this session. Existing-input arms put the wait in ungranted Ready and enqueue Y via the real queue before cleanup; prove Y Pending/Held/unkeyed. Later-input arms first clean X with no other rows, reconcile over three expiry windows (no grant), then enqueue Y. Grant when due, flush through real selection and fake adapter correlated UserPrompt. Assert SAME wait ID, new action selected on Y, actual delivered body/receipt and no manual prompt/compatibility rewind; X remains Canceled. PC restoring round-1 wait cancellation strands Y; PC unconditional empty-demand suppression strands later Y. These guards pass at base and must not be mislabeled RED witnesses. |
+| V-11 C1603_cleanup_keeps_held_input_deliverable | unselected-held-pending-channel, unselected-held-pending-scheduled, later-held-input-after-cleanup-channel, later-held-input-after-cleanup-scheduled / **4** | Start from V-1's real selected X/Drop with admission below cap. Advance compatibility cursor beyond this session. Existing-input arms first expire the unredeemed grant while X is still Pending, reaching the normal ungranted Ready/rearm delay, then Drop X and enqueue Y via the real queue before cleanup; prove Y Pending/Held/unkeyed. Later-input arms first clean X with no other rows, reconcile over three expiry windows (no grant), then enqueue Y. Grant when due, flush through real selection and fake adapter correlated UserPrompt. Assert SAME wait ID, new action selected on Y, actual delivered body/receipt and no manual prompt/compatibility rewind; X remains Canceled. PC restoring round-1 wait cancellation strands Y; PC unconditional empty-demand suppression strands later Y. These guards pass at base and must not be mislabeled RED witnesses. |
 | V-12 C1603_empty_queue_demand_does_not_reserve_provider | never-selected-empty, detached-empty, independent-task, attempt-cap / **4** | Exercise direct GrantReadyAsync plus ReconcileAsync. Put more than B real live empty queue waits before an eligible competitor; competitor must grant, proving demand exclusion precedes Take. Empty waits keep their state/key/version after cleanup. Independently redeemable task still grants with no queue input. At-cap cleaned wait retains count, never grants free revalidation; new demand reaches the existing Exhausted rule. PC removing demand filter/putting it after Take monopolizes/starves the competitor; blanket no-queue filtering fails independent-task. |
 
 Totals: **27 queue + 18 standing = 45 new results**. V-2/V-3/V-7/V-8/V-10/V-11/V-12 are
@@ -391,41 +440,54 @@ confirm only that failing method at the pinned Code base before calling it inher
 
 ### Checkpoints
 
-**Lane: Linux, PostgreSQL Integration, fake in-process adapters.** All rows share
-the `S1-S2` committed group and a single isolated build. They are the closed final
-green list; no full Unit/assembly run or native Windows tests. The expected S3-A
-base has 20 `CapacityRecoverySupervisionTests` results (6 existing + 14 specified
-in S3 A). Verify the landed prerequisite and recount before Code: additional
-landed S3 tests must be named and included, never hidden by lowering a floor.
+**Lane: Linux, PostgreSQL Integration; portable server services.** CP-1..CP-8
+share S1-S2 and one isolated build. Run every named affected class in full,
+including all partial files. CP-5 includes Refusal (1), Transient (2), Capacity
+(2), CapacityResume (1) and the remaining 46 results: **52**, not only the old
+three capacity methods. CP-4 is **6 + 18 = 24** at S3-A tip
+`6564c5757dd0ec7c347fe50275f1334498f9e073`. CP-7 is **18 + 2 Recovery + 6 Remote +
+2 S3 = 28**: the review/brief's 26 omitted Recovery's two tests. Counts are a
+source audit, not executed results; recheck the actual landed S3-A base and fresh
+TRX, including later S3 tests if present. Never lower floors to conceal omissions.
 
-Use the checkpoint tool's plan workflow: `import --plan <this-file> --out
-<ignored-manifest.yaml>`, then apply only the budget/timing pins above and execute
-`run <ignored-manifest.yaml> --expected-source-sha <full-tip> --total-timeout 29m
---hard-wall-timeout 39m`. YAML is a positional argument; `--plan` parses Markdown.
-Preserve the imported membership exactly. One run, then `wait --max-wait 570s`
-until exit is not 75; remain responsible for joining it. Bootstrap any unavailable
-tool binary through `scripts/build-slot.ps1` and account for that separately.
-Use the built tool for subsequent control commands so no unlisted compilation
-occurs. Checkpoint builds take their own slots. No reader-refusal fallback or
-unleased driver is authorized here; stop with the evidence if tooling refuses.
-Retain every unedited CHECKPOINT line, full tested SHA, roster, TRX/hash and
-source/build provenance. Validate receipts with `scripts/validate-checkpoint-receipt.ps1`.
+Import this plan with the built checkpoint tool (`import --plan <this-file> --out
+<ignored-manifest.yaml>`); apply the performance/timing pins, then run the
+positional manifest with `--expected-source-sha <full-tip> --total-timeout 90m
+--hard-wall-timeout 100m` after the R1 Debug commissioning described above. Preserve
+membership. Use one run for this committed group and `wait --max-wait 45s` repeatedly
+until exit is not 75, remaining responsible for the run and regular status updates.
+Bootstrap any missing tool binary through `scripts/build-slot.ps1` and account for
+it separately; subsequent control commands use the built binary. Every checkpoint
+build/test takes its own host slot. No unleased/tool-refusal fallback. Retain all
+unedited CHECKPOINT lines, exact tested SHA, roster, TRX/hash and source/build
+provenance; validate with `scripts/validate-checkpoint-receipt.ps1` and run the
+duration tripwire on each fresh TRX. The Final Unit lane is additionally bound by
+the commissioning profile as specified in Performance budget.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1603/` | c1603-queue | `/*/Antiphon.Tests.Application/CapacityObsoleteQueueTests/*` | V-1..V-5, V-11/V-12 | all 27 new results, 0 failed/skipped | 27 | 9 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-2 | S1-S2 | CP-1 | c1603-standing | `/*/Antiphon.Tests.Application/CapacityObsoleteStandingTests/*` | V-6..V-10 | all 18 new results, 0 failed/skipped | 18 | 3 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-3 | S1-S2 | CP-1 | c1603-existing-capacity | `/*/Antiphon.Tests.Application/(CapacityWaitOrphanSweepTests*)\|(CapacityRecoveryGrantLivenessTests*)\|(CapacityRecoveryQueueTests*)\|(CapacityRecoveryTaskTests*)/*` | terminal owners, D-12 fairness, genuine queue delivery, retained consumers | 6 + 12 + 8 + 6 = 32 results, each class present, 0 failed/skipped | 32 | 5 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-4 | S1-S2 | CP-1 | c1603-s3-supervision | `/*/Antiphon.Tests.Application/CapacityRecoverySupervisionTests/*` | S3-A atomic consumption/exit guards, D8, V16-V18 | all 20 S3-A results, 0 failed/skipped | 20 | 3 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-5 | S1-S2 | CP-1 | c1603-standing-reservation | `/*/Antiphon.Tests.Application/StandingRestartEscalationTests/(C510_S2_capacity_grant_is_required_and_follows_fresh*)\|(C510_S2_cleared_model_hold_grant_starts_resume_on_the_next_tick*)` | existing automatic Fresh/resume after a model hold | 2 + 1 = 3 results, both methods present, 0 failed/skipped | 3 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1603/` | c1603-queue | `/*/Antiphon.Tests.Application/CapacityObsoleteQueueTests/*` | V-1..V-5, V-11/V-12; real cancellations and later demand | 27 new results, 0 failed/skipped | 27 | 14 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-2 | S1-S2 | CP-1 | c1603-standing | `/*/Antiphon.Tests.Application/CapacityObsoleteStandingTests/*` | V-6..V-10 | 18 new results, 0 failed/skipped | 18 | 9 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-3 | S1-S2 | CP-1 | c1603-existing-capacity | `/*/Antiphon.Tests.Application/(CapacityWaitOrphanSweepTests*)\|(CapacityRecoveryGrantLivenessTests*)\|(CapacityRecoveryQueueTests*)\|(CapacityRecoveryTaskTests*)/*` | terminal owners, D-12 fairness, genuine queue delivery, retained consumers | 6 + 12 + 8 + 6 = 32, each class present, 0 failed/skipped | 32 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-4 | S1-S2 | CP-1 | c1603-s3-supervision | `/*/Antiphon.Tests.Application/CapacityRecoverySupervisionTests/*` | S3-A atomic consumption/exit guards, D8 | 6 + 18 = 24, 0 failed/skipped | 24 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-5 | S1-S2 | CP-1 | c1603-standing-reservation | `/*/Antiphon.Tests.Application/StandingRestartEscalationTests/*` | full class: Refusal/Transient, Fresh/resume, acceptance/generation boundaries and guards | 52, all partials included, 0 failed/skipped | 52 | 16 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-6 | S1-S2 | CP-1 | c1603-acceptance-persistence | `/*/Antiphon.Tests.Application/(CapacityRecoveryAcceptanceTests*)\|(CapacityRecoveryPersistenceTests*)\|(CapacityRecoveryTranscriptTests*)/*` | direct grant callers, persistence, real session progress | 15 + 12 + 1 = 28, each class present, 0 failed/skipped | 28 | 5 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-7 | S1-S2 | CP-1 | c1603-admission-lifecycle | `/*/Antiphon.Tests.Application/CapacityAdmissionLifecycleTests/*` | complete lifecycle including Recovery, Remote and S3 partials | 18 + 2 + 6 + 2 = 28, 0 failed/skipped | 28 | 9 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-8 | S1-S2 | CP-1 | c1603-compatibility-locks | `/*/Antiphon.Tests.Application/(CapacityRecoveryCompatibilityTests*)\|(CapacityRecoveryRefusalTests*)\|(CapacityRecoveryAttentionTests*)\|(CapacityLockOrderTests*)/*` | forward cursor, other consumer kinds, exhaustion, provider/owner lock order | 5 + 4 + 3 + 17 = 29, each class present, 0 failed/skipped | 29 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 
-Suffix audit at the inspected source: CP-3's four class prefixes each resolve to
-one distinct class; CP-5's two method prefixes each resolve to one method (Fresh
-has ClaudeCode/Grok arguments). There are no suffix collisions. The new class
-names do not yet exist and are reserved by this plan; recheck after implementation
-and after moving to the landed S3 base. Every OR operand is parenthesized with
-its own trailing `*`, and table pipes are escaped. Confirm actual fresh TRX names;
-`--list-tests` is not scoped-execution evidence.
+Integration total: **45 new + 193 existing = 238**. The required RED diagnostics target 8
+results (4 queue + 4 standing), separately from the green roster and its counts.
+The estimated column includes a 7-minute shared build only in CP-1 (7 + 7 test
+minutes); the other rows charge test execution. Explicit row timeout pins replace
+the importer's estimate-derived defaults; the table itself does not set p95.
+
+Suffix audit at the inspected source/S3-A tip: each of the eleven class prefixes
+in CP-3/CP-6/CP-8 resolves to exactly its intended class; partial files are one
+class, not suffix collisions. CP-4/CP-5/CP-7 use exact classes. New exact class
+names do not yet exist and are reserved here. Recheck implementation and landed
+base before execution. Every OR operand is parenthesized with its own trailing
+asterisk; table pipes are escaped. Require fresh TRX membership and nonzero
+counts; list-tests does not establish scoped execution.
 
 ## Placement
 
@@ -507,7 +569,9 @@ Plan Review must judge the positive-evidence predicates, null-generation fallbac
 queue demand/later-input delivery, queue lock/DI lifetime, CAS and lock ordering,
 independent retained consumer, and
 performance exceptions. Ask a different company's model to perform that Review.
-No extra user decision is required to produce this plan under D-1..D-6.
+No extra user decision is required to produce this plan under D-1..D-7.
+After approving Review and S3-A landing, commission Code with the verification
+profile/Unit manifest and the R1 performance Debug obligation attached.
 
 Before Code/Review calls a product branch landable, fetch master and run
 `git merge-tree --write-tree origin/master HEAD` without merging; conflicts need
@@ -526,6 +590,5 @@ while empty), or standing-consumer-replaced **Superseded** outcome. Across at
 least three configured expiry intervals the canceled action must not regain a
 grant; another eligible waiter advances when its provider clock permits. A new
 held message may correctly grant the retained queue wait under a new action.
-
 
 Do not generate production traffic or cancel a live message just for this check.
