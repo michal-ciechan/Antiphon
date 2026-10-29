@@ -1,6 +1,6 @@
-# CARD-1603 Final Review round 2 (b5b016a6) - PARTIAL
+# CARD-1603 Final Review round 2 (b5b016a6)
 
-Status: partial. Adversarial read, D-1 repro and mutations are complete. The Unit shards are still running.
+**Verdict: one defect (D-1, a flaky V-8 witness in CP-2 that does not observe the lock order it claims). Round-1 D-1..D-4 are closed, and the product change has no new race. Unit lane Full: 3919/3919 methods, 6271 results, 6226 passed, 44 Windows-only skips, 1 failure inherited from master. CP-1..CP-8: 278/278.**
 
 - Subject: `origin/feat/card-task-49ac8ec7` at `c57edb47747e005b0c794b83a1a6027637fff834`. Round-2 Code task: 49ac8ec7-5663-4b0a-b535-9984c39e2f03. Original Code owner: 1d5d34a3-dc37-4882-baa5-df327e9cc63a.
 - Base `e65343132`. `origin/master` is `0e7dd3905`.
@@ -96,76 +96,101 @@ PCs stay pending for method-scoped SourceLanding Mutation. These scratch runs di
 - **A-3:** the queue detach now reads the wait twice in a row (`ObsoleteConsumers.cs:136` and `:147`). The CAS makes the second read redundant. It is harmless.
 - **A-4:** V-6's at-most-five reconcile loop (`CapacityObsoleteStandingTests.cs:74-81`) cannot go falsely green: the assertion stays Superseded, and `nostanding`/pre-fix stay red. It accommodates the busy try-lock by design.
 
-## Unit shard log (live, one build bin-rb5b016a/, dotnet exec under build-slot.ps1)
+## Adversarial read (round-2 delta and whole product diff)
+
+### (1) Plan conformance
+
+- Every round-1 conformance finding still holds (8ef7bb9e report: lock order, parked rows, demand predicate, standing supersede).
+- Round-2 deviations, each judged:
+  - **(a) Obsolete-selection hold.** It is now bounded by unfinished, grant candidate and not expired. This is the round-1 reviewer's prescribed fix. OK.
+  - **(b) Demand-loss key-mismatch expiry fallback**, and the wait is detached whenever `lost` is true. OK. The detach also stops a stale tracked entity being returned by the candidate query.
+  - **(c) `capacity-obsolete-before-finish` moved after the reread.** The plan text is amended to match. OK.
+  - **(d) V-6 loop of at most five reconciles.** OK, see A-4.
+  - **(e) Plan V-2/V-10/V-12/CP-1 rows amended to 52/278.** These are the round-1 fix arms. OK.
+- **A-2 (Admitted->Ready on proven-absent demand):** unchanged and safe, as judged in round 1.
+- **A-3:** now partly witnessed. `gate-busy-past-expiry` shows that a competitor is admitted while X is attached and the gate is busy, and that W is not re-granted.
+
+### (2) Races in the new code (`CapacityRecoveryService.cs:154-205`)
+
+- **Clear-without-rearm vs cleanup:** both take the provider lock, so they serialize.
+  - Clear first: `ClearGrant` does not bump the wait version, so the cleanup CAS still holds. The detach then rekeys W to Ready. Its provider check (`granted == W && key`) fails, so it leaves a competitor's grant alone.
+  - Cleanup first: the grant is already cleared.
+- **vs `ObserveTranscriptAsync`** (writes W without the provider lock): `GrantReady` never writes the tracked W in the hold or clear branches, so there is no lost update. `ApplyDemandLossAsync` is a version CAS.
+- **vs a canceled X re-Pended (`DeferResumeAbsence`) or a new held Y selected by the flush:** the cleared W keeps key K1 with no rekey outside the gate. The selection is now deliverable, so the next tick re-grants the SAME key and the flush redeems. Nothing is lost, and it is safer than the base re-arm, which re-keyed queue rows under the provider lock.
+- **vs a flush redeem:** `RedeemOnAsync` serializes on the provider lock. A redeem after the clear is refused with `grant-mismatch`. The row stays Pending and is re-granted the next tick.
+- **Restart:** one transaction per kind.
+- **Lock order:** unchanged. `GrantReady` takes no gate and no row lock, the cleanup uses gate -> NOWAIT row -> provider try, and no lock is held across IO.
+
+### (3) No cycling and exactly-once
+
+- A wait whose obsolete selection is attached is excluded before `Take` (`WhereQueueDemandAllowsGrant`) and in the loop. After an expiry clear it is never re-granted until the detach. After the detach it is Ready with no demand and is excluded.
+- A wait with deliverable demand is granted as before: CP-3, CP-6, CP-7 and CP-8 are green, and V-1's schedule arm and V-11 deliver Y with a correlated UserPrompt through the real queue.
+- The clear path spends nothing. `RedeemOnAsync` and the consume paths are unchanged, so S3-A holds: CP-4 24/24, CP-5 52/52.
+- No session input wait changed. With parking disabled, a waiting session still has no automatic release deadline (CARD-1083).
+
+### (5) Performance (R1)
+
+- New classes: the tripwire reports 0 unlisted tests >= 5 s for CP-1 and CP-2. Both are Integration+Slow and allowlisted. The only >= 5 s rows are each host's first test, which pays the Postgres template startup.
+- Existing CP-3..CP-8 tests have unlisted >= 5 s rows, for example `C1593_warm_reuse_lost_commit_ack_delivers_the_brief` at 32.2 s at the tip and 32.7 s at master, and `Card0412_V22` at 24 s at the tip and 33 s at master. I ran them back-to-back at origin/master and at the tip. They are equally slow at master, so this tripwire debt predates the change (advisory A-5).
+- The author's 278-result claim is consistent with my lane CP rows: 52/18/47/24/52/28/28/29.
+
+## Unit lane (Full)
+
+- **Build:** one leased build, `tests/Antiphon.Tests -> bin-rb5b016a/`, `UseAppHost=false`, 232 s, 0 errors.
+- **Shards:** 21 Unit shards (CARD-1573 combined class filters, the same partition as round 1) plus the Matrix method row. Each ran as `dotnet exec` under `scripts/build-slot.ps1` with `timeout 45m`, in three lanes. Wall time was 21:32 to 23:10 UTC. CP-1..CP-8 ran fresh in the same lanes.
+- **Completeness:** a `System.Reflection.Metadata` scan of the built dll found 3919 `Category("Unit")` methods. The shard TRX union has 3919: missing 0, extra 0.
+- **Results:** 6271 total: 6226 passed, 44 NotExecuted, 1 failed.
+  - The 44 match round 1's set of Windows-only runtime skips.
+  - The failure is `RemoteScriptContractTests.C1105_Git_audit_resume_preserves_proof` (shard a-rsc2). Run alone at origin/master `0e7dd3905` (scratch build) it fails 1/1, and at the tip it fails 1/1. It is inherited and unrelated, the same as in round 1.
+- I started the shards in parallel with the adversarial read to fit the 3.5 h budget. The read, repro and mutation evidence was pushed first, in `1b7022744`.
+- `reviewedSourceClean` is false: the brief prescribes `dotnet exec` shards, so there are no sealed checkpoint-tool receipts.
+
 ```
-SHARD a-rsc3 start 2026-10-29T21:32:46Z
-SHARD b1-RollingVRS start 2026-10-29T21:32:46Z
-SHARD b4-Ch1 start 2026-10-29T21:32:46Z
 SHARD b4-Ch1 end rc=0 wall=1081s waited=0s  total: 255  failed: 0  succeeded: 255  skipped: 0  duration: 17m 57s 891ms 
-SHARD b3-Retired start 2026-10-29T21:50:47Z
 SHARD a-rsc3 end rc=0 wall=1691s waited=15s  total: 39  failed: 0  succeeded: 39  skipped: 0  duration: 27m 52s 479ms 
-SHARD b5-Ch2 start 2026-10-29T22:00:57Z
 SHARD b1-RollingVRS end rc=0 wall=1999s waited=0s  total: 77  failed: 0  succeeded: 77  skipped: 0  duration: 33m 16s 455ms 
-SHARD c6-HLM start 2026-10-29T22:06:05Z
 SHARD b3-Retired end rc=0 wall=1157s waited=195s  total: 38  failed: 0  succeeded: 38  skipped: 0  duration: 15m 59s 920ms 
-SHARD a-rsc2 start 2026-10-29T22:10:04Z
 SHARD b5-Ch2 end rc=0 wall=1429s waited=120s  total: 302  failed: 0  succeeded: 301  skipped: 1  duration: 21m 45s 760ms 
-SHARD c1-C1 start 2026-10-29T22:24:46Z
 SHARD c6-HLM end rc=0 wall=1166s waited=30s  total: 740  failed: 0  succeeded: 738  skipped: 2  duration: 18m 53s 288ms 
-SHARD c7-OPQ start 2026-10-29T22:25:31Z
 SHARD a-rsc2 end rc=2 wall=960s waited=60s  total: 216  failed: 1  succeeded: 215  skipped: 0  duration: 14m 56s 469ms 
-SHARD x-c8-R start 2026-10-29T22:26:04Z
 SHARD c1-C1 end rc=0 wall=663s waited=15s  total: 173  failed: 0  succeeded: 170  skipped: 3  duration: 10m 44s 616ms 
-SHARD c3-AB start 2026-10-29T22:35:49Z
 SHARD x-c8-R end rc=0 wall=703s waited=15s  total: 499  failed: 0  succeeded: 499  skipped: 0  duration: 11m 25s 441ms 
-SHARD c5-EFGIJK start 2026-10-29T22:37:47Z
 SHARD c7-OPQ end rc=0 wall=937s waited=0s  total: 763  failed: 0  succeeded: 755  skipped: 8  duration: 15m 34s 490ms 
-SHARD a-rsc5 start 2026-10-29T22:41:08Z
 SHARD a-rsc5 end rc=0 wall=193s waited=0s  total: 121  failed: 0  succeeded: 121  skipped: 0  duration: 3m 11s 603ms 
-SHARD a-rsc1 start 2026-10-29T22:44:21Z
 SHARD c3-AB end rc=0 wall=710s waited=0s  total: 553  failed: 0  succeeded: 550  skipped: 3  duration: 11m 48s 671ms 
-SHARD x-c10-TUV start 2026-10-29T22:47:39Z
 SHARD a-rsc1 end rc=0 wall=251s waited=0s  total: 40  failed: 0  succeeded: 40  skipped: 0  duration: 4m 09s 776ms 
-SHARD x-c11-W start 2026-10-29T22:48:32Z
 SHARD c5-EFGIJK end rc=0 wall=733s waited=0s  total: 492  failed: 0  succeeded: 479  skipped: 13  duration: 12m 09s 822ms 
-SHARD c4-D start 2026-10-29T22:50:00Z
 SHARD x-c11-W end rc=0 wall=262s waited=0s  total: 299  failed: 0  succeeded: 298  skipped: 1  duration: 4m 19s 826ms 
-SHARD c2-C2 start 2026-10-29T22:52:54Z
 SHARD c2-C2 end rc=0 wall=251s waited=0s  total: 201  failed: 0  succeeded: 201  skipped: 0  duration: 4m 09s 448ms 
-SHARD a-rsc4 start 2026-10-29T22:57:05Z
 SHARD c4-D end rc=0 wall=564s waited=0s  total: 580  failed: 0  succeeded: 574  skipped: 6  duration: 9m 22s 562ms 
-SHARD x-c9-S start 2026-10-29T22:59:24Z
 SHARD x-c10-TUV end rc=0 wall=726s waited=0s  total: 423  failed: 0  succeeded: 418  skipped: 5  duration: 12m 03s 973ms 
-SHARD i-cp5 start 2026-10-29T22:59:45Z
 SHARD a-rsc4 end rc=0 wall=162s waited=0s  total: 83  failed: 0  succeeded: 83  skipped: 0  duration: 2m 39s 663ms 
-SHARD b2-RollingOther start 2026-10-29T22:59:47Z
 SHARD i-cp5 end rc=0 wall=56s waited=0s  total: 52  failed: 0  succeeded: 52  skipped: 0  duration: 53s 900ms 
-SHARD i-cp6 start 2026-10-29T23:00:41Z
 SHARD i-cp6 end rc=0 wall=75s waited=0s  total: 28  failed: 0  succeeded: 28  skipped: 0  duration: 1m 14s 226ms 
-SHARD i-cp7 start 2026-10-29T23:01:56Z
 SHARD b2-RollingOther end rc=0 wall=132s waited=0s  total: 13  failed: 0  succeeded: 13  skipped: 0  duration: 2m 10s 533ms 
-SHARD m-matrix start 2026-10-29T23:01:59Z
 SHARD m-matrix end rc=0 wall=36s waited=30s  total: 8  failed: 0  succeeded: 8  skipped: 0  duration: 1s 879ms 
-SHARD i-cp1 start 2026-10-29T23:02:35Z
 SHARD i-cp1 end rc=0 wall=96s waited=0s  total: 52  failed: 0  succeeded: 52  skipped: 0  duration: 1m 31s 998ms 
-SHARD i-cp2 start 2026-10-29T23:04:11Z
 SHARD i-cp7 end rc=0 wall=137s waited=15s  total: 28  failed: 0  succeeded: 28  skipped: 0  duration: 1m 58s 987ms 
-SHARD i-cp8 start 2026-10-29T23:04:13Z
 SHARD i-cp2 end rc=0 wall=55s waited=15s  total: 18  failed: 0  succeeded: 18  skipped: 0  duration: 38s 041ms 
-SHARD i-cp3 start 2026-10-29T23:05:06Z
 SHARD i-cp8 end rc=0 wall=99s waited=30s  total: 29  failed: 0  succeeded: 29  skipped: 0  duration: 1m 07s 502ms 
 LANE B done 2026-10-29T23:05:52Z
 SHARD i-cp3 end rc=0 wall=93s waited=30s  total: 47  failed: 0  succeeded: 47  skipped: 0  duration: 1m 00s 863ms 
-SHARD i-cp4 start 2026-10-29T23:06:39Z
 SHARD i-cp4 end rc=0 wall=41s waited=0s  total: 24  failed: 0  succeeded: 24  skipped: 0  duration: 39s 155ms 
 LANE A done 2026-10-29T23:07:20Z
 SHARD x-c9-S end rc=0 wall=674s waited=0s  total: 356  failed: 0  succeeded: 354  skipped: 2  duration: 11m 10s 929ms 
 LANE C done 2026-10-29T23:10:38Z
 ALL-LANES-DONE
+RED c1105-master total: 1 failed: 1 ; RED c1105-tip total: 1 failed: 1
+V-8 reruns at tip (main build): m1 red (session-busy), m2 green, m3 green, c1 red (agent-busy), c2 green
 ```
 
-Red comparisons:
-```
-RED c1105-master  total: 1  failed: 1  succeeded: 0 
-RED c1105-tip  total: 1  failed: 1  succeeded: 0 
-```
+## Advisory (added)
+
+- **A-5:** these existing capacity tests are >= 5 s and not allowlisted, and they are equally slow at master: `C1593_warm_reuse_lost_commit_ack_delivers_the_brief`, `C1593_rollback_exit_keeps_reservation`, `C1593_crash_after_launch_commit_consumes_one_admission`, `Card0412_V22_migrate_forward_preserves_legacy_holds`, `Input_body_upgrade_preserves_a_preexisting_event_with_null_body`, the `C1593` `CapacityLockOrderTests` rows, `C1322` and `Card0412_V10`. This is outside CARD-1603. Consider a tripwire card.
+
+## Cleanup
+
+- I removed all 32 `bin-rb5b016a` directories in the worktree, one literal path at a time.
+- The scratch copies stay in the session scratchpad: the env-gated mutation tree with `bin-rb5mut/`, the pre-fix tree with `bin-rb5pre/`, and the origin/master tree with `bin-rb5mst/`. They are outside the repo.
+- TRX and logs stay under the gitignored `.antiphon/rv/`.
+- The subject branch was not touched.
