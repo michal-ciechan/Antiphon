@@ -684,12 +684,16 @@ gate: exit 4 is `FixtureBuildSlotTimeout`, and any other offline failure stays
 must start within the existing 30-second window or the diagnosis stays `FixtureRestoreBarrierFailed`.
 The first granted slot stays held until the second grant or that 45-minute deadline. The fixture
 does not release that slot to retry; a retry would drop the grant and reopen the arrival window.
-A refusal, a slot timeout, or INT/TERM releases only a probe whose container id this run recorded
-after launch and whose labels are `io.antiphon.owner=c849-fixture`, `io.antiphon.fixture-run` for
-this run, and the probe role. The release kills and removes that id. A same-named container the
-launcher refused is left untouched and recorded as residue. INT exits 130 and TERM exits 143.
-The release also DELETEs any granted build-slot lease, removes the fixture volumes, and does not
-wait on a probe that is still running. `kill -9` is sent only to a pid `jobs -pr` still lists.
+A refusal, a slot timeout, or INT/TERM waits up to 60 seconds for an in-flight probe to publish
+its container id or for that probe's job to exit, then kills and removes only a 64-hex id this run
+recorded after launch whose labels are `io.antiphon.owner=c849-fixture`, `io.antiphon.fixture-run`
+for this run, and the probe role. An absent recorded container is already gone and is not foreign
+residue. A same-named container the launcher refused is left untouched and recorded as residue.
+INT exits 130 and TERM exits 143. The release also DELETEs any granted build-slot lease and removes
+the fixture volumes. It does not wait on a shell pid that is still running. TERM and `kill -9` are
+sent only while `jobs -pr` lists that pid. The driver stops waiting for `go` at the same 45-minute
+slot deadline and exits 4, which releases the lease. The first granted slot still stays held until
+the second grant or that deadline.
 
 The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
 ` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
