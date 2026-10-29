@@ -124,6 +124,10 @@ internal static class WindowsUnitSkipRoster
             "C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups)."),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleDockerTests", "C1008_Real_docker_comparison", 1,
             "C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups)."),
+        new("Antiphon.Tests.Application", "AgentReportStoreBudgetTests", "Slow_git_response_does_not_spend_write_budget", 1,
+            "CARD-1605 delayed executable requires native Linux"),
+        new("Antiphon.Tests.Application", "AgentReportStoreLoadTests", "Store_samples_record_normal_and_contended_phases", 1,
+            "CARD-1605 load telemetry requires native Linux"),
     ];
 
     // Legacy call sites are source-closure accounting, outside the S1 child runtime roster.
