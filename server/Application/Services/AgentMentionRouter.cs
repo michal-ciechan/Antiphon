@@ -90,7 +90,9 @@ public sealed class AgentMentionRouter : IDisposable
 
         // The liveness read is a database round trip. Claim these targets under the
         // debounce gate first, or that timer queues the partial line while the read waits.
-        // A failed or not-live read still enqueues the claim; only cancellation skips it.
+        // A failed, not-live, or cancelled read still enqueues the claim with no stamp.
+        // The pump cancels this token when a runner connection is replaced; the router
+        // keeps running, so cancellation settles the line and then rethrows.
         var claimed = ClaimCompletedMentions(sourceSessionId, ready);
 
         MentionSourceLiveness? observed = null;
@@ -102,6 +104,7 @@ public sealed class AgentMentionRouter : IDisposable
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                Settle(null);
                 throw;
             }
             catch (Exception ex)
@@ -110,16 +113,35 @@ public sealed class AgentMentionRouter : IDisposable
             }
         }
 
-        foreach (var mention in claimed)
-            EnqueueCommand(sourceSessionId, mention, observed);
-        for (var i = 0; i < completedLineCount; i++)
-            _pendingStates.TryRemove(sourceSessionId, out _);
+        Settle(observed);
+        return;
 
-        var remainder = completedLineCount < lines.Length ? lines[^1] : string.Empty;
-        if (remainder.Length > MaxLineChars)
-            remainder = remainder[^MaxLineChars..];
-        _pendingText[sourceSessionId] = remainder;
-        SchedulePendingMentions(sourceSessionId, remainder);
+        void Settle(MentionSourceLiveness? stamp)
+        {
+            for (var index = 0; index < claimed.Count; index++)
+            {
+                try
+                {
+                    EnqueueCommand(sourceSessionId, claimed[index], stamp);
+                }
+                catch
+                {
+                    // TryWrite does not throw. A throw after the claim must not keep a key
+                    // for a mention that never queued, or the next chunk skips it forever.
+                    ReleaseUnqueuedClaim(sourceSessionId, claimed, index);
+                    throw;
+                }
+            }
+
+            for (var i = 0; i < completedLineCount; i++)
+                _pendingStates.TryRemove(sourceSessionId, out _);
+
+            var remainder = completedLineCount < lines.Length ? lines[^1] : string.Empty;
+            if (remainder.Length > MaxLineChars)
+                remainder = remainder[^MaxLineChars..];
+            _pendingText[sourceSessionId] = remainder;
+            SchedulePendingMentions(sourceSessionId, remainder);
+        }
     }
 
     public void Dispose()
@@ -283,19 +305,43 @@ public sealed class AgentMentionRouter : IDisposable
         lock (state.Gate)
         {
             state.Version++;
+            // Skip only targets the debounce already queued. A later mention of the
+            // same target in this chunk is a separate message and still queues.
+            var already = new HashSet<string>(state.RoutedKeys, StringComparer.OrdinalIgnoreCase);
             foreach (var mention in ready)
             {
-                if (state.RoutedKeys.Add(PendingRouteKey(mention)))
+                if (already.Contains(PendingRouteKey(mention)))
                 {
-                    claimed.Add(mention);
+                    Record(sourceSessionId, MentionRouteDiagnostics.CommandSkippedDuplicate, $"target={mention.Target}");
                     continue;
                 }
 
-                Record(sourceSessionId, MentionRouteDiagnostics.CommandSkippedDuplicate, $"target={mention.Target}");
+                state.RoutedKeys.Add(PendingRouteKey(mention));
+                claimed.Add(mention);
             }
         }
 
         return claimed;
+    }
+
+    private void ReleaseUnqueuedClaim(Guid sourceSessionId, List<AgentMention> claimed, int firstUnqueued)
+    {
+        if (!_pendingStates.TryGetValue(sourceSessionId, out var state))
+            return;
+
+        var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < firstUnqueued; i++)
+            kept.Add(PendingRouteKey(claimed[i]));
+
+        lock (state.Gate)
+        {
+            for (var i = firstUnqueued; i < claimed.Count; i++)
+            {
+                var key = PendingRouteKey(claimed[i]);
+                if (!kept.Contains(key))
+                    state.RoutedKeys.Remove(key);
+            }
+        }
     }
 
     private bool PendingRouteExists(Guid sourceSessionId, AgentMention mention)
