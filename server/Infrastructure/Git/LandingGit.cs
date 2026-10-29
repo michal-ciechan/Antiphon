@@ -244,6 +244,22 @@ public class LandingGit : ILandingGit
         { }
     }
 
+    /// <summary>A broken pipe on stdin is git exiting before it reads. Observe that fault so a
+    /// drain that has already moved on does not leave it unobserved. It is not descendant evidence.</summary>
+    private static void ObserveStdinWrite(Task write)
+    {
+        if (write.IsCompleted)
+        {
+            _ = write.Exception;
+            return;
+        }
+        _ = write.ContinueWith(
+            static finished => { _ = finished.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     private static void ObserveAbandoned(Task[] streams, Action whenClosed)
     {
         if (streams.Length == 0)
@@ -879,6 +895,9 @@ public class LandingGit : ILandingGit
             }, budget.Token);
             // The reads stay unbound so an abandoned copy completes on real EOF, not on the budget
             // token. The wait below is still budget-bound. The journal then drops only at that EOF.
+            // The stdin write is not a read: git closing its input faults it with a broken pipe,
+            // and that fault must not count as an unfinished descendant.
+            ObserveStdinWrite(write);
             var copy = child.StandardOutput.BaseStream.CopyToAsync(output);
             var error = child.StandardError.ReadToEndAsync();
             try
@@ -889,18 +908,19 @@ public class LandingGit : ILandingGit
                     if (!identified && !child.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
                     await journal.StartedAsync(child.Id, identified ? startTicks : null, ct);
                 }
-                await Task.WhenAll(write, copy, error).WaitAsync(budget.Token);
+                await Task.WhenAll(copy, error).WaitAsync(budget.Token);
                 await child.WaitForExitAsync(budget.Token);
             }
             catch
             {
                 // Same bound as ExecuteProcessAsync: a grandchild holding a redirected pipe must not
                 // outlive the budget by its own lifetime. The original failure is the one reported.
+                // Only the read pipes are the drain; the stdin write is observed on its own.
                 var handedOff = false;
                 var drained = false;
                 try
                 {
-                    handedOff = await ReleaseChildAsync(child, journal is null ? null : journal.StreamsClosed, output, write, copy, error);
+                    handedOff = await ReleaseChildAsync(child, journal is null ? null : journal.StreamsClosed, output, copy, error);
                     drained = !handedOff;
                 }
                 catch
@@ -916,6 +936,9 @@ public class LandingGit : ILandingGit
                 throw;
             }
             journal?.Exited(child);
+            // Both reads reached EOF and the root has exited, so the record is already gone.
+            // A broken-pipe write still fails the call, as WhenAll(write, ...) did at the base.
+            await write.WaitAsync(budget.Token);
             return (child.ExitCode, output.ToArray());
         }
         finally
