@@ -1118,9 +1118,10 @@ public sealed class RemoteScriptContractTests
         Fact(output, "volumes-removed").ShouldBe("1", output);
     }
 
-    // CARD-0849 round 2. A same-named container the launcher refused is not this
-    // run's. TERM and INT kill only recorded CIDs, the slot wait is wall-clock,
-    // offline exit 4 is the slot timeout, and kill -9 stays on jobs -pr.
+    // CARD-0849 round 3. A same-named container the launcher refused is not this
+    // run's. TERM and INT kill only recorded CIDs. TERM and kill -9 reach a pid
+    // only while jobs -pr lists it, so a live pid from another shell survives.
+    // The slot wait is wall-clock. Offline exit 4 is the slot timeout.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Refused_launch_keeps_a_foreign_container_and_signals_release_proven_cids()
@@ -1146,6 +1147,23 @@ public sealed class RemoteScriptContractTests
         Fact(output, "offline-code").ShouldBe("2", output);
         Fact(output, "reap-owned-escalated").ShouldBe("1", output);
         Fact(output, "reap-unowned-escalated").ShouldBe("0", output);
+        Fact(output, "reap-unowned-survived").ShouldBe("1", output);
+    }
+
+    // CARD-0849 round 3. A cid that arrives after the sibling probe has already
+    // refused is still published, killed by that id, and its lease is deleted.
+    // The planted same-named container is not that id.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Late_container_id_is_released_and_its_lease_deleted()
+    {
+        var output = C1192Run("slot-late-cid");
+        Fact(output, "late-diagnosis").ShouldBe("FixtureRestoreBarrierFailed", output);
+        Fact(output, "late-p2-removed").ShouldBe("1", output);
+        Fact(output, "late-p2-killed-by-cid").ShouldBe("1", output);
+        Fact(output, "late-foreign-survived").ShouldBe("1", output);
+        Fact(output, "late-foreign-killed").ShouldBe("0", output);
+        Fact(output, "late-lease").ShouldBe("1", output);
     }
 
     // CARD-1192 S2. Shared scratch blocks the waiter until release. Private scratch is already eligible.
