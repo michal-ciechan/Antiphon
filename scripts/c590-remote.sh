@@ -7290,7 +7290,7 @@ c1008_ls_remote_status() {
 # with no reason, the same text as an unauthenticated ls-remote. A supplied
 # directory whose file is missing, empty, or not a regular file names proof-missing.
 c1008_apply_host_proof() {
-    local rel url file name line1 line2 line3 line4 line5 op oh rp created started expect n=0 lower skip line
+    local rel url file name line1 line2 line3 line4 line5 op oh rp created started expect n=0 lower skip line ref_re
     rel="$(rel_repo "$audit_repo")"
     if [ -z "${C1008_HOST_PROOF:-}" ]; then
         fail 128
@@ -7343,13 +7343,16 @@ c1008_apply_host_proof() {
     [ "$created" -ge "$started" ] || fail 128 " reason=proof-stale"
     : > "$scratch/origin"
     skip=5
+    # The pattern stays in a variable. A ] ] inside [[ is the end of the
+    # conditional, so the character class cannot be written inline.
+    ref_re=$'^[0-9a-f]{40}\trefs/(heads|tags)/[^[:space:]]+$'
     while IFS= read -r line || [ -n "$line" ]; do
         if [ "$skip" -gt 0 ]; then
             skip=$((skip - 1))
             continue
         fi
         [ -n "$line" ] || fail 128 " reason=proof-parse"
-        [[ "$line" =~ ^[0-9a-f]{40}$'\t''refs/(heads|tags)/[^[:space:]]+$ ]] || fail 128 " reason=proof-parse"
+        [[ "$line" =~ $ref_re ]] || fail 128 " reason=proof-parse"
         lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
         case "$lower" in
             *ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*|*token*|*password*|*secret*)
