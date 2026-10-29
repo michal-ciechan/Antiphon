@@ -71,5 +71,12 @@ docker/session-runner-grok/verify-codex-image.sh text eol=lf
 docker/session-runner-grok/**/*.sh text eol=lf
 docker/session-runner-grok/**/*.mjs text eol=lf
 
+# C1313: the selector harness reads these scripts as LF and refuses a CR. A fresh
+# Windows qualification clone sets only core.longpaths and inherits core.autocrlf,
+# so text=auto checks *.ps1 out as CRLF. eol=lf keeps the working tree LF.
+# Windows PowerShell 5.1 reads LF scripts. No tracked .ps1 blob is CRLF.
+# The -text baseline below stays exempt so checkout does not rewrite its bytes.
+*.ps1 text eol=lf
+
 # Historical deploy baseline. The readiness test hashes these bytes; checkout must not rewrite them.
-tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1 -text
+tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1 -text -eol
