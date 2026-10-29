@@ -4401,9 +4401,15 @@ c1192_dump_shell_state() {
 # makes the child its own process group and is restored before return. The
 # group signal is that child's group, not this fixture's group.
 # Ledger line the INT trap writes before it calls the production handler.
-# Exit 2 is not proof the trap ran unless this line is present.
+# Exit 2 is not proof the trap ran unless this line is present. The group
+# witness stamps C1192_TRAP_MARK so a line left by the pid witness is not
+# treated as this run's trap.
 c1192_note_signal_trap() {
-    printf 'trap-ran %s\n' "$1" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    if [ -n "${C1192_TRAP_MARK:-}" ]; then
+        printf 'trap-ran %s %s\n' "$1" "$C1192_TRAP_MARK" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    else
+        printf 'trap-ran %s\n' "$1" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    fi
 }
 
 c1192_signal_witness() {
@@ -4453,6 +4459,13 @@ c1192_signal_witness() {
     ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
     export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_SLOT_NEVER C1192_SLOT_LEASE
     rm -f -- "$C1192_ROOT/signal-armed" "$C1192_ROOT/signal-out" "$C1192_ROOT/live-before"
+    # A fresh mark per group run. The pid witness writes trap-ran into the
+    # same ledger, and a leftover line would skip the group signal.
+    if [ "$delivery" = group ]; then
+        C1192_TRAP_MARK="g${RANDOM}$$"
+    else
+        unset C1192_TRAP_MARK
+    fi
     child="$C1192_ROOT/signal-child.sh"
     {
         printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
@@ -4516,7 +4529,7 @@ c1192_signal_witness() {
             emit "${prefix}-lease" 0
             emit "${prefix}-volumes" 0
         fi
-        unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
+        unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL C1192_TRAP_MARK
         c1192_kill_jobs
         return 0
     fi
@@ -4547,7 +4560,7 @@ c1192_signal_witness() {
         while [ "$i" -lt 40 ]; do
             c849_fixture_probe_exited "$pid" && break
             if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
-                && grep -Fxq "trap-ran INT" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+                && grep -Fxq "trap-ran INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
                 break
             fi
             kill -s INT -- -"$pid" 2>/dev/null || true
@@ -4601,8 +4614,8 @@ c1192_signal_witness() {
         [ "$nrestore" -ge 2 ] || containers=0
         [ "$nrestore" -ge 2 ] || procs=0
         [ "$nrestore" -ge 2 ] || cid_kills=0
-        if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
-            && grep -Fxq "trap-ran INT" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+        if [ -n "${C1192_TRAP_MARK:-}" ] && [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+            && grep -Fxq "trap-ran INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
             trap_ran=1
         fi
         # Well under the slot deadline, so the deadline path cannot pass.
@@ -4645,7 +4658,7 @@ c1192_signal_witness() {
         emit "${prefix}-lease" "$released"
         emit "${prefix}-volumes" "$volumes"
     fi
-    unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
+    unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL C1192_TRAP_MARK
     c1192_kill_jobs
 }
 
