@@ -99,7 +99,7 @@ internal static class SolutionAudit
 
                     CanaryRepository.DeleteActive();
                 },
-                copyClock: new WallClock(cancelCopy: true));
+                copyClock: new WallClock(CanaryRepository.CancelCopy));
         }
         finally
         {

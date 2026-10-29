@@ -11,20 +11,20 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(120_000)]
     public async Task RecordedCanaryDeleteRejectsUnsafeRecords()
     {
-        var script = Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1");
+        var library = CanaryRemovalLibrary();
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c9fe-canary-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         try
         {
-            await AssertKeptAsync(script, root, "repo-root", world => world.Repo);
-            await AssertKeptAsync(script, root, "empty", _ => "");
-            await AssertKeptAsync(script, root, "whitespace", _ => " \t ");
-            await AssertKeptAsync(script, root, "parent", world => world.Parent);
-            await AssertKeptAsync(script, root, "slash", _ => "/");
-            await AssertKeptAsync(script, root, "outside", world => world.OutsideCanary);
-            await AssertKeptAsync(script, root, "trailing", world => world.Canary + "/");
-            await AssertKeptAsync(script, root, "uppercase", world => world.UpperCanary);
-            await AssertKeptAsync(script, root, "newline", world => world.Canary + "\ninjected");
-            await AssertSymlinkUnlinkedAsync(script, root);
+            await AssertKeptAsync(library, root, "repo-root", world => world.Repo);
+            await AssertKeptAsync(library, root, "empty", _ => "");
+            await AssertKeptAsync(library, root, "whitespace", _ => " \t ");
+            await AssertKeptAsync(library, root, "parent", world => world.Parent);
+            await AssertKeptAsync(library, root, "slash", _ => "/");
+            await AssertKeptAsync(library, root, "outside", world => world.OutsideCanary);
+            await AssertKeptAsync(library, root, "trailing", world => world.Canary + "/");
+            await AssertKeptAsync(library, root, "uppercase", world => world.UpperCanary);
+            await AssertKeptAsync(library, root, "newline", world => world.Canary + "\ninjected");
+            await AssertSymlinkUnlinkedAsync(library, root);
         }
         finally
         {
@@ -36,14 +36,14 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(120_000)]
     public async Task RecordedCanaryDeleteRemovesOnlyTheExactCanary()
     {
-        var script = Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1");
+        var library = CanaryRemovalLibrary();
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c9fe-canary-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         try
         {
             var exact = CreateWorld(root, "exact");
             var exactSentinel = Path.Combine(exact.Canary, "sentinel");
             File.WriteAllText(exactSentinel, "keep");
-            var removed = await RemoveRecordedCanaryAsync(script, exact.Canary, exact.Repo);
+            var removed = await RemoveRecordedCanaryAsync(library, exact.Canary, exact.Repo);
             removed.ExitCode.ShouldBe(0, removed.Text);
             File.Exists(exactSentinel).ShouldBeFalse(exactSentinel);
             Directory.Exists(exact.Repo).ShouldBeTrue(exact.Repo);
@@ -54,7 +54,7 @@ public sealed partial class LandGraphEvaluationTests
             var parentName = Path.GetFileName(dotted.Parent);
             var record = Path.Combine(dotted.Parent, "..", parentName, Path.GetFileName(dotted.Canary));
             record.ShouldContain("..");
-            var normalized = await RemoveRecordedCanaryAsync(script, record, dotted.Repo);
+            var normalized = await RemoveRecordedCanaryAsync(library, record, dotted.Repo);
             normalized.ExitCode.ShouldBe(0, normalized.Text);
             File.Exists(dottedSentinel).ShouldBeFalse(dottedSentinel);
             Directory.Exists(dotted.Repo).ShouldBeTrue(dotted.Repo);
@@ -69,7 +69,7 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(120_000)]
     public async Task EachCanaryGuardIsNecessary()
     {
-        var original = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"));
+        var original = await File.ReadAllTextAsync(CanaryRemovalLibrary());
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c9fe-guard-" + Guid.NewGuid().ToString("N")[..12])).FullName;
         try
         {
@@ -77,6 +77,8 @@ public sealed partial class LandGraphEvaluationTests
             await ProveGuardAsync(original, root, "parent", world => world.OutsideCanary, world => Path.Combine(world.OutsideCanary, "sentinel"));
             await ProveGuardAsync(original, root, "rebuilt", world => world.Canary + "/", world => Path.Combine(world.Canary, "sentinel"));
             await ProveGuardAsync(original, root, "repo-root", world => world.Repo, world => Path.Combine(world.Repo, "sentinel"), canaryIsRepo: true);
+            await ProveRepoSeparatorGuardAsync(original, root);
+            await ProveRepoDirectoryGuardAsync(original, root);
         }
         finally
         {
@@ -133,15 +135,14 @@ public sealed partial class LandGraphEvaluationTests
         var keptSentinel = sentinelPath(kept);
         Directory.CreateDirectory(Path.GetDirectoryName(keptSentinel)!);
         await File.WriteAllTextAsync(keptSentinel, "keep");
-        var real = await RemoveRecordedCanaryAsync(
-            Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"), record(kept), kept.Repo);
+        var real = await RemoveRecordedCanaryAsync(CanaryRemovalLibrary(), record(kept), kept.Repo);
         real.ExitCode.ShouldBe(0, guard + " real: " + real.Text);
         File.Exists(keptSentinel).ShouldBeTrue(guard + " real sentinel");
 
         var dropped = DisableGuard(original, guard);
         var copyDir = Path.Combine(root, "scripts-" + guard);
         Directory.CreateDirectory(copyDir);
-        var copy = Path.Combine(copyDir, "audit-land-verification-graph.ps1");
+        var copy = Path.Combine(copyDir, "land-graph-canary-removal.ps1");
         await File.WriteAllTextAsync(copy, dropped);
         var victim = CreateWorld(root, guard + "-mutated", canaryIsRepo: canaryIsRepo);
         var victimSentinel = sentinelPath(victim);
@@ -217,7 +218,99 @@ public sealed partial class LandGraphEvaluationTests
         }
     }
 
-    private static async Task<ToolRun> RemoveRecordedCanaryAsync(string script, string recorded, string repo)
+    private static string CanaryRemovalLibrary() =>
+        Path.Combine(RepoRoot(), "scripts", "lib", "land-graph-canary-removal.ps1");
+
+    private static async Task ProveRepoSeparatorGuardAsync(string original, string root)
+    {
+        var kept = await CreateInsideCanaryAsync(root, "sep-real");
+        var real = await RemoveRecordedCanaryAsync(CanaryRemovalLibrary(), kept.Canary, kept.Repo + "/");
+        real.ExitCode.ShouldBe(0, "separator real: " + real.Text);
+        File.Exists(kept.Sentinel).ShouldBeTrue("a trailing separator must not delete a canary inside the repository");
+
+        var copy = await WriteMutatedLibraryAsync(original, root, "repo-separator");
+        var victim = await CreateInsideCanaryAsync(root, "sep-mutated");
+        var mutated = await RemoveRecordedCanaryAsync(copy, victim.Canary, victim.Repo + "/");
+        mutated.ExitCode.ShouldBe(0, "separator mutated: " + mutated.Text);
+        File.Exists(victim.Sentinel).ShouldBeFalse("separator guard must be the only check stopping that delete");
+    }
+
+    private static async Task ProveRepoDirectoryGuardAsync(string original, string root)
+    {
+        var kept = await CreateSiblingCanaryAsync(root, "dir-real");
+        var real = await RemoveRecordedCanaryAsync(CanaryRemovalLibrary(), kept.Canary, kept.MissingRepo);
+        real.ExitCode.ShouldBe(0, "directory real: " + real.Text);
+        File.Exists(kept.Sentinel).ShouldBeTrue("a missing repository directory must not delete the canary");
+
+        var copy = await WriteMutatedLibraryAsync(original, root, "repo-directory");
+        var victim = await CreateSiblingCanaryAsync(root, "dir-mutated");
+        var mutated = await RemoveRecordedCanaryAsync(copy, victim.Canary, victim.MissingRepo);
+        mutated.ExitCode.ShouldBe(0, "directory mutated: " + mutated.Text);
+        File.Exists(victim.Sentinel).ShouldBeFalse("directory guard must be the only check stopping that delete");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task CanaryNamedFolderInsideTheRepositoryIsNeverDeleted()
+    {
+        var library = CanaryRemovalLibrary();
+        var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c9fe-inside-" + Guid.NewGuid().ToString("N")[..12])).FullName;
+        try
+        {
+            var inside = await CreateInsideCanaryAsync(root, "inside");
+            foreach (var repo in new[] { inside.Repo, inside.Repo + "/", inside.Repo + "\\" })
+            {
+                var run = await RemoveRecordedCanaryAsync(library, inside.Canary, repo);
+                run.ExitCode.ShouldBe(0, repo + ": " + run.Text);
+                File.Exists(inside.Sentinel).ShouldBeTrue(repo);
+            }
+
+            var sibling = await CreateSiblingCanaryAsync(root, "sibling");
+            var missing = await RemoveRecordedCanaryAsync(library, sibling.Canary, sibling.MissingRepo);
+            missing.ExitCode.ShouldBe(0, missing.Text);
+            File.Exists(sibling.Sentinel).ShouldBeTrue(sibling.MissingRepo);
+
+            var fileRepo = Path.Combine(Path.GetDirectoryName(sibling.Canary)!, "repo-file");
+            await File.WriteAllTextAsync(fileRepo, "not a directory");
+            var asFile = await RemoveRecordedCanaryAsync(library, sibling.Canary, fileRepo);
+            asFile.ExitCode.ShouldBe(0, asFile.Text);
+            File.Exists(sibling.Sentinel).ShouldBeTrue(fileRepo);
+            Directory.Exists(inside.Repo).ShouldBeTrue(inside.Repo);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) StartRefGit.DeleteDirectory(root);
+        }
+    }
+
+    private static async Task<InsideCanary> CreateInsideCanaryAsync(string root, string label)
+    {
+        var repo = Directory.CreateDirectory(Path.Combine(root, label, "repo")).FullName;
+        var canary = Directory.CreateDirectory(Path.Combine(repo, "antiphon-landgraph-canary-" + Guid.NewGuid().ToString("N"))).FullName;
+        var sentinel = Path.Combine(canary, "sentinel");
+        await File.WriteAllTextAsync(sentinel, "keep");
+        return new InsideCanary(repo, canary, sentinel);
+    }
+
+    private static async Task<SiblingCanary> CreateSiblingCanaryAsync(string root, string label)
+    {
+        var parent = Directory.CreateDirectory(Path.Combine(root, label)).FullName;
+        var canary = Directory.CreateDirectory(Path.Combine(parent, "antiphon-landgraph-canary-" + Guid.NewGuid().ToString("N"))).FullName;
+        var sentinel = Path.Combine(canary, "sentinel");
+        await File.WriteAllTextAsync(sentinel, "keep");
+        return new SiblingCanary(Path.Combine(parent, "missing-repo"), canary, sentinel);
+    }
+
+    private static async Task<string> WriteMutatedLibraryAsync(string original, string root, string guard)
+    {
+        var copyDir = Path.Combine(root, "lib-" + guard);
+        Directory.CreateDirectory(copyDir);
+        var copy = Path.Combine(copyDir, "land-graph-canary-removal.ps1");
+        await File.WriteAllTextAsync(copy, DisableGuard(original, guard));
+        return copy;
+    }
+
+    private static async Task<ToolRun> RemoveRecordedCanaryAsync(string library, string recorded, string repo)
     {
         var record = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-canary-record-" + Guid.NewGuid().ToString("N") + ".txt");
         await File.WriteAllTextAsync(record, recorded);
@@ -229,7 +322,14 @@ public sealed partial class LandGraphEvaluationTests
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-RemoveRecordedCanary", record, "-RemoveRecordedCanaryRepo", repo })
+            psi.Environment["CANARY_LIBRARY"] = library;
+            psi.Environment["CANARY_RECORD"] = record;
+            psi.Environment["CANARY_REPO"] = repo;
+            foreach (var arg in new[]
+                     {
+                         "-NoProfile", "-NonInteractive", "-Command",
+                         "$ErrorActionPreference = 'Stop'; . $env:CANARY_LIBRARY; Remove-RecordedCanary -RecordPath $env:CANARY_RECORD -RepositoryRoot $env:CANARY_REPO",
+                     })
                 psi.ArgumentList.Add(arg);
             using var process = Process.Start(psi)!;
             var text = await process.StandardOutput.ReadToEndAsync() + await process.StandardError.ReadToEndAsync();
@@ -241,6 +341,10 @@ public sealed partial class LandGraphEvaluationTests
             if (File.Exists(record)) File.Delete(record);
         }
     }
+
+    private readonly record struct InsideCanary(string Repo, string Canary, string Sentinel);
+
+    private readonly record struct SiblingCanary(string MissingRepo, string Canary, string Sentinel);
 
     private readonly record struct CanaryWorld(string Parent, string Repo, string Canary, string UpperCanary, string OutsideCanary);
 }
