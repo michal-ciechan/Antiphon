@@ -84,6 +84,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
     [Test]
     public async Task C488_DetachedFollowUpPublishesReviewedFix()
     {
+        using var witness = RealBuildSlotWitness.Install();
         await using var h = new LandingSafetyHarness();
         var recording = ConfigureRealVerifier(h);
         await h.InitializeAsync();
@@ -174,11 +175,13 @@ public sealed class AgentTaskLandSourceFreshnessTests
             new(h.Fixture.TaskId, op.Id, queued.RequestId, targetArtifacts), CancellationToken.None);
         targetCheck.Passed.ShouldBeTrue(targetCheck.Description);
         AssertFreshProbeReport(targetArtifacts);
+        witness.AssertScriptNotInvoked();
     }
 
     [Test]
     public async Task C494_DetachedFixVerifierFailurePreventsPublication()
     {
+        using var witness = RealBuildSlotWitness.Install();
         await using var h = new LandingSafetyHarness();
         var recording = ConfigureRealVerifier(h);
         await h.InitializeAsync();
@@ -237,6 +240,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(b);
         h.Fixture.Git.Trace.Any(command => command[0] == "push"
             && command[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal)).ShouldBeFalse();
+        witness.AssertScriptNotInvoked();
     }
 
     [Test]
@@ -1160,6 +1164,70 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op.LastReason.ShouldBe("source_remote_changed");
         new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
         h.Git.SourceRemoteRechecks.ShouldBe(recheck);
+    }
+
+    // The outer run already holds a host build slot. build-slot.ps1 on PATH exits 97 if invoked, and
+    // ANTIPHON_BUILD_SLOTS_URL is not a URI, so constructing the real runner gate fails immediately.
+    private sealed class RealBuildSlotWitness : IDisposable
+    {
+        private static readonly SemaphoreSlim Gate = new(1, 1);
+        private readonly string _root;
+        private readonly string _marker;
+        private readonly string? _path;
+        private readonly string? _slotsUrl;
+        private bool _disposed;
+
+        private RealBuildSlotWitness(string root, string marker, string? path, string? slotsUrl)
+        {
+            _root = root;
+            _marker = marker;
+            _path = path;
+            _slotsUrl = slotsUrl;
+        }
+
+        public static RealBuildSlotWitness Install()
+        {
+            Gate.Wait();
+            try
+            {
+                var root = Path.Combine(Path.GetTempPath(), "antiphon-real-slot-witness-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(root);
+                var marker = Path.Combine(root, "invoked.txt");
+                var script = Path.Combine(root, "build-slot.ps1");
+                File.WriteAllText(script,
+                    "#!/bin/sh\n" +
+                    "echo \"REAL build-slot.ps1 invoked: $*\" >&2\n" +
+                    "printf '%s\\n' \"$*\" >> '" + marker + "'\n" +
+                    "exit 97\n");
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                var previousPath = Environment.GetEnvironmentVariable("PATH");
+                var previousUrl = Environment.GetEnvironmentVariable("ANTIPHON_BUILD_SLOTS_URL");
+                Environment.SetEnvironmentVariable("PATH", root + Path.PathSeparator + previousPath);
+                Environment.SetEnvironmentVariable("ANTIPHON_BUILD_SLOTS_URL", "refuse-real-build-slot");
+                return new RealBuildSlotWitness(root, marker, previousPath, previousUrl);
+            }
+            catch
+            {
+                Gate.Release();
+                throw;
+            }
+        }
+
+        public void AssertScriptNotInvoked() =>
+            File.Exists(_marker).ShouldBeFalse("the real build-slot.ps1 must not run inside a slot-holding test");
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            Environment.SetEnvironmentVariable("PATH", _path);
+            Environment.SetEnvironmentVariable("ANTIPHON_BUILD_SLOTS_URL", _slotsUrl);
+            try { Directory.Delete(_root, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            Gate.Release();
+        }
     }
 
     private static RecordingRealVerifier ConfigureRealVerifier(LandingSafetyHarness h)
