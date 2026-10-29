@@ -1,5 +1,9 @@
 # Windows pty-host staging investigation
 
+Reproduced and repaired a native Windows publication denial. The forced native
+lock/release witness passed all 15 cycles, the affected class passed 14 tests
+(one Linux-only skip), and six consecutive split-46 cold starts passed.
+
 Task bf53504b starts at `5e9514d0253aad1ee3a14a5b2766fb39702bd824` on
 `feat/card-task-bf53504b`. Scope: the native Windows split-46 staging failure.
 The unrelated split-55 sibling-inspection timeout is outside this repair.
@@ -82,9 +86,94 @@ The destination-overwrite control passed in 0.110 seconds. Green build: 0 errors
 one pre-existing nullable warning. Fresh TRX, logs and SHA-256 hashes are under
 `.antiphon/task-bf53504b-evidence/green*`. Client install and rebuild also passed
 through the slot gate; npm audit advisories and the existing Vite chunk warning
-were not changed. E2E cold-start verification follows on the same product source.
+were not changed.
+
+## E2E cold-start results
+
+The E2E build and all six attempts used clean source
+`3a99d4acc6d4edeace80c7f40c40fd295eb78e4a` (only the investigation narrative
+changed after the native green source). The build passed with 0 errors and 39
+existing warnings in 4m 50.07s; its slot was held for 292s. Native environment:
+Windows 10.0.19045, win-x64, .NET 9.0.22, TUnit 1.44.0, MTP 2.2.2.
+
+Every attempt selected exactly
+`/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningWaitsForCaller`.
+The fixture checked its runner port was not 17204, used native FakeGrok, and
+owned its PostgreSQL container, runner and detached hosts. No staging denial
+occurred in these repetitions; no original unforced flake was observed here.
+
+| Attempt | Passed / failed / skipped | Test seconds | Wall seconds, including admission |
+|---|---|---:|---:|
+| e2e-01 | 1 / 0 / 0 | 134.619 | 142.224 |
+| e2e-02 | 1 / 0 / 0 | 144.423 | 152.329 |
+| e2e-03 | 1 / 0 / 0 | 130.757 | 137.942 |
+| e2e-04 | 1 / 0 / 0 | 144.675 | 853.166 |
+| e2e-05 | 1 / 0 / 0 | 181.100 | 196.675 |
+| e2e-06 | 1 / 0 / 0 | 155.467 | 233.829 |
+
+Total: **6 passed / 0 failed / 0 skipped**. The repetition batch ran from
+12:14:57 to 12:43:37 UTC (28m 40s). Its existing budget stopped further repetitions
+after the sixth finished, rather than starting another beyond the 26-minute
+admission cutoff. Attempt 4 waited 701s for a slot; attempt 6 waited 61s, initially
+behind the memory floor. A host sample during the fourth admission wait recorded
+100% CPU and 6464 MB free physical memory. One attempt to stop the still-believed
+queued fourth repetition refused its ownership precondition because the test
+child had already started; **that stop attempt stopped no process**, and the test passed.
+
+These are bounded flake diagnostics, not a full rc qualification or a measured
+p95. Phase recording was requested through the documented environment variables
+but this E2E build emitted no phase JSONL; fixture/IO phase totals therefore
+remain unknown. TRX durations, individual slot waits/holds and run wall times
+are retained. Neither production nor test timeouts were widened.
+
+## Evidence, cleanup and review limits
+
+Absolute evidence root:
+`C:\Antiphon\worktrees\card-task-bf53504b\.antiphon\task-bf53504b-evidence`.
+Each `e2e-01` through `e2e-06` directory contains a fresh `result.trx`; sibling
+logs retain its gated invocation. `e2e-runs.jsonl`, `e2e-results-summary.json`,
+source SHA/status files, build logs, platform/load records and build hashes
+preserve provenance. `red`, `red2` and `red3` preserve both invalid fixture probes
+and the valid product red; none is relabeled as passing.
+
+All nine recorded build-artifact SHA-256 hashes matched after verification.
+Tracked source remained clean throughout the E2E batch. Every foreground driver
+completed and released its slot. Cleanup found no worktree executable running,
+verified containment and absence of reparse points, and removed all 18 exact
+literal `bin-bf53504b` paths. Generated evidence remains ignored and uncommitted.
+The production runner was used only as the mandated build-slot broker; it and
+the canonical checkout were not restarted, reconfigured, or used for test sessions.
+Existing caller authority covered the repair and task-branch pushes; no further
+approval was requested. No tag, release publication, merge, rebase or force push occurred.
+
+The repair covers the reproduced native rename failure. Because the original
+runner-side stack and handle-owner evidence were deleted before this task,
+attribution of the historical failure to a scanner, another process, or the exact
+filesystem call remains unproved. It is not a claim that every access-denied
+staging failure has this cause. Persistent denial still fails with its original
+exception; unrelated errors are not retried and a competing destination is not
+overwritten. The split-55 sibling-inspection issue remains outside this repair.
+
+At the verified source, `merge-tree` is clean against RC base
+`cf1a124035f45857e3e2bf205ab9f8b05cf7a8e4`. Master
+`f8bddb6efda7b0e8f50f3b45744087e52188bc66` has 20 conflicts; their messages exactly
+match the c490e425 report's retained list. This is not master land approval.
+The evidence-history guard passed with zero violations and is rerun for the
+final report commit. Initial ordinary Review is still required.
+
+## Rerun
+
+Rebuild the client bundle before E2E if absent; every driver takes a slot.
+Use fresh result directories for both selections:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label staging-build -- dotnet build tests/Antiphon.PtyHost.Tests --property:OutputPath=bin-staging-review/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label staging-tests -- dotnet run --project tests/Antiphon.PtyHost.Tests --no-build --property:OutputPath=bin-staging-review/ -- --treenode-filter '/*/*/ShadowCopyStoreTests/*' --report-trx --report-trx-filename result.trx --results-directory .antiphon/staging-review-native
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label staging-e2e-build -- dotnet build tests/Antiphon.E2E --property:OutputPath=bin-staging-review/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label staging-e2e -- dotnet run --project tests/Antiphon.E2E --no-build --property:OutputPath=bin-staging-review/ -- --treenode-filter '/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningWaitsForCaller' --report-trx --report-trx-filename result.trx --results-directory .antiphon/staging-review-e2e
+```
 
 --- next stage ---
 next: review
-handoff: Review the final staging repair and native evidence; original handle-owner attribution remains limited by retained logs.
+handoff: Review the bounded Windows publication repair, valid native red, 15 forced green cycles, 14 passing affected tests and six passing cold-start E2E attempts. Original handle-owner attribution remains unresolved; master conflicts are unchanged.
 artifact: docs/investigations/2026-10-29-pty-host-staging-bf53504b.md
