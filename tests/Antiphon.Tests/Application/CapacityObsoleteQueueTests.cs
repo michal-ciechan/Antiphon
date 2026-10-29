@@ -77,6 +77,15 @@ public class CapacityObsoleteQueueTests
         }
 
         var competitor = await fx.SeedCompetitorAsync(selected.BlockedAt.AddMinutes(1));
+        // Due on the third 121s window, so the stall timeout does not expire the grant
+        // the assertion still expects to be held.
+        await using (var db = fx.Ctx())
+        {
+            var due = fx.Now.AddSeconds((121 * 2) + 30);
+            await db.CapacityRecoveryWaits.Where(w => w.Id == competitor.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(w => w.DueAt, due));
+        }
+
         await fx.Recovery.ReconcileAsync(CancellationToken.None);
         var cleaned = await fx.ReloadWaitAsync(wait.Id);
         cleaned.SelectedMessageId.ShouldBeNull();
@@ -280,6 +289,7 @@ public class CapacityObsoleteQueueTests
     {
         var parked = arm.StartsWith("parked", StringComparison.Ordinal);
         var scheduled = arm.EndsWith("scheduled", StringComparison.Ordinal);
+        var unselected = arm.StartsWith("unselected", StringComparison.Ordinal);
         await using var fx = await QueueFixture.OpenAsync(maxDeliveryAttempts: parked ? 1 : 3);
         await fx.SeedWallAsync();
         await fx.AdvanceCursorPastSessionAsync();
@@ -294,12 +304,16 @@ public class CapacityObsoleteQueueTests
 
         var beforeDrop = await fx.ReloadWaitAsync(wait.Id);
         beforeDrop.SelectedMessageId.ShouldBe(selected);
-        if (arm.StartsWith("unselected", StringComparison.Ordinal))
+        Guid? provenHeld = null;
+        if (unselected)
         {
             fx.Advance(TimeSpan.FromSeconds(121));
             await fx.Recovery.ReconcileAsync(CancellationToken.None);
             await fx.Queue.CancelAsync(fx.SessionId, selected, CancellationToken.None);
-            var follow = await fx.EnqueueHeldAsync(origin, "c1603-already-held");
+            // Default WhenIdle enqueue is what stamps the display hold. deliverIfIdle false
+            // never reaches ApplyCapacityHoldAsync.
+            var follow = await fx.EnqueueHeldAsync(origin, "c1603-already-held", deliverIfIdle: true);
+            provenHeld = follow;
             await using (var db = fx.Ctx())
             {
                 var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == follow);
@@ -307,6 +321,10 @@ public class CapacityObsoleteQueueTests
                 row.NoteHeader.ShouldBe("Held");
                 row.CapacityRecoveryActionKey.ShouldBeNull();
             }
+
+            // Drop is done and Y is held. Cleanup has to retire X before a later grant
+            // can admit Y; a canceled selection still blocks the provider.
+            await fx.Recovery.ReconcileAsync(CancellationToken.None);
         }
         else if (!parked)
         {
@@ -356,14 +374,29 @@ public class CapacityObsoleteQueueTests
             }
         }
 
-        var body = "c1603-deliver-" + arm;
-        var followUp = await fx.EnqueueHeldAsync(origin, body);
+        // The unselected arms already hold the row this delivery must use. A second
+        // body would sit behind it. A non-held Ui head, when present, takes the first
+        // flush; the selected Channel/Scheduled row goes on the next one.
+        string body;
+        Guid followUp;
+        if (provenHeld is Guid existing)
+        {
+            body = "c1603-already-held";
+            followUp = existing;
+        }
+        else
+        {
+            body = "c1603-deliver-" + arm;
+            followUp = await fx.EnqueueHeldAsync(origin, body);
+        }
+
         var ready = await fx.ReloadWaitAsync(wait.Id);
         if (ready.DueAt is { } due && due > fx.Now)
             fx.Advance(due - fx.Now + TimeSpan.FromSeconds(1));
         await fx.Recovery.GrantReadyAsync(CancellationToken.None);
         fx.Adapter.ThrowOnSend = null;
         fx.ShowEmptyComposer();
+        await fx.Queue.FlushIfIdleAsync(fx.SessionId, CancellationToken.None);
         await fx.Queue.FlushIfIdleAsync(fx.SessionId, CancellationToken.None);
         var delivered = await fx.ReloadWaitAsync(wait.Id);
         delivered.Id.ShouldBe(wait.Id);
@@ -571,6 +604,10 @@ public class CapacityObsoleteQueueTests
         public async Task<Guid> SupersedeScheduleSelectionAsync()
         {
             ShowEmptyComposer();
+            // The non-held Ui head must stay in front and fail, or the first scheduled
+            // copy is typed and is no longer the Pending selection.
+            Adapter.ThrowOnSend = new InvalidOperationException("c1603 delivery failed");
+            Adapter.PromptFailure = _ => new InvalidOperationException("c1603 delivery failed");
             await Queue.EnqueueAsync(SessionId, "ui head", MessageSendMode.WhenIdle, CancellationToken.None,
                 origin: QueuedMessageOrigin.Ui, deliverIfIdle: false);
             var scheduleId = await SeedScheduleAsync("c1603-schedule-original");
@@ -620,6 +657,8 @@ public class CapacityObsoleteQueueTests
             Adapter.ThrowOnSend = null;
             ShowEmptyComposer();
             await Recovery.GrantReadyAsync(CancellationToken.None);
+            // The failed Ui head is still in front of the retained scheduled row.
+            await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
             await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
             var after = await ReloadWaitAsync(waitId);
             after.Id.ShouldBe(waitId);
@@ -676,11 +715,12 @@ public class CapacityObsoleteQueueTests
             await db.SaveChangesAsync();
         }
 
-        public async Task<Guid> EnqueueHeldAsync(QueuedMessageOrigin origin, string body)
+        public async Task<Guid> EnqueueHeldAsync(
+            QueuedMessageOrigin origin, string body, bool deliverIfIdle = false)
         {
             var id = Guid.Empty;
             await Queue.EnqueueAsync(SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
-                origin: origin, conversationKey: "telegram:-1009", deliverIfIdle: false,
+                origin: origin, conversationKey: "telegram:-1009", deliverIfIdle: deliverIfIdle,
                 sourceScheduleId: origin == QueuedMessageOrigin.Scheduled ? Guid.NewGuid() : null,
                 onCreated: created => id = created);
             return id;
@@ -729,6 +769,12 @@ public class CapacityObsoleteQueueTests
             await using var db = Ctx();
             if (arm == "replacement-selection")
             {
+                // CapacityRecoveryActionKey is unique. Move the linkage off X before Y takes it.
+                var old = await db.SessionQueuedMessages.SingleAsync(m => m.Id == messageId, ct);
+                old.CapacityRecoveryActionKey = null;
+                old.CapacityWaitId = null;
+                old.CapacityWaitVersion = null;
+                await db.SaveChangesAsync(ct);
                 var replacement = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-replacement");
                 var wait = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == waitId, ct);
                 wait.SelectedMessageId = replacement;
@@ -1047,10 +1093,25 @@ public class CapacityObsoleteQueueTests
 
         public async Task AssertFutureHeldGuardAsync()
         {
+            // Seeded guard. This fixture's delivery cap is 1, so a failed flush would park
+            // the selection. HoldUntil is applied directly because enqueue is the only
+            // production writer and it cannot select the row in the same insert.
             await SeedWallAsync();
             var wait = await EnsureLiveWaitAsync();
+            var selected = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-selected-future");
             await Recovery.GrantReadyAsync(CancellationToken.None);
-            var selected = await SelectByFailedDeliveryAsync(leadingUi: false);
+            var granted = await ReloadWaitAsync(wait.Id);
+            await using (var db = Ctx())
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == selected);
+                row.CapacityWaitId = wait.Id;
+                row.CapacityRecoveryActionKey = granted.ActionKey;
+                row.CapacityWaitVersion = granted.Version;
+                var current = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+                current.SelectedMessageId = selected;
+                await db.SaveChangesAsync();
+            }
+
             Adapter.ThrowOnSend = null;
             var held = await EnqueueHeldAsync(QueuedMessageOrigin.Channel, "c1603-future");
             var until = Now.AddHours(2);
