@@ -79,6 +79,9 @@ public sealed class CustodyHelperContractTests
 
         Rules(text).Count(line => line.Contains("NOPASSWD", StringComparison.Ordinal)).ShouldBe(1);
         Rules(text).ShouldContain("Defaults:#1654 env_reset");
+        Rules(text).ShouldContain("Defaults:#1654 !use_pty");
+        Rules(text).ShouldContain("Defaults:#1654 !pam_session");
+        Rules(text).ShouldContain("Defaults:#1654 !pam_setcred");
 
         // No path outside the two helpers may appear in an effective line, and no rule may
         // grant every command or target a user other than uid 1654.
@@ -190,8 +193,11 @@ public sealed class CustodyHelperContractTests
         stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter");
         stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill");
         stage.ShouldContain("COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody");
+        stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-common.sh /usr/local/lib/antiphon-custody-common.sh");
         stage.ShouldContain("chown 0:0 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill");
         stage.ShouldContain("chmod 0755 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill");
+        stage.ShouldContain("chown 0:0 /usr/local/lib/antiphon-custody-common.sh");
+        stage.ShouldContain("chmod 0444 /usr/local/lib/antiphon-custody-common.sh");
         stage.ShouldContain("chmod 0440 /etc/sudoers.d/antiphon-custody");
         stage.ShouldContain("visudo -c");
         stage.ShouldContain("setpriv --help | grep -F -- '--no-new-privs'");

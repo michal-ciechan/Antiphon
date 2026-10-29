@@ -245,6 +245,7 @@ COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiph
 # targets must never carry them, which is what Default_runtime_excludes_custody_helpers guards.
 COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter
 COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill
+COPY docker/session-runner-grok/antiphon-custody-common.sh /usr/local/lib/antiphon-custody-common.sh
 COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody
 # V-28's four containment measurements, run in-image by the harness (CP-14) and by the
 # server2 custody-containment case (CP-15). It is a measurement, not a privilege: it runs as
@@ -253,6 +254,8 @@ COPY docker/session-runner-grok/custody-containment-probe.sh /usr/local/bin/anti
 RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && chown 0:0 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
  && chmod 0755 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
+ && chown 0:0 /usr/local/lib/antiphon-custody-common.sh \
+ && chmod 0444 /usr/local/lib/antiphon-custody-common.sh \
  && chmod 0755 /usr/local/bin/antiphon-custody-containment-probe \
  && chown 0:0 /etc/sudoers.d/antiphon-custody \
  && chmod 0440 /etc/sudoers.d/antiphon-custody \

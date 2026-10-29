@@ -7,6 +7,25 @@ custody_procs_populated() {
   [ -s "$procs" ]
 }
 
+# Seconds is a caller argument. Production passes 30. No environment override.
+custody_drain() {
+  local procs="${1:-}" seconds="${2:-}" waited=0
+  if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+    return 2
+  fi
+  while [ "$waited" -lt "$seconds" ]; do
+    if ! custody_procs_populated "$procs"; then
+      return 0
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  if custody_procs_populated "$procs"; then
+    return 1
+  fi
+  return 0
+}
+
 custody_namespace_boot() {
   local state="${1:-}"
   local run="${2:-}"

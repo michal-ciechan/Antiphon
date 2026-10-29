@@ -21,5 +21,8 @@ Defaults:#1654 env_reset
 # grant so `sudo -n antiphon-custody-enter ...` is a plain exec.
 Defaults:#1654 !use_pty
 Defaults:#1654 !pam_session
+# sudo 1.9.13p3 still forks a credential supervisor unless pam_setcred is off.
+# That supervisor is the pid Porta records, and it stays outside the cgroup.
+Defaults:#1654 !pam_setcred
 
 #1654 ALL=(root) NOPASSWD: /usr/local/bin/antiphon-custody-enter, /usr/local/bin/antiphon-custody-kill
