@@ -2785,8 +2785,11 @@ public sealed class RollingVolumeRecycleScriptTests
             File.Delete(dirtyFile);
 
             var bare = Path.Combine(root, "public-origin");
+            // reset --hard records the abandoned child in ORIG_HEAD. The audit
+            // reads that pseudoref, so drop it with the reflog files first.
             var publish = await C994ScriptProcess.Run("bash", "-c",
                 "if [ -d " + BashSingle(repo) + "/.git/logs ]; then find " + BashSingle(repo) + "/.git/logs -type f -delete; fi" +
+                " && rm -f -- " + BashSingle(Path.Combine(repo, ".git", "ORIG_HEAD")) +
                 " && git init -q --bare " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " remote set-url origin " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " push -q origin main");
