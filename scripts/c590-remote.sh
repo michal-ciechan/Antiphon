@@ -3236,7 +3236,10 @@ c849_fixture_launch() {
         spins=$((spins + 1))
         sleep 0.05
     done
-    if [[ "$identity" =~ ^[0-9a-f]{64}$ ]] && [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    # A path that appears while docker is running, including a link swapped in
+    # before the id is recorded, is still the metadata writer's refusal. Skipping
+    # it would report success and leave the link in place.
+    if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
         c849_fixture_write "$file" create printf '%s\n' "$identity" || {
             kill "$docker_pid" 2>/dev/null || true
             wait "$docker_pid" 2>/dev/null || true
@@ -3250,7 +3253,7 @@ c849_fixture_launch() {
     wait "$docker_pid" || code=$?
     if [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]] && c849_fixture_metadata_regular "$cid_dir/id"; then
         identity="$(cat -- "$cid_dir/id" 2>/dev/null || true)"
-        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]] && [ ! -e "$file" ] && [ ! -L "$file" ]; then
+        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
             c849_fixture_write "$file" create printf '%s\n' "$identity" || {
                 rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
                 return 2
