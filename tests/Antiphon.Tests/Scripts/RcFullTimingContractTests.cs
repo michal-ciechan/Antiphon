@@ -228,7 +228,7 @@ public sealed class RcFullTimingContractTests
             if (-not (Get-Command Publish-NightlyChunkObservation -ErrorAction SilentlyContinue)) {
                 throw 'production Publish-NightlyChunkObservation is missing'
             }
-            function New-OwnerRun([string]$childImage) {
+            function New-OwnerRun([string]$retainedImage) {
                 return [pscustomobject]@{
                     ExitCode = 0
                     RootStartedAtUtc = '2026-10-29T00:00:00.0000000Z'
@@ -247,11 +247,11 @@ public sealed class RcFullTimingContractTests
                         '44:2026-10-29T00:00:00.2000000Z',
                         '45:2026-10-29T00:00:00.3000000Z'
                     )
-                    DescendantImages = @('OwnedChild.exe', '', $childImage)
+                    DescendantImages = @($retainedImage, '', 'LiveName')
                     DescendantExitedAtUtc = @('2026-10-29T00:00:01.5000000Z', '', '')
                 }
             }
-            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'LiveName') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
+            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'OwnedChild.exe') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
             [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'Other.exe') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '2' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
             $timing = Join-Path $work 'timing'
             $firstPath = Join-Path $timing 'owner-antiphon-all-group-1-run-1-1.json'
@@ -262,11 +262,12 @@ public sealed class RcFullTimingContractTests
             $persisted = $true
             $exitedMatch = [regex]::Match($raw, '"rootExitedAtUtc"\s*:\s*"([^"]*)"')
             if ($exitedMatch.Success) { $exited = $exitedMatch.Groups[1].Value }
+            $startedMatch = [regex]::Match($raw, '"rootStartedAtUtc"\s*:\s*"([^"]*)"')
+            if ($startedMatch.Success) { $rootStarted = $startedMatch.Groups[1].Value }
             function Read-Text([object]$Obj, [string]$Name) {
                 if ($null -eq $Obj -or $Obj.PSObject.Properties.Name -notcontains $Name) { return '' }
                 return [string]$Obj.$Name
             }
-            $rootStarted = Read-Text $doc 'rootStartedAtUtc'
             $runId = Read-Text $doc 'runId'
             $attempt = Read-Text $doc 'attempt'
             if ($doc.PSObject.Properties.Name -contains 'jobEmpty') { $jobEmpty = [bool]$doc.jobEmpty }
@@ -497,7 +498,7 @@ public sealed class RcFullTimingContractTests
         $net8Admission = $true
         $desktopDiagnostic = $false
         $script:RcScopeSeen = $false
-        $scopeProbe = { $called = $true }
+        $scopeProbe = { $script:RcScopeSeen = $true }
         & $scopeProbe
         $loaderObservable = [bool]$script:RcScopeSeen
         $receiptWritten = $false
