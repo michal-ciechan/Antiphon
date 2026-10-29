@@ -1,0 +1,34 @@
+using System.Threading.Tasks;
+using TUnit.Core;
+
+namespace Antiphon.TestSupport
+{
+    public sealed class NativeLinuxOnlyAttribute : SkipAttribute
+    {
+        public NativeLinuxOnlyAttribute(string reason) : base(reason) { }
+
+        public override Task<bool> ShouldSkip(TestRegisteredContext context) => Task.FromResult(true);
+    }
+}
+
+public sealed class OtherSkipAttribute : SkipAttribute
+{
+    public OtherSkipAttribute(string reason) : base(reason) { }
+
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) => Task.FromResult(true);
+}
+
+public class LookHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("same full name")]
+    public void SameName() { }
+
+    [Test]
+    [Skip("ordinary")]
+    public void Ordinary() { }
+
+    [Test]
+    [OtherSkip("subclass")]
+    public void Subclass() { }
+}

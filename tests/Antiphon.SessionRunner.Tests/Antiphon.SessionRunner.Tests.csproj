@@ -25,6 +25,15 @@
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
+    <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Shared\NativeLinuxWindowsBaseline.json">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxWindowsBaseline.json</LogicalName>
+    </EmbeddedResource>
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestSupport\HerdrTestProcess.cs" />

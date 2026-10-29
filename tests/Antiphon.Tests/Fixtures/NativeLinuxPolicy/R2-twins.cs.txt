@@ -1,0 +1,45 @@
+using TUnit.Core;
+
+namespace One
+{
+    public class Twin
+    {
+        [Test]
+        [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: gated twin")]
+        public void Work() { }
+    }
+}
+
+namespace Two
+{
+    public class Twin
+    {
+        [Test]
+        public void Work() { }
+    }
+
+    public class twin
+    {
+        [Test]
+        public void work() { }
+    }
+}
+
+namespace Only
+{
+    public class Exact
+    {
+        [Test]
+        [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: exact")]
+        public void Run() { }
+    }
+}
+
+namespace Other
+{
+    public class Exact
+    {
+        [Test]
+        public void Run() { }
+    }
+}

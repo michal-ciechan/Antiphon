@@ -1,0 +1,8 @@
+using TUnit.Core;
+
+public class RealHost
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: real")]
+    public void Pass() { }
+}
