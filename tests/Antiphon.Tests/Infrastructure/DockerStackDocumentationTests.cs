@@ -153,6 +153,17 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("git clone --filter=blob:none --no-checkout");
         section.ShouldContain("RecycleGitAuditUnknown");
         section.ShouldContain("GithubTokenAbsent");
+        // CARD-1607: a private origin is proved on the desktop. The container still
+        // receives no credential. With no proof, the preview environment is unchanged.
+        section.ShouldContain("When no host proof is supplied, the preview passes that same environment and nothing further.", Case.Sensitive);
+        section.ShouldContain("No GitHub token, SSH agent, or git credential helper is passed.", Case.Sensitive);
+        section.ShouldContain("passes only ref names and object ids through a read-only bind", Case.Sensitive);
+        section.ShouldContain("No credential enters the container.", Case.Sensitive);
+        section.ShouldContain("Any other ls-remote failure stays a refusal.", Case.Sensitive);
+        section.ShouldContain("The proof is bound to operation id, operation start, repository path, and origin URL hash", Case.Sensitive);
+        section.ShouldContain("a missing, empty, unreadable, stale, or mismatched proof refuses `RecycleGitAuditUnknown`", Case.Sensitive);
+        section.ShouldContain("Apply asks the desktop again rather than reusing the preview proof.", Case.Sensitive);
+        section.ShouldContain("asks the desktop again for fresh proofs", Case.Sensitive);
         foreach (var volume in new[] { "work", "runner-tmp", "dind-data" })
             section.ShouldNotContain($"docker volume rm antiphon-runner_{volume}", Case.Sensitive,
                 "manual main-volume removal cannot precede redeploy-old");
