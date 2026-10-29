@@ -171,4 +171,68 @@ public sealed class GrokRulesHttpAcceptanceTests
             try { Directory.Delete(root, recursive: true); } catch (Exception) { }
         }
     }
+
+    // The rules payload above never enters the exception, so it cannot witness a command line
+    // that already contains the instructions. This one puts a 3000-char argv sentinel in the
+    // message the 500 detail is built from.
+    [Test, Timeout(60_000)]
+    public async Task Unmapped_launch_failure_redacts_a_long_argv_sentinel_and_omits_the_stack(CancellationToken ct)
+    {
+        const string marker = "GROK-RULES-ARGV-SENTINEL-2dec24ba";
+        var sentinel = marker + new string('Q', 3000 - marker.Length);
+        var padding = string.Join(' ', Enumerable.Repeat("pad", 200));
+        var message = $"Could not start terminal process grok --append-system-prompt {sentinel} --session-id keep-me {padding}";
+        var root = Path.Combine(Path.GetTempPath(), "c2dec24ba-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = root,
+                PtyHostSourceDir = Path.Combine(root, "missing-host"),
+                CpuWatchdogEnabled = false,
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        runtime.CreationEffectForTest = (_, _) => throw new InvalidOperationException(message);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Production" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton(runtime);
+        var app = builder.Build();
+        app.UseRunnerExceptionMapping();
+        app.MapSessionLaunchRoute();
+        await app.StartAsync(ct);
+        try
+        {
+            var address = app.Urls.Single();
+            var uri = new Uri(address);
+            uri.IsLoopback.ShouldBeTrue();
+            uri.Port.ShouldNotBe(17204);
+            using var http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(20) };
+            var request = new RunnerLaunchRequest(
+                Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), root, 80, 24,
+                TranscriptFormat: TranscriptFormats.Grok);
+            using var reply = await http.PostAsJsonAsync("/sessions", request, ct);
+            var text = await reply.Content.ReadAsStringAsync(ct);
+            reply.StatusCode.ShouldBe(HttpStatusCode.InternalServerError, $"launch-response-body:{text}");
+            using var json = JsonDocument.Parse(text);
+            var detail = json.RootElement.GetProperty("detail").GetString();
+            detail.ShouldNotBeNull();
+            detail.Length.ShouldBe(512);
+            detail.ShouldEndWith("…");
+            detail.ShouldContain("<redacted 3000 chars>");
+            detail.ShouldContain("--append-system-prompt");
+            detail.ShouldContain("keep-me");
+            json.RootElement.GetProperty("type").GetString().ShouldBe("runner_unhandled_exception");
+            json.RootElement.GetProperty("title").GetString().ShouldBe(typeof(InvalidOperationException).FullName);
+            text.ShouldNotContain(marker);
+            text.ShouldNotContain(sentinel);
+            text.ShouldNotContain("   at ");
+        }
+        finally
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+            try { Directory.Delete(root, recursive: true); } catch (Exception) { }
+        }
+    }
 }

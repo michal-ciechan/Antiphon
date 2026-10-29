@@ -1,5 +1,9 @@
 ﻿using System.Collections.Concurrent;
 using System.Data.Common;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -8,14 +12,20 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Infrastructure.Resilience;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Shouldly;
@@ -2576,6 +2586,125 @@ public class AgentSessionLaunchFailureTests
         {
             startGate.TrySetResult(); readyGate.TrySetResult(true);
             try { await launch; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
+    public async Task Runner_500_longer_than_both_text_columns_still_records_a_failed_session()
+    {
+        var message = "Session runner returned 500: " + new string('M', 4500);
+        message.Length.ShouldBeGreaterThan(4000);
+
+        var interactive = new FakeAgentProtocolAdapter { ThrowOnStart = new HttpRequestException(message) };
+        await using (var fixture = await LaunchFixture.CreateAsync(interactive))
+        {
+            await Should.ThrowAsync<HttpRequestException>(fixture.LaunchInteractiveAsync());
+            await using var db = LaunchFixture.CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.Length.ShouldBe(2000);
+            session.FailureReason.ShouldEndWith("…");
+            session.FailureReason.ShouldStartWith("Session runner returned 500:");
+            (await db.Agents.SingleAsync(a => a.Id == fixture.AgentId)).Status.ShouldBe(AgentStatus.Failed);
+        }
+
+        var cardAdapter = new FakeAgentProtocolAdapter { ThrowOnStart = new HttpRequestException(message) };
+        await using var cardFixture = await LaunchFixture.CreateAsync(cardAdapter);
+        var cardId = await cardFixture.CreateCardAsync();
+        await Should.ThrowAsync<HttpRequestException>(cardFixture.StartCardSessionAsync(cardId, "boot-must-not-be-sent"));
+        await using var cardDb = LaunchFixture.CreateContext();
+        var cardSession = await cardDb.AgentSessions.SingleAsync(s => s.CardId == cardId);
+        cardSession.Status.ShouldBe(SessionStatus.Failed);
+        cardSession.FailureReason.ShouldNotBeNull();
+        cardSession.FailureReason.Length.ShouldBe(2000);
+        cardSession.FailureReason.ShouldEndWith("…");
+        var attempt = await cardDb.RunAttempts.SingleAsync(a => a.CardId == cardId);
+        attempt.Phase.ShouldBe(RunPhase.Failed);
+        attempt.ErrorDetails.ShouldNotBeNull();
+        attempt.ErrorDetails.Length.ShouldBe(4000);
+        attempt.ErrorDetails.ShouldEndWith("…");
+        attempt.ErrorDetails.ShouldStartWith("Session runner returned 500:");
+    }
+
+    [Test]
+    public async Task Runner_500_argv_sentinel_is_absent_from_the_body_the_failure_reason_and_the_server_log(CancellationToken ct)
+    {
+        const string marker = "GROK-RULES-ARGV-SENTINEL-2dec24ba";
+        var sentinel = marker + new string('Q', 3000 - marker.Length);
+        var message = $"Could not start terminal process grok --append-system-prompt {sentinel} --session-id keep-me";
+        var body = await PostUnmappedLaunchAsync(message, ct);
+        body.ShouldNotContain(marker);
+        body.ShouldNotContain(sentinel);
+        using var json = JsonDocument.Parse(body);
+        var detail = json.RootElement.GetProperty("detail").GetString();
+        detail.ShouldNotBeNull();
+        detail.ShouldContain("<redacted 3000 chars>");
+        detail.Length.ShouldBeLessThanOrEqualTo(512);
+
+        var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/problem+json"),
+        };
+        var launchError = await Should.ThrowAsync<HttpRequestException>(
+            () => SessionRunnerHttpClient.ThrowForRunnerProblemAsync(response, CancellationToken.None));
+        launchError.Message.ShouldNotContain(marker);
+
+        var logs = new CollectingLoggerProvider();
+        var adapter = new FakeAgentProtocolAdapter { ThrowOnStart = launchError };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, services =>
+            services.AddLogging(builder => builder.AddProvider(logs)));
+        await Should.ThrowAsync<HttpRequestException>(fixture.LaunchInteractiveAsync());
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldNotContain(marker);
+        session.FailureReason.ShouldNotContain(sentinel);
+        session.FailureReason.ShouldContain("<redacted 3000 chars>");
+        var recorded = string.Join('\n', logs.Lines);
+        recorded.ShouldContain("Failed to start interactive agent session");
+        recorded.ShouldNotContain(marker);
+        recorded.ShouldNotContain(sentinel);
+    }
+
+    private static async Task<string> PostUnmappedLaunchAsync(string message, CancellationToken ct)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c2dec24ba-srv-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
+            {
+                SessionLogPath = root,
+                PtyHostSourceDir = Path.Combine(root, "missing-host"),
+                CpuWatchdogEnabled = false,
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        runtime.CreationEffectForTest = (_, _) => throw new InvalidOperationException(message);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Production" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton(runtime);
+        var app = builder.Build();
+        app.UseRunnerExceptionMapping();
+        app.MapSessionLaunchRoute();
+        await app.StartAsync(ct);
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()), Timeout = TimeSpan.FromSeconds(20) };
+            using var reply = await http.PostAsJsonAsync("/sessions", new RunnerLaunchRequest(
+                Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), root, 80, 24,
+                TranscriptFormat: TranscriptFormats.Grok), ct);
+            var text = await reply.Content.ReadAsStringAsync(ct);
+            reply.StatusCode.ShouldBe(HttpStatusCode.InternalServerError, $"launch-response-body:{text}");
+            return text;
+        }
+        finally
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+            try { Directory.Delete(root, recursive: true); } catch (Exception) { }
         }
     }
 
