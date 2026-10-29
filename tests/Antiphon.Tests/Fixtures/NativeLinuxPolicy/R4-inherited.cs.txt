@@ -40,3 +40,33 @@ public class Derived : BaseTests
 public class MarkedDerived : BaseTests
 {
 }
+
+public abstract class HideBase
+{
+    [Test]
+    public void Hidden() { }
+}
+
+[InheritsTests]
+public class HideDerived : HideBase
+{
+    public new void Hidden() { }
+
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: own")]
+    public void Own() { }
+}
+
+public abstract class NewTestBase
+{
+    [Test]
+    public void Hidden() { }
+}
+
+[InheritsTests]
+public class NewTestDerived : NewTestBase
+{
+    [Test]
+    [Antiphon.TestSupport.NativeLinuxOnly("Linux-only by construction: new test")]
+    public new void Hidden() { }
+}
