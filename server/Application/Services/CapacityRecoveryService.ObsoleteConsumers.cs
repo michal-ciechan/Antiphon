@@ -4,7 +4,6 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
@@ -712,18 +711,13 @@ public sealed partial class CapacityRecoveryService
 
     private static async Task<bool> TryTakeProviderLockAsync(AppDbContext db, AgentKind kind, CancellationToken ct)
     {
-        var connection = db.Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open)
-            await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        command.CommandText = "SELECT pg_try_advisory_xact_lock(hashtext(@key))";
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = "key";
-        parameter.Value = $"antiphon.capacity.kind.{kind}";
-        command.Parameters.Add(parameter);
-        var acquired = await command.ExecuteScalarAsync(ct);
-        return acquired is bool held && held;
+        // Stay on the EF transaction so a busy provider rolls back with the detach, and so
+        // command interceptors observe the same try-lock the admission path uses.
+        var key = $"antiphon.capacity.kind.{kind}";
+        var acquired = await db.Database
+            .SqlQueryRaw<bool>("""SELECT pg_try_advisory_xact_lock(hashtext({0})) AS "Value" """, key)
+            .ToListAsync(ct);
+        return acquired.Count == 1 && acquired[0];
     }
 
     private static Task<bool> TryLockMessageNoWaitAsync(AppDbContext db, Guid messageId, CancellationToken ct) =>
