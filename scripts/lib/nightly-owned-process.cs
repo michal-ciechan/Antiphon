@@ -54,6 +54,11 @@ namespace Antiphon.Nightly
         public double CleanupMilliseconds { get; set; }
         public double DrainMilliseconds { get; set; }
         public string Error { get; set; } = "";
+        public string RootExitedAtUtc { get; set; } = "";
+        public string[] DescendantImages { get; set; } = Array.Empty<string>();
+        public string[] DescendantExitedAtUtc { get; set; } = Array.Empty<string>();
+        public int[] MissedDescendantPids { get; set; } = Array.Empty<int>();
+        public bool JobEmptyObserved { get; set; }
     }
 
     public sealed class NativeProcessOwner
@@ -62,6 +67,7 @@ namespace Antiphon.Nightly
         private readonly CancellationTokenSource _drainCancellation = new CancellationTokenSource();
         private readonly NativeProcessHooks _hooks;
         private readonly Dictionary<int, Process> _descendants = new Dictionary<int, Process>();
+        private readonly List<int> _missedDescendants = new List<int>();
         public NativeProcessResult Observation { get; } = new NativeProcessResult();
         // Live OS handle for an independent fixture observer, never part of a receipt.
         public IntPtr JobHandle { get; private set; }
@@ -264,6 +270,7 @@ namespace Antiphon.Nightly
                 if (logWrite != null) try { logWrite.GetAwaiter().GetResult(); } catch { }
                 if (drain != null) Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
                 _drainCancellation.Dispose();
+                StampOwnerObservation(root);
                 Observation.DescendantIdentities = _descendants.Values.Select(p => p.Id + ":" + p.StartTime.ToUniversalTime().ToString("O")).ToArray();
                 foreach (var p in _descendants.Values) p.Dispose();
                 Close(ref job); Close(ref root); Close(ref thread);
@@ -320,6 +327,52 @@ namespace Antiphon.Nightly
             });
             return reader;
         }
+        private void RecordMissed(int pid)
+        {
+            if (!_missedDescendants.Contains(pid)) _missedDescendants.Add(pid);
+        }
+
+        private void StampOwnerObservation(IntPtr root)
+        {
+            Observation.MissedDescendantPids = _missedDescendants.ToArray();
+            Observation.JobEmptyObserved = Observation.RemainingProcessCount == 0;
+            if (root != IntPtr.Zero)
+            {
+                try
+                {
+                    if (RootExited(root))
+                    {
+                        long creation, exitFile, kernel, user;
+                        if (GetProcessTimes(root, out creation, out exitFile, out kernel, out user) && exitFile > 0)
+                            Observation.RootExitedAtUtc = DateTime.FromFileTimeUtc(exitFile).ToString("o");
+                    }
+                }
+                catch (Exception) { }
+            }
+            var images = new List<string>();
+            var exitStamps = new List<string>();
+            foreach (var process in _descendants.Values)
+            {
+                string image = "";
+                string exitStamp = "";
+                try
+                {
+                    try { image = process.ProcessName; } catch (Exception) { image = ""; }
+                    if (process.HasExited)
+                    {
+                        try { exitStamp = process.ExitTime.ToUniversalTime().ToString("o"); } catch (Exception) { exitStamp = ""; }
+                    }
+                }
+                catch (Exception) { }
+                if (image == null) image = "";
+                if (exitStamp == null) exitStamp = "";
+                images.Add(image);
+                exitStamps.Add(exitStamp);
+            }
+            Observation.DescendantImages = images.ToArray();
+            Observation.DescendantExitedAtUtc = exitStamps.ToArray();
+        }
+
         private void CaptureDescendants(IntPtr job)
         {
             // Job process-list query: grow rather than truncate the observed roster.
@@ -338,8 +391,8 @@ namespace Antiphon.Nightly
                         int pid = (int)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size);
                         if (pid == Observation.Pid || _descendants.ContainsKey(pid)) continue;
                         try { var p = Process.GetProcessById(pid); _ = p.Handle; _ = p.StartTime; _descendants.Add(pid, p); }
-                        catch (ArgumentException) { /* exited between the two independent OS reads */ }
-                        catch (InvalidOperationException) { /* exited */ }
+                        catch (ArgumentException) { RecordMissed(pid); }
+                        catch (InvalidOperationException) { RecordMissed(pid); }
                     }
                     return;
                 }
@@ -388,6 +441,7 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool TerminateProcess(IntPtr process, uint code);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
         [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     }
 }
