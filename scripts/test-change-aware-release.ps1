@@ -49,10 +49,14 @@ function New-Fx {
     foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
         if ($path -and -not (Test-Path (Join-Path $seed $path))) { Write-Fx $seed $path 'fixture source' }
     }
-    # Preserve every tracked project, including child probes outside tests/.
-    # The production census still decides which projects require a disposition.
+    # Preserve the complete production test-project census, including probes outside tests/.
+    # This authority fixture does not need unrelated production project graphs: each
+    # request otherwise shells out to Git for all of them at both committed revisions.
     foreach ($path in (Git-Fx $repoRoot @('ls-files','*.csproj')).Split("`n")) {
-        Write-Fx $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
+        $projectText = [IO.File]::ReadAllText((Join-Path $repoRoot $path))
+        if ($projectText -match '(?is)<IsTestProject>\s*true\s*</IsTestProject>') {
+            Write-Fx $seed $path $projectText
+        }
     }
     # Committed differing wrapper bytes force the real self-reexec edge. These tiny
     # repositories track their ownership marker so checkout cleanup can be exercised.
