@@ -8,6 +8,8 @@ The scan includes all tracked C# under tests and test-*.ps1 under scripts, looki
 
 The only admitted candidate closure is C1514LandingSplitBudgetTests -> ScriptHarness.RunHarnessCaseAsync -> ScriptHarnessProcess/Options -> test-nightly-tests.ps1 exact C1404/C1410 case -> nightly planner/coverage helpers. Each child owns a GUID ResultsDirectory. Retain the existing cancellation/cleanup deadlines and prevent shared policy-file writes; the tests read frozen costs/policy. All fixtures remain invocation-local. Code must retain this closure in the diagnostic manifest and reject drift. The two cases test synthetic planning; their speed result cannot represent DB, ConPTY, telemetry or the 30 s wait band.
 
+S1 round 3 defers A4 host sampling. That deferral does not change this trial roster or the 1653-path table. Line numbers stay frozen to the source named above.
+
 Round-2 inventory (historical): 478 strict-limiter files; 1539 files with the original timing/wait markers; 1616 listed paths. Round-3 supplement at `6e3282ea12f8eb4386caaca060c03e52a2622a69`: **1653 distinct paths**, adding the three embedded real-sleep/poll files and 34 previously unlisted GitProcessSpawnLimit files. All **111** tracked C# files matching `ParallelLimiter<GitProcessSpawnLimit>` (including classification-test fixture text) are now listed; 77 were already present through timing markers. This does not add any candidate UID or change any limiter. The original marker count is retained as historical, not claimed to be a rerun of its heuristic. Line numbers refer to the frozen source above.
 
 | Source path (all tests unless explicitly named) | Lane | Timing/wait candidate lines | Protection |
