@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 /// and a row the runner never received stays failed with the shutdown's task event.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<PhoneHomeRestartResumeLoadLimit>]
 public class PhoneHomeRestartResumeTests
 {
     [Test]
@@ -36,13 +37,26 @@ public class PhoneHomeRestartResumeTests
             directory: world.Host.Directory);
 
         await service.ScanAsync(CancellationToken.None);
-        await queue.WaitForIdleAsync(TimeSpan.FromSeconds(3), CancellationToken.None);
+        await WaitForRestartIdleAsync(queue);
 
         var session = await world.ReadSessionAsync();
         session.Status.ShouldBe(SessionStatus.Running);
         world.Peer.RequestCount(PhoneHomeOperation.Get).ShouldBeGreaterThanOrEqualTo(1);
         world.Peer.Launches.Count.ShouldBe(0);
         world.Peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+    }
+
+    private static Task WaitForRestartIdleAsync(AgentSessionLaunchQueue queue)
+    {
+        // The queue timeout follows this clock. Leaving it unadvanced keeps a launch
+        // that is still running off the inner budget. The wall cap fails one that never idles.
+        var logical = new FakeTimeProvider();
+        return LoadTimeoutWait.UntilSignaledAsync(
+            ct => queue.WaitForIdleAsync(TimeSpan.FromDays(1), ct, logical),
+            clock: null,
+            budget: null,
+            wallCap: LoadTimeoutBounds.RestartScanIdleWait,
+            label: "restart scan idle");
     }
 
     [Test]

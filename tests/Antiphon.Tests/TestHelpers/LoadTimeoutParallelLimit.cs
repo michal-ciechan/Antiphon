@@ -71,3 +71,12 @@ public sealed class SpecialistQualificationLoadLimit : IParallelLimit
 {
     public int Limit => 4;
 }
+
+/// <summary>
+/// Width-4 cap for <c>PhoneHomeRestartResumeTests</c>. Each row starts a Kestrel
+/// phone-home host. Two rows: ceil(2/4)*8s = 8s.
+/// </summary>
+public sealed class PhoneHomeRestartResumeLoadLimit : IParallelLimit
+{
+    public int Limit => 4;
+}
