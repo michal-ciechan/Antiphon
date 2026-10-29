@@ -13,6 +13,14 @@
 # ASCII only. Never prints a secret, an argument vector or an environment value.
 set -euo pipefail
 
+# Fixed install. Not a sudo command and not overridable by the caller.
+if [ ! -r /usr/local/lib/antiphon-custody-common.sh ]; then
+  echo "C604_CUSTODY_REFUSED CustodyLibraryMissing" >&2
+  exit 3
+fi
+# shellcheck disable=SC1091
+source /usr/local/lib/antiphon-custody-common.sh
+
 CUSTODY_ROOT=antiphon-custody
 APP_UID=1654
 APP_GID=1654
@@ -54,7 +62,8 @@ is_v2() {
 # Creates the execution's tree if it is absent and returns once it exists and is empty. The
 # custody root is root-owned 0755 so uid 1654 can never do this for itself.
 prepare_tree_v2() {
-  local id="$1" dir="$V2_ROOT/$id"
+  local id="$1"
+  local dir="$V2_ROOT/$id"
   require_under_root "$dir" "$V2_ROOT"
   mkdir -p "$dir"
   chmod 0755 "$dir"
@@ -64,7 +73,7 @@ prepare_tree_v2() {
   if [ ! -f "$dir/tree/cgroup.procs" ]; then
     refuse CustodyTreeUnavailable
   fi
-  if [ -s "$dir/tree/cgroup.procs" ]; then
+  if custody_procs_populated "$dir/tree/cgroup.procs"; then
     refuse CustodyTreeNotEmpty
   fi
 }
@@ -79,7 +88,7 @@ prepare_tree_v1() {
     if [ ! -f "$dir/tree/cgroup.procs" ]; then
       refuse CustodyTreeUnavailable
     fi
-    if [ -s "$dir/tree/cgroup.procs" ]; then
+    if custody_procs_populated "$dir/tree/cgroup.procs"; then
       refuse CustodyTreeNotEmpty
     fi
   done
