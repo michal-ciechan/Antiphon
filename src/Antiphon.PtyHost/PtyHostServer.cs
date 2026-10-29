@@ -127,15 +127,10 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
                     if (await DispatchAsync(message, outbound.Writer, connectionCts.Token))
                         return;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
                 {
                     // A bad command must not cost the runner its connection to a live session.
-                    // InvalidOperationException and ArgumentException keep their message. Other
-                    // faults are named so the runner can report them instead of a dropped pipe.
-                    var detail = ex is InvalidOperationException or ArgumentException
-                        ? ex.Message
-                        : ex.GetType().Name + ": " + ex.Message;
-                    outbound.Writer.TryWrite(new ErrorMessage("commandFailed", detail));
+                    outbound.Writer.TryWrite(new ErrorMessage("commandFailed", ex.Message));
                 }
             }
         }

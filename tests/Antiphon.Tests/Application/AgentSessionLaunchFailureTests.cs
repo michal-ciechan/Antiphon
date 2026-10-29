@@ -20,6 +20,7 @@ using Antiphon.Tests.Infrastructure.Resilience;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;

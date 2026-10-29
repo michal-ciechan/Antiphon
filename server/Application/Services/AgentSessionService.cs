@@ -333,14 +333,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             if (adapter is not null)
                 await KillAndDisposeAsync(adapter);
 
-            attempt.ErrorDetails = ex.Message;
+            attempt.ErrorDetails = ColumnText.Clip(ex.Message, 4000);
             if (!RunAttemptStateMachine.IsTerminal(attempt.Phase))
                 RunAttemptStateMachine.Transition(attempt, RunPhase.Failed, UtcNow());
 
             if (session is not null)
             {
                 session.Status = SessionStatus.Failed;
-                session.FailureReason = ex.Message;
+                session.FailureReason = ColumnText.Clip(ex.Message, 2000);
                 session.EndedAt = UtcNow();
                 // CARD-0056: teardown already ran (KillAndDisposeAsync above). Stamp after the kill
                 // on this catch because that order outranks the CARD-0256 stamp-before-kill rule;
@@ -440,7 +440,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             else
             {
                 session.Status = stoppedCheck ? SessionStatus.Stopped : SessionStatus.Failed;
-                session.FailureReason = ex.Message;
+                session.FailureReason = ColumnText.Clip(ex.Message, 2000);
                 session.EndedAt = UtcNow();
                 session.LastSeenAt = session.EndedAt.Value;
                 // R5 repair: the runner ran this generation and it exited on its own; record that exit
