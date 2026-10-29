@@ -8876,10 +8876,19 @@ public sealed class RemoteScriptContractTests
         var elapsed = Stopwatch.StartNew();
         process.StandardInput.Write(input);
         process.StandardInput.Close();
-        if (!process.WaitForExit(60_000))
+        // cleanup-probe consumer is fourteen full fixture runs and does not sleep.
+        // Idle Linux 2026-10-29: script wall 29.4s (finalize 16.9s, workspace
+        // init 4.3s), then 57.0s on the same host once it was busy. Loaded
+        // server2 passed the test at 58.7s and this wait killed it at 60s.
+        // 120s is twice that 58.7s observation (provisional; the samples are
+        // those three timings). Windows starts this bash through wsl.exe, so
+        // its cap is 180s: 120s plus a provisional minute for WSL startup,
+        // which this host cannot measure.
+        var budgetMs = OperatingSystem.IsWindows() ? 180_000 : 120_000;
+        if (!process.WaitForExit(budgetMs))
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException("the Linux shell harness did not finish in 60s");
+            throw new TimeoutException($"the Linux shell harness did not finish in {budgetMs / 1000}s");
         }
 
         process.WaitForExit();
