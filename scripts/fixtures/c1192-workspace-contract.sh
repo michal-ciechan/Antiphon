@@ -507,6 +507,9 @@ simulate_restore() {
     project="${PARSED_CMD[$((n - 1))]}"
     data=$(volume_data_for_target /fixture) || return 97
     if [ "$driver" = offline.sh ]; then
+        if [ "${C1192_FAULT:-}" = offline-slot-timeout ]; then
+            return 4
+        fi
         plant_restored_package || return 97
         return 0
     fi
@@ -1326,11 +1329,17 @@ docker() {
                     *) name="$1"; shift ;;
                 esac
             done
+            local requested="$name" candidate
+            if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+                for candidate in "$C1192_ROOT/containers"/*; do
+                    [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+                done
+            fi
             if [ -z "$name" ] || [ ! -d "$C1192_ROOT/containers/$name" ]; then
                 return 1
             fi
             : > "$C1192_ROOT/killed-$name"
-            order_log "kill $name"
+            order_log "kill $requested"
             return 0
             ;;
         *) printf 'UNEXPECTED-DOCKER %s\n' "$1" >> "$C1192_ROOT/scenario.err"; return 97 ;;
@@ -4035,10 +4044,28 @@ mode_slot_timeout() {
 # Same shell as the probes. A live wait is recorded and does not block, so the
 # base hang is a fact instead of a 25-minute stall. Facts are emitted, then the
 # probes are stopped. The harness still exits 0 so the assertion is the failure.
+# 1 only when each fixture volume existed before finalization and a volume rm
+# removed it. Absence alone is not removal: a volume that was never created
+# used to leave this fact at 1.
+c1192_volumes_removed() {
+    local name ok=1
+    for name in "c849${RUN}race-packages" "c849${RUN}race-scratch" "$WORK"; do
+        volume_exists "$name" && ok=0
+        grep -Fxq "volume $name" "$C1192_ROOT/order" || ok=0
+    done
+    [ "$ok" = 1 ] && [ "${1:-0}" = 1 ]
+}
+
 c1192_slot_refusal_finish() {
     trap - EXIT
+    local present=0
+    if volume_exists "c849${RUN}race-packages" \
+        && volume_exists "c849${RUN}race-scratch" \
+        && volume_exists "$WORK"; then
+        present=1
+    fi
     c849_fixture_finalize || true
-    local waited=0 removed=1 released=0 signal=0 volumes=1
+    local waited=0 removed=1 released=0 volumes=0
     if [ -f "$C1192_ROOT/waits" ] && grep -q WAITED_LIVE "$C1192_ROOT/waits"; then
         waited=1
     fi
@@ -4049,16 +4076,12 @@ c1192_slot_refusal_finish() {
         && grep -q '11111111-1111-1111-1111-111111111111' "$C1192_ROOT/curls"; then
         released=1
     fi
-    if declare -f c849_fixture | grep -q 'c849_fixture_on_signal'; then
-        signal=1
+    if c1192_volumes_removed "$present"; then
+        volumes=1
     fi
-    volume_exists "c849${RUN}race-packages" && volumes=0
-    volume_exists "c849${RUN}race-scratch" && volumes=0
-    volume_exists "$WORK" && volumes=0
     emit waited-live "$waited"
     emit probes-removed "$removed"
     emit lease-released "$released"
-    emit signal-trap "$signal"
     emit volumes-removed "$volumes"
     if [ -f "$C1192_ROOT/refusal" ]; then
         cat -- "$C1192_ROOT/refusal"
@@ -4112,6 +4135,215 @@ mode_slot_refusal() {
     c1192_slot_refusal_finish
 }
 
+c1192_slot_curl() {
+    printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >> "$C1192_ROOT/curls"' 'exit 0' > "$C1192_ROOT/bin/curl"
+    chmod 755 "$C1192_ROOT/bin/curl"
+}
+
+c1192_fixture_traps() {
+    declare -f c849_fixture | sed -n 's/^    \(trap .*\)$/\1/p'
+}
+
+# Plant one foreign restore-p1, then run the barrier. Release may kill only a
+# CID this run recorded. The planted container must still be here afterwards.
+c1192_foreign_witness() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch" name id survived=0 killed=0 residue=0 ledger=0
+    name="c849-${RUN}-restore-p1"
+    c1192_slot_plant "$packages" "$scratch"
+    plant_container "$name" foreign other-run consumer "$ADMITTED" ""
+    id="$(cat "$C1192_ROOT/containers/$name/id")"
+    C1192_SLOT_GATE=1
+    C589_SLOT_WAIT_SECONDS=5
+    c1192_slot_barrier "$packages" "$scratch"
+    unset C1192_SLOT_GATE C589_SLOT_WAIT_SECONDS
+    container_exists "$name" && survived=1
+    if grep -F "kill $id" "$C1192_ROOT/order" >/dev/null 2>&1 \
+        || grep -F "kill $name" "$C1192_ROOT/order" >/dev/null 2>&1; then
+        killed=1
+    fi
+    if [ -f "$CASE_DIR/fixture-cleanup-residue.txt" ] && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt"; then
+        residue=1
+    fi
+    if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+        && grep -Fxq "foreign: left untouched container $name" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+        ledger=1
+    fi
+    emit foreign-survived "$survived"
+    emit foreign-killed "$killed"
+    emit foreign-residue "$residue"
+    emit foreign-ledger "$ledger"
+    emit foreign-diagnosis "$(diagnosis_of "$C1192_SLOT_OUT")"
+    c1192_kill_jobs
+}
+
+# Run the barrier under the fixture's own trap lines. TERM must exit 143 and
+# INT 130, both probes die by the recorded CID, the lease is deleted, and the
+# volumes that were present are removed afterwards.
+c1192_signal_witness() {
+    local sig="$1" expected="$2" packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key
+    traps="$(c1192_fixture_traps)"
+    if ! printf '%s\n' "$traps" | grep -qx "trap 'c849_fixture_on_signal INT' INT" \
+        || ! printf '%s\n' "$traps" | grep -qx "trap 'c849_fixture_on_signal TERM' TERM"; then
+        emit "signal-${sig}-installed" 0
+        emit "signal-${sig}-exit" 0
+        emit "signal-${sig}-cid-kills" 0
+        emit "signal-${sig}-lease" 0
+        emit "signal-${sig}-volumes" 0
+        return 0
+    fi
+    emit "signal-${sig}-installed" 1
+    c1192_slot_plant "$packages" "$scratch"
+    : > "$C1192_ROOT/curls"
+    c1192_slot_curl
+    if volume_exists "$packages" && volume_exists "$scratch" && volume_exists "$WORK"; then
+        present=1
+    fi
+    C1192_SLOT_GATE=1
+    C1192_SLOT_NEVER=1
+    C589_SLOT_WAIT_SECONDS=30
+    C1192_SLOT_LEASE=11111111-1111-1111-1111-111111111111
+    ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
+    export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_SLOT_NEVER C1192_SLOT_LEASE
+    (
+        eval "$traps"
+        c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch"
+    ) > "$C1192_ROOT/signal-out" 2>>"$C1192_ROOT/scenario.err" &
+    pid=$!
+    i=0
+    while [ "$i" -lt 100 ]; do
+        if [ -f "$CASE_DIR/.fixture-live-probes" ] \
+            && [ -f "$SERVER2_ROOT/race-p1.log" ] \
+            && grep -q 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log"; then
+            n=$(grep -c 'restore-p' "$CASE_DIR/.fixture-live-probes" || true)
+            [ "${n:-0}" -ge 2 ] && break
+        fi
+        command sleep 0.05
+        i=$((i + 1))
+    done
+    if [ "$i" -ge 100 ]; then
+        kill -s "$sig" "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        emit "signal-${sig}-exit" 0
+        emit "signal-${sig}-cid-kills" 0
+        emit "signal-${sig}-lease" 0
+        emit "signal-${sig}-volumes" 0
+        unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
+        c1192_kill_jobs
+        return 0
+    fi
+    cp -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before"
+    kill -s "$sig" "$pid" 2>/dev/null || true
+    wait "$pid" || code=$?
+    emit "signal-${sig}-exit" "$code"
+    cid_kills=1
+    while read -r _ cid name || [ -n "${cid:-}" ]; do
+        [ -n "${cid:-}" ] && [ -n "${name:-}" ] || continue
+        grep -Fxq "kill $cid" "$C1192_ROOT/order" || cid_kills=0
+        container_exists "$name" && cid_kills=0
+        if grep -F "kill $name" "$C1192_ROOT/order" >/dev/null 2>&1; then
+            cid_kills=0
+        fi
+    done < "$C1192_ROOT/live-before"
+    emit "signal-${sig}-cid-kills" "$cid_kills"
+    if grep -q 'DELETE' "$C1192_ROOT/curls" \
+        && grep -q '11111111-1111-1111-1111-111111111111' "$C1192_ROOT/curls"; then
+        released=1
+    fi
+    emit "signal-${sig}-lease" "$released"
+    if c1192_volumes_removed "$present"; then
+        volumes=1
+    fi
+    emit "signal-${sig}-volumes" "$volumes"
+    unset C1192_SLOT_GATE C1192_SLOT_NEVER C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
+    c1192_kill_jobs
+    key="$expected"
+    [ "$code" = "$key" ] || true
+}
+
+# A slow reader must not multiply the slot deadline. Exit 4 inside a few
+# seconds of a 3-second budget; the iteration counter would still be running.
+c1192_deadline_witness() {
+    local a b start code=0 elapsed bounded=0
+    command sleep 30 & a=$!
+    command sleep 30 & b=$!
+    c849_fixture_volume_test_file() { command sleep 1; return 1; }
+    C589_SLOT_WAIT_SECONDS=3
+    start=$(date +%s)
+    c849_fixture_wait_slot_markers p1 p2 "$a" "$b" || code=$?
+    elapsed=$(( $(date +%s) - start ))
+    unset C589_SLOT_WAIT_SECONDS
+    command kill "$a" "$b" 2>/dev/null || true
+    command wait "$a" 2>/dev/null || true
+    command wait "$b" 2>/dev/null || true
+    if [ "$code" = 4 ] && [ "$elapsed" -le 8 ]; then
+        bounded=1
+    fi
+    emit slot-wait-bounded "$bounded"
+    emit slot-wait-elapsed "$elapsed"
+    emit slot-wait-code "$code"
+}
+
+c1192_offline_witness() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch" out code=0
+    if ! declare -F c849_fixture_offline_restore >/dev/null; then
+        emit offline-diagnosis missing
+        emit offline-code 0
+        return 0
+    fi
+    c1192_slot_plant "$packages" "$scratch"
+    C1192_FAULT=offline-slot-timeout
+    out=$(
+        write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
+        c849_fixture_offline_restore "$ADMITTED" "$packages" "$scratch"
+    ) || code=$?
+    unset C1192_FAULT
+    emit offline-diagnosis "$(diagnosis_of "$out")"
+    emit offline-code "$code"
+    c1192_kill_jobs
+}
+
+# kill -9 only reaches a pid jobs -pr still lists. A live pid from another
+# shell is signalled with TERM and is not escalated.
+c1192_reap_witness() {
+    local owned foreign owned_hit=0 foreign_hit=0
+    command sleep 60 & owned=$!
+    foreign=$(bash -c 'command sleep 60 >/dev/null 2>&1 & echo $!; exit 0')
+    kill() {
+        printf '%s\n' "$*" >> "$C1192_ROOT/kills"
+        command kill "$@"
+    }
+    : > "$C1192_ROOT/kills"
+    c849_fixture_reap_probe "$owned"
+    if grep -q -- '-9' "$C1192_ROOT/kills"; then
+        owned_hit=1
+    fi
+    command wait "$owned" 2>/dev/null || true
+    : > "$C1192_ROOT/kills"
+    if [ -n "$foreign" ] && [ -d "/proc/$foreign" ]; then
+        c849_fixture_reap_probe "$foreign"
+        if grep -q -- '-9' "$C1192_ROOT/kills"; then
+            foreign_hit=1
+        fi
+        command kill "$foreign" 2>/dev/null || true
+        command wait "$foreign" 2>/dev/null || true
+    else
+        foreign_hit=1
+    fi
+    unset -f kill
+    emit reap-owned-escalated "$owned_hit"
+    emit reap-unowned-escalated "$foreign_hit"
+}
+
+mode_slot_round2() {
+    c1192_foreign_witness
+    c1192_signal_witness TERM 143
+    c1192_signal_witness INT 130
+    c1192_deadline_witness
+    c1192_offline_witness
+    c1192_reap_witness
+}
+
 case "$mode" in
     deadline-setup) mode_deadline_setup ;;
     publication-link) mode_publication_link "$@" ;;
@@ -4139,6 +4371,7 @@ case "$mode" in
     slot-delay) mode_slot_delay ;;
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
+    slot-round2) mode_slot_round2 ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
     npm|npm-network-create) mode_npm ;;
