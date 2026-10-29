@@ -98,6 +98,18 @@ Line references are at the inspected source SHA; paths are repository relative.
   rc and master through separate authorized ordinary review/landing flows.
   Master publication alone is not activation. This Plan pushes only its assigned
   branch and authorizes no deployment, tag, promotion or release-gate shortcut.
+- **D-8: separate correctness from load measurement.** The permanent concurrent
+  correctness case uses handshakes and disables only the store's internal timers
+  on its test-owned instance; its finite outer test/caller deadline still applies.
+  V-1..V-5 independently protect production deadlines. The 80-store production-
+  budget sampler is native Linux and opt-in, enabled explicitly by CP-5. Record
+  genuine I/O-budget refusals instead of asserting every shared-runner sample
+  beats two seconds. Reject a permanent zero-refusal benchmark: it confuses host
+  performance with byte/cancellation correctness and would be flaky.
+- **D-9: classify and register both classes at introduction.** Both new classes
+  are Integration + Slow with the assembly-local `ProcessSpawnLimit`. Register
+  each in the Slow allowlist and Linux census as specified below; CP-6 verifies
+  metadata and lane classification. This is part of S1/S2, not optional cleanup.
 
 These are implementation defaults for independent TestDesign review. The 30 s
 production cap is an explicit policy decision; performance estimates and its
@@ -188,7 +200,9 @@ All new methods below belong to
 Construct the actual store with its production defaults and an injected real
 `GitWorkspaceService`/test-owned gate. Do not use `ReportWorkspace.Store()` for
 deadline witnesses: its 30-second override would mask the bug. The helper may
-reuse its owned path/task/expected-byte conventions.
+reuse its owned path/task/expected-byte conventions. Only explicitly named
+non-deadline cases V-10/V-11 and short preparation-expiry cases V-5/V-9 override
+phase allowances; V-9's I/O-expiry case retains the production default.
 
 | ID / proposed exact method | Cases | Setup and independently observable outcome | Why a stub or incorrect fix fails |
 |---|---:|---|---|
@@ -201,11 +215,13 @@ reuse its owned path/task/expected-byte conventions.
 | V-7 `Canceled_fast_path_or_late_readback_never_returns_success` | 2 | Arguments `existing-read`, `readback`: **both use `task.Result = ""` (empty body)**. For existing-read preseed the exact zero-byte canonical file; for readback start absent, let the store publish zero bytes, then cancel the caller at that hook. Both hooks return normally. Require caller cancellation, no success, the selected phase reached and intact zero-byte canonical bytes. | `ReadExactlyAsync` on an empty buffer need not observe cancellation, so only the explicit final production token check prevents success. A non-empty readback would throw during reading and mask its removal. TestDesign must bind separate method/case-specific mutant red and restored green evidence for **each** path with its corresponding final check removed. |
 | V-8 `Artifact_preservation_observes_store_budget_outcome` | 2 | Arguments `queued`, `write-stall`. Use concrete `CardDoneArtifactPreservation` with the real store and owned roots. Reuse V-1/V-3 handshakes. Queued success records a readable exact external pointer; write stall returns `artifact_unpreserved` and sets no pointer. | No mock store result or self-comparison; consumer verdict is checked against independent on-disk bytes and the task's ResultFilePath. No real cleanup runs. |
 | V-9 `Budget_diagnostics_identify_phase_and_outcome` | 4 | Arguments `stored`, `reused`, `preparation-expired`, `io-expired`. Capture structured logger fields and independently time the invocation; require the expected entered phases/outcome, nonnegative measured durations, and total consistent with phase/cleanup spans within measured overhead. Inject a sentinel report body and prove it never appears in diagnostics. | Logging a constant duration/outcome, omitting early reuse, or reporting preparation timeout as I/O timeout fails. Timing assertions use tolerance, not equality with two seconds. |
-| V-11 `Unrelated_cancellation_returns_non_budget_refusal` | 2 | Arguments `root`, `write`. At the named store hook throw a new OCE carrying an independently canceled foreign token; prove caller and active store-budget tokens remain live. Await normally and assert a non-null result with null Path, exact Reason `canceled`, no canonical/temp file, and the sanitized refusal diagnostic. Use bounded generous **test-only** phase budgets so this fixture measures exception classification, not timer races. | Rethrowing fails the normal await; returning success or either budget reason fails exact outcomes. Exercise the real store, not an `IAgentReportStore` mock. Today's catch returns `io-budget-expired`, so the reason assertion is independently discriminating. |
+| V-10 `Concurrent_stores_preserve_exact_bytes_after_gate_release` | 1 | Eight unique task IDs and distinct Unicode bodies share one initialized owned repo and private width-eight gate. Acquire all eight leases, start the eight real stores, await `Waiting == 8`, then release in `finally`. On these test-owned instances only set `PreparationBudget` and `IoBudget` to `Timeout.InfiniteTimeSpan`; link all work to the finite test deadline and join every call before teardown. Require eight exact full-ID/hash paths and independently readable bytes, no temporary residue, and no gate holders/waiters. | Readiness is a barrier, not an arbitrary sleep or host-load assumption. This grades concurrency/content correctness without racing production timers against a busy filesystem. Dropped/swapped bytes, fake paths or leaked leases fail. Production timeout regressions are caught by V-1..V-5, not this intentionally timer-independent case. |
+| V-11 `Unrelated_cancellation_returns_non_budget_refusal` | 2 | Arguments `root`, `write`. At the named store hook throw a new OCE carrying an independently canceled foreign token; prove caller and active store-budget tokens remain live. Await normally and assert a non-null result with null Path, exact Reason `canceled`, no canonical/temp file, and the sanitized refusal diagnostic. Set both internal phase budgets to `Timeout.InfiniteTimeSpan` only on this test instance, under its finite 10 s caller/test deadline, so this fixture measures exception classification, not timer races. | Rethrowing fails the normal await; returning success or either budget reason fails exact outcomes. Exercise the real store, not an `IAgentReportStore` mock. Today's catch returns `io-budget-expired`, so the reason assertion is independently discriminating. |
 | R-1 existing `AgentReportStoreTests` | 28 | Whole existing class: exact content/full IDs, all 11 root cases, five tracking/ignore cases, two ineffective-ignore cases, atomic publication/reuse/concurrency, path limit and seven failure/cancellation cases. | Preserves custody gates that a tempting fast path or cache could bypass. Do not loosen their assertions or remove the zero-budget witness. |
 | R-2 existing `OutputDistillationDeliveryTests.Storage_failures_leave_a_recoverable_settled_report` and `Host_cancellation_during_storage_can_retry_settlement_once` | 8 | Seven storage failure vectors plus the caller-cancellation settlement retry. | Pins Result retention, fallback delivery and one logical queued note without adding an automatic store retry. |
 | R-3 existing `VerificationRoundDeliveryTests.C544_ReportRegeneratedFromSnapshot` | 1 | Real saved completion snapshot, remove its owned report, mutate current task.Result, restart fixture and deliver. | Verifies snapshot bytes are regenerated and delivered once, not current mutable task bytes. |
-| V-10 new `AgentReportStoreLoadTests.Store_samples_record_normal_and_contended_phases` | 1 | The bounded 80-store sampling design below, exact-byte/readback assertions for every sample, zero unexpected refusals, and nonzero observed gate contention in the loaded group. | A timing-only benchmark could pass while losing files. This test validates every path/content and refuses an unobserved load condition; 80 internal samples still count as one TUnit result. |
+| V-12 new `AgentReportStoreLoadTests.Store_samples_record_normal_and_contended_phases` | 1 | Require `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` and `NativeLinuxGate.Require("CARD-1605 load telemetry requires native Linux")`; otherwise explicitly skip. CP-5 sets the flag. Use production defaults for all 80 samples. Validate every successful pointer/byte sequence, every refusal's null Path/reason/temp cleanup, and retain all phase samples. `io-budget-expired` is a measured allowed refusal, never fabricated success; other refusals fail the acceptance sample. Require observed controlled gate contention and D-2's preparation threshold. | No permanent zero-refusal assertion under the real 2 s I/O budget. Return counts/reasons and censored I/O tails separately; all-refused buckets are inconclusive, not success. CP-5 must execute, not skip. Permanent exact-byte/concurrency coverage is V-10; production timer coverage is V-1..V-5. |
+| R-4 existing classification guards | 2 | `Antiphon.TestSupport.TestClassificationGuardTests.Registry_matches_compiled_metadata` and `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration`, compiled in `Antiphon.Tests`. | Catches unregistered Slow classes, invalid allowlist reason layout and missing/contradictory Unit/Integration tags. Source census reconciliation separately checks the two new Linux roster rows. |
 
 Commit/push S1 tests before the production fix. CP-1 must compile and execute
 both intended methods, with two path/preservation assertion failures attributable
@@ -226,8 +242,8 @@ to one exact method per cycle and assert the intended failure.
 
 | Slice | Files | Outcome and verification |
 |---|---|---|
-| S1: discriminating tests first | New `tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs` with V-1/V-2/V-3; new `tests/Antiphon.Tests/TestHelpers/ReportBudgetWorkspace.cs` for shared seed, owned per-case clones, direct store construction and the delayed Linux Git wrapper. | No production edits. Commit/push, then CP-1 intentional RED. Keep its failure receipts at the tested SHA. V-3 participates in S2's full green roster. |
-| S2: split deadlines and complete witnesses | `server/Infrastructure/Files/AgentReportStore.cs`; extend the S1 test class/helper for V-4..V-9 and V-11; new `tests/Antiphon.Tests/Application/AgentReportStoreLoadTests.cs` for V-10. Update `ReportWorkspace.cs` comments only if needed to distinguish its custody-test override. Update test roster/classification inputs only through their existing census workflow if new classes require entries. | Commit/push before tests. CP-2..CP-5 require green; exact method/case roster is 48 + 8 + 1 + 1 = 58 executed results. Keep application callers and global Git behavior unchanged. Record observed timing against that source. |
+| S1: discriminating tests first | New `tests/Antiphon.Tests/Application/AgentReportStoreBudgetTests.cs` with V-1/V-2/V-3; new `tests/Antiphon.Tests/TestHelpers/ReportBudgetWorkspace.cs` for shared seed, owned per-case clones, direct store construction and delayed Linux Git wrapper. Add Budget class Slow reason/name pair to `tests/Antiphon.Tests/slow-tests-allowlist.txt` and its three-method census entry to `tests/linux-test-roster.json`. | No production edits. Commit/push, then CP-1 intentional RED. Keep its failure receipts at the tested SHA. V-3 participates in S2's full green roster. |
+| S2: split deadlines and complete witnesses | `server/Infrastructure/Files/AgentReportStore.cs`; extend S1 class/helper for V-4..V-11; new `tests/Antiphon.Tests/Application/AgentReportStoreLoadTests.cs` for opt-in V-12. Add Load class Slow reason/name pair and finish both Linux census entries. Update `ReportWorkspace.cs` comments only if needed to distinguish its custody-test override. | Commit/push before tests. CP-2..CP-6 require green; exact roster is **49 + 8 + 1 + 1 + 2 = 61** executed results. Keep application callers and global Git behavior unchanged. Record measured phases/refusals against that source. |
 
 The helper uses the assembly-local `ProcessSpawnLimit`, because the delayed
 executable starts a shell as well as Git; `GitProcessSpawnLimit` is insufficient
@@ -236,29 +252,77 @@ below. No separate test project is justified for this small server/Git boundary;
 CARD-1546 owns broader Git extraction. No session is added or changed to wait
 for input, so the CARD-1083 conditional-release checklist is not triggered.
 
+### Classification and Linux census obligations
+
+Apply `[Category("Integration")]`, `[Category("Slow")]` and
+`[ParallelLimiter<ProcessSpawnLimit>]` at class level to **both**
+`Antiphon.Tests.Application.AgentReportStoreBudgetTests` and
+`Antiphon.Tests.Application.AgentReportStoreLoadTests`. The Budget class uses a
+shell wrapper and real 2-2.5 s waits plus Git setup (initial bound 6 s per case,
+potentially crossing the 5 s tripwire); the Load class runs the 30-60 s sampler.
+Keep the strict limiter even for the sampler to avoid overlapping it with the
+other strict spawners. Its concurrency 16 is explicit in-method concurrency,
+not sixteen TUnit tests. Do not add Unit to either class.
+
+Append these adjacent reason/name pairs to the existing allowlist, preserving
+its layout (one nonempty single-`#` comment immediately followed by its FQN):
+
+```text
+# CARD-1605: real 2-2.5 second cancellation barriers plus isolated Git setup can exceed five seconds.
+Antiphon.Tests.Application.AgentReportStoreBudgetTests
+# CARD-1605: opt-in 80-store production-budget sampler takes approximately 30-60 seconds.
+Antiphon.Tests.Application.AgentReportStoreLoadTests
+```
+
+`tests/linux-test-roster.json` must contain both classes, not a conditional
+"if needed" edit. Follow the existing `AgentReportStoreTests` process-spawner
+census convention: `assembly: Antiphon.Tests`, exact FQN and sourceFiles,
+`disposition: exclude`, `lane: null`, `shard: null`, owner **CARD-1605 explicit
+native/process checkpoints**. This excludes them from the generic CARD-0590
+Docker selection, **not** from the explicit Linux CP-1/2/5 rows. Budget boundary
+states owned Git plus native Linux shell wrapper and per-method NativeLinuxGate;
+Load boundary states owned Git plus Linux `/proc` telemetry and opt-in sampling.
+Budget `directTestMethods` is 3 in S1 and **11** in S2 (21 expanded cases);
+Load is **1** (80 samples inside one result). Refresh sourceSha256 and helper
+closure from the actual committed files: ReportBudgetWorkspace, ProcessSpawnLimit,
+NativeLinuxGate and any genuinely reached shared helpers. Reconcile changed
+class/method summary counts with the source census; do not invent hashes, treat
+source-method counts as expanded case counts or reclassify unrelated exclusions.
+
+No OS-selected product behavior changes: `SamePath`, `Within` and
+`HasReparseAncestor` stay untouched. The `check-os-witnesses.ps1` declaration
+therefore has no changed-OS-branch obligations. V-2 and V-12 are native Linux
+witnesses; a Windows skip cannot satisfy them. No Windows rc evidence is read,
+restarted or credited by this task.
+
 ### Checkpoints
 
-Proposed closed ordinary scope for TestDesign to freeze. All rows use the **Linux
-integration lane**; the explicit Linux requirement comes from V-2's controlled
-executable, not a fleet host name. Other cases are portable. Native Windows
+Proposed closed ordinary scope for TestDesign to freeze. CP-1..CP-5 use the
+**Linux Integration lane**, CP-6 the **Linux Unit classification lane**. The
+explicit Linux requirements come from V-2's executable and V-12's telemetry,
+not a fleet host name. Other cases are portable. Native Windows
 release qualification is not performed or credited by these rows. The current
 Plan runs no checkpoint. CP-1 is baseline RED only; final green acceptance is
-CP-2..CP-5, including V-1/V-2 again. Each row binds one isolated build (or its
+CP-2..CP-6, including V-1/V-2 again. Each row binds one isolated build (or its
 explicit same-slice reuse) and one exact filter. EstimatedMinutes are provisional
 bounded scheduling estimates, not measured costs.
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
-|---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1605-red/` | linux-budget-red | `/*/Antiphon.Tests.Application/AgentReportStoreBudgetTests/(Gate_wait_longer_than_write_budget_still_preserves_report*)\|(Slow_git_response_does_not_spend_write_budget*)` | V-1,V-2 baseline | both listed methods; 2 intended assertion failures, retained as RED | 2 | 4 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1605-green/` | linux-budget-custody | `/*/Antiphon.Tests.Application/(AgentReportStoreTests*)\|(AgentReportStoreBudgetTests*)/*` | V-1..V-9,V-11,R-1 | all listed, 0 failed/skipped; 48 cases | 48 | 4 | true |
-| CP-3 | S2 | CP-2 | linux-report-callers | `/*/Antiphon.Tests.Application/OutputDistillationDeliveryTests/(Storage_failures_leave_a_recoverable_settled_report*)\|(Host_cancellation_during_storage_can_retry_settlement_once*)` | R-2 | all listed, 0 failed/skipped; 8 cases | 8 | 2 | true |
-| CP-4 | S2 | CP-2 | linux-snapshot-report | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C544_ReportRegeneratedFromSnapshot` | R-3 | all listed, 0 failed/skipped; 1 case | 1 | 2 | true |
-| CP-5 | S2 | CP-2 | linux-report-load | `/*/Antiphon.Tests.Application/AgentReportStoreLoadTests/Store_samples_record_normal_and_contended_phases` | V-10 | 1 executed, 0 failed/skipped; 80 byte-verified internal samples | 1 | 2 | true |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1605-red/` | linux-budget-red | `/*/Antiphon.Tests.Application/AgentReportStoreBudgetTests/(Gate_wait_longer_than_write_budget_still_preserves_report*)\|(Slow_git_response_does_not_spend_write_budget*)` | V-1,V-2 baseline | both listed methods; 2 intended assertion failures, retained as RED | 2 | 4 | true | n/a |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1605-green/` | linux-budget-custody | `/*/Antiphon.Tests.Application/(AgentReportStoreTests*)\|(AgentReportStoreBudgetTests*)/*` | V-1..V-11,R-1 | all listed, 0 failed/skipped; 49 cases | 49 | 4 | true | n/a |
+| CP-3 | S2 | CP-2 | linux-report-callers | `/*/Antiphon.Tests.Application/OutputDistillationDeliveryTests/(Storage_failures_leave_a_recoverable_settled_report*)\|(Host_cancellation_during_storage_can_retry_settlement_once*)` | R-2 | all listed, 0 failed/skipped; 8 cases | 8 | 2 | true | n/a |
+| CP-4 | S2 | CP-2 | linux-snapshot-report | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C544_ReportRegeneratedFromSnapshot` | R-3 | all listed, 0 failed/skipped; 1 case | 1 | 2 | true | n/a |
+| CP-5 | S2 | CP-2 | linux-report-load | `/*/Antiphon.Tests.Application/AgentReportStoreLoadTests/Store_samples_record_normal_and_contended_phases` | V-12 | 1 executed, 0 failed/skipped; 80 accounted samples, exact bytes for every success and classified refusals | 1 | 2 | true | `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` |
+| CP-6 | S2 | CP-2 | linux-unit-classification | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-4 | both exact guard methods listed above, 0 failed/skipped; 2 cases | 2 | 1 | true | n/a |
 
 Suffix audit at the inspected SHA found only `AgentReportStoreTests` for that
 class prefix; neither new class exists. Both CP-3 method prefixes and CP-4's
 exact method have exactly one declaration. The new class/method names are
-reserved proposals, not discovered tests. TestDesign and Code must repeat the
+reserved proposals, not discovered tests. CP-6 class prefixes each match one
+class in the selected Antiphon.Tests assembly; each has exactly the one named
+method (the shared guard is linked into other assemblies, which this row does
+not run). TestDesign and Code must repeat the
 suffix audit after adding them, and validate the full fresh TRX roster; the Min
 floor alone cannot prove selection. Every OR operand above is parenthesized and
 ends in `*`; table pipes are escaped. Do not use OR between complete tree paths.
@@ -295,18 +359,42 @@ to accommodate load.
 
 ### Collection, setup and attribution
 
-V-10 performs one warmup outside the sample, then 20 stores per payload/load
+V-12 (CP-5, explicitly opt-in) performs one warmup outside the sample, then 20 stores per payload/load
 bucket: 4 KiB and 64 KiB of valid UTF-8, normal sequential and loaded concurrency
 16 against a private width-eight Git gate. That is 80 stores, unique full task
 IDs, using one initialized owned repository and its unchanged ignore policy.
 Loaded work is real repository discovery/custody and WriteThrough report writes,
-not fleet-wide CPU burners or access to production reports. Start each loaded
-batch together, record observed queue depth/peak and ambient host CPU/load/memory;
-require contention to have actually occurred. Keep setup and warmup outside
-StoreAsync timing. Every sample must return independently verified exact bytes.
-Report n, p50, nearest-rank p95, max and refusals for total, preparation and I/O
-in each bucket. With n=20, p95 is the 19th sorted observation: this remains a
-limited controlled sample, not an estimate of production tail probability.
+not fleet-wide CPU burners or access to production reports. For each loaded
+bucket, hold all eight test-owned gate leases, start the first 16 stores, observe
+16 queued entrants and immediately release the barrier; admit the remaining
+four while keeping at most 16 stores in flight. This makes contention an observed
+fixture fact instead of hoping concurrent scheduling creates it. Include the
+barrier's measured queue time in preparation; there is no injected sleep here.
+Release every lease and join every store in `finally` on all outcomes.
+
+Record queue depth/peak and native Linux ambient metrics: `/proc/stat` CPU deltas
+around the batch, `/proc/loadavg` and `/proc/meminfo` plus processor count. Read
+them directly without spawning a monitoring tool; missing fields are unknown,
+not zero. CPU/load telemetry is context, not a pass/fail host-utilization gate.
+Keep setup/warmup outside StoreAsync timing. Preserve all 80 outcomes and phase
+durations, validating exact bytes for every returned pointer and null Path,
+reason and no temp residue for every refusal. I/O expiry after rename may leave
+exact canonical bytes, but never a successful pointer. An all-refused bucket
+cannot establish a useful success distribution and leaves acceptance incomplete.
+
+Report n, p50, nearest-rank p95, max and refusal counts/reasons for total,
+preparation and I/O per bucket. Include completed preparation even when I/O
+later expires. Report successful I/O duration and canceled/censored I/O duration
+separately; never present a successful-only p95 as an all-sample tail. With
+n=20, preparation p95 is the 19th sorted observation: this is a limited
+controlled sample, not an estimate of production tail probability. There is no
+zero-I/O-refusal criterion or unmeasured Windows throughput promise.
+
+V-10 is the always-on correctness companion in CP-2: eight barrier-controlled
+stores with internal timer expiry disabled only on their test instances, a
+finite caller/test deadline, and byte/lease/cleanup assertions. Thus ordinary
+suite correctness does not depend on eighty production writes beating 2 s on a
+shared runner. The original production-default V-1..V-5 witnesses remain.
 
 New tests initialize and seed a Git template once per test host, clone/copy it
 into isolated owned case directories, and share it across the budget/load classes
@@ -336,13 +424,14 @@ platform/load bucket; no extrapolated Windows p95 is claimed.
 | Work | Expected duration before measurement | Initial bound / reason |
 |---|---|---|
 | V-1/V-2 and V-3 real-time witnesses | 2.5 s imposed preparation wait or about 2 s I/O expiry, plus fixture/Git overhead; provisional at most 6 s per method | 12 s per test initially; target about 2x observed comparable p95 after the first real samples. A scheduler overrun is diagnostic, never permission to widen the protected I/O bound. |
-| Other new budget methods | 0.1-3 s per case, provisional | 10 s per case for phase-entry and teardown, to be narrowed from observations. Local hooks/leases must be released and all launched work joined in `finally`. |
-| CP-1/CP-2 isolated builds | 1-3 min each, unmeasured here; desired ceiling about 6 min pending p95 | The scheduler has a 15 min build floor; retain it only as the explicit tooling exception below, with the independent run cap still active. No repeated builds for CP-3..CP-5. |
+| Other new budget methods | 0.1-3 s per case, provisional; V-10 eight-store batch expected <=6 s | 10 s per case for phase-entry and teardown; V-10 12 s finite caller/test deadline. V-11 disables internal phase timers on its test instance so only its finite 10 s caller/test deadline applies. Narrow from observations. Local hooks/leases must be released and all launched work joined in `finally`. |
+| CP-1/CP-2 isolated builds | 1-3 min each, unmeasured here; desired ceiling about 6 min pending p95 | The scheduler has a 15 min build floor; retain it only as the explicit tooling exception below, with the independent run cap still active. No repeated builds for CP-3..CP-6. |
 | CP-2 test execution | 20-40 s including new real-time witnesses; existing 28-case class historical p95 7.213 s | 90 s provisional, then about 2x measured execution p95 rounded to supported units. Existing class history cannot price the new witnesses. |
 | CP-3/CP-4 integration rows | Each 30-60 s including shared startup/cloning; unknown current p95 | 2 min execution each initially. Phase collection must show container/readiness, template/migration, clone, provider setup, body and teardown separately. |
 | CP-5 sample method | 30-60 s for 80 small report stores, provisional | 2 min execution initially, then about 2x measured p95. One scheduled sampling invocation; no repeated battery solely to improve the percentile. |
+| CP-6 classification row | 1-5 s for compiled metadata and source census, provisional | 10 s per method; one-minute row ceiling is the tool's whole-minute granularity exception. Reuse CP-2 build; no host/container startup. |
 | Build-slot admission | Load-dependent, separate from execution | Explicit 5 min acquisition allowance per build/row. Exit 4 is not run; report admission p95 separately from execution. |
-| Complete planned work | Table floor 14 min, including two isolated builds and baseline RED; final S2 group floor 10 min | Provisional 20 min charged execution and a 25 min hard wall for S2; S1 8/13 min. Collection is bounded, not an open-ended stress run. |
+| Complete planned work | Table floor 15 min, including two isolated builds and baseline RED; final S2 group floor 11 min | Provisional 20 min charged execution and a 25 min hard wall for S2; S1 8/13 min. Collection is bounded, not an open-ended stress run. |
 
 All new duration numbers above are provisional CARD-1605 estimates, with the
 named first-row/CP-5 collection obligation. Existing imported defaults
@@ -387,7 +476,9 @@ figures; old receipts do not validate the new value. A value far above observed
 exception. Per-test/per-row budgets still follow measured 2x p95 independently.
 Never alter the mandated two-second I/O ceiling by applying that formula to it.
 
-The app/category is server + Git operations, Integration (R-3 also Slow).
+The app/category is server + Git operations. R-1/R-2 are Integration; R-3 and
+both new classes are Integration + Slow; CP-6 guards are Unit. New Slow
+registrations and Linux census entries are mandatory slice deliverables above.
 `Antiphon.Tests` directly references `Antiphon.Server`; the store is compiled in
 that server project, which references messaging, Pty, runner contracts, resilience
 and observability. Those projects are dependencies, not changed consumers of
@@ -424,7 +515,7 @@ retrying the broad run.
   platform's behavior under the existing release policy; this task neither reads
   desktop evidence nor restarts an ended qualification.
 
-Accept the implementation only with the intended CP-1 RED, CP-2..CP-5 green
+Accept the implementation only with the intended CP-1 RED, CP-2..CP-6 green
 counts/rosters and source-bound receipts, retained two-second/2.5-second refusal,
 bounded preparation cancellation, measured per-store load evidence, and unchanged
 caller custody/fallback outcomes. Independent ordinary Code Review still follows
