@@ -41,7 +41,9 @@ internal sealed class ReportWorkspace : IAsyncDisposable
         await GitAsync(Main, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "seed");
         if (worktree) await GitAsync(Main, "worktree", "add", "-b", "delegate", Worktree);
     }
-    // Custody assertions are not the production hung-IO bound. The budget row sets IoBudget to zero.
+    // Custody assertions are not the production two-second report I/O bound. This override
+    // lengthens only IoBudget. PreparationBudget stays at its 30-second production default.
+    // The budget row sets IoBudget to zero.
     internal static readonly TimeSpan CustodyIoBudget = TimeSpan.FromSeconds(30);
 
     public AgentReportStore Store(DelegationSettings? settings = null)
