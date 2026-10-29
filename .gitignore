@@ -54,6 +54,12 @@ bin-*/
 # task rows reference it; canonical reports survive delegate worktree cleanup.
 .antiphon/
 
+# Qualification checkouts keep these root markers (git clean -fdx -e). They are
+# ownership, not source. Unignored, checkpoint porcelain reports dirty=2 and the
+# repeat-script rows refuse the clone. Nested copies stay visible.
+/.antiphon-nightly-owned
+/.antiphon-release-owned
+
 # pts-vibe-coding (managed by /pts-vibe-init)
 .pts-vibe/state.json
 .pts-vibe/implementation.json
