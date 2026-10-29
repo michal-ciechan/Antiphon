@@ -200,7 +200,22 @@ public sealed partial class CapacityRecoveryService
                 && granted == wait.Id && grantedKey == candidate.ActionKey)
                 ClearGrant(provider, now);
             await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
+            try
+            {
+                await tx.CommitAsync(ct);
+            }
+            catch (Exception ex) when (!IsLockNotAvailable(ex) && ex is not OperationCanceledException)
+            {
+                // The detach and the wait reset are one transaction. A commit fault must
+                // leave the selection, the message key, and the grant for the next pass.
+                await tx.RollbackAsync(ct);
+                _logger.LogWarning(
+                    ex,
+                    "Capacity obsolete selection commit failed wait {WaitId} message {MessageId}",
+                    wait.Id, candidate.MessageId);
+                return CleanupOutcome.Deferred;
+            }
+
             _logger.LogInformation(
                 "Capacity obsolete selection detached wait {WaitId} message {MessageId} action {ActionKey} reason {Reason}",
                 wait.Id, candidate.MessageId, candidate.ActionKey, reason);
