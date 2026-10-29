@@ -689,7 +689,7 @@ its container id or for that probe's job to exit, then kills and removes only a 
 recorded after launch whose labels are `io.antiphon.owner=c849-fixture`, `io.antiphon.fixture-run`
 for this run, and the probe role. An absent recorded container is already gone and is not foreign
 residue. A same-named container the launcher refused is left untouched and recorded as residue.
-INT exits 130 and TERM exits 143. The release also DELETEs any granted build-slot lease and removes
+TERM exits 143. A pid-only SIGINT can be dropped while the shell waits on a foreground child that does not die of it; the fixture repeats that signal until the trap runs, and the trap then exits 130. A process-group SIGINT is the operator Ctrl-C. The probes survive it, because their PID 1 has no SIGINT handler, and only a proven container id is killed. That path exits 130 when the trap finishes, or 2 when the barrier records FixtureRestoreBarrierFailed first. Neither outcome is fail-open. The release also DELETEs any granted build-slot lease and removes
 the fixture volumes. It does not wait on a shell pid that is still running. TERM and `kill -9` are
 sent only while `jobs -pr` lists that pid. The driver stops waiting for `go` at the same 45-minute
 slot deadline and exits 4, which releases the lease. The first granted slot still stays held until
