@@ -8,9 +8,12 @@
 # Build the DLL through scripts/build-slot.ps1, with -c Release and
 # --property:OutputPath=bin-land-audit/Release/net10.0/, or supply a built -ToolPath.
 # No implicit build and no pre-check-only mode. Any evaluation error refuses (exit 1).
+# The evaluator's own clocks bound each solution pass and the canary copy. This script's
+# wait is that total plus a short startup grace, so a hung dotnet still refuses with the
+# same evaluation-failed line. -EvaluationBudgetSeconds overrides that wait for witnesses.
 # ASCII-only and Windows PowerShell 5.1 compatible.
 [CmdletBinding()]
-param([switch]$Check, [switch]$Update, [string]$ToolPath)
+param([switch]$Check, [switch]$Update, [string]$ToolPath, [int]$EvaluationBudgetSeconds = 0)
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -29,7 +32,7 @@ function ConvertTo-NativeArgument([string]$Value) {
     return '"' + $escaped + '"'
 }
 
-function Invoke-AuditChild([string]$Executable, [string[]]$Arguments) {
+function Invoke-AuditChild([string]$Executable, [string[]]$Arguments, [int]$TimeoutMs = 300000, [switch]$EvaluationTimeout) {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $Executable
     $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ')
@@ -50,10 +53,16 @@ function Invoke-AuditChild([string]$Executable, [string[]]$Arguments) {
         if (-not $process.Start()) { throw "could not start $Executable" }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(300000)) { throw "subprocess exceeded 300 s: $Executable" }
-        $remaining = [int][Math]::Max(1, 300000 - $clock.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            if ($EvaluationTimeout) {
+                $seconds = [int]($TimeoutMs / 1000)
+                return [pscustomobject]@{ Code = 2; Text = ('evaluation-failed: evaluating Antiphon.sln exceeded ' + $seconds + ' s') }
+            }
+            throw "subprocess exceeded $([int]($TimeoutMs / 1000)) s: $Executable"
+        }
+        $remaining = [int][Math]::Max(1, $TimeoutMs - $clock.ElapsedMilliseconds)
         if (-not [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($stdout, $stderr), $remaining)) {
-            throw "subprocess output exceeded 300 s: $Executable"
+            throw "subprocess output exceeded $([int]($TimeoutMs / 1000)) s: $Executable"
         }
         return [pscustomobject]@{ Code = $process.ExitCode; Text = $stdout.Result + $stderr.Result }
     } finally {
@@ -102,12 +111,29 @@ function Assert-HeadSource([string]$Head) {
     if ($run.Code -ne 0) { throw 'source differs from HEAD; commit source and pins before auditing' }
 }
 
+function Get-EvaluatorBudgetSeconds([string]$EvaluatorPath) {
+    if ($EvaluationBudgetSeconds -lt 0) { throw 'evaluation budget must be positive' }
+    if ($EvaluationBudgetSeconds -gt 0) { return $EvaluationBudgetSeconds }
+    $probe = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($EvaluatorPath), '--print-budget')
+    if ($probe.Code -ne 0) { throw ('evaluation budget probe failed: ' + $probe.Text.Trim()) }
+    foreach ($line in ($probe.Text -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('total=')) { return [int]$trimmed.Substring(6) }
+    }
+    throw 'evaluation budget probe did not report total'
+}
+
 function Assert-EvaluatedGraph([string]$EvaluatorPath) {
     if ([string]::IsNullOrEmpty($EvaluatorPath)) {
         $EvaluatorPath = Join-Path $RepoRoot 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
     }
     if (-not [System.IO.File]::Exists($EvaluatorPath)) { throw ('built evaluator missing: ' + $EvaluatorPath) }
-    $evaluation = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln')
+    $budget = Get-EvaluatorBudgetSeconds $EvaluatorPath
+    # SDK discovery is outside the tool's phase clocks. An explicit witness budget is exact.
+    $grace = 0
+    if ($EvaluationBudgetSeconds -le 0) { $grace = 30 }
+    $timeoutMs = ($budget + $grace) * 1000
+    $evaluation = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln') -TimeoutMs $timeoutMs -EvaluationTimeout
     if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }
     if ($evaluation.Code -ne 0) { throw ('land graph evaluation refused (exit ' + $evaluation.Code + ')') }
 }
