@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
 using Antiphon.PtyHost.Client;
 using Shouldly;
 using TUnit.Core;
@@ -10,7 +8,7 @@ namespace Antiphon.PtyHost.Tests;
 public partial class ShadowCopyStoreTests
 {
     [Test]
-    public async Task Windows_publication_survives_a_transient_directory_handle()
+    public async Task Windows_publication_survives_a_transient_payload_handle()
     {
         RequireWindows();
         var (root, source, store) = CreateFixture();
@@ -24,9 +22,9 @@ public partial class ShadowCopyStoreTests
                 var final = Path.Combine(store.BinRoot, $"{iteration}.published");
                 Directory.CreateDirectory(staging);
                 File.Copy(Path.Combine(source, "Antiphon.PtyHost.exe"), Path.Combine(staging, "Antiphon.PtyHost.exe"));
-                using var held = HoldDirectoryWithoutDeleteSharing(staging);
+                using var held = File.OpenRead(Path.Combine(staging, "Antiphon.PtyHost.exe"));
 
-                var denied = Should.Throw<UnauthorizedAccessException>(() => Directory.Move(staging, final));
+                var denied = Should.Throw<IOException>(() => Directory.Move(staging, final));
                 denied.HResult.ShouldBe(unchecked((int)0x80070005));
                 var release = Task.Run(async () =>
                 {
@@ -62,10 +60,10 @@ public partial class ShadowCopyStoreTests
             var final = Path.Combine(store.BinRoot, "published");
             Directory.CreateDirectory(staging);
             File.WriteAllText(Path.Combine(staging, "payload"), "original");
-            using var held = HoldDirectoryWithoutDeleteSharing(staging);
+            using var held = File.OpenRead(Path.Combine(staging, "payload"));
             var elapsed = Stopwatch.StartNew();
 
-            var denied = Should.Throw<UnauthorizedAccessException>(() =>
+            var denied = Should.Throw<IOException>(() =>
                 ShadowCopyStore.PublishStagingDirectory(staging, final));
 
             denied.HResult.ShouldBe(unchecked((int)0x80070005));
@@ -106,25 +104,6 @@ public partial class ShadowCopyStoreTests
     private static void RequireWindows()
     {
         if (!OperatingSystem.IsWindows())
-            throw new TUnit.Core.Exceptions.SkipTestException("Requires native Windows directory sharing semantics.");
+            throw new TUnit.Core.Exceptions.SkipTestException("Requires native Windows file sharing semantics.");
     }
-
-    private static SafeFileHandle HoldDirectoryWithoutDeleteSharing(string path)
-    {
-        // OPEN_EXISTING + FILE_FLAG_BACKUP_SEMANTICS opens the directory itself. Read/write
-        // sharing lets the copy finish; withholding FILE_SHARE_DELETE prevents its rename.
-        var handle = CreateFileW(path, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
-        if (handle.IsInvalid)
-        {
-            var error = Marshal.GetLastWin32Error();
-            handle.Dispose();
-            throw new System.ComponentModel.Win32Exception(error);
-        }
-        return handle;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
-    private static extern SafeFileHandle CreateFileW(
-        string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
-        uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
 }
