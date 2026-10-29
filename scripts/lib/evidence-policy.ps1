@@ -1,6 +1,18 @@
 # CARD-1015: read-only Git object policy. Only Get-EvidenceGitResult is the test I/O seam.
 Set-StrictMode -Version Latest
 
+function Set-EvidenceConsoleUtf8 {
+    # Windows pwsh and Windows PowerShell 5.1 leave Console.OutputEncoding on the
+    # ANSI/OEM code page. Write-Host then emits U+00E9 as byte 0xE9 and a UTF-8
+    # reader substitutes U+FFFD. pwsh 7 Encoding.UTF8 is UTF8EncodingSealed (no BOM);
+    # 5.1 Encoding.UTF8's preamble would prefix the first diagnostic line.
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    [Console]::InputEncoding = $utf8
+    [Console]::OutputEncoding = $utf8
+    $global:OutputEncoding = $utf8
+}
+Set-EvidenceConsoleUtf8
+
 function Invoke-EvidenceNativeGit {
     param([string]$Repository, [string[]]$Arguments)
     $p = [Diagnostics.Process]::new()
@@ -9,6 +21,11 @@ function Invoke-EvidenceNativeGit {
     $p.StartInfo.UseShellExecute = $false
     $p.StartInfo.RedirectStandardOutput = $true
     $p.StartInfo.RedirectStandardError = $true
+    # Raw stdout is still copied from BaseStream and decoded strictly below.
+    # The reader encoding keeps a text drain on the same pipes in UTF-8.
+    $pipeUtf8 = [Text.UTF8Encoding]::new($false)
+    $p.StartInfo.StandardOutputEncoding = $pipeUtf8
+    $p.StartInfo.StandardErrorEncoding = $pipeUtf8
     $p.StartInfo.Environment['GIT_OPTIONAL_LOCKS'] = '0'
     foreach ($arg in $Arguments) { $p.StartInfo.ArgumentList.Add($arg) }
     $memory = [IO.MemoryStream]::new()
@@ -156,6 +173,7 @@ function Get-EvidenceViolation {
 
 function Write-EvidenceViolation {
     param([string]$Commit, [object]$Entry, [string]$Reason, [long]$Bytes)
+    Set-EvidenceConsoleUtf8
     $escaped = ConvertTo-Json -InputObject $Entry.Path -Compress
     Write-Host "EVIDENCE violation commit=$Commit path=$escaped bytes=$Bytes reason=$Reason"
 }
@@ -193,6 +211,7 @@ function Select-EvidenceEventRange {
 function Invoke-EvidenceHistory {
     param([string]$Repository = '.', [string]$BaseRef, [string]$HeadRef = 'HEAD', [string]$EventPath, [string]$EventName, [string]$ManualBase, [string]$ManualHead)
     try {
+        Set-EvidenceConsoleUtf8
         Assert-EvidenceHistory $Repository
         if ($EventPath -or $EventName) {
             if ($BaseRef) { throw 'mixed_parameter_sets' }
@@ -265,6 +284,7 @@ function Get-EvidenceMap {
 function Invoke-EvidenceDeletion {
     param([string]$Repository = '.', [string]$InventoryRef, [string]$InventoryPathSha256, [string]$InventoryCount, [string]$InventoryBytes, [string]$HeadRef = 'HEAD', [switch]$InventoryOnly, [string]$SupplementalCleanup)
     try {
+        Set-EvidenceConsoleUtf8
         $supplemental = $PSBoundParameters.ContainsKey('SupplementalCleanup')
         if ($supplemental -and ($SupplementalCleanup -cnotmatch '^CARD-[0-9]{4,}$' -or $SupplementalCleanup -ceq 'CARD-1015')) { throw 'supplemental_cleanup_input' }
         $deletionMarker = if ($supplemental) { "Antiphon-Evidence-Deletion: $SupplementalCleanup" } else { 'Antiphon-Evidence-Deletion: CARD-1015' }
