@@ -14,3 +14,11 @@ Lanes A/B/C run concurrently, shards within each lane sequential, each shard `ti
 | Shard | Lane | Filter (short) | Result | Wall |
 |---|---|---|---|---|
 | c1-int | C | 12 named integration classes (CP-1..CP-6 union) | 332/332 green (Lifecycle 28, LockOrder 17 incl CP-6, WallReroute 15, ReceiptFailure 21, BaseGuard 97, RecoverySupervision 24, StandingRestartEscalation 52, AgentSupervision 10, StandingRestartAccounting 21, AgentControlServiceIntegration 33, RecoveryQueue 8, RecoveryTask 6). D-1 witness under 3-lane load: `C1593_S3_REREAD tick=2.05s held=2.04s cleared=True` | 236 s |
+
+### Raw shard summary (summary.log)
+```
+SHARD c1-int end rc=0 wall=236s  total: 332  failed: 0  succeeded: 332  skipped: 0  duration: 3m 53s 930ms 
+SHARD a1-RSC-C1other end rc=0 wall=1693s  total: 112  failed: 0  succeeded: 112  skipped: 0  duration: 28m 10s 983ms 
+SHARD b1-Rolling end rc=0 wall=1621s  total: 45  failed: 0  succeeded: 45  skipped: 0  duration: 26m 59s 037ms 
+SHARD c2-Cother end rc=0 wall=1141s  total: 374  failed: 0  succeeded: 371  skipped: 3  duration: 18m 59s 942ms 
+```
