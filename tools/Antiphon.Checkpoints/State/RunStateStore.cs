@@ -6,6 +6,7 @@ namespace Antiphon.Checkpoints;
 public sealed class RunStateStore
 {
     private readonly CheckpointCleanupContext _context;
+    private readonly object _publicationGate = new();
 
     public RunStateStore() : this(CheckpointCleanupDefaults.Context) { }
     public RunStateStore(CheckpointCleanupContext context) => _context = context;
@@ -17,6 +18,14 @@ public sealed class RunStateStore
     };
 
     public string? Write(string path, RunState state)
+    {
+        // Scheduler and row continuations share this store. Keep serialization,
+        // replacement verification, custody recording and history in one publication.
+        lock (_publicationGate)
+            return WriteCore(path, state);
+    }
+
+    private string? WriteCore(string path, RunState state)
     {
         if (string.IsNullOrEmpty(state.ToolOwner))
             state.ToolOwner = SafeWrite.Marker;
