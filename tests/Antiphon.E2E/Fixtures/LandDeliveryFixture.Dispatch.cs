@@ -117,7 +117,14 @@ public sealed partial class LandDeliveryFixture
                 var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
                 owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
                     $"the owned dispatch was refused before any warning intent: {owned.FailureReason}");
-                return (await DispatchIntentsAsync()).Count == 2;
+                // The 5 s inspection budget is the product contract. A loaded host that
+                // finishes every candidate and then times out during enrichment commits
+                // sibling-inspection-incomplete beside the reduced pair. Wait for that
+                // signal; do not require the wall clock to finish inside the budget.
+                var committed = await DispatchIntentsAsync();
+                return DispatchWaitDiagnostic.ReducedSiblingDispatchReady(
+                    committed.Select(i => (i.WarningKey, (string?)i.Detail)).ToList(),
+                    ExpectedDispatchSiblings.Select(s => DispatchBaseNotificationPayload.SiblingKey(s.Id)).ToArray());
             }, "two committed reduced dispatch intents");
         }
         catch (TimeoutException ex)
