@@ -3,12 +3,14 @@ using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointExecutorLogTests : CheckpointTestBase
 {
     [Test]
@@ -341,18 +343,18 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
     private sealed class CallerContextSink : IExecutorLogSink
     {
         public List<string> Lines { get; } = [];
-        public string Diagnostic => $"sink entered={Entered:O} completion={Completed:O} context={Context}";
-        private DateTimeOffset Entered;
-        private DateTimeOffset Completed;
-        private string? Context;
+        public string Diagnostic => $"sink entered={_entered:O} completion={_completed:O} context={_contextName} lines={Lines.Count}";
+        private DateTimeOffset _entered;
+        private DateTimeOffset _completed;
+        private string? _contextName;
 
         public async Task AppendAsync(string line, CancellationToken cancellationToken)
         {
             var context = SynchronizationContext.Current;
-            Entered = DateTimeOffset.UtcNow;
-            Context = context?.GetType().Name ?? "thread-pool";
+            _entered = DateTimeOffset.UtcNow;
+            _contextName = context?.GetType().Name ?? "thread-pool";
             var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            void Complete() { Completed = DateTimeOffset.UtcNow; done.TrySetResult(); }
+            void Complete() { _completed = DateTimeOffset.UtcNow; done.TrySetResult(); }
             if (context is not null)
                 context.Post(_ => Complete(), null);
             else
