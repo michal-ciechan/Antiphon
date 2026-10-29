@@ -111,6 +111,91 @@ The second test never reached its second seal, so it gives no idempotency verdic
 The runtime startup probe rejects a failed helper (`LinuxCgroupCustodyProbe.cs:32`),
 consistent with the live null backend. No production-session outcome was inferred.
 
+### Root exit has both a fixture race and an automatic-seal defect
+
+The original run timed out after 20.160 s waiting for `daemon.pid`
+(`prior-sweep.log:148`). The script backgrounds `setsid sh` and immediately
+exits without a readiness handshake (`LinuxCgroupCustodyTests.cs:101`). That
+fixture does not establish that the detached process has installed its session
+and written its PID before the parent exits. The exact signal/scheduling history
+of the old run is unavailable; no missing executable or privilege is established.
+
+On the unchanged source, the isolated rerun wrote `daemon.pid=19989`, passed
+its live-descendant membership assertion at line 107, then failed at line 111:
+`producer-seal.json` existed before the explicit custody request at line 114.
+Result: 1 failed, 0 skipped, 401 ms body, 435 s slot wait. Retained records:
+
+- Host log: root exit code 0 at `2026-10-29T18:47:15.1156774Z`.
+- Seal record revision 3: `2026-10-29T18:47:15.1215528Z`.
+- Tracked root PID 19968; detached sleep PID 19989, PPID 1, session/group 19989;
+  custody container `dead6b31-ec07-42d8-9b71-82730c2d5a57`.
+
+The host starts its observer after root exit (`HostSession.cs:404`). Its ordinary
+read forces sealing for `PtyHostStatus.Exited` at line 332; the journal then calls
+`SealAndObserveCustodyAsync` (`HostCustodyJournal.cs:101`), which records a seal
+and invokes termination on Linux (`PtyAgentRunner.cs:512`). This is a confirmed
+product mechanism that the older missing-marker failure masked. Windows job
+observation and Linux terminate-at-seal have different consequences here. The
+existing native test requires live descendants to remain unsealed until its
+explicit request; R-9 in
+`docs/superpowers/plans/2026-09-22-card-0604-persistent-runner-dind-plan.md:1083`
+names this boundary. A working kill helper would make this automatic path capable
+of terminating those descendants; that consequence is source reconstruction,
+not a deliberately repaired native execution.
+
+### Apphost comparison
+
+The baseline output has managed host DLL/deps/runtimeconfig but no extensionless
+`Antiphon.PtyHost`. Its native libraries are under `runtimes/<rid>/native`,
+not at the root (`noapp-layout.json`). The test project is plain project references
+with no `CopyOwnedPtyHostAppHost` target
+(`tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj:21`). That special
+staging target belongs to `tests/Antiphon.Tests/Antiphon.Tests.csproj:168`;
+`docs/testing-and-build.md:529` explains the checkpoint default and its narrower
+staging exception at line 531.
+
+A second isolated build uses `UseAppHost=true --runtime linux-x64`, matching the
+native RID used by the runner Docker publishes
+(`docker/session-runner-grok/Dockerfile:39`). It succeeded with 0 errors and the
+same inherited warning; wait 75 s, held 11 s. It was built at documentation-only
+commit `d67393258`, with unchanged product/test bytes from the assigned base.
+Both the executable and root native library are present. The first native launcher
+method, `Shadow_host_exchanges_bytes_and_exits`, passed alone (1/1, no skips,
+1.408 s run, wait 30 s). The next method, `Detach_creates_a_new_session`, failed alone despite the correct
+artifacts: expected host session ID 27622, observed parent session ID 4717
+(243 ms body, 165 s slot wait). `PosixProcessSpawner.StartDetached` returns
+immediately after `Process.Start` (`src/Antiphon.PtyHost/PosixProcessSpawner.cs:46`);
+the child performs `setsid` only later, at line 67. The intermediary reports the
+PID at `Program.cs:14`, and `PtyHostLauncher.cs:160` waits for the intermediary,
+not detached-child readiness. The test reads `getsid` immediately at
+`LinuxPtyHostLauncherTests.cs:107`. This is a test readiness race masked by the
+original missing apphost. Production separately connects to the child pipe before
+using the session (`SessionRunnerRuntime.cs:3231`). Remaining results are pending.
+
+The live runner also already has `/app/Antiphon.PtyHost` and
+`/app/libporta_pty.so` (`live-launcher-layout.log`). Its production launcher
+artifacts are not the deficient baseline test output.
+
+## Per-test classification
+
+Classes below describe the original red, with newly exposed failures stated separately.
+`H` = HostCustodyTests; `C` = LinuxCgroupCustodyTests; `L` = LinuxPtyHostLauncherTests.
+The Investigate stage forbids fix design; the requested minimal-fix column records
+that boundary. The single repair note below is for the next stage.
+
+| Test | Cause class and evidence | Can this pass merely by provisioning Linux correctly? | Minimal fix | Owner | Risk |
+|---|---|---|---|---|---|
+| H.Inbox_is_unsupported_and_never_becomes_no_start_proof | **TEST DEFECT**: Windows fixture and expectation on Unix; fresh expected ErrorMessage / actual LaunchedMessage; H:212, :278, :293, PtyBackend.cs:90. Host platform-binding validation gap also observed. | No: Unix deliberately ignores the inbox selector. Native Windows result was not measured. | Deferred to Plan | PtyHost test + host admission owners | Medium: platform guard alone would conceal the host's acceptance of a Windows binding on Unix; runner admission currently fences it. |
+| C.Tracked_launch_places_child_in_tree | **PRODUCT DEFECT**: fresh recorded sudo PID 13811 outside the tree, shell/sleep 13814/13821 inside; C:63; PtyAgentRunner.cs:193; shipped sudo policy:18. | No with the shipped policy/identity assumption; this host already has the required roots/helpers. | Deferred to Plan | Session-testing image + custody identity owners | High: recorded root identity differs from the contained root. |
+| C.Root_exit_with_live_descendants_is_draining_until_seal | **TEST DEFECT** in original missing-marker setup (unacknowledged background start, C:101); **PRODUCT DEFECT** beneath it: fresh native run reaches C:111 and finds an automatic seal before the explicit request. | Not reliably: provisioning does not synchronize the fixture or change the automatic-seal path. Exact old-run signal is unknown. | Deferred to Plan | PtyHost lifecycle + native test owners | High: a working termination helper makes root-exit observation capable of killing live descendants. |
+| C.Seal_terminates_and_observes_zero | **PRODUCT DEFECT**: original Draining at C:134; installed kill helper exits 1 at line 91 before termination; population remains nonzero. | No with the shipped helper. v2 is not a remedy for the same declaration defect. | Deferred to Plan | Linux custody helper owner | High: sealing cannot terminate the tree; tests wait out sleep 300. |
+| C.Second_seal_is_idempotent | **PRODUCT DEFECT**: same helper failure; original first seal is Draining at C:241. The second seal is never reached. | No with the shipped helper; idempotency itself remains unqualified. | Deferred to Plan | Linux custody helper + receipt owners | High: no first terminal receipt, hence no idempotency evidence. |
+| L.Shadow_host_exchanges_bytes_and_exits | **ENVIRONMENT** (test build artifacts): missing apphost at L:35 in original output; native apphost/RID build passes this method alone. | Yes, observed with apphost and root native library. | Deferred to Plan | Linux test build/staging owner | Low for this original failure; ordinary native byte exchange is now witnessed. |
+| L.Detach_creates_a_new_session | **ENVIRONMENT** originally (missing apphost); **TEST DEFECT** newly exposed: fresh native host session ID still equals parent ID at L:108 because no child-readiness wait precedes getsid. | Artifacts remove the original error, but this method remains racy. | Deferred to Plan | Linux test build/staging + launcher test owners | Medium: a timing check was masked; production waits for a pipe connection. |
+| L.Detach_failure_exits_without_pipe_readiness | **ENVIRONMENT**: original Process.Start cannot find executable at L:136. Fresh apphost run passes alone. | Yes, observed. | Deferred to Plan | Linux test build/staging owner | Low for original red; this assertion alone does not qualify every native detach failure. |
+| L.Intermediary_pipes_reach_eof_while_host_lives | **ENVIRONMENT**: original Process.Start lacks apphost at L:172; pending native comparison. | Native comparison pending. | Deferred to Plan | Linux test build/staging owner | Medium until native EOF witness completes. |
+| L.Canceled_launch_leaves_no_owned_host | **ENVIRONMENT**: original FileNotFoundException precedes expected cancellation at L:210; pending native comparison. | Native comparison pending. | Deferred to Plan | Linux test build/staging owner | Medium until native cancellation/cleanup witness completes. |
+
 ## Not done, noted
 
 No fix designed or implemented; repair choices and ordering await the completed evidence.
