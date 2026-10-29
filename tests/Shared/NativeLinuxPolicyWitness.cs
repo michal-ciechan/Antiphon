@@ -286,6 +286,7 @@ public static class NativeLinuxPolicyWitness
                 CompareBaseline(request, byIdentity, diagnostics);
 
             var covered = new HashSet<TestNode>();
+            var matchedTypes = new HashSet<Type>();
             foreach (var row in rows)
             {
                 if (!string.Equals(row.Suite, request.SuiteId, StringComparison.Ordinal))
@@ -303,6 +304,7 @@ public static class NativeLinuxPolicyWitness
                 foreach (var node in matched)
                 {
                     covered.Add(node);
+                    matchedTypes.Add(node.Type);
                     RefuseUnsupported(node, row, diagnostics);
                     var reason = MarkerReason(node);
                     if (string.IsNullOrEmpty(reason))
@@ -323,7 +325,7 @@ public static class NativeLinuxPolicyWitness
             {
                 if (type is not { IsClass: true })
                     continue;
-                if (!HasDirectMarker(type) && !type.GetMethods(AllMethods).Any(HasDirectMarker))
+                if (!matchedTypes.Contains(type) && !HasDirectMarker(type) && !type.GetMethods(AllMethods).Any(HasDirectMarker))
                     continue;
                 RefuseUnsupportedMembers(type, request.SuiteId, diagnostics);
             }
@@ -457,9 +459,22 @@ public static class NativeLinuxPolicyWitness
     static void RefuseUnsupportedMembers(Type type, string suite, List<WitnessDiagnostic> diagnostics)
     {
         var concrete = FormatReflectedType(type);
-        RefuseMember(type, suite, type.Name, new TestNode(type, null!, suite, concrete, concrete, ""), diagnostics);
-        foreach (var method in type.GetMethods(AllMethods))
-            RefuseMember(method, suite, type.Name, new TestNode(type, method, suite, concrete, FormatReflectedType(method.DeclaringType ?? type), MethodSignature(method)), diagnostics);
+        foreach (var current in RefusalChain(type))
+        {
+            var declaring = FormatReflectedType(current);
+            RefuseMember(current, suite, type.Name, new TestNode(type, null!, suite, concrete, declaring, ""), diagnostics);
+            foreach (var method in current.GetMethods(AllMethods))
+                RefuseMember(method, suite, type.Name, new TestNode(type, method, suite, concrete, FormatReflectedType(method.DeclaringType ?? current), MethodSignature(method)), diagnostics);
+        }
+    }
+
+    static IEnumerable<Type> RefusalChain(Type type)
+    {
+        yield return type;
+        if (!HasInherits(type))
+            yield break;
+        for (var cursor = type.BaseType; cursor is not null && cursor != typeof(object); cursor = cursor.BaseType)
+            yield return cursor;
     }
 
     static void RefuseMember(MemberInfo member, string suite, string row, TestNode node, List<WitnessDiagnostic> diagnostics)
@@ -499,22 +514,33 @@ public static class NativeLinuxPolicyWitness
         else
             chain.Add(type);
 
-        var chosen = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
+        // TUnit still runs a base [Test] hidden by a non-test `new` method. A real override
+        // replaces that method, and a `new` [Test] is the only node TUnit runs for the signature.
+        var chosen = new List<MethodInfo>();
         foreach (var current in chain)
         {
             foreach (var method in current.GetMethods(AllMethods))
             {
                 if (method.IsSpecialName)
                     continue;
+                var root = method.GetBaseDefinition();
+                if (!root.Equals(method))
+                {
+                    chosen.RemoveAll(existing => existing.GetBaseDefinition().Equals(root));
+                    if (IsTest(method))
+                        chosen.Add(method);
+                    continue;
+                }
+
+                if (!IsTest(method))
+                    continue;
                 var signature = MethodSignature(method);
-                if (IsTest(method))
-                    chosen[signature] = method;
-                else if (current != chain[0])
-                    chosen.Remove(signature);
+                chosen.RemoveAll(existing => MethodSignature(existing).Equals(signature, StringComparison.Ordinal));
+                chosen.Add(method);
             }
         }
 
-        foreach (var method in chosen.Values)
+        foreach (var method in chosen)
         {
             var concrete = FormatReflectedType(type);
             var declaring = FormatReflectedType(method.DeclaringType ?? type);
