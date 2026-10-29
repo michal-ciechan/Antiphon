@@ -1,3 +1,4 @@
+using System.Text;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 
