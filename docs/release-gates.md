@@ -270,6 +270,37 @@ opt-in) stay required and have no exclusion row.
 `test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusions` checks the source gate, the shipped
 rows, and that those obligation gaps still leave coverage incomplete.
 
+#### CARD-1613 marker migration and maintenance
+
+The [CARD-1613 plan](superpowers/plans/2026-10-29-card-1613-pinned-linux-skip-reflection-plan.md)
+replaces that source-only verdict with compiled marker witnesses. This is the implementation
+contract; the Plan task has not installed those witnesses yet.
+
+At migration, compare frozen pre-S1 and annotated S2 source once, retaining the ignored
+audit inputs and receipt. Whole-file/helper digests belong only to that migration audit.
+Permanent Unit witnesses compare compiled pinned markers with frozen reasons for migrated
+signatures; they never digest live inventory files. Unrelated portable test edits require
+no baseline refresh.
+
+- A new non-legacy exclusion needs a reviewed Windows policy row, the exact pinned marker
+  with a nonempty reason on every selected node, and passing reverse-coverage/policy checks
+  in all four suites. It has no historical Windows reason and needs no migration-baseline
+  entry. New tests under a marked class follow the same rule.
+- An intentional reason change for a migrated signature updates the effective marker,
+  retained runtime gate and frozen reason/hash in one reviewed commit. Record the owning
+  card, affected signatures and exact old/new reasons. Run the four witnesses, R-14 reason
+  variants, and any affected C1210/C1050 native check with its deliberately updated oracle.
+  Keep original migration receipts historical; never regenerate the baseline during tests.
+- A rename/removal of a migrated signature needs a reviewed identity mapping/removal in
+  the same change. Missing identities otherwise fail; do not silently prune the baseline.
+- A legacy exclusion change supplies a record-level before/after diff, owning card and
+  reason. Confirm that none of the 45 witnessed identities moves into legacy, then update
+  the reviewed legacy records and literal canonical digest together with policyHash.
+  Run R-13 refusal variants, four suite witnesses and policy/census checks. The initial
+  88-record count permits separately reviewed maintenance; a new reason/owner does not
+  make an exclusion legacy. Never derive the expected digest from live policy at runtime
+  or approve a mismatch with a hash-only edit.
+
 The default/full `verify-dev-stack.ps1` smoke belongs on the Windows Aspire desktop:
 its `antiphon-postgres` check concerns that desktop stack, not an isolated runner
 database. Non-Windows full invocations, including `-SkipBrowser`, refuse with
