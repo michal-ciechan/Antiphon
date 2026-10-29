@@ -60,7 +60,7 @@ public sealed class ShadowCopyStore(string binRoot)
             try
             {
                 CopyRecursive(sourceDir, stagingDir);
-                Directory.Move(stagingDir, finalDir);
+                PublishStagingDirectory(stagingDir, finalDir);
                 return finalDir;
             }
             catch (IOException) when (Directory.Exists(finalDir))
@@ -77,6 +77,9 @@ public sealed class ShadowCopyStore(string binRoot)
             }
         }
     }
+
+    internal static void PublishStagingDirectory(string stagingDir, string finalDir) =>
+        Directory.Move(stagingDir, finalDir);
 
     internal static bool HasRuntimePayload(string dir) =>
         File.Exists(Path.Combine(dir, OperatingSystem.IsWindows() ? "Antiphon.PtyHost.exe" : "Antiphon.PtyHost"))
