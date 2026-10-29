@@ -4466,8 +4466,14 @@ c1192_reap_witness() {
     local owned foreign owned_hit=0 foreign_signalled=0 foreign_survived=0 name
     command sleep 60 & owned=$!
     foreign=$(bash -c 'command sleep 60 >/dev/null 2>&1 & echo $!; exit 0')
+    # Delivering TERM ends the sleep and drops it from jobs -pr before the
+    # escalation check, so -9 is skipped. Record that TERM and leave the pid
+    # in the job table; -9 is then the deterministic escalation.
     kill() {
         printf '%s\n' "$*" >> "$C1192_ROOT/kills"
+        if [ "$#" -eq 1 ] && [ "$1" = "$owned" ]; then
+            return 0
+        fi
         command kill "$@"
     }
     : > "$C1192_ROOT/kills"
