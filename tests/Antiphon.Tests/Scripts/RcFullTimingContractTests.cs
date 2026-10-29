@@ -22,11 +22,24 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
         observed.GetProperty("persisted").GetBoolean().ShouldBeTrue("root exit and descendant image were not persisted");
         observed.GetProperty("image").GetString().ShouldBe("OwnedChild.exe");
-        observed.GetProperty("missedImage").GetString().ShouldBe("unknown");
+        observed.GetProperty("blankImage").GetString().ShouldBe("unknown");
+        observed.GetProperty("missedImage").GetString().ShouldBe("unknown", "missed pid was left as a live image");
+        observed.GetProperty("missedOnlyImage").GetString().ShouldBe("unknown", "pid that exited before capture was dropped");
+        observed.GetProperty("missedContainsLive").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("missedContainsBlank").GetBoolean().ShouldBeFalse("blank image is not a missed pid");
         observed.GetProperty("jobEmpty").GetBoolean().ShouldBeTrue();
         observed.GetProperty("drainMilliseconds").GetDouble().ShouldBe(7);
         observed.GetProperty("executionMilliseconds").GetDouble().ShouldBe(20);
+        observed.GetProperty("launchMilliseconds").GetDouble().ShouldBe(10);
+        observed.GetProperty("cleanupMilliseconds").GetDouble().ShouldBe(4);
+        observed.GetProperty("childrenExited").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("outputDrained").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("remainingProcessCount").GetInt32().ShouldBe(0);
         observed.GetProperty("rootExitedAtUtc").GetString().ShouldBe("2026-10-29T00:00:02.0000000Z");
+        observed.GetProperty("rootStartedAtUtc").GetString().ShouldBe("2026-10-29T00:00:00.0000000Z");
+        observed.GetProperty("runId").GetString().ShouldBe("run-1");
+        observed.GetProperty("attempt").GetString().ShouldBe("1");
+        observed.GetProperty("attempt2Preserved").GetBoolean().ShouldBeTrue("rerun overwrote the first owner observation");
     }
 
     [Test]
@@ -39,6 +52,13 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("indexSuites").GetInt32().ShouldBe(2, "old singleton overwrite");
         Uids(observed, "antiphonUids").ShouldBe(new[] { "uid-antiphon" });
         Uids(observed, "e2eUids").ShouldBe(new[] { "uid-e2e" });
+        observed.GetProperty("antiphonAssembly").GetString().ShouldBe("Antiphon.Tests");
+        observed.GetProperty("e2eAssembly").GetString().ShouldBe("Antiphon.E2E");
+        observed.GetProperty("antiphonSource").GetString().ShouldBe("src", "index dropped source digest");
+        observed.GetProperty("e2eSource").GetString().ShouldBe("src", "index dropped source digest");
+        observed.GetProperty("stale").GetBoolean().ShouldBeFalse("stale-input-not-joined");
+        observed.GetProperty("antiphonJoined").GetBoolean().ShouldBeTrue("cross-suite plan was stale");
+        observed.GetProperty("e2eJoined").GetBoolean().ShouldBeTrue("cross-suite plan was stale");
         SuiteOf(observed, "antiphon-case").ShouldBe("antiphon");
         SuiteOf(observed, "e2e-case").ShouldBe("e2e");
     }
@@ -60,9 +80,14 @@ public sealed class RcFullTimingContractTests
         Matrix(observed, "net9").ShouldBe("compatible");
         observed.GetProperty("desktopLoaderCalled").GetBoolean().ShouldBeFalse();
         observed.GetProperty("net8LoaderCalled").GetBoolean().ShouldBeFalse();
+        observed.GetProperty("loaderObservable").GetBoolean().ShouldBeTrue("loader flag is child scope");
         observed.GetProperty("desktopAdmission").GetBoolean().ShouldBeFalse();
         observed.GetProperty("net8Admission").GetBoolean().ShouldBeFalse();
         observed.GetProperty("desktopDiagnosticComplete").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("receiptWritten").GetBoolean().ShouldBeTrue("host runtime receipt was not written");
+        observed.GetProperty("productionSamples").GetInt32().ShouldBe(2);
+        observed.GetProperty("loaderWrapped").GetBoolean().ShouldBeTrue("loader fault escaped");
+        observed.GetProperty("readsAfterOwner").GetInt32().ShouldBe(0);
     }
 
     [Test]
@@ -71,10 +96,6 @@ public sealed class RcFullTimingContractTests
     {
         var root = FreshRoot();
         var observed = await Run(DiscoveryScript, cancellationToken, root);
-        var impl = await File.ReadAllTextAsync(
-            Path.Combine(C1514Support.RepoRoot(), "scripts", "lib", "nightly-tests-impl.ps1"), cancellationToken);
-        impl.Contains("$chunkDiscoverySeconds = $suiteDiscoverySeconds", StringComparison.Ordinal)
-            .ShouldBeFalse("baseline copied constant");
         observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
         observed.GetProperty("copiedFromSuite").GetBoolean().ShouldBeFalse("baseline copied constant");
         observed.GetProperty("missingChunk").ValueKind.ShouldBe(JsonValueKind.Null);
@@ -92,7 +113,7 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
         observed.GetProperty("countedOnce").GetBoolean().ShouldBeTrue("planning and build were summed once per chunk");
         observed.GetProperty("setupSeconds").GetDouble().ShouldBe(9);
-        observed.GetProperty("perChunkBuildSum").GetDouble().ShouldBe(12);
+        observed.GetProperty("perChunkBuildSum").GetDouble().ShouldBe(6, "build was summed once per chunk");
         observed.GetProperty("overlapped").GetBoolean().ShouldBeFalse();
     }
 
@@ -113,6 +134,9 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("orphanIncomplete").GetBoolean().ShouldBeTrue("no false pass");
         observed.GetProperty("orphanCountsKnown").GetBoolean().ShouldBeFalse("no false zero");
         observed.GetProperty("duplicateJoined").GetBoolean().ShouldBeFalse("duplicate native markers");
+        observed.GetProperty("summaryAggregationBudgetMilliseconds").GetInt32().ShouldBe(5000, "aggregate re-read budget");
+        observed.GetProperty("summaryAggregationMilliseconds").GetInt32().ShouldBeGreaterThanOrEqualTo(0);
+        observed.GetProperty("summaryAggregationMilliseconds").GetInt32().ShouldBeLessThanOrEqualTo(5000);
     }
 
     private static string[] Uids(JsonElement observed, string name)
@@ -175,72 +199,152 @@ public sealed class RcFullTimingContractTests
         $ErrorActionPreference = 'Stop'
         $repo = $args[0]
         $work = $args[1]
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'test-phase-evidence.ps1')
-        $descendants = @(
-            [pscustomobject]@{ pid = 43; image = 'OwnedChild.exe'; startedAtUtc = '2026-10-29T00:00:00.1000000Z'; exitedAtUtc = '2026-10-29T00:00:01.5000000Z' }
-            [pscustomobject]@{ pid = 44; image = ''; startedAtUtc = ''; exitedAtUtc = '' }
-        )
-        $verdict = [pscustomobject]@{
-            ExitCode = 0
-            coverageComplete = $true
-            testsPassed = $true
-            rootStartedAtUtc = '2026-10-29T00:00:00.0000000Z'
-            rootExitedAtUtc = '2026-10-29T00:00:02.0000000Z'
-            jobEmpty = $true
-            remainingProcessCount = 0
-            launchMilliseconds = 10
-            executionMilliseconds = 20
-            cleanupMilliseconds = 4
-            drainMilliseconds = 7
-            childrenExited = $true
-            outputDrained = $true
-            missedDescendantPids = @(44)
-            descendants = $descendants
-        }
-        [void](Complete-TestPhaseLaunch -Verdict $verdict -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1)
-        $found = $false
+        $problems = New-Object System.Collections.Generic.List[string]
+        $persisted = $false
         $image = ''
+        $blankImage = ''
         $missedImage = ''
+        $missedOnlyImage = ''
+        $missedContainsLive = $false
+        $missedContainsBlank = $false
         $jobEmpty = $false
         $drain = 0.0
         $execution = 0.0
+        $launch = 0.0
+        $cleanup = 0.0
+        $childrenExited = $false
+        $outputDrained = $false
+        $remaining = -1
         $exited = ''
-        $timing = Join-Path $work 'timing'
-        if (Test-Path -LiteralPath $timing) {
-            foreach ($file in @(Get-ChildItem -LiteralPath $timing -File -Filter '*.json')) {
-                $text = [IO.File]::ReadAllText($file.FullName)
-                if ($text.IndexOf('rootExitedAtUtc') -lt 0) { continue }
-                $found = $true
-                $doc = $text | ConvertFrom-Json
-                $exitedMatch = [regex]::Match($text, '"rootExitedAtUtc"\s*:\s*"([^"]*)"')
-                if ($exitedMatch.Success) { $exited = $exitedMatch.Groups[1].Value }
-                if ($doc.PSObject.Properties.Name -contains 'jobEmpty') { $jobEmpty = [bool]$doc.jobEmpty }
-                if ($doc.PSObject.Properties.Name -contains 'drainMilliseconds') { $drain = [double]$doc.drainMilliseconds }
-                if ($doc.PSObject.Properties.Name -contains 'executionMilliseconds') { $execution = [double]$doc.executionMilliseconds }
-                if ($doc.PSObject.Properties.Name -contains 'descendants') {
-                    foreach ($row in @($doc.descendants)) {
-                        $rowPid = 0
-                        if ($row.PSObject.Properties.Name -contains 'pid') { $rowPid = [int]$row.pid }
-                        $rowImage = ''
-                        if ($row.PSObject.Properties.Name -contains 'image') { $rowImage = [string]$row.image }
-                        if ($rowPid -eq 43) { $image = $rowImage }
-                        if ($rowPid -eq 44) { $missedImage = $rowImage }
-                    }
+        $rootStarted = ''
+        $runId = ''
+        $attempt = ''
+        $attempt2Preserved = $false
+        try {
+            $lib = Join-Path $repo 'scripts/lib'
+            . (Join-Path $lib 'nightly-common.ps1')
+            . (Join-Path $lib 'test-phase-evidence.ps1')
+            . (Join-Path $lib 'nightly-tests-impl.ps1')
+            if (-not (Get-Command Publish-NightlyChunkObservation -ErrorAction SilentlyContinue)) {
+                throw 'production Publish-NightlyChunkObservation is missing'
+            }
+            function New-OwnerRun([string]$childImage) {
+                return [pscustomobject]@{
+                    ExitCode = 0
+                    RootStartedAtUtc = '2026-10-29T00:00:00.0000000Z'
+                    RootExitedAtUtc = '2026-10-29T00:00:02.0000000Z'
+                    JobEmptyObserved = $true
+                    RemainingProcessCount = 0
+                    LaunchMilliseconds = 10
+                    ExecutionMilliseconds = 20
+                    CleanupMilliseconds = 4
+                    DrainMilliseconds = 7
+                    ChildrenExited = $true
+                    OutputDrained = $true
+                    MissedDescendantPids = @(45, 46)
+                    DescendantIdentities = @(
+                        '43:2026-10-29T00:00:00.1000000Z',
+                        '44:2026-10-29T00:00:00.2000000Z',
+                        '45:2026-10-29T00:00:00.3000000Z'
+                    )
+                    DescendantImages = @('OwnedChild.exe', '', $childImage)
+                    DescendantExitedAtUtc = @('2026-10-29T00:00:01.5000000Z', '', '')
                 }
             }
+            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'LiveName') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '1' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
+            [void](Publish-NightlyChunkObservation -Run (New-OwnerRun 'Other.exe') -LogRoot $work -TrxPath (Join-Path $work 'missing.trx') -Suite 'antiphon' -Chunk 'all-group-1' -RunId 'run-1' -Attempt '2' -HostWallSeconds 1 -CoverageComplete $true -TestsPassed $true)
+            $timing = Join-Path $work 'timing'
+            $firstPath = Join-Path $timing 'owner-antiphon-all-group-1-run-1-1.json'
+            $secondPath = Join-Path $timing 'owner-antiphon-all-group-1-run-1-2.json'
+            if (-not (Test-Path -LiteralPath $firstPath)) { throw 'owner sidecar missing' }
+            $raw = [IO.File]::ReadAllText($firstPath)
+            $doc = $raw | ConvertFrom-Json
+            $persisted = $true
+            $exitedMatch = [regex]::Match($raw, '"rootExitedAtUtc"\s*:\s*"([^"]*)"')
+            if ($exitedMatch.Success) { $exited = $exitedMatch.Groups[1].Value }
+            function Read-Text([object]$Obj, [string]$Name) {
+                if ($null -eq $Obj -or $Obj.PSObject.Properties.Name -notcontains $Name) { return '' }
+                return [string]$Obj.$Name
+            }
+            $rootStarted = Read-Text $doc 'rootStartedAtUtc'
+            $runId = Read-Text $doc 'runId'
+            $attempt = Read-Text $doc 'attempt'
+            if ($doc.PSObject.Properties.Name -contains 'jobEmpty') { $jobEmpty = [bool]$doc.jobEmpty }
+            if ($doc.PSObject.Properties.Name -contains 'drainMilliseconds') { $drain = [double]$doc.drainMilliseconds }
+            if ($doc.PSObject.Properties.Name -contains 'executionMilliseconds') { $execution = [double]$doc.executionMilliseconds }
+            if ($doc.PSObject.Properties.Name -contains 'launchMilliseconds') { $launch = [double]$doc.launchMilliseconds }
+            if ($doc.PSObject.Properties.Name -contains 'cleanupMilliseconds') { $cleanup = [double]$doc.cleanupMilliseconds }
+            if ($doc.PSObject.Properties.Name -contains 'childrenExited') { $childrenExited = [bool]$doc.childrenExited }
+            if ($doc.PSObject.Properties.Name -contains 'outputDrained') { $outputDrained = [bool]$doc.outputDrained }
+            if ($doc.PSObject.Properties.Name -contains 'remainingProcessCount') { $remaining = [int]$doc.remainingProcessCount }
+            $missedIds = @()
+            if ($doc.PSObject.Properties.Name -contains 'missedDescendantPids') { $missedIds = @($doc.missedDescendantPids) }
+            foreach ($id in $missedIds) {
+                if ([int]$id -eq 45) { $missedContainsLive = $true }
+                if ([int]$id -eq 44) { $missedContainsBlank = $true }
+                if ([int]$id -eq 46) { $missedOnlySeen = $true }
+            }
+            if ($doc.PSObject.Properties.Name -contains 'descendants') {
+                foreach ($row in @($doc.descendants)) {
+                    $rowPid = 0
+                    if ($row.PSObject.Properties.Name -contains 'pid') { $rowPid = [int]$row.pid }
+                    $rowImage = ''
+                    if ($row.PSObject.Properties.Name -contains 'image') { $rowImage = [string]$row.image }
+                    if ($rowPid -eq 43) { $image = $rowImage }
+                    if ($rowPid -eq 44) { $blankImage = $rowImage }
+                    if ($rowPid -eq 45) { $missedImage = $rowImage }
+                    if ($rowPid -eq 46) { $missedOnlyImage = $rowImage }
+                }
+            }
+            if ((Test-Path -LiteralPath $secondPath)) {
+                $second = [IO.File]::ReadAllText($secondPath) | ConvertFrom-Json
+                $secondImage = ''
+                if ($second.PSObject.Properties.Name -contains 'descendants') {
+                    foreach ($row in @($second.descendants)) {
+                        if ([int]$row.pid -eq 43) { $secondImage = [string]$row.image }
+                    }
+                }
+                if ($image -eq 'OwnedChild.exe' -and $secondImage -eq 'Other.exe') { $attempt2Preserved = $true }
+            }
+        } catch {
+            $problems.Add([string]$_.Exception.Message)
         }
+        if (-not $persisted) { $problems.Add('owner-not-persisted') }
+        if ($image -ne 'OwnedChild.exe') { $problems.Add('retained-image-missing') }
+        if ($blankImage -ne 'unknown') { $problems.Add('blank-image-not-unknown') }
+        if ($missedImage -ne 'unknown') { $problems.Add('missed-live-image-not-unknown') }
+        if ($missedOnlyImage -ne 'unknown') { $problems.Add('exited-before-capture-dropped') }
+        if (-not $missedContainsLive) { $problems.Add('missed-list-dropped-live') }
+        if ($missedContainsBlank) { $problems.Add('blank-image-marked-missed') }
+        if ($rootStarted -ne '2026-10-29T00:00:00.0000000Z') { $problems.Add('root-start-missing') }
+        if ($runId -ne 'run-1' -or $attempt -ne '1') { $problems.Add('run-attempt-missing') }
+        if (-not $attempt2Preserved) { $problems.Add('rerun-overwrote-owner') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
-            persisted = [bool]$found
+            exitCode = [int]$exit
+            text = [string]$text
+            persisted = [bool]$persisted
             image = [string]$image
+            blankImage = [string]$blankImage
             missedImage = [string]$missedImage
+            missedOnlyImage = [string]$missedOnlyImage
+            missedContainsLive = [bool]$missedContainsLive
+            missedContainsBlank = [bool]$missedContainsBlank
             jobEmpty = [bool]$jobEmpty
             drainMilliseconds = [double]$drain
             executionMilliseconds = [double]$execution
+            launchMilliseconds = [double]$launch
+            cleanupMilliseconds = [double]$cleanup
+            childrenExited = [bool]$childrenExited
+            outputDrained = [bool]$outputDrained
+            remainingProcessCount = [int]$remaining
             rootExitedAtUtc = [string]$exited
+            rootStartedAtUtc = [string]$rootStarted
+            runId = [string]$runId
+            attempt = [string]$attempt
+            attempt2Preserved = [bool]$attempt2Preserved
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
         """;
@@ -275,13 +379,15 @@ public sealed class RcFullTimingContractTests
         $common = @{
             LogRoot = $work; RunId = 'run-1'; Attempt = '1'
             SourceDigest = 'src'; AssemblyDigest = 'asm'; PolicyDigest = 'pol'; CostFileDigest = 'cost'
-            AssemblyId = 'Antiphon.Tests'; ProfileExclusions = @()
+            ProfileExclusions = @()
         }
-        [void](Write-TestPhasePlannedManifest @common -Suite 'antiphon' -Groups @(New-RcGroup $antiphonClass) -DiscoveryNodes @(New-RcNode 'uid-antiphon' $antiphonClass))
-        [void](Write-TestPhasePlannedManifest @common -Suite 'e2e' -Groups @(New-RcGroup $e2eClass) -DiscoveryNodes @(New-RcNode 'uid-e2e' $e2eClass))
+        [void](Write-TestPhasePlannedManifest @common -Suite 'antiphon' -AssemblyId 'Antiphon.Tests' -Groups @(New-RcGroup $antiphonClass) -DiscoveryNodes @(New-RcNode 'uid-antiphon' $antiphonClass))
+        [void](Write-TestPhasePlannedManifest @common -Suite 'e2e' -AssemblyId 'Antiphon.E2E' -Groups @(New-RcGroup $e2eClass) -DiscoveryNodes @(New-RcNode 'uid-e2e' $e2eClass))
         function Write-RcCase([string]$suite, [string]$id) {
             $timing = Join-Path $work 'timing'
-            $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"' + $suite + '","assembly":"Antiphon.Tests"}'
+            $assembly = 'Antiphon.Tests'
+            if ($suite -eq 'e2e') { $assembly = 'Antiphon.E2E' }
+            $header = '{"recordKind":"header","version":1,"pid":1,"nonce":"n1","frequencyHz":10000000,"epochUtc":"2026-10-29T00:00:00.0000000Z","runId":"run-1","groupId":"all-group-1","attempt":"1","suite":"' + $suite + '","assembly":"' + $assembly + '"}'
             $complete = '{"recordKind":"complete","testId":"' + $id + '","className":"C","method":"M","args":[],"startOffsetMs":0,"endOffsetMs":1,"outcome":"Passed","phases":[],"processes":[],"exclusive":{"db":1,"host":0,"process":0,"fs":0,"network":0,"fixture":0},"overlapMs":0,"remainderMs":0,"childUnionMs":0,"droppedPhaseCount":0,"shared":false,"incomplete":false}'
             [IO.File]::WriteAllText((Join-Path $timing ('cases-' + $suite + '-n1.jsonl')), ($header + "`n" + $complete + "`n"))
             $trxPath = Join-Path $work ($suite + '.trx')
@@ -305,27 +411,69 @@ public sealed class RcFullTimingContractTests
             return @($ids.ToArray())
         }
         $indexCount = 0
+        $antiphonAssembly = ''
+        $e2eAssembly = ''
+        $antiphonSource = ''
+        $e2eSource = ''
         $indexPath = Join-Path $timing 'groups-planned-index.json'
         if (Test-Path -LiteralPath $indexPath) {
             $index = [IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
-            if ($index.PSObject.Properties.Name -contains 'suites') { $indexCount = @($index.suites).Count }
+            if ($index.PSObject.Properties.Name -contains 'suites') {
+                $indexCount = @($index.suites).Count
+                foreach ($row in @($index.suites)) {
+                    $suiteName = [string]$row.suite
+                    $asm = ''
+                    $source = ''
+                    if ($row.PSObject.Properties.Name -contains 'assembly') { $asm = [string]$row.assembly }
+                    if ($row.PSObject.Properties.Name -contains 'sourceDigest') { $source = [string]$row.sourceDigest }
+                    if ($suiteName -eq 'antiphon') { $antiphonAssembly = $asm; $antiphonSource = $source }
+                    if ($suiteName -eq 'e2e') { $e2eAssembly = $asm; $e2eSource = $source }
+                }
+            }
         }
         $rows = New-Object System.Collections.Generic.List[object]
+        $antiphonJoined = $false
+        $e2eJoined = $false
+        $stale = $false
         $summaryPath = Join-Path $timing 'summary.json'
         if (Test-Path -LiteralPath $summaryPath) {
             $summary = [IO.File]::ReadAllText($summaryPath) | ConvertFrom-Json
+            if ($summary.PSObject.Properties.Name -contains 'quality') {
+                foreach ($flag in @($summary.quality)) {
+                    if ([string]$flag -eq 'stale-input-not-joined') { $stale = $true }
+                }
+            }
             foreach ($test in @($summary.tests)) {
                 $suite = ''
                 if ($test.PSObject.Properties.Name -contains 'suite') { $suite = [string]$test.suite }
+                $joined = $false
+                if ($test.PSObject.Properties.Name -contains 'joined') { $joined = [bool]$test.joined }
                 $rows.Add([ordered]@{ testId = [string]$test.testId; suite = $suite })
+                if ([string]$test.testId -eq 'antiphon-case' -and $joined -and $suite -eq 'antiphon') { $antiphonJoined = $true }
+                if ([string]$test.testId -eq 'e2e-case' -and $joined -and $suite -eq 'e2e') { $e2eJoined = $true }
             }
         }
+        $problems = New-Object System.Collections.Generic.List[string]
+        if (-not $antiphonJoined -or $stale) { $problems.Add('cross-suite-stale-not-joined') }
+        if (-not $e2eJoined) { $problems.Add('e2e-not-joined') }
+        if ($antiphonSource -ne 'src' -or $e2eSource -ne 'src') { $problems.Add('index-digest-missing') }
+        if ($antiphonAssembly -ne 'Antiphon.Tests' -or $e2eAssembly -ne 'Antiphon.E2E') { $problems.Add('index-assembly-mismatch') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
+            exitCode = [int]$exit
+            text = [string]$text
             indexSuites = [int]$indexCount
             antiphonUids = @(Read-Uids 'groups-planned-antiphon.json')
             e2eUids = @(Read-Uids 'groups-planned-e2e.json')
+            antiphonAssembly = [string]$antiphonAssembly
+            e2eAssembly = [string]$e2eAssembly
+            antiphonSource = [string]$antiphonSource
+            e2eSource = [string]$e2eSource
+            stale = [bool]$stale
+            antiphonJoined = [bool]$antiphonJoined
+            e2eJoined = [bool]$e2eJoined
             rows = @($rows.ToArray())
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
@@ -335,7 +483,8 @@ public sealed class RcFullTimingContractTests
         $ErrorActionPreference = 'Stop'
         $repo = $args[0]
         $work = $args[1]
-        $path = Join-Path $repo 'scripts/lib/qualification-host-stats.ps1'
+        $lib = Join-Path $repo 'scripts/lib'
+        $path = Join-Path $lib 'qualification-host-stats.ps1'
         $sampleCount = 0
         $firstCpu = $null
         $secondCpu = $null
@@ -347,6 +496,14 @@ public sealed class RcFullTimingContractTests
         $desktopAdmission = $true
         $net8Admission = $true
         $desktopDiagnostic = $false
+        $script:RcScopeSeen = $false
+        $scopeProbe = { $called = $true }
+        & $scopeProbe
+        $loaderObservable = [bool]$script:RcScopeSeen
+        $receiptWritten = $false
+        $productionSamples = 0
+        $loaderWrapped = $false
+        $readsAfterOwner = 99
         if (Test-Path -LiteralPath $path) {
             . $path
             $script:RcHostStopped = $false
@@ -369,9 +526,9 @@ public sealed class RcFullTimingContractTests
             }
             $readsAfter = [int]$script:RcHostReadsAfter
             function Invoke-RcMatrix([string]$edition, [string]$framework) {
-                $called = $false
-                $result = Test-QualificationHostRuntime -Edition $edition -FrameworkDescription $framework -Loader { $called = $true; return 'loaded' }
-                return [pscustomobject]@{ decision = [string]$result.decision; loaderCalled = [bool]$called; admission = [bool]$result.measurementAdmission; diagnostic = [bool]$result.diagnosticComplete }
+                $script:RcMatrixCalled = $false
+                $result = Test-QualificationHostRuntime -Edition $edition -FrameworkDescription $framework -Loader { $script:RcMatrixCalled = $true; return 'loaded' }
+                return [pscustomobject]@{ decision = [string]$result.decision; loaderCalled = [bool]$script:RcMatrixCalled; admission = [bool]$result.measurementAdmission; diagnostic = [bool]$result.diagnosticComplete }
             }
             $desktop = Invoke-RcMatrix 'Desktop' '.NET Framework 4.8.1'
             $net8 = Invoke-RcMatrix 'Core' '.NET 8.0.11'
@@ -384,10 +541,56 @@ public sealed class RcFullTimingContractTests
             $desktopAdmission = $desktop.admission
             $net8Admission = $net8.admission
             $desktopDiagnostic = $desktop.diagnostic
+            try {
+                $blown = New-QualificationHostStatsProvider -AssemblyPath (Join-Path $work 'probe.dll') -Edition 'Core' -FrameworkDescription '.NET 9.0.8' -Loader { throw 'loader-fault' }
+                if ([string]$blown.loadReason -eq 'loader-failed' -and -not [bool]$blown.measurementAdmission) { $loaderWrapped = $true }
+            } catch { $loaderWrapped = $false }
+            try {
+                . (Join-Path $lib 'nightly-common.ps1')
+                . (Join-Path $lib 'test-phase-evidence.ps1')
+                . (Join-Path $lib 'nightly-tests-impl.ps1')
+                if (Get-Command Start-NightlyHostSampling -ErrorAction SilentlyContinue) {
+                    $dll = Join-Path $work 'probe.dll'
+                    [IO.File]::WriteAllBytes($dll, [byte[]](1, 2, 3, 4))
+                    $script:RcProdStop = $false
+                    $script:RcProdReads = 0
+                    $script:RcProdReadsAfter = 0
+                    $prodProbe = {
+                        if ($script:RcProdStop) { $script:RcProdReadsAfter++; return $null }
+                        $script:RcProdReads++
+                        if ($script:RcProdReads -eq 1) {
+                            return [pscustomobject]@{ at = '2026-10-29T00:00:00.0000000Z'; cpuPercent = $null; cores = 2; memoryAvailableBytes = 8; memoryCommittedBytes = $null; diskQueue = $null }
+                        }
+                        return [pscustomobject]@{ at = '2026-10-29T00:00:30.0000000Z'; cpuPercent = 1; cores = 2; memoryAvailableBytes = $null; memoryCommittedBytes = $null; diskQueue = $null }
+                    }
+                    $started = Start-NightlyHostSampling -LogRoot $work -AssemblyPath $dll -Loader { return 'probe-handle' } -Probe $prodProbe -SampleCount 2 -IntervalMilliseconds 0 -OwnerCompleted { $script:RcProdStop = $true }
+                    if ($null -ne $started -and $started.PSObject.Properties.Name -contains 'sampleCount') { $productionSamples = [int]$started.sampleCount }
+                    $readsAfterOwner = [int]$script:RcProdReadsAfter
+                    $receiptPath = Join-Path (Join-Path $work 'timing') 'host-runtime.json'
+                    if (Test-Path -LiteralPath $receiptPath) {
+                        $receipt = [IO.File]::ReadAllText($receiptPath) | ConvertFrom-Json
+                        $exeOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.executable) -or [string]$receipt.executableReason -eq 'unavailable'
+                        $digestOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.assemblyDigest)
+                        $editionOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.psEdition)
+                        $versionOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.psVersion)
+                        $frameworkOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.frameworkDescription)
+                        if ($exeOk -and $digestOk -and $editionOk -and $versionOk -and $frameworkOk) { $receiptWritten = $true }
+                    }
+                }
+            } catch { }
         }
+        $problems = New-Object System.Collections.Generic.List[string]
+        if (-not $loaderObservable) { $problems.Add('loader-flag-child-scope') }
+        if (-not $receiptWritten) { $problems.Add('host-runtime-receipt-missing') }
+        if ($productionSamples -ne 2) { $problems.Add('production-samples-missing') }
+        if (-not $loaderWrapped) { $problems.Add('loader-fault-escaped') }
+        if ($readsAfterOwner -ne 0) { $problems.Add('samples-after-owner') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
+            exitCode = [int]$exit
+            text = [string]$text
             sampleCount = [int]$sampleCount
             firstCpu = $firstCpu
             secondCpu = $secondCpu
@@ -396,9 +599,14 @@ public sealed class RcFullTimingContractTests
             matrix = $matrix
             desktopLoaderCalled = [bool]$desktopLoader
             net8LoaderCalled = [bool]$net8Loader
+            loaderObservable = [bool]$loaderObservable
             desktopAdmission = [bool]$desktopAdmission
             net8Admission = [bool]$net8Admission
             desktopDiagnosticComplete = [bool]$desktopDiagnostic
+            receiptWritten = [bool]$receiptWritten
+            productionSamples = [int]$productionSamples
+            loaderWrapped = [bool]$loaderWrapped
+            readsAfterOwner = [int]$readsAfterOwner
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
         """;
@@ -416,19 +624,27 @@ public sealed class RcFullTimingContractTests
         $markedChunk = 21.377
         $supplemental = 21.377
         $suite = 21.377
-        if (Get-Command Resolve-NightlyChunkDiscoverySeconds -ErrorAction SilentlyContinue) {
-            $missing = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds $null
-            $marked = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.5
-            $extra = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.25 -SupplementalLaunch $true
+        $problems = New-Object System.Collections.Generic.List[string]
+        if (Get-Command Resolve-NightlyProductionChunkDiscovery -ErrorAction SilentlyContinue) {
+            $missing = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds $null
+            $marked = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.5
+            $extra = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds 21.377 -ChunkMarkerSeconds 1.25 -SupplementalLaunch
             $copied = [bool]$missing.copiedFromSuite
             $missingChunk = $missing.chunkDiscoverySeconds
             $markedChunk = $marked.chunkDiscoverySeconds
             $supplemental = $extra.chunkDiscoverySeconds
             $suite = $missing.suiteDiscoverySeconds
+        } else {
+            $problems.Add('production-discovery-writer-missing')
         }
+        if ($copied) { $problems.Add('discovery-copied-from-suite') }
+        if ($null -ne $missingChunk) { $problems.Add('ordinary-chunk-copied-suite-constant') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
+            exitCode = [int]$exit
+            text = [string]$text
             copiedFromSuite = [bool]$copied
             missingChunk = $missingChunk
             markedChunk = $markedChunk
@@ -445,13 +661,20 @@ public sealed class RcFullTimingContractTests
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
+        . (Join-Path $lib 'nightly-tests-impl.ps1')
+        $exit = 0
+        $text = ''
+        $problems = New-Object System.Collections.Generic.List[string]
         $countedOnce = $false
-        $setup = 12.0
-        $sum = 12.0
+        $setup = -1.0
+        $sum = -1.0
         $overlapped = $true
-        if (Get-Command Write-QualificationRunPhase -ErrorAction SilentlyContinue) {
-            Write-QualificationRunPhase -LogRoot $work -Name 'planning' -StartedAt '2026-10-29T00:00:00.0000000Z' -EndedAt '2026-10-29T00:00:03.0000000Z' -Seconds 3
-            Write-QualificationRunPhase -LogRoot $work -Name 'build' -StartedAt '2026-10-29T00:00:03.0000000Z' -EndedAt '2026-10-29T00:00:09.0000000Z' -Seconds 6
+        try {
+            if (-not (Get-Command Write-NightlyPrerequisitePhases -ErrorAction SilentlyContinue)) {
+                $problems.Add('prerequisite-writer-missing')
+            } else {
+                Write-NightlyPrerequisitePhases -LogRoot $work -NpmCiStarted '2026-10-29T00:00:00.0000000Z' -NpmCiSeconds 1 -NpmBuildStarted '2026-10-29T00:00:01.0000000Z' -NpmBuildSeconds 6 -LintStarted '2026-10-29T00:00:07.0000000Z' -LintSeconds 2 -DotnetStarted '2026-10-29T00:00:09.0000000Z' -DotnetSeconds 0
+            }
             Update-QualificationChunkTiming -LogRoot $work -TimingRoot (Join-Path $work 'timing') -Suite 'antiphon' -Chunk 'a' -LastPhase 'run' -BuildSeconds 6 -RunId 'run-1' -Attempt '1'
             Update-QualificationChunkTiming -LogRoot $work -TimingRoot (Join-Path $work 'timing') -Suite 'antiphon' -Chunk 'b' -LastPhase 'run' -BuildSeconds 6 -RunId 'run-1' -Attempt '1'
             $acct = Get-QualificationSetupAccounting -LogRoot $work
@@ -459,10 +682,17 @@ public sealed class RcFullTimingContractTests
             $setup = [double]$acct.setupSeconds
             $sum = [double]$acct.perChunkBuildSum
             $overlapped = [bool]$acct.overlapped
+            if (-not $countedOnce) { $problems.Add('counted-more-than-once') }
+            if ([double]$setup -ne 9) { $problems.Add(('setup-seconds=' + [string]$setup)) }
+            if ([double]$sum -ne 6) { $problems.Add(('per-chunk-build-sum=' + [string]$sum)) }
+            if ($overlapped) { $problems.Add('phases-overlapped') }
+        } catch {
+            $problems.Add([string]$_.Exception.Message)
         }
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
+            exitCode = [int]$exit
+            text = [string]$text
             countedOnce = [bool]$countedOnce
             setupSeconds = [double]$setup
             perChunkBuildSum = [double]$sum
@@ -537,9 +767,23 @@ public sealed class RcFullTimingContractTests
         }
         $quality = @($summary.quality | ForEach-Object { [string]$_ })
         $torn = ($quality -contains 'torn-tail') -or ([int]$summary.tornLines -gt 0)
+        $budget = -1
+        $spent = -1
+        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationBudgetMilliseconds' -and $null -ne $summary.summaryAggregationBudgetMilliseconds) {
+            $budget = [int]$summary.summaryAggregationBudgetMilliseconds
+        }
+        if ($summary.PSObject.Properties.Name -contains 'summaryAggregationMilliseconds' -and $null -ne $summary.summaryAggregationMilliseconds) {
+            $spent = [int]$summary.summaryAggregationMilliseconds
+        }
+        $problems = New-Object System.Collections.Generic.List[string]
+        if ($budget -ne 5000) { $problems.Add(('summary-budget=' + [string]$budget)) }
+        if ($spent -lt 0 -or $spent -gt $budget) { $problems.Add(('summary-spent=' + [string]$spent)) }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
         $out = [ordered]@{
-            exitCode = 0
-            text = ''
+            exitCode = [int]$exit
+            text = [string]$text
             earlyPresent = [bool]$early
             latePresent = [bool]$late
             torn = [bool]$torn
@@ -550,6 +794,8 @@ public sealed class RcFullTimingContractTests
             orphanIncomplete = [bool]$orphanIncomplete
             orphanCountsKnown = [bool]$orphanKnown
             duplicateJoined = [bool]$duplicateJoined
+            summaryAggregationBudgetMilliseconds = [int]$budget
+            summaryAggregationMilliseconds = [int]$spent
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
