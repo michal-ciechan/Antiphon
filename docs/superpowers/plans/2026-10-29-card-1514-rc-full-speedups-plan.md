@@ -16,7 +16,7 @@ The six design-review defects are accepted for correction. This first pushed ske
 | D-2 | Resolved: the S6 measurement dispatch requires `-Platform Windows`; portable CP-16 validates admission logic only. Each trial receipt binds actual Windows identity. |
 | D-3 | Resolved: linked conservative timing/wait census dispositions every listed file; closed two-method pilot excludes every other test. Elapsed benchmarks remain strict and host-isolated. |
 | D-4 | Resolved: 20 pairs, 10 per load stratum; paired wall ratio/sign rule, per-test deadline margin, descriptive percentiles only, and explicit 25.9% per-stratum zero-failure bound. |
-| D-5 | Execute the heartbeat harness and C1397 assertions through named checkpoint wrappers with source-verified counts. |
+| D-5 | Resolved: CP-17 runs all 17 existing heartbeat assertions; CP-18 explicitly selects C1397 (1 assertion); CP-19 runs the S3-changed Costs wrapper (1 result / 4 assertions). |
 | D-6 | Name OS/environment witnesses, discriminating inputs and production factories; run `scripts/check-os-witnesses.ps1` against the final plan. |
 
 Also verify the absent release-authority production wiring, rc log-fix subjects/cherry-picks, suffix-safe filters and same-source/same-platform build reuse. No product code is changed by this Plan task.
@@ -182,6 +182,8 @@ Run one checkpoint-tool invocation per committed slice/lane group, with the corr
 
 `Min` is a conservative count floor, not a time or assertion count. New single-case methods have declared counts; existing parameterized classes use a source-method floor until TestDesign obtains the expanded execution census (CP-14 = 15 lifecycle + 6 isolation + 5 cache methods; CP-5 = 9 recorder + 3 summary methods). Expect every named class/method and every argument expansion, zero outer failed/skipped results, and no unintended suffix class. Nested intentionally failing probe results are checked by their passing outer lifecycle witness, not presented as qualification green.
 
+**S3 harness closure (D-5).** Add `tests/Antiphon.Tests/Scripts/RcFullWatchdogHarnessTests.cs` (Integration, strict limiter) with exactly two unparameterized methods. `HeartbeatExistingContract` (CP-17) runs the whole `scripts/test-qualification-supervisor-heartbeat.ps1` harness through the owned process helper and asserts exactly **17 PASS / 0 FAIL**, every existing assertion name and final `passed=17 failed=0`, exit 0. The 17 include idle/CPU isolation, TRX/log resets, 10/30 minute budgets, missing hosts, manifest read, JSON roundtrip/continuation and ASCII/no-kill checks; preserve these as progress identity is added. CP-9 owns new UID-progress assertions, so no implicit extra heartbeat count is assumed. `C1397ExistingContract` (CP-18) uses `ScriptHarness.RunHarnessCaseAsync` with prefix `C1397`, case `C1397_RcAntiphonLaunchGroups`, expectedRows=1 and its exact existing assertion name: **1 PASS / 0 FAIL**, `C487: 1 passed, 0 failed, 1 rows` and `C487 HARNESS EXIT CODE: 0`. The default script invocation does not run C1397. Each wrapper contributes **one TUnit result**, not its internal assertion count. Removing the harness invocation, named count, or exit/result assertions must go red under a controlled harness failure; a wrapper that only asserts launch success is a stub. Add explicit wrapper/argument-consumer script-census dispositions (matching existing schema) for heartbeat/nightly-tests; do not launch the entire default nightly harness implicitly. CP-19 closes the S3 edit to `test-rc-roster-repairs.ps1` immediately instead of waiting for S4's CP-11.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -202,6 +204,9 @@ Run one checkpoint-tool invocation per committed slice/lane group, with the corr
 | CP-14 | S5 | `tests/Antiphon.Tests -> bin-rcspeed-b4reg/` | portable-db-isolation | `/*/Antiphon.Tests.TestHelpers/(TestDbFixtureLifecycleTests*)\|(TestDbFixtureIsolationTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)/*` | B4, D isolation | all 3 classes and argument expansions, 0 failed/skipped | 26 | 10 | true |
 | CP-15 | S5 | `tests/Antiphon.Tests -> bin-rcspeed-lazy/` | portable-lazy-bootstrap | `/*/Antiphon.Tests.TestHelpers/TestDbFixtureLazyInitializationTests/(A_db_free_exact_method_selection_constructs_and_starts_no_database*)\|(Mixed_first_consumers_share_one_real_bootstrap*)` | B4 no eager DB / shared setup | both methods, 0 failed/skipped | 2 | 9 | true |
 | CP-16 | S6 | `tests/Antiphon.Tests -> bin-rcspeed-c/` | portable-trial-admission | `/*/*/(RcFullParallelTrialTests*)\|(ProcessSpawnLimitTests*)/*` | C, D diagnostic credit | both classes, 0 failed/skipped | 14 | 8 | true |
+| CP-17 | S3 | `CP-8` | portable-heartbeat-harness | `/*/Antiphon.Tests.Scripts/RcFullWatchdogHarnessTests/HeartbeatExistingContract` | B2 existing heartbeat regression | 1 wrapper; exactly 17 internal PASS, 0 FAIL, exit 0 | 1 | 1 | true |
+| CP-18 | S3 | `CP-8` | portable-c1397-harness | `/*/Antiphon.Tests.Scripts/RcFullWatchdogHarnessTests/C1397ExistingContract` | B2 planner/watchdog and census | 1 wrapper; exactly 1 internal PASS C1397, 0 FAIL, harness exit 0 | 1 | 1 | true |
+| CP-19 | S3 | `CP-8` | portable-cost-ceiling-regression | `/*/Antiphon.Tests.Scripts/RcRosterRepairTests/Costs` | B2 planner/policy pair | exact method, 4 internal C1567 assertions, 0 failed/skipped | 1 | 1 | true |
 
 ### Cost
 
