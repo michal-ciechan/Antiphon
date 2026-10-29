@@ -133,6 +133,8 @@ SHARD x-c11-W end rc=0 wall=262s waited=0s  total: 299  failed: 0  succeeded: 29
 SHARD c2-C2 start 2026-10-29T22:52:54Z
 SHARD c2-C2 end rc=0 wall=251s waited=0s  total: 201  failed: 0  succeeded: 201  skipped: 0  duration: 4m 09s 448ms 
 SHARD a-rsc4 start 2026-10-29T22:57:05Z
+SHARD c4-D end rc=0 wall=564s waited=0s  total: 580  failed: 0  succeeded: 574  skipped: 6  duration: 9m 22s 562ms 
+SHARD x-c9-S start 2026-10-29T22:59:24Z
 ```
 
 Red comparisons:
