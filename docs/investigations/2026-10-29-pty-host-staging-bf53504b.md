@@ -22,8 +22,9 @@ rename into an internal method without changing behavior, acquires a real Window
 handle, proves the native denial, and requires publication after that handle is
 released. It does not inject filesystem results or exceptions.
 
-The proposed minimal repair retries only publication, only bounded Windows
-access/sharing failures, preserving the completed private copy and atomic rename.
+The minimal repair retries only publication, only Windows IOException HRESULT
+`0x80070005` (access denied), preserving the completed private copy and atomic rename.
+Ten attempts add at most nine 100 ms waits. Other errors are immediately propagated.
 Persistent errors must still throw; no caller timeout or gate assertion changes.
 Concurrent staging uses unique paths; destination collision recovery remains in
 `EnsureCurrent`. Cleanup is inspected separately, not blamed without evidence.
@@ -66,6 +67,12 @@ A gated native probe holding a *payload file* with `File.OpenRead` reproduced
 parent `.copying` directory. The regression now uses this real native condition.
 The original handle owner remains unknown; a matching failure mechanism is
 established, not antivirus or competing-runner attribution.
+
+The corrected test at `1985698d5aa56bc2a9a17adb605097a9905e5c49` produced a valid
+product red: 0 passed / 1 failed / 0 skipped, 275 ms, with the native premise
+passing and `PublishStagingDirectory` throwing IOException access denied. Its
+single `Directory.Move` is the unchanged base operation, extracted for direct
+native testing. No failure was hidden by an assertion or timeout adjustment.
 
 --- next stage ---
 next: review
