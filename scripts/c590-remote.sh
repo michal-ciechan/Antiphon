@@ -5434,7 +5434,13 @@ c849_fixture_finalize() {
     c849_fixture_helper_release "c849-${RUN}-masked" || return 2
     c849_fixture_helper_release "c849-${RUN}-apphost" || return 2
     local child
-    for child in $(jobs -pr); do c849_fixture_reap_probe "$child"; done
+    for child in $(jobs -pr); do
+        if c849_fixture_probe_exited "$child"; then
+            wait "$child" || true
+        else
+            c849_fixture_reap_probe "$child" || true
+        fi
+    done
     if [ "$owned" = 1 ]; then
         c849_fixture_export_logs || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'diagnostic-export\n' || return 2
     fi
@@ -5476,7 +5482,7 @@ c849_fixture() {
     C849_FIXTURE_FINALIZED=0
     c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" replace true || return 2
     c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" replace true || return 2
-    trap 'c849_fixture_on_signal' INT TERM
+    eval "trap 'c849_fixture_on_signal' INT TERM"
     trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
     c849_fixture_workspace_init
     mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2
