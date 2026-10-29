@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -1753,6 +1754,77 @@ public class FakeClaudeContractTests
             looseRaw.Split('␟').Length,
             "the split is the defect: the native parser sees MORE arguments than were intended, and "
             + $"each extra one is a fragment of the system prompt. loose=[{looseRaw}] strict=[{strictRaw}]");
+    }
+
+    /// <summary>
+    /// Windows qualification decoded <c>--echo-args</c> with the console OEM code page: U+241F's
+    /// UTF-8 bytes E2 90 9F became U+00D4 U+00C9 U+0192 (CP850). Linux's console encoding is
+    /// already UTF-8, so this injects a single-byte page (Latin1 stands in for OEM 850/437) and
+    /// requires the separator to survive that capture.
+    /// </summary>
+    [Test]
+    public async Task Argv_separator_survives_an_oem_code_page_capture()
+    {
+        var loose = await ReadLooseArgsUnderCaptureEncodingAsync(Encoding.Latin1);
+        loose.ShouldContain(
+            "--append-system-prompt\u241Fa \"quoted\" word",
+            customMessage: "the argv separator is U+241F and must survive a legacy capture encoding. "
+                + "Windows OEM 850 turned E2 90 9F into U+00D4 U+00C9 U+0192. Line was: " + loose);
+    }
+
+    /// <summary>
+    /// Encoding for the fake's redirected stdout. <paramref name="ambientConsoleEncoding"/> is the
+    /// page a Windows console applies when <see cref="ProcessStartInfo.StandardOutputEncoding"/>
+    /// is left unset.
+    /// </summary>
+    private static Encoding StdoutCaptureEncoding(Encoding ambientConsoleEncoding)
+        => ambientConsoleEncoding;
+
+    /// <summary>
+    /// Launches the fake with <c>--echo-args</c> and reads the loose argv line under
+    /// <paramref name="ambientConsoleEncoding"/>. No ConPTY and no <c>CommandLineToArgvW</c>, so
+    /// it runs on Linux. The process stays up after the banner; it is killed once the line arrives.
+    /// </summary>
+    private static async Task<string> ReadLooseArgsUnderCaptureEncodingAsync(Encoding ambientConsoleEncoding)
+    {
+        var staged = Path.Combine(AppContext.BaseDirectory, "fakeclaude");
+        var exe = Path.Combine(staged, OperatingSystem.IsWindows() ? "fakeclaude.exe" : "fakeclaude");
+        var dll = Path.Combine(staged, "fakeclaude.dll");
+        if (!File.Exists(exe) && !File.Exists(dll))
+            throw new SkipTestException($"fakeclaude not staged under {staged}");
+
+        var psi = File.Exists(exe)
+            ? new ProcessStartInfo(exe)
+            : new ProcessStartInfo("dotnet") { ArgumentList = { "exec", dll, "--" } };
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardInput = true;
+        psi.UseShellExecute = false;
+        psi.StandardOutputEncoding = StdoutCaptureEncoding(ambientConsoleEncoding);
+        psi.ArgumentList.Add("--echo-args");
+        psi.ArgumentList.Add("--append-system-prompt");
+        psi.ArgumentList.Add("a \"quoted\" word");
+
+        using var process = new Process { StartInfo = psi };
+        process.Start();
+        var loose = string.Empty;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (loose.Length == 0 && !cts.IsCancellationRequested)
+            {
+                var line = await process.StandardOutput.ReadLineAsync(cts.Token);
+                if (line is null) break;
+                if (line.StartsWith("ARGS:", StringComparison.Ordinal)) loose = line["ARGS:".Length..];
+            }
+        }
+        catch (OperationCanceledException) { /* the assertion below names the empty line */ }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+        }
+
+        loose.ShouldNotBeEmpty("the fake must print its ARGS line");
+        return loose;
     }
 
     /// <summary>
