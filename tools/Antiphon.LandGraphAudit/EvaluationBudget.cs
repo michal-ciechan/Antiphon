@@ -15,10 +15,13 @@ internal static class EvaluationBudget
     // Loaded time after that line (copy + pass 2): 14703, 12433, 15326.
     public const int MeasuredLoadedPassP95Milliseconds = 22328;
 
-    // No isolated copy stopwatch. 8000ms sits under every loaded second-phase sample,
-    // which still includes pass 2, so it is a provisional upper bound for the copy
-    // (small sample, Linux only). Hardlinks keep the copy on the metadata path.
-    public const int MeasuredCopyP95Milliseconds = 8000;
+    // Plain byte copy of this tree on server2, 2026-10-29. Three samples of the
+    // tracked set (9138 paths, 182462478 bytes): 1957, 2253, 2249 ms. Userspace
+    // read/write, so this is slower than File.Copy. Nearest-rank p95 for n=3 is
+    // rank 3, so 2253. Twice that, rounded up, is 5 s. Provisional for Windows:
+    // replace this constant with a Windows plain-copy p95 to raise it.
+    // See docs/orchestration-loop.md.
+    public const int MeasuredCopyP95Milliseconds = 2253;
 
     // Run 28bbb58e finished one pass inside the old combined ceiling and then refused.
     // Windows keeps that 120s as a per-pass floor until a Windows pass duration is recorded.

@@ -1,28 +1,34 @@
-using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Antiphon.LandGraphAudit;
 
-/// <summary>A disposable evaluation-only copy. Never writes through a link into the source tree.</summary>
+/// <summary>A disposable byte copy. Writes never share data with the source tree.</summary>
 internal sealed class CanaryRepository : IDisposable
 {
     private const string Canary = "antiphon-c1483-canary";
+    internal const string DirectoryPrefix = "antiphon-landgraph-canary-";
+
     // Preserve ancestor configuration discovery (.editorconfig/.globalconfig, SDK searches).
     // A temporary directory under a different parent changes more than documentation.
     private CanaryRepository(string repo) => Root = Path.Combine(
         Path.GetDirectoryName(repo) ?? throw new IOException("repository has no parent for canary evaluation"),
-        "antiphon-landgraph-canary-" + Guid.NewGuid().ToString("N"));
+        DirectoryPrefix + Guid.NewGuid().ToString("N"));
 
     public string Root { get; }
 
-    // Set for the whole copy. A timed-out copy exits the process, which skips Dispose.
-    private static string? ActiveRoot;
+    // The script reads this after a kill. The tool writes it before creating the directory.
+    internal static string? RecordPath { get; set; }
 
-    private readonly Dictionary<string, string> _directoryRealPaths = new(StringComparer.Ordinal);
+    // Set until Dispose. A kill skips Dispose; the process-exit hook and the script both use this path.
+    private static string? ActiveRoot;
+    private static volatile bool Cancelled;
 
     public static CanaryRepository Create(string repo)
     {
+        Cancelled = false;
         var copy = new CanaryRepository(repo);
         ActiveRoot = copy.Root;
+        Publish(copy.Root);
         try
         {
             Directory.CreateDirectory(copy.Root);
@@ -37,6 +43,7 @@ internal sealed class CanaryRepository : IDisposable
 
             foreach (var relative in files.Order(StringComparer.Ordinal))
             {
+                if (Cancelled) throw new IOException("canary copy cancelled");
                 if (relative.Equals("README.md", StringComparison.OrdinalIgnoreCase)) continue;
                 var source = Path.Combine(repo, relative);
                 var destination = Path.GetFullPath(Path.Combine(copy.Root, relative));
@@ -48,14 +55,7 @@ internal sealed class CanaryRepository : IDisposable
                                 && relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
                 if (skippable) { File.WriteAllText(destination, Canary); continue; }
                 var target = new FileInfo(source).LinkTarget;
-                if (target is null)
-                {
-                    // A byte copy of every tracked file is what made a loaded Windows host
-                    // spend the whole combined budget after the first pass. Same-volume
-                    // hard links share the bytes; skippable docs are written above, not linked.
-                    if (!TryHardLink(source, destination)) File.Copy(source, destination);
-                    continue;
-                }
+                if (target is null) { File.Copy(source, destination); continue; }
                 if (Path.IsPathRooted(target) && (target == repo || target.StartsWith(repo + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                     target = copy.Root + target[repo.Length..];
                 if (Directory.Exists(source)) Directory.CreateSymbolicLink(destination, target);
@@ -65,54 +65,69 @@ internal sealed class CanaryRepository : IDisposable
             copy.CheckDestination(added);
             Directory.CreateDirectory(Path.GetDirectoryName(added)!);
             File.WriteAllText(added, Canary);
-            ActiveRoot = null;
             return copy;
         }
-        catch { copy.Dispose(); ActiveRoot = null; throw; }
+        catch { copy.Dispose(); throw; }
     }
 
-    /// <summary>Best-effort removal of a copy that did not finish. The copier may still be running.</summary>
+    internal static void CancelCopy() => Cancelled = true;
+
+    /// <summary>Removes the live canary. A second call is a no-op once the directory is gone.</summary>
     internal static void DeleteActive()
     {
         var root = ActiveRoot;
-        ActiveRoot = null;
-        if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
-        try { Directory.Delete(root, recursive: true); }
-        catch (Exception) { }
+        if (string.IsNullOrEmpty(root)) return;
+        DeleteRoot(root);
+    }
+
+    internal static bool IsCanaryDirectoryName(string name)
+    {
+        if (name.Length != DirectoryPrefix.Length + 32 || !name.StartsWith(DirectoryPrefix, StringComparison.Ordinal))
+            return false;
+        for (var i = DirectoryPrefix.Length; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (c is not (>= '0' and <= '9' or >= 'a' and <= 'f')) return false;
+        }
+        return true;
+    }
+
+    private static void Publish(string root)
+    {
+        var record = RecordPath;
+        if (!string.IsNullOrEmpty(record))
+        {
+            using var stream = new FileStream(record, FileMode.Create, FileAccess.Write, FileShare.Read);
+            var bytes = Encoding.UTF8.GetBytes(root);
+            stream.Write(bytes);
+            stream.Flush(true);
+        }
+        Console.Out.WriteLine("canary=" + root);
+        Console.Out.Flush();
     }
 
     private void CheckDestination(string path)
     {
-        var real = SolutionAudit.RealPath(path, _directoryRealPaths);
+        var real = SolutionAudit.RealPath(path);
         if (!real.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new IOException("canary destination escapes through a link: " + path);
     }
 
-    private static bool TryHardLink(string source, string destination)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            if (CreateHardLinkW(destination, source, IntPtr.Zero)) return true;
-            if (Marshal.GetLastPInvokeError() == 17) return false;
-            throw new IOException("hard link failed (" + Marshal.GetLastPInvokeError().ToString() + "): " + destination);
-        }
-        if (OperatingSystem.IsLinux())
-        {
-            if (Link(source, destination) == 0) return true;
-            if (Marshal.GetLastPInvokeError() == 18) return false;
-            throw new IOException("hard link failed (" + Marshal.GetLastPInvokeError().ToString() + "): " + destination);
-        }
-        return false;
-    }
-
-    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
-    private static extern int Link(string existing, string path);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CreateHardLinkW(string path, string existing, IntPtr security);
-
     public void Dispose()
     {
-        if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        DeleteRoot(Root);
+        if (string.Equals(ActiveRoot, Root, StringComparison.Ordinal)) ActiveRoot = null;
+    }
+
+    private static void DeleteRoot(string root)
+    {
+        if (!IsCanaryDirectoryName(Path.GetFileName(root))) return;
+        try
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+        catch (Exception)
+        {
+        }
     }
 }
