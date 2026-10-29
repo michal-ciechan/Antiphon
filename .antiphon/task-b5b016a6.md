@@ -117,6 +117,8 @@ SHARD a-rsc2 end rc=2 wall=960s waited=60s  total: 216  failed: 1  succeeded: 21
 SHARD x-c8-R start 2026-10-29T22:26:04Z
 SHARD c1-C1 end rc=0 wall=663s waited=15s  total: 173  failed: 0  succeeded: 170  skipped: 3  duration: 10m 44s 616ms 
 SHARD c3-AB start 2026-10-29T22:35:49Z
+SHARD x-c8-R end rc=0 wall=703s waited=15s  total: 499  failed: 0  succeeded: 499  skipped: 0  duration: 11m 25s 441ms 
+SHARD c5-EFGIJK start 2026-10-29T22:37:47Z
 ```
 
 Red comparisons:
