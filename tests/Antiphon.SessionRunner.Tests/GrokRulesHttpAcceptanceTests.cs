@@ -6,6 +6,12 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -62,7 +68,7 @@ public sealed class GrokRulesHttpAcceptanceTests
             using var started = await http.PostAsJsonAsync("/sessions", request, ct);
             var launchJson = await started.Content.ReadAsStringAsync(ct);
             await File.WriteAllTextAsync(Path.Combine(artifacts, "launch-response.json"), launchJson, ct);
-            started.StatusCode.ShouldBe(HttpStatusCode.Created, launchJson);
+            started.StatusCode.ShouldBe(HttpStatusCode.Created, $"launch-response-body:{launchJson}");
             launchJson.ShouldNotContain(sentinel);
             var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var launched = JsonSerializer.Deserialize<RunnerSessionDto>(launchJson, options)!;
@@ -112,6 +118,57 @@ public sealed class GrokRulesHttpAcceptanceTests
                 catch (ArgumentException) { /* Owned host already exited. */ }
             }
             await File.WriteAllLinesAsync(Path.Combine(artifacts, "runner-http.log"), output);
+        }
+    }
+
+    // Linux stand-in for the native Windows empty 500: an unmapped launch exception must name
+    // itself in the problem body and must not echo the rules payload.
+    [Test, Timeout(60_000)]
+    public async Task Unmapped_launch_failure_names_the_cause_in_the_response_body(CancellationToken ct)
+    {
+        const string sentinel = "rules-body-sentinel-must-not-leak";
+        const string cause = "Host launch failed (launchFailed): grok_rules_file_write_failed: metadata";
+        var root = Path.Combine(Path.GetTempPath(), "c4840174e-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = root,
+                PtyHostSourceDir = Path.Combine(root, "missing-host"),
+                CpuWatchdogEnabled = false,
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        runtime.CreationEffectForTest = (_, _) => throw new InvalidOperationException(cause);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Production" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton(runtime);
+        var app = builder.Build();
+        app.UseRunnerExceptionMapping();
+        app.MapSessionLaunchRoute();
+        await app.StartAsync(ct);
+        try
+        {
+            var address = app.Urls.Single();
+            var uri = new Uri(address);
+            uri.IsLoopback.ShouldBeTrue();
+            uri.Port.ShouldNotBe(17204);
+            using var http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(20) };
+            var request = new RunnerLaunchRequest(
+                Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), root, 80, 24,
+                TranscriptFormat: TranscriptFormats.Grok,
+                GrokRulesPayload: new(sentinel + "\n" + new string('x', 64), 1, Guid.NewGuid()));
+            using var reply = await http.PostAsJsonAsync("/sessions", request, ct);
+            var text = await reply.Content.ReadAsStringAsync(ct);
+            reply.StatusCode.ShouldBe(HttpStatusCode.InternalServerError, $"launch-response-body:{text}");
+            text.ShouldContain(cause);
+            text.ShouldNotContain(sentinel);
+        }
+        finally
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+            try { Directory.Delete(root, recursive: true); } catch (Exception) { }
         }
     }
 }
