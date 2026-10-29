@@ -78,6 +78,11 @@ internal sealed class RepositoryChildJournal
         File.Delete(_path); // Only this operation's journal, after its exact handle exited.
     }
 
+    /// <summary>Removes this journal without a Process handle. The caller has already observed the
+    /// root exit and is invoking this only once both redirected streams have closed. A server crash
+    /// before that leaves the file for recover-repository-children.ps1.</summary>
+    internal void StreamsClosed() => File.Delete(_path);
+
     /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
     public void NotStarted() => File.Delete(_path);
 

@@ -100,55 +100,81 @@ public class LandingGit : ILandingGit
         }
         // Any other start failure is ambiguous (Windows builds the redirected streams after
         // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
-        using var process = child ?? throw new IOException("git_start_failed");
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
+        var process = child ?? throw new IOException("git_start_failed");
+        var disposeProcess = true;
         try
         {
-            if (journal is not null || started is not null)
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try
             {
-                // One identity read serves the journal and the caller, so they cannot disagree.
-                // CARD-0661: a child that already exited may have no start identity left to read;
-                // the journal records its root as completed and the caller's unknown-identity
-                // state is the conservative one. We await its exit below either way.
-                var identified = TryReadStartIdentity(process, out var startTicks);
-                if (!identified && !process.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
-                if (journal is not null) await journal.StartedAsync(process.Id, identified ? startTicks : null, ct);
-                if (started is not null && identified) await started(process.Id, startTicks, ct);
+                if (journal is not null || started is not null)
+                {
+                    // One identity read serves the journal and the caller, so they cannot disagree.
+                    // CARD-0661: a child that already exited may have no start identity left to read;
+                    // the journal records its root as completed and the caller's unknown-identity
+                    // state is the conservative one. We await its exit below either way.
+                    var identified = TryReadStartIdentity(process, out var startTicks);
+                    if (!identified && !process.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
+                    if (journal is not null) await journal.StartedAsync(process.Id, identified ? startTicks : null, ct);
+                    if (started is not null && identified) await started(process.Id, startTicks, ct);
+                }
+                await process.WaitForExitAsync(budget.Token);
+                // A normal exit waits for EOF with no second deadline. The budget bounds the kill
+                // path only: a grandchild that keeps a pipe open after success must not become
+                // git_timeout, and the journal stays until those pipes close.
+                await Task.WhenAll(output, error);
             }
-            await process.WaitForExitAsync(budget.Token);
-            // The root can exit while a reparented grandchild still holds the redirected pipe.
-            // ReadToEndAsync would then wait out that grandchild. Stay inside the budget.
-            await Task.WhenAll(output, error).WaitAsync(budget.Token);
-        }
-        catch
-        {
-            // The Process handle, not a subsequently looked-up PID, identifies this child.
-            // KillDrainGrace bounds the drain: a grandchild the tree kill cannot see must not
-            // extend this past the budget by its own lifetime (CARD-1076, Windows 30.5s on a 2s budget).
-            await ReleaseChildAsync(process, output, error);
-            if (process.HasExited) journal?.Exited(process);
+            catch
+            {
+                // The Process handle, not a subsequently looked-up PID, identifies this child.
+                // KillDrainGrace bounds the drain: a grandchild the tree kill cannot see must not
+                // extend this past the budget by its own lifetime (CARD-1076, Windows 30.5s on a 2s budget).
+                // The journal is removed only once the abandoned streams close, so a crash while the
+                // holder lives still leaves a record for recover-repository-children.ps1.
+                var handedOff = false;
+                var drained = false;
+                try
+                {
+                    handedOff = await ReleaseChildAsync(process, journal is null ? null : journal.StreamsClosed, null, output, error);
+                    drained = !handedOff;
+                }
+                catch
+                {
+                    // The drain faulted before an abandon continuation existed. Leave the journal.
+                }
+                if (handedOff) disposeProcess = false;
+                else if (drained && process.HasExited) journal?.Exited(process);
+                _cardFiles?.NoteServerGit(repository, arguments);
+                if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
+                throw;
+            }
+            // Never expose Git stderr (endpoints/hooks may contain secrets). The journal stays until
+            // the drain above finishes, so a worker death while the pipes are open still fences.
+            journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
-            if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
-            throw;
+            string? rebaseHead = null;
+            if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
+            {
+                var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), ct);
+                if (head.Succeeded) rebaseHead = head.Output.Trim();
+            }
+            return new(process.ExitCode, await output,
+                process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
         }
-        // Never expose Git stderr (endpoints/hooks may contain secrets). The journal stays until
-        // the drain above finishes, so a worker death while the root's own pipes close still fences.
-        journal?.Exited(process);
-        _cardFiles?.NoteServerGit(repository, arguments);
-        string? rebaseHead = null;
-        if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
+        finally
         {
-            var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), ct);
-            if (head.Succeeded) rebaseHead = head.Output.Trim();
+            if (disposeProcess) process.Dispose();
         }
-        return new(process.ExitCode, await output,
-            process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
     }
 
     /// <summary>Kill the root and wait at most <see cref="KillDrainGrace"/> for it and its redirected
-    /// streams. Streams still open when the grace ends are abandoned; their tasks are observed.</summary>
-    private static async Task ReleaseChildAsync(Process process, params Task[] streams)
+    /// streams. Returns true when those streams were abandoned. The caller must then not dispose
+    /// <paramref name="process"/> or <paramref name="keepUntilClosed"/>. After both streams close, the
+    /// continuation runs <paramref name="onStreamsClosed"/> and only then disposes the handle. The
+    /// journal deleter does not touch the Process. Disposing earlier closes the read ends and looks
+    /// like EOF while a grandchild still holds the pipes. A crash before the streams close leaves the file.</summary>
+    private static async Task<bool> ReleaseChildAsync(Process process, Action? onStreamsClosed, IDisposable? keepUntilClosed, params Task[] streams)
     {
         TryKill(process, entireProcessTree: true);
         using var grace = new CancellationTokenSource(KillDrainGrace);
@@ -158,6 +184,7 @@ public class LandingGit : ILandingGit
                 await process.WaitForExitAsync(grace.Token);
             if (streams.Length > 0)
                 await Task.WhenAll(streams).WaitAsync(grace.Token);
+            return false;
         }
         catch (OperationCanceledException)
         {
@@ -172,8 +199,38 @@ public class LandingGit : ILandingGit
                 }
             }
             catch (OperationCanceledException) { }
-            ObserveAbandoned(streams);
+
+            // Read the exit while the handle is still ours. The continuation runs after this method
+            // returns and must not call back into the Process to decide whether the fence can drop.
+            Action? delete = null;
+            if (onStreamsClosed is not null)
+            {
+                try
+                {
+                    if (process.HasExited) delete = onStreamsClosed;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                { }
+            }
+            ObserveAbandoned(streams, () =>
+            {
+                try { delete?.Invoke(); }
+                finally
+                {
+                    TryDispose(process);
+                    try { keepUntilClosed?.Dispose(); }
+                    catch (ObjectDisposedException) { }
+                }
+            });
+            return true;
         }
+    }
+
+    private static void TryDispose(Process process)
+    {
+        try { process.Dispose(); }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+        { }
     }
 
     private static void TryKill(Process process, bool entireProcessTree)
@@ -187,13 +244,24 @@ public class LandingGit : ILandingGit
         { }
     }
 
-    private static void ObserveAbandoned(Task[] streams)
+    private static void ObserveAbandoned(Task[] streams, Action whenClosed)
     {
-        if (streams.Length == 0) return;
+        if (streams.Length == 0)
+        {
+            whenClosed();
+            return;
+        }
+        // Every completion, including a clean EOF. OnlyOnFaulted would leave the journal in place
+        // after the holder exits. The action deletes the journal file and then disposes the handle.
         _ = Task.WhenAll(streams).ContinueWith(
-            static finished => _ = finished.Exception,
+            static (finished, state) =>
+            {
+                _ = finished.Exception;
+                ((Action)state!)();
+            },
+            whenClosed,
             CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
     }
 
@@ -202,7 +270,8 @@ public class LandingGit : ILandingGit
     /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
     /// </summary>
     /// <summary>A subcommand that may write the repository. Its child carries a standing
-    /// <see cref="RepositoryChildJournal"/> record from before <c>Process.Start</c> until its exact handle exited.</summary>
+    /// <see cref="RepositoryChildJournal"/> record from before <c>Process.Start</c> until its
+    /// redirected streams have closed after the root exited.</summary>
     internal static bool IsMutating(IReadOnlyList<string> arguments) => arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
         or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
 
@@ -796,38 +865,64 @@ public class LandingGit : ILandingGit
             journal.NotStarted();
             throw;
         }
-        using var child = started ?? throw new IOException("git_start_failed");
-        using var output = new MemoryStream();
-        var write = Task.Run(async () =>
-        {
-            await child.StandardInput.BaseStream.WriteAsync(input, budget.Token);
-            await child.StandardInput.BaseStream.FlushAsync(budget.Token);
-            child.StandardInput.Close();
-        }, budget.Token);
-        var copy = child.StandardOutput.BaseStream.CopyToAsync(output, budget.Token);
-        var error = child.StandardError.ReadToEndAsync(budget.Token);
+        var child = started ?? throw new IOException("git_start_failed");
+        var output = new MemoryStream();
+        var disposeChild = true;
+        var disposeOutput = true;
         try
         {
-            if (journal is not null)
+            var write = Task.Run(async () =>
             {
-                var identified = TryReadStartIdentity(child, out var startTicks);
-                if (!identified && !child.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
-                await journal.StartedAsync(child.Id, identified ? startTicks : null, ct);
+                await child.StandardInput.BaseStream.WriteAsync(input, budget.Token);
+                await child.StandardInput.BaseStream.FlushAsync(budget.Token);
+                child.StandardInput.Close();
+            }, budget.Token);
+            // The reads stay unbound so an abandoned copy completes on real EOF, not on the budget
+            // token. The wait below is still budget-bound. The journal then drops only at that EOF.
+            var copy = child.StandardOutput.BaseStream.CopyToAsync(output);
+            var error = child.StandardError.ReadToEndAsync();
+            try
+            {
+                if (journal is not null)
+                {
+                    var identified = TryReadStartIdentity(child, out var startTicks);
+                    if (!identified && !child.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
+                    await journal.StartedAsync(child.Id, identified ? startTicks : null, ct);
+                }
+                await Task.WhenAll(write, copy, error).WaitAsync(budget.Token);
+                await child.WaitForExitAsync(budget.Token);
             }
-            await Task.WhenAll(write, copy, error);
-            await child.WaitForExitAsync(budget.Token);
+            catch
+            {
+                // Same bound as ExecuteProcessAsync: a grandchild holding a redirected pipe must not
+                // outlive the budget by its own lifetime. The original failure is the one reported.
+                var handedOff = false;
+                var drained = false;
+                try
+                {
+                    handedOff = await ReleaseChildAsync(child, journal is null ? null : journal.StreamsClosed, output, write, copy, error);
+                    drained = !handedOff;
+                }
+                catch
+                {
+                    // The drain faulted before an abandon continuation existed. Leave the journal.
+                }
+                if (handedOff)
+                {
+                    disposeChild = false;
+                    disposeOutput = false;
+                }
+                else if (drained && child.HasExited) journal?.Exited(child);
+                throw;
+            }
+            journal?.Exited(child);
+            return (child.ExitCode, output.ToArray());
         }
-        catch
+        finally
         {
-            // Same bound as ExecuteProcessAsync: a grandchild holding a redirected pipe must not
-            // outlive the budget by its own lifetime. The original failure is the one reported.
-            try { await ReleaseChildAsync(child, write, copy, error); }
-            catch { }
-            if (child.HasExited) journal?.Exited(child);
-            throw;
+            if (disposeChild) child.Dispose();
+            if (disposeOutput) output.Dispose();
         }
-        journal?.Exited(child);
-        return (child.ExitCode, output.ToArray());
     }
 
     private async Task<LandSourceInspection> IdentityAsync(LandSourceCoordinates coordinates, CancellationToken ct)
