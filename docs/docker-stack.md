@@ -673,6 +673,16 @@ generated smoke project in `scripts/c590-remote.sh` and the image's offline prob
 Fixture retry of an unpinned SHA against the same image fails the same way; do not warm the
 deliberately empty package cache or downgrade the SDK to get past it.
 
+The restore race does not count build-slot wait against its 30-second arrival window. Each
+restore probe writes `slot-held` only after `scripts/build-slot.ps1` grants the slot, and the
+barrier starts that window only once both probes hold slots. Slot acquisition uses the build-slot
+timeout (default 45 minutes). A probe that exits 4, or a wait that reaches that deadline while a
+slot is still ungranted, is `FixtureBuildSlotTimeout`. Once both slots are held, both restores
+must start within the existing 30-second window or the diagnosis stays `FixtureRestoreBarrierFailed`.
+A refusal, a slot timeout, or INT/TERM kills `c849-${RUN}-restore-p1` and `c849-${RUN}-restore-p2`
+(and the other named restore and lock probes) by exact name, DELETEs any granted build-slot lease,
+removes the fixture volumes, and does not wait on those probes.
+
 The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
 ` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
 removes the installer's home, so its binary prints no channel tag. CARD-0986 Review

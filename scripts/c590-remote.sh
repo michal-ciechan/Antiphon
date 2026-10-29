@@ -4093,6 +4093,7 @@ c849_fixture_restore_container() {
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
         -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        -e "C589_SLOT_WAIT_SECONDS=$(c849_fixture_slot_deadline_seconds)" \
         --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "$work_mount" \
@@ -4163,8 +4164,9 @@ PS
 #!/bin/sh
 set -eu
 cd "$1"
-: > ready
+: > slot-held
 while [ ! -e /fixture/race/go ]; do sleep 0.1; done
+: > ready
 dotnet restore "$(basename "$1").csproj" --configfile /fixture/race/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
 SH
     c849_fixture_volume_write /fixture/race/offline.sh <<'SH' || write_result false FixtureRaceWriteFailed 2
@@ -4202,34 +4204,202 @@ PS
     c849_fixture_volume_chown_race || write_result false FixtureRaceWriteFailed 2
 }
 
+# 45 minutes matches scripts/build-slot.ps1 -SlotWaitMinutes. A digit-only
+# C589_SLOT_WAIT_SECONDS is that gate's own seconds override, so the probe's
+# exit 4 and this deadline describe the same wait.
+c849_fixture_slot_deadline_seconds() {
+    case "${C589_SLOT_WAIT_SECONDS:-}" in
+        ''|*[!0-9]*) printf '2700' ;;
+        *) printf '%s' "$C589_SLOT_WAIT_SECONDS" ;;
+    esac
+}
+
+c849_fixture_track_probe() {
+    printf '%s %s\n' "$1" "$2" >> "$CASE_DIR/.fixture-live-probes"
+}
+
+c849_fixture_clear_live_probes() {
+    [ -L "$CASE_DIR/.fixture-live-probes" ] && return 0
+    rm -f -- "$CASE_DIR/.fixture-live-probes"
+}
+
+c849_fixture_probe_name_ok() {
+    case "$1" in
+        "c849-${RUN}-restore-p1"|"c849-${RUN}-restore-p2"|"c849-${RUN}-restore-p3"|\
+        "c849-${RUN}-lock-holder-shared"|"c849-${RUN}-lock-waiter-shared"|\
+        "c849-${RUN}-lock-holder-private"|"c849-${RUN}-lock-waiter-private") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 0 when the pid is gone or is a zombie. A running probe returns 1.
+# /proc state is required because kill -0 is true for a zombie and would hide exit 4.
+c849_fixture_probe_exited() {
+    local pid="$1" line state
+    case "$pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    [ -r "/proc/$pid/stat" ] || return 0
+    line=$(cat -- "/proc/$pid/stat" 2>/dev/null || true)
+    state=${line##*) }
+    state=${state%% *}
+    [ "$state" = Z ]
+}
+
+# Signal the probe, then wait only after it has exited. A live wait is the hang.
+c849_fixture_reap_probe() {
+    local pid="$1" i
+    case "$pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    if ! c849_fixture_probe_exited "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    i=0
+    while [ "$i" -lt 50 ]; do
+        c849_fixture_probe_exited "$pid" && break
+        i=$((i + 1))
+        sleep 0.05
+    done
+    if c849_fixture_probe_exited "$pid"; then
+        wait "$pid" 2>/dev/null || true
+    fi
+}
+
+c849_fixture_release_slot_leases() {
+    local log lease broker="" url
+    # compose_host requires the deploy origin. Tests have no broker and release through the URL.
+    if [ -n "${C604_SERVER_ORIGIN:-}" ]; then
+        broker="$(compose_host --profile broker ps -q build-slots 2>/dev/null || true)" || broker=""
+    fi
+    for log in "$SERVER2_ROOT/race-p1.log" "$SERVER2_ROOT/race-p2.log" "$SERVER2_ROOT/race-p3.log" \
+        "$SERVER2_ROOT/lock-holder.log" "$SERVER2_ROOT/lock-waiter.log" \
+        "$SERVER2_ROOT/private-holder.log" "$SERVER2_ROOT/private-waiter.log"; do
+        [ -f "$log" ] && [ ! -L "$log" ] || continue
+        while IFS= read -r lease || [ -n "${lease:-}" ]; do
+            case "$lease" in
+                [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+                *) continue ;;
+            esac
+            if [ -n "$broker" ]; then
+                docker exec "$broker" curl -fsS -X DELETE --max-time 10 "http://127.0.0.1:8080/build-slots/$lease" >/dev/null 2>&1 || true
+            elif [ -n "${ANTIPHON_BUILD_SLOTS_URL:-}" ]; then
+                url="${ANTIPHON_BUILD_SLOTS_URL%/}"
+                curl -fsS -X DELETE --max-time 10 "$url/$lease" >/dev/null 2>&1 || true
+            fi
+        done < <(sed -n 's/.*BUILD SLOT granted lease=\([0-9a-fA-F-]\{36\}\).*/\1/p' "$log")
+    done
+}
+
+c849_fixture_release_live_probes() {
+    local file="$CASE_DIR/.fixture-live-probes" pid name
+    [ -f "$file" ] && [ ! -L "$file" ] || return 0
+    while read -r pid name || [ -n "${pid:-}" ]; do
+        [ -n "${name:-}" ] || continue
+        c849_fixture_probe_name_ok "$name" || continue
+        docker kill -- "$name" >/dev/null 2>&1 || true
+        docker rm -f -- "$name" >/dev/null 2>&1 || true
+        c849_fixture_reap_probe "$pid"
+    done < "$file"
+    c849_fixture_release_slot_leases || true
+    c849_fixture_clear_live_probes
+}
+
+# 0 when both slot-held markers exist. 4 is a slot deadline or probe exit 4.
+# 1 is any other probe death. The 30s ready window has not started.
+c849_fixture_wait_slot_markers() {
+    local left="$1" right="$2" a="$3" b="$4" deadline i status pid
+    deadline=$(c849_fixture_slot_deadline_seconds)
+    i=0
+    while [ "$i" -lt $((deadline * 5)) ]; do
+        if c849_fixture_volume_test_file "/fixture/race/$left/slot-held" \
+            && c849_fixture_volume_test_file "/fixture/race/$right/slot-held"; then
+            return 0
+        fi
+        for pid in "$a" "$b"; do
+            if c849_fixture_probe_exited "$pid"; then
+                status=0
+                wait "$pid" || status=$?
+                [ "$status" = 4 ] && return 4
+                return 1
+            fi
+        done
+        i=$((i + 1))
+        sleep 0.2
+    done
+    for pid in "$a" "$b"; do
+        if c849_fixture_probe_exited "$pid"; then
+            status=0
+            wait "$pid" || status=$?
+            [ "$status" = 4 ] && return 4
+            return 1
+        fi
+    done
+    return 4
+}
+
+c849_fixture_on_signal() {
+    trap '' INT TERM
+    c849_fixture_release_live_probes || true
+    exit 143
+}
+
 c849_fixture_race_restore_barrier() {
-    local image="$1" packages="$2" scratch="$3" a b
+    local image="$1" packages="$2" scratch="$3" a b slot=0
     c849_fixture_restore_container "$image" p1 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
+    c849_fixture_track_probe "$a" "c849-${RUN}-restore-p1"
     c849_fixture_restore_container "$image" p2 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
-    c849_fixture_wait_file /fixture/race/p1/ready && c849_fixture_wait_file /fixture/race/p2/ready \
-        || write_result false FixtureRestoreBarrierFailed 2
-    c849_fixture_volume_touch /fixture/race/go || write_result false FixtureRestoreBarrierFailed 2
-    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
-    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
+    c849_fixture_track_probe "$b" "c849-${RUN}-restore-p2"
+    c849_fixture_wait_slot_markers p1 p2 "$a" "$b" || slot=$?
+    if [ "$slot" != 0 ]; then
+        c849_fixture_release_live_probes || true
+        if [ "$slot" = 4 ]; then
+            write_result false FixtureBuildSlotTimeout 2
+        fi
+        write_result false FixtureRestoreBarrierFailed 2
+    fi
+    c849_fixture_volume_touch /fixture/race/go || {
+        c849_fixture_release_live_probes || true
+        write_result false FixtureRestoreBarrierFailed 2
+    }
+    c849_fixture_wait_file /fixture/race/p1/ready && c849_fixture_wait_file /fixture/race/p2/ready || {
+        c849_fixture_release_live_probes || true
+        write_result false FixtureRestoreBarrierFailed 2
+    }
+    wait "$a" || {
+        c849_fixture_release_live_probes || true
+        write_result false FixtureConcurrentRestoreFailed 2
+    }
+    wait "$b" || {
+        c849_fixture_release_live_probes || true
+        write_result false FixtureConcurrentRestoreFailed 2
+    }
+    c849_fixture_clear_live_probes
 }
 
 c849_fixture_race_lock_probe() {
     local image="$1" scratch="$2" private_scratch="$3" holder waiter
     c849_fixture_lock_container "$image" "$scratch" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
+    c849_fixture_track_probe "$holder" "c849-${RUN}-lock-holder-shared"
     c849_fixture_wait_file /fixture/race/shared-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
     c849_fixture_lock_container "$image" "$scratch" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
+    c849_fixture_track_probe "$waiter" "c849-${RUN}-lock-waiter-shared"
     sleep 2
     c849_fixture_lock_assert /fixture/race/shared-waiter-entered || write_result false NuGetLockNotShared 2
     c849_fixture_volume_touch /fixture/race/shared-release || write_result false FixtureNuGetLockProbeFailed 2
     wait "$holder" && wait "$waiter" && c849_fixture_volume_test_exists /fixture/race/shared-waiter-entered \
         || write_result false FixtureNuGetLockProbeFailed 2
     c849_fixture_lock_container "$image" "$scratch" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
+    c849_fixture_track_probe "$holder" "c849-${RUN}-lock-holder-private"
     c849_fixture_wait_file /fixture/race/private-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
     c849_fixture_lock_container "$image" "$private_scratch" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
+    c849_fixture_track_probe "$waiter" "c849-${RUN}-lock-waiter-private"
     c849_fixture_wait_file /fixture/race/private-waiter-entered || write_result false ControlNotSensitive 2
     c849_fixture_control PC-17 NuGetLockNotShared c849_fixture_lock_assert /fixture/race/private-waiter-entered
     c849_fixture_volume_touch /fixture/race/private-release || write_result false FixtureNuGetLockProbeFailed 2
     wait "$holder" && wait "$waiter" || write_result false FixtureNuGetLockProbeFailed 2
+    c849_fixture_clear_live_probes
 }
 
 c849_fixture_nuget_race() {
@@ -5180,6 +5350,8 @@ c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     local -a compose_audits=()
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
+    # Refusal and signal paths leave probe names here. Release them before any wait.
+    c849_fixture_release_live_probes || true
     # Preserve acquisition uncertainty even if finalization can later remove it.
     c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" ensure true || return 2
     c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" ensure true || return 2
@@ -5262,7 +5434,7 @@ c849_fixture_finalize() {
     c849_fixture_helper_release "c849-${RUN}-masked" || return 2
     c849_fixture_helper_release "c849-${RUN}-apphost" || return 2
     local child
-    for child in $(jobs -pr); do wait "$child" || true; done
+    for child in $(jobs -pr); do c849_fixture_reap_probe "$child"; done
     if [ "$owned" = 1 ]; then
         c849_fixture_export_logs || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'diagnostic-export\n' || return 2
     fi
@@ -5304,6 +5476,7 @@ c849_fixture() {
     C849_FIXTURE_FINALIZED=0
     c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" replace true || return 2
     c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" replace true || return 2
+    trap 'c849_fixture_on_signal' INT TERM
     trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
     c849_fixture_workspace_init
     mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2
