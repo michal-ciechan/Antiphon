@@ -244,11 +244,30 @@ public static class NativeLinuxPolicyWitness
                     diagnostics.Add(Diag("unknown-exclusion", row.Suite, row.Class, "", "", "", "unknown suite"));
                 if (!seenKeys.Add(row.Key))
                     diagnostics.Add(Diag("duplicate-row", row.Suite, row.Class, "", "", "", row.Key.Replace('\n', '|')));
+                if (IsFrozenKey(row.Key) && !(row.Platform == "windows" && row.Reason.StartsWith(LinuxReasonPrefix, StringComparison.Ordinal)))
+                    diagnostics.Add(Diag("witnessed-row-reshaped", row.Suite, row.Class, "", "", "", row.Platform));
                 if (witnessed.Contains(row.Key))
                     continue;
                 if (row.Platform == "windows" && row.Reason.StartsWith(LinuxReasonPrefix, StringComparison.Ordinal))
                     continue;
                 legacyParts.Add(Canonical(element, null));
+            }
+
+            var frozenPresent = 0;
+            foreach (var key in WitnessedRowKeys)
+            {
+                if (seenKeys.Contains(key))
+                    frozenPresent++;
+            }
+            if (frozenPresent > 0)
+            {
+                foreach (var key in WitnessedRowKeys)
+                {
+                    if (seenKeys.Contains(key))
+                        continue;
+                    var parts = key.Split('\n');
+                    diagnostics.Add(Diag("witnessed-row-missing", parts.Length > 0 ? parts[0] : "", parts.Length > 1 ? parts[1] : "", "", "", "", ""));
+                }
             }
 
             var legacyPayload = "[" + string.Join(",", legacyParts) + "]";
@@ -428,7 +447,11 @@ public static class NativeLinuxPolicyWitness
             }
             var actual = MarkerReason(node);
             if (string.IsNullOrEmpty(actual))
+            {
+                var rowClass = item.TryGetProperty("RowClass", out var rowElement) ? rowElement.GetString() ?? "" : "";
+                diagnostics.Add(Diag("missing-marker", request.SuiteId, rowClass, node.Concrete, node.Declaring, node.Signature, ""));
                 continue;
+            }
             if (!string.Equals(actual, expected, StringComparison.Ordinal))
                 diagnostics.Add(Diag("reason-mismatch", request.SuiteId, "", node.Concrete, node.Declaring, node.Signature, actual));
         }
@@ -596,8 +619,20 @@ public static class NativeLinuxPolicyWitness
             : new List<string>();
         var platform = element.TryGetProperty("platform", out var platformElement) ? platformElement.GetString() ?? "" : "";
         var reason = element.GetProperty("reason").GetString() ?? "";
-        var witnessed = platform == "windows" && reason.StartsWith(LinuxReasonPrefix, StringComparison.Ordinal);
-        return new PolicyRow(suite, klass, methods, platform, reason, suite + "\n" + klass + "\n" + string.Join("\n", methods), witnessed);
+        var key = suite + "\n" + klass + "\n" + string.Join("\n", methods);
+        var shaped = platform == "windows" && reason.StartsWith(LinuxReasonPrefix, StringComparison.Ordinal);
+        return new PolicyRow(suite, klass, methods, platform, reason, key, shaped || IsFrozenKey(key));
+    }
+
+    static bool IsFrozenKey(string key)
+    {
+        foreach (var item in WitnessedRowKeys)
+        {
+            if (string.Equals(item, key, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     static string FormatReflectedType(Type type)
