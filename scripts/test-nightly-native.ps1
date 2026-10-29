@@ -22,6 +22,16 @@ function Assert-Native([bool]$Condition, [string]$Label) {
     $script:passed++
     Write-Host ('PASS C1039 ' + $Label)
 }
+function Invoke-RcWindowsNativeProcessOwner {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [string]$WorkingDirectory,
+        [int]$TimeoutMilliseconds,
+        [string]$LogPath
+    )
+    return [Antiphon.Nightly.NativeProcessOwner]::Start($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $LogPath, $null, $null)
+}
 function Wait-Native([scriptblock]$Condition, [string]$Label) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
@@ -273,9 +283,9 @@ while (!(Test-Path (Join-Path $Root 'child.pid'))) { Start-Sleep -Milliseconds 1
                 $guardRoot = Join-Path $ResultsDirectory 'packaged admission'
                 $null = New-Item -ItemType Directory -Path $guardRoot
                 $script:roots += $guardRoot
-                $raw = [Antiphon.Nightly.NativeProcessOwner]::Start($packaged[0],
-                    [string[]]@('-NoProfile','-File',$childScript,'-Root',$guardRoot,'-Fixture',$FixtureExecutable),
-                    $guardRoot, 30000, (Join-Path $guardRoot 'native.log'), $null, $null)
+                $raw = Invoke-RcWindowsNativeProcessOwner -FilePath $packaged[0] `
+                    -ArgumentList ([string[]]@('-NoProfile','-File',$childScript,'-Root',$guardRoot,'-Fixture',$FixtureExecutable)) `
+                    -WorkingDirectory $guardRoot -TimeoutMilliseconds 30000 -LogPath (Join-Path $guardRoot 'native.log')
                 $script:owners += $raw
                 Wait-Native { $raw.Completion.IsCompleted } 'packaged admission refusal'
                 $refused = $raw.Completion.GetAwaiter().GetResult()

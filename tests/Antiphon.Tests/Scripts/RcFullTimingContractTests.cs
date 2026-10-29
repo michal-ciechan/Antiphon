@@ -80,14 +80,37 @@ public sealed class RcFullTimingContractTests
         Matrix(observed, "net9").ShouldBe("compatible");
         observed.GetProperty("desktopLoaderCalled").GetBoolean().ShouldBeFalse();
         observed.GetProperty("net8LoaderCalled").GetBoolean().ShouldBeFalse();
-        observed.GetProperty("loaderObservable").GetBoolean().ShouldBeTrue("loader flag is child scope");
         observed.GetProperty("desktopAdmission").GetBoolean().ShouldBeFalse();
         observed.GetProperty("net8Admission").GetBoolean().ShouldBeFalse();
         observed.GetProperty("desktopDiagnosticComplete").GetBoolean().ShouldBeTrue();
-        observed.GetProperty("receiptWritten").GetBoolean().ShouldBeTrue("host runtime receipt was not written");
-        observed.GetProperty("productionSamples").GetInt32().ShouldBe(2);
         observed.GetProperty("loaderWrapped").GetBoolean().ShouldBeTrue("loader fault escaped");
-        observed.GetProperty("readsAfterOwner").GetInt32().ShouldBe(0);
+        observed.GetProperty("productionUnwired").GetBoolean().ShouldBeTrue("production still loads the host-stats probe");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task ProductionCallSitesPersistDiscoveryAndSetup(CancellationToken cancellationToken)
+    {
+        var root = FreshRoot();
+        var observed = await Run(CallSiteScript, cancellationToken, root);
+        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
+        observed.GetProperty("discoveryNull").GetBoolean().ShouldBeTrue("call site copied the suite constant");
+        observed.GetProperty("setupNpmCi").GetBoolean().ShouldBeTrue("npm-ci setup phase was not written");
+        observed.GetProperty("setupNpmBuild").GetBoolean().ShouldBeTrue("npm-build setup phase was not written");
+        observed.GetProperty("setupLint").GetBoolean().ShouldBeTrue("lint setup phase was not written");
+        observed.GetProperty("setupDotnet").GetBoolean().ShouldBeTrue("dotnet-build setup phase was not written");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task PhaseRootAbsentEmptyAndSet(CancellationToken cancellationToken)
+    {
+        var root = FreshRoot();
+        var observed = await Run(PhaseRootScript, cancellationToken, root);
+        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
+        observed.GetProperty("absentPresent").GetBoolean().ShouldBeFalse("absent phase root was copied");
+        observed.GetProperty("emptyPresent").GetBoolean().ShouldBeFalse("empty phase root was copied");
+        observed.GetProperty("setCopied").GetBoolean().ShouldBeTrue("set phase root was not copied");
     }
 
     [Test]
@@ -512,14 +535,8 @@ public sealed class RcFullTimingContractTests
         $desktopAdmission = $true
         $net8Admission = $true
         $desktopDiagnostic = $false
-        $script:RcScopeSeen = $false
-        $scopeProbe = { $script:RcScopeSeen = $true }
-        & $scopeProbe
-        $loaderObservable = [bool]$script:RcScopeSeen
-        $receiptWritten = $false
-        $productionSamples = 0
         $loaderWrapped = $false
-        $readsAfterOwner = 99
+        $productionUnwired = $false
         if (Test-Path -LiteralPath $path) {
             . $path
             $script:RcHostStopped = $false
@@ -561,46 +578,18 @@ public sealed class RcFullTimingContractTests
                 $blown = New-QualificationHostStatsProvider -AssemblyPath (Join-Path $work 'probe.dll') -Edition 'Core' -FrameworkDescription '.NET 9.0.8' -Loader { throw 'loader-fault' }
                 if ([string]$blown.loadReason -eq 'loader-failed' -and -not [bool]$blown.measurementAdmission) { $loaderWrapped = $true }
             } catch { $loaderWrapped = $false }
-            try {
-                . (Join-Path $lib 'nightly-common.ps1')
-                . (Join-Path $lib 'test-phase-evidence.ps1')
-                . (Join-Path $lib 'nightly-tests-impl.ps1')
-                if (Get-Command Start-NightlyHostSampling -ErrorAction SilentlyContinue) {
-                    $dll = Join-Path $work 'probe.dll'
-                    [IO.File]::WriteAllBytes($dll, [byte[]](1, 2, 3, 4))
-                    $script:RcProdStop = $false
-                    $script:RcProdReads = 0
-                    $script:RcProdReadsAfter = 0
-                    $prodProbe = {
-                        if ($script:RcProdStop) { $script:RcProdReadsAfter++; return $null }
-                        $script:RcProdReads++
-                        if ($script:RcProdReads -eq 1) {
-                            return [pscustomobject]@{ at = '2026-10-29T00:00:00.0000000Z'; cpuPercent = $null; cores = 2; memoryAvailableBytes = 8; memoryCommittedBytes = $null; diskQueue = $null }
-                        }
-                        return [pscustomobject]@{ at = '2026-10-29T00:00:30.0000000Z'; cpuPercent = 1; cores = 2; memoryAvailableBytes = $null; memoryCommittedBytes = $null; diskQueue = $null }
-                    }
-                    $started = Start-NightlyHostSampling -LogRoot $work -AssemblyPath $dll -Loader { return 'probe-handle' } -Probe $prodProbe -SampleCount 2 -IntervalMilliseconds 0 -OwnerCompleted { $script:RcProdStop = $true }
-                    if ($null -ne $started -and $started.PSObject.Properties.Name -contains 'sampleCount') { $productionSamples = [int]$started.sampleCount }
-                    $readsAfterOwner = [int]$script:RcProdReadsAfter
-                    $receiptPath = Join-Path (Join-Path $work 'timing') 'host-runtime.json'
-                    if (Test-Path -LiteralPath $receiptPath) {
-                        $receipt = [IO.File]::ReadAllText($receiptPath) | ConvertFrom-Json
-                        $exeOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.executable) -or [string]$receipt.executableReason -eq 'unavailable'
-                        $digestOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.assemblyDigest)
-                        $editionOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.psEdition)
-                        $versionOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.psVersion)
-                        $frameworkOk = -not [string]::IsNullOrWhiteSpace([string]$receipt.frameworkDescription)
-                        if ($exeOk -and $digestOk -and $editionOk -and $versionOk -and $frameworkOk) { $receiptWritten = $true }
-                    }
-                }
-            } catch { }
+            . (Join-Path $lib 'nightly-common.ps1')
+            . (Join-Path $lib 'test-phase-evidence.ps1')
+            . (Join-Path $lib 'nightly-tests-impl.ps1')
+            $implText = [IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+            $productionUnwired = -not (Get-Command Start-NightlyHostSampling -ErrorAction SilentlyContinue)
+            if ($implText.Contains('qualification-host-stats.ps1')) { $productionUnwired = $false }
+            if ($implText.Contains('Antiphon.SessionRunner.dll')) { $productionUnwired = $false }
+            if ($implText.Contains('Add-Type')) { $productionUnwired = $false }
         }
         $problems = New-Object System.Collections.Generic.List[string]
-        if (-not $loaderObservable) { $problems.Add('loader-flag-child-scope') }
-        if (-not $receiptWritten) { $problems.Add('host-runtime-receipt-missing') }
-        if ($productionSamples -ne 2) { $problems.Add('production-samples-missing') }
         if (-not $loaderWrapped) { $problems.Add('loader-fault-escaped') }
-        if ($readsAfterOwner -ne 0) { $problems.Add('samples-after-owner') }
+        if (-not $productionUnwired) { $problems.Add('production-still-wired') }
         $exit = 0
         $text = ''
         if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
@@ -615,14 +604,11 @@ public sealed class RcFullTimingContractTests
             matrix = $matrix
             desktopLoaderCalled = [bool]$desktopLoader
             net8LoaderCalled = [bool]$net8Loader
-            loaderObservable = [bool]$loaderObservable
             desktopAdmission = [bool]$desktopAdmission
             net8Admission = [bool]$net8Admission
             desktopDiagnosticComplete = [bool]$desktopDiagnostic
-            receiptWritten = [bool]$receiptWritten
-            productionSamples = [int]$productionSamples
             loaderWrapped = [bool]$loaderWrapped
-            readsAfterOwner = [int]$readsAfterOwner
+            productionUnwired = [bool]$productionUnwired
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 6))
         """;
@@ -881,6 +867,137 @@ public sealed class RcFullTimingContractTests
             secondLate = [bool]$secondLate
             summaryAggregationBudgetMilliseconds = [int]$budget
             summaryAggregationMilliseconds = [int]$spent
+        }
+        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
+        """;
+
+    private const string CallSiteScript = """
+        $ErrorActionPreference = 'Stop'
+        $repo = $args[0]
+        $work = $args[1]
+        $bin = Join-Path $work 'bin'
+        New-Item -ItemType Directory -Path $bin -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $bin 'npm'), "#!/bin/sh`nexit 0`n")
+        $env:PATH = $bin + [IO.Path]::PathSeparator + $env:PATH
+        $lib = Join-Path $repo 'scripts/lib'
+        . (Join-Path $lib 'nightly-common.ps1')
+        . (Join-Path $lib 'nightly-policy.ps1')
+        . (Join-Path $lib 'nightly-coverage.ps1')
+        . (Join-Path $lib 'release-gate.ps1')
+        . (Join-Path $lib 'release-selection.ps1')
+        . (Join-Path $lib 'nightly-tests-impl.ps1')
+        $log = Join-Path $work 'run'
+        $timing = Join-Path $work 'timing'
+        New-Item -ItemType Directory -Path $log -Force | Out-Null
+        New-Item -ItemType Directory -Path $timing -Force | Out-Null
+        $seamPath = Join-Path $work 'seams.ps1'
+        $seam = @'
+        $NightlySeams = @{
+            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
+            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+            StartProcess = {
+                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+            }
+        }
+        '@
+        [IO.File]::WriteAllText($seamPath, $seam)
+        $problems = New-Object System.Collections.Generic.List[string]
+        $discoveryNull = $false
+        $setupNpmCi = $false
+        $setupNpmBuild = $false
+        $setupLint = $false
+        $setupDotnet = $false
+        try {
+            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $log -TimingRoot $timing -Suites @('scripts') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'call-site' -Trigger 'manual' -SeamsPath $seamPath -AllowSharedTree
+        } catch {
+            $problems.Add('invoke-threw')
+        }
+        $setupPath = Join-Path $timing 'setup-phases.json'
+        if (Test-Path -LiteralPath $setupPath) {
+            $setup = [IO.File]::ReadAllText($setupPath) | ConvertFrom-Json
+            $names = @()
+            if ($null -ne $setup.phases) { foreach ($row in @($setup.phases)) { $names += [string]$row.name } }
+            $setupNpmCi = $names -contains 'npm-ci'
+            $setupNpmBuild = $names -contains 'npm-build'
+            $setupLint = $names -contains 'lint'
+            $setupDotnet = $names -contains 'dotnet-build'
+        }
+        $timingPath = Join-Path $log 'scripts-all.timing.json'
+        $token = ''
+        if (Test-Path -LiteralPath $timingPath) {
+            $raw = [IO.File]::ReadAllText($timingPath)
+            $match = [regex]::Match($raw, '"discoverySeconds":([^,}]+)')
+            if ($match.Success) { $token = $match.Groups[1].Value.Trim() }
+        }
+        $discoveryNull = ($token -eq 'null')
+        if (-not $discoveryNull) { $problems.Add('discovery-not-null') }
+        if (-not $setupNpmCi) { $problems.Add('missing-npm-ci') }
+        if (-not $setupNpmBuild) { $problems.Add('missing-npm-build') }
+        if (-not $setupLint) { $problems.Add('missing-lint') }
+        if (-not $setupDotnet) { $problems.Add('missing-dotnet-build') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
+        $out = [ordered]@{
+            exitCode = [int]$exit
+            text = [string]$text
+            discoveryNull = [bool]$discoveryNull
+            setupNpmCi = [bool]$setupNpmCi
+            setupNpmBuild = [bool]$setupNpmBuild
+            setupLint = [bool]$setupLint
+            setupDotnet = [bool]$setupDotnet
+        }
+        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
+        """;
+
+    private const string PhaseRootScript = """
+        $ErrorActionPreference = 'Stop'
+        $repo = $args[0]
+        $work = $args[1]
+        $lib = Join-Path $repo 'scripts/lib'
+        . (Join-Path $lib 'nightly-common.ps1')
+        . (Join-Path $lib 'test-phase-evidence.ps1')
+        $saved = [Environment]::GetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT')
+        $problems = New-Object System.Collections.Generic.List[string]
+        $absentPresent = $true
+        $emptyPresent = $true
+        $setCopied = $false
+        try {
+            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $null)
+            $absent = @{}
+            $absent['ANTIPHON_TEST_PHASE_ROOT'] = 'stale'
+            $null = Enable-TestPhaseExecutionEnvironment -Environment $absent -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot ''
+            $absentPresent = $absent.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')
+            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', '')
+            $empty = @{}
+            $empty['ANTIPHON_TEST_PHASE_ROOT'] = 'stale'
+            $null = Enable-TestPhaseExecutionEnvironment -Environment $empty -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot '   '
+            $emptyPresent = $empty.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')
+            $setRoot = Join-Path $work 'phase-root'
+            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $setRoot)
+            $set = @{}
+            $null = Enable-TestPhaseExecutionEnvironment -Environment $set -LogRoot $work -RunId 'run-1' -GroupId 'g' -Attempt '1' -Suite 'antiphon' -Profile 'local' -TimingRoot ''
+            $setValue = ''
+            if ($set.ContainsKey('ANTIPHON_TEST_PHASE_ROOT')) { $setValue = [string]$set['ANTIPHON_TEST_PHASE_ROOT'] }
+            $setCopied = ($setValue -eq $setRoot) -and ([string]$set['ANTIPHON_TEST_PHASE_RUN_ID'] -eq 'run-1')
+        } catch {
+            $problems.Add('phase-root-threw')
+        } finally {
+            [Environment]::SetEnvironmentVariable('ANTIPHON_TEST_PHASE_ROOT', $saved)
+        }
+        if ($absentPresent) { $problems.Add('absent-key-copied') }
+        if ($emptyPresent) { $problems.Add('empty-key-copied') }
+        if (-not $setCopied) { $problems.Add('set-value-not-copied') }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
+        $out = [ordered]@{
+            exitCode = [int]$exit
+            text = [string]$text
+            absentPresent = [bool]$absentPresent
+            emptyPresent = [bool]$emptyPresent
+            setCopied = [bool]$setCopied
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
