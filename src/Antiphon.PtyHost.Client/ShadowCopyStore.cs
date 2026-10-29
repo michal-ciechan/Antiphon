@@ -78,8 +78,25 @@ public sealed class ShadowCopyStore(string binRoot)
         }
     }
 
-    internal static void PublishStagingDirectory(string stagingDir, string finalDir) =>
-        Directory.Move(stagingDir, finalDir);
+    internal static void PublishStagingDirectory(string stagingDir, string finalDir)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(stagingDir, finalDir);
+                return;
+            }
+            catch (IOException ex) when (OperatingSystem.IsWindows()
+                && ex.HResult == unchecked((int)0x80070005) && attempt < 9)
+            {
+                // Windows can deny a directory rename while a scanner holds a newly copied
+                // payload file without delete sharing. Retry only this atomic publication:
+                // never recopy, overwrite a winner, or report success while still denied.
+                Thread.Sleep(100);
+            }
+        }
+    }
 
     internal static bool HasRuntimePayload(string dir) =>
         File.Exists(Path.Combine(dir, OperatingSystem.IsWindows() ? "Antiphon.PtyHost.exe" : "Antiphon.PtyHost"))
