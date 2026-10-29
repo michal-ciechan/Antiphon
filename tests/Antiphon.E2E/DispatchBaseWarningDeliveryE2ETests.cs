@@ -2,6 +2,7 @@ using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -156,9 +157,21 @@ public class DispatchBaseWarningDeliveryE2ETests
         {
             if (cut is "dispatch-claim" or "dispatch-projection")
             {
+                // Projection has not committed. A bare Warning count also fails when the claim
+                // committed some other warning (quota, capacity consume) and left the intents open.
                 intents.ShouldAllBe(i => i.MaterializedAt == null);
-                (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
-                (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId)).ShouldBe(0);
+                var warnings = await db.AgentTaskEvents.AsNoTracking()
+                    .Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning)
+                    .Select(e => new { e.Id, e.Detail })
+                    .ToListAsync();
+                var observed = DispatchWaitDiagnostic.FormatWarnings(
+                    warnings.Select(w => new DispatchWaitDiagnostic.WarningRow(w.Id, w.Detail)));
+                Console.WriteLine("C540 crash-cut warnings at " + boundary + ": " + observed);
+                var intentIds = intents.Select(i => i.Id).ToHashSet();
+                warnings.Where(w => DispatchWaitDiagnostic.IsUnmaterializedProjection(w.Id, w.Detail, intentIds))
+                    .ShouldBeEmpty("dispatch-base projection leaked at " + boundary + "; warnings=" + observed);
+                (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId))
+                    .ShouldBe(0, "dispatch-base notification leaked at " + boundary + "; warnings=" + observed);
             }
             else if (cut == "pre-enqueue")
             {
