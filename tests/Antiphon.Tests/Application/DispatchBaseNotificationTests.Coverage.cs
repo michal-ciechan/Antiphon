@@ -491,14 +491,13 @@ public partial class DispatchBaseNotificationTests
         await repo.CommitFileAsync("README.md", "base\n");
         await repo.GitAsync("branch", "trunk", "master");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var caller = await BridgeQueueHarness.CreateAsync(new()
+        await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             PreserveDatabaseOnDispose = true,
             ConnectionString = schema.ConnectionString,
         });
-        await caller.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "caller baseline before dispatch");
-        await caller.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await caller.InsertStoreVisibleTurnAsync("caller baseline before dispatch", "ready");
         await using var db = CreateContext(schema);
         var card = await SeedCardAsync(db, "CARD-0508");
         var projectId = await db.Boards.AsNoTracking().Where(b => b.Id == card.BoardId)
