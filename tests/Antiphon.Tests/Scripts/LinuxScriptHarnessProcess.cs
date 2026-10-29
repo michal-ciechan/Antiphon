@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipes;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Antiphon.Tests.Scripts;
@@ -158,6 +160,87 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
         _control?.Dispose();
         _socket?.Dispose();
     }
+
+    public string DescribePipeHolders()
+    {
+        try
+        {
+            var targets = new HashSet<string>(StringComparer.Ordinal);
+            CollectPipeTarget(Stdout.BaseStream, targets);
+            CollectPipeTarget(Stderr.BaseStream, targets);
+            if (targets.Count == 0) return "unidentified";
+            var self = Environment.ProcessId;
+            var names = new List<string>(8);
+            foreach (var entry in Directory.EnumerateDirectories("/proc"))
+            {
+                if (names.Count == 8) break;
+                if (!int.TryParse(Path.GetFileName(entry), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) ||
+                    pid <= 0 || pid == self)
+                    continue;
+                if (!HoldsPipe(pid, targets)) continue;
+                names.Add(pid.ToString(CultureInfo.InvariantCulture) + ":" + ReadComm(pid));
+            }
+            return names.Count == 0 ? "unidentified" : string.Join(",", names);
+        }
+        catch
+        {
+            return "unidentified";
+        }
+    }
+
+    private static void CollectPipeTarget(Stream stream, HashSet<string> targets)
+    {
+        SafeHandle? handle = stream switch
+        {
+            FileStream file when !file.SafeFileHandle.IsInvalid && !file.SafeFileHandle.IsClosed => file.SafeFileHandle,
+            PipeStream pipe when !pipe.SafePipeHandle.IsInvalid && !pipe.SafePipeHandle.IsClosed => pipe.SafePipeHandle,
+            _ => null
+        };
+        if (handle is null) return;
+        var fd = (int)handle.DangerousGetHandle();
+        if (fd < 0) return;
+        var target = ReadLinkOrNull("/proc/self/fd/" + fd.ToString(CultureInfo.InvariantCulture));
+        if (target is not null && target.StartsWith("pipe:[", StringComparison.Ordinal))
+            targets.Add(target);
+    }
+
+    private static bool HoldsPipe(int pid, HashSet<string> targets)
+    {
+        try
+        {
+            var fdDirectory = "/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/fd";
+            foreach (var fd in Directory.EnumerateFileSystemEntries(fdDirectory))
+            {
+                var target = ReadLinkOrNull(fd);
+                if (target is not null && targets.Contains(target)) return true;
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return false;
+    }
+
+    private static string ReadComm(int pid)
+    {
+        try
+        {
+            var comm = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/comm").Trim();
+            return comm.Length == 0 ? "unknown" : comm;
+        }
+        catch (IOException) { return "unknown"; }
+        catch (UnauthorizedAccessException) { return "unknown"; }
+    }
+
+    private static string? ReadLinkOrNull(string path)
+    {
+        var buffer = new byte[4096];
+        var written = (int)ReadLink(path, buffer, buffer.Length);
+        if (written <= 0 || written >= buffer.Length) return null;
+        return Encoding.UTF8.GetString(buffer, 0, written);
+    }
+
+    [DllImport("libc", EntryPoint = "readlink", SetLastError = true)]
+    private static extern nint ReadLink(string path, byte[] buffer, nint size);
 
     public void Dispose()
     {
