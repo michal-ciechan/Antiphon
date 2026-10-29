@@ -195,7 +195,7 @@ public sealed class WorktreeManager : IWorktreeManager
 
         foreach (var entry in entries)
         {
-            var path = Path.GetFullPath(entry.Path);
+            var path = CanonicalGitPath(entry.Path);
             if (!IsPathUnderRoot(path, worktreeRoot))
                 continue;
 
@@ -260,7 +260,7 @@ public sealed class WorktreeManager : IWorktreeManager
                 continue;
 
             registeredBranches.Add(branch);
-            var path = Path.GetFullPath(entry.Path);
+            var path = CanonicalGitPath(entry.Path);
             var directoryExists = Directory.Exists(path);
             var gitMarker = Path.Combine(path, ".git");
             result.Add(new DelegateWorktreeScanEntry(
@@ -363,7 +363,7 @@ public sealed class WorktreeManager : IWorktreeManager
                 {
                     if (!Directory.Exists(worktreeRoot) || !IsPathUnderRoot(entry.Path, worktreeRoot))
                         continue;
-                    var path = Path.GetFullPath(entry.Path);
+                    var path = CanonicalGitPath(entry.Path);
                     byPath[NormalizePathForComparison(path)] = new WorktreeResidueScanEntry(
                         path,
                         entry.Branch,
@@ -899,7 +899,7 @@ public sealed class WorktreeManager : IWorktreeManager
         Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     // rev-parse prints forward slashes. GitDirectory is persisted and compared as an OS path.
-    internal static string CanonicalGitPath(string gitOutput) => gitOutput.Trim();
+    internal static string CanonicalGitPath(string gitOutput) => Path.GetFullPath(gitOutput.Trim());
 
     private static string NormalizeBranchName(string branch)
     {
