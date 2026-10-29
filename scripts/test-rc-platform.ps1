@@ -599,13 +599,34 @@ function Test-LinuxOnlyWindowsExclusions {
         if (-not $loaded.Found) { return $null }
         return ($loaded.Lines -join "`n")
     }
+    $script:SuiteSources = @{}
+    function Get-SuiteSources([string]$Suite) {
+        if ($script:SuiteSources.ContainsKey($Suite)) { return ,$script:SuiteSources[$Suite] }
+        $rootRel = switch ($Suite) {
+            'antiphon' { 'tests/Antiphon.Tests' }
+            'session-runner' { 'tests/Antiphon.SessionRunner.Tests' }
+            'pty-host' { 'tests/Antiphon.PtyHost.Tests' }
+            'agents-pty' { 'tests/Antiphon.Agents.Pty.Tests' }
+            default { throw "unknown suite $Suite" }
+        }
+        $root = Join-Path $repoRoot $rootRel
+        $paths = @(Get-ChildItem -LiteralPath $root -Recurse -Filter *.cs -File | Where-Object {
+            $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.FullName -notmatch '[\\/]bin-'
+        } | Sort-Object -Property FullName)
+        $texts = New-Object string[] $paths.Count
+        for ($i = 0; $i -lt $paths.Count; $i++) { $texts[$i] = [IO.File]::ReadAllText($paths[$i].FullName) }
+        $script:SuiteSources[$Suite] = $texts
+        return ,$texts
+    }
     function Test-SourceGated([string]$Source, [string]$Class, [string[]]$Methods) {
         return @([RcPlatformWitness.LinuxOnlyGate]::RowProblems($Source, $Class, $Methods))
     }
+    function Test-SourcesGated([string[]]$Sources, [string]$Class, [string[]]$Methods) {
+        return @([RcPlatformWitness.LinuxOnlyGate]::RowProblemsMany($Sources, $Class, $Methods))
+    }
     function Test-RowGated($row) {
-        $source = Read-ClassSource $row.c
-        if ($null -eq $source) { return @('missing-source') }
-        return @(Test-SourceGated $source ([string]$row.c) ([string[]]@($row.m)))
+        $sources = Get-SuiteSources ([string]$row.s)
+        return @([RcPlatformWitness.LinuxOnlyGate]::CachedRowProblems([string]$row.s, $sources, [string]$row.c, [string[]]@($row.m)))
     }
     $gateProblems = @()
     foreach ($row in $inventory) {
@@ -615,7 +636,7 @@ function Test-LinuxOnlyWindowsExclusions {
     $noise = Read-ClassLines 'AttentionFeedNoiseTests'
     $noiseAdmitted = $false
     if ($noise.Found) {
-        $noiseAdmitted = @((Test-RowGated @{ c = 'AttentionFeedNoiseTests'; m = @() })).Count -eq 0
+        $noiseAdmitted = @((Test-RowGated @{ s = 'antiphon'; c = 'AttentionFeedNoiseTests'; m = @() })).Count -eq 0
     }
     $synthetic = 'if (!OperatingSystem.IsLinux()) Skip.Test("Windows junction variant is unverified");'
     $syntheticSkip = [regex]::Match($synthetic, 'Skip\.Test\(\s*"([^"]*)"').Groups[1].Value
@@ -623,15 +644,23 @@ function Test-LinuxOnlyWindowsExclusions {
     $forbidProblems = @(Test-SourceGated $forbidSource 'ForbidSkipTests' ([string[]]@()))
     $syntheticRefused = $forbid.IsMatch($syntheticSkip) -and (($forbidProblems -join ' ') -eq 'forbid Case')
     $noiseProblems = @()
-    if ($noise.Found) { $noiseProblems = @((Test-RowGated @{ c = 'AttentionFeedNoiseTests'; m = @() })) }
+    if ($noise.Found) { $noiseProblems = @((Test-RowGated @{ s = 'antiphon'; c = 'AttentionFeedNoiseTests'; m = @() })) }
     $noiseParsed = -not (($noiseProblems -join ',') -like '*parse-failed*')
     Assert-C1323 ((-not $noiseAdmitted) -and $syntheticRefused -and $noise.Found -and $noiseParsed) 'ungated-class-refused' "noise=$noiseAdmitted synthetic=$syntheticRefused parsed=$noiseParsed"
+    $gateType = @'
+
+internal static class NativeLinuxGate {
+    internal static void Require(string reason) {
+        if (!OperatingSystem.IsLinux()) throw new SkipTestException(reason);
+    }
+}
+'@
     $neighbour = @'
 public sealed class NeighbourGateTests {
     [Test] public void Ungated_runs_on_windows() { var value = 1; value.ToString(); }
     [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
 }
-'@
+'@ + $gateType
     $returnTrueTool = @'
 public sealed class ReturnTrueToolTests {
     [Test] public void Case() { if (!Linux()) return; Work(); }
@@ -650,14 +679,14 @@ public sealed class ReturnTrueGoodTests {
 public sealed class EnvWrappedGateTests {
     [Test] public void Case() { if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
 }
-'@
+'@ + $gateType
     $removedGate = @'
 public sealed class RemovedGateTests {
     [Test] public void C1008_Recycle_exact_default_volumes() { Work(); }
     [Test] public void Sibling_is_gated() { NativeLinuxGate.Require("linux only"); }
     private static void Work() { }
 }
-'@
+'@ + $gateType
     $compound = @'
 public sealed class CompoundConditionTests {
     [Test] public void Case() {
@@ -675,6 +704,245 @@ public sealed class CompoundConditionTests {
     if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('C1008_Recycle_exact_default_volumes'))).Count -eq 0) { $holes += 'removed-method-gate-admitted' }
     if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('Sibling_is_gated'))).Count -gt 0) { $holes += 'sibling-gate-refused' }
     if (@(Test-SourceGated $compound 'CompoundConditionTests' ([string[]]@())).Count -eq 0) { $holes += 'compound-condition-admitted' }
+    $lambda = @'
+public sealed class LambdaGateTests {
+    [Test] public void Case() { System.Action never = () => NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $localFn = @'
+public sealed class LocalFnGateTests {
+    [Test] public void Case() { static void Never() => NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $blockFn = @'
+public sealed class BlockFnGateTests {
+    [Test] public void Case() { void Never() { NativeLinuxGate.Require("linux only"); } }
+}
+'@ + $gateType
+    $ternaryNew = @'
+public sealed class TernaryNewTests {
+    [Test] public void Case() { using var fixture = Env("X") is null ? null : new HelperFixture(); }
+    static string Env(string name) { return null; }
+    sealed class HelperFixture { public HelperFixture() { if (!OperatingSystem.IsLinux()) throw new SkipTestException("linux"); } }
+}
+'@
+    $taskRun = @'
+public sealed class TaskRunGateTests {
+    [Test] public void Case() { _ = Task.Run(() => NativeLinuxGate.Require("linux only")); }
+}
+'@ + $gateType
+    $ternaryCall = @'
+public sealed class TernaryCallTests {
+    [Test] public void Case() { _ = Env("X") is null ? 0 : Gated(); }
+    static string Env(string name) { return null; }
+    static int Gated() { NativeLinuxGate.Require("linux only"); return 1; }
+}
+'@ + $gateType
+    $charU = @'
+public sealed class CharUTests {
+    [Test] public void Case() { System.Console.Write('\u0041'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $charX = @'
+public sealed class CharXTests {
+    [Test] public void Case() { System.Console.Write('\x41'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $charSlash = @'
+public sealed class CharSlashTests {
+    [Test] public void Case() { System.Console.Write('\\'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $charQuote = @'
+public sealed class CharQuoteTests {
+    [Test] public void Case() { System.Console.Write('\''); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $charPositive = @'
+public sealed class CharPositiveTests {
+    [Test] public void Ungated_chars() {
+        System.Console.Write('\u0041');
+        System.Console.Write('\x41');
+        System.Console.Write('\\');
+        System.Console.Write('\'');
+    }
+    [Test] public void Gated_after_chars() { NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $preIf = @'
+public sealed class PreprocessorGateTests {
+    [Test] public void Case() {
+#if ANTIPHON_NEVER_DEFINED
+        NativeLinuxGate.Require("linux only");
+#endif
+        var value = 1;
+    }
+}
+'@ + $gateType
+    $nopClass = @'
+public sealed class NopProbeTests {
+    [Test] public void Case() { NopProbe.RequireLinux(); }
+}
+'@
+    $nopHelper = @'
+public static class NopProbe { public static void RequireLinux() { } }
+'@
+    $overload = @'
+public sealed class OverloadGateTests {
+    [Test] public void Case() { NativeLinuxGate.Require("linux only"); }
+    [Test] public void Case(int value) { var x = value; }
+}
+'@ + $gateType
+    $caseTwin = @'
+public sealed class CaseTwinTests {
+    [Test] public void Case() { NativeLinuxGate.Require("linux only"); }
+    [Test] public void case() { var x = 1; }
+}
+'@ + $gateType
+    $twinA = @'
+namespace One;
+public sealed class TwinClassTests { [Test] public void Case() { NativeLinuxGate.Require("linux only"); } }
+'@ + $gateType
+    $twinB = @'
+namespace Two;
+public sealed class TwinClassTests { [Test] public void Case() { var x = 1; } }
+'@
+    $partialA = @'
+namespace Same;
+public sealed partial class PartialGateTests { [Test] public void Case() { NativeLinuxGate.Require("linux only"); } }
+'@ + $gateType
+    $partialB = @'
+namespace Same;
+public sealed partial class PartialGateTests { [Test] public void Other() { var x = 1; } }
+'@
+    $inheritBase = @'
+namespace Inherited;
+public class InheritBaseTests { [Test] public void Inherited_runs_on_windows() { var x = 1; } }
+'@
+    $inheritDerived = @'
+namespace Inherited;
+[InheritsTests]
+public class InheritDerivedTests : InheritBaseTests {
+    [Test] public void Own() { NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $inheritPlain = @'
+namespace Inherited;
+public class InheritPlainTests : InheritBaseTests {
+    [Test] public void Own() { NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $preamble = @'
+public sealed class PreambleGateTests {
+    [Test] public void Case() { WindowsWork(); NativeLinuxGate.Require("linux only"); }
+    static void WindowsWork() { Assert.Fail("windows"); }
+}
+'@ + $gateType
+    $commentGate = @'
+public sealed class CommentGateTests {
+    [Test] public void Case() {
+        // NativeLinuxGate.Require("linux only");
+        var x = 1;
+    }
+}
+'@ + $gateType
+    $stringGate = @'
+public sealed class StringGateTests {
+    [Test] public void Case() { var x = "NativeLinuxGate.Require(\"linux only\");"; }
+}
+'@ + $gateType
+    $blockComment = @'
+public sealed class BlockCommentTests {
+    [Test] public void Ungated_comment() { /* } */ var x = 1; }
+    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $afterReturn = @'
+public sealed class AfterReturnTests {
+    [Test] public void Case() { return; NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $afterIfReturn = @'
+public sealed class AfterIfReturnTests {
+    [Test] public void Case() { if (true) return; NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $tryGate = @'
+public sealed class TryGateTests {
+    [Test] public void Case() { try { NativeLinuxGate.Require("linux only"); } catch (Exception) { } }
+}
+'@ + $gateType
+    $skipWhen = @'
+public sealed class SkipWhenTests {
+    [Test, SkipWhen(false)] public void Case() { var x = 1; }
+}
+'@
+    $braceNoise = @'
+public sealed class BraceNoiseTests {
+    [Test] public void Ungated_noise() {
+        var a = @"} } ""x"" ";
+        var b = """
+        }
+        """;
+        var c = '{';
+        var d = '}';
+        var e = $"{{ {(true ? "}" : "{")} }}";
+    }
+    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
+}
+'@ + $gateType
+    $misparse = @'
+public sealed class MisparseTests {
+    [Test] public void Case() { System.Console.Write('); }
+}
+'@
+    function Add-Refused([string]$Name, [string]$Source, [string]$Class, [string[]]$Methods) {
+        if (@(Test-SourceGated $Source $Class $Methods).Count -eq 0) { $script:HoleList += $Name }
+    }
+    $script:HoleList = @($holes)
+    Add-Refused 'lambda-admitted' $lambda 'LambdaGateTests' @()
+    Add-Refused 'local-fn-admitted' $localFn 'LocalFnGateTests' @()
+    Add-Refused 'block-fn-admitted' $blockFn 'BlockFnGateTests' @()
+    Add-Refused 'ternary-new-admitted' $ternaryNew 'TernaryNewTests' @()
+    Add-Refused 'task-run-admitted' $taskRun 'TaskRunGateTests' @()
+    Add-Refused 'ternary-call-admitted' $ternaryCall 'TernaryCallTests' @()
+    Add-Refused 'char-u-admitted' $charU 'CharUTests' @()
+    Add-Refused 'char-x-admitted' $charX 'CharXTests' @()
+    Add-Refused 'char-slash-admitted' $charSlash 'CharSlashTests' @()
+    Add-Refused 'char-quote-admitted' $charQuote 'CharQuoteTests' @()
+    if (@(Test-SourceGated $charPositive 'CharPositiveTests' ([string[]]@('Ungated_chars'))).Count -eq 0) { $script:HoleList += 'char-positive-ungated-admitted' }
+    if (@(Test-SourceGated $charPositive 'CharPositiveTests' ([string[]]@('Gated_after_chars'))).Count -gt 0) { $script:HoleList += 'char-positive-gated-refused' }
+    Add-Refused 'preprocessor-admitted' $preIf 'PreprocessorGateTests' @()
+    if (@(Test-SourcesGated ([string[]]@($nopClass, $nopHelper)) 'NopProbeTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'nop-probe-admitted' }
+    if (@(Test-SourceGated $overload 'OverloadGateTests' ([string[]]@('Case'))).Count -eq 0) { $script:HoleList += 'overload-admitted' }
+    if (@(Test-SourceGated $caseTwin 'CaseTwinTests' ([string[]]@('Case'))).Count -eq 0) { $script:HoleList += 'case-twin-admitted' }
+    if (@(Test-SourcesGated ([string[]]@($twinA, $twinB)) 'TwinClassTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'other-file-admitted' }
+    if (@(Test-SourcesGated ([string[]]@($partialA, $partialB)) 'PartialGateTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'partial-sibling-admitted' }
+    if (@(Test-SourcesGated ([string[]]@($inheritBase, $inheritDerived)) 'InheritDerivedTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'inherits-base-admitted' }
+    if (@(Test-SourcesGated ([string[]]@($inheritBase, $inheritPlain)) 'InheritPlainTests' ([string[]]@())).Count -gt 0) { $script:HoleList += 'inherits-without-attribute-refused' }
+    Add-Refused 'preamble-admitted' $preamble 'PreambleGateTests' @()
+    Add-Refused 'comment-admitted' $commentGate 'CommentGateTests' @()
+    Add-Refused 'string-admitted' $stringGate 'StringGateTests' @()
+    if (@(Test-SourceGated $blockComment 'BlockCommentTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'block-comment-admitted' }
+    if (@(Test-SourceGated $blockComment 'BlockCommentTests' ([string[]]@('Gated_next'))).Count -gt 0) { $script:HoleList += 'block-comment-gated-refused' }
+    Add-Refused 'after-return-admitted' $afterReturn 'AfterReturnTests' @()
+    Add-Refused 'after-if-return-admitted' $afterIfReturn 'AfterIfReturnTests' @()
+    Add-Refused 'try-admitted' $tryGate 'TryGateTests' @()
+    Add-Refused 'skip-when-admitted' $skipWhen 'SkipWhenTests' @()
+    if (@(Test-SourceGated $braceNoise 'BraceNoiseTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'brace-noise-admitted' }
+    if (@(Test-SourceGated $braceNoise 'BraceNoiseTests' ([string[]]@('Gated_next'))).Count -gt 0) { $script:HoleList += 'brace-noise-gated-refused' }
+    $misparseProblems = @(Test-SourceGated $misparse 'MisparseTests' ([string[]]@()))
+    if (($misparseProblems -join ' ') -notlike 'misparse*') { $script:HoleList += ('misparse-admitted:' + ($misparseProblems -join '|')) }
+    $once = @((Test-RowGated $inventory[0])) -join '|'
+    $twice = @((Test-RowGated $inventory[0])) -join '|'
+    if ($once -cne $twice) { $script:HoleList += 'nondeterministic' }
+    $compileRefused = $false
+    try { Add-Type -TypeDefinition 'public class {' -ErrorAction Stop } catch { $compileRefused = $true }
+    if (-not $compileRefused) { $script:HoleList += 'compile-failure-admitted' }
+    $loadRefused = $false
+    try { Add-Type -Path (Join-Path $repoRoot 'scripts/lib/no-such-witness.cs') -ErrorAction Stop } catch { $loadRefused = $true }
+    if (-not $loadRefused) { $script:HoleList += 'load-failure-admitted' }
+    $holes = @($script:HoleList)
     Assert-C1323 ($holes.Count -eq 0) 'synthetic-gate-holes-refused' ($holes -join ',')
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
