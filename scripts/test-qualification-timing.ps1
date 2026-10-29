@@ -15,6 +15,49 @@ function Assert-Check {
     $script:failed++
 }
 
+function Initialize-HarnessFifo {
+    if ('AntiphonHarnessPosix' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class AntiphonHarnessPosix {
+    [DllImport("libc", SetLastError = true)]
+    public static extern int mkfifo(string pathname, uint mode);
+}
+'@
+}
+
+function New-HarnessFifo {
+    param([string]$Path)
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return $false }
+    Initialize-HarnessFifo
+    $code = [AntiphonHarnessPosix]::mkfifo($Path, [uint32]438)
+    return ($code -eq 0)
+}
+
+function Set-HarnessUnixMode {
+    param([string]$Path, [string]$Octal)
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { throw 'unix mode is not a Windows property' }
+    $bits = [Convert]::ToInt32($Octal, 8)
+    [System.IO.File]::SetUnixFileMode($Path, [System.IO.UnixFileMode]$bits)
+}
+
+function New-HarnessSymlink {
+    param([string]$Link, [string]$Target)
+    try {
+        New-Item -ItemType SymbolicLink -Path $Link -Target $Target -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $item = Get-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+            if ($item -and $item.PSIsContainer) {
+                New-Item -ItemType Junction -Path $Link -Target $Target -ErrorAction Stop | Out-Null
+                return $true
+            }
+        }
+        return $false
+    }
+}
+
 function Get-NetFxAddTypeFindings {
     param([string[]]$Paths)
     $rules = @(
@@ -466,8 +509,7 @@ $payload = [ordered]@{
         $fifoChunk = Join-Path $fifoDir (Get-QualificationChunkDirectoryName -Chunk 'g1' -RunId 'run-fifo' -Attempt '1' -Suite 'antiphon')
         New-Item -ItemType Directory -Path $fifoChunk -Force | Out-Null
         $fifo = Join-Path $fifoChunk 'cases-81-fifo.jsonl'
-        & mkfifo $fifo
-        $fifoOkCreated = ($LASTEXITCODE -eq 0)
+        $fifoOkCreated = New-HarnessFifo $fifo
         $fifoResult = Join-Path $boundRoot 'fifo.json'
         $fifoScript = Join-Path $boundRoot 'fifo.ps1'
         $fifoBody = @'
@@ -499,7 +541,7 @@ $payload = [ordered]@{
 
         $denied = Join-Path $boundTiming 'cases-82-denied.jsonl'
         [IO.File]::WriteAllText($denied, '{"recordKind":"header"}' + "`n")
-        & chmod 000 $denied
+        Set-HarnessUnixMode $denied '000'
         $deniedResult = Join-Path $boundRoot 'denied.json'
         $deniedScript = Join-Path $boundRoot 'denied.ps1'
         $deniedBody = @'
@@ -527,15 +569,14 @@ $payload = [ordered]@{
             $deniedOk = ([double]$deniedDoc.seconds -lt 0.2 -and -not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
         }
         Assert-Check $deniedOk 'unreadable-timing-file-returns-inside-budget'
-        & chmod 644 $denied
+        Set-HarnessUnixMode $denied '644'
 
         $launchRoot = Join-Path $boundRoot 'launch'
         New-Item -ItemType Directory -Path $launchRoot -Force | Out-Null
         $launchLog = Join-Path $launchRoot 'logs'
         New-Item -ItemType Directory -Path $launchLog -Force | Out-Null
         $launchFifo = Join-Path $launchLog 'antiphon-all.timing.json'
-        & mkfifo $launchFifo
-        $launchCreated = ($LASTEXITCODE -eq 0)
+        $launchCreated = New-HarnessFifo $launchFifo
         $launchMarker = Join-Path $launchRoot 'launched'
         $launchSeam = Join-Path $launchRoot 'seam.ps1'
         $launchSeamBody = @'
@@ -735,6 +776,10 @@ $ReleaseGateSeams = @{
 
 # Post-run aggregation: a FIFO TRX, a 100 MB line, an unreadable file, and a
 # symlink stay inside the budget and leave the chunk exit untouched.
+# FIFO and mode 000 are POSIX-only. A directory link is covered further down.
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    Write-Host 'SKIP post-run-hostile-files-keep-exit-inside-budget fifo and unix mode 000 are not Windows properties'
+} else {
 $aggDenied = ''
 $aggRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-agg-' + [guid]::NewGuid().ToString('N'))
 $aggLog = Join-Path $aggRoot 'logs'
@@ -742,8 +787,7 @@ $aggTiming = Join-Path $aggLog 'timing'
 New-Item -ItemType Directory -Path $aggTiming -Force | Out-Null
 try {
     $aggFifo = Join-Path $aggLog 'antiphon-g9.trx'
-    & mkfifo $aggFifo
-    $aggFifoOk = ($LASTEXITCODE -eq 0)
+    $aggFifoOk = New-HarnessFifo $aggFifo
     $aggFolder = Join-Path $aggTiming (Get-QualificationChunkDirectoryName -Chunk 'g9' -RunId 'agg' -Attempt '1' -Suite 'antiphon')
     New-Item -ItemType Directory -Path $aggFolder -Force | Out-Null
     $aggHuge = Join-Path $aggFolder 'cases-80-huge.jsonl'
@@ -754,9 +798,9 @@ try {
     } finally { $aggStream.Dispose() }
     $aggDenied = Join-Path $aggFolder 'cases-82-denied.jsonl'
     [IO.File]::WriteAllText($aggDenied, '{"recordKind":"header"}' + "`n")
-    & chmod 000 $aggDenied
-    & ln -s $aggHuge (Join-Path $aggFolder 'cases-83-link.jsonl')
-    & mkfifo (Join-Path $aggFolder 'cases-81-fifo.jsonl')
+    Set-HarnessUnixMode $aggDenied '000'
+    New-HarnessSymlink (Join-Path $aggFolder 'cases-83-link.jsonl') $aggHuge | Out-Null
+    New-HarnessFifo (Join-Path $aggFolder 'cases-81-fifo.jsonl') | Out-Null
     $aggDense = New-Object System.Text.StringBuilder
     [void]$aggDense.Append('{"v":[')
     for ($n = 0; $n -lt 100000; $n++) { [void]$aggDense.Append('0,') }
@@ -773,8 +817,9 @@ try {
     Write-Host ('FAIL post-run-hostile-files-keep-exit-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if (Test-Path -LiteralPath $aggDenied) { & chmod 644 $aggDenied }
+    if (Test-Path -LiteralPath $aggDenied) { Set-HarnessUnixMode $aggDenied '644' }
     Remove-Item -LiteralPath $aggRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 }
 
 # The launch heartbeat must not open a timing file. strace records openat only.
@@ -801,17 +846,17 @@ try {
     $openDenied = Join-Path $openTiming 'cases-82-denied.jsonl'
     $openLink = Join-Path $openTiming 'cases-83-link.jsonl'
     $openFifo = Join-Path $openTiming 'cases-81-fifo.jsonl'
-    & mkfifo $openFifoTrx
-    & mkfifo $openSide
-    & mkfifo $openFifo
+    New-HarnessFifo $openFifoTrx | Out-Null
+    New-HarnessFifo $openSide | Out-Null
+    New-HarnessFifo $openFifo | Out-Null
     $openStream = [IO.File]::Create($openHuge)
     try {
         $openChunk = [Text.Encoding]::UTF8.GetBytes('x' * 1MB)
         for ($n = 0; $n -lt 100; $n++) { $openStream.Write($openChunk, 0, $openChunk.Length) }
     } finally { $openStream.Dispose() }
     [IO.File]::WriteAllText($openDenied, '{"recordKind":"header"}' + "`n")
-    & chmod 000 $openDenied
-    & ln -s $openHuge $openLink
+    Set-HarnessUnixMode $openDenied '000'
+    New-HarnessSymlink $openLink $openHuge | Out-Null
     $openMarker = Join-Path $openRoot 'launched'
     $openChild = Join-Path $openRoot 'heart.ps1'
     $openTrace = Join-Path $openRoot 'openat.txt'
@@ -848,7 +893,7 @@ exit $LASTEXITCODE
     Write-Host ('FAIL launch-path-opens-no-timing-file ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if (Test-Path -LiteralPath $openDenied) { & chmod 644 $openDenied }
+    if (Test-Path -LiteralPath $openDenied) { Set-HarnessUnixMode $openDenied '644' }
     Remove-Item -LiteralPath $openRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 }
@@ -1415,8 +1460,7 @@ try {
     ) -join "`n"
     [IO.File]::WriteAllText((Join-Path $linkOutside 'cases-42-link1.jsonl'), $linkJournal + "`n")
     $linkPath = Join-Path $linkTiming $linkName
-    & ln -s $linkOutside $linkPath
-    $linkMade = ($LASTEXITCODE -eq 0)
+    $linkMade = New-HarnessSymlink $linkPath $linkOutside
     $linkSums = Get-QualificationPhaseSums -TimingRoot $linkTiming -Chunk $linkChunk -RunId $linkRun -Suite $linkSuite -Attempt $linkAttempt
     $linkRefused = ($linkMade -and [bool]$linkSums.refused -and $null -eq $linkSums.fixtureSetupSeconds)
     $realName = Get-QualificationChunkDirectoryName -Chunk 'g-real' -RunId $linkRun -Attempt $linkAttempt -Suite $linkSuite

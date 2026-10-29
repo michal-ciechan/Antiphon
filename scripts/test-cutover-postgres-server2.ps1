@@ -33,6 +33,13 @@ function Write-Fail {
     Write-Host "FAIL $Name - $Detail"
 }
 
+function Set-C1407Executable {
+    param([string]$Path)
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return }
+    $mode = [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite -bor [System.IO.UnixFileMode]::UserExecute -bor [System.IO.UnixFileMode]::GroupRead -bor [System.IO.UnixFileMode]::GroupExecute -bor [System.IO.UnixFileMode]::OtherRead -bor [System.IO.UnixFileMode]::OtherExecute
+    [System.IO.File]::SetUnixFileMode($Path, $mode)
+}
+
 function New-C1407FakeBin {
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-fake-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -46,7 +53,7 @@ function New-C1407FakeBin {
             'exit 99'
         )
         Set-Content -LiteralPath $path -Value $lines -Encoding ascii
-        & chmod +x $path
+        Set-C1407Executable $path
     }
     return [pscustomobject]@{ Dir = $dir; Trace = $trace }
 }
@@ -234,7 +241,7 @@ esac
     foreach ($name in @('docker', 'dotnet', 'ssh', 'scp', 'age', 'curl', 'wget', 'pwsh')) {
         $path = Join-Path $dir $name
         Set-Content -LiteralPath $path -Value $body -Encoding ascii
-        & chmod +x $path
+        Set-C1407Executable $path
     }
     return [pscustomobject]@{ Dir = $dir; Trace = $trace; Stdin = $stdin }
 }
@@ -1938,14 +1945,23 @@ function Test-W30 {
 }
 
 $all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30')
+$script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30')
+function Invoke-C1407Case {
+    param([string]$Name)
+    if (($env:OS -eq 'Windows_NT') -and ($script:C1407PosixWindow -contains $Name)) {
+        Write-Host ("SKIP {0} POSIX extensionless sh fake: the executable bit is not a Windows property; Linux still runs this case" -f $Name)
+        return
+    }
+    & ('Test-{0}' -f $Name)
+}
 if ($Case) {
     $name = $Case
     if ($name -match '^W-([0-9]+)$') { $name = 'W' + $Matches[1] }
     $fn = Get-Command -Name ('Test-{0}' -f $name) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
-    & $fn
+    Invoke-C1407Case $name
 } else {
-    foreach ($id in $all) { & ('Test-{0}' -f $id) }
+    foreach ($id in $all) { Invoke-C1407Case $id }
 }
 
 Write-Host ''
