@@ -228,6 +228,22 @@ public class LinuxPtyHostLauncherTests
         }
     }
 
+    /// <summary>
+    /// CARD-1614: the owned consumer root contains the native apphost and matching
+    /// libporta_pty.so, user-executable, before any shadow copy.
+    /// </summary>
+    [Test]
+    public void C1614_Owned_payload_has_native_apphost_and_matching_library()
+    {
+        RequireLinux();
+        var root = AppContext.BaseDirectory;
+        var host = Path.Combine(root, PtyHostLauncher.HostExeName);
+        var library = Path.Combine(root, "libporta_pty.so");
+        File.Exists(host).ShouldBeTrue($"owned native apphost missing before shadow copy: {host}");
+        File.Exists(library).ShouldBeTrue($"matching libporta_pty.so missing beside the apphost: {library}");
+        (File.GetUnixFileMode(host) & UnixFileMode.UserExecute).ShouldNotBe((UnixFileMode)0);
+    }
+
     private static string NewRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-linux-ptyhost", Guid.NewGuid().ToString("N"));
