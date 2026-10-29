@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Microsoft.Build.Locator;
 
@@ -15,11 +16,12 @@ public static class Program
     public const int Refused = 1;
     public const int EvaluationFailed = 2;
 
-    private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(300);
-    private static readonly TimeSpan SolutionTimeout = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(EvaluationBudget.ToolCeilingSeconds);
 
     public static int Main(string[] args)
     {
+        if (PrintBudget(args, out var budgetExit)) return budgetExit;
+
         string? repo = null;
         string? solution = null;
         var probe = false;
@@ -75,10 +77,7 @@ public static class Program
             if (probe)
                 return Evaluation.Probe(instance.Version.ToString(), Console.Out);
 
-            var audit = Task.Run(() => Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out));
-            if (!audit.Wait(SolutionTimeout))
-                return Fail($"evaluating {solution} exceeded {SolutionTimeout.TotalSeconds:0} s");
-            return audit.Result;
+            return Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out);
         }
         catch (Exception ex)
         {
@@ -86,9 +85,50 @@ public static class Program
         }
     }
 
+    private static bool PrintBudget(string[] args, out int exitCode)
+    {
+        exitCode = Approved;
+        if (args.Length == 0 || args[0] != "--print-budget") return false;
+        int? measuredPass = null;
+        int? measuredCopy = null;
+        bool? windows = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (i + 1 >= args.Length)
+            {
+                exitCode = Fail($"unknown or incomplete argument '{args[i]}'");
+                return true;
+            }
+            var value = args[++i];
+            switch (args[i - 1])
+            {
+                case "--measured-pass-p95-ms" when int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var pass):
+                    measuredPass = pass; break;
+                case "--measured-copy-p95-ms" when int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var copy):
+                    measuredCopy = copy; break;
+                case "--windows" when value is "true" or "false":
+                    windows = value == "true"; break;
+                default:
+                    exitCode = Fail($"unknown or incomplete argument '{args[i - 1]}'");
+                    return true;
+            }
+        }
+
+        var passMs = measuredPass ?? EvaluationBudget.MeasuredLoadedPassP95Milliseconds;
+        var copyMs = measuredCopy ?? EvaluationBudget.MeasuredCopyP95Milliseconds;
+        var passSeconds = EvaluationBudget.PassSeconds(passMs, windows ?? OperatingSystem.IsWindows());
+        var copySeconds = EvaluationBudget.CopySeconds(copyMs);
+        var total = EvaluationBudget.TotalSeconds(passSeconds, EvaluationBudget.Passes, copySeconds);
+        Console.Out.WriteLine($"pass={passSeconds.ToString(CultureInfo.InvariantCulture)}");
+        Console.Out.WriteLine($"copy={copySeconds.ToString(CultureInfo.InvariantCulture)}");
+        Console.Out.WriteLine($"total={total.ToString(CultureInfo.InvariantCulture)}");
+        return true;
+    }
+
     internal static int Fail(string message)
     {
         Console.Out.WriteLine($"evaluation-failed: {OneLine(message)}");
+        Console.Out.Flush();
         return EvaluationFailed;
     }
 

@@ -528,7 +528,8 @@ public sealed partial class LandGraphEvaluationTests
             using var process = Process.Start(psi)!;
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(240));
+            // Above the Windows two-pass ceiling (120s + 120s + copy + startup).
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(360));
             try
             {
                 await process.WaitForExitAsync(cts.Token);

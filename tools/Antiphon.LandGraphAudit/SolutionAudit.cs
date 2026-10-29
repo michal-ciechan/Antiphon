@@ -18,29 +18,38 @@ internal static class SolutionAudit
 
     public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
     {
-        // Locator has registered the SDK before this method is entered. Inspect every
-        // repository evaluation expression, including inactive branches and metadata.
-        var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
-        EvaluationExpressionPolicy.Check(repo, expressionRefusals);
-        if (expressionRefusals.Count > 0)
+        // Each pass has its own budget. The old single wait covered both passes and the copy.
+        string[]? tracked = null;
+        string? artifacts = null;
+        EvaluationSnapshot? baseline = null;
+        var first = Bound(EvaluationBudget.PassTimeout, solution, () =>
         {
-            foreach (var refusal in expressionRefusals) output.WriteLine(refusal);
-            return Program.Refused;
-        }
+            // Locator has registered the SDK before this method is entered. Inspect every
+            // repository evaluation expression, including inactive branches and metadata.
+            var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
+            EvaluationExpressionPolicy.Check(repo, expressionRefusals);
+            if (expressionRefusals.Count > 0)
+            {
+                foreach (var refusal in expressionRefusals) output.WriteLine(refusal);
+                return Program.Refused;
+            }
 
-        var tracked = BuildInputPolicy.TrackedFiles(repo);
-        var artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
-        var baseline = new EvaluationSnapshot(repo, repo);
-        var result = RunPass(repo, solution, sdkDirectory, output, tracked, artifacts, baseline);
-        if (result != Program.Approved) return result;
+            tracked = BuildInputPolicy.TrackedFiles(repo);
+            artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
+            baseline = new EvaluationSnapshot(repo, repo);
+            return RunPass(repo, solution, sdkDirectory, output, tracked, artifacts, baseline);
+        });
+        if (first != Program.Approved) return first;
 
-        using var canary = CanaryRepository.Create(repo);
+        using var canary = BoundCopy(EvaluationBudget.CopyTimeout, solution, () => CanaryRepository.Create(repo));
         var changed = new EvaluationSnapshot(canary.Root, repo);
         try
         {
             using var diagnostics = new StringWriter();
-            result = RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked, artifacts, changed);
-            if (result != Program.Approved)
+            var second = Bound(EvaluationBudget.PassTimeout, solution, () =>
+                RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked!, artifacts!, changed),
+                () => { try { canary.Dispose(); } catch (Exception) { } });
+            if (second != Program.Approved)
             {
                 output.WriteLine($"refused: differential canary evaluation refused: {Program.OneLine(diagnostics.ToString())}");
                 return Program.Refused;
@@ -54,6 +63,7 @@ internal static class SolutionAudit
             return Program.Refused;
         }
 
+        if (baseline is null) return Program.Fail("evaluation produced no baseline");
         var difference = baseline.Difference(changed);
         if (difference is not null)
         {
@@ -62,6 +72,31 @@ internal static class SolutionAudit
         }
         output.WriteLine("approved");
         return Program.Approved;
+    }
+
+    /// <summary>
+    /// A phase that does not finish inside <paramref name="budget"/> refuses and exits.
+    /// Returning would let the timed-out pass keep writing into the verdict.
+    /// </summary>
+    private static int Bound(TimeSpan budget, string solution, Func<int> work, Action? onTimeout = null)
+    {
+        var task = Task.Run(work);
+        if (task.Wait(budget)) return task.GetAwaiter().GetResult();
+        try { onTimeout?.Invoke(); }
+        catch (Exception) { }
+        Program.Fail($"evaluating {solution} exceeded {budget.TotalSeconds:0} s");
+        Environment.Exit(Program.EvaluationFailed);
+        return Program.EvaluationFailed;
+    }
+
+    private static CanaryRepository BoundCopy(TimeSpan budget, string solution, Func<CanaryRepository> work)
+    {
+        var task = Task.Run(work);
+        if (task.Wait(budget)) return task.GetAwaiter().GetResult();
+        CanaryRepository.DeleteActive();
+        Program.Fail($"evaluating {solution} exceeded {budget.TotalSeconds:0} s");
+        Environment.Exit(Program.EvaluationFailed);
+        return null!;
     }
 
     private static int RunPass(string repo, string solution, string sdkDirectory, TextWriter output,
@@ -271,11 +306,24 @@ internal static class SolutionAudit
     /// Missing components are kept as written; one that cannot be read throws. Windows folds <c>..</c> lexically before the file system
     /// sees it, so there this only over-approximates (another candidate, never fewer refusals).
     /// </summary>
-    internal static string RealPath(string path)
+    internal static string RealPath(string path) => RealPath(path, null);
+
+    /// <summary>
+    /// <paramref name="directoryCache"/> remembers the real path of a lexical parent so a
+    /// sibling file does not stat that parent again. The cached value is <see cref="RealPath(string)"/>
+    /// of the parent, never inferred from a child that may itself be a link.
+    /// </summary>
+    internal static string RealPath(string path, Dictionary<string, string>? directoryCache)
     {
-        path = Path.Combine(Environment.CurrentDirectory, path);
-        var root = Path.GetPathRoot(path)!;
-        return Walk(Path.GetFullPath(root), Components(path[root.Length..]));
+        var combined = Path.Combine(Environment.CurrentDirectory, path);
+        var parent = Path.GetDirectoryName(combined);
+        if (directoryCache is not null && parent is not null && directoryCache.TryGetValue(parent, out var realParent))
+            return Walk(realParent, [Path.GetFileName(combined)]);
+        var root = Path.GetPathRoot(combined)!;
+        var real = Walk(Path.GetFullPath(root), Components(combined[root.Length..]));
+        if (directoryCache is not null && parent is not null && !directoryCache.ContainsKey(parent))
+            directoryCache[parent] = RealPath(parent);
+        return real;
     }
 
     private static string Walk(string current, IEnumerable<string> components)
