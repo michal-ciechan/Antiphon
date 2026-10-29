@@ -71,8 +71,15 @@ public class CapacityObsoleteStandingTests
                 .ShouldBeGreaterThan(0);
         }
 
-        await fx.Recovery.ReconcileAsync(CancellationToken.None);
+        // The kind lock is cluster-wide. A busy try-lock leaves the granted wait
+        // ActionPending; reconcile again until the supersede commits.
         var replaced = await fx.ReloadWaitAsync(wait.Id);
+        for (var attempt = 0; attempt < 5 && replaced.State == CapacityRecoveryWaitState.ActionPending; attempt++)
+        {
+            await fx.Recovery.ReconcileAsync(CancellationToken.None);
+            replaced = await fx.ReloadWaitAsync(wait.Id);
+        }
+
         replaced.State.ShouldBe(CapacityRecoveryWaitState.Superseded);
         replaced.OutcomeReason.ShouldBe("standing-consumer-replaced");
         replaced.AdmissionCount.ShouldBe(granted.AdmissionCount);

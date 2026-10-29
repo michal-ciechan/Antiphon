@@ -144,10 +144,6 @@ public sealed partial class CapacityRecoveryService
                 return CleanupOutcome.Deferred;
             }
 
-            if (_landBoundary is not null)
-                await _landBoundary.ReachedAsync(
-                    "capacity-obsolete-before-finish", wait.Id, candidate.MessageId, ct);
-
             wait = await db.Set<CapacityRecoveryWait>().AsNoTracking()
                 .FirstOrDefaultAsync(w => w.Id == candidate.WaitId, ct);
             if (wait is null || IsFinished(wait) || wait.Version != candidate.Version
@@ -157,6 +153,12 @@ public sealed partial class CapacityRecoveryService
                 await tx.RollbackAsync(ct);
                 return CleanupOutcome.Deferred;
             }
+
+            // After the reread that feeds the compare-and-set, so a progress write
+            // here is the race the version predicate exists to lose.
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync(
+                    "capacity-obsolete-before-finish", wait.Id, candidate.MessageId, ct);
 
             var now = UtcNow();
             var nextOrdinal = wait.ActionOrdinal + 1;
@@ -321,10 +323,6 @@ public sealed partial class CapacityRecoveryService
                 return CleanupOutcome.Deferred;
             }
 
-            if (_landBoundary is not null)
-                await _landBoundary.ReachedAsync(
-                    "capacity-obsolete-before-finish", wait.Id, Guid.Empty, ct);
-
             wait = await db.Set<CapacityRecoveryWait>().AsNoTracking()
                 .FirstOrDefaultAsync(w => w.Id == candidate.WaitId, ct);
             if (wait is null || !StandingReplacementHolds(wait, candidate, session))
@@ -332,6 +330,12 @@ public sealed partial class CapacityRecoveryService
                 await tx.RollbackAsync(ct);
                 return CleanupOutcome.Deferred;
             }
+
+            // After the reread that feeds the compare-and-set, so a progress write
+            // here is the race the version predicate exists to lose.
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync(
+                    "capacity-obsolete-before-finish", wait.Id, Guid.Empty, ct);
 
             var now = UtcNow();
             var updated = await db.Set<CapacityRecoveryWait>()

@@ -263,6 +263,16 @@ public class CapacityObsoleteQueueTests
     [Arguments("queued-task")]
     [Arguments("launch-receipt")]
     [Arguments("confirmed-prompt")]
+    [Arguments("dropped-launch-receipt")]
+    [Arguments("parked-launch-receipt")]
+    [Arguments("dropped-dispatch-receipt")]
+    [Arguments("parked-dispatch-receipt")]
+    [Arguments("dropped-confirmed-prompt")]
+    [Arguments("parked-confirmed-prompt")]
+    [Arguments("dropped-queued-task")]
+    [Arguments("parked-queued-task")]
+    [Arguments("dropped-retained-task")]
+    [Arguments("parked-retained-task")]
     public async Task C1603_queue_cleanup_preserves_real_consumers(string arm)
     {
         await using var fx = await QueueFixture.OpenAsync();
@@ -278,6 +288,7 @@ public class CapacityObsoleteQueueTests
         after.ActionKey.ShouldBe(before.ActionKey);
         after.SelectedMessageId.ShouldBe(before.SelectedMessageId);
         after.Version.ShouldBe(before.Version);
+        after.NeedsRevalidationGrant.ShouldBe(before.NeedsRevalidationGrant);
         if (arm == "confirmed-prompt")
         {
             await using var db = fx.Ctx();
@@ -377,6 +388,42 @@ public class CapacityObsoleteQueueTests
         fail.Remaining = 0;
         await fx.Recovery.ReconcileAsync(CancellationToken.None);
         (await fx.ReloadWaitAsync(wait.Id)).SelectedMessageId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1603_queue_cleanup_loses_compare_and_set_safely()
+    {
+        var boundary = new ProbeBoundary();
+        await using var fx = await QueueFixture.OpenAsync(boundary);
+        await fx.SeedWallAsync();
+        var wait = await fx.EnsureLiveWaitAsync();
+        await fx.Recovery.GrantReadyAsync(CancellationToken.None);
+        var messageId = await fx.SelectByFailedDeliveryAsync(leadingUi: true);
+        await fx.Queue.CancelAsync(fx.SessionId, messageId, CancellationToken.None);
+        var before = await fx.ReloadWaitAsync(wait.Id);
+        Guid? grantAtBoundary = null;
+        boundary.OnReached = async (name, waitId, _, ct) =>
+        {
+            if (name != "capacity-obsolete-before-finish" || waitId != wait.Id)
+                return;
+            await using var db = fx.Ctx();
+            grantAtBoundary = (await db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                .SingleAsync(s => s.Kind == AgentKind.ClaudeCode, ct)).GrantedWaitId;
+            await fx.Recovery.ObserveTranscriptAsync(
+                fx.SessionId, TranscriptKinds.TurnEnd, false, ct,
+                stopReason: TranscriptKinds.StopReasons.EndTurn);
+        };
+
+        await fx.Recovery.ReconcileAsync(CancellationToken.None);
+        grantAtBoundary.ShouldBe(wait.Id);
+        var after = await fx.ReloadWaitAsync(wait.Id);
+        after.State.ShouldBe(CapacityRecoveryWaitState.Progressed);
+        after.OutcomeReason.ShouldNotBe("selected-message-canceled");
+        after.SelectedMessageId.ShouldBe(messageId);
+        after.ActionKey.ShouldBe(before.ActionKey);
+        await using var db = fx.Ctx();
+        (await db.Set<CapacityRecoveryProviderState>().AsNoTracking()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBeNull();
     }
 
     [Test]
@@ -546,9 +593,17 @@ public class CapacityObsoleteQueueTests
     [Arguments("future-held-only")]
     [Arguments("granted-then-demand-lost-grant-expired")]
     [Arguments("granted-then-demand-lost-new-wall-wave")]
+    [Arguments("legacy-null-session-empty")]
+    [Arguments("legacy-null-session-held")]
     public async Task C1603_empty_queue_demand_does_not_reserve_provider(string arm)
     {
         await using var fx = await QueueFixture.OpenAsync(batch: 2, maxDeliveryAttempts: 1);
+        if (arm is "legacy-null-session-empty" or "legacy-null-session-held")
+        {
+            await fx.AssertLegacyNullSessionAsync(arm.EndsWith("held", StringComparison.Ordinal));
+            return;
+        }
+
         if (arm is "granted-then-demand-lost-grant-expired" or "granted-then-demand-lost-new-wall-wave")
         {
             await fx.AssertDemandLossAsync(arm);
@@ -1079,6 +1134,9 @@ public class CapacityObsoleteQueueTests
 
         public async Task<CapacityRecoveryWait> SeedPreservedConsumerAsync(string arm)
         {
+            if (arm.StartsWith("dropped-", StringComparison.Ordinal) || arm.StartsWith("parked-", StringComparison.Ordinal))
+                return await SeedExemptedObsoleteSelectionAsync(arm);
+
             if (arm is "queued-task" or "retained-task")
             {
                 var taskId = Guid.NewGuid();
@@ -1156,6 +1214,117 @@ public class CapacityObsoleteQueueTests
                 update.SessionQueuedMessages.Add(message);
             await update.SaveChangesAsync();
             return row;
+        }
+
+        public async Task<CapacityRecoveryWait> SeedExemptedObsoleteSelectionAsync(string arm)
+        {
+            var parked = arm.StartsWith("parked-", StringComparison.Ordinal);
+            var kind = arm[(arm.IndexOf('-', StringComparison.Ordinal) + 1)..];
+            CapacityRecoveryWait wait;
+            if (kind is "queued-task" or "retained-task")
+            {
+                var taskId = Guid.NewGuid();
+                await using var db = Ctx();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, Title = arm, Goal = "keep",
+                    AgentKind = AgentKind.ClaudeCode,
+                    Status = kind == "retained-task" ? AgentTaskStatus.Working : AgentTaskStatus.Queued,
+                    CapacityWaitRetained = kind == "retained-task",
+                    CreatedAt = Now, ConcurrencyToken = Guid.NewGuid(),
+                });
+                await db.SaveChangesAsync();
+                wait = await Recovery.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+                    $"task:{taskId:N}", CapacityWaitConsumerKind.LiveSession,
+                    holdAlreadyCleared: true, taskId: taskId, sessionId: SessionId,
+                    blockedAt: Now.AddMinutes(-3)), CancellationToken.None);
+                if (kind == "retained-task")
+                {
+                    await using var link = Ctx();
+                    await link.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+                        .SetProperty(t => t.CapacityWaitId, wait.Id));
+                }
+            }
+            else
+            {
+                wait = await EnsureLiveWaitAsync();
+            }
+
+            await using var update = Ctx();
+            var row = await update.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            var messageId = Guid.NewGuid();
+            update.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = messageId, AgentSessionId = SessionId, Sequence = 1, Body = arm,
+                Origin = QueuedMessageOrigin.Channel, CreatedAt = Now,
+                CapacityWaitId = row.Id, CapacityWaitVersion = row.Version,
+                CapacityRecoveryActionKey = row.ActionKey,
+                Status = parked ? QueuedMessageStatus.Pending : QueuedMessageStatus.Canceled,
+                DeliveryAttempts = parked ? 3 : 0,
+            });
+            row.SelectedMessageId = messageId;
+            row.State = CapacityRecoveryWaitState.ActionPending;
+            row.NeedsRevalidationGrant = true;
+            if (kind == "launch-receipt")
+                row.LaunchReceipt = "launched";
+            else if (kind == "dispatch-receipt")
+                row.DispatchAttemptId = Guid.NewGuid();
+            else if (kind == "confirmed-prompt")
+                row.ConfirmedPromptSequence = 4;
+            await update.SaveChangesAsync();
+            return row;
+        }
+
+        public async Task AssertLegacyNullSessionAsync(bool heldDemand)
+        {
+            var sessionId = Guid.NewGuid();
+            var blocked = Now.AddHours(-3);
+            await using (var db = Ctx())
+            {
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                    Status = SessionStatus.Running, CreatedAt = blocked, StartedAt = blocked, Cwd = "/tmp",
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var wait = await Recovery.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+                $"session:{sessionId:N}", CapacityWaitConsumerKind.LiveSession,
+                holdAlreadyCleared: true, sessionId: sessionId, blockedAt: blocked), CancellationToken.None);
+            await using (var db = Ctx())
+            {
+                await db.CapacityRecoveryWaits.Where(w => w.Id == wait.Id).ExecuteUpdateAsync(s => s
+                    .SetProperty(w => w.SessionId, (Guid?)null));
+                if (heldDemand)
+                {
+                    db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                    {
+                        Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Body = "c1603-legacy-held",
+                        Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Pending,
+                        DeliveryAttempts = 0, CreatedAt = blocked,
+                    });
+                    await db.SaveChangesAsync();
+                }
+            }
+
+            var before = await ReloadWaitAsync(wait.Id);
+            before.SessionId.ShouldBeNull();
+            before.ConsumerKey.ShouldBe($"session:{sessionId:N}");
+            if (!heldDemand)
+            {
+                var competitor = await SeedCompetitorAsync(Now.AddMinutes(1));
+                await Recovery.GrantReadyAsync(CancellationToken.None);
+                (await ReloadProviderAsync()).GrantedWaitId.ShouldBe(competitor.Id);
+                var after = await ReloadWaitAsync(wait.Id);
+                after.State.ShouldBe(before.State);
+                after.Version.ShouldBe(before.Version);
+                after.ActionKey.ShouldBe(before.ActionKey);
+                return;
+            }
+
+            await Recovery.GrantReadyAsync(CancellationToken.None);
+            (await ReloadProviderAsync()).GrantedWaitId.ShouldBe(wait.Id);
         }
 
         public async Task HoldMatchingGrantAsync(CapacityRecoveryWait wait)
