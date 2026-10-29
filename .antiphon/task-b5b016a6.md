@@ -123,6 +123,8 @@ SHARD c7-OPQ end rc=0 wall=937s waited=0s  total: 763  failed: 0  succeeded: 755
 SHARD a-rsc5 start 2026-10-29T22:41:08Z
 SHARD a-rsc5 end rc=0 wall=193s waited=0s  total: 121  failed: 0  succeeded: 121  skipped: 0  duration: 3m 11s 603ms 
 SHARD a-rsc1 start 2026-10-29T22:44:21Z
+SHARD c3-AB end rc=0 wall=710s waited=0s  total: 553  failed: 0  succeeded: 550  skipped: 3  duration: 11m 48s 671ms 
+SHARD x-c10-TUV start 2026-10-29T22:47:39Z
 ```
 
 Red comparisons:
