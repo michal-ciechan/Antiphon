@@ -671,6 +671,7 @@ public sealed class PhoneHomeMirrorJoinTests
                 AllowedRoots = ["C:\\", "/"],
             }));
             services.AddSingleton<ISessionRunnerDirectory>(Host.Directory);
+            services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton<ILandingGit>(new FixedGit(Sha, OriginUrl));
             services.AddSingleton<RemoteWorkspaceService>();
             services.AddSingleton<RemoteWorkspacePreparer>();
