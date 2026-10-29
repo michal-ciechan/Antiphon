@@ -415,8 +415,12 @@ public sealed partial class LandGraphEvaluationTests
         </Project>
         """;
 
-    internal static string ToolDll() =>
-        Path.Combine(AppContext.BaseDirectory, "land-graph-audit", "Antiphon.LandGraphAudit.dll");
+    internal static string ToolDll()
+    {
+        var configured = Environment.GetEnvironmentVariable("ANTIPHON_LANDGRAPH_TOOL_DLL");
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+        return Path.Combine(AppContext.BaseDirectory, "land-graph-audit", "Antiphon.LandGraphAudit.dll");
+    }
 
     private static string RepoRoot()
     {
