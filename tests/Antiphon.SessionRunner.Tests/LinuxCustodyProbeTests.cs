@@ -62,7 +62,7 @@ public sealed class LinuxCustodyProbeTests
     [Test]
     public void C1614_Unqualified_or_v2_custody_is_unadvertised()
     {
-        LinuxCgroupCustodyProbe.Detect(new FakeEnvironment()).ShouldBeNull();
+        LinuxCgroupCustodyProbe.Detect(new FakeEnvironment { Qualified = false }).ShouldBeNull();
         LinuxCgroupCustodyProbe.Detect(new FakeEnvironment
         {
             Qualified = true,
@@ -95,7 +95,7 @@ public sealed class LinuxCustodyProbeTests
         public bool EnterProbeOk { get; init; } = true;
         public bool KillProbeOk { get; init; } = true;
         public int NoNewPrivsValue { get; init; }
-        public bool Qualified { get; init; }
+        public bool Qualified { get; init; } = true;
         public LinuxCustodyHierarchy Hierarchy { get; init; } = LinuxCustodyHierarchy.V1;
         public List<string> Probed { get; } = [];
         public string? RootAsked { get; private set; }

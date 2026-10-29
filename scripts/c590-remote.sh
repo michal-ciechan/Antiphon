@@ -9776,10 +9776,20 @@ case_custody_containment() {
 
     # Nothing is left behind: a surviving cgroup fails the next execution's "exists and is empty"
     # precondition for a reason nobody would be able to see.
-    docker exec -u 1654 "$container" sh -c \
-        'find /sys/fs/cgroup/pids/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; find /sys/fs/cgroup/freezer/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l' \
-        > "$CASE_DIR/custody-residue.txt" 2>&1 || true
-    if grep -qvE '^0$' "$CASE_DIR/custody-residue.txt"; then
+    docker exec -u 1654 "$container" bash -c '
+source /usr/local/lib/antiphon-custody-common.sh || exit 1
+ns="$(custody_read_namespace)" || exit 1
+custody_count_execution_trees /sys/fs/cgroup/pids/antiphon-custody "$ns" || exit 1
+printf "controller=freezer\n"
+custody_count_execution_trees /sys/fs/cgroup/freezer/antiphon-custody "$ns" || exit 1
+' > "$CASE_DIR/custody-residue.txt" 2>&1 || write_result false CustodyResidue 2
+    if ! grep -q '^status=ok$' "$CASE_DIR/custody-residue.txt"; then
+        write_result false CustodyResidue 2
+    fi
+    if ! grep -q '^current=0$' "$CASE_DIR/custody-residue.txt"; then
+        write_result false CustodyResidue 2
+    fi
+    if grep -qE '^(current|foreign|legacy)=[1-9]' "$CASE_DIR/custody-residue.txt"; then
         write_result false CustodyResidue 2
     fi
     write_result true '' 0
