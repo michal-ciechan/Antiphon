@@ -1119,6 +1119,21 @@ function Read-TestPhaseJsonlFile {
     return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
 }
 
+# Summary-only. The 200 ms / 262144 inline bound stays on Read-TestPhaseJsonlFile.
+# An incomplete inline read is parsed again under a separate finite budget.
+function Read-TestPhaseJsonlForSummary {
+    param([string]$Path)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $watch
+    $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $watch
+    if (-not [bool]$parsed.Complete) {
+        $again = [Diagnostics.Stopwatch]::StartNew()
+        $full = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 8388608 -DeadlineMilliseconds 5000 -Watch $again
+        $parsed = ConvertTo-TestPhaseJsonlRecords -Read $full -MaxLines 20000 -DeadlineMilliseconds 5000 -Watch $again
+    }
+    return [pscustomobject]@{ Records = @($parsed.Records); Torn = [int]$parsed.Torn; Malformed = [int]$parsed.Malformed; Path = $Path }
+}
+
 function Read-TestPhaseJsonlBounded {
     param(
         [string]$Path,
@@ -1242,8 +1257,15 @@ function Write-TestPhasePlannedManifest {
         groups = @($groupRows)
     }
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    $text = ConvertTo-TestPhaseJsonText -Value $manifest
     $path = Join-Path $dir 'groups-planned.json'
-    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $manifest)
+    Write-TestPhaseTextAtomic -Path $path -Text $text
+    # Keep the singleton for existing readers. Also retain every allowlisted suite.
+    if ($Suite -match '^[a-z0-9][a-z0-9-]{0,40}$') {
+        $suiteFile = 'groups-planned-' + $Suite + '.json'
+        Write-TestPhaseTextAtomic -Path (Join-Path $dir $suiteFile) -Text $text
+        Update-TestPhasePlannedIndex -Directory $dir -Suite $Suite -FileName $suiteFile -RunId $RunId -Attempt $Attempt -AssemblyId $AssemblyId
+    }
     return $path
 }
 
@@ -1351,6 +1373,7 @@ function Write-TestPhaseExecutedManifest {
     if ($trxIdentity.Kind -eq 'regular') {
         try { $digest = Get-NightlyFileSha256 -Path $TrxPath } catch { $digest = '' }
     }
+    Write-TestPhaseOwnerObservation -Verdict $Verdict -LogRoot $LogRoot -Suite $Suite -Chunk $Chunk
     $exitCode = $null
     $coverageComplete = $null
     $testsPassed = $null
@@ -1443,7 +1466,7 @@ function ConvertTo-TestPhaseSummaryRows {
     $fixtures = @()
     $seenComplete = @{}
     foreach ($shard in $shards) {
-        $parsed = Read-TestPhaseJsonlFile -Path $shard.FullName
+        $parsed = Read-TestPhaseJsonlForSummary -Path $shard.FullName
         $torn += [int]$parsed.Torn
         $malformed += [int]$parsed.Malformed
         $header = $null
@@ -1464,17 +1487,18 @@ function ConvertTo-TestPhaseSummaryRows {
             if ($kind -eq 'fixture') { $fixtures += $rec; continue }
             $id = [string]$rec.testId
             if ([string]::IsNullOrWhiteSpace($id)) { continue }
-            if ($kind -eq 'start') { $starts[$id] = $rec; continue }
+            $evidenceKey = Get-TestPhaseEvidenceKey -Header $header -TestId $id
+            if ($kind -eq 'start') { $starts[$evidenceKey] = $rec; continue }
             if ($kind -ne 'complete') { continue }
-            if ($seenComplete.ContainsKey($id)) {
-                $prior = $completes[$id]
+            if ($seenComplete.ContainsKey($evidenceKey)) {
+                $prior = $completes[$evidenceKey]
                 if ([string]$prior.Record.outcome -ne [string]$rec.outcome) {
                     $prior.Conflict = $true
                     if (-not $quality.Contains('conflicting-duplicate')) { $quality.Add('conflicting-duplicate') }
                 }
             } else {
-                $seenComplete[$id] = $true
-                $completes[$id] = [pscustomobject]@{ Record = $rec; Header = $header; Conflict = $false }
+                $seenComplete[$evidenceKey] = $true
+                $completes[$evidenceKey] = [pscustomobject]@{ Record = $rec; Header = $header; Conflict = $false }
             }
         }
     }
@@ -1482,12 +1506,17 @@ function ConvertTo-TestPhaseSummaryRows {
     if ($malformed -gt 0 -and -not $quality.Contains('malformed-line')) { $quality.Add('malformed-line') }
 
     $trxGroups = @{}
+    $trxSuites = @{}
     $executedPath = Join-Path $timing 'groups-executed.json'
     if ((Get-TestPhasePathIdentity -Path $executedPath).Kind -eq 'regular') {
         $executed = [System.IO.File]::ReadAllText($executedPath) | ConvertFrom-Json
         foreach ($chunk in @($executed.chunks)) {
             if (-not [string]::IsNullOrWhiteSpace([string]$chunk.trx)) {
-                $trxGroups[[System.IO.Path]::GetFullPath((Join-Path $RunDirectory ([string]$chunk.trx)))] = [string]$chunk.chunk
+                $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory ([string]$chunk.trx)))
+                $trxGroups[$fullTrx] = [string]$chunk.chunk
+                $suiteText = ''
+                if ($chunk.PSObject.Properties.Name -contains 'suite') { $suiteText = [string]$chunk.suite }
+                $trxSuites[$fullTrx] = $suiteText
             }
         }
     }
@@ -1500,7 +1529,10 @@ function ConvertTo-TestPhaseSummaryRows {
         foreach ($row in @($trxRead.Rows)) {
             $group = ''
             if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
-            $row | Add-Member -NotePropertyName GroupId -NotePropertyValue $group
+            $row | Add-Member -NotePropertyName GroupId -NotePropertyValue $group -Force
+            $suiteText = ''
+            if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
+            $row | Add-Member -NotePropertyName Suite -NotePropertyValue $suiteText -Force
             $trxRows += $row
         }
     }
@@ -1522,10 +1554,28 @@ function ConvertTo-TestPhaseSummaryRows {
 
     $tests = @()
     $joinedTrx = @{}
-    foreach ($id in @($completes.Keys)) {
-        $bag = $completes[$id]
+    $completeTestIds = @{}
+    foreach ($completeKey in @($completes.Keys)) {
+        $completeTestIds[[string]$completes[$completeKey].Record.testId] = $true
+    }
+    foreach ($completeKey in @($completes.Keys)) {
+        $bag = $completes[$completeKey]
+        $id = [string]$bag.Record.testId
+        $headerSuite = ''
+        if ($null -ne $bag.Header -and $bag.Header.PSObject.Properties.Name -contains 'suite') {
+            $headerSuite = [string]$bag.Header.suite
+        }
         $matches = @()
         if ($nativeMap.ContainsKey([string]$id)) { $matches = @($nativeMap[[string]$id].ToArray()) }
+        $filtered = New-Object System.Collections.Generic.List[object]
+        foreach ($match in $matches) {
+            $trxSuite = ''
+            if ($match.PSObject.Properties.Name -contains 'Suite') { $trxSuite = [string]$match.Suite }
+            $bothSuites = (-not [string]::IsNullOrWhiteSpace($headerSuite)) -and (-not [string]::IsNullOrWhiteSpace($trxSuite))
+            if ($bothSuites -and ($headerSuite -ne $trxSuite)) { continue }
+            $filtered.Add($match)
+        }
+        $matches = @($filtered.ToArray())
         $distinct = @{}
         foreach ($match in $matches) { $distinct[[string]$match.TestId + '|' + [string]$match.Path] = $match }
         $matchRows = @($distinct.Values)
@@ -1564,6 +1614,7 @@ function ConvertTo-TestPhaseSummaryRows {
         $ex = $src.exclusive
         $tests += [ordered]@{
             testId = [string]$id
+            suite = [string]$headerSuite
             className = [string]$src.className
             method = [string]$src.method
             duration = $duration
@@ -1573,6 +1624,7 @@ function ConvertTo-TestPhaseSummaryRows {
             phaseOutcome = $phaseOutcome
             joined = [bool]$joined
             incomplete = [bool]$incomplete
+            countsKnown = $true
             db = $(if ($ex) { [long]$ex.db } else { 0 })
             host = $(if ($ex) { [long]$ex.host } else { 0 })
             process = $(if ($ex) { [long]$ex.process } else { 0 })
@@ -1584,11 +1636,15 @@ function ConvertTo-TestPhaseSummaryRows {
             droppedPhaseCount = $(if ($src.droppedPhaseCount) { [int]$src.droppedPhaseCount } else { 0 })
         }
     }
-    foreach ($id in @($starts.Keys)) {
-        if ($completes.ContainsKey([string]$id)) { continue }
+    foreach ($startKey in @($starts.Keys)) {
+        if ($completes.ContainsKey([string]$startKey)) { continue }
+        $startRec = $starts[$startKey]
+        $startId = [string]$startRec.testId
+        $startSuite = ''
         if (-not $quality.Contains('missing-terminal-remains-incomplete')) { $quality.Add('missing-terminal-remains-incomplete') }
         $tests += [ordered]@{
-            testId = [string]$id
+            testId = [string]$startId
+            suite = [string]$startSuite
             className = ''
             method = ''
             duration = $null
@@ -1598,6 +1654,7 @@ function ConvertTo-TestPhaseSummaryRows {
             phaseOutcome = ''
             joined = $false
             incomplete = $true
+            countsKnown = $false
             db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
         }
@@ -1607,21 +1664,33 @@ function ConvertTo-TestPhaseSummaryRows {
         if ($joinedTrx.ContainsKey($key)) { continue }
         $nativeHit = $false
         foreach ($native in @(Get-TestPhaseNativeIds -Text ([string]$row.StdOut))) {
-            if ($completes.ContainsKey([string]$native)) { $nativeHit = $true }
+            if ($completeTestIds.ContainsKey([string]$native)) { $nativeHit = $true }
         }
         if ($nativeHit) { continue }
-        if ($completes.ContainsKey([string]$row.TestId)) { continue }
+        if ($completeTestIds.ContainsKey([string]$row.TestId)) { continue }
+        $outcome = [string]$row.Outcome
+        $incomplete = $false
+        $countsKnown = $false
+        if ($outcome -eq 'Passed') {
+            $outcome = 'unknown'
+            $incomplete = $true
+            if (-not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
+        }
+        $rowSuite = ''
+        if ($row.PSObject.Properties.Name -contains 'Suite') { $rowSuite = [string]$row.Suite }
         $tests += [ordered]@{
             testId = [string]$row.TestId
+            suite = [string]$rowSuite
             className = ''
             method = [string]$row.Name
             duration = [string]$row.Duration
             groupId = [string]$row.GroupId
-            outcome = [string]$row.Outcome
+            outcome = [string]$outcome
             trxOutcome = [string]$row.Outcome
             phaseOutcome = ''
             joined = $false
-            incomplete = $false
+            incomplete = [bool]$incomplete
+            countsKnown = [bool]$countsKnown
             db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
         }
@@ -1726,9 +1795,15 @@ function Write-TestPhaseSummaryFiles {
 function Invoke-TestPhaseRunSummary {
     param([string]$RunDirectory, [int]$Top = 50)
     $plannedPath = Join-Path (Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory) 'groups-planned.json'
-    if ((Get-TestPhasePathIdentity -Path $plannedPath).Kind -ne 'regular') { return }
+    $docs = @(Read-TestPhasePlannedDocuments -RunDirectory $RunDirectory)
+    if ($docs.Count -lt 1) { return }
     try {
-        $planned = [System.IO.File]::ReadAllText($plannedPath) | ConvertFrom-Json
+        # A historical singleton is one suite. It stays the stale-check document
+        # and is not treated as the membership of every other suite.
+        $planned = $docs[0]
+        if ((Get-TestPhasePathIdentity -Path $plannedPath).Kind -eq 'regular') {
+            $planned = [System.IO.File]::ReadAllText($plannedPath) | ConvertFrom-Json
+        }
         $report = ConvertTo-TestPhaseSummaryRows -Planned $planned -RunDirectory $RunDirectory
         Write-TestPhaseSummaryFiles -Planned $planned -Report $report -RunDirectory $RunDirectory -Top $Top
     } catch {
@@ -2284,6 +2359,306 @@ function Read-QualificationSidecar {
         return (ConvertFrom-QualificationJToken -Token $token)
     }
     try { return ($text | ConvertFrom-Json) } catch { return $null }
+}
+
+function Get-TestPhaseEvidenceKey {
+    param($Header, [string]$TestId)
+    $suite = ''
+    if ($null -ne $Header -and $Header.PSObject.Properties.Name -contains 'suite') {
+        $suite = [string]$Header.suite
+    }
+    if (-not [string]::IsNullOrWhiteSpace($suite)) { return ($suite + '|' + [string]$TestId) }
+    return [string]$TestId
+}
+
+function Get-TestPhaseNoteValue {
+    param($Object, [string[]]$Names)
+    if ($null -eq $Object) { return $null }
+    $props = @($Object.PSObject.Properties.Name)
+    foreach ($name in @($Names)) {
+        if ($props -contains $name) { return $Object.$name }
+    }
+    return $null
+}
+
+function Test-TestPhaseNotePresent {
+    param($Object, [string[]]$Names)
+    if ($null -eq $Object) { return $false }
+    $props = @($Object.PSObject.Properties.Name)
+    foreach ($name in @($Names)) {
+        if ($props -contains $name) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-TestPhaseOwnerImage {
+    param($Image)
+    $text = ''
+    if ($null -ne $Image) { $text = [string]$Image }
+    if ([string]::IsNullOrWhiteSpace($text)) { return 'unknown' }
+    return $text
+}
+
+function Write-TestPhaseOwnerObservation {
+    param($Verdict, [string]$LogRoot, [string]$Suite, [string]$Chunk)
+    try {
+        if ($null -eq $Verdict) { return }
+        $names = @(
+            'rootExitedAtUtc', 'RootExitedAtUtc', 'jobEmpty', 'JobEmpty', 'JobEmptyObserved',
+            'descendants', 'Descendants', 'missedDescendantPids', 'MissedDescendantPids',
+            'drainMilliseconds', 'DrainMilliseconds', 'executionMilliseconds', 'ExecutionMilliseconds',
+            'descendantIdentities', 'DescendantIdentities'
+        )
+        if (-not (Test-TestPhaseNotePresent -Object $Verdict -Names $names)) { return }
+        if ($Suite -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
+        if ($Chunk -notmatch '^[a-z0-9][a-z0-9._-]{0,80}$') { return }
+        $missed = @{}
+        $missedRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('missedDescendantPids', 'MissedDescendantPids')
+        if ($null -ne $missedRaw) {
+            foreach ($childPid in @($missedRaw)) {
+                if ($null -eq $childPid -or [string]::IsNullOrWhiteSpace([string]$childPid)) { continue }
+                $missed[[string]([int]$childPid)] = $true
+            }
+        }
+        $rows = New-Object System.Collections.Generic.List[object]
+        $descRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendants', 'Descendants')
+        if ($null -ne $descRaw) {
+            foreach ($row in @($descRaw)) {
+                if ($null -eq $row) { continue }
+                $pidValue = Get-TestPhaseNoteValue -Object $row -Names @('pid', 'Pid')
+                $childPid = 0
+                if ($null -ne $pidValue -and -not [string]::IsNullOrWhiteSpace([string]$pidValue)) { $childPid = [int]$pidValue }
+                $image = ConvertTo-TestPhaseOwnerImage (Get-TestPhaseNoteValue -Object $row -Names @('image', 'Image', 'ProcessName'))
+                if ($missed.ContainsKey([string]$childPid)) { $image = 'unknown' }
+                $started = Get-TestPhaseNoteValue -Object $row -Names @('startedAtUtc', 'StartedAtUtc')
+                $exited = Get-TestPhaseNoteValue -Object $row -Names @('exitedAtUtc', 'ExitedAtUtc')
+                $startedText = ''
+                $exitedText = ''
+                if ($null -ne $started) { $startedText = [string]$started }
+                if ($null -ne $exited) { $exitedText = [string]$exited }
+                $rows.Add([ordered]@{ pid = $childPid; image = [string]$image; startedAtUtc = $startedText; exitedAtUtc = $exitedText })
+            }
+        }
+        if ($rows.Count -eq 0) {
+            $identRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantIdentities', 'DescendantIdentities')
+            $imageRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantImages', 'DescendantImages')
+            $exitRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantExitedAtUtc', 'DescendantExitedAtUtc')
+            $idents = @()
+            $images = @()
+            $exitStamps = @()
+            if ($null -ne $identRaw) { $idents = @($identRaw) }
+            if ($null -ne $imageRaw) { $images = @($imageRaw) }
+            if ($null -ne $exitRaw) { $exitStamps = @($exitRaw) }
+            for ($i = 0; $i -lt $idents.Count; $i++) {
+                $ident = [string]$idents[$i]
+                $colon = $ident.IndexOf(':')
+                $childPid = 0
+                $startedText = ''
+                if ($colon -gt 0) {
+                    $childPid = [int]$ident.Substring(0, $colon)
+                    $startedText = $ident.Substring($colon + 1)
+                }
+                $image = 'unknown'
+                if ($i -lt $images.Count) { $image = ConvertTo-TestPhaseOwnerImage $images[$i] }
+                if ($missed.ContainsKey([string]$childPid)) { $image = 'unknown' }
+                $exitedText = ''
+                if ($i -lt $exitStamps.Count -and $null -ne $exitStamps[$i]) { $exitedText = [string]$exitStamps[$i] }
+                $rows.Add([ordered]@{ pid = $childPid; image = [string]$image; startedAtUtc = $startedText; exitedAtUtc = $exitedText })
+            }
+        }
+        $job = $false
+        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')) {
+            $jobValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')
+            if ($null -ne $jobValue) { $job = [bool]$jobValue }
+        }
+        $drain = 0.0
+        $drainValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('drainMilliseconds', 'DrainMilliseconds')
+        if ($null -ne $drainValue) { $drain = [double]$drainValue }
+        $execution = 0.0
+        $executionValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('executionMilliseconds', 'ExecutionMilliseconds')
+        if ($null -ne $executionValue) { $execution = [double]$executionValue }
+        $exitedAt = ''
+        $exitedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('rootExitedAtUtc', 'RootExitedAtUtc')
+        if ($null -ne $exitedValue) { $exitedAt = [string]$exitedValue }
+        $doc = [ordered]@{
+            version = 1
+            suite = [string]$Suite
+            chunk = [string]$Chunk
+            rootExitedAtUtc = $exitedAt
+            jobEmpty = [bool]$job
+            drainMilliseconds = $drain
+            executionMilliseconds = $execution
+            descendants = @($rows.ToArray())
+        }
+        $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+        $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '.json')
+        Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
+    } catch {
+        # Owner stamps are diagnostic. A write failure must not change the verdict.
+    }
+}
+
+function Update-TestPhasePlannedIndex {
+    param(
+        [string]$Directory,
+        [string]$Suite,
+        [string]$FileName,
+        [string]$RunId,
+        [string]$Attempt,
+        [string]$AssemblyId
+    )
+    if ($Suite -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
+    if ($FileName -notmatch '^groups-planned-[a-z0-9][a-z0-9-]{0,40}\.json$') { return }
+    $path = Join-Path $Directory 'groups-planned-index.json'
+    $kept = New-Object System.Collections.Generic.List[object]
+    if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
+        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        if ($existing.PSObject.Properties.Name -contains 'suites' -and $null -ne $existing.suites) {
+            foreach ($row in @($existing.suites)) {
+                if ($null -eq $row) { continue }
+                if ([string]$row.suite -eq $Suite) { continue }
+                $kept.Add([ordered]@{
+                    suite = [string]$row.suite
+                    file = [string]$row.file
+                    runId = [string]$row.runId
+                    attempt = [string]$row.attempt
+                    assembly = [string]$row.assembly
+                })
+            }
+        }
+    }
+    $kept.Add([ordered]@{
+        suite = [string]$Suite
+        file = [string]$FileName
+        runId = [string]$RunId
+        attempt = [string]$Attempt
+        assembly = [string]$AssemblyId
+    })
+    $doc = [ordered]@{
+        version = 1
+        runId = [string]$RunId
+        attempt = [string]$Attempt
+        suites = @($kept.ToArray())
+    }
+    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
+}
+
+function Read-TestPhasePlannedDocuments {
+    param([string]$RunDirectory)
+    $dir = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
+    $docs = New-Object System.Collections.Generic.List[object]
+    $indexPath = Join-Path $dir 'groups-planned-index.json'
+    if ((Get-TestPhasePathIdentity -Path $indexPath).Kind -eq 'regular') {
+        $index = [System.IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
+        if ($index.PSObject.Properties.Name -contains 'suites' -and $null -ne $index.suites) {
+            foreach ($row in @($index.suites)) {
+                if ($null -eq $row) { continue }
+                $file = ''
+                if ($row.PSObject.Properties.Name -contains 'file') { $file = [string]$row.file }
+                if ($file -notmatch '^groups-planned-[a-z0-9][a-z0-9-]{0,40}\.json$') { continue }
+                $docPath = Join-Path $dir $file
+                if ((Get-TestPhasePathIdentity -Path $docPath).Kind -ne 'regular') { continue }
+                $docs.Add(([System.IO.File]::ReadAllText($docPath) | ConvertFrom-Json))
+            }
+        }
+    }
+    if ($docs.Count -eq 0) {
+        $singleton = Join-Path $dir 'groups-planned.json'
+        if ((Get-TestPhasePathIdentity -Path $singleton).Kind -eq 'regular') {
+            $docs.Add(([System.IO.File]::ReadAllText($singleton) | ConvertFrom-Json))
+        }
+    }
+    return @($docs.ToArray())
+}
+
+function Write-QualificationRunPhase {
+    param(
+        [string]$LogRoot,
+        [string]$Name,
+        [string]$StartedAt,
+        [string]$EndedAt,
+        $Seconds
+    )
+    if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Name)) { return }
+    if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
+    $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    $path = Join-Path $dir 'setup-phases.json'
+    $kept = New-Object System.Collections.Generic.List[object]
+    if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
+        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        if ($existing.PSObject.Properties.Name -contains 'phases' -and $null -ne $existing.phases) {
+            foreach ($row in @($existing.phases)) {
+                if ($null -eq $row) { continue }
+                if ([string]$row.name -eq $Name) { continue }
+                $phaseSeconds = 0.0
+                if ($null -ne $row.seconds) { $phaseSeconds = [double]$row.seconds }
+                $kept.Add([ordered]@{
+                    name = [string]$row.name
+                    startedAt = [string]$row.startedAt
+                    endedAt = [string]$row.endedAt
+                    seconds = $phaseSeconds
+                })
+            }
+        }
+    }
+    $phaseSeconds = 0.0
+    if ($null -ne $Seconds) { $phaseSeconds = [double]$Seconds }
+    $kept.Add([ordered]@{
+        name = [string]$Name
+        startedAt = [string]$StartedAt
+        endedAt = [string]$EndedAt
+        seconds = $phaseSeconds
+    })
+    $doc = [ordered]@{ version = 1; phases = @($kept.ToArray()) }
+    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
+}
+
+function Get-QualificationSetupAccounting {
+    param([string]$LogRoot)
+    $setup = 0.0
+    $overlapped = $false
+    $countedOnce = $false
+    $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    $path = Join-Path $dir 'setup-phases.json'
+    $intervals = New-Object System.Collections.Generic.List[object]
+    if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
+        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $countedOnce = $true
+        if ($existing.PSObject.Properties.Name -contains 'phases' -and $null -ne $existing.phases) {
+            foreach ($row in @($existing.phases)) {
+                if ($null -eq $row) { continue }
+                if ($null -ne $row.seconds) { $setup += [double]$row.seconds }
+                $startTicks = $null
+                $endTicks = $null
+                try { $startTicks = [datetimeoffset]::Parse([string]$row.startedAt).UtcTicks } catch { $startTicks = $null }
+                try { $endTicks = [datetimeoffset]::Parse([string]$row.endedAt).UtcTicks } catch { $endTicks = $null }
+                if ($null -ne $startTicks -and $null -ne $endTicks) {
+                    $intervals.Add([pscustomobject]@{ StartTicks = [int64]$startTicks; EndTicks = [int64]$endTicks })
+                }
+            }
+        }
+    }
+    $ordered = @($intervals.ToArray() | Sort-Object StartTicks)
+    for ($i = 1; $i -lt $ordered.Count; $i++) {
+        if ([int64]$ordered[$i].StartTicks -lt [int64]$ordered[$i - 1].EndTicks) { $overlapped = $true }
+    }
+    $sum = 0.0
+    if (-not [string]::IsNullOrWhiteSpace($LogRoot) -and (Test-Path -LiteralPath $LogRoot)) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.timing.json' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $row = [System.IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
+                if ($row.PSObject.Properties.Name -contains 'buildSeconds' -and $null -ne $row.buildSeconds) {
+                    $sum += [double]$row.buildSeconds
+                }
+            } catch { }
+        }
+    }
+    return [pscustomobject]@{
+        countedOnce = [bool]$countedOnce
+        setupSeconds = [double]$setup
+        perChunkBuildSum = [double]$sum
+        overlapped = [bool]$overlapped
+    }
 }
 
 function Initialize-TestPhaseReadWarmup {
