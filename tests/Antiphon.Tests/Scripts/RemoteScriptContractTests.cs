@@ -1076,6 +1076,41 @@ public sealed class RemoteScriptContractTests
             Fact(output, label).ShouldBe("1", label);
     }
 
+    // CARD-0849. A second restore whose build slot arrives after the old 30s window
+    // still starts. The driver records slot-held before the go wait and ready
+    // immediately before restore, so the arrival window is the race itself.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Delayed_slot_grant_still_starts_both_restores()
+    {
+        var output = C1192Run("slot-delay");
+        Fact(output, "delayed-race").ShouldBe("1", output);
+        Fact(output, "driver-order").ShouldBe("1", output);
+    }
+
+    // CARD-0849. Probe exit 4 is the build-slot timeout and is not a restore-barrier miss.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Build_slot_exit_is_FixtureBuildSlotTimeout()
+    {
+        var output = C1192Run("slot-timeout");
+        Fact(output, "slot-diagnosis").ShouldBe("FixtureBuildSlotTimeout", output);
+    }
+
+    // CARD-0849. A refused fixture kills the named restore probes, deletes the granted
+    // lease, and does not wait on a probe that is still running. INT/TERM has the same release.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Refused_fixture_releases_probes_without_waiting()
+    {
+        var output = C1192Run("slot-refusal");
+        Fact(output, "waited-live").ShouldBe("0", output);
+        Fact(output, "probes-removed").ShouldBe("1", output);
+        Fact(output, "lease-released").ShouldBe("1", output);
+        Fact(output, "signal-trap").ShouldBe("1", output);
+        Fact(output, "volumes-removed").ShouldBe("1", output);
+    }
+
     // CARD-1192 S2. Shared scratch blocks the waiter until release. Private scratch is already eligible.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
