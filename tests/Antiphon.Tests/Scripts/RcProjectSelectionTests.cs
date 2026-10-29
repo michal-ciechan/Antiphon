@@ -8,8 +8,8 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RcProjectSelectionTests
 {
     [Test]
-    public Task C1545_Closure() => Run("C1545_Closure", 8,
-        "scoped", "owners", "downstream", "batches", "categories", "manifest-closure", "no-credit", "deterministic");
+    public Task C1545_Closure() => Run("C1545_Closure", 9,
+        "immutable-blob-read-once", "scoped", "owners", "downstream", "batches", "categories", "manifest-closure", "no-credit", "deterministic");
 
     [Test]
     public Task C1545_FailClosed() => Run("C1545_FailClosed", 4,
