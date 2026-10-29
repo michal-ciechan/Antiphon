@@ -14,7 +14,7 @@ namespace Antiphon.Server.Application.Services;
 /// CARD-0412 sole granter and wait coordinator. Supervisor reconciliation issues at most one
 /// outstanding grant per execution kind; queue/start/dispatch redeem it.
 /// </summary>
-public sealed class CapacityRecoveryService
+public sealed partial class CapacityRecoveryService
 {
     public const string CountedTaskLockKey = "antiphon.capacity.counted-tasks";
     public const string CompatibilityCursorKey = "card-0412-compatibility";
@@ -54,6 +54,7 @@ public sealed class CapacityRecoveryService
             return;
         await ReconcileCompatibilityAsync(ct);
         await CancelOrphanedWaitsAsync(ct);
+        await ReconcileObsoleteConsumersAsync(ct);
         await RearmStalledAdmissionsAsync(ct);
         await GrantReadyAsync(ct);
     }
@@ -152,7 +153,28 @@ public sealed class CapacityRecoveryService
             {
                 var current = await db.Set<CapacityRecoveryWait>()
                     .FirstOrDefaultAsync(w => w.Id == outstanding, ct);
-                if (current is null || !StillHoldsGrant(current, state, now))
+                // A canceled or parked selection is not demand, and releasing or rotating it
+                // here would skip the queue-gate lock. Leave that grant until cleanup detaches.
+                if (current is not null && await ObsoleteSelectionAttachedAsync(db, current, ct))
+                {
+                    skipGrant = true;
+                }
+                else if (current is not null && await DemandIsProvenAbsentAsync(db, current, now, ct))
+                {
+                    // Precedence over expiry: an empty action must not rotate through Deferred.
+                    if (await ApplyDemandLossAsync(db, current, now, ct)
+                        && state.GrantedWaitId == current.Id
+                        && state.GrantedActionKey == current.ActionKey)
+                    {
+                        ClearGrant(state, now);
+                        db.Entry(current).State = EntityState.Detached;
+                    }
+                    else
+                    {
+                        skipGrant = true;
+                    }
+                }
+                else if (current is null || !StillHoldsGrant(current, state, now))
                 {
                     await RecordRevokedGrantAsync(db, current, state, now, ct);
                     state.GrantedWaitId = null;
@@ -168,7 +190,7 @@ public sealed class CapacityRecoveryService
             if (!skipGrant && !(state.NextAdmissionAt is { } due && due > now))
             {
                 var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
-                var candidates = await db.Set<CapacityRecoveryWait>()
+                var candidates = await WhereQueueDemandAllowsGrant(db.Set<CapacityRecoveryWait>(), db, now)
                     .Where(w => w.ExecutionKind == kind
                         && (w.State == CapacityRecoveryWaitState.Ready
                             || w.State == CapacityRecoveryWaitState.ActionPending
@@ -204,6 +226,10 @@ public sealed class CapacityRecoveryService
                         wait.Version++;
                         continue;
                     }
+
+                    if (await ObsoleteSelectionAttachedAsync(db, wait, ct)
+                        || await DemandIsProvenAbsentAsync(db, wait, now, ct))
+                        continue;
 
                     winner = wait;
                     break;
