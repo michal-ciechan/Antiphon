@@ -2429,8 +2429,16 @@ target. It evaluates each solution pass on its own clock: twice the loaded Linux
 measured on server2 at `8004259c` (22.328 s to the first `not-built` line under 8 CPU
 burners, so 45 s), and on Windows at least the 120 s one-pass floor from qualification
 `28bbb58e`, which finished a pass and then refused because both passes and the canary copy
-shared one 120 s wait. The canary copy is a same-volume hard link (provisional copy budget
-16 s, under the loaded second-phase samples). A timeout still exits 2. `not-built` lines
+shared one 120 s wait. That Windows 120 s floor is provisional until a Windows pass
+duration is recorded. The canary is a plain byte copy, not a hard link. Its budget is
+twice the plain-copy p95 measured on server2 on 2026-10-29 (samples 1957 ms, 2253 ms and 2249 ms;
+nearest-rank p95 2253 ms, so 5 s; see `EvaluationBudget.MeasuredCopyP95Milliseconds`);
+that copy budget is provisional for Windows. Raise the Windows pass floor by editing
+`EvaluationBudget.WindowsPassFloorSeconds`, and the copy budget by editing
+`EvaluationBudget.MeasuredCopyP95Milliseconds`, both in
+`tools/Antiphon.LandGraphAudit/EvaluationBudget.cs`, from a fresh measurement. The script
+waits for the tool's printed `ceiling`, which adds only `EvaluationBudget.StartupGraceSeconds`
+(60). A timeout still exits 2. `not-built` lines
 stay informational and do not refuse. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.
 

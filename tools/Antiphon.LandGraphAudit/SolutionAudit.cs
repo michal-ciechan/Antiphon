@@ -16,14 +16,22 @@ internal static class SolutionAudit
     private const string SolutionConfiguration = "Debug";
     private const string SolutionPlatform = "Any CPU";
 
-    public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
+    public static int Run(string repo, string solution, string sdkDirectory, TextWriter output, WitnessRequest? witness = null)
     {
         // Each pass has its own budget. The old single wait covered both passes and the copy.
+        var passBudget = witness?.Pass ?? EvaluationBudget.PassTimeout;
+        var copyBudget = witness?.Copy ?? EvaluationBudget.CopyTimeout;
         string[]? tracked = null;
         string? artifacts = null;
         EvaluationSnapshot? baseline = null;
-        var first = Bound(EvaluationBudget.PassTimeout, solution, () =>
+        var first = PhaseClock.Bound(passBudget, solution, "pass 1", () =>
         {
+            if (witness is not null)
+            {
+                if (witness.HoldPass1 > TimeSpan.Zero) Thread.Sleep(witness.HoldPass1);
+                return Program.Approved;
+            }
+
             // Locator has registered the SDK before this method is entered. Inspect every
             // repository evaluation expression, including inactive branches and metadata.
             var expressionRefusals = new SortedSet<string>(StringComparer.Ordinal);
@@ -41,12 +49,32 @@ internal static class SolutionAudit
         });
         if (first != Program.Approved) return first;
 
-        using var canary = BoundCopy(EvaluationBudget.CopyTimeout, solution, () => CanaryRepository.Create(repo));
+        using var canary = PhaseClock.BoundCopy(copyBudget, solution, () =>
+        {
+            var created = CanaryRepository.Create(repo);
+            if (witness is { HoldCopy: var hold } && hold > TimeSpan.Zero) Thread.Sleep(hold);
+            return created;
+        });
+        if (witness?.TouchRelative is { } touch) TouchCanary(canary.Root, touch, output);
+        if (witness is not null)
+        {
+            var witnessed = PhaseClock.Bound(passBudget, solution, "pass 2", () =>
+            {
+                output.WriteLine("phase=pass2");
+                output.Flush();
+                if (witness.HoldPass2 > TimeSpan.Zero) Thread.Sleep(witness.HoldPass2);
+                return Program.Approved;
+            }, () => { try { canary.Dispose(); } catch (Exception) { } });
+            if (witnessed != Program.Approved) return witnessed;
+            output.WriteLine("approved");
+            return Program.Approved;
+        }
+
         var changed = new EvaluationSnapshot(canary.Root, repo);
         try
         {
             using var diagnostics = new StringWriter();
-            var second = Bound(EvaluationBudget.PassTimeout, solution, () =>
+            var second = PhaseClock.Bound(passBudget, solution, "pass 2", () =>
                 RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked!, artifacts!, changed),
                 () => { try { canary.Dispose(); } catch (Exception) { } });
             if (second != Program.Approved)
@@ -74,29 +102,18 @@ internal static class SolutionAudit
         return Program.Approved;
     }
 
-    /// <summary>
-    /// A phase that does not finish inside <paramref name="budget"/> refuses and exits.
-    /// Returning would let the timed-out pass keep writing into the verdict.
-    /// </summary>
-    private static int Bound(TimeSpan budget, string solution, Func<int> work, Action? onTimeout = null)
+    private static void TouchCanary(string root, string relative, TextWriter output)
     {
-        var task = Task.Run(work);
-        if (task.Wait(budget)) return task.GetAwaiter().GetResult();
-        try { onTimeout?.Invoke(); }
-        catch (Exception) { }
-        Program.Fail($"evaluating {solution} exceeded {budget.TotalSeconds:0} s");
-        Environment.Exit(Program.EvaluationFailed);
-        return Program.EvaluationFailed;
-    }
-
-    private static CanaryRepository BoundCopy(TimeSpan budget, string solution, Func<CanaryRepository> work)
-    {
-        var task = Task.Run(work);
-        if (task.Wait(budget)) return task.GetAwaiter().GetResult();
-        CanaryRepository.DeleteActive();
-        Program.Fail($"evaluating {solution} exceeded {budget.TotalSeconds:0} s");
-        Environment.Exit(Program.EvaluationFailed);
-        return null!;
+        if (Path.IsPathRooted(relative) || relative.Contains("..", StringComparison.Ordinal))
+            throw new IOException("canary touch path escapes the canary");
+        var destination = Path.GetFullPath(Path.Combine(root, relative));
+        if (!destination.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new IOException("canary touch path escapes the canary");
+        const string sentinel = "canary-independent-copy";
+        File.WriteAllText(destination, sentinel);
+        if (!string.Equals(File.ReadAllText(destination), sentinel, StringComparison.Ordinal))
+            throw new IOException("canary write did not stay in the canary");
+        output.WriteLine("canary-independent: " + relative.Replace('\\', '/'));
     }
 
     private static int RunPass(string repo, string solution, string sdkDirectory, TextWriter output,

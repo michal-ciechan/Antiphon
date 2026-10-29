@@ -302,25 +302,41 @@ public sealed partial class LandGraphEvaluationTests
         linux.Pass.ShouldBe(45);
         linux.Copy.ShouldBe(16);
         linux.Total.ShouldBe(106);
+        linux.Grace.ShouldBe(60);
+        linux.Ceiling.ShouldBe(166);
 
         var windows = await PrintBudgetAsync(22328, 8000, true);
         windows.Pass.ShouldBe(120);
         windows.Copy.ShouldBe(16);
         windows.Total.ShouldBe(256);
+        windows.Grace.ShouldBe(60);
+        windows.Ceiling.ShouldBe(316);
 
         var wider = await PrintBudgetAsync(70000, 1000, true);
         wider.Pass.ShouldBe(140);
         wider.Copy.ShouldBe(2);
         wider.Total.ShouldBe(282);
+        wider.Grace.ShouldBe(60);
+        wider.Ceiling.ShouldBe(342);
 
         var floor = await PrintBudgetAsync(0, 0, false);
         floor.Pass.ShouldBe(1);
         floor.Copy.ShouldBe(1);
         floor.Total.ShouldBe(3);
+        floor.Grace.ShouldBe(60);
+        floor.Ceiling.ShouldBe(63);
 
         var host = await PrintBudgetAsync(null, null, null);
         host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
+        host.Copy.ShouldBe(5);
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
+        host.Grace.ShouldBe(60);
+        host.Ceiling.ShouldBe(host.Total + host.Grace);
+        var script = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"));
+        script.ShouldContain("StartsWith('ceiling=')", Case.Sensitive);
+        script.ShouldNotContain("$grace = 30", Case.Sensitive);
+        var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit", "EvaluationBudget.cs"));
+        budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
     }
 
     [Test]
@@ -346,7 +362,220 @@ public sealed partial class LandGraphEvaluationTests
         fast.Text.ShouldContain("approved", Case.Sensitive);
     }
 
-    private static async Task<(int Pass, int Copy, int Total)> PrintBudgetAsync(int? passMs, int? copyMs, bool? windows)
+    // 70% + 70% exceeds one pass budget and fits two separate pass clocks.
+    [Test]
+    [Timeout(120_000)]
+    public async Task PerPassClocksApproveWhenEachPassUsesSeventyPercent()
+    {
+        await using var repo = await TinyAuditRepoAsync();
+        var run = await repo.RunToolAsync(WitnessArgs(2000, 10_000, 1400, 0, 1400));
+        run.ExitCode.ShouldBe(0, run.Text);
+        run.Text.ShouldContain("approved", Case.Sensitive);
+        run.Text.ShouldNotContain("exceeded", Case.Sensitive);
+        AbsentCanary(run.Text);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Pass1TimeoutExits2AndNamesThePass()
+    {
+        await using var repo = await TinyAuditRepoAsync();
+        var run = await repo.RunToolAsync(WitnessArgs(1000, 10_000, 2500, 0, 0));
+        run.ExitCode.ShouldBe(2, run.Text);
+        run.Text.ShouldContain("pass 1 exceeded", Case.Sensitive);
+        run.Text.ShouldNotContain("approved", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Pass2TimeoutExits2NamesThePassAndRemovesCanary()
+    {
+        await using var repo = await TinyAuditRepoAsync();
+        var run = await repo.RunToolAsync(WitnessArgs(1000, 10_000, 0, 0, 2500));
+        run.ExitCode.ShouldBe(2, run.Text);
+        run.Text.ShouldContain("pass 2 exceeded", Case.Sensitive);
+        run.Text.ShouldNotContain("approved", Case.Sensitive);
+        AbsentCanary(run.Text);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task CopyTimeoutExits2NamesTheCopyAndRemovesCanary()
+    {
+        await using var repo = await TinyAuditRepoAsync();
+        var run = await repo.RunToolAsync(WitnessArgs(10_000, 1000, 0, 4000, 0));
+        run.ExitCode.ShouldBe(2, run.Text);
+        run.Text.ShouldContain("copy exceeded", Case.Sensitive);
+        run.Text.ShouldNotContain("approved", Case.Sensitive);
+        AbsentCanary(run.Text);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task CanaryCopyIsIndependentOfTheSource()
+    {
+        const string original = "class Program { static void Main() {} }\n";
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            ["App/Program.cs"] = original,
+            ["App/App.csproj"] = SdkProject(""),
+        });
+        var run = await repo.RunToolAsync([.. WitnessArgs(5000, 15_000, 0, 0, 0), "--touch-canary", "App/Program.cs"]);
+        run.ExitCode.ShouldBe(0, run.Text);
+        run.Text.ShouldContain("canary-independent: App/Program.cs", Case.Sensitive);
+        (await File.ReadAllTextAsync(repo.Full("App/Program.cs"))).ShouldBe(original);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task KillDuringPass2LeavesParentListingUnchanged()
+    {
+        var parent = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c1483-parent-" + Guid.NewGuid().ToString("N")[..12])).FullName;
+        var record = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-canary-record-" + Guid.NewGuid().ToString("N") + ".txt");
+        var repo = await TinyAuditRepoAsync();
+        try
+        {
+            var moved = Path.Combine(parent, "repo");
+            Directory.Move(repo.Root, moved);
+            var before = Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            var psi = new ProcessStartInfo("dotnet")
+            {
+                WorkingDirectory = moved,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add(ToolDll());
+            foreach (var arg in WitnessArgs(180_000, 60_000, 0, 0, 60_000)) psi.ArgumentList.Add(arg);
+            psi.ArgumentList.Add("--canary-record");
+            psi.ArgumentList.Add(record);
+            psi.ArgumentList.Add("--repo");
+            psi.ArgumentList.Add(moved);
+            psi.ArgumentList.Add("--solution");
+            psi.ArgumentList.Add("Antiphon.sln");
+            using var process = Process.Start(psi)!;
+            var stderr = process.StandardError.ReadToEndAsync();
+            string? canary = null;
+            var enteredPass2 = false;
+            using var sawPass2 = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            while (await process.StandardOutput.ReadLineAsync(sawPass2.Token) is { } line)
+            {
+                if (line.StartsWith("canary=", StringComparison.Ordinal)) canary = line["canary=".Length..].Trim();
+                if (line == "phase=pass2") { enteredPass2 = true; break; }
+            }
+            enteredPass2.ShouldBeTrue("the kill must happen after pass 2 has started");
+            canary.ShouldNotBeNull();
+            Directory.Exists(canary).ShouldBeTrue(canary);
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            try { await stderr; } catch (Exception) { }
+            Directory.Exists(canary).ShouldBeTrue("SIGKILL leaves the canary for the script");
+            var script = Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1");
+            var cleanup = new ProcessStartInfo("pwsh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-RemoveRecordedCanary", record, "-RemoveRecordedCanaryRepo", moved })
+                cleanup.ArgumentList.Add(arg);
+            using var cleaner = Process.Start(cleanup)!;
+            var cleanupText = await cleaner.StandardOutput.ReadToEndAsync() + await cleaner.StandardError.ReadToEndAsync();
+            await cleaner.WaitForExitAsync();
+            cleaner.ExitCode.ShouldBe(0, cleanupText);
+            Directory.Exists(canary).ShouldBeFalse(canary);
+            Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before);
+        }
+        finally
+        {
+            if (Directory.Exists(parent)) StartRefGit.DeleteDirectory(parent);
+            if (Directory.Exists(repo.Root)) StartRefGit.DeleteDirectory(repo.Root);
+            if (File.Exists(record)) File.Delete(record);
+        }
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task ScriptKillDuringPass2LeavesParentListingUnchanged()
+    {
+        var parent = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c1483-parent-" + Guid.NewGuid().ToString("N")[..12])).FullName;
+        var repo = await ScriptRepoAsync(new()
+        {
+            ["App/Program.cs"] = "class Program { static void Main() {} }\n",
+            ["App/App.csproj"] = SdkProject(""),
+        });
+        var moved = Path.Combine(parent, "repo");
+        try
+        {
+            Directory.Move(repo.Root, moved);
+            var before = Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            var update = await RunScriptAsync(moved, "-Update");
+            update.ExitCode.ShouldBe(0, update.Text);
+            var check = await RunCheckWitnessAsync(moved, 45, "180000,60000,0,0,120000");
+            check.ExitCode.ShouldBe(1, check.Text);
+            check.Text.ShouldContain("phase=pass2", Case.Sensitive);
+            check.Text.ShouldContain("land graph evaluation refused (exit 2)", Case.Sensitive);
+            Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before);
+        }
+        finally
+        {
+            if (Directory.Exists(parent)) StartRefGit.DeleteDirectory(parent);
+            if (Directory.Exists(repo.Root)) StartRefGit.DeleteDirectory(repo.Root);
+        }
+    }
+
+    private static async Task<AuditRepo> TinyAuditRepoAsync() =>
+        await AuditRepo.CreateAsync(new()
+        {
+            ["App/Program.cs"] = "class Program { static void Main() {} }\n",
+            ["App/App.csproj"] = SdkProject(""),
+        });
+
+    private static string[] WitnessArgs(int passBudget, int copyBudget, int hold1, int holdCopy, int hold2) =>
+    [
+        "--witness-clocks",
+        "--pass-budget-ms", passBudget.ToString(CultureInfo.InvariantCulture),
+        "--copy-budget-ms", copyBudget.ToString(CultureInfo.InvariantCulture),
+        "--hold-pass1-ms", hold1.ToString(CultureInfo.InvariantCulture),
+        "--hold-copy-ms", holdCopy.ToString(CultureInfo.InvariantCulture),
+        "--hold-pass2-ms", hold2.ToString(CultureInfo.InvariantCulture),
+    ];
+
+    private static void AbsentCanary(string text)
+    {
+        var line = text.Split('\n').Select(item => item.Trim()).First(item => item.StartsWith("canary=", StringComparison.Ordinal));
+        var path = line["canary=".Length..].Trim();
+        path.ShouldNotBeNullOrWhiteSpace();
+        Directory.Exists(path).ShouldBeFalse(path);
+    }
+
+    private static async Task<ToolRun> RunCheckWitnessAsync(string root, int budgetSeconds, string witnessClock)
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
+        var command = "Set-StrictMode -Version Latest; & '" + script.Replace("'", "''") + "' -Check -EvaluationBudgetSeconds "
+            + budgetSeconds.ToString(CultureInfo.InvariantCulture) + " -WitnessClock '" + witnessClock + "'";
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        try { await process.WaitForExitAsync(deadline.Token); }
+        catch
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw;
+        }
+        return new ToolRun(process.ExitCode, await stdout + await stderr);
+    }
+
+    private static async Task<(int Pass, int Copy, int Total, int Grace, int Ceiling)> PrintBudgetAsync(int? passMs, int? copyMs, bool? windows)
     {
         var dll = ToolDll();
         File.Exists(dll).ShouldBeTrue(dll);
@@ -382,7 +611,7 @@ public sealed partial class LandGraphEvaluationTests
             var line = text.Split('\n').Select(l => l.Trim()).First(l => l.StartsWith(name + "=", StringComparison.Ordinal));
             return int.Parse(line[(name.Length + 1)..], CultureInfo.InvariantCulture);
         }
-        return (Read("pass"), Read("copy"), Read("total"));
+        return (Read("pass"), Read("copy"), Read("total"), Read("grace"), Read("ceiling"));
     }
 
     private static async Task<ToolRun> RunCheckWithFakeDotnetAsync(string root, string sdk, int sleepSeconds, int budgetSeconds)
