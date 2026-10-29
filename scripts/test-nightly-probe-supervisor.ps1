@@ -1,7 +1,10 @@
 #requires -Version 7.0
 param([string]$Case = 'C1375_DeadlineKillsAndJoinsTree', [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-if (-not $IsLinux) { throw 'CARD-1375 native expiry qualification requires Linux.' }
+if (-not $IsLinux) {
+    Write-Host 'SKIP C1375_DeadlineKillsAndJoinsTree: CARD-1375 native expiry qualification requires Linux.'
+    exit 0
+}
 if ($Case -cne 'C1375_DeadlineKillsAndJoinsTree') { throw "Unknown case $Case" }
 . (Join-Path $PSScriptRoot 'lib/nightly-probe-supervisor.ps1')
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
