@@ -72,7 +72,7 @@ public sealed class QualificationCheckoutSourceTests
         var output = await Git(root, 0, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none");
         return output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Select(record => record.Length >= 3 ? record[3..] : record)
-            .OrderBy(path => path, StringComparison.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
     }
 
