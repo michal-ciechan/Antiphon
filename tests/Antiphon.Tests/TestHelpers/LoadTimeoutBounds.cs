@@ -21,6 +21,15 @@ public static class LoadTimeoutBounds
     public static readonly TimeSpan LaunchQueueIdleWait = TimeSpan.FromSeconds(45);
 
     /// <summary>
+    /// Idle bound for the phone-home restart scan. The row used to pass a 3s budget
+    /// into <c>WaitForIdleAsync</c>. Twenty-one serial Linux runs alone peaked at
+    /// 1813ms (p95 621ms). Twenty-one serial runs under eight sha256sum burners
+    /// peaked at 3589ms (p95 791ms). That 3589ms sample is past 3s. Twice the burner
+    /// maximum is 8s; twice the burner p95 is under the sample that missed 3s.
+    /// </summary>
+    public static readonly TimeSpan RestartScanIdleWait = TimeSpan.FromSeconds(8);
+
+    /// <summary>
     /// Phone-home signal bound. Was 5s. Measured whole-test passes were 7-19s,
     /// so 20s covers that latency. A longer cap only slows the known Finite_stall red.
     /// </summary>
