@@ -560,11 +560,12 @@ public sealed class LandingGitTests
         await repo.CommitFileAsync("README.md", "seed\n");
         await repo.AddBareOriginAsync();
         await repo.CommitFileAsync("more.md", "more\n");
-        // The sleeper records its pid so the test can close the pipe. Tree kill does not reach a
-        // reparented msys grandchild, so the journal clear follows the holder, not the return.
-        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        // A reparented MSYS holder can survive tree kill. Its shell PID is not a Windows PID;
+        // release this owned hook by a file barrier instead of interpreting that PID natively.
+        var releaseFile = Path.Combine(repo.Path, "holder.release");
         var hook = await InstallExecutableHookAsync(repo.Path, "pre-push",
-            "#!/bin/sh\necho $$ > \"" + pidFile.Replace('\\', '/') + "\"\nsleep 30\nexit 0\n", ct);
+            "#!/bin/sh\ni=0\nwhile [ ! -f \"" + releaseFile.Replace('\\', '/')
+            + "\" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done\nexit 0\n", ct);
         var git = new LandingGit();
 
         var watch = Stopwatch.StartNew();
@@ -580,7 +581,7 @@ public sealed class LandingGitTests
             watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15) + LandingGit.KillDrainGrace);
             var common = await git.CommonDirectoryAsync(repo.Path, ct);
             var children = Path.Combine(common, "antiphon", "children");
-            KillHolder(pidFile);
+            await File.WriteAllTextAsync(releaseFile, "release", ct);
             var cleared = Stopwatch.StartNew();
             while (JournalFiles(children).Length > 0)
             {
@@ -593,7 +594,7 @@ public sealed class LandingGitTests
         }
         finally
         {
-            KillHolder(pidFile);
+            await File.WriteAllTextAsync(releaseFile, "release", CancellationToken.None);
         }
     }
 
