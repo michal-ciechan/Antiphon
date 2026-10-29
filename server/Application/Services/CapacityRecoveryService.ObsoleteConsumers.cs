@@ -16,11 +16,13 @@ public sealed partial class CapacityRecoveryService
         Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
 
     /// <summary>
-    /// Retire a canceled or parked queue selection without ending the wait. Bounded. Busy locks defer.
+    /// Retire a canceled or parked queue selection without ending the wait, and supersede a
+    /// standing wait whose accepted generation was replaced. Bounded per path. Busy locks defer.
     /// </summary>
     private async Task ReconcileObsoleteConsumersAsync(CancellationToken ct)
     {
         await ReconcileObsoleteQueueSelectionsAsync(ct);
+        await ReconcileObsoleteStandingConsumersAsync(ct);
     }
 
     private async Task ReconcileObsoleteQueueSelectionsAsync(CancellationToken ct)
@@ -212,6 +214,147 @@ public sealed partial class CapacityRecoveryService
         }
     }
 
+    private async Task ReconcileObsoleteStandingConsumersAsync(CancellationToken ct)
+    {
+        var started = Stopwatch.StartNew();
+        var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
+        List<StandingCleanupCandidate> candidates;
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            candidates = await DiscoverReplacedStandingConsumersAsync(db, batch, ct);
+        }
+
+        var superseded = 0;
+        var deferred = 0;
+        var busy = 0;
+        foreach (var candidate in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync(
+                    "capacity-obsolete-after-discovery", candidate.WaitId, Guid.Empty, ct);
+            var outcome = await SupersedeStandingConsumerAsync(candidate, ct);
+            if (outcome == CleanupOutcome.Detached)
+                superseded++;
+            else if (outcome == CleanupOutcome.Busy)
+                busy++;
+            else
+                deferred++;
+        }
+
+        _logger.LogInformation(
+            "Capacity obsolete standing scanned {Scanned} superseded {Superseded} deferred {Deferred} busy {Busy} elapsed {ElapsedMs}",
+            candidates.Count, superseded, deferred, busy, started.ElapsedMilliseconds);
+    }
+
+    private async Task<CleanupOutcome> SupersedeStandingConsumerAsync(
+        StandingCleanupCandidate candidate, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            if (!await TryLockRowNoWaitAsync(db, "AgentSessions", candidate.SessionId, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Busy;
+            }
+
+            if (!await TryLockRowNoWaitAsync(db, "Agents", candidate.AgentId, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Busy;
+            }
+
+            var agent = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == candidate.AgentId, ct);
+            var session = await db.AgentSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == candidate.SessionId, ct);
+            if (agent is null || session is null || agent.IsPoolDelegate
+                || !string.Equals(agent.PersistentSessionId, session.Id.ToString("D"), StringComparison.Ordinal))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            var ownership = await new StandingSessionOwnership(db).ResolveAsync(session, ct);
+            if (ownership.Owner != agent.Id)
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            var wait = await db.Set<CapacityRecoveryWait>().AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == candidate.WaitId, ct);
+            if (!StandingReplacementHolds(wait, candidate, session))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            if (!await TryTakeProviderLockAsync(db, candidate.Kind, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Busy;
+            }
+
+            wait = await db.Set<CapacityRecoveryWait>().AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == candidate.WaitId, ct);
+            if (wait is null || !StandingReplacementHolds(wait, candidate, session))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            if (_landBoundary is not null)
+                await _landBoundary.ReachedAsync(
+                    "capacity-obsolete-before-finish", wait.Id, Guid.Empty, ct);
+
+            wait = await db.Set<CapacityRecoveryWait>().AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == candidate.WaitId, ct);
+            if (wait is null || !StandingReplacementHolds(wait, candidate, session))
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            var now = UtcNow();
+            var updated = await db.Set<CapacityRecoveryWait>()
+                .Where(w => w.Id == wait.Id && w.Version == candidate.Version && w.ActionKey == candidate.ActionKey
+                    && w.State == wait.State)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(w => w.State, CapacityRecoveryWaitState.Superseded)
+                    .SetProperty(w => w.Outcome, nameof(CapacityRecoveryWaitState.Superseded))
+                    .SetProperty(w => w.OutcomeReason, "standing-consumer-replaced")
+                    .SetProperty(w => w.NeedsRevalidationGrant, false)
+                    .SetProperty(w => w.Version, wait.Version + 1)
+                    .SetProperty(w => w.UpdatedAt, now), ct);
+            if (updated != 1)
+            {
+                await tx.RollbackAsync(ct);
+                return CleanupOutcome.Deferred;
+            }
+
+            var provider = await db.Set<CapacityRecoveryProviderState>()
+                .FirstOrDefaultAsync(s => s.Kind == candidate.Kind, ct);
+            if (provider is { GrantedWaitId: { } granted, GrantedActionKey: { } grantedKey }
+                && granted == wait.Id && grantedKey == candidate.ActionKey)
+                ClearGrant(provider, now);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            _logger.LogInformation(
+                "Capacity obsolete standing superseded wait {WaitId} agent {AgentId} session {SessionId}",
+                wait.Id, candidate.AgentId, candidate.SessionId);
+            return CleanupOutcome.Detached;
+        }
+        catch (Exception ex) when (IsLockNotAvailable(ex))
+        {
+            await tx.RollbackAsync(ct);
+            return CleanupOutcome.Busy;
+        }
+    }
+
     private static async Task<List<QueueCleanupCandidate>> DiscoverObsoleteQueueSelectionsAsync(
         AppDbContext db, int batch, int cap, CancellationToken ct)
     {
@@ -262,6 +405,79 @@ public sealed partial class CapacityRecoveryService
         }
 
         return matched;
+    }
+
+    private static async Task<List<StandingCleanupCandidate>> DiscoverReplacedStandingConsumersAsync(
+        AppDbContext db, int batch, CancellationToken ct)
+    {
+        var waits = await Unfinished(db.CapacityRecoveryWaits)
+            .Where(w => w.ConsumerKind == CapacityWaitConsumerKind.StandingStart
+                && w.LaunchSessionId == null
+                && w.LaunchReceipt == null
+                && w.DispatchAttemptId == null
+                && w.SelectedMessageId == null
+                && w.ConfirmedPromptSequence == null)
+            .Select(w => new
+            {
+                w.Id,
+                w.Version,
+                w.ActionKey,
+                w.ExecutionKind,
+                w.AgentId,
+                w.ConsumerKey,
+                w.BlockedAt,
+                w.SessionId,
+                w.SessionStartedAt,
+            })
+            .ToListAsync(ct);
+        if (waits.Count == 0)
+            return [];
+
+        var agentIds = new HashSet<Guid>();
+        foreach (var wait in waits)
+        {
+            if (wait.AgentId is { } id)
+                agentIds.Add(id);
+            else if (TryParseAgentKey(wait.ConsumerKey, out var parsed))
+                agentIds.Add(parsed);
+        }
+
+        var agents = await db.Agents.AsNoTracking()
+            .Where(a => agentIds.Contains(a.Id) && !a.IsPoolDelegate && a.PersistentSessionId != null)
+            .Select(a => new { a.Id, a.PersistentSessionId })
+            .ToListAsync(ct);
+        var pointers = new Dictionary<Guid, Guid>();
+        foreach (var agent in agents)
+        {
+            if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+                pointers[agent.Id] = sessionId;
+        }
+
+        var sessions = await db.AgentSessions.AsNoTracking()
+            .Where(s => pointers.Values.Contains(s.Id))
+            .Select(s => new { s.Id, s.StartedAt, s.CapacityRecoveryActionKey })
+            .ToDictionaryAsync(s => s.Id, ct);
+
+        var found = new List<StandingCleanupCandidate>();
+        foreach (var wait in waits.OrderBy(w => w.BlockedAt).ThenBy(w => w.Id))
+        {
+            var agentId = wait.AgentId ?? (TryParseAgentKey(wait.ConsumerKey, out var parsed) ? parsed : Guid.Empty);
+            if (agentId == Guid.Empty || !pointers.TryGetValue(agentId, out var sessionId))
+                continue;
+            if (!sessions.TryGetValue(sessionId, out var session))
+                continue;
+            if (!IsStandingReplacement(
+                    wait.SessionId, wait.SessionStartedAt, wait.BlockedAt, wait.Id, session.Id,
+                    session.StartedAt, session.CapacityRecoveryActionKey))
+                continue;
+            found.Add(new StandingCleanupCandidate(
+                wait.Id, wait.Version, wait.ActionKey, wait.ExecutionKind, agentId, sessionId,
+                wait.BlockedAt, wait.SessionId, wait.SessionStartedAt));
+            if (found.Count == batch)
+                break;
+        }
+
+        return found;
     }
 
     private IQueryable<CapacityRecoveryWait> WhereQueueDemandAllowsGrant(
@@ -454,6 +670,38 @@ public sealed partial class CapacityRecoveryService
         return TryParseSessionKey(consumerKey, out var parsed) && parsed == messageSessionId;
     }
 
+    private static bool StandingReplacementHolds(
+        CapacityRecoveryWait? wait, StandingCleanupCandidate candidate, AgentSession session)
+    {
+        if (wait is null || IsFinished(wait) || wait.Version != candidate.Version || wait.ActionKey != candidate.ActionKey)
+            return false;
+        if (wait.ConsumerKind != CapacityWaitConsumerKind.StandingStart || HasIndependentConsumer(wait))
+            return false;
+        return IsStandingReplacement(
+            wait.SessionId, wait.SessionStartedAt, wait.BlockedAt, wait.Id, session.Id, session.StartedAt,
+            session.CapacityRecoveryActionKey);
+    }
+
+    private static bool IsStandingReplacement(
+        Guid? waitSessionId, DateTime? waitStartedAt, DateTime blockedAt, Guid waitId, Guid sessionId,
+        DateTime sessionStartedAt, string? sessionActionKey)
+    {
+        if (sessionStartedAt <= blockedAt)
+            return false;
+        if (waitSessionId is not null && waitStartedAt is not null)
+            return sessionId != waitSessionId || sessionStartedAt != waitStartedAt;
+        var prefix = $"{waitId:N}:";
+        return sessionActionKey is null || !sessionActionKey.StartsWith(prefix, StringComparison.Ordinal);
+    }
+
+    private static bool TryParseAgentKey(string consumerKey, out Guid agentId)
+    {
+        agentId = Guid.Empty;
+        const string prefix = "agent:";
+        return consumerKey.StartsWith(prefix, StringComparison.Ordinal)
+            && Guid.TryParse(consumerKey[prefix.Length..], out agentId);
+    }
+
     private static bool TryParseSessionKey(string consumerKey, out Guid sessionId)
     {
         sessionId = Guid.Empty;
@@ -533,6 +781,17 @@ public sealed partial class CapacityRecoveryService
         Guid SessionId,
         DateTime BlockedAt,
         string ConsumerKey);
+
+    private readonly record struct StandingCleanupCandidate(
+        Guid WaitId,
+        int Version,
+        string ActionKey,
+        AgentKind Kind,
+        Guid AgentId,
+        Guid SessionId,
+        DateTime BlockedAt,
+        Guid? WaitSessionId,
+        DateTime? WaitStartedAt);
 
     private enum CleanupOutcome
     {
