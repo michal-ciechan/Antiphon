@@ -22,7 +22,7 @@ public sealed class CheckpointWindowsReadModeTests
     [Arguments("write", 808)]
     [Arguments("write", 262144)]
     [Arguments("write", 524305)]
-    public void Windows_reads_do_not_queue_synchronous_io_behind_blocked_workers(string consumer, int size)
+    public void Windows_reads_keep_synchronous_handles_content_and_custody(string consumer, int size)
     {
         var f = new HostCleanupCheckpointFixture(CheckpointPlatform.Windows);
         var path = Path.Combine(f.Root, "new-content.txt");
@@ -31,8 +31,7 @@ public sealed class CheckpointWindowsReadModeTests
         var streams = new List<ModeledWindowsStream>();
         f.Io.StreamFactory = () =>
         {
-            var opened = new ModeledWindowsStream(bytes, f.Clock,
-                (f.Io.ReadRequests.Last().WindowsFlags & 0x40000000) != 0);
+            var opened = new ModeledWindowsStream(bytes);
             streams.Add(opened);
             return opened;
         };
@@ -58,20 +57,17 @@ public sealed class CheckpointWindowsReadModeTests
 
         // A write opens twice: ReplacementPublication.Matches reads the new bytes back
         // with a synchronous Read, then the custody digest opens the same file. Receipt
-        // and digest consumers open once. Linux, review 7ba417d9, every pool worker busy:
-        // that synchronous Read returned 808 bytes in 4-5 ms. ReadAsync on the same
-        // non-overlapped handle did not finish within 3 s on a capped pool and took 969 ms
-        // when the pool could grow. Only that ReadAsync is a worker stall. Digest and
-        // receipt opens stay overlapped, no-follow, and sequential.
+        // and digest consumers open once. Actual native scheduling is covered by the
+        // isolated pool-saturation witness in CheckpointReceiptStallBudgetTests.
         var opens = consumer == "write" ? 2 : 1;
         streams.Count.ShouldBe(opens);
-        streams.ShouldAllBe(s => s.WorkerWaits == 0 && s.Disposed);
+        streams.ShouldAllBe(s => s.Disposed);
         streams[^1].Delivered.ShouldBe(size);
         if (consumer == "write") streams[0].Delivered.ShouldBe(0);
         f.Io.ReadRequests.Count.ShouldBe(opens);
-        // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED. The verification open is the
+        // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN, without OVERLAPPED. The verification open is the
         // base Matches request and is not this mask.
-        const uint digestOpen = 0x00200000u | 0x08000000u | 0x40000000u;
+        const uint digestOpen = 0x00200000u | 0x08000000u;
         for (var i = 0; i < f.Io.ReadRequests.Count; i++)
         {
             var request = f.Io.ReadRequests[i];
@@ -82,7 +78,7 @@ public sealed class CheckpointWindowsReadModeTests
             }
             else
             {
-                (request.WindowsFlags & digestOpen).ShouldBe(digestOpen);
+                request.WindowsFlags.ShouldBe(digestOpen);
             }
         }
 
@@ -90,28 +86,15 @@ public sealed class CheckpointWindowsReadModeTests
         f.Io.Count("close-read", path).ShouldBe(opens);
     }
 
-    // Model the .NET Windows split without changing the process-wide thread pool or
-    // acquiring a native lock: ReadAsync on a synchronous handle needs a worker to
-    // run ReadFile. With workers occupied by blocking callers, no read starts before
-    // the existing deadline. An overlapped handle can submit I/O without that worker.
-    // A synchronous Read on either handle runs on the caller and is not a stall.
-    // This witnesses the scheduling dependency, not the load of the historical host.
-    private sealed class ModeledWindowsStream(byte[] bytes, ControlledTimeProvider clock, bool overlapped)
+    // Track bytes and disposal here; a memory stream cannot prove native I/O scheduling.
+    private sealed class ModeledWindowsStream(byte[] bytes)
         : MemoryStream(bytes, writable: false)
     {
-        public int WorkerWaits { get; private set; }
         public long Delivered { get; private set; }
         public bool Disposed { get; private set; }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (!overlapped)
-            {
-                WorkerWaits++;
-                clock.Advance(CheckpointFileReader.StallDeadline);
-                cancellationToken.ThrowIfCancellationRequested();
-                throw new InvalidOperationException("the queued synchronous read must reach its deadline");
-            }
             var result = base.ReadAsync(buffer, cancellationToken);
             Delivered += result.Result;
             return result;

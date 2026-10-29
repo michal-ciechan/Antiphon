@@ -98,7 +98,7 @@ public static class ConfinedFileReader
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
         budget.Inspect(metadata.Size);
         afterVerification?.Invoke();
-        using var stream = openStream is not null ? openStream(handle) : OperatingSystem.IsLinux() ? new LinuxReadStream(handle) : new FileStream(handle, FileAccess.Read);
+        using var stream = openStream is not null ? openStream(handle) : new DedicatedReadStream(handle);
         long total = 0;
         var buffer = new byte[ReadChunk];
         try
@@ -276,9 +276,9 @@ public static class ConfinedFileReader
 
     private sealed class ReadStalledException(string message) : IOException(message);
 
-    // Linux FileStream.ReadAsync on a non-overlapped fd queues blocking I/O on the pool.
-    // The reader already owns a dedicated thread, so execute that syscall inline instead.
-    private sealed class LinuxReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
+    // The reader owns a dedicated thread and an independent deadline monitor. Execute
+    // the syscall there on both platforms, without worker or overlapped-completion queues.
+    private sealed class DedicatedReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -312,9 +312,8 @@ public static class ConfinedFileReader
     {
         if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
             throw new InvalidDataException("selected file is not regular");
-        // FileStream infers async mode from the retained handle; do not queue synchronous
-        // Windows I/O behind the callers blocking on ReadAsync's three-second deadline.
-        var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000 | 0x40000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
+        // DedicatedReadStream executes the synchronous syscall on the owned I/O thread.
+        var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
         if (handle.IsInvalid) { handle.Dispose(); throw NativeFailure(); }
         return handle;
     }

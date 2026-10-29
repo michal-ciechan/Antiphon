@@ -88,9 +88,9 @@ public static class CheckpointFileReader
         {
             if ((context.Io.Attributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
                 throw new InvalidDataException("selected file is not regular");
-            // FileStream infers async mode from the retained handle. A synchronous Windows
-            // handle makes ReadAsync queue blocking I/O behind the callers waiting for it.
-            request = new(0, 0x00200000 | 0x08000000 | 0x40000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
+            // The retained stream reads synchronously on our dedicated I/O thread.
+            // Overlapped completions would depend on the pool occupied by blocking callers.
+            request = new(0, 0x00200000 | 0x08000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
         }
         else throw new InvalidDataException("opened-handle verification unsupported on this platform");
         using var handle = context.Io.OpenRead(path, request);
