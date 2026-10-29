@@ -12,10 +12,13 @@ internal interface IPhaseClock
 
 internal static class PhaseClock
 {
+    /// <summary>Starting result. Replaced only when the phase work returns.</summary>
+    public const int Refusal = 2;
+
     public static int Bound(IPhaseClock clock, TimeSpan budget, string solution, string phase, Func<int> work,
         TextWriter output, Action? onTimeout = null)
     {
-        var result = 0;
+        var result = Refusal;
         if (clock.TryComplete(budget, () => result = work())) return result;
         try
         {
@@ -28,7 +31,7 @@ internal static class PhaseClock
 
         output.WriteLine($"evaluation-failed: evaluating {solution} {phase} exceeded {budget.TotalSeconds:0} s");
         output.Flush();
-        return 2;
+        return Refusal;
     }
 }
 
