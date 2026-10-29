@@ -27,10 +27,13 @@ public class CapacityRecoveryGrantLivenessTests
         var deadWaits = new List<CapacityRecoveryWait>();
         for (var index = 0; index < 2; index++)
         {
+            var sessionId = Guid.NewGuid();
             var wait = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
-                $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
+                $"session:{sessionId:N}", CapacityWaitConsumerKind.LiveSession,
                 holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30 + index)), CancellationToken.None);
             deadWaits.Add(wait);
+            if (!hasReceipt)
+                await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, sessionId);
             if (hasReceipt)
             {
                 await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
@@ -86,9 +89,12 @@ public class CapacityRecoveryGrantLivenessTests
         var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
         await using var services = provider;
         var now = time.GetUtcNow().UtcDateTime;
+        var olderSession = Guid.NewGuid();
         var older = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
-            $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
+            $"session:{olderSession:N}", CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30)), CancellationToken.None);
+        if (!hasReceipt)
+            await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, olderSession);
         var younger = await CapacityRecoveryTestSupport.EnsureWaitWithLiveOwnerAsync(service, schema, CapacityRecoveryTestSupport.Registration(
             $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
             holdAlreadyCleared: true, blockedAt: now.AddMinutes(-1)), CancellationToken.None);

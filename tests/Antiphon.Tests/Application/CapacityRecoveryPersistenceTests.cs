@@ -251,6 +251,7 @@ public class CapacityRecoveryPersistenceTests
             CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true,
             sessionId: sessionId), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, sessionId);
         await service.GrantReadyAsync(CancellationToken.None);
         var grant = await ReloadGrant(schema, AgentKind.ClaudeCode);
         (await service.RedeemAsync(

@@ -39,6 +39,8 @@ public class CapacityRecoveryTranscriptTests
                 $"session:{f.SessionId:N}", CapacityWaitConsumerKind.LiveSession,
                 executionKind: AgentKind.Codex, alias: null,
                 holdAlreadyCleared: true, sessionId: f.SessionId), default);
+            await using (var demand = f.Db())
+                await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(demand, f.SessionId);
             (await recovery.GrantReadyAsync(default)).ShouldBe(1);
             (await recovery.RedeemAsync(wait.Id, wait.ActionKey, AgentKind.Codex,
                 CapacityRedemptionPath.Queue, default)).Ok.ShouldBeTrue();

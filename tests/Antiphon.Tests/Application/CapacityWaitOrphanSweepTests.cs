@@ -37,9 +37,17 @@ public class CapacityWaitOrphanSweepTests
         var second = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
             $"session:{liveSession:N}", CapacityWaitConsumerKind.LiveSession, sessionId: liveSession,
             holdAlreadyCleared: true, blockedAt: now.AddHours(-1)), CancellationToken.None);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, endedSession);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, liveSession);
         (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(1);
         await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
             (await db.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(first.Id);
+        if (missing)
+        {
+            await using var cleanup = CapacityRecoveryTestSupport.CreateContext(schema);
+            await cleanup.SessionQueuedMessages.Where(m => m.AgentSessionId == endedSession).ExecuteDeleteAsync();
+            await cleanup.AgentSessions.Where(s => s.Id == endedSession).ExecuteDeleteAsync();
+        }
 
         await service.ReconcileAsync(CancellationToken.None);
 

@@ -26,6 +26,7 @@ public partial class CapacityAdmissionLifecycleTests
         var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
             $"session:{sessionId:N}", CapacityWaitConsumerKind.LiveSession,
             holdAlreadyCleared: true, sessionId: sessionId), ct);
+        await CapacityRecoveryTestSupport.SeedHeldChannelDemandAsync(schema, sessionId, ct);
         (await service.GrantReadyAsync(ct)).ShouldBe(1);
 
         await using (var seed = CapacityRecoveryTestSupport.CreateContext(schema))
