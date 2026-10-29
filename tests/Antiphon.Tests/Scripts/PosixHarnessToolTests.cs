@@ -46,6 +46,18 @@ public sealed class PosixHarnessToolTests
         result.Stdout.ShouldContain("PASS W-1");
     }
 
+    [Test]
+    public void Cutover_window_completes_without_cat_grep_or_tr_on_path()
+    {
+        NativeLinuxGate.Require(
+            "CARD-1407 window fakes are POSIX sh scripts; cat, grep and tr are external. Windows skips these cases because an extensionless sh fake is not a Windows executable.");
+        using var hidden = HiddenPath.Without("cat", "grep", "tr");
+        var result = Run("test-cutover-postgres-server2.ps1", hidden.DirectoryPath, 120_000, "-Case", "W6");
+        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
+        AssertNoMissingCommand(result);
+        result.Stdout.ShouldContain("PASS W-6");
+    }
+
     private static void AssertNoMissingCommand(CheckpointFixtureProcess.Output result)
     {
         var text = result.Stdout + result.Stderr;
