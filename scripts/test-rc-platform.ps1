@@ -504,9 +504,13 @@ function Test-LinuxSessionRunnerAdmission {
 
 function Test-LinuxOnlyWindowsExclusions {
     # Windows rc exclusions for skips that are Linux-only by construction. Gap classes stay required.
+    # Each test is sliced to its own body by scripts/lib/linux-only-gate-witness.cs. A fixed window
+    # after the signature is not a gate: the next test's skip must not cover an ungated neighbour.
     $prefix = 'Linux-only by construction:'
-    $strict = [regex]::new('(?s)if\s*\(\s*!\s*OperatingSystem\.IsLinux\(\)\s*\)[\s\S]{0,300}?(?:throw\s+new\s+(?:[\w.]+\.)?SkipTestException|Skip\.Test)\s*\(|if\s*\(\s*OperatingSystem\.IsWindows\(\)\s*\)[\s\S]{0,300}?(?:throw\s+new\s+(?:[\w.]+\.)?SkipTestException|Skip\.Test)\s*\(|if\s*\(\s*OperatingSystem\.IsLinux\(\)\s*\)\s*return\s+true\s*;|NativeLinuxGate\s*\.\s*Require|RequireNativeLinux\s*\(|RequireLinux(?:Join|Custody)?\s*\(|RequireUnix\s*\(')
     $forbid = [regex]::new('(?i)unverified|junction|case-sensitive|case-twin|opt-in')
+    if (-not ('RcPlatformWitness.LinuxOnlyGate' -as [type])) {
+        Add-Type -Path (Join-Path $PSScriptRoot 'lib/linux-only-gate-witness.cs')
+    }
     $inventory = @(
         @{ s='antiphon'; c='PhoneHomeMirrorJoinTests'; o='CARD-1032'; m=@() }
         @{ s='antiphon'; c='UnixDelegateLaunchArgvTests'; o='CARD-0590'; m=@() }
@@ -564,22 +568,6 @@ function Test-LinuxOnlyWindowsExclusions {
     $documentClasses = @(
         'ClaudeDialogWatchdogCanaryTests','LandGraphEvaluationTests','PhoneHomeCompletedCardTransportTests','PhoneHomeMirrorJoinTests','UnixDelegateLaunchArgvTests','CheckpointConfinementLedgerTests','CheckpointReceiptSafetyTests','CheckpointBoundedReaderTests','OutputCleanupTests','AnchoredPathDeleteWitnessTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointSourceGitBoundsTests','CheckpointVerifierBoundsTests','PlanCoverageHandleTests','CheckpointFixtureProcessTests','DetachedLauncherTests','SafeDeleteProcessBoundaryTests','CodexRootExecContractTests','FileUseCaptureTests','GrokSha256PinTests','JqRunnerImageContractTests','GithubCredentialHelperTests','GitMinimumVersionGuardTests','RollingVolumeRecycleScriptTests','RetiredTempContainerScriptTests','RetiredTempContainerHostTests','BuildSlotScriptTests','HostJqPrerequisiteScriptTests','ScriptHarnessLinuxOwnershipTests','C1364BoundLandWaitProofTests','RollingProductionMountTests','RefreshGithubTokenRemoteCommandTests','NightlyProbeSupervisorTests','RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests','RollingVolumeRecycleCensusChurnTests','RemoteScriptContractTests','CompletedCardWorkspaceRemovalTests','RunnerWorkspaceBindingTests','HostStatsProbeLiveTests','LinuxCgroupCustodyTests','UnixPtyArgvTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointRecoveryLinuxTests','CheckpointStampSafetyTests','CheckpointOutputConfinementTests','CheckpointFixtureRoutingTests','CheckpointInheritedFileTests','CheckpointTempRootSweepTests','PlanCoverageCommandTests'
     )
-    function Find-Def([System.Collections.Generic.List[string]]$lines, [string]$name) {
-        $rx = [regex]('\b' + [regex]::Escape($name) + '\s*\(')
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if (-not $rx.IsMatch($lines[$i]) -or $lines[$i] -notmatch '\b(public|private|internal|protected)\b') { continue }
-            $idxName = $lines[$i].IndexOf($name)
-            $idxArrow = $lines[$i].IndexOf('=>')
-            if ($idxArrow -ge 0 -and $idxArrow -lt $idxName) { continue }
-            return $i
-        }
-        return -1
-    }
-    function Window([System.Collections.Generic.List[string]]$lines, [int]$at, [int]$n) {
-        $end = [Math]::Min($lines.Count - 1, $at + $n)
-        return ($lines.GetRange($at, $end - $at + 1) -join "`n")
-    }
-    function Test-GatedSlice([string]$slice) { return $strict.IsMatch($slice) }
     function Read-ClassLines([string]$class) {
         $rels = @(
             "tests/Antiphon.Tests/Checkpoints/$class.cs"
@@ -606,60 +594,18 @@ function Test-LinuxOnlyWindowsExclusions {
         }
         return @{ Found = $found; Lines = $all }
     }
+    function Read-ClassSource([string]$class) {
+        $loaded = Read-ClassLines $class
+        if (-not $loaded.Found) { return $null }
+        return ($loaded.Lines -join "`n")
+    }
+    function Test-SourceGated([string]$Source, [string]$Class, [string[]]$Methods) {
+        return @([RcPlatformWitness.LinuxOnlyGate]::RowProblems($Source, $Class, $Methods))
+    }
     function Test-RowGated($row) {
-        $loaded = Read-ClassLines $row.c
-        if (-not $loaded.Found) { return @('missing-source') }
-        $lines = $loaded.Lines
-        $problems = @()
-        $before = $false
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '\[Before\((Test|Class)\)\]' -and (Test-GatedSlice (Window $lines $i 12))) { $before = $true }
-        }
-        $methods = @($row.m)
-        if ($methods.Count -eq 0) {
-            $seen = 0
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i] -notmatch '\[Test(\s*,|\s*\])') { continue }
-                $seen++
-                $def = -1
-                for ($j = $i; $j -lt [Math]::Min($lines.Count, $i + 40); $j++) {
-                    if ($lines[$j] -match '\b(public|internal)\b.+\(') { $def = $j; break }
-                }
-                if ($def -lt 0) { $problems += "no-signature@$i"; continue }
-                $slice = Window $lines $def 25
-                $ok = $before -or (Test-GatedSlice $slice)
-                if (-not $ok) {
-                    foreach ($call in [regex]::Matches($slice, '\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(')) {
-                        $hn = $call.Groups[1].Value
-                        $h = Find-Def $lines $hn
-                        if ($h -ge 0 -and $h -ne $def -and (Test-GatedSlice (Window $lines $h 20))) { $ok = $true; break }
-                    }
-                }
-                if (-not $ok) { $problems += "ungated@$def" }
-                if ($slice -match 'Skip' -and $forbid.IsMatch($slice)) { $problems += "forbid@$def" }
-            }
-            if ($seen -eq 0) { $problems += 'no-tests' }
-        } else {
-            foreach ($m in $methods) {
-                $def = Find-Def $lines $m
-                if ($def -lt 0) { $problems += "missing $m"; continue }
-                $slice = Window $lines $def 30
-                $ok = $before -or (Test-GatedSlice $slice)
-                if (-not $ok) {
-                    foreach ($call in [regex]::Matches($slice, '\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(')) {
-                        $hn = $call.Groups[1].Value
-                        if ($hn -eq $m) { continue }
-                        $h = Find-Def $lines $hn
-                        if ($h -ge 0 -and (Test-GatedSlice (Window $lines $h 25))) { $ok = $true; break }
-                    }
-                }
-                if (-not $ok) { $problems += "ungated $m" }
-                foreach ($s in [regex]::Matches($slice, 'Skip(?:TestException|\.Test)\(\s*(?:@)?\$?"([^"]*)"')) {
-                    if ($forbid.IsMatch($s.Groups[1].Value)) { $problems += "forbid $m" }
-                }
-            }
-        }
-        return $problems
+        $source = Read-ClassSource $row.c
+        if ($null -eq $source) { return @('missing-source') }
+        return @(Test-SourceGated $source ([string]$row.c) ([string[]]@($row.m)))
     }
     $gateProblems = @()
     foreach ($row in $inventory) {
@@ -673,8 +619,63 @@ function Test-LinuxOnlyWindowsExclusions {
     }
     $synthetic = 'if (!OperatingSystem.IsLinux()) Skip.Test("Windows junction variant is unverified");'
     $syntheticSkip = [regex]::Match($synthetic, 'Skip\.Test\(\s*"([^"]*)"').Groups[1].Value
-    $syntheticRefused = (Test-GatedSlice $synthetic) -and $forbid.IsMatch($syntheticSkip)
-    Assert-C1323 ((-not $noiseAdmitted) -and $syntheticRefused -and $noise.Found) 'ungated-class-refused' "noise=$noiseAdmitted synthetic=$syntheticRefused"
+    $forbidSource = "public sealed class ForbidSkipTests { [Test] public void Case() { $synthetic } }"
+    $forbidProblems = @(Test-SourceGated $forbidSource 'ForbidSkipTests' ([string[]]@()))
+    $syntheticRefused = $forbid.IsMatch($syntheticSkip) -and (($forbidProblems -join ' ') -eq 'forbid Case')
+    $noiseProblems = @()
+    if ($noise.Found) { $noiseProblems = @((Test-RowGated @{ c = 'AttentionFeedNoiseTests'; m = @() })) }
+    $noiseParsed = -not (($noiseProblems -join ',') -like '*parse-failed*')
+    Assert-C1323 ((-not $noiseAdmitted) -and $syntheticRefused -and $noise.Found -and $noiseParsed) 'ungated-class-refused' "noise=$noiseAdmitted synthetic=$syntheticRefused parsed=$noiseParsed"
+    $neighbour = @'
+public sealed class NeighbourGateTests {
+    [Test] public void Ungated_runs_on_windows() { var value = 1; value.ToString(); }
+    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
+}
+'@
+    $returnTrueTool = @'
+public sealed class ReturnTrueToolTests {
+    [Test] public void Case() { if (!Linux()) return; Work(); }
+    private static bool Linux() { if (OperatingSystem.IsLinux()) return true; return File.Exists("C:\\tools\\wsl-sh.exe"); }
+    private static void Work() { }
+}
+'@
+    $returnTrueGood = @'
+public sealed class ReturnTrueGoodTests {
+    [Test] public void Case() { if (!Linux()) return; Work(); }
+    private static bool Linux() { if (OperatingSystem.IsLinux()) return true; Skip.Test("native"); return false; }
+    private static void Work() { }
+}
+'@
+    $envWrapped = @'
+public sealed class EnvWrappedGateTests {
+    [Test] public void Case() { if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
+}
+'@
+    $removedGate = @'
+public sealed class RemovedGateTests {
+    [Test] public void C1008_Recycle_exact_default_volumes() { Work(); }
+    [Test] public void Sibling_is_gated() { NativeLinuxGate.Require("linux only"); }
+    private static void Work() { }
+}
+'@
+    $compound = @'
+public sealed class CompoundConditionTests {
+    [Test] public void Case() {
+        if (!OperatingSystem.IsLinux() && !File.Exists("C:\\tools\\wsl-sh.exe")) Skip.Test("compound");
+    }
+}
+'@
+    $holes = @()
+    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@())).Count -eq 0) { $holes += 'neighbour-class-admitted' }
+    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@('Ungated_runs_on_windows'))).Count -eq 0) { $holes += 'neighbour-ungated-admitted' }
+    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@('Gated_next'))).Count -gt 0) { $holes += 'neighbour-gated-refused' }
+    if (@(Test-SourceGated $returnTrueTool 'ReturnTrueToolTests' ([string[]]@())).Count -eq 0) { $holes += 'return-true-tool-admitted' }
+    if (@(Test-SourceGated $returnTrueGood 'ReturnTrueGoodTests' ([string[]]@())).Count -gt 0) { $holes += 'return-true-skip-refused' }
+    if (@(Test-SourceGated $envWrapped 'EnvWrappedGateTests' ([string[]]@())).Count -eq 0) { $holes += 'env-wrapped-gate-admitted' }
+    if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('C1008_Recycle_exact_default_volumes'))).Count -eq 0) { $holes += 'removed-method-gate-admitted' }
+    if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('Sibling_is_gated'))).Count -gt 0) { $holes += 'sibling-gate-refused' }
+    if (@(Test-SourceGated $compound 'CompoundConditionTests' ([string[]]@())).Count -eq 0) { $holes += 'compound-condition-admitted' }
+    Assert-C1323 ($holes.Count -eq 0) 'synthetic-gate-holes-refused' ($holes -join ',')
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
     $expectedKeys = @()
