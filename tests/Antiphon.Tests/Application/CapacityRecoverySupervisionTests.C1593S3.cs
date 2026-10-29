@@ -410,6 +410,8 @@ public partial class CapacityRecoverySupervisionTests
         var acted = await tick;
         elapsed.Stop();
         await standIn.Completed.WaitAsync(TimeSpan.FromSeconds(20), ct);
+        Console.WriteLine(
+            $"C1593_S3_REREAD tick={elapsed.Elapsed.TotalSeconds:F2}s held={standIn.HeldUntilWaitCleared.TotalSeconds:F2}s cleared={standIn.WaitClearedBeforeRelease}");
 
         // The stand-in holds the agent row for 25s unless the reread gives up. The tick must
         // return on the injected bound, and the charge must not rewrite a commit that landed.
