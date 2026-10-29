@@ -1491,7 +1491,10 @@ native sealed receipts for every accepted generation. Receipt import checks bind
 creation, expected runner store, original host/container, successful zero accounting and drained
 I/O; status/PIDs/kill acknowledgements cannot substitute. NeverReserved is a separate proven
 empty history. The fresh DB evidence reader and Git/filesystem checks run under the genuine
-repository lease before output/ref/tree deletion; unknown custody remains residue, never a kill.
+repository lease before output/ref/tree deletion. Unknown custody remains residue. Terminal-task
+CleanupVerification can terminate Linux containment; a Windows seal does not terminate, and the
+existing linger and kill-on-close job remain. A successful kill is not a receipt and is not a
+source-clean verdict.
 Publication, report disposition and cleanup are independent verdicts. Deploy all source/custody/
 cleanup/contracts together and directly inspect loaded selector, bundle hashes and runner/host
 tracking before commissioning the feature's own PCs; caller-owned rollout cannot be fixture proof.

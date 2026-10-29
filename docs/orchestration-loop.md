@@ -2616,8 +2616,11 @@ original container's descendant-zero observation and drained output; dead root, 
 kill success or worker restoration alone never proves custody. Never-reserved evidence is a
 separate closed path. Every attempt, exact L/creation/registration/ref, no owners/sequencer,
 restoration and hashed task-owned outputs must match. Unknown files, dirty/replaced trees or
-missing/unsupported custody remain actionable residue. No force or recursive deletion, and
-cleanup never kills. A restored Failed/Canceled battery may clean without changing its verdict.
+missing/unsupported custody remain actionable residue. No force or recursive deletion.
+Terminal-task CleanupVerification can terminate Linux containment. A Windows seal does not
+terminate, and that host's existing linger and kill-on-close job remain. A successful kill
+is not a receipt and is not a source-clean verdict. A restored Failed/Canceled battery may
+clean without changing its verdict.
 See docs/testing-and-build.md for the restoration schema and docs/ops-http.md for inspection.
 
 Ship source admission, launch custody, no-autosave/no-land fences, cleanup and these contracts
