@@ -49,6 +49,21 @@ public static class SessionReadLaunchRoutes
                         type: RunnerAbsenceEvidence.ClosedIdentityProblemType, statusCode: StatusCodes.Status409Conflict)
                     .ExecuteAsync(context);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // An unmapped launch failure was an empty 500. Name the exception. Cancellation
+                // still propagates so a client abort is not turned into a problem document.
+                app.Logger.LogError(ex, "Unhandled session-runner request failure");
+                if (context.Response.HasStarted)
+                    throw;
+                context.Response.Clear();
+                await Results.Problem(
+                        title: ex.GetType().FullName,
+                        detail: ex.ToString(),
+                        statusCode: StatusCodes.Status500InternalServerError,
+                        type: "runner_unhandled_exception")
+                    .ExecuteAsync(context);
+            }
         });
     }
 
