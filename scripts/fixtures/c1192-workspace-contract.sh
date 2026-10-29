@@ -225,6 +225,63 @@ if [ "${1:-}" = "cleanup-contained" ]; then
     exit 1
 fi
 
+# Scratch mutations of the extracted production functions. The production file
+# stays untouched. Each one is a single break the group or driver witness must
+# fail: m1 drops the cid kill, m5 kills by name, m7 deletes the driver deadline.
+c1192_apply_mutation() {
+    local file="$1" tmp
+    case "${C1192_MUTATION:-}" in
+        '') return 0 ;;
+        m1)
+            grep -F 'docker kill -- "$cid"' "$file" >/dev/null || fail "m1 kill line missing"
+            grep -F 'docker rm -f -- "$cid"' "$file" >/dev/null || fail "m1 rm line missing"
+            tmp="$file.mut"
+            # Keep the then-branch. An empty then is a syntax error, so the
+            # branch becomes a no-op and no longer kills or removes by cid.
+            awk '
+                /docker kill -- "\$cid"/ { print "            :"; skip=1; next }
+                skip == 1 && /docker rm -f -- "\$cid"/ { skip=0; next }
+                { print }
+            ' "$file" > "$tmp"
+            grep -F 'docker kill -- "$cid"' "$tmp" && fail "m1 kill line survived"
+            mv -f -- "$tmp" "$file"
+            ;;
+        m5)
+            grep -F 'docker kill -- "$cid"' "$file" >/dev/null || fail "m5 kill line missing"
+            tmp="$file.mut"
+            sed 's/docker kill -- "$cid"/docker kill -- "$name"/' "$file" > "$tmp"
+            grep -F 'docker kill -- "$name"' "$tmp" >/dev/null || fail "m5 rename failed"
+            mv -f -- "$tmp" "$file"
+            ;;
+        m6) return 0 ;;
+        m7)
+            tmp="$file.mut"
+            awk '
+                /if \[ "\$\(date \+%s\)" -ge "\$deadline" \]; then/ { skip=3 }
+                skip > 0 { skip--; next }
+                { print }
+            ' "$file" > "$tmp"
+            grep -F 'ge "$deadline"' "$tmp" && fail "m7 deadline check still present"
+            grep -F 'while [ ! -e /fixture/race/go ]' "$tmp" >/dev/null || fail "m7 removed the go loop"
+            mv -f -- "$tmp" "$file"
+            ;;
+        *) fail "unknown mutation ${C1192_MUTATION}" ;;
+    esac
+}
+
+# The fake restore probe is this shell, not a container PID 1. Ignore SIGINT in
+# the probe so a process-group Ctrl-C cannot stop it. It dies only after the
+# proven docker kill creates the killed- marker.
+c1192_shield_probe_sigint() {
+    local src
+    src=$(declare -f c849_fixture_restore_container) || fail "restore container missing"
+    eval "${src/c849_fixture_restore_container/c849_fixture_restore_container_body}"
+    c849_fixture_restore_container() {
+        trap '' INT
+        c849_fixture_restore_container_body "$@"
+    }
+}
+
 mode="${1:?mode}"
 repo="${2:?repo}"
 private_parent=$(mktemp -d /tmp/c1192-parent.XXXXXX) || exit 1
@@ -279,8 +336,22 @@ awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { 
             *) printf '%s\n' "$line" ;;
         esac
     done > "$root/functions"
+c1192_apply_mutation "$root/functions"
 # shellcheck disable=SC1091
 source "$root/functions"
+c1192_shield_probe_sigint
+# m6: the INT handler returns before release and before exit 130.
+if [ "${C1192_MUTATION:-}" = m6 ]; then
+    c849_fixture_on_signal() {
+        local sig="${1:-TERM}"
+        if [ "$sig" = INT ]; then
+            return 0
+        fi
+        trap '' INT TERM
+        c849_fixture_release_live_probes || true
+        exit 143
+    }
+fi
 
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 CASE=runner-cache-fixture
@@ -4314,12 +4385,12 @@ c1192_dump_shell_state() {
 # and the volumes that were present are removed afterwards.
 #
 # delivery=group sends one SIGINT to the child's process group, which is how
-# an operator Ctrl-C reaches a foreground `bash c590-remote.sh`. The probes
-# are in that group and can stop their own containers, so the barrier may
-# exit 2 before the trap's exit 130. Either exit is accepted. The invariants
-# are: both probe containers are gone, both probe processes are dead, the
-# lease is deleted, the fixture volumes are removed, and an unrelated pid is
-# not signaled.
+# an operator Ctrl-C reaches a foreground `bash c590-remote.sh`. The fake
+# probes ignore SIGINT and die only when docker kill records their cid. Exit
+# 130 is the trap. Exit 2 is accepted only when the trap wrote its ledger
+# line, every live cid was killed by that id and not by name, and the wait
+# finished well under C589_SLOT_WAIT_SECONDS. An unrelated pid is planted on
+# the live-probe ledger and must survive.
 #
 # INT does not reach a fixture that was itself started with & from a
 # non-interactive shell: the ignored disposition is inherited and trap cannot
@@ -4328,12 +4399,19 @@ c1192_dump_shell_state() {
 # TERM is not in that pair, so a pid-only TERM still arrives. Monitor mode
 # makes the child its own process group and is restored before return. The
 # group signal is that child's group, not this fixture's group.
+# Ledger line the INT trap writes before it calls the production handler.
+# Exit 2 is not proof the trap ran unless this line is present.
+c1192_note_signal_trap() {
+    printf 'trap-ran %s\n' "$1" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+}
+
 c1192_signal_witness() {
     local sig="$1" expected="$2" delivery="${3:-pid}"
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
     local prefix="signal-${sig}" traps pid i code=0 present=0 cid_kills=0 volumes=0 released=0
     local child armed monitor=0 foreign="" probe_pid cid name nrestore=0 containers=0 procs=0
-    local accepted=0 foreign_ok=0
+    local accepted=0 foreign_ok=0 planted=0 deadline_seconds=0 started=0 elapsed=0
+    local trap_ran=0 bounded=0 name_kills=0
     [ "$delivery" = group ] && prefix="signal-${sig}-group"
     traps="$(c1192_fixture_traps)"
     if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
@@ -4347,6 +4425,9 @@ c1192_signal_witness() {
             emit "${prefix}-lease" 0
             emit "${prefix}-volumes" 0
             emit "${prefix}-foreign" 0
+            emit "${prefix}-cid-kills" 0
+            emit "${prefix}-bounded" 0
+            emit "${prefix}-trap" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4362,7 +4443,11 @@ c1192_signal_witness() {
     fi
     C1192_SLOT_GATE=1
     C1192_SLOT_NEVER=1
+    # Group m6, a no-op INT handler, runs until this deadline. Green release
+    # finishes well under it. Pid and TERM keep the longer bound.
     C589_SLOT_WAIT_SECONDS=30
+    [ "$delivery" = group ] && C589_SLOT_WAIT_SECONDS=15
+    deadline_seconds=$C589_SLOT_WAIT_SECONDS
     C1192_SLOT_LEASE=11111111-1111-1111-1111-111111111111
     ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
     export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_SLOT_NEVER C1192_SLOT_LEASE
@@ -4371,7 +4456,8 @@ c1192_signal_witness() {
     {
         printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
         c1192_dump_shell_state
-        printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")"
+        printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")" \
+            "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT' INT"
         printf '%s\n' \
             'armed=0' \
             'trap_text=$(trap -p INT)' \
@@ -4421,6 +4507,9 @@ c1192_signal_witness() {
             emit "${prefix}-lease" 0
             emit "${prefix}-volumes" 0
             emit "${prefix}-foreign" 0
+            emit "${prefix}-cid-kills" 0
+            emit "${prefix}-bounded" 0
+            emit "${prefix}-trap" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4433,7 +4522,20 @@ c1192_signal_witness() {
     emit "${prefix}-installed" 1
     if [ "$delivery" = group ]; then
         # A sleeper from another shell is not in this child's process group.
+        # It is on the live-probe ledger, so a release that signals every
+        # recorded pid kills it and this witness goes red.
         foreign=$(bash -c 'command sleep 120 >/dev/null 2>&1 & echo $!; exit 0')
+        planted=0
+        if [ -n "$foreign" ]; then
+            {
+                flock -w 5 7 || exit 1
+                printf '%s pending %s\n' "$foreign" "c849-${RUN}-lock-holder-shared" >> "$CASE_DIR/.fixture-live-probes"
+            } 7>>"$CASE_DIR/.fixture-live-probes.lock" && planted=1
+        fi
+        if [ "$planted" != 1 ] || ! grep -Fxq "$foreign pending c849-${RUN}-lock-holder-shared" "$CASE_DIR/.fixture-live-probes"; then
+            planted=0
+        fi
+        started=$(date +%s)
         kill -s INT -- -"$pid" 2>/dev/null || true
     elif [ "$sig" = INT ]; then
         # One pid-only SIGINT is discarded while the slot poll is inside sleep.
@@ -4460,11 +4562,10 @@ c1192_signal_witness() {
         volumes=1
     fi
     if [ "$delivery" = group ]; then
-        case "$code" in
-            2|130) accepted=1 ;;
-        esac
+        elapsed=$(( $(date +%s) - started ))
         containers=1
         procs=1
+        cid_kills=1
         nrestore=0
         while read -r probe_pid cid name || [ -n "${probe_pid:-}" ]; do
             case "${name:-}" in
@@ -4474,10 +4575,29 @@ c1192_signal_witness() {
             nrestore=$((nrestore + 1))
             container_exists "$name" && containers=0
             c849_fixture_probe_exited "$probe_pid" || procs=0
+            grep -Fxq "kill $cid" "$C1192_ROOT/order" || cid_kills=0
+            if grep -F "kill $name" "$C1192_ROOT/order" >/dev/null 2>&1; then
+                cid_kills=0
+                name_kills=1
+            fi
         done < "$C1192_ROOT/live-before"
         [ "$nrestore" -ge 2 ] || containers=0
         [ "$nrestore" -ge 2 ] || procs=0
-        if [ -n "$foreign" ] && ! c849_fixture_probe_exited "$foreign"; then
+        [ "$nrestore" -ge 2 ] || cid_kills=0
+        if [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+            && grep -Fxq "trap-ran INT" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+            trap_ran=1
+        fi
+        # Well under the slot deadline, so the deadline path cannot pass.
+        if [ "$deadline_seconds" -gt 0 ] && [ "$elapsed" -lt "$deadline_seconds" ] && [ "$elapsed" -le 10 ]; then
+            bounded=1
+        fi
+        if [ "$cid_kills" = 1 ] && [ "$name_kills" = 0 ] && [ "$trap_ran" = 1 ] && [ "$bounded" = 1 ]; then
+            case "$code" in
+                2|130) accepted=1 ;;
+            esac
+        fi
+        if [ "$planted" = 1 ] && [ -n "$foreign" ] && ! c849_fixture_probe_exited "$foreign"; then
             foreign_ok=1
         fi
         if [ -n "$foreign" ]; then
@@ -4490,6 +4610,10 @@ c1192_signal_witness() {
         emit "${prefix}-lease" "$released"
         emit "${prefix}-volumes" "$volumes"
         emit "${prefix}-foreign" "$foreign_ok"
+        emit "${prefix}-cid-kills" "$cid_kills"
+        emit "${prefix}-bounded" "$bounded"
+        emit "${prefix}-trap" "$trap_ran"
+        emit "${prefix}-elapsed" "$elapsed"
     else
         cid_kills=1
         while read -r _ cid name || [ -n "${cid:-}" ]; do
@@ -4637,6 +4761,110 @@ c1192_late_cid_witness() {
     c1192_kill_jobs
 }
 
+c1192_out_fact() {
+    local key="$1" text="$2" line val=""
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        case "$line" in
+            "$key"=*) val=${line#*=} ;;
+        esac
+    done <<< "$text"
+    printf '%s' "$val"
+}
+
+# 0 when the group witness satisfied the release contract.
+c1192_group_contract() {
+    local text="$1" key val
+    for key in signal-INT-group-installed signal-INT-group-accepted signal-INT-group-containers \
+        signal-INT-group-procs signal-INT-group-lease signal-INT-group-volumes \
+        signal-INT-group-foreign signal-INT-group-cid-kills signal-INT-group-bounded \
+        signal-INT-group-trap; do
+        val=$(c1192_out_fact "$key" "$text")
+        [ "$val" = 1 ] || return 1
+    done
+    val=$(c1192_out_fact signal-INT-group-exit "$text")
+    case "$val" in
+        2|130) return 0 ;;
+    esac
+    return 1
+}
+
+# Run the generated driver.sh. No go file: exit 4 before ready. Go present:
+# ready is written. The go path is /fixture/race/go, so that leg runs after
+# pivot_root into a private mount namespace.
+c1192_driver_go_leg() {
+    local script="$1" root deadline
+    root=$(mktemp -d "$C1192_ROOT/driver-root.XXXXXX")
+    mkdir -p "$root/fixture/race" "$root/proj" "$root/old" "$root/bin" "$root/lib" "$root/lib64"
+    cp -- "$script" "$root/driver.sh"
+    printf '1\n' > "$root/fixture/race/go"
+    deadline=$(( $(date +%s) + 30 ))
+    timeout 8 unshare --user --mount --map-root-user bash -c '
+        root=$1
+        deadline=$2
+        mkdir -p "$root/bin" "$root/lib" "$root/lib64" "$root/old"
+        mount --bind "$root" "$root" || exit 23
+        mount --bind /usr/bin "$root/bin" || exit 20
+        mount --bind /usr/lib "$root/lib" || exit 21
+        mount --bind /usr/lib64 "$root/lib64" || exit 22
+        cd "$root" || exit 24
+        pivot_root . old || exit 25
+        exec /bin/sh /driver.sh /proj "$deadline"
+    ' bash "$root" "$deadline" >/dev/null 2>&1 || true
+    [ -f "$root/proj/ready" ]
+}
+
+c1192_driver_deadline_witness() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local data script proj nogo_rc=0 exit4=0 ready=0 start
+    c1192_slot_plant "$packages" "$scratch"
+    c849_fixture_race_materialize "$ADMITTED"
+    data=$(volume_data_for_target /fixture) || { emit driver-exit4 0; emit driver-ready 0; return 0; }
+    script="$data/race/driver.sh"
+    if [ ! -f "$script" ]; then
+        emit driver-exit4 0
+        emit driver-ready 0
+        return 0
+    fi
+    proj=$(mktemp -d "$C1192_ROOT/driver-proj.XXXXXX")
+    start=$(date +%s)
+    timeout 3 sh "$script" "$proj" $((start - 1)) || nogo_rc=$?
+    if [ "$nogo_rc" = 4 ] && [ ! -e "$proj/ready" ]; then
+        exit4=1
+    fi
+    if c1192_driver_go_leg "$script"; then
+        ready=1
+    fi
+    emit driver-exit4 "$exit4"
+    emit driver-ready "$ready"
+    c1192_kill_jobs
+}
+
+# A scratch copy of the fixture with one break. red-<id>=1 only when that
+# copy reaches the witness and fails the contract. A crash before the witness
+# is not a red result.
+c1192_red_group() {
+    local id="$1" out installed
+    out=$(C1192_MUTATION="$id" bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" slot-int-group "$repo" 2>"$C1192_ROOT/red-$id.err") || true
+    installed=$(c1192_out_fact signal-INT-group-installed "$out")
+    if [ "$installed" = 1 ] && ! c1192_group_contract "$out"; then
+        emit "red-$id" 1
+    else
+        emit "red-$id" 0
+    fi
+}
+
+c1192_red_driver() {
+    local out exit4 ready
+    out=$(C1192_MUTATION=m7 bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" slot-driver-deadline "$repo" 2>"$C1192_ROOT/red-m7.err") || true
+    exit4=$(c1192_out_fact driver-exit4 "$out")
+    ready=$(c1192_out_fact driver-ready "$out")
+    if [ "$exit4" != 1 ] && [ "$ready" = 1 ]; then
+        emit red-m7 1
+    else
+        emit red-m7 0
+    fi
+}
+
 mode_slot_round2() {
     c1192_foreign_witness
     c1192_signal_witness TERM 143
@@ -4645,6 +4873,11 @@ mode_slot_round2() {
     c1192_deadline_witness
     c1192_offline_witness
     c1192_reap_witness
+    c1192_driver_deadline_witness
+    c1192_red_group m1
+    c1192_red_group m5
+    c1192_red_group m6
+    c1192_red_driver
 }
 
 case "$mode" in
@@ -4675,6 +4908,8 @@ case "$mode" in
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
     slot-round2) mode_slot_round2 ;;
+    slot-int-group) c1192_signal_witness INT 130 group ;;
+    slot-driver-deadline) c1192_driver_deadline_witness ;;
     slot-late-cid) c1192_late_cid_witness ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
