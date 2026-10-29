@@ -400,7 +400,10 @@ public sealed class DockerStackDocumentationTests
             "FixtureRestoreBarrierFailed",
             "30-second",
             "45 minutes",
-            "INT exits 130",
+            "A pid-only SIGINT can be dropped",
+            "process-group SIGINT",
+            "exits 130 when the trap finishes, or 2 when the barrier records FixtureRestoreBarrierFailed",
+            "TERM exits 143",
             "does not release that slot to retry"
         })
             text.ShouldContain(pin, Case.Sensitive, pin);
