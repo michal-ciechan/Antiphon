@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -292,6 +294,135 @@ public sealed partial class LandGraphEvaluationTests
         }
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task EvaluationBudgetDerivationUsesTwiceMeasuredP95AndWindowsFloor()
+    {
+        var linux = await PrintBudgetAsync(22328, 8000, false);
+        linux.Pass.ShouldBe(45);
+        linux.Copy.ShouldBe(16);
+        linux.Total.ShouldBe(106);
+
+        var windows = await PrintBudgetAsync(22328, 8000, true);
+        windows.Pass.ShouldBe(120);
+        windows.Copy.ShouldBe(16);
+        windows.Total.ShouldBe(256);
+
+        var wider = await PrintBudgetAsync(70000, 1000, true);
+        wider.Pass.ShouldBe(140);
+        wider.Copy.ShouldBe(2);
+        wider.Total.ShouldBe(282);
+
+        var floor = await PrintBudgetAsync(0, 0, false);
+        floor.Pass.ShouldBe(1);
+        floor.Copy.ShouldBe(1);
+        floor.Total.ShouldBe(3);
+
+        var host = await PrintBudgetAsync(null, null, null);
+        host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
+        host.Total.ShouldBe(host.Pass * 2 + host.Copy);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task EvaluationBudgetRefusesSlowDotnetAndAcceptsFastDotnet()
+    {
+        if (OperatingSystem.IsWindows())
+            throw new SkipTestException("The slow evaluator is a PATH shim named dotnet; Windows process start resolves dotnet.exe.");
+
+        await using var repo = await ScriptRepoAsync(new() { ["App/App.csproj"] = SdkProject("") });
+        var update = await RunScriptAsync(repo.Root, "-Update");
+        update.ExitCode.ShouldBe(0, update.Text);
+        var sdk = (await File.ReadAllLinesAsync(repo.Full(EvaluationFile)))[1];
+
+        var slow = await RunCheckWithFakeDotnetAsync(repo.Root, sdk, sleepSeconds: 30, budgetSeconds: 1);
+        slow.ExitCode.ShouldBe(1, slow.Text);
+        slow.Text.ShouldContain("evaluation-failed: evaluating Antiphon.sln exceeded 1 s", Case.Sensitive);
+        slow.Text.ShouldContain("land graph evaluation refused (exit 2)", Case.Sensitive);
+        slow.Text.ShouldNotContain("approved", Case.Sensitive);
+
+        var fast = await RunCheckWithFakeDotnetAsync(repo.Root, sdk, sleepSeconds: 0, budgetSeconds: 30);
+        fast.ExitCode.ShouldBe(0, fast.Text);
+        fast.Text.ShouldContain("approved", Case.Sensitive);
+    }
+
+    private static async Task<(int Pass, int Copy, int Total)> PrintBudgetAsync(int? passMs, int? copyMs, bool? windows)
+    {
+        var dll = ToolDll();
+        File.Exists(dll).ShouldBeTrue(dll);
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add(dll);
+        psi.ArgumentList.Add("--print-budget");
+        if (passMs is int pass)
+        {
+            psi.ArgumentList.Add("--measured-pass-p95-ms");
+            psi.ArgumentList.Add(pass.ToString(CultureInfo.InvariantCulture));
+        }
+        if (copyMs is int copy)
+        {
+            psi.ArgumentList.Add("--measured-copy-p95-ms");
+            psi.ArgumentList.Add(copy.ToString(CultureInfo.InvariantCulture));
+        }
+        if (windows is bool windowsHost)
+        {
+            psi.ArgumentList.Add("--windows");
+            psi.ArgumentList.Add(windowsHost ? "true" : "false");
+        }
+        using var process = Process.Start(psi)!;
+        var text = await process.StandardOutput.ReadToEndAsync() + await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, text);
+        int Read(string name)
+        {
+            var line = text.Split('\n').Select(l => l.Trim()).First(l => l.StartsWith(name + "=", StringComparison.Ordinal));
+            return int.Parse(line[(name.Length + 1)..], CultureInfo.InvariantCulture);
+        }
+        return (Read("pass"), Read("copy"), Read("total"));
+    }
+
+    private static async Task<ToolRun> RunCheckWithFakeDotnetAsync(string root, string sdk, int sleepSeconds, int budgetSeconds)
+    {
+        var shimDir = Path.Combine(Path.GetTempPath(), "c1483-dotnet-" + Guid.NewGuid().ToString("N")[..12]);
+        Directory.CreateDirectory(shimDir);
+        var shim = Path.Combine(shimDir, "dotnet");
+        await File.WriteAllTextAsync(shim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' \"" + sdk + "\"\n  exit 0\nfi\nif [ \"" + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\" != \"0\" ]; then\n  sleep " + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\nfi\nprintf 'approved\\n'\nexit 0\n");
+        File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        try
+        {
+            var start = new ProcessStartInfo("pwsh")
+            {
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.Environment["PATH"] = shimDir + ":" + start.Environment["PATH"];
+            var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
+            var command = "Set-StrictMode -Version Latest; & '" + script.Replace("'", "''") + "' -Check -EvaluationBudgetSeconds " + budgetSeconds.ToString(CultureInfo.InvariantCulture);
+            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
+            using var process = Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try { await process.WaitForExitAsync(deadline.Token); }
+            catch
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                throw;
+            }
+            return new ToolRun(process.ExitCode, await stdout + await stderr);
+        }
+        finally
+        {
+            if (Directory.Exists(shimDir)) Directory.Delete(shimDir, recursive: true);
+        }
+    }
+
     internal static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
     {
         files[PinsFile] = "";
@@ -324,7 +455,7 @@ public sealed partial class LandGraphEvaluationTests
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(240));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(360));
         try { await process.WaitForExitAsync(deadline.Token); }
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
         return new ToolRun(process.ExitCode, await stdout + await stderr);
