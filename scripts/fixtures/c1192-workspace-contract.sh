@@ -392,10 +392,72 @@ plant_container() {
 volume_exists() { [ -d "$C1192_ROOT/volumes/$1" ]; }
 container_exists() { [ -d "$C1192_ROOT/containers/$1" ]; }
 
+# Line match without a pipe. grep -q under pipefail dies with SIGPIPE when
+# the producer still has bytes to write.
+c1192_has_exact_line() {
+    local want="$1" text="$2" line
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        [ "$line" = "$want" ] && return 0
+    done <<< "$text"
+    return 1
+}
+
+c1192_has_substr() {
+    local want="$1" text="$2" line
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        case "$line" in
+            *"$want"*) return 0 ;;
+        esac
+    done <<< "$text"
+    return 1
+}
+
+c1192_first_line_number() {
+    local want="$1" text="$2" line n=0
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        n=$((n + 1))
+        case "$line" in
+            *"$want"*) printf '%s' "$n"; return 0 ;;
+        esac
+    done <<< "$text"
+    return 1
+}
+
+c1192_file_has_substr() {
+    local want="$1" file="$2" line
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        case "$line" in
+            *"$want"*) return 0 ;;
+        esac
+    done < "$file"
+    return 1
+}
+
+# 0 when the snapshot has at least two restore probes and every one of them
+# already carries a 64-hex id. A pending line is not yet safe to signal.
+c1192_copied_live_cids() {
+    local file="$1" pid cid name n=0
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+    while read -r pid cid name || [ -n "${pid:-}" ]; do
+        case "${name:-}" in
+            *restore-p*) ;;
+            *) continue ;;
+        esac
+        [[ "${cid:-}" =~ ^[0-9a-f]{64}$ ]] || return 1
+        n=$((n + 1))
+    done < "$file"
+    [ "$n" -ge 2 ]
+}
+
 diagnosis_of() {
-    local line
-    line=$(printf '%s\n' "$1" | grep '^DIAGNOSIS=' | tail -n 1 || true)
-    printf '%s' "${line#DIAGNOSIS=}"
+    local line last=""
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+        case "$line" in
+            DIAGNOSIS=*) last=$line ;;
+        esac
+    done <<< "$1"
+    printf '%s' "${last#DIAGNOSIS=}"
 }
 
 create_count() {
@@ -510,6 +572,16 @@ simulate_restore() {
     [ "$n" -ge 2 ] || return 97
     driver="${PARSED_CMD[$((n - 2))]}"
     project="${PARSED_CMD[$((n - 1))]}"
+    # driver.sh is invoked as sh driver project deadline. The deadline is the
+    # last token only when it is an epoch; the project stays the name before it.
+    case "$project" in
+        ''|*[!0-9]*) ;;
+        *)
+            [ "$n" -ge 3 ] || return 97
+            driver="${PARSED_CMD[$((n - 3))]}"
+            project="${PARSED_CMD[$((n - 2))]}"
+            ;;
+    esac
     data=$(volume_data_for_target /fixture) || return 97
     if [ "$driver" = offline.sh ]; then
         if [ "${C1192_FAULT:-}" = offline-slot-timeout ]; then
@@ -653,8 +725,8 @@ exec_in() {
     for arg in "$@"; do
         script_text+="$arg"$'\n'
     done
-    if printf '%s\n' "$script_text" | grep -q 'chown -R 1654:1654' \
-        && printf '%s\n' "$script_text" | grep -qx '/fixture/race'; then
+    if c1192_has_substr 'chown -R 1654:1654' "$script_text" \
+        && c1192_has_exact_line '/fixture/race' "$script_text"; then
         local probe="$data/race/lock-probe.ps1"
         if [ -f "$probe" ] && grep -q 'ExecuteWithFileLocked' "$probe" && grep -q '/fixture/race' "$probe"; then
             printf '1\n' > "$C1192_ROOT/probe-at-handoff"
@@ -968,7 +1040,19 @@ docker_run_payload() {
     parse_run_create "$@"
     if [ -n "$PARSED_NAME" ]; then
         store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
-        [ -z "$PARSED_CIDFILE" ] || cat "$C1192_ROOT/containers/$PARSED_NAME/id" > "$PARSED_CIDFILE"
+        if [ -n "$PARSED_CIDFILE" ]; then
+            case "$PARSED_NAME" in
+                *"-restore-${C1192_LATE_CID_FOR:-}")
+                    : > "$PARSED_CIDFILE"
+                    if [ -n "${C1192_SLOT_LEASE:-}" ]; then
+                        printf 'BUILD SLOT granted lease=%s waited=0s maxcpucount=1\n' "$C1192_SLOT_LEASE"
+                    fi
+                    command sleep "${C1192_LATE_CID_SECONDS:-2}"
+                    cat "$C1192_ROOT/containers/$PARSED_NAME/id" > "$PARSED_CIDFILE"
+                    ;;
+                *) cat "$C1192_ROOT/containers/$PARSED_NAME/id" > "$PARSED_CIDFILE" ;;
+            esac
+        fi
     fi
     if [ "$mode" = apphost ]; then apphost_run; return; fi
     local kind=other-run
@@ -2069,9 +2153,10 @@ mode_barriers() {
     else
         emit missing-ready-refused 0
     fi
-    local poll=0
-    if declare -f c849_fixture_wait_file | grep -q 'seq 1 150' \
-        && declare -f c849_fixture_wait_file | grep -q 'sleep 0.2' \
+    local poll=0 wait_body
+    wait_body=$(declare -f c849_fixture_wait_file)
+    if c1192_has_substr 'seq 1 150' "$wait_body" \
+        && c1192_has_substr 'sleep 0.2' "$wait_body" \
         && [ "$ncount" = 150 ]; then
         poll=1
     fi
@@ -3004,13 +3089,13 @@ mode_retention_inspect() {
     done
     RETENTION_INSPECT_FAULT=temp-private
     out=$(c849_fixture_retention 2>&1) || code=$?
-    if [ "$code" != 2 ] || ! printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureVolumeInspectFailed'; then
+    if [ "$code" != 2 ] || ! c1192_has_exact_line 'DIAGNOSIS=FixtureVolumeInspectFailed' "$out"; then
         fail "retention-inspect code=$code $out"
     fi
     if [ -f "$CASE_DIR/fixture-groups.txt" ] && grep -Fxq 'PASS F-7' "$CASE_DIR/fixture-groups.txt"; then
         fail retention-inspect-published-success
     fi
-    if printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureTempPrivateVolumeRetained'; then
+    if c1192_has_exact_line 'DIAGNOSIS=FixtureTempPrivateVolumeRetained' "$out"; then
         fail retention-inspect-absence-token
     fi
     printf 'PASS retention-inspect-refused\n'
@@ -3980,10 +4065,10 @@ mode_deadline_setup() {
 c1192_driver_order() {
     local body slot go ready restore
     body=$(declare -f c849_fixture_race_materialize)
-    slot=$(printf '%s\n' "$body" | grep -n 'slot-held' | head -n 1 | cut -d: -f1 || true)
-    go=$(printf '%s\n' "$body" | grep -n '/fixture/race/go' | head -n 1 | cut -d: -f1 || true)
-    ready=$(printf '%s\n' "$body" | grep -n ': > ready' | head -n 1 | cut -d: -f1 || true)
-    restore=$(printf '%s\n' "$body" | grep -n 'dotnet restore' | head -n 1 | cut -d: -f1 || true)
+    slot=$(c1192_first_line_number 'slot-held' "$body" || true)
+    go=$(c1192_first_line_number '/fixture/race/go' "$body" || true)
+    ready=$(c1192_first_line_number ': > ready' "$body" || true)
+    restore=$(c1192_first_line_number 'dotnet restore' "$body" || true)
     if [ -n "$slot" ] && [ -n "$go" ] && [ -n "$ready" ] && [ -n "$restore" ] \
         && [ "$slot" -lt "$go" ] && [ "$go" -lt "$ready" ] && [ "$ready" -lt "$restore" ]; then
         printf '1'
@@ -4190,15 +4275,53 @@ c1192_foreign_witness() {
     c1192_kill_jobs
 }
 
+# Dump this shell into a script a new bash can source. A background job of a
+# non-interactive shell is started with SIGINT ignored, and bash will not
+# re-arm a signal that was ignored at exec. The child is exec'd only after
+# perl sets SIGINT back to the default.
+c1192_dump_shell_state() {
+    local name spec flags
+    declare -f
+    while IFS= read -r name; do
+        case "$name" in
+            BASH*|FUNCNAME|GROUPS|EPOCH*|BASHPID|PPID|_|PIPESTATUS|COMP_*|SRANDOM|SECONDS|LINENO|OLDPWD|PWD|SHELLOPTS|BASHOPTS|UID|EUID|RANDOM|HISTCMD|name|spec|flags) continue ;;
+            *TOKEN*|*SECRET*|*PASSWORD*|*CREDENTIAL*) continue ;;
+        esac
+        spec=$(declare -p "$name" 2>/dev/null || true)
+        [ -n "$spec" ] || continue
+        # declare -p is "declare -flags name=value". The r flag is readonly.
+        # A later r in the value is not a flag.
+        flags=${spec#declare }
+        case "$flags" in
+            -*)
+                flags=${flags%% *}
+                case "$flags" in
+                    *r*) continue ;;
+                esac
+                ;;
+        esac
+        printf '%s\n' "$spec"
+    done < <(compgen -v)
+}
+
 # Run the barrier under the fixture's own trap lines. TERM must exit 143 and
 # INT 130, both probes die by the recorded CID, the lease is deleted, and the
 # volumes that were present are removed afterwards.
+#
+# INT reaches the fixture when it is the foreground of the deploy ssh session
+# (Invoke-C590Ssh runs `bash c590-remote.sh` with no trailing &): the remote
+# shell starts with SIGINT default, and an operator Ctrl-C is delivered to
+# that process group. INT does not reach a fixture that was itself started
+# with & from a non-interactive shell, because the ignored disposition is
+# inherited at exec and `trap` cannot undo it. TERM is not in that pair, so
+# it still arrives. This witness execs the barrier through perl so the test
+# delivers INT even when this harness was started in the background.
 c1192_signal_witness() {
     local sig="$1" expected="$2" packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key
+    local traps pid i n=0 code=0 present=0 cid_kills=0 volumes=0 released=0 key child armed
     traps="$(c1192_fixture_traps)"
-    if ! printf '%s\n' "$traps" | grep -qx "trap 'c849_fixture_on_signal INT' INT" \
-        || ! printf '%s\n' "$traps" | grep -qx "trap 'c849_fixture_on_signal TERM' TERM"; then
+    if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
+        || ! c1192_has_exact_line "trap 'c849_fixture_on_signal TERM' TERM" "$traps"; then
         emit "signal-${sig}-installed" 0
         emit "signal-${sig}-exit" 0
         emit "signal-${sig}-cid-kills" 0
@@ -4206,7 +4329,6 @@ c1192_signal_witness() {
         emit "signal-${sig}-volumes" 0
         return 0
     fi
-    emit "signal-${sig}-installed" 1
     c1192_slot_plant "$packages" "$scratch"
     : > "$C1192_ROOT/curls"
     c1192_slot_curl
@@ -4219,26 +4341,48 @@ c1192_signal_witness() {
     C1192_SLOT_LEASE=11111111-1111-1111-1111-111111111111
     ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
     export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_SLOT_NEVER C1192_SLOT_LEASE
-    (
-        eval "$traps"
-        c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch"
-    ) > "$C1192_ROOT/signal-out" 2>>"$C1192_ROOT/scenario.err" &
+    rm -f -- "$C1192_ROOT/signal-armed" "$C1192_ROOT/signal-out" "$C1192_ROOT/live-before"
+    child="$C1192_ROOT/signal-child.sh"
+    {
+        printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
+        c1192_dump_shell_state
+        printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")"
+        printf '%s\n' \
+            'armed=0' \
+            'trap_text=$(trap -p INT)' \
+            'case "$trap_text" in' \
+            '    *c849_fixture_on_signal*) armed=1 ;;' \
+            'esac' \
+            "printf '%s\n' \"\$armed\" > $(printf '%q' "$C1192_ROOT")/signal-armed" \
+            '[ "$armed" = 1 ] || exit 2' \
+            "c849_fixture_race_restore_barrier $(printf '%q' "$ADMITTED") $(printf '%q' "$packages") $(printf '%q' "$scratch")"
+    } > "$child"
+    # perl inherits an ignored SIGINT when this harness was backgrounded, then
+    # puts the default back before exec. The bash pid is the same process.
+    perl -e '$SIG{INT}="DEFAULT"; $SIG{QUIT}="DEFAULT"; exec @ARGV or die $!' -- \
+        bash "$child" > "$C1192_ROOT/signal-out" 2>>"$C1192_ROOT/scenario.err" &
     pid=$!
     i=0
-    while [ "$i" -lt 100 ]; do
-        if [ -f "$CASE_DIR/.fixture-live-probes" ] \
-            && [ -f "$SERVER2_ROOT/race-p1.log" ] \
-            && grep -q 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log" \
-            && cp -f -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before"; then
-            n=$(grep -c 'restore-p' "$C1192_ROOT/live-before" 2>/dev/null || true)
-            [ "${n:-0}" -ge 2 ] && break
+    armed=0
+    while [ "$i" -lt 200 ]; do
+        if [ -f "$C1192_ROOT/signal-armed" ] && [ "$(cat -- "$C1192_ROOT/signal-armed")" = 0 ]; then
+            break
+        fi
+        if [ -f "$C1192_ROOT/signal-armed" ] && [ "$(cat -- "$C1192_ROOT/signal-armed")" = 1 ] \
+            && [ -f "$CASE_DIR/.fixture-live-probes" ] \
+            && c1192_file_has_substr 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log" \
+            && cp -f -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before" \
+            && c1192_copied_live_cids "$C1192_ROOT/live-before"; then
+            armed=1
+            break
         fi
         command sleep 0.05
         i=$((i + 1))
     done
-    if [ "$i" -ge 100 ]; then
-        kill -s "$sig" "$pid" 2>/dev/null || true
+    if [ "$armed" != 1 ]; then
+        kill -s TERM "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
+        emit "signal-${sig}-installed" 0
         emit "signal-${sig}-exit" 0
         emit "signal-${sig}-cid-kills" 0
         emit "signal-${sig}-lease" 0
@@ -4247,6 +4391,7 @@ c1192_signal_witness() {
         c1192_kill_jobs
         return 0
     fi
+    emit "signal-${sig}-installed" 1
     kill -s "$sig" "$pid" 2>/dev/null || true
     wait "$pid" || code=$?
     emit "signal-${sig}-exit" "$code"
@@ -4315,10 +4460,10 @@ c1192_offline_witness() {
     c1192_kill_jobs
 }
 
-# kill -9 only reaches a pid jobs -pr still lists. A live pid from another
-# shell is signalled with TERM and is not escalated.
+# TERM and KILL reach a pid only while jobs -pr lists it. A live pid from
+# another shell is on the ledger as pending and is not signalled at all.
 c1192_reap_witness() {
-    local owned foreign owned_hit=0 foreign_hit=0
+    local owned foreign owned_hit=0 foreign_signalled=0 foreign_survived=0 name
     command sleep 60 & owned=$!
     foreign=$(bash -c 'command sleep 60 >/dev/null 2>&1 & echo $!; exit 0')
     kill() {
@@ -4327,24 +4472,73 @@ c1192_reap_witness() {
     }
     : > "$C1192_ROOT/kills"
     c849_fixture_reap_probe "$owned"
-    if grep -q -- '-9' "$C1192_ROOT/kills"; then
+    if [ -s "$C1192_ROOT/kills" ] && c1192_file_has_substr '-9' "$C1192_ROOT/kills"; then
         owned_hit=1
     fi
     command wait "$owned" 2>/dev/null || true
     : > "$C1192_ROOT/kills"
+    name="c849-${RUN}-restore-p2"
     if [ -n "$foreign" ] && [ -d "/proc/$foreign" ]; then
-        c849_fixture_reap_probe "$foreign"
-        if grep -q -- '-9' "$C1192_ROOT/kills"; then
-            foreign_hit=1
+        printf '%s pending %s\n' "$foreign" "$name" > "$CASE_DIR/.fixture-live-probes"
+        c849_fixture_release_live_probes || true
+        if [ -s "$C1192_ROOT/kills" ]; then
+            foreign_signalled=1
+        fi
+        if [ -d "/proc/$foreign" ]; then
+            foreign_survived=1
         fi
         command kill "$foreign" 2>/dev/null || true
         command wait "$foreign" 2>/dev/null || true
-    else
-        foreign_hit=1
     fi
     unset -f kill
     emit reap-owned-escalated "$owned_hit"
-    emit reap-unowned-escalated "$foreign_hit"
+    emit reap-unowned-escalated "$foreign_signalled"
+    emit reap-unowned-survived "$foreign_survived"
+}
+
+# p1 is a planted foreign name, so the barrier refuses while p2's cid is still
+# unpublished. Release waits, then kills p2 by that cid and deletes its lease.
+c1192_late_cid_witness() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local name="c849-${RUN}-restore-p1" p2="c849-${RUN}-restore-p2"
+    local foreign_id="" p2id="" survived=0 killed=0 removed=0 killed_by_cid=0 released=0
+    c1192_slot_plant "$packages" "$scratch"
+    plant_container "$name" foreign other-run consumer "$ADMITTED" ""
+    foreign_id="$(cat -- "$C1192_ROOT/containers/$name/id")"
+    : > "$C1192_ROOT/curls"
+    c1192_slot_curl
+    C1192_SLOT_GATE=1
+    C1192_LATE_CID_FOR=p2
+    C1192_LATE_CID_SECONDS=2
+    C589_SLOT_WAIT_SECONDS=30
+    C1192_SLOT_LEASE=11111111-1111-1111-1111-111111111111
+    ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
+    export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_LATE_CID_FOR C1192_LATE_CID_SECONDS C1192_SLOT_LEASE
+    c1192_slot_barrier "$packages" "$scratch"
+    unset C1192_SLOT_GATE C1192_LATE_CID_FOR C1192_LATE_CID_SECONDS C589_SLOT_WAIT_SECONDS C1192_SLOT_LEASE ANTIPHON_BUILD_SLOTS_URL
+    container_exists "$name" && survived=1
+    if c1192_file_has_substr "kill $foreign_id" "$C1192_ROOT/order" \
+        || c1192_file_has_substr "kill $name" "$C1192_ROOT/order"; then
+        killed=1
+    fi
+    container_exists "$p2" || removed=1
+    if [ -f "$CASE_DIR/.fixture-id-$p2" ]; then
+        p2id="$(cat -- "$CASE_DIR/.fixture-id-$p2")"
+    fi
+    if [[ "$p2id" =~ ^[0-9a-f]{64}$ ]] && c1192_file_has_substr "kill $p2id" "$C1192_ROOT/order"; then
+        killed_by_cid=1
+    fi
+    if c1192_file_has_substr 'DELETE' "$C1192_ROOT/curls" \
+        && c1192_file_has_substr '11111111-1111-1111-1111-111111111111' "$C1192_ROOT/curls"; then
+        released=1
+    fi
+    emit late-diagnosis "$(diagnosis_of "$C1192_SLOT_OUT")"
+    emit late-p2-removed "$removed"
+    emit late-p2-killed-by-cid "$killed_by_cid"
+    emit late-foreign-survived "$survived"
+    emit late-foreign-killed "$killed"
+    emit late-lease "$released"
+    c1192_kill_jobs
 }
 
 mode_slot_round2() {
@@ -4384,6 +4578,7 @@ case "$mode" in
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
     slot-round2) mode_slot_round2 ;;
+    slot-late-cid) c1192_late_cid_witness ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
     npm|npm-network-create) mode_npm ;;
