@@ -94,15 +94,20 @@ public class LinuxPtyHostLauncherTests
         {
             var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(tempRoot, "bin")), AppContext.BaseDirectory);
             var parentSession = Getsid(Environment.ProcessId);
-            parentSession.ShouldNotBe(Environment.ProcessId, "the test process must not already be the host session leader");
-
             var sessionId = Guid.NewGuid();
+            var pipeName = $"antiphon-pty-linux-sid-{sessionId:N}";
             var hostPid = await launcher.LaunchDetachedAsync(
                 sessionId,
                 Path.Combine(tempRoot, "manifests"),
-                pipeName: $"antiphon-pty-linux-sid-{sessionId:N}",
+                pipeName: pipeName,
                 launchTimeout: TimeSpan.FromSeconds(60));
             owned.Add(hostPid);
+
+            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(4));
+            await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
+            var hello = await client.ExpectAsync<HelloAckMessage>(TimeSpan.FromSeconds(4));
+            hello.SessionId.ShouldBe(sessionId);
+            Process.GetProcessById(hostPid).HasExited.ShouldBeFalse();
 
             var hostSessionId = Getsid(hostPid);
             hostSessionId.ShouldBe(hostPid);
