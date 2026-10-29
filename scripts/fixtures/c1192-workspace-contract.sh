@@ -510,6 +510,12 @@ simulate_restore() {
         plant_restored_package || return 97
         return 0
     fi
+    # Opt-in only. The default path still writes ready before go, which is what the
+    # current barrier waits on. C849 slot tests set C1192_SLOT_GATE=1.
+    if [ "${C1192_SLOT_GATE:-}" = 1 ]; then
+        c1192_slot_gated_restore "$project" "$data"
+        return $?
+    fi
     mkdir -p "$data/race/$project"
     printf '1\n' > "$data/race/$project/ready"
     wait_for_volume_file "$data/race/go" || return 1
@@ -518,6 +524,74 @@ simulate_restore() {
     fi
     plant_restored_package || return 97
     return 0
+}
+
+# Slot gate model. slot-held is the grant. ready is written only after go, immediately
+# before the restore. A killed container or slot-stop ends the wait so a refusal cannot
+# leave this function running after the scenario has recorded its facts.
+c1192_slot_stop_requested() {
+    [ -e "${C1192_ROOT:?}/slot-stop" ]
+}
+
+c1192_slot_killed() {
+    [ -n "${PARSED_NAME:-}" ] && [ -e "${C1192_ROOT:?}/killed-$PARSED_NAME" ]
+}
+
+c1192_slot_gated_restore() {
+    local project="$1" data="$2" spins=0 need n i
+    if [ "${C1192_SLOT_EXIT4_FOR:-}" = "$project" ]; then
+        return 4
+    fi
+    if [ "${C1192_SLOT_NEVER:-}" = 1 ]; then
+        if [ -n "${C1192_SLOT_LEASE:-}" ] && [ "$project" = p1 ]; then
+            printf 'BUILD SLOT granted lease=%s waited=0s maxcpucount=1\n' "$C1192_SLOT_LEASE"
+        fi
+        while [ ! -e "${C1192_ROOT:?}/killed-${PARSED_NAME:-}" ]; do
+            c1192_slot_stop_requested && return 4
+            spins=$((spins + 1))
+            [ "$spins" -lt 20000 ] || return 4
+            command sleep 0.05
+        done
+        return 4
+    fi
+    if [ "${C1192_SLOT_DELAY_FOR:-}" = "$project" ]; then
+        need=${C1192_SLOT_DELAY_POLLS:-160}
+        while true; do
+            c1192_slot_killed && return 4
+            c1192_slot_stop_requested && return 4
+            n=$(grep -c '^0\.2$' "${C1192_ROOT:?}/sleeps" || true)
+            [ "${n:-0}" -ge "$need" ] && break
+            spins=$((spins + 1))
+            [ "$spins" -lt 20000 ] || return 4
+            command sleep 0.01
+        done
+    fi
+    mkdir -p "$data/race/$project"
+    printf '1\n' > "$data/race/$project/slot-held"
+    for i in $(seq 1 1500); do
+        [ -f "$data/race/go" ] && break
+        c1192_slot_killed && return 4
+        c1192_slot_stop_requested && return 1
+        command sleep 0.02
+    done
+    [ -f "$data/race/go" ] || return 1
+    printf '1\n' > "$data/race/$project/ready"
+    if [ "${C1192_FAULT:-}" = "restore-$project" ]; then
+        return 1
+    fi
+    plant_restored_package || return 97
+    return 0
+}
+
+c1192_kill_jobs() {
+    : > "${C1192_ROOT:?}/slot-stop"
+    local pids
+    pids=$(jobs -pr 2>/dev/null || true)
+    [ -n "$pids" ] || return 0
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
 }
 
 simulate_lock() {
@@ -1238,6 +1312,25 @@ docker() {
             local spec="$1" dash="${2:-}"
             [ "$dash" = - ] || { printf 'UNEXPECTED-CP %s\n' "$*" >> "$C1192_ROOT/scenario.err"; return 97; }
             payload_cp_stream "$spec"
+            ;;
+        # Quiet when the name is already gone. A missing container is not an unexpected verb.
+        # "kill" is not a container-removal line, so deletion-count audits stay stable.
+        kill)
+            shift
+            local name=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --) shift; name="${1:-}"; [ $# -gt 0 ] && shift; break ;;
+                    -*) shift ;;
+                    *) name="$1"; shift ;;
+                esac
+            done
+            if [ -z "$name" ] || [ ! -d "$C1192_ROOT/containers/$name" ]; then
+                return 1
+            fi
+            : > "$C1192_ROOT/killed-$name"
+            order_log "kill $name"
+            return 0
             ;;
         *) printf 'UNEXPECTED-DOCKER %s\n' "$1" >> "$C1192_ROOT/scenario.err"; return 97 ;;
     esac
@@ -3868,6 +3961,156 @@ mode_deadline_setup() {
     done
 }
 
+# 1 when driver.sh records slot-held, then the go wait, then ready, then restore.
+c1192_driver_order() {
+    local body slot go ready restore
+    body=$(declare -f c849_fixture_race_materialize)
+    slot=$(printf '%s\n' "$body" | grep -n 'slot-held' | head -n 1 | cut -d: -f1 || true)
+    go=$(printf '%s\n' "$body" | grep -n '/fixture/race/go' | head -n 1 | cut -d: -f1 || true)
+    ready=$(printf '%s\n' "$body" | grep -n ': > ready' | head -n 1 | cut -d: -f1 || true)
+    restore=$(printf '%s\n' "$body" | grep -n 'dotnet restore' | head -n 1 | cut -d: -f1 || true)
+    if [ -n "$slot" ] && [ -n "$go" ] && [ -n "$ready" ] && [ -n "$restore" ] \
+        && [ "$slot" -lt "$go" ] && [ "$go" -lt "$ready" ] && [ "$ready" -lt "$restore" ]; then
+        printf '1'
+    else
+        printf '0'
+    fi
+}
+
+c1192_slot_plant() {
+    local packages="$1" scratch="$2"
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    plant_cache "$packages" nuget-packages
+    plant_cache "$scratch" nuget-scratch
+    : > "$C1192_ROOT/sleeps"
+    rm -f -- "$C1192_ROOT/slot-stop"
+}
+
+# Command substitution hides the barrier's exit and would orphan its probes.
+# The trap stops those probes when the barrier refuses.
+c1192_slot_barrier() {
+    local packages="$1" scratch="$2" code=0 out
+    out=$(
+        trap 'c1192_kill_jobs' EXIT
+        c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err"
+    ) || code=$?
+    C1192_SLOT_CODE=$code
+    C1192_SLOT_OUT=$out
+}
+
+mode_slot_delay() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    c1192_slot_plant "$packages" "$scratch"
+    C1192_SLOT_GATE=1
+    C1192_SLOT_DELAY_FOR=p2
+    C589_SLOT_WAIT_SECONDS=90
+    c1192_slot_barrier "$packages" "$scratch"
+    unset C1192_SLOT_GATE C1192_SLOT_DELAY_FOR C589_SLOT_WAIT_SECONDS
+    refuse_unexpected
+    if [ "$C1192_SLOT_CODE" = 0 ]; then
+        emit delayed-race 1
+    else
+        emit delayed-race 0
+    fi
+    emit driver-order "$(c1192_driver_order)"
+    emit slot-diagnosis "$(diagnosis_of "$C1192_SLOT_OUT")"
+}
+
+mode_slot_timeout() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    c1192_slot_plant "$packages" "$scratch"
+    C1192_SLOT_GATE=1
+    C1192_SLOT_EXIT4_FOR=p2
+    C589_SLOT_WAIT_SECONDS=2
+    c1192_slot_barrier "$packages" "$scratch"
+    unset C1192_SLOT_GATE C1192_SLOT_EXIT4_FOR C589_SLOT_WAIT_SECONDS
+    refuse_unexpected
+    emit slot-diagnosis "$(diagnosis_of "$C1192_SLOT_OUT")"
+}
+
+# Same shell as the probes. A live wait is recorded and does not block, so the
+# base hang is a fact instead of a 25-minute stall. Facts are emitted, then the
+# probes are stopped. The harness still exits 0 so the assertion is the failure.
+c1192_slot_refusal_finish() {
+    trap - EXIT
+    c849_fixture_finalize || true
+    local waited=0 removed=1 released=0 signal=0 volumes=1
+    if [ -f "$C1192_ROOT/waits" ] && grep -q WAITED_LIVE "$C1192_ROOT/waits"; then
+        waited=1
+    fi
+    container_exists "c849-${RUN}-restore-p1" && removed=0
+    container_exists "c849-${RUN}-restore-p2" && removed=0
+    if [ -f "$C1192_ROOT/curls" ] \
+        && grep -q 'DELETE' "$C1192_ROOT/curls" \
+        && grep -q '11111111-1111-1111-1111-111111111111' "$C1192_ROOT/curls"; then
+        released=1
+    fi
+    if declare -f c849_fixture | grep -q 'c849_fixture_on_signal'; then
+        signal=1
+    fi
+    volume_exists "c849${RUN}race-packages" && volumes=0
+    volume_exists "c849${RUN}race-scratch" && volumes=0
+    volume_exists "$WORK" && volumes=0
+    emit waited-live "$waited"
+    emit probes-removed "$removed"
+    emit lease-released "$released"
+    emit signal-trap "$signal"
+    emit volumes-removed "$volumes"
+    if [ -f "$C1192_ROOT/refusal" ]; then
+        cat -- "$C1192_ROOT/refusal"
+    fi
+    c1192_kill_jobs
+    cleanup_private
+    exit 0
+}
+
+mode_slot_refusal() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    c1192_slot_plant "$packages" "$scratch"
+    : > "$C1192_ROOT/waits"
+    : > "$C1192_ROOT/curls"
+    printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >> "$C1192_ROOT/curls"' 'exit 0' > "$C1192_ROOT/bin/curl"
+    chmod 755 "$C1192_ROOT/bin/curl"
+    wait() {
+        local pid stat live=0
+        for pid in "$@"; do
+            case "$pid" in
+                ''|*[!0-9]*) continue ;;
+            esac
+            kill -0 "$pid" 2>/dev/null || continue
+            stat=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+            case "$stat" in
+                *Z*) ;;
+                *)
+                    printf 'WAITED_LIVE\n' >> "$C1192_ROOT/waits"
+                    live=1
+                    ;;
+            esac
+        done
+        [ "$live" = 0 ] || return 0
+        command wait "$@"
+    }
+    write_result() {
+        local diagnosis="$2" code="$3"
+        if [ "${WROTE:-0}" = 1 ]; then exit "$code"; fi
+        WROTE=1
+        printf 'DIAGNOSIS=%s\n' "$diagnosis" > "$C1192_ROOT/refusal"
+        exit "$code"
+    }
+    trap 'c1192_slot_refusal_finish' EXIT
+    C1192_SLOT_GATE=1
+    C1192_SLOT_NEVER=1
+    C589_SLOT_WAIT_SECONDS=2
+    C1192_SLOT_LEASE=11111111-1111-1111-1111-111111111111
+    ANTIPHON_BUILD_SLOTS_URL=http://127.0.0.1:9/build-slots
+    export ANTIPHON_BUILD_SLOTS_URL C1192_SLOT_GATE C1192_SLOT_NEVER C1192_SLOT_LEASE
+    c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err" || true
+    c1192_slot_refusal_finish
+}
+
 case "$mode" in
     deadline-setup) mode_deadline_setup ;;
     publication-link) mode_publication_link "$@" ;;
@@ -3892,6 +4135,9 @@ case "$mode" in
     argv) mode_argv ;;
     race) mode_race ;;
     barriers) mode_barriers ;;
+    slot-delay) mode_slot_delay ;;
+    slot-timeout) mode_slot_timeout ;;
+    slot-refusal) mode_slot_refusal ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
     npm|npm-network-create) mode_npm ;;
