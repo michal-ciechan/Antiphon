@@ -18,6 +18,7 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     public VerificationExecutionBinding Binding { get; }
     public VerificationHostIdentity Identity { get; }
     public Guid ContainerId => Identity.ContainerId;
+    public Guid LinuxNamespaceId { get; private set; }
 
     /// <summary>
     /// Test seam. When set, the first linux-namespace.json write uses this id.
@@ -44,7 +45,7 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         // A second host cannot replace a former host/job, even if its root or manifest disappeared.
         store.WriteRecord(binding, "host-identity.json", Identity);
         store.WriteRecord(binding, "linux-namespace.json",
-            new LinuxNamespaceRecord(1, ReadLinuxNamespace(), Identity.ContainerId));
+            new LinuxNamespaceRecord(1, LinuxNamespaceId = ReadLinuxNamespace(), Identity.ContainerId));
     }
 
     private static Guid ReadLinuxNamespace()

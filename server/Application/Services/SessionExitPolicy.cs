@@ -26,15 +26,21 @@ public static class SessionExitPolicy
         SessionTerminationSource source = SessionTerminationSource.Unknown,
         ProcessStopIntentDto? intent = null)
     {
-        var requested = IsRequested(source);
+        var requested = IsRequested(source) || intent is { Provenance: ProcessStopProvenance.LiveIssuer,
+            Target: ProcessStopTarget.Child or ProcessStopTarget.Custody };
         if (code is null && signal is null && intent is { Target: ProcessStopTarget.Host,
             Outcome: ProcessStopOutcome.Issued, Provenance: ProcessStopProvenance.LiveIssuer })
             return "Antiphon host stop issued; child exit unobserved (exit code unknown; signal unknown)";
         if (signal is > 0)
         {
             var death = $"killed by signal {signal} ({SignalName(signal.Value)})";
+            if (CanAttribute(intent, signal))
+            {
+                var record = intent!.Durable ? "matching stop request recorded" : "stop record not durable";
+                return $"stopped by Antiphon ({SignalName(signal.Value)}; {record}); {death}";
+            }
             if (requested) return $"Antiphon stop requested; {death}; sender unconfirmed";
-            return intent is not null
+            return intent is { Provenance: ProcessStopProvenance.RecoveredUnverified }
                 ? $"{death}; sender unconfirmed (untrusted stop record)"
                 : $"{death}; sender unknown";
         }
@@ -45,6 +51,12 @@ public static class SessionExitPolicy
         return signal == 0 ? $"{exit}; Antiphon stop requested"
             : "Antiphon stop requested; signal unknown";
     }
+
+    public static bool CanAttribute(ProcessStopIntentDto? intent, int? signal) => signal is > 0
+        && intent is { Provenance: ProcessStopProvenance.LiveIssuer, Outcome: ProcessStopOutcome.Issued,
+            Target: ProcessStopTarget.Child or ProcessStopTarget.Custody, TargetPid: > 0, TargetStartedAtUtc: not null }
+        && intent.AttemptedSignal == signal && intent.RequestId != Guid.Empty
+        && intent.IssuerBootId != Guid.Empty && intent.HostInstanceId != Guid.Empty;
 
     // POSIX signal names here describe the qualified Linux producer only.
     public static string SignalName(int signal) => signal switch

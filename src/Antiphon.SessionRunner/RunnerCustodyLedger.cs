@@ -263,7 +263,29 @@ public sealed class RunnerCustodyLedger
         if (!_recovery.HostGone(host.HostPid, host.HostStartTimeUtc))
             return new(binding, VerificationCustodyState.Unknown, "custody_host_still_present", host);
 
-        var kill = _recovery.Kill(host.ContainerId);
+        PtyTerminationObservation kill = new(false, 0);
+        if (OperatingSystem.IsLinux())
+        {
+            StopIntents ??= new(Path.Combine(Store.Root, "stop-intents"));
+            _recovery.StopSignal = (pid, signal, path, send) => {
+                bool? sent = null;
+                StopIntents.Attempt(new() {
+                    RequestId = Guid.NewGuid(), SessionId = binding.Generation.SessionId,
+                    AcceptedStartedAt = binding.Generation.AcceptedStartedAt, HostInstanceId = host.HostInstanceId,
+                    RequestedAtUtc = DateTime.UtcNow, Target = ProcessStopTarget.Helper,
+                    TargetPid = pid, AttemptedSignal = signal, Path = ProcessStopPath.Recovery,
+                }, () => sent = send());
+                return sent;
+            };
+            StopIntents.Attempt(new() {
+                RequestId = Guid.NewGuid(), SessionId = binding.Generation.SessionId,
+                AcceptedStartedAt = binding.Generation.AcceptedStartedAt, HostInstanceId = host.HostInstanceId,
+                RequestedAtUtc = DateTime.UtcNow, Target = ProcessStopTarget.Custody,
+                CustodyNamespace = ns.NamespaceId.ToString("D"), CustodyContainer = host.ContainerId.ToString("D"),
+                AttemptedSignal = 9, Path = ProcessStopPath.Recovery,
+            }, () => { kill = _recovery.Kill(host.ContainerId); return kill.Succeeded; });
+        }
+        else kill = _recovery.Kill(host.ContainerId);
         string reason;
         try
         {

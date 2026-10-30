@@ -80,6 +80,31 @@ Porta's Kill only signals the TUI; `PortaPtySession` tree-kills the pid we can s
 own that job handle. Inbox tests and fallback still need that. CARD-0221's three-state release rule
 (killed, pooled warm, or owned) is unchanged.
 
+**Linux stop evidence (CARD-1619; final ordinary/native qualification pending).**
+The PTY layer accepts a primitive low-level stop callback, keeping its dependency
+independent of the host protocol. HostSession and the runner use the same
+ProcessStopIntentStore at their authorized Linux signal boundaries, including
+launcher failure, PID cleanup, explicit custody release/recovery and helper timeout.
+The normal tree SIGKILL and Porta's pinned native SIGHUP fallback are separate
+attempts. Native PID/start checks bind the live owner; a host kill is not a child's
+wait observation. Windows spawn, kill, job and teardown order are unchanged.
+
+Issuer memory is published around the actual operation under a gate. Diagnostic
+writing starts afterward, outside it, on one bounded worker with a 100 ms offer
+deadline and one pending snapshot. No stop/observer waits for disk. WriteThrough,
+Flush(true), atomic rename and Linux directory fsync protect diagnostic durability
+only; the host manifest does not itself fsync its directory. Failure or a stuck
+fsync leaves matching live issuer evidence valid and nondurable. A timeout cannot
+cancel that kernel IO. Recovered records are always unverified, including planted
+issued/LiveIssuer claims. An existing server request supports request-only wording;
+only the actual live issuer can qualify stopped by Antiphon.
+
+Porta disposal closes the master streams and calls a failure-swallowing SIGHUP
+helper. Record that request before either operation, never promote its void return
+to issued evidence, and close on Linux before joining the blocked reader. Custody
+helper success is an issued operation only: preserve post-drain accounting, Unknown
+recovery and retained containers. No diagnostic record supplies release authority.
+
 **Opt-in custody foundation (CARD-0478, incomplete Code checkpoint).**
 `StartTrackedAsync` additionally uses a native job-list attribute and suspension
 to establish containment before resuming the root. Its accounting comes from

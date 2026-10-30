@@ -22,8 +22,10 @@ internal sealed class LinuxInstalledCustodyRecovery(IProcessLivenessProbe probe)
         }
     }
 
+    public PtyStopCallback? StopSignal { get; set; }
+
     public PtyTerminationObservation Kill(Guid containerId) =>
-        new LinuxCgroupContainment(containerId).Terminate();
+        new LinuxCgroupContainment(containerId) { StopSignal = StopSignal }.Terminate();
 
     public IReadOnlyList<int> ReadTreePids(Guid containerId) =>
         new LinuxCgroupContainment(containerId).ReadActive().Pids;
@@ -36,6 +38,7 @@ internal sealed class LinuxInstalledCustodyRecovery(IProcessLivenessProbe probe)
 /// </summary>
 public interface ILinuxCustodyRecovery
 {
+    PtyStopCallback? StopSignal { get => null; set { } }
     bool HostGone(int pid, DateTime startUtc);
 
     Guid ReadNamespace();
