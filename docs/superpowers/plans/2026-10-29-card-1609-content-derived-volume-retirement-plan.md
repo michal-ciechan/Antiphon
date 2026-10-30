@@ -18,7 +18,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 | D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Done: baseline and preservation R6 |
 | D-3 | Complete read-only offender preview, human and machine forms | Done: D-15, C11 |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Done: D-16..18, C12..14, operator choices |
-| D-5 | Bounded census retries, durable partial/resume behavior | Pending |
+| D-5 | Bounded census retries, durable partial/resume behavior | Done: D-19, J6/J8 |
 | D-6 | Retained-volume deploy refusal, C849 contract, external caches | Pending |
 | D-7 | Master/rc port order after top-up 38, definition scope | Pending |
 | D-8 | Windows skip roster and closure checkpoint | Pending |
@@ -92,6 +92,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 | Private host proof already proves ancestry | CARD-1607 emits advertised refs only after classified auth failure; the shell then uses fetched/present heads. `created >= started` has no upper age bound. | All origins move to a complete, fresh host proof; retain fail-closed error handling. |
 | Branches and worktree HEADs are the whole safety gate | Existing scanner protects loose/packed refs, reflogs, pseudorefs, linked admins, indices, object completeness and unknown Git shapes. | Preserve that closure; no reflog or tag weakening. |
 | Every target volume is audited | `c1008_audit` reads work plus registered tmp checkouts. No work volume returns `absent` before other content checks; state is not mounted. | Typed role inventory for every present target, including state and non-work content. |
+| Repeated census reads are stable | PowerShell retries Drift only; Unstable throws. Shell also permits final Drift after journaled container removal. | D-19 defines bounded v2 retry without accepting incomplete proof; keep v1 adapter explicit. |
 | Container absence proves no access | `c1008_references` additionally detects bind sources overlapping a volume mount; named-volume queries alone miss them. | Preserve all-container census and canonical alias checks. |
 | Existing receipts bind an immutable Docker ID | `c1008_volume` has Name/CreatedAt/Mountpoint/selected labels/driver/options; named local volumes have no container-style immutable Id in this implementation. | Bind daemon identity and the whole incarnation tuple; never substitute name alone. |
 | Final removal is already exact-name-only | Temp uses `compose_temp down -v`, then verifies target absence; main uses exact volume rm. | Temp retirement switches to an exact recorded allowlist, no Compose deletion. |
@@ -101,7 +102,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 
 ## Decisions
 
-D-1 through D-18 are the stated defaults for review. They make the design concrete;
+D-1 through D-19 are the stated defaults for review. They make the design concrete;
 they do not authorize relaxing a refusal. Operator questions are collected below.
 
 **D-1 — Separate retirement from deployment, starting with retired temp.** Add a
@@ -296,7 +297,7 @@ complete publication proof AND trusted Ready receipt AND no current references`.
    attached during this final check. No unknown output/error is interpreted as zero.
 5. Persist the complete delete plan and then each target's intent before executing
    `docker volume rm -- <exact-name>` without force. Immediately before every rm,
-   revalidate that incarnation, full live guards and all remaining references.
+   revalidate that incarnation, full live guards with D-19 bounded read retries, and all remaining references.
    Keep work last in the stable order state, dind, tmp, work, so a partial failure
    preferentially retains repository data. All targets must pass before the first
    effect; removal is not an atomic transaction across volumes.
@@ -496,6 +497,40 @@ Do not claim 32 unpublished objects merely because they were omitted. A new
 read-only preview/replay measures findings by reason, unique object and repository
 in one pass; the original deleted volumes cannot be rescanned.
 
+**D-19 — Retry transient census reads at effect boundaries, never effects.**
+The landed PowerShell census retries Drift three times but immediately refuses
+Unstable. The shell also contains CARD-1371's post-container-removal Drift
+allowance; v2 must NOT use that allowance to authorize a volume delete. Preserve
+v1 behavior in its adapter. For v2 both wrapper and shell share this contract:
+at preview, apply admission, after container cleanup, and immediately before each
+volume delete, collect a complete fresh two-pass project-closure census. Retry
+only classified cross-read Drift/Unstable, at most four total attempts with
+2 s, 5 s, 10 s backoffs, inside one 180 s monotonic gate budget (provisional; record
+production p95 before tuning). Every HTTP call also respects the remaining budget
+and its existing call deadline. No nested retry may reset the gate budget/count.
+Discard comparison snapshots on retry; preserve every attempt/read, cause,
+duration and backoff in the immutable phase evidence. No inventory/helper/network
+proof or volume deletion is repeated merely to retry a census.
+
+A real bound task/land, nonzero/unknown counter, malformed/incomplete pagination,
+changed identity or unsafe topology is not Unstable and is not forgiven by this
+loop. Keep the existing separately bounded bound-land wait at admission; it cannot
+turn an unsafe observation between deletions into permission to continue. After a
+successful retry recheck all current guards and remaining incarnations/references;
+if the wait aged publication evidence, refresh it under D-7 before any effect.
+Deadline or fourth Unstable/Drift refuses; no stale census is accepted as zero.
+
+Before the first volume intent/rm, refusal leaves every volume intact (any earlier
+container cleanup has its own journal/outcome). Between two deletes there is no
+cross-volume atomicity: immediately stop before the next intent/rm, persist
+PartialRefused with completed/intended targets and census evidence, and retain all
+remaining volumes. A crash during backoff has no new effect. Resume must consume
+the same durable journal and re-prove remaining roles, not restart the entire
+retirement blindly. This guarantees retries themselves cannot create unrecorded
+partial retirement; it does not promise rollback of an earlier successful delete.
+Rejected: unlimited retries, reusing the first census, or accepting unstable final
+rows merely because containers have already been removed.
+
 ## Locks, concurrency and deletion failure modes
 
 Canonical order: host rollout lock (existing FD 8) -> cache-maintenance lock
@@ -593,7 +628,7 @@ made by this Plan task.
 | S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. | C1/C2/J1 fail on intended readiness/no-deletion assertions against unchanged production at the task base; CP-1/2. |
 | S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H6 and R3-R6; D-15 full-roster output. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch of `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations. | J1-J10, R1/R2 and N2/N3. |
-| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W5. ASCII transport scripts; LF shell files. |
+| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W5. ASCII transport scripts; LF shell files. |
 | S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..11; update runbook command examples and refusal recovery. |
 
 Relocate the four old historical-image-specific methods in
@@ -717,7 +752,7 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | J3 | `Volume_incarnation_and_operation_are_bound` | Alter name/CreatedAt/daemon/inode/role/labels/op/nonce individually; each refuses. PC: compare name only. |
 | J4 | `Freshness_and_policy_version_are_rechecked` | Expired/future proof, compatible current-build change, incompatible policy, long apply after valid admission; fake clock. PC: remove upper age check. |
 | J5 | `Changed_content_and_remote_proof_refuse` | New private/public ref, dirty bytes after preview and remote snapshot loss; reprove permissible remote advancement. PC: reuse preview publication. |
-| J6 | `Every_delete_rechecks_full_live_guards` | New running/exited refs, bind aliases, busy/routed/bound land or changed retirement between deletes; exact-name-only effects. PC: reuse initial census. |
+| J6 | `Every_delete_rechecks_full_live_guards` | New running/exited refs, bind aliases, busy/routed/bound land or changed retirement between deletes; exact-name-only effects. Inject Unstable x3 then stable, x4 exhaustion before first delete, between state/dind deletes, and resume; assert 2/5/10 backoff with fake clock, no next delete and complete attempt journal. Malformed/bound-work is never retried as Unstable. PC: reuse initial census or accept last unstable rows. |
 | J7 | `Lock_order_excludes_supported_writers` | Real flock barriers: concurrent create/recycle/resume serializes; cache-only path cannot invert; timeout no mutation. PC: skip rollout lock. |
 | J8 | `Journal_intents_and_partial_resume_are_exact` | Every persistence/delete cut, no-intent absence, partial success, replacement, remaining-role dependencies and copy failure. PC: infer deleted from missing file/error. |
 | J9 | `Legacy_receipts_are_history_only` | All v1/missing/conflicting/foreign receipts preserve history but require fresh v2 proof; no schema-upgrade-to-PASS. PC: import old success as Ready. |
@@ -824,7 +859,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ## Operator questions and independent review gates
 
-The plan is written under D-1..D-18 rather than waiting for answers. These are
+The plan is written under D-1..D-19 rather than waiting for answers. These are
 explicit review choices, not permission questions during this Plan:
 
 - Confirm D-2 retains reflog and original tag-object protection despite the manual
