@@ -3175,10 +3175,26 @@ public sealed class RemoteScriptContractTests
         foreach (var main in new[] { true, false })
         {
             using var f = new C1008HostFixture(main);
-            var run = await f.Run(main ? "deploy-parent" : "retire-temp-runner", dryRun: true);
+            // An unpinned temp dry-run audits with the current image. GNU timeout would
+            // exec docker by name and miss this fixture, so the shell timeout stays.
+            var run = await f.Run(main ? "deploy-parent" : "retire-temp-runner", VolumeRetirementFixture.ShellProbe, dryRun: true);
             run.Output.ShouldNotContain("MUTATION", Case.Sensitive, "recycle-preview-readonly: preview precedes generic setup");
             f.Removed.ShouldBeEmpty("recycle-preview-readonly: no selected removal");
-            f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0]) || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+            foreach (var args in f.Trace)
+            {
+                if (args.Length == 0) continue;
+                (args[0] is "stop" or "rm" or "create" or "start").ShouldBeFalse(
+                    "recycle-preview-readonly: dry-run does not stop, remove, create, or start");
+                (args.Length >= 2 && args[0] == "volume" && args[1] == "rm").ShouldBeFalse(
+                    "recycle-preview-readonly: dry-run removes no volume");
+                if (args[0] != "run") continue;
+                args.ShouldContain("--rm");
+                var dropped = Array.IndexOf(args, "--cap-drop");
+                dropped.ShouldBeGreaterThanOrEqualTo(0, "recycle-preview-readonly: helper drops capabilities");
+                args[dropped + 1].ShouldBe("ALL");
+                args.Any(arg => arg.Contains(",readonly", StringComparison.Ordinal)).ShouldBeTrue(
+                    "recycle-preview-readonly: the content helper is a read-only run");
+            }
             run.Output.ShouldContain("auditPending=true");
             f.Statuses[main ? "server2" : "server2-temp"]!["sessions"] = 1;
             var apply = await f.Run(main ? "deploy-parent" : "retire-temp-runner");
