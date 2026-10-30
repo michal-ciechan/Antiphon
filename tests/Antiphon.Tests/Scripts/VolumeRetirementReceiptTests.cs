@@ -169,6 +169,94 @@ public sealed class VolumeRetirementReceiptTests
     private static string ReceiptPath(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server", "retirement", VolumeRetirementFixture.Operation, "receipt.json");
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Changed_content_and_remote_proof_refuse()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var results = new List<string>();
+        foreach (var vector in new[] { "published-ref", "dirty", "remote-loss", "unchanged" })
+        {
+            using var fixture = new C1008HostFixture(main: false);
+            var (bare, repo) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+            await VolumeRetirementFixture.ReadyPreview(fixture);
+            if (vector == "published-ref")
+            {
+                // The OID was already published: a new location still changes
+                // the safety inventory and needs another preview.
+                var edit = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(repo) +
+                    " branch new-location HEAD");
+                edit.Exit.ShouldBe(0, edit.Output);
+            }
+            if (vector == "dirty") await File.AppendAllTextAsync(Path.Combine(repo, "readme.txt"), "retained bytes");
+            if (vector == "remote-loss") Directory.Move(bare, bare + ".unavailable");
+            var applied = await fixture.Run("retire-temp-runner", VolumeRetirementFixture.ShellProbe);
+            var safe = vector == "unchanged"
+                ? applied.Exit == 0 && fixture.Removed.Length == 4
+                : applied.Exit != 0 && fixture.Removed.Length == 0;
+            if (!safe) results.Add(vector + " exit=" + applied.Exit + " removed=" + string.Join(",", fixture.Removed) +
+                " out=" + VolumeRetirementFixture.Truncate(applied.Output));
+        }
+        results.ShouldBeEmpty("J5 fresh content/publication and exact preview inventory; " + string.Join(" | ", results));
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Every_delete_rechecks_full_live_guards()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var errors = new List<string>();
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh");
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        fixture.Docker["fault"] = "c1609-late-temp-busy";
+        var applied = await fixture.Run("retire-temp-runner", VolumeRetirementFixture.ShellProbe);
+        if (applied.Exit == 0 || !fixture.Removed.SequenceEqual(new[] { "antiphon-runner-temp_runner-state" }))
+            errors.Add("between-delete busy guard: exit=" + applied.Exit + " removed=" + string.Join(",", fixture.Removed));
+        fixture.Trace.Any(row => row.Contains("down") && row.Contains("-v")).ShouldBeFalse(
+            "J6 a broad Compose removal cannot check the boundary between exact targets");
+        foreach (var vector in new[] { "stable-fourth", "exhausted", "over-budget", "malformed", "bound" })
+        {
+            var run = await VolumeRetirementFixture.Bash($$"""
+                set -euo pipefail
+                source {{VolumeRetirementFixture.Quote(script)}}
+                CASE_DIR={{VolumeRetirementFixture.Quote(Path.Combine(fixture.Root, "census"))}}
+                mkdir -p "$CASE_DIR"
+                : > "$CASE_DIR/c1609-census.jsonl"
+                ticks=0; reads=0; sleeps=''
+                c1609_monotonic_ms() { printf '%s\n' "$ticks"; }
+                sleep() { sleeps="$sleeps $1"; ticks=$((ticks + $1 * 1000)); }
+                c1008_tasks_collect_attempt() {
+                    reads=$((reads + 1))
+                    C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Unstable'
+                    case '{{vector}}' in
+                        stable-fourth) [ "$reads" -ne 4 ] || { C1008_TASK_ERROR=''; return 0; } ;;
+                        over-budget) ticks=$((ticks + 100000)); [ "$reads" -ne 2 ] || { C1008_TASK_ERROR=''; return 0; } ;;
+                        malformed) C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Malformed' ;;
+                        bound) C1008_TASK_ERROR=RecycleLandInFlight ;;
+                    esac
+                    return 2
+                }
+                code=0; c1609_census_v2_loop || code=$?
+                printf 'RESULT code=%s reads=%s sleeps=%s cause=%s\n' "$code" "$reads" "$sleeps" "$C1008_TASK_ERROR"
+                jq -sc '{attempts:length,final:.[-1].cause}' "$CASE_DIR/c1609-census.jsonl"
+                """);
+            run.Exit.ShouldBe(0, "J6 census harness executes; " + run.Output);
+            var expected = vector switch
+            {
+                "stable-fourth" => "code=0 reads=4 sleeps= 2 5 10",
+                "exhausted" => "code=2 reads=4 sleeps= 2 5 10",
+                "over-budget" => "code=2 reads=2 sleeps= 2",
+                _ => "code=2 reads=1 sleeps="
+            };
+            if (!run.Output.Contains(expected, StringComparison.Ordinal)) errors.Add(vector + ": " + run.Output);
+            var expectedAttempts = vector is "stable-fourth" or "exhausted" ? 4 : vector == "over-budget" ? 2 : 1;
+            if (!run.Output.Contains("\"attempts\":" + expectedAttempts, StringComparison.Ordinal))
+                errors.Add(vector + ": incomplete attempt journal: " + run.Output);
+        }
+        errors.ShouldBeEmpty("J6 effect-boundary guards, bounded retries and complete attempt journal; " + string.Join(" | ", errors));
+    }
+
     private static async Task<(int Exit, string Output)> CheckPreview(C1008HostFixture fixture, string mutation = "")
     {
         return await VolumeRetirementFixture.Bash($$"""
