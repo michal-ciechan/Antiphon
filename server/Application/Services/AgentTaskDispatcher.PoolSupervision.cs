@@ -61,6 +61,7 @@ public sealed partial class AgentTaskDispatcher
             var reason = prefix + "|turn=" + (turn is DateTime known
                 ? AsUtc(known).ToString("O", CultureInfo.InvariantCulture)
                 : "unknown");
+            var clippedReason = ColumnText.Clip(reason, AgentIncident.FailureReasonMaxLength);
             if (existing is null)
             {
                 _db.AgentIncidents.Add(new AgentIncident
@@ -71,15 +72,19 @@ public sealed partial class AgentTaskDispatcher
                     Kind = AgentIncidentKind.PooledSessionWorkingPastTtl,
                     Severity = AlertSeverity.Warning,
                     Message = ColumnText.Clip(message, AgentIncident.MessageMaxLength),
-                    FailureReason = ColumnText.Clip(reason, AgentIncident.FailureReasonMaxLength),
+                    FailureReason = clippedReason,
                     CreatedAt = now,
                 });
             }
-            else
+            else if (!string.Equals(existing.FailureReason, clippedReason, StringComparison.Ordinal))
             {
                 existing.Message = ColumnText.Clip(message, AgentIncident.MessageMaxLength);
-                existing.FailureReason = ColumnText.Clip(reason, AgentIncident.FailureReasonMaxLength);
+                existing.FailureReason = clippedReason;
                 existing.Severity = AlertSeverity.Warning;
+            }
+            else
+            {
+                continue;
             }
 
             acted++;

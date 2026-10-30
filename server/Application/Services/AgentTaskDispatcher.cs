@@ -9251,6 +9251,7 @@ public sealed partial class AgentTaskDispatcher
         // session is terminal. Created and Stopping (a kill that threw) are not.
         var unfinishedSessionIds = new HashSet<Guid>();
         var sessionStartedAt = new Dictionary<Guid, DateTime>();
+        var sessionStatus = new Dictionary<Guid, SessionStatus>();
         var sessionRunnerIds = new Dictionary<Guid, string?>();
         if (sessionIds.Count > 0)
         {
@@ -9263,6 +9264,7 @@ public sealed partial class AgentTaskDispatcher
             {
                 unfinishedSessionIds.Add(row.Id);
                 sessionStartedAt[row.Id] = row.StartedAt;
+                sessionStatus[row.Id] = row.Status;
                 sessionRunnerIds[row.Id] = row.RunnerId;
                 if (row.Status is SessionStatus.Starting or SessionStatus.Running)
                     liveSessionIds.Add(row.Id);
@@ -9292,7 +9294,7 @@ public sealed partial class AgentTaskDispatcher
 
         // CARD-1610: Working is kept however old the transcript is. A Created/Stopping session, a
         // Running session with no proved generation, or a remote inventory that has not answered
-        // cannot prove idle. A Failed task whose session is still unfinished is held, not retired.
+        // cannot prove idle. Only the current Failed owner of a proved generation is held.
         var uncertainSessionIds = new HashSet<Guid>();
         foreach (var sid in unfinishedSessionIds)
         {
@@ -9304,27 +9306,19 @@ public sealed partial class AgentTaskDispatcher
                 uncertainSessionIds.Add(sid);
         }
 
-        var failedLiveSessionIds = new HashSet<Guid>();
-        if (sessionIds.Count > 0)
-        {
-            foreach (var sid in await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.Status == AgentTaskStatus.Failed
-                    && t.AgentSessionId != null
-                    && sessionIds.Contains(t.AgentSessionId.Value))
-                .Select(t => t.AgentSessionId!.Value)
-                .Distinct()
-                .ToListAsync(ct))
-            {
-                if (unfinishedSessionIds.Contains(sid))
-                    failedLiveSessionIds.Add(sid);
-            }
-        }
+        var ownerSessions = new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>(unfinishedSessionIds.Count);
+        foreach (var sid in unfinishedSessionIds)
+            ownerSessions[sid] = (sessionStatus[sid], sessionStartedAt[sid]);
+        var failedLiveSessionIds = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, ownerSessions, ct))
+            .Keys.ToHashSet();
 
         // Protect in both the TTL and cap arms. Query the whole warm set so a protected cap
         // member is replaced by the next oldest idle member, never another worker.
         var warmSessions = parsed.Where(p => warm.Contains(p.Agent) && p.SessionId.HasValue)
             .Select(p => p.SessionId!.Value).Distinct().ToList();
         var workingSessions = await SessionMessageQueueService.IsWorkingBatchAsync(_db, warmSessions, ct);
+        // Rows with no turn boundary do not prove idle. A transcript with no rows stays eligible.
+        var missingTurnBoundary = await SessionsWithoutTurnBoundaryAsync(warmSessions, ct);
         var lastTranscript = warmSessions.Count == 0
             ? new Dictionary<Guid, DateTime>()
             : await _db.TranscriptEntries.AsNoTracking()
@@ -9335,7 +9329,8 @@ public sealed partial class AgentTaskDispatcher
         var protectedAgents = parsed.Where(p => p.SessionId is Guid sid
                 && ((liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid))
                     || uncertainSessionIds.Contains(sid)
-                    || failedLiveSessionIds.Contains(sid)))
+                    || failedLiveSessionIds.Contains(sid)
+                    || missingTurnBoundary.Contains(sid)))
             .Select(p => p.Agent).ToHashSet();
         var acted = 0;
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
@@ -9409,14 +9404,20 @@ public sealed partial class AgentTaskDispatcher
             .Distinct()
             .ToList();
         var recheckWorking = await SessionMessageQueueService.IsWorkingBatchAsync(_db, retireSessionIds, ct);
-        var recheckUnfinished = retireSessionIds.Count == 0
-            ? new HashSet<Guid>()
-            : (await _db.AgentSessions.AsNoTracking()
+        var recheckRows = new List<(Guid Id, SessionStatus Status, DateTime StartedAt, string? RunnerId)>();
+        if (retireSessionIds.Count > 0)
+        {
+            foreach (var row in await _db.AgentSessions.AsNoTracking()
                 .Where(s => retireSessionIds.Contains(s.Id)
                     && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
                         || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
                 .Select(s => new { s.Id, s.Status, s.StartedAt, s.RunnerId })
                 .ToListAsync(ct))
+            {
+                recheckRows.Add((row.Id, row.Status, row.StartedAt, row.RunnerId));
+            }
+        }
+        var recheckUnfinished = recheckRows
             .Where(s => s.Status is SessionStatus.Created or SessionStatus.Stopping
                 || s.StartedAt == default
                 || _runtime?.RemoteInventoryPending(s.RunnerId) == true
@@ -9424,37 +9425,20 @@ public sealed partial class AgentTaskDispatcher
                     && recheckWorking.GetValueOrDefault(s.Id)))
             .Select(s => s.Id)
             .ToHashSet();
-        var recheckFailed = retireSessionIds.Count == 0
-            ? new HashSet<Guid>()
-            : (await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.Status == AgentTaskStatus.Failed
-                    && t.AgentSessionId != null
-                    && retireSessionIds.Contains(t.AgentSessionId.Value))
-                .Select(t => t.AgentSessionId!.Value)
-                .ToListAsync(ct))
-            .Where(recheckUnfinished.Contains)
-            .ToHashSet();
-        // A Failed session is held even when the recheck above classified it as idle.
-        if (retireSessionIds.Count > 0)
-        {
-            foreach (var sid in await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.Status == AgentTaskStatus.Failed
-                    && t.AgentSessionId != null
-                    && retireSessionIds.Contains(t.AgentSessionId.Value))
-                .Select(t => t.AgentSessionId!.Value)
-                .ToListAsync(ct))
-            {
-                if (unfinishedSessionIds.Contains(sid) || recheckUnfinished.Contains(sid))
-                    recheckFailed.Add(sid);
-            }
-        }
+        var recheckSessions = recheckRows.ToDictionary(
+            s => s.Id,
+            s => (Status: s.Status, StartedAt: s.StartedAt));
+        var recheckFailed = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, recheckSessions, ct))
+            .Keys.ToHashSet();
+        var recheckMissingBoundary = await SessionsWithoutTurnBoundaryAsync(retireSessionIds, ct);
 
         foreach (var agent in retire)
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
             if (Guid.TryParse(agent.PersistentSessionId, out var sid)
-                && (recheckUnfinished.Contains(sid) || recheckFailed.Contains(sid) || recheckWorking.GetValueOrDefault(sid)))
+                && (recheckUnfinished.Contains(sid) || recheckFailed.Contains(sid)
+                    || recheckMissingBoundary.Contains(sid) || recheckWorking.GetValueOrDefault(sid)))
             {
                 agent.PoolIdleSince = now;
                 _logger.LogWarning(
@@ -9566,6 +9550,38 @@ public sealed partial class AgentTaskDispatcher
 
         return executions.All(e => e.ReceiptBytes is { Length: > 0 }
             && e.CustodyReason is "Exited" or "NeverStarted");
+    }
+
+    /// <summary>
+    /// Sessions that have transcript rows and no turn boundary. Empty transcripts are absent
+    /// from the result and stay eligible for TTL and cap retirement.
+    /// </summary>
+    private async Task<HashSet<Guid>> SessionsWithoutTurnBoundaryAsync(
+        IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+    {
+        var missing = new HashSet<Guid>();
+        if (sessionIds.Count == 0)
+            return missing;
+        var rows = await _db.TranscriptEntries.AsNoTracking()
+            .Where(entry => sessionIds.Contains(entry.AgentSessionId))
+            .Select(entry => new { entry.AgentSessionId, entry.Kind, entry.Text })
+            .ToListAsync(ct);
+        var seen = new HashSet<Guid>();
+        var bounded = new HashSet<Guid>();
+        foreach (var row in rows)
+        {
+            seen.Add(row.AgentSessionId);
+            if (IsTurnBoundary(row.Kind, row.Text))
+                bounded.Add(row.AgentSessionId);
+        }
+
+        foreach (var id in seen)
+        {
+            if (!bounded.Contains(id))
+                missing.Add(id);
+        }
+
+        return missing;
     }
 
     /// <summary>
