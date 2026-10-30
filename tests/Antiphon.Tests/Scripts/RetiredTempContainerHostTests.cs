@@ -551,7 +551,7 @@ public sealed class RetiredTempContainerHostTests
         run.Output.ShouldContain("C994_CUSTODY cases=5 reaped=true");
     }
 
-    // CARD-1105 V-6. Temp cleanup proves the containers' own generation, not the target roster.
+    // CARD-1609 D-9. Supported actual topology is independent of historical builds.
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Temp_cleanup_uses_previous_generation()
     {
@@ -560,8 +560,11 @@ public sealed class RetiredTempContainerHostTests
         {
             accepted.Docker["containers"]!.AsArray().Add(accepted.Container('7', Project, "session-runner", false, previousGeneration: true));
             accepted.Docker["containers"]!.AsArray().Add(accepted.Container('8', Project, "state-init", false, previousGeneration: true));
+            File.WriteAllText(Path.Combine(accepted.Root, "temp.env"),
+                "RUNNER_GROK_STORE_DIR=" + accepted.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+            accepted.Docker["images"] = new JsonObject();
             var run = await Cleanup(accepted);
-            run.Exit.ShouldBe(0, "c1105-temp-generation: " + run.Output);
+            run.Exit.ShouldBe(0, "c1609: published content and supported topology do not require an old SHA/image; " + run.Output);
             var mounts = Receipt(accepted)["candidates"]!.AsArray().Single(candidate =>
                 candidate!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")!
                 ["Topology"]!["mounts"]!.AsArray();
@@ -573,9 +576,10 @@ public sealed class RetiredTempContainerHostTests
         refused.Docker["containers"]!.AsArray().Add(refused.Container('8', Project, "state-init", false, previousGeneration: true));
         File.WriteAllText(Path.Combine(refused.Root, "temp.env"),
             "RUNNER_GROK_STORE_DIR=" + refused.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+        refused.Docker["containers"]![0]!["Mounts"]![0]!["Destination"] = "/unknown-topology";
         var mismatch = await Cleanup(refused);
-        mismatch.Exit.ShouldBe(2, "c1105-temp-generation: a different stack SHA refuses; " + mismatch.Output);
-        mismatch.Output.ShouldContain("RecycleGenerationMismatch");
+        mismatch.Exit.ShouldBe(2, "c1609: unknown actual topology still refuses; " + mismatch.Output);
+        mismatch.Output.ShouldContain("RecycleComposeMismatch");
         NoMutation(refused, "c1105-temp-generation");
     }
 }
