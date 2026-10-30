@@ -187,6 +187,12 @@ function preserve(f) {
     scope.image,'bash','-ceu',f.kept.map((n,i)=>'cat /v'+i+'/sentinel; printf "\\n"').join('; '));
   assert.deepEqual(out.split('\n'),f.kept,'main/all three caches/sentinel bytes');
 }
+function targetBytes(f) {
+  return d('run','--rm','--network','none','--user','1654:1654','--label',label+'='+scope.prefix,
+    '--mount','type=volume,source='+f.targets[3]+',target=/work,readonly,volume-nocopy',
+    '--mount','type=volume,source='+f.targets[2]+',target=/tmp,readonly,volume-nocopy',scope.image,
+    'bash','-ceu','find /work /tmp -xdev -type f -print0 | sort -z | xargs -0 -r sha256sum');
+}
 async function n1(f) {
   proof(f);
   const probe=[
@@ -202,14 +208,20 @@ async function n1(f) {
     '[ -e /audit-scratch/n1-release ]'
   ].join('\n');
   const original='orig_program="$(declare -f c1008_git_program)"; eval "$(printf "%s" "$orig_program" | sed "1s/c1008_git_program/native_original/")"\nc1008_git_program() { printf "%s\\n" '+q(probe)+'; native_original; }\n';
+  const beforeBytes=targetBytes(f);
   const r=await shell(f,original+'c1008_audit_readonly','kernel');
   assert.equal(r.code,0,'N1 kernel namespace and real host proof: '+r.stdout+r.stderr);
   assert(r.stdout.includes('repositories=1'),'real scanner reached the real published repository');
+  assert.equal(targetBytes(f),beforeBytes,'N1 audited bytes unchanged');
   const facts=fs.readdirSync(scope.root+'/inspects').map(n=>JSON.parse(fs.readFileSync(scope.root+'/inspects/'+n)))
     .filter(c=>c.Config.Labels['io.antiphon.preview-audit']?.startsWith(f.op+':'));
   assert(facts.length>0,'captured actual owned helper inspect');
   const fact=facts[0];
   assert.equal(fact.HostConfig.NetworkMode,'none');assert.equal(fact.HostConfig.ReadonlyRootfs,true);
+  assert.equal(fact.Config.User,'1654:1654');assert.equal(fact.HostConfig.Privileged,false);
+  assert.equal(fact.HostConfig.Init,true);assert(fact.HostConfig.CapDrop.includes('ALL'));
+  assert(fact.HostConfig.SecurityOpt.some(s=>s.startsWith('no-new-privileges')));
+  assert(!fact.Mounts.some(m=>m.Destination==='/var/run/docker.sock'||m.Destination==='/state'));
   for(const target of ['/work','/tmp']){
     const m=fact.Mounts.find(m=>m.Destination===target);assert(m && !m.RW,'kernel read-only '+target);
     const declaration=fact.HostConfig.Mounts.find(m=>m.Target===target);assert.equal(declaration.VolumeOptions.NoCopy,true);
@@ -222,7 +234,22 @@ async function n1(f) {
     'git','-C','/work/repos/outer','worktree','add','--detach','/tmp/linked','HEAD');
   const linked=await shell(f,'c1008_audit_readonly','linked');
   assert.equal(linked.code,0,'native /tmp linked worktree: '+linked.stdout+linked.stderr);
-  assert(linked.stdout.includes('/tmp/linked'),'linked checkout actually visited');
+  const linkedBytes=targetBytes(f);
+  const change=(script)=>d('run','--rm','--network','none','--user','1654:1654','--label',label+'='+scope.prefix,
+    '--mount','type=volume,source='+f.targets[3]+',target=/work,volume-nocopy',
+    '--mount','type=volume,source='+f.targets[2]+',target=/tmp,volume-nocopy',scope.image,'bash','-ceu',script);
+  change('printf dirty >> /tmp/linked/file');
+  const dirty=await shell(f,'c1008_audit_readonly','linked-dirty');
+  assert.notEqual(dirty.code,0,'dirty absolute /tmp checkout must refuse');
+  assert(dirty.stdout.includes('RecycleWorktreeDirty'),'N1 linked refusal is content, not a fixture error');
+  change('printf "published A\\n" > /tmp/linked/file');
+  assert.equal(targetBytes(f),linkedBytes,'linked negative changes no bytes during the audit');
+  change('printf "#!/bin/sh\\nprintf N1_HOOK_EXECUTED\\n" > /work/repos/outer/.git/hooks/post-checkout; chmod 0755 /work/repos/outer/.git/hooks/post-checkout');
+  const hookBytes=targetBytes(f);
+  const hook=await shell(f,'c1008_audit_readonly','hook');
+  assert.notEqual(hook.code,0,'N1 repository hook refuses');
+  assert(hook.stdout.includes('reason=hook'));assert(!hook.stdout.includes('N1_HOOK_EXECUTED'));
+  assert.equal(targetBytes(f),hookBytes,'hook refusal leaves every byte intact');
   const foreign=d('run','-d','--network','none','--label',label+'='+scope.prefix,'--name',f.stem+'-foreign-helper',scope.image,'sleep','infinity');f.ids.push(foreign);
   const timed=await shell(f,'c1008_git_program() { printf "exec sleep 30\\n"; }\nC1008_AUDIT_TIMEOUT_SECONDS=1\nif c1008_audit_readonly; then exit 71; fi','cancel');
   assert.equal(timed.code,0,'owned helper timeout refuses and joins: '+timed.stdout+timed.stderr);

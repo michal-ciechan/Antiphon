@@ -72,6 +72,50 @@ const classifyAudit = (mounts, envs) => {
   const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp' && e !== 'C1008_TMP_MOUNT=/tmp' && !proofEnvs.includes(e) && !inventoryEnv.includes(e));
   return {mounts: auditMounts, extra, proofSource};
 };
+// Explicit host-side adapter for local, owned bare origins in offline fixtures.
+// Read the real advertised graph once per origin/phase. No PASS verdict is minted
+// from volume objects, and this adapter is never shipped into production scripts.
+function fixtureHostProof(work, tmp, operation) {
+  const directory = fs.mkdtempSync(path.join(root, "host-proof-phase-"));
+  const started = Math.floor(Date.now() / 1000);
+  const gitExe = cp.execFileSync("which", ["git"], {encoding:"utf8"}).trim();
+  const graphEnv = {...process.env, GIT_CONFIG_SYSTEM:"/dev/null", GIT_CONFIG_GLOBAL:"/dev/null", GIT_TERMINAL_PROMPT:"0", GIT_NO_LAZY_FETCH:"1"};
+  const git = a => cp.execFileSync(gitExe, a, {encoding:"utf8",env:graphEnv,timeout:10000,stdio:["ignore","pipe","pipe"]}).trim();
+  const origins = new Map();
+  const visit = (directoryPath, relative) => {
+    let entries; try { entries=fs.readdirSync(directoryPath,{withFileTypes:true}); } catch { return; }
+    const dot=entries.find(e=>e.name===".git" && e.isDirectory());
+    const bare=entries.some(e=>e.name==="HEAD" && e.isFile()) && entries.some(e=>e.name==="objects" && e.isDirectory());
+    if (dot || bare) {
+      if (!/^[A-Za-z0-9._/-]+$/.test(relative) || relative.includes("..")) return;
+      try {
+        const dir=dot?path.join(directoryPath,".git"):directoryPath;
+        const origin=git(["--git-dir="+dir,"config","--local","--get","remote.origin.url"]);
+        if (!origin.startsWith(root+"/") || fs.realpathSync(origin)!==origin || !fs.statSync(origin).isDirectory()) return;
+        let graph=origins.get(origin);
+        if (!graph) {
+          const advertisement=git(["ls-remote","--heads","--tags",origin]);
+          if (!advertisement || !advertisement.split("\n").every(l=>/^[0-9a-f]{40}\trefs\/(heads|tags)\/[^\s]+$/.test(l))) return;
+          const scratch=path.join(directory,"graph-"+crypto.randomBytes(8).toString("hex"));
+          git(["init","-q","--bare",scratch]);
+          git(["--git-dir="+scratch,"fetch","-q","--no-write-fetch-head","--no-tags",origin,"+refs/heads/*:refs/heads/*","+refs/tags/*:refs/tags/*"]);
+          if (git(["ls-remote","--heads","--tags",origin])!==advertisement) return;
+          const bundle=scratch+".bundle"; git(["--git-dir="+scratch,"bundle","create",bundle,"--all"]);
+          graph={advertisement,bundle};origins.set(origin,graph);
+        }
+        const originHash=crypto.createHash("sha256").update(origin).digest("hex");
+        const name=crypto.createHash("sha256").update(relative+"\n"+origin).digest("hex");
+        fs.writeFileSync(path.join(directory,name),"c1008-host-proof 1\noperation "+operation+"\norigin "+originHash+"\nrepo "+relative+"\ncreated "+started+"\n"+graph.advertisement+"\n",{mode:0o644});
+        fs.copyFileSync(graph.bundle,path.join(directory,name+".bundle"));
+      } catch {}
+      return;
+    }
+    for (const e of entries) if(e.isDirectory()) visit(path.join(directoryPath,e.name),relative?relative+"/"+e.name:e.name);
+  };
+  visit(work,"");
+  if(tmp)visit(tmp,"/tmp");
+  return {directory,started};
+}
 // CARD-1105. Run the pty-host probe against one fixture shape. tmpAssets===false
 // stays a probe exit 1 and is not an absent directory.
 const ptyProbe = (shape, script) => {
@@ -171,7 +215,7 @@ const previewRun = () => {
   const classified = classifyAudit(mounts, envs);
   if (!classified) reason('preview mount set refused');
   const auditMounts = classified.mounts;
-  const proofSource = classified.proofSource;
+  let proofSource = classified.proofSource;
   const tmpVol = vol.replace(/_work$/, '_runner-tmp');
   const mountEnv = envs.filter(e => e === (v2 ? 'C1008_TMP_MOUNT=/tmp' : 'C1008_TMP_MOUNT=/runner-tmp'));
   const extra = classified.extra;
@@ -185,6 +229,11 @@ const previewRun = () => {
   } else if (auditMounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
   if (typeof program !== 'string' || program.length === 0) reason('preview program missing');
+  if (v2 && !proofSource && !envs.includes("C1008_AUDIT_MODE=inventory")) {
+    const host=fixtureHostProof(state.volumes[vol].Mountpoint,tmpMount,previewNameOk[1]);
+    proofSource=host.directory;
+    envs.push("C1008_HOST_PROOF=/c1008-host-proof","C1008_OPERATION="+previewNameOk[1],"C1008_OPERATION_STARTED="+host.started);
+  }
   if (fs.existsSync(path.join(root, 'preview-hang'))) {
     const id = crypto.randomBytes(32).toString('hex');
     if (cidPath) fs.writeFileSync(cidPath, id + '\n');
