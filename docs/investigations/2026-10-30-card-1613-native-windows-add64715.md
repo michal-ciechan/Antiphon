@@ -55,3 +55,18 @@ Automatic approval review rejected recursive deletion of the failed owned
 build output with only `blocked by policy`. The output was instead preserved,
 without deleting data, at
 `C:\Temp\antiphon-add64715-evidence\failed-windows-output`.
+
+## Later native witness at f389a3d61e57d11905b39de6d0cdf4faf46d3150
+
+CP-9/10/11 passed 4/1/2 with a validated clean-source receipt. All 126 policy
+cases matched baseline outcomes and reasons. The standalone audit approved,
+but C1483_S4_RealRepositoryApproves then exceeded the 12-second copy limit and
+reported cleanup errors. C1483_S5_CheckRequiresEvaluationRecord and the linked
+skippable-input guard passed (selection: 2 passed, 1 failed).
+
+The Windows Markdown scan adds backslash paths to the ordinal set already
+containing Git's slash paths: 1,853 tracked docs became 3,577 entries, including
+1,724 duplicate copies. Normalizing only the platform directory separator to
+Git's slash form restores 1,853 entries. Native receipts and the failure TRX
+remain in C:\Temp\antiphon-add64715-evidence. This paragraph records the red
+witness before that repair; it is not a claim that the last failure passed.
