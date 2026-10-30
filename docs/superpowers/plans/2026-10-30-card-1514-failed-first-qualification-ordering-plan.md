@@ -4,6 +4,18 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
+## Round-2 amendment status
+
+Task `c93b388f`, base `f75a84a04c8ea1a41699069c1486f57bb76ff062`. Review `1254ac0d` confirms the core design and replay. This amendment is in progress; not yet ready for Code. Close each item with code-grounded decisions and exact witnesses:
+
+- Review D-1: name and classify every order-dependent field; CP-4/7 assert each policy.
+- Review D-2: suite-qualified heartbeat costs, with collision RED.
+- Review D-3: bind historical membership limits; Full reports unresolved, Partial refuses.
+- Review D-4: retain lazy per-suite preparation with absent/empty history; preparation-failure witnesses.
+- Review D-5: non-identity cross-suite dispatch precondition and no-op mutation.
+- Review D-6: complete consumer roster, explicit Partial state-root isolation and missing-scope refusal.
+- Advisories A-1..4: S2 waits for integrated M1/M2, renames follow mode policy, operator digest check, carry plan onto rc.
+
 ## Ground truth
 
 Source references are to the assigned base unless a different immutable commit is named. These are inspected implementation facts, not qualifications of the live candidate.
