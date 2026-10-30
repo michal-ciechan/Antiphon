@@ -3,7 +3,7 @@
 Task `dfd3f49c`, branch `feat/card-task-dfd3f49c`, inherited tip
 `126b5e4e5124a1bbf69f7ef5dbac00cb73d1a5ac`.
 
-Investigation in progress. No acceptance or regression classification yet.
+Initial protocol recorded before execution. Completed classification and verification follow below.
 
 The original Debug's pre-fix base is
 `80b3a59c40cd18dea905829e428d35844cb89b8d` (parent of `b65503281`).
@@ -278,3 +278,69 @@ base's exact health method is being rerun in its separate frozen scratch worktre
 for inherited attribution; this subsequent repair/build only changes the main
 worktree. The 284/285 outcome is retained, never relabelled green. A fresh complete
 five-repeat selection remains required after this repair.
+
+## Completed portable verification and attribution
+
+The unchanged original base's health method executed 30: passed 27, failed 3.
+One failure reproduces the SAME PostgreSQL 23505 sequence collision, one is
+`ShouldAssertException: busy` (a late real TurnEnd overwrote the marker), and one
+is `ShouldAssertException: idle` / ArmUnconfirmed from the original pre-fix arm
+path. The duplicate-sequence first line is the DbUpdateException quoted above.
+Console/TRX and child evidence are in `base-health30`. This confirms inherited
+fixture attribution for the new full-selection failure; it was not blamed on the
+arm repair or classified only from a passing base sample. The base tree stayed
+frozen while only the main worktree received the fixture repair/build.
+
+Final fixture repair commit: `c100106683ee98fa683d170675f351b7837b2a77`.
+The fresh five-repeat selection at that commit executed 285, passed 285, failed 0,
+skipped 0. Per class: Maintenance 145 (29 x5, including RV514), PTY integration 45
+(9 x5), Recovery 85 (17 x5), Dialog delivery 10 (2 x5). The original three-prompt
+method, the held-TurnEnd witness, and RV514 each executed exactly five and all
+passed. Native TUnit repetitions share one host/database setup, with normal
+per-case hooks and fresh PTY children; these are not fresh-host trials.
+The earlier 284/285 run is preserved separately, not replaced by this result.
+Evidence: `portable-final5/results.trx`, console, source/run summary, timing,
+child JSONL, `portable-summary.json`, and `healthfix-build.log`.
+
+Final-control pack at `1c0eb2f13b58dae675c38ba7732b2d107e38ff0c`:
+
+| Control | Baseline passed/total | Mutated passed/failed/total | Restored passed/total |
+|---|---:|---:|---:|
+| a | 5/5 | 4/1/5 | 5/5 |
+| b | 1/1 | 0/1/1 | 1/1 |
+| c | 5/5 | 4/1/5 | 5/5 |
+
+Control (a) fails only `unknown` on repeated Enter requests; (b) fails on
+ArmUnconfirmed versus ArmedObserved; (c) fails only `redraw` with an attributed
+TUnit TimeoutException after 30.0832440 s, not a watchdog kill or hang. All three
+mutations compile. Source and both original server/test DLL/PDB pairs restored
+byte-for-byte after each cycle; restored witnesses passed 11/11. The subsequent
+health-fixture-only change touches neither production nor the maintenance-control
+methods/files; these control outcomes remain bound to their actual tested SHA.
+The final full selection recompiled clean source after all controls.
+
+Build/land definition files changed: NONE. No -Update ran. Real land graph -Check
+at the first repair passed both evaluations and the canary, approved digest
+7BDABBA075B620C10A47B50CE1277A932DDD801E9314A932C4EAC03885441A99, 68 inputs.
+No later definition input changed. Check log: `land-graph.log`. All build/test
+supervisors used granted slots, TEMP=/tmp, UseAppHost=false and isolated outputs;
+exact invocations and phase/source identities are retained. The extra base-health
+selection and final rerun are justified by the newly observed 284/285 failure.
+No tests/assertions were removed, no numeric timeout increased, no retry added.
+No product source, ambiguous-write refresh or raw input fallback changed.
+
+Native Windows remains OWED: original C514 class once after qualification
+`d47848cc` releases its lock, then the original failing case ALONE20 and LOAD10
+with recorded load and MaintenanceEvidence for every failure. Exact commands are
+in the earlier arm-unconfirmed investigation. No Windows tests, live qualification,
+C:\Antiphon, tags, publication, force push, rebase, merge or activation was touched.
+The original Windows arm diagnosis remains separately unqualified by Linux.
+
+Git checks: RC 335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f merge-tree at the first
+repair was clean (tree 773624d91155b9e50e8fe4ea29ead069cd2fba8a). Master
+31f990317038635c2f1e652b6a950905fcf07a31 has the same ten conflict paths at the
+inherited base and repaired branch; none was resolved. The pre-report evidence-diff
+check at 1c0eb2f13b58dae675c38ba7732b2d107e38ff0c passed: 4 commits, 0 entries,
+0 violations. Final report-commit checks and remote tip appear in the caller report.
+
+Cleanup: removed 224 owned alternate-output directories by recorded literal path; none remains. Every child/run was awaited. Generated logs/TRX/JSON remain ignored under /work/worktrees/task-dfd3f49c/.antiphon/c514-three-dfd3f49c. The detached base's temporary Linux adaptation was restored before scratch worktree removal. These are scoped direct-run results, not whole-assembly or native qualification and not SHA-validated checkpoint receipts.
