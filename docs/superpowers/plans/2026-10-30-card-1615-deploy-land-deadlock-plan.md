@@ -224,7 +224,8 @@ The two proposed classes do not yet exist and have no source-name collision. At
 completed in 6.90 seconds (5 compiler warnings, 0 errors; slot wait 0 seconds).
 The importer accepted 3 rows with one build and floors 7/5/6, exit 0; the generated
 YAML stays ignored at `.antiphon/c1615-plan-scratch/import.yaml`. The final Serial
-annotation is re-imported before handoff. These are document checks. Required product red,
+annotation was re-imported successfully (3 rows, exit 0, slot wait 0 seconds), with
+the final YAML at `.antiphon/c1615-plan-scratch/import-final.yaml`. These are document checks. Required product red,
 green, timing and native Windows execution remain for TestDesign/Code; none is claimed.
 No new input-waiting session is introduced. If an operational task waits for input,
 parking remains disabled and there is no automatic release deadline; caller resolution
@@ -257,3 +258,14 @@ CARD-1353 census behavior), review the resulting trees and run their affected ch
 Master publication is not activation. Product hosts deploy only a reviewed current rc
 SHA; verify canonical HEAD, `/api/version`, runner `buildVersion` and staged smoke/Both.
 No tags, target pushes, deploy, rc rebase or desktop-run credit are part of this task.
+
+Publication preflight: fetched master `98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`.
+`git merge-tree --write-tree origin/master HEAD` returned exit 1; repeating it
+against the assigned base returned the same four conflicts: `.antiphon/task-af2b78c8.md`,
+`docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`,
+`server/Application/Services/CapacityRecoveryService.cs`, and
+`tests/Antiphon.Tests/Application/CapacityLockOrderTests.cs`. These are inherited
+rc/master divergence. The task delta is this one new plan file, with clean
+`git diff --check`; it is reviewable, but the whole rc-derived branch is not
+declared directly landable on master. Caller-owned publication must preserve
+that distinction; no merge, rebase or conflict edits were performed here.
