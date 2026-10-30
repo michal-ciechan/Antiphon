@@ -471,3 +471,58 @@ There is no correction producer after D-5, so a correction-specific witness is
 removed rather than pretended covered by C1161. Retain the existing C1161 Failed
 **parent** receipt method (three cases) and C1259 accepted-attempt replacement
 fence (two cases) as independent regression checkpoints.
+
+## D-10 detail: pooled Working detection without reclamation
+
+`RetireIdleWarmAgentsAsync` currently protects Working sessions only when their
+last transcript is newer than the TTL cutoff, then logs "reads mid-turn but has
+been silent" and calls KillPooledSessionAsync. Both TTL and cap eviction must
+exclude **all Working and Unknown** sessions, regardless of transcript age.
+Recheck under the existing release gate immediately before any idle retirement;
+remote automatic release continues to require the runner's conditional idle
+proof. No force fallback and no new timer exception. Preserve pool agent,
+worktree and occupancy until authoritative exit or authorized release.
+
+Add `PooledSessionWorkingPastTtl` attention backed by a durable AgentIncident
+for a pooled, same-generation Working session with **no open task owner** whose
+current turn age exceeds the configured pool TTL. If the turn start is unknown,
+start a first-observed-Working episode and age that observation; never backdate
+from a stale pool label. Record first/last observation, last useful activity,
+identity, age and custody guidance. Repeated ticks/restarts do not create another
+incident for the same episode. No fresh runner sample means Unknown, not cleared.
+Use the existing bounded pool sweep and seat sampler; no per-request runner fanout.
+A task-bound Failed session uses FailedTaskSessionHeld, suppressing the duplicate
+pool warning. A genuinely idle warm session retains existing TTL/cap retirement.
+Resolution requires proved idle/end or a new open owner; retain historical audit.
+
+Replace, do not delete, the contradictory existing test
+`AgentTaskPoolTests.the_janitor_retires_a_working_reading_session_silent_for_a_full_ttl`
+with `C1610_Janitor_retains_working_after_full_ttl`, which fails on the old kill.
+The new visibility tests cover TTL and cap pressure, taskless incident creation,
+restart dedup, Unknown retention, failed-session dedup, idle recovery and normal
+idle retirement. Assert no stopper call, no row/worktree deletion and retained
+capacity for Working/Unknown. A stall is reported for a decision, never killed.
+
+## Revised slices and concrete file ownership
+
+| Slice | Product and documentation files | Test files / ordinary checkpoints |
+|---|---|---|
+| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and existing client type mirror; AttentionKind/AgentIncidentKind; delegate status rendering in its owning scripts/lib partial; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards |
+| S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; BlockedContextBuilder.cs; AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
+| S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs and hosted recovery; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
+| S4 declared Deploy budget and docs | scripts/delegate.ps1 and actual scripts/lib delegate parameter/body/status partials; scripts/deploy-server2.ps1; DTO/create/reply binding; docs/docker-stack.md, docs/ops-http.md, docs/testing-and-build.md reference only if its instruction changes | Scripts/TaskCeilingScriptTests.cs (8); TestLaneCategoryGuardTests, TestClassificationGuardTests, ProcessSpawnLimitTests; slow-tests-allowlist.txt and strict roster |
+
+Paths without a directory in this table are under server/Application/Services
+unless their explicit layer is named above. Code resolves existing script partials
+before editing; no duplicate parameter parser. Add new types only at their owning
+layer. Domain remains infrastructure-free. No build-slot broker, runner release
+protocol, raw killing API or client control is added. Existing generic attention
+presentation consumes the new facts; preserve nullable DTO compatibility.
+
+Commit failing behavioral witnesses before fixes. S1 is a small independently
+reviewable safety slice. S2-S4 are one **test/build group**, committed as meaningful
+source slices before the green run; their mutually dependent hold/report behavior
+must not be activated piecemeal. Share one isolated build for all rows at each
+unchanged committed group, never across red versus green source. No source edits
+while a run is in flight. TestDesign owns the detailed guard/positive-control
+inventory before Code; this Plan's ordinary roster below is not executed evidence.
