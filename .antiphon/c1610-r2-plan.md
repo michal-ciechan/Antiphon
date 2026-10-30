@@ -4,7 +4,7 @@ Scope: the commissioned seven priority rows (CP-15/16/22/25/38/90/91), terminal 
 
 ## Performance budget
 
-One shared isolated build; all rows serial, including timing-sensitive rows. Reuse the existing per-assembly shared PostgreSQL/template-schema fixture and per-test isolated schemas. Preserve checkpoint/TRX per-test and phase timing under .antiphon/checkpoints; unknown external phases remain unknown. Prior review executed these 14 rows (335 cases); this repair adds six receipt cases (341 total). Estimates and the importer's 15-minute timeout floor are inherited/provisional CARD-1404 exceptions; bound collection to this run, do not broaden. Queue admission is separate (45-minute gate bound); total charged execution allowance is 30 minutes. No selection is expected to exceed 30 minutes.
+One shared isolated build; all rows serial, including timing-sensitive rows. Reuse the existing per-assembly shared PostgreSQL/template-schema fixture and per-test isolated schemas. Preserve checkpoint/TRX per-test and phase timing under .antiphon/checkpoints; unknown external phases remain unknown. Prior review executed these 14 rows (335 cases); this repair adds seven receipt cases (342 total). Estimates and the importer's 15-minute timeout floor are inherited/provisional CARD-1404 exceptions; bound collection to this run, do not broaden. Queue admission is separate (45-minute gate bound); total charged execution allowance is 30 minutes. No selection is expected to exceed 30 minutes.
 
 ### Checkpoints
 
@@ -12,7 +12,7 @@ One shared isolated build; all rows serial, including timing-sensitive rows. Reu
 |---|---|---|---|---|---|---|---:|---:|
 | CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-r2-final/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
 | CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 49 passed; no failed/skipped | 49 | 3 |
-| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 33 passed; no failed/skipped | 33 | 5 |
+| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 34 passed; no failed/skipped | 34 | 5 |
 | CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 22 passed; no failed/skipped | 22 | 2 |
 | CP-22 | S2-S4 | CP-15 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | full affected class | 36 passed; no failed/skipped | 36 | 4 |
 | CP-25 | S2-S4 | CP-15 | server-integration-TaskDeadlinePolicyTests | `/*/*/TaskDeadlinePolicyTests/*` | full affected class | 39 passed; no failed/skipped | 39 | 3 |
