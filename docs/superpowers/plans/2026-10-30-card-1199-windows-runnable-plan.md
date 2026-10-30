@@ -83,7 +83,7 @@ Aliases below are exact repository files, not replacement implementations:
 - O: `tests/Antiphon.Tests/Checkpoints/CheckpointOutputConfinementTests.cs`;
   graph builders, `SeedBuild`, `Finish`, `AssertOwnedAndUnchanged`, both runners.
 - P1: `tools/Antiphon.Checkpoints/BuildConfinement.cs` `Prepare`, `Settle`,
-  `Classify`, `Stamp`, `CaptureTracked` and hardened Git; script equivalents in
+  `Classify`, `Stamp`, `Capture` and hardened Git; script equivalents in
   `scripts/run-checkpoint.ps1`: `Get-CheckpointTrackedSnapshot`,
   `Get-CheckpointContentStamp`, `Complete-CheckpointBaseline`.
 - P2: same C# file `Rewrite`, `Walk`/real MSBuild evaluation and
@@ -125,7 +125,8 @@ synthetic NotExecuted in any of the 35 prevents completeness, and ensure 35
 Passed contributes complete coverage for that isolated roster. This is a census
 contract, not native execution evidence. Do not mark unrelated R-2 rows passed.
 
-Tests: CP-1..CP-12 and CP-36. Implementation/review preparation 40 minutes;
+Tests: CP-1..CP-12 and CP-36. Include the exact skip-census updates in
+`scripts/lib/checkpoint-usage.ps1` described below. Implementation/review preparation 40 minutes;
 ordinary two-lane execution/build allowance 60 minutes; reporting 10 minutes.
 The native existing-output-symlink setup remains Directory.CreateSymbolicLink.
 Collision fixtures' unreachable POSIX sentinel commands are replaced in S-C;
@@ -160,7 +161,8 @@ Prepare/Settle and real graph/build execution. Production's separate hardened
 Git readers remain unchanged. Test helper use is opt-in in S/T/O only; consumers
 of their shared WaitAsync must retain caller cancellation and bounded drains.
 
-Commit the regression BEFORE the helper repair. Its exact method is
+Commit the regression and a compiling pass-through helper BEFORE the helper
+repair; a missing helper/build error is not the red witness. Its exact method is
 `CheckpointFixtureGitEnvironmentTests.fixture_commit_matches_hardened_status_under_hostile_config`.
 Use owned child configuration containing autocrlf=true and explicit CRLF file
 bytes, stage through the existing unisolated fixture route, invalidate the Git
@@ -174,10 +176,11 @@ config still effective, parent environment unchanged, two parallel child roots
 independent, and no eager process launch outside the strict ProcessSpawnLimit.
 
 Tests: CP-37 red first (one deliberate failing regression, no fixture/build
-error); then CP-13..CP-20, CP-37..CP-39 green. Re-run CP-8..CP-12 once here
-because their shared T setup changed, and CP-1 (staged Git grandchild) once.
+error); then CP-13..CP-20, CP-38/CP-48/CP-50 green and CP-39 on Linux.
+CP-47 requalifies the five S-A T methods and S staged-untracked once because
+their shared setup changed.
 The O sites can be wired now while their five gates remain until S-B2.
-Authoring 55m + two test builds/lanes and red witness 80m + reporting 15m.
+Authoring 40m + red/green builds and two-lane checks 95m + reporting 15m.
 If measured runs exceed that bound, hand off committed remaining CP IDs;
 do not silently replace real-build checks with mocks.
 
@@ -203,7 +206,7 @@ The seven C1 rows below are untracked-descendant, ignored-descendant,
 modified-tracked, deleted-tracked, regular-user-move, deleted-untracked and
 changed-untracked. Port the collision sentinel actions in the same change so an
 incorrectly launched build can actually mutate its sentinel on Windows and be
-caught. Tests: CP-26..CP-32 plus CP-4..CP-7 (four collision guards affected by
+caught. Tests: CP-26..CP-32 plus CP-49 (four collision guards affected by
 that arrangement change). Authoring 45m + evidence 65m + reporting 15m.
 
 ### S-C2: staged shape replacement and file symlink (125-minute ceiling)
@@ -241,7 +244,7 @@ Rebuild once for final acceptance if the embedded manifest changed. No second
 Update after verification. A later build-definition change invalidates this
 finalization and needs a fresh commission, not another hidden refresh.
 
-Tests: CP-41..CP-45 once per indicated lane, one shared build per lane on the
+Tests: CP-41..CP-46 once per indicated lane, one shared build per lane on the
 final source. Confirm exactly 35 target cases pass with zero skipped/failed;
 report CP-44's pre-existing Windows sibling separately. Audit is a named,
 necessary authoring action outside checkpoints because it writes source.
@@ -352,21 +355,24 @@ TRX against exact class/method identities and argument expansion, not only Min.
 The new shape names preserve the original sixteen shape strings one-for-one.
 
 After a leased bootstrap of the checkpoint tool to an owned alternate output,
-the exact command for **every CP-n** in both tables is this expansion, with n
-replaced by its integer (the plan path is literal):
+import this plan and apply only the deadline overlay described in Performance
+budget to `.antiphon/c1199-checkpoints.yaml`. The exact execution command for
+**every CP-n** in both tables is this expansion, with n replaced by its integer:
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-checkpoint -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199-plan-tool/ -- run --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --rows CP-n --serial
+dotnet tools/Antiphon.Checkpoints/bin-c1199-plan-tool/Antiphon.Checkpoints.dll run .antiphon/c1199-checkpoints.yaml --rows CP-n --serial
 ```
 
 For each committed slice, replace the one ID with the comma-separated row set
 below and run once. The runner shares its build within that invocation. Do not
 run each row as a separate build. Use `wait --run <printed-id> --max-wait 50s`
 until terminal when the foreground observer returns 75; never leave a child
-running at task settlement. The outer wrapper gates the CLI; checkpoint-managed
-builds/drivers acquire their own slots. Use the deployment's documented
-checkpoint CLI bootstrap practice if nesting slot leases is disallowed; do not
-bypass the driver slot or count CLI bootstrap as the test-assembly build.
+running at task settlement. This prebuilt DLL invocation is orchestration only and cannot implicitly
+build. The executor acquires its own build/driver slots; do not hold an outer
+slot around `run` while it waits for an inner slot. Bootstrap/import itself goes
+through `scripts/build-slot.ps1`, and is not the test-assembly build. Running the
+exported manifest is necessary here because the plan-table schema cannot carry
+the explicit per-row deadlines; its selection must be byte-equivalent to import.
 
 | Slice | Windows rows | Linux rows | Expected target results (support results separate) |
 |---|---|---|---|
@@ -439,3 +445,203 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
 | CP-50 | S-B1 | `CP-13` | both-git-regression-green | `/*/*/CheckpointFixtureGitEnvironmentTests/fixture_commit_matches_hardened_status_under_hostile_config` | V-2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+
+## Performance budget
+
+Apply [testing/build performance standards](../../testing-and-build.md#performance-standards)
+and [R1-R9](../../test-performance-standards.md). This Plan runs only an importer
+build/validation, not the product tests. The Code selections above are the whole
+ordinary scope; no full assembly, Unit sweep, E2E or provider canary is authorized
+as an extra confidence run. All three classes are Category=Unit despite their
+real subprocess/build cost; keep that category in this change and record an
+explicit `checkpoint/git-build` group. Future project/category extraction is
+separate CARD-1545/CARD-1546 work, not a prerequisite or an excuse to lose coverage.
+
+### Measurement provenance and Full cost
+
+Measurements come from investigation source
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`, native Windows 10 x64/NTFS,
+SDK 10.0.300, PowerShell 7.6.9, Git 2.50.1.windows.1, TUnit 1.44.0. Three
+uncommitted gate-only changes were present in that binary. Load is unknown;
+slot wait was zero except the last control's 45 seconds. There is **one sample
+per row/path, no measured p95**, and the phases were not instrumented. Do not
+merge failed first-run durations with passing controls into an invented p95.
+
+| Selection | Observed native execution | Planned whole-minute execution | Build separate |
+|---|---|---:|---|
+| S-A twelve passes | Sum of per-case samples 711.93s (11m52s); not a contiguous run | 18 across exact-method rows | 10m per source group/lane, based on 9m56s native build |
+| S-B1 eight corrected T cases | Passing control 797.40s (13m17s) | 17; plus 11 for six shared-setup regression cases | Same group build; red needs its own build |
+| S-B2 five corrected O cases | Passing control 448.44s (7m28s); outer wall 504.14s includes 45s admission | 9, plus existing sibling 1 on Windows | 10m |
+| S-C1 seven ports | First failed arrangements sum 381.65s; no successful port sample | 8, plus 3 collision checks | 10m |
+| S-C2 three ports | Failed arrangements sum 151.92s; no successful port sample | 6 | 10m |
+| S-F all 35, class batches | No complete clean-source passing run exists | Shape 14 + T 24 + O 10 = 48; Windows sibling 1 separate | 10m, included in CP-41's 24 |
+| Initial investigation aggregate | 35m43.591s includes the 56.273s Windows sibling and early failures | Historical cost retained, not a success estimate | Excludes 9m56.13s build |
+
+Windows Full already discovers/requires these 35 but currently spends almost no
+body time on them. Forecast its incremental successful body cost at **about
+40-50 minutes**, provisional: 11m52s of unchanged passes + 20m46s of corrected
+configuration controls + roughly 9-14 minutes for native ports and launch
+remainder. The final checkpoint budget uses 48 minutes. The existing O Windows
+sibling is already in Full, so do not count it again. The new helper's three
+support tests add a separately measured small cost (budget 3 minutes).
+
+Use `new Full wall = latest comparable Full wall - old 35-skip wall + measured
+35-success wall + new support-test wall + measured build/packing delta`.
+There is no current comparable complete Full baseline in this evidence; do not
+assert a new fleet-wide total or reuse CARD-0856's historical 270 minutes as one.
+The existing Full assembly build is already paid; fixture builds inside the
+35 bodies are incremental. Record successful distributions before changing
+`test-execution-policy.json` cost rows; updating those is measured-cost work,
+not an exclusion change or authority to rewrite historical results.
+
+### Aggregate-run Debug and parallel work
+
+**Caller must commission/reuse a Debug task before paying another aggregate
+selection over 30 minutes**, including S-F and any expected two-lane batch above
+that threshold. Attach the investigation's exact run IDs, SHA, TRX durations,
+35m44s aggregate, missing phases and this forecast; reference CARD-1199 with
+CARD-1404/CARD-1514/CARD-1314. This delegate cannot dispatch that task. Debug must
+measure successful per-case fixture creation, Git calls, graph evaluation,
+restore/build, TUnit startup, receipt validation, teardown and unassigned
+remainder, with build/admission separated. Preserve the original 23 failures.
+Split or repair only after attributing cost; a retry is not the Debug outcome.
+Source authoring and bounded slice verification need not wait for a speed-up
+implementation, but no over-30-minute run is credited without its Debug record.
+
+The separately commissioned manifest-publication plan must publish these 35
+planned identities and their actual terminal outcomes/timings from the run's
+own evidence. This work emits fresh TRX, exact selectors, logs and phase JSONL
+now; it does not depend on that publisher landing. Until it is available, retain
+the local planned/executed mapping beside each checkpoint receipt. Do not claim
+publisher completion or Full credit from this plan. Relevant existing work:
+[Windows timing repair](2026-10-23-card-1514-windows-timing-repair-plan.md),
+[phase instrumentation](2026-10-23-card-1514-test-timing-instrumentation-plan.md),
+[slow-test speedups](2026-10-23-card-1514-slow-test-speedups-plan.md), and
+[cost-balanced groups](2026-10-21-card-1404-cost-balanced-launch-groups-plan.md).
+Their improvements can reduce the same measured cost; they cannot remove a
+required identity, change assertions, combine receipts across SHAs, or turn a
+runtime skip into Passed. The caller's separate publisher plan has not been
+identified by artifact in this brief; link its exact reviewed artifact at
+commissioning rather than inventing one.
+
+### Phases, sharing and observability
+
+Use the existing TestTiming API in changed fixture helpers/call sites. Once per
+assembly/run: recorder setup, cached SDK/NuGet assets and any immutable fixture
+text. Each case owns its Git repository/home and exact cleanup inventory. No
+AppHost, HTTP server, Docker, database container, migration or database seed is
+needed by this selection; report those phases as not applicable. Do not start
+such infrastructure to test configuration isolation.
+
+Fresh repositories/build outputs are the subject of these tests: graph variants,
+pre-existing user output, clean fresh-checkout behavior, and tool versus script
+must each start with the prescribed independent baseline. O seeds each graph
+once and reuses its captured bytes for the two entries, as it already does.
+Keep `fresh_checkout_run_executes_a_test`'s absent-obj witness. Do not clone
+absolute project.assets.json paths across repositories or share mutable Git
+indexes. Any later template optimization must retain those fresh-start checks.
+
+For a case with execution estimate M, provisional planning allocation is setup
+0.2M, graph/restore/build/body 0.6M, assertions/receipt processing 0.1M and teardown
+0.1M; these are budgets, NOT measurements. Record each real boundary and the
+remainder instead of reporting those ratios as observed. Use FixtureSetup,
+ProcessSpawn/ProcessWait, Filesystem, OurCode and FixtureTeardown spans. Distinguish
+seed builds, tool builds, script builds and nested TUnit runs; record external
+Git/MSBuild/pwsh calls individually, never secrets or full environment payloads.
+Retain existing 30s Git, 120s seed-build and cancellation-bound wrapper limits;
+record their elapsed values. New helper diagnostic calls have a 30s whole-operation
+limit (provisional inherited Git bound); new helper tests at most 120s. No new
+retry, longer external-call timeout or process-wide limiter is introduced.
+
+Record under ignored `.antiphon/checkpoints/<run-id>/` plus
+`.antiphon/c1199-timing/<lane>/<source>/<attempt>/`. Set
+ANTIPHON_TEST_PHASE_ROOT to an absolute owned path and the existing RUN_ID,
+GROUP_ID, ATTEMPT and SUITE metadata for the test child; keep discovery/bootstrap
+outside its case duration. Preserve per-test p50/p95/max when enough comparable
+samples exist, per-row counts, host/platform/load, phase last-progress and
+wall/build/admission totals. Missing spans remain unknown/null and unassigned
+wall is remainder, not zero. Capture the actual project-reference closure from
+Antiphon.Tests (including Checkpoints and HostCleanup and staged helpers) with
+the run; downstream selection is these real consumers, not a claimed whole-app
+coverage result.
+
+### Explicit deadlines, sampling and exceptions
+
+Do not run with the importer's automatic 15-minute/3x defaults: import currently
+sets CP-41/CP-42 to **72 minutes** and warns. Produce an ignored YAML from this
+plan, then change ONLY the documented timeout fields (and timing environment
+metadata); verify all 50 IDs, After, build IDs, filters, counts and estimates
+are identical to import. This is the executable checkpoint manifest for Code,
+not a policy/schema change. Keep the unedited import alongside it.
+
+| Rows | Explicit timeoutMinutes | Basis / limitation |
+|---|---:|---|
+| CP-1..CP-35 | Twice the per-row execution Minutes in the per-row table (2, 4 or 6) | Rounded 2x provisional successful/sample-based planning bound; excludes shared build |
+| CP-36 | 4 | 2m support batch, provisional |
+| CP-37 | 2 | Tests-first one-case red body; its 10m build is separate |
+| CP-38 | 4 | Two new helper tests, provisional |
+| CP-39,CP-40 | 2 | Existing small control selections, provisional |
+| CP-41 | 28 | 2x 14m shape batch, provisional |
+| CP-42 | 48 | 2x 24m complete T batch, provisional; Debug required |
+| CP-43 | 20 | 2x 10m confinement batch, provisional |
+| CP-44 | 2 | Historical Windows sibling 56.273s, n=1 |
+| CP-45 | 4 | 2m guard batch, provisional |
+| CP-46 | 6 | 3m audit estimate; retain evaluator's own unchanged bounds |
+| CP-47 | 22 | 2x 11m six-case regression batch, provisional |
+| CP-48,CP-50 | 2 | One small case each, provisional |
+| CP-49 | 6 | 2x 3m collision batch, provisional |
+
+Set `timeouts.rowMinutes: 20` for the shared-build floor (approximately 2x the
+9m56s build sample) and `build.slotWaitMinutes: 10` for each acquisition; never
+retry an admission expiry unleased. The current scheduler couples each build's
+deadline to its largest dependent row: S-B1 can become 22m and S-F becomes 48m.
+That is a disclosed **CARD-1199/CARD-1404 provisional build-deadline exception**,
+not a measured 48m build need or permission to let an owned idle build drift.
+Debug measures it; removing that scheduler coupling is separate work. Set the
+execution allowance per invocation to twice its selected EstimatedMinutes sum,
+and hard-wall allowance to that plus 10 minutes. Report exit 4 as not run,
+execution expiry as failure, and joined cancellation if the 150-minute task
+ceiling is reached. Admission time remains visible and consumes task wall time.
+
+Existing T/O method watchdogs are finite (60/180/300/420s); S was 600s. Give the
+new shape wrappers at most the smaller of their old 600s bound and their row
+budget above. Do not widen any existing test timeout from a single sample.
+Retained longer T/O limits are an explicit temporary CARD-1199/CARD-1404 exception
+until successful case history exists, not compliant measured p95. Collect the
+next **three naturally required native passes** (Code, final acceptance, later
+Review/Full as applicable), without repeated-green runs solely for timing, and
+review the sufficient-history threshold in the existing timeout-audit tool.
+Then set each test/row deadline to rounded approximately 2x comparable measured
+p95, with any remaining exception named. A 40s operation should have no more
+than approximately two minutes. Failed arrangement samples cannot justify a
+larger successful deadline; Linux and Windows distributions stay separate.
+
+S-A budget 110m; S-B1 150m (40 authoring, 95 red/green and both-lane checks,
+15 reporting); S-B2 100m; S-C1/C2 125m each; S-F 150m. These are bounded task
+ceilings, not a claim of measured implementation time. Reuse exact same-source
+receipts when permitted, never relabel them. Caller may commission the second
+OS verification as its own task against the immutable pushed slice when a lane
+cannot be reached from the authoring host. No running delegate is sent a remote
+snapshot or silently moved; no source mutation while its verification runs.
+
+## R-2 decision retained
+
+The investigation established a directory symbolic-link arrangement on one
+Windows host. It did not run a junction variant, establish privilege-free file
+symlinks, or qualify hostile same-account/process-custody races. The native
+implementations exist, but these are different acceptance obligations. Also
+retain the old plan's Windows file-sharing qualification disclosure; these
+35 do not close it.
+
+The operator's remaining decision is to commission explicit native junction
+and custody qualification (recommended), or accept a narrowly written release
+limitation through the normal card/release-policy decision process. In the
+latter case the operator must specify which requirement is deferred and its
+owner; this plan grants no exclusion or Full waiver. Candidate junction seams
+are `OutputCleanupTests.parent_symlink_does_not_delete_a_tracked_stamp` and
+`CheckpointOwnedOutputTests.changed_inventory_is_refused`'s link argument.
+Keep their exact target/index survival and native reparse evidence separate
+from S's existing directory-symbolic-link case. No R-2 decision is required to
+implement the authorized 35-row portability work; default is pending/required.
+
+No session-waits-for-input behavior is added or changed by this plan.
