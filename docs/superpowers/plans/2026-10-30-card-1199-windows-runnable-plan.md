@@ -332,3 +332,110 @@ explicitly labeled script-only or local helper. All 35 stay required in policy.
 | CP-33 / S-C2 | `S.shape_directory_on_file` | P1 shape stamp/index/unstaged descendants. Require USER-SECRET staged and USER-UNSTAGED unstaged, both exact bytes, named tamper and invalid receipt; missing target execution fails. | Port: File.Delete tracked.txt; Directory.Move user-dir; git add -A tracked.txt then git restore --staged tracked.txt/unstaged.txt. | 2 / 20.61 |
 | CP-34 / S-C2 | `S.shape_file_on_directory` | P1 directory-to-file shape/index/Settle. Require USER-FILE at dir and dir/a.txt tamper; add staged replacement/old-entry absence assertions; no-op/copy arrangement fails. | Port: remove only owned fixture dir recursively, File.Move payload.dat to dir, git add -A dir. | 2 / 65.48 |
 | CP-35 / S-C2 | `S.shape_symlink_on_file` | P1 StampLink/Settle; P4 native file link. Require real file LinkTarget ending link-target.txt, LINK-BYTES target unchanged, tamper and invalid receipt; copy/hardlink/no-op fails. | Port: delete tracked regular file, File.CreateSymbolicLink tracked.txt -> link-target.txt, git add tracked.txt. Verify link/index without assuming Git symlink mode on unqualified hosts. | 2 / 65.83 |
+
+### Checkpoint commands and lanes
+
+Read GET `/api/runner-defaults` and GET `/api/session-runners` immediately before
+commissioning. Both returned 200 in this Plan session: the default resolves to
+Linux; an eligible native Windows lane and an eligible Linux lane were present.
+No fleet URL or host is pinned here. Omit `-Runner`; use `-Platform Windows` for
+native evidence and `-Platform Linux` for the Linux parity portion. OS-independent
+plan review/import omits `-Platform` (or Any to clear a prior pin). Availability
+and capacity are observations, not reservations.
+
+In the table, `both-` means the identical row is required separately on Windows
+and Linux; `windows-` and `linux-` are native-only. Keep separate source-bound
+receipts; Linux cannot earn Windows release credit. Do not execute the entire
+multi-slice/multi-lane table indiscriminately. Suffixes in every OR operand are
+parenthesized and starred; exact one-method rows need no wildcard. Check fresh
+TRX against exact class/method identities and argument expansion, not only Min.
+The new shape names preserve the original sixteen shape strings one-for-one.
+
+After a leased bootstrap of the checkpoint tool to an owned alternate output,
+the exact command for **every CP-n** in both tables is this expansion, with n
+replaced by its integer (the plan path is literal):
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-checkpoint -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199-plan-tool/ -- run --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --rows CP-n --serial
+```
+
+For each committed slice, replace the one ID with the comma-separated row set
+below and run once. The runner shares its build within that invocation. Do not
+run each row as a separate build. Use `wait --run <printed-id> --max-wait 50s`
+until terminal when the foreground observer returns 75; never leave a child
+running at task settlement. The outer wrapper gates the CLI; checkpoint-managed
+builds/drivers acquire their own slots. Use the deployment's documented
+checkpoint CLI bootstrap practice if nesting slot leases is disallowed; do not
+bypass the driver slot or count CLI bootstrap as the test-assembly build.
+
+| Slice | Windows rows | Linux rows | Expected target results (support results separate) |
+|---|---|---|---|
+| S-A | CP-1..CP-12,CP-36 | same | 12 per lane |
+| S-B1 red | CP-37 | CP-37 | 1 expected configuration assertion failure per lane, separately committed before fix |
+| S-B1 green | CP-13..CP-20,CP-38,CP-47,CP-48,CP-50 | same plus CP-39 | 8 new plus 6 explicitly requalified per lane |
+| S-B2 | CP-21..CP-25,CP-40 | CP-21..CP-25 | 5 plus 1 existing Windows sibling |
+| S-C1 | CP-26..CP-32,CP-49 | same | 7 new plus 4 collision requalifications |
+| S-C2 | CP-33..CP-35 | same | 3 per lane |
+| S-F | CP-41..CP-46 | CP-41..CP-43,CP-45,CP-46 | 35 per lane, plus 1 existing Windows sibling |
+
+Ranges above are descriptive: pass explicit comma-separated IDs to `--rows`.
+Build outputs are slice-owned, fresh, inventoried and removed after joined
+execution; never change an output to reuse a DLL across source commits. Red
+CP-37 owns its own output and must be cleaned by its producer before final
+source qualification. Slot refusal is not test execution. All rows require
+zero skipped/failed except the explicitly expected tests-first CP-37 red.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S-A | `tests/Antiphon.Tests -> bin-c1199a/` | both-s-a-1 | `/*/*/CheckpointShapeConflictTests/shape_staged_untracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 11 | true |
+| CP-2 | S-A | `CP-1` | both-s-a-2 | `/*/*/CheckpointShapeConflictTests/shape_clean_build` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-3 | S-A | `CP-1` | both-s-a-3 | `/*/*/CheckpointShapeConflictTests/missing_receipt_is_not_negative_success` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-4 | S-A | `CP-1` | both-s-a-4 | `/*/*/CheckpointShapeConflictTests/shape_existing_stamp` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-5 | S-A | `CP-1` | both-s-a-5 | `/*/*/CheckpointShapeConflictTests/shape_compiler_collision` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-6 | S-A | `CP-1` | both-s-a-6 | `/*/*/CheckpointShapeConflictTests/shape_existing_output_directory` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-7 | S-A | `CP-1` | both-s-a-7 | `/*/*/CheckpointShapeConflictTests/shape_existing_output_symlink` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-8 | S-A | `CP-1` | both-s-a-8 | `/*/*/CheckpointTrackedBaselineTests/intermediate_output_path_tampering_is_reported` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-9 | S-A | `CP-1` | both-s-a-9 | `/*/*/CheckpointTrackedBaselineTests/generated_target_file_tampering_is_reported` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-10 | S-A | `CP-1` | both-s-a-10 | `/*/*/CheckpointTrackedBaselineTests/dirty_tracked_tree_is_refused_and_unmodified` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-11 | S-A | `CP-1` | both-s-a-11 | `/*/*/CheckpointTrackedBaselineTests/tracked_snapshot_contains_committed_files` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-12 | S-A | `CP-1` | both-s-a-12 | `/*/*/CheckpointTrackedBaselineTests/index_added_file_is_kept_and_indexed` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-13 | S-B1 | `tests/Antiphon.Tests -> bin-c1199b1/` | both-s-b1-13 | `/*/*/CheckpointTrackedBaselineTests/local_output_property_tampering_is_reported` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
+| CP-14 | S-B1 | `CP-13` | both-s-b1-14 | `/*/*/CheckpointTrackedBaselineTests/imported_props_reference_tampering_is_reported` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-15 | S-B1 | `CP-13` | both-s-b1-15 | `/*/*/CheckpointTrackedBaselineTests/transitive_reference_tampering_is_reported` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-16 | S-B1 | `CP-13` | both-s-b1-16 | `/*/*/CheckpointTrackedBaselineTests/clean_untracked_output_build_exits_zero` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-17 | S-B1 | `CP-13` | both-s-b1-17 | `/*/*/CheckpointTrackedBaselineTests/fresh_checkout_run_executes_a_test` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-18 | S-B1 | `CP-13` | both-s-b1-18 | `/*/*/CheckpointTrackedBaselineTests/staged_untracked_file_is_kept_and_indexed` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-19 | S-B1 | `CP-13` | both-s-b1-19 | `/*/*/CheckpointTrackedBaselineTests/staged_ignored_file_is_kept_and_indexed` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-20 | S-B1 | `CP-13` | both-s-b1-20 | `/*/*/CheckpointTrackedBaselineTests/passing_script_requires_writable_source_receipt` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-21 | S-B2 | `tests/Antiphon.Tests -> bin-c1199b2/` | both-s-b2-21 | `/*/*/CheckpointOutputConfinementTests/imported_props_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
+| CP-22 | S-B2 | `CP-21` | both-s-b2-22 | `/*/*/CheckpointOutputConfinementTests/directory_build_props_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-23 | S-B2 | `CP-21` | both-s-b2-23 | `/*/*/CheckpointOutputConfinementTests/conditional_import_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-24 | S-B2 | `CP-21` | both-s-b2-24 | `/*/*/CheckpointOutputConfinementTests/transitive_import_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-25 | S-B2 | `CP-21` | both-s-b2-25 | `/*/*/CheckpointOutputConfinementTests/unevaluable_import_is_refused_before_the_build` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-26 | S-C1 | `tests/Antiphon.Tests -> bin-c1199c1/` | both-s-c1-26 | `/*/*/CheckpointShapeConflictTests/shape_untracked_descendant` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 11 | true |
+| CP-27 | S-C1 | `CP-26` | both-s-c1-27 | `/*/*/CheckpointShapeConflictTests/shape_ignored_descendant` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-28 | S-C1 | `CP-26` | both-s-c1-28 | `/*/*/CheckpointShapeConflictTests/shape_modified_tracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-29 | S-C1 | `CP-26` | both-s-c1-29 | `/*/*/CheckpointShapeConflictTests/shape_deleted_tracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-30 | S-C1 | `CP-26` | both-s-c1-30 | `/*/*/CheckpointShapeConflictTests/shape_regular_user_move` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-31 | S-C1 | `CP-26` | both-s-c1-31 | `/*/*/CheckpointShapeConflictTests/shape_deleted_untracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-32 | S-C1 | `CP-26` | both-s-c1-32 | `/*/*/CheckpointShapeConflictTests/shape_changed_untracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-33 | S-C2 | `tests/Antiphon.Tests -> bin-c1199c2/` | both-s-c2-33 | `/*/*/CheckpointShapeConflictTests/shape_directory_on_file` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
+| CP-34 | S-C2 | `CP-33` | both-s-c2-34 | `/*/*/CheckpointShapeConflictTests/shape_file_on_directory` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-35 | S-C2 | `CP-33` | both-s-c2-35 | `/*/*/CheckpointShapeConflictTests/shape_symlink_on_file` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-36 | S-A | `CP-1` | both-required-roster | `/*/*/(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)/(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusions*)\|(namespace_census_matches_compiled_checkpoint_cases*)` | V-3 R-1 | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-37 | S-B1-red | `tests/Antiphon.Tests -> bin-c1199bred/` | both-git-red | `/*/*/CheckpointFixtureGitEnvironmentTests/fixture_commit_matches_hardened_status_under_hostile_config` | V-2 red | exactly 1 executed; expected named dirty-baseline assertion failure | 1 | 11 | true |
+| CP-38 | S-B1 | `CP-13` | both-git-child-boundary | `/*/*/CheckpointFixtureGitEnvironmentTests/(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)` | V-2 R-1 | exactly 2 passed; 0 failed/skipped | 2 | 2 | true |
+| CP-39 | S-B1 | `CP-13` | linux-routing-cancellation | `/*/*/CheckpointFixtureRoutingTests/C1233_TokenCallers` | V-2 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 1 | true |
+| CP-40 | S-B2 | `CP-21` | windows-existing-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-41 | S-F | `tests/Antiphon.Tests -> bin-c1199final/` | both-final-shapes | `/*/*/CheckpointShapeConflictTests/*` | V-1 V-4 R-1 R-4 | exactly 17 passed; 0 failed/skipped | 17 | 24 | true |
+| CP-42 | S-F | `CP-41` | both-final-baseline | `/*/*/CheckpointTrackedBaselineTests/*` | V-1 V-2 R-1 R-4 | exactly 13 passed; 0 failed/skipped | 13 | 24 | true |
+| CP-43 | S-F | `CP-41` | both-final-confinement | `/*/*/CheckpointOutputConfinementTests/(imported_props_build_preserves_the_tracked_dependency*)\|(directory_build_props_build_preserves_the_tracked_dependency*)\|(conditional_import_build_preserves_the_tracked_dependency*)\|(transitive_import_build_preserves_the_tracked_dependency*)\|(unevaluable_import_is_refused_before_the_build*)` | V-1 V-2 R-1 R-4 | exactly 5 passed; 0 failed/skipped | 5 | 10 | true |
+| CP-44 | S-F | `CP-41` | windows-final-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusions*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
+| CP-46 | S-F | n/a | both-final-audit | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tests/Antiphon.Tests/bin-c1199final/land-graph-audit/Antiphon.LandGraphAudit.dll` | R-3 | audit exit 0; exact committed graph and unchanged pins | n/a | 3 | true |
+| CP-47 | S-B1 | `CP-13` | both-shared-git-regressions | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/(shape_staged_untracked*)\|(intermediate_output_path_tampering_is_reported*)\|(generated_target_file_tampering_is_reported*)\|(dirty_tracked_tree_is_refused_and_unmodified*)\|(tracked_snapshot_contains_committed_files*)\|(index_added_file_is_kept_and_indexed*)` | V-1 V-2 R-1 | exactly 6 passed; 0 failed/skipped | 6 | 11 | true |
+| CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
+| CP-50 | S-B1 | `CP-13` | both-git-regression-green | `/*/*/CheckpointFixtureGitEnvironmentTests/fixture_commit_matches_hardened_status_under_hostile_config` | V-2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
