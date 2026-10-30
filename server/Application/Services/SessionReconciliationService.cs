@@ -197,9 +197,12 @@ public sealed class SessionReconciliationService
         var liveSessions = await liveSessionsQuery.ToListAsync(ct);
         var exitedById = runnerSessions.Where(s => s.Status == "Exited").ToDictionary(s => s.SessionId);
         var exitedIds = exitedById.Keys.ToArray();
-        var terminal = await _db.AgentSessions.Where(s => exitedIds.Contains(s.Id)
-            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
-            && s.RunnerId == ownerRunnerId).ToListAsync(ct);
+        var terminalQuery = _db.AgentSessions.Where(s => exitedIds.Contains(s.Id)
+            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed));
+        terminalQuery = ownerRunnerId is null
+            ? terminalQuery.Where(s => s.RunnerId == null)
+            : terminalQuery.Where(s => s.RunnerId == ownerRunnerId);
+        var terminal = await terminalQuery.ToListAsync(ct);
         foreach (var row in terminal)
         {
             var snapshot = exitedById.GetValueOrDefault(row.Id);

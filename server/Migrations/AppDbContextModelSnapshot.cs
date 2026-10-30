@@ -247,6 +247,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("ExitCode")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ExitSignal")
+                        .HasColumnType("integer");
+
                     b.Property<string>("FailureReason")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
@@ -696,6 +699,13 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int?>("ExitCode")
                         .HasColumnType("integer");
+
+                    b.Property<int?>("ExitSignal")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ExitStopIntentJson")
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
 
                     b.Property<string>("FailureReason")
                         .HasMaxLength(2000)
@@ -7592,6 +7602,9 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("character varying(4000)");
 
                     b.Property<int?>("ExitCode")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ExitSignal")
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("LastEventAt")

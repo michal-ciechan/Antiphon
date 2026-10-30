@@ -107,6 +107,22 @@ public class Card1619ExitPersistenceTests
         row.FailureReason.ShouldBe("retained request detail");
         var storedIntent = SessionExitEvidence.ReadIntent((string?)Property(row, "ExitStopIntentJson"));
         storedIntent.ShouldBe(evt.ExitStopIntent);
+        await using (var recovered = await Store.CreateAsync(native.Id, native.Generation, terminal: true))
+        {
+            await using (var scan = recovered.Db())
+            {
+                var runner = new SessionReconciliationServiceTests.FakeRunnerClient { Sessions = [
+                    new RunnerContractMapper().Map(native.Snapshot) with { ExitStopIntent = evt.ExitStopIntent }
+                ] };
+                await SessionReconciliationServiceTests.BuildService(scan, runner, new MockEventBus(), launchResumeEnabled: false).ScanAsync(default);
+            }
+            await using var verify = recovered.Db();
+            var terminal = await verify.AgentSessions.SingleAsync();
+            Signal(terminal).ShouldBe(9);
+            terminal.Status.ShouldBe(SessionStatus.Stopped);
+            terminal.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
+            SessionExitEvidence.ReadIntent((string?)Property(terminal, "ExitStopIntentJson")).ShouldBe(storedIntent);
+        }
         var manifestPath = Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(Path.Combine(native.Root, "pty-hosts", "manifests"), native.Id);
         var manifest = Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath)!;
         (manifest with { ExitStopIntent = Intent(native) with { Provenance = ProcessStopProvenance.LiveIssuer } }).SaveAtomic(manifestPath);
