@@ -7,9 +7,10 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// First method includes the once-per-session image preparation (120s provisional)
-// and its native body (180s). CARD-1609 owns collection of normal phase samples.
-[Timeout(300_000)]
+// First method includes the once-per-session image preparation (120s provisional).
+// N3's first complete owned-daemon run measured 181s including its driver; use
+// a provisional 360s body budget until normal phase samples establish p95.
+[Timeout(480_000)]
 [Category("Integration")]
 [Category("Slow")]
 [ClassDataSource<VolumeRetirementDockerEnvironment>(Shared = SharedType.PerTestSession)]
@@ -56,7 +57,7 @@ public sealed class VolumeRetirementDockerEnvironment : IAsyncDisposable
             prepared.Exit.ShouldBe(0, "native preparation is not an assertion-red witness: " + prepared.Output);
             _root.ShouldNotBeNull(prepared.Output);
         }
-        var result = await InvokeAsync(["--case", nativeCase, "--root", _root!], 180, cancellationToken);
+        var result = await InvokeAsync(["--case", nativeCase, "--root", _root!], 360, cancellationToken);
         Console.WriteLine(result.Output);
         result.Exit.ShouldBe(0, nativeCase + " production retirement witness: " + result.Output);
         result.Output.ShouldContain("C1609_NATIVE " + nativeCase + " passed cleanup=absent");

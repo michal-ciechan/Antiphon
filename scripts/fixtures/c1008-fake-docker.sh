@@ -92,6 +92,7 @@ function fixtureHostProof(work, tmp, operation) {
         const dir=dot?path.join(directoryPath,".git"):directoryPath;
         const origin=git(["--git-dir="+dir,"config","--local","--get","remote.origin.url"]);
         if (!origin.startsWith(root+"/") || fs.realpathSync(origin)!==origin || !fs.statSync(origin).isDirectory()) return;
+        if (Object.values(state.volumes).some(v => origin === v.Mountpoint || origin.startsWith(v.Mountpoint+"/"))) return;
         let graph=origins.get(origin);
         if (!graph) {
           const advertisement=git(["ls-remote","--heads","--tags",origin]);
