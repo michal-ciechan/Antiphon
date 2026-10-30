@@ -6114,6 +6114,13 @@ c1008_compose_source() {
 # Previous generation is the deployed stack SHA when it agrees with registration and the image.
 c1008_previous_generation() {
     local project="$1" owned="$2" envfile sha status_sha tag image_id container_image owned_count image_count
+    if [ "$project" = "$TEMP_PROJECT" ]; then
+        # Retirement never reconstructs a build. Keep this legacy reader harmless
+        # for temp callers; actual topology and content provide its admission.
+        C1008_PREVIOUS_SHA=''
+        printf '%s\n' '{"statusBuildVersion":null,"imageTag":null,"imageId":null}'
+        return 0
+    fi
     owned_count="$(printf '%s' "$owned" | jq -e 'if type!="array" then error("owned") else
         [.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or
           .Config.Labels["com.docker.compose.service"]=="state-init")] | length end')" \
@@ -6242,9 +6249,47 @@ c1008_previous_model() {
     printf '%s' "$model" | jq -Sc . || c1008_refuse RecycleGenerationUnknown
 }
 
-# Service topology is authorized by the shipped Compose contract, not inspect labels.
+# CARD-1609 D-9. A shipped, versioned topology catalog, independent of source
+# history. Inspect chooses only between the two complete supported rosters;
+# c1008_owned_mounts still validates every source/type/destination/RW bit.
+c1609_temp_topology_model() {
+    local owned="${1:-[]}" token=false
+    token="$(printf '%s' "$owned" | jq -r '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") |
+        .Mounts[] | select(.Destination=="/run/antiphon/github-token")] | length>0')" || return 2
+    jq -ncS --arg project "$TEMP_PROJECT" --argjson owned "$owned" --argjson token "$token" \
+        --arg claude "$CLAUDE_OAUTH_TOKEN_PATH" --arg git "$GIT_IDENTITY_PATH" --arg codex "$CODEX_HOME_PATH" \
+        --arg github "$GITHUB_TOKEN_DIR_PATH" --arg grok "${RUNNER_GROK_STORE_DIR:-}" \
+        --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" '
+      def volume($role;$target;$copy): {kind:"volume",role:$role,source:(
+          if $role|startswith("runner-") and ($role!="runner-state" and $role!="runner-tmp")
+          then "antiphon-runner-cache-"+($role|ltrimstr("runner-")) else $project+"_"+$role end),target:$target,rw:true,nocopy:$copy};
+      def bind($source;$target;$rw;$file): {kind:"bind",source:$source,target:$target,rw:$rw,file:$file};
+      {volumes:(reduce ["work","runner-state","runner-tmp","dind-data","runner-nuget-packages","runner-nuget-scratch","runner-npm-content"][] as $r
+          ({}; .[$r]={name:(if $r|startswith("runner-") and ($r!="runner-state" and $r!="runner-tmp")
+              then "antiphon-runner-cache-"+($r|ltrimstr("runner-")) else $project+"_"+$r end)})),
+       c994Topology:{version:1,services:(if ($owned|length)==0 then {} else
+         {"state-init":[volume("work";"/work";false),volume("runner-state";"/runner-state";false),bind($codex;"/codex-home";true;false)],
+          "session-runner":([volume("work";"/work";false),volume("runner-state";"/state";false),
+            volume("dind-data";"/var/lib/docker";false),volume("runner-tmp";"/tmp";false),
+            volume("runner-nuget-packages";"/home/app/.nuget/packages";true),
+            volume("runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch";true),
+            volume("runner-npm-content";"/home/app/.npm/_cacache";true),
+            bind($claude;"/run/antiphon/claude-oauth-token";false;true),
+            bind($git;"/run/antiphon/gitconfig";false;true),bind($codex;"/state/codex";true;false),bind($grok;"/state/grok";true;false),
+            {kind:"secret",source:$key,target:"/run/secrets/antiphon-deploy-key",rw:false,file:true},
+            {kind:"secret",source:$phone,target:"/run/secrets/phone-home",rw:false,file:true},
+            {kind:"tmpfs",source:"",target:"/run/antiphon",rw:true}] +
+            if $token then [bind($github;"/run/antiphon/github-token";false;false)] else [] end)}
+         | with_entries(select(.key as $s | any($owned[]; .Config.Labels["com.docker.compose.service"]==$s)) | .value |= sort_by(.target)) end)}}'
+}
+
+# Main recreation retains the source-bound Compose contract.
 c1008_compose_model() {
     local model role key expected grok="${RUNNER_GROK_STORE_DIR:-}" sha="${1:-$SHA}" source_dir
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        c1609_temp_topology_model
+        return $?
+    fi
     source_dir="$CASE_DIR/compose/${sha:0:12}"
     c1008_compose_source "$sha" "$source_dir" || c1008_refuse RecycleComposeMismatch
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
@@ -8391,6 +8436,7 @@ c1008_private_identity() {
 c1008_owned_mounts() {
     require_lane host
     local owned="$1" model="$2" volumes="$3" source canonical kind file
+    if [ "$owned" = '[]' ]; then C1008_OWNED='[]'; return 0; fi
     # Metadata in the Docker host namespace only; no contents or inode pinning.
     while IFS=$'\t' read -r source file; do
         [ -n "$source" ] || continue
@@ -8933,6 +8979,16 @@ c1008_bind_generation() {
     gen_owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
         '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')" \
         || c1008_refuse RecycleGenerationUnknown
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        # Container cleanup is a separate exact-ID phase. A volume capability
+        # cannot authorize a still-present container or reconstruct its build.
+        [ "$(printf '%s' "$gen_owned" | jq length)" = 0 ] || c1008_refuse RecycleContainerStateUnknown
+        C1008_PREVIOUS_SHA=''; C1008_PREVIOUS_MODEL="$model"
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.previousSha=null|.previousComposeDigest=null|.generation={statusBuildVersion:null,imageTag:null,imageId:null}')" \
+            || c1008_refuse RecycleReceiptUnavailable
+        if [ "${C1008_RESUME:-0}" = 1 ]; then c1008_lock; c1008_reconcile_owned "$model"; fi
+        return 0
+    fi
     if [ "${C1008_RESUME:-0}" = 1 ]; then
         printf '%s' "$C1008_RECORD" | jq -e 'has("previousSha") and has("previousComposeDigest") and has("generation") and
             ((.previousSha==null and .previousComposeDigest==null) or
@@ -9079,7 +9135,7 @@ c1008_recycle() {
         [ -f "$C1008_JOURNAL" ] && [ ! -L "$C1008_JOURNAL" ] || c1008_refuse RecycleResumeMismatch
         current="$(cat "$C1008_JOURNAL")"
         printf '%s' "$current" | jq -e --arg sha "$SHA" --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg digest "$digest" \
-            '.schema==1 and .sourceSha==$sha and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
+            '.schema==1 and (.sourceSha==$sha or .project=="antiphon-runner-temp") and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
             || c1008_refuse RecycleResumeMismatch
         C1008_RECORD="$current"
         printf '%s' "$current" | jq -e 'all(.owned[]?; .Topology.version==1)' >/dev/null || c1008_refuse RecycleResumeMismatch
@@ -10000,7 +10056,6 @@ case_retire_temp_containers() {
     C1008_PROJECT="$TEMP_PROJECT"
     if [ -s "$SERVER2_TEMP_ENV" ]; then RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"; fi
     local model census owned volumes='{}' name facts id current expected image count gen_count
-    model="$(c1008_compose_model)" || c994_refuse RecycleComposeMismatch
     census="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
     owned="$(printf '%s' "$census" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
     printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or
@@ -10008,16 +10063,7 @@ case_retire_temp_containers() {
       ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c994_refuse TempContainerOwnershipUnknown
     if printf '%s' "$owned" | jq -e 'any(.[]; .State.Running==true and .State.Status=="running")' >/dev/null; then c994_refuse TempContainerStillRunning; fi
     printf '%s' "$owned" | jq -e 'all(.[]; .State.Running==false and .State.Status=="exited")' >/dev/null || c994_refuse TempContainerStateUnknown
-    # CARD-1105 D-6. Exited temp containers are proved against their own generation.
-    gen_count="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")] | length')" \
-        || c994_refuse TempContainerStateUnknown
-    if [ "$gen_count" != 0 ]; then
-        C1008_STATUS="$(c849_status_body server2-temp)" || c994_refuse RunnerStatusMissing
-        c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$TEMP_PROJECT" "$owned"
-        [ -n "${C1008_PREVIOUS_SHA:-}" ] || c994_refuse RecycleGenerationUnknown
-        c1008_capture_json "$CASE_DIR/previous-model.json" c1008_previous_model "$C1008_PREVIOUS_SHA"
-        model="$(cat "$CASE_DIR/previous-model.json")"
-    fi
+    model="$(c1609_temp_topology_model "$owned")" || c994_refuse RecycleComposeMismatch
     for name in work runner-state runner-tmp dind-data; do
         facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
         c1008_private_identity "$facts" "${TEMP_PROJECT}_$name" "$TEMP_PROJECT" "$name" || c994_refuse RecycleVolumeIdentityMismatch

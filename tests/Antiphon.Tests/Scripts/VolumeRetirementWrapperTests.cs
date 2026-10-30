@@ -293,7 +293,8 @@ public sealed class VolumeRetirementWrapperTests
         mainMatch.ShouldContain("exit=0");
         mainMatch.ShouldContain("statusBuildVersion");
         var tempMismatch = await Bash(shell, ("SHA", Sha), ("IMAGE", imageA), ("DOCKER_IMAGE", imageB), ("PROJECT", "antiphon-runner-temp"));
-        tempMismatch.ShouldContain("refused=RecycleGenerationMismatch");
+        tempMismatch.ShouldContain("exit=0");
+        tempMismatch.ShouldNotContain("refused=");
         var tempNoRunner = await Bash(shell, ("SHA", Sha), ("IMAGE", imageA), ("DOCKER_IMAGE", imageB),
             ("PROJECT", "antiphon-runner-temp"), ("SERVICE", "state-init"));
         tempNoRunner.ShouldContain("exit=0");

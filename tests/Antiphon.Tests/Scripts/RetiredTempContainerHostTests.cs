@@ -206,15 +206,18 @@ public sealed class RetiredTempContainerHostTests
         foreach(var fault in new[]{"valid","bind","tmpfs","private","compose","token-missing","token-source","token-writable"}) {
             using var f=Fixture("session-runner","state-init");var runner=f.Docker["containers"]!.AsArray()[1]!;
             var tokenMount=runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/run/antiphon/github-token")!;
-            if(fault=="token-missing")runner["Mounts"]!.AsArray().Remove(tokenMount);
+            // The complete older roster has no token bind and is supported.
+            // A missing expected destination with an unknown replacement still refuses.
+            if(fault=="token-missing")tokenMount["Destination"]="/run/antiphon/unknown-token";
             if(fault=="token-source")tokenMount["Source"]="/foreign";
             if(fault=="token-writable")tokenMount["RW"]=true;
             if(fault=="bind")runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/state/codex")!["Source"]="/foreign";
             if(fault=="tmpfs")runner["HostConfig"]=new JsonObject();
             if(fault=="private")f.Docker["volumes"]![Project+"_work"]!["Labels"]!["com.docker.compose.project"]="foreign";
             if(fault=="compose")f.Docker["models"]![Project]!["services"]!["state-init"]!["volumes"]![1]!["target"]="/state";
-            var run=await Cleanup(f);run.Exit.ShouldBe(fault=="valid"?0:2,"c994-mounts c994-private-identity c994-compose: "+fault+"; "+run.Output);
-            if(fault!="valid")NoMutation(f,"c994-mounts");
+            var good=fault is "valid" or "compose";
+            var run=await Cleanup(f);run.Exit.ShouldBe(good?0:2,"c994-mounts c994-private-identity c994-compose: "+fault+"; "+run.Output);
+            if(!good)NoMutation(f,"c994-mounts");
             else {
                 var candidates=Receipt(f)["candidates"]!.AsArray();
                 candidates.Select(c=>c!["Topology"]!["mounts"]!.AsArray().Count).ShouldBe(new[]{15,3},"c994-mounts: logical roster including the token bind");
@@ -562,7 +565,6 @@ public sealed class RetiredTempContainerHostTests
             accepted.Docker["containers"]!.AsArray().Add(accepted.Container('8', Project, "state-init", false, previousGeneration: true));
             File.WriteAllText(Path.Combine(accepted.Root, "temp.env"),
                 "RUNNER_GROK_STORE_DIR=" + accepted.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
-            accepted.Docker["images"] = new JsonObject();
             var run = await Cleanup(accepted);
             run.Exit.ShouldBe(0, "c1609: published content and supported topology do not require an old SHA/image; " + run.Output);
             var mounts = Receipt(accepted)["candidates"]!.AsArray().Single(candidate =>
@@ -579,7 +581,34 @@ public sealed class RetiredTempContainerHostTests
         refused.Docker["containers"]![0]!["Mounts"]![0]!["Destination"] = "/unknown-topology";
         var mismatch = await Cleanup(refused);
         mismatch.Exit.ShouldBe(2, "c1609: unknown actual topology still refuses; " + mismatch.Output);
-        mismatch.Output.ShouldContain("RecycleComposeMismatch");
+        mismatch.Output.ShouldContain("RecycleContainerStateUnknown");
         NoMutation(refused, "c1105-temp-generation");
+
+        foreach (var unpublished in new[] { false, true })
+        {
+            using var content = new C1008HostFixture(main: false);
+            var seed = await VolumeRetirementFixture.SeedPublishedOuter(content);
+            File.WriteAllText(Path.Combine(content.Root, "temp.env"),
+                "RUNNER_GROK_STORE_DIR=" + content.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+            const string noHistory = "c1008_compose_source() { return 2; }; c1008_previous_model() { return 2; }";
+            await VolumeRetirementFixture.ReadyPreview(content, noHistory);
+            if (unpublished)
+            {
+                await File.WriteAllTextAsync(Path.Combine(seed.Outer, "private.txt"), "retained unpublished work\n");
+                var commit = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(seed.Outer) +
+                    " add private.txt && git -C " + VolumeRetirementFixture.Quote(seed.Outer) + " commit -qm private");
+                commit.Exit.ShouldBe(0, commit.Output);
+            }
+            content.ReloadDocker();
+            var apply = await content.Run("retire-temp-runner", noHistory);
+            apply.Exit.ShouldBe(unpublished ? 2 : 0, "c1609: content decides despite missing historical source; " + apply.Output);
+            if (unpublished)
+            {
+                apply.Output.ShouldContain("RecycleUnpublishedWork");
+                content.Removed.ShouldBeEmpty();
+                (await File.ReadAllTextAsync(Path.Combine(seed.Outer, "private.txt"))).ShouldBe("retained unpublished work\n");
+            }
+            else content.Removed.ShouldBe(new[] { Project + "_runner-state", Project + "_dind-data", Project + "_runner-tmp", Project + "_work" });
+        }
     }
 }
