@@ -1606,6 +1606,178 @@ function Invoke-V14 {
     Write-MpResult -Ok $true -Reason 'v14'
 }
 
+function Get-MpSampleStats {
+    param([double[]]$Samples)
+    $sorted = @($Samples | Sort-Object)
+    if ($sorted.Count -eq 0) { Fail-Mp 'scale-no-samples' }
+    $median = [double]$sorted[[int][math]::Floor(($sorted.Count - 1) / 2)]
+    if (($sorted.Count % 2) -eq 0) { $median = ($median + [double]$sorted[$sorted.Count / 2]) / 2 }
+    return [ordered]@{ count = $sorted.Count; medianMs = $median; p95Ms = [double]$sorted[[int][math]::Ceiling(0.95 * $sorted.Count) - 1]; maxMs = [double]$sorted[-1]; rawMs = @($Samples) }
+}
+
+function Get-MpScaleMetadata {
+    $sha = [Environment]::GetEnvironmentVariable('MP_SOURCE_SHA')
+    if ($sha -notmatch '^[0-9a-f]{40}$') { Fail-Mp 'scale-source-sha-required' }
+    $load = 'unknown'
+    if (Test-Path -LiteralPath '/proc/loadavg') { $load = [IO.File]::ReadAllText('/proc/loadavg').Trim() }
+    return [ordered]@{
+        source = $sha; powershell = $PSVersionTable.PSVersion.ToString(); edition = $PSVersionTable.PSEdition
+        dotnet = [Environment]::Version.ToString(); os = [Environment]::OSVersion.VersionString
+        culture = [Threading.Thread]::CurrentThread.CurrentCulture.Name; timezone = [TimeZoneInfo]::Local.Id
+        host = [Environment]::MachineName; load = $load; synthetic = $true; nativeOwnerLaunches = 0; qualificationCredit = $false
+        oracleSha256 = (Get-TestPhaseSha256Text -Text (${function:Invoke-LegacyExecutedManifest}.ToString()))
+        perFilesystemOperationTimings = 'unknown; total calls measured separately from initialization and projection'
+    }
+}
+
+function Invoke-MpScaleSamples {
+    $metadata = Get-MpScaleMetadata
+    $prefixes = @(0, 240, 480)
+    if ($env:MP_M3_SMOKE -eq '1') { $prefixes = @(0) }
+    $rows = New-Object System.Collections.Generic.List[object]
+    $trx = Join-Path $Work 'current.trx'
+    New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'bench-current' -Outcome 'Passed'))
+    $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $false; testsPassed = $false }
+    foreach ($size in $prefixes) {
+        Write-Output ('SCALE prefix=' + $size + ' prepare')
+        $root = Join-Path $Work ('prefix-' + $size)
+        $prod = Join-Path $root 'prod'
+        $oracle = Join-Path $root 'oracle'
+        if (Test-Path -LiteralPath $root) { Fail-Mp 'scale-work-not-fresh' }
+        New-Item -ItemType Directory -Path (Join-Path $prod 'timing') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $oracle 'timing') -Force | Out-Null
+        $prep = [Diagnostics.Stopwatch]::StartNew()
+        $flat = Join-Path $prod 'timing/groups-executed.json'
+        $wide = [int]($size * 152 / 240)
+        if ($size -gt 0) {
+            Write-MpLegacyPrefix -Path $flat -Chunks $size -OutcomesPerChunk 89 -WideOutcomes 90 -WideChunks $wide
+            [IO.File]::Copy($flat, (Join-Path $oracle 'timing/groups-executed.json'))
+        }
+        $before = Get-MpSha $flat
+        $prep.Stop()
+        $script:QualificationTimingRoot = $null
+        $init = [Diagnostics.Stopwatch]::StartNew()
+        $ctx = Open-MpContext -LogRoot $prod -RunId 'run-v1' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+        $init.Stop()
+        if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp 'scale-context-refused' }
+        $candidate = New-Object System.Collections.Generic.List[double]
+        $legacy = New-Object System.Collections.Generic.List[double]
+        try {
+            $first = [Diagnostics.Stopwatch]::StartNew()
+            Publish-MpChunk -LogRoot $prod -TrxPath $trx -Suite 'antiphon' -Chunk 'bench-live' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
+            $first.Stop()
+            for ($i = 0; $i -lt 20; $i++) {
+                if ($i -eq 0) {
+                    Write-Output ('SCALE prefix=' + $size + ' legacy-reference=1')
+                    $watch = [Diagnostics.Stopwatch]::StartNew()
+                    Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $trx -Suite 'antiphon' -Chunk 'bench-live' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
+                    $watch.Stop(); $legacy.Add($watch.Elapsed.TotalMilliseconds)
+                }
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                Publish-MpChunk -LogRoot $prod -TrxPath $trx -Suite 'antiphon' -Chunk 'bench-live' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
+                $watch.Stop(); $candidate.Add($watch.Elapsed.TotalMilliseconds)
+                if ($i -eq 1) {
+                    Write-Output ('SCALE prefix=' + $size + ' legacy-reference=2')
+                    $watch = [Diagnostics.Stopwatch]::StartNew()
+                    Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $trx -Suite 'antiphon' -Chunk 'bench-live' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
+                    $watch.Stop(); $legacy.Add($watch.Elapsed.TotalMilliseconds)
+                }
+                if ((Get-MpSha $flat) -ne $before) { Fail-Mp 'scale-flat-changed-before-projection' }
+            }
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
+            $watch.Stop()
+            if ($ctx.LastCommitted -ne 21) { Fail-Mp 'scale-lost-record' }
+            $digest = Get-MpSha $flat
+            if ($digest -ne (Get-MpSha (Join-Path $oracle 'timing/groups-executed.json'))) { Fail-Mp 'scale-legacy-bytes-differ' }
+            $doc = Get-Content -Raw -LiteralPath $flat | ConvertFrom-Json
+            if (@($doc.chunks).Count -ne ($size + 1)) { Fail-Mp 'scale-lost-seed-chunks' }
+            $outcomes = 0
+            foreach ($chunk in @($doc.chunks)) { $outcomes += @($chunk.outcomes).Count }
+            $expected = $size * 89 + $wide + 1
+            if ($outcomes -ne $expected) { Fail-Mp 'scale-outcome-count' }
+            $gen = Join-Path (Join-Path $prod 'timing/groups-executed.journal') $ctx.Generation
+            $records = @(Get-ChildItem -LiteralPath $gen -Filter '????????.json' -File)
+            $recordBytes = 0L
+            foreach ($record in $records) { $recordBytes += $record.Length }
+            $rows.Add([ordered]@{ prefixChunks = $size; prefixOutcomes = ($expected - 1); preparationMs = $prep.Elapsed.TotalMilliseconds; initializationMs = $init.Elapsed.TotalMilliseconds; firstPublicationMs = $first.Elapsed.TotalMilliseconds; candidate = (Get-MpSampleStats $candidate.ToArray()); legacy = (Get-MpSampleStats $legacy.ToArray()); projectionMs = $watch.Elapsed.TotalMilliseconds; recordCount = $records.Count; recordBytes = $recordBytes; projectionBytes = (Get-Item -LiteralPath $flat).Length; sha256 = $digest })
+            $report = [ordered]@{ metadata = $metadata; phase = 'samples'; complete = $false; rows = @($rows.ToArray()) }
+            [IO.File]::WriteAllText((Join-Path $Work 'metrics.json'), ($report | ConvertTo-Json -Depth 20))
+            Write-Output ('SCALE prefix=' + $size + ' p95-ms=' + $rows[$rows.Count - 1].candidate.p95Ms + ' bytes-equal=true')
+        } finally { Close-MpContext -Context $ctx }
+    }
+    $report.complete = $true
+    [IO.File]::WriteAllText((Join-Path $Work 'metrics.json'), ($report | ConvertTo-Json -Depth 20))
+    Write-MpResult -Ok $true -Reason 'm3-samples'
+}
+
+function Invoke-MpScaleReplay {
+    $metadata = Get-MpScaleMetadata
+    $count = 385
+    if ($env:MP_M3_SMOKE -eq '1') { $count = 3 }
+    $root = Join-Path $Work 'replay'
+    if (Test-Path -LiteralPath $root) { Fail-Mp 'replay-work-not-fresh' }
+    $prod = Join-Path $root 'prod'; $oracle = Join-Path $root 'oracle'
+    New-Item -ItemType Directory -Path $prod -Force | Out-Null
+    New-Item -ItemType Directory -Path $oracle -Force | Out-Null
+    $inputs = New-Object System.Collections.Generic.List[object]
+    $prep = [Diagnostics.Stopwatch]::StartNew()
+    for ($i = 0; $i -lt $count; $i++) {
+        $trx = Join-Path $Work ('inputs/input-' + $i.ToString('0000') + '.trx')
+        $outcome = @('Passed', 'Failed', 'NotExecuted')[$i % 3]
+        New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id ('uid-' + $i.ToString('0000')) -Outcome $outcome))
+        $suite = @('antiphon', 'e2e')[$i % 2]
+        $inputs.Add([pscustomobject]@{ index = $i; trx = $trx; sha256 = (Get-MpSha $trx); outcome = $outcome; suite = $suite; chunk = ('synthetic-' + $i.ToString('0000')); wall = (1.0 + ($i % 5) / 4.0) })
+    }
+    $prep.Stop()
+    [IO.File]::WriteAllText((Join-Path $Work 'ordered-inputs.json'), ($inputs.ToArray() | ConvertTo-Json -Depth 10))
+    $script:QualificationTimingRoot = $null
+    $init = [Diagnostics.Stopwatch]::StartNew()
+    $ctx = Open-MpContext -LogRoot $prod -RunId 'replay-385' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+    $init.Stop()
+    if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp 'replay-context-refused' }
+    $candidate = New-Object System.Collections.Generic.List[double]
+    $legacy = New-Object System.Collections.Generic.List[double]
+    try {
+        foreach ($input in $inputs) {
+            if (($input.index % 16) -eq 0) { Write-Output ('REPLAY publication=' + $input.index + '/' + $count) }
+            $exitCode = 0
+            if ($input.outcome -eq 'Failed') { $exitCode = 1 }
+            $verdict = [pscustomobject]@{ ExitCode = $exitCode; coverageComplete = $false; testsPassed = ($input.outcome -eq 'Passed') }
+            if (($input.index % 2) -eq 0) {
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall
+                $sw.Stop(); $legacy.Add($sw.Elapsed.TotalMilliseconds)
+            }
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            Publish-MpChunk -LogRoot $prod -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall -ExitCode $exitCode -Passed ($input.outcome -eq 'Passed')
+            $sw.Stop(); $candidate.Add($sw.Elapsed.TotalMilliseconds)
+            if ((Get-MpSha (Join-Path $prod 'timing/groups-executed.json')) -ne '') { Fail-Mp 'replay-projected-per-chunk' }
+            if (($input.index % 2) -eq 1) {
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall
+                $sw.Stop(); $legacy.Add($sw.Elapsed.TotalMilliseconds)
+            }
+        }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
+        $sw.Stop()
+        $flat = Join-Path $prod 'timing/groups-executed.json'
+        $digest = Get-MpSha $flat
+        if ($digest -ne (Get-MpSha (Join-Path $oracle 'timing/groups-executed.json'))) { Fail-Mp 'replay-full-legacy-bytes-differ' }
+        $doc = Get-Content -Raw -LiteralPath $flat | ConvertFrom-Json
+        if (@($doc.chunks).Count -ne $count -or $ctx.LastCommitted -ne $count) { Fail-Mp 'replay-chunks-dropped' }
+        $actual = @($doc.chunks | ForEach-Object { $_.outcomes } | ForEach-Object { [string]$_.testId } | Sort-Object)
+        $expected = @($inputs | ForEach-Object { 'uid-' + ([int]$_.index).ToString('0000') } | Sort-Object)
+        if (($actual -join ',') -cne ($expected -join ',')) { Fail-Mp 'replay-uid-multiset' }
+        $report = [ordered]@{ metadata = $metadata; phase = 'replay'; complete = $true; publications = $count; outcomes = $actual.Count; preparationMs = $prep.Elapsed.TotalMilliseconds; initializationMs = $init.Elapsed.TotalMilliseconds; candidate = (Get-MpSampleStats $candidate.ToArray()); legacy = (Get-MpSampleStats $legacy.ToArray()); projectionMs = $sw.Elapsed.TotalMilliseconds; projectionBytes = (Get-Item -LiteralPath $flat).Length; sha256 = $digest; historicalReplay = $false }
+        [IO.File]::WriteAllText((Join-Path $Work 'metrics.json'), ($report | ConvertTo-Json -Depth 20))
+        Write-Output ('REPLAY complete publications=' + $count + ' bytes-equal=true sha256=' + $digest)
+    } finally { Close-MpContext -Context $ctx }
+    Write-MpResult -Ok $true -Reason 'm3-replay'
+}
+
+
 try {
     # Same load order as scripts/nightly-tests.ps1. The impl file does not import policy or coverage.
     $lib = Join-Path $Repo 'scripts/lib'
@@ -1636,6 +1808,8 @@ try {
         'v12' { Invoke-V12 }
         'v13' { Invoke-V13 }
         'v14' { Invoke-V14 }
+        'm3-samples' { Invoke-MpScaleSamples }
+        'm3-replay' { Invoke-MpScaleReplay }
         default { Fail-Mp ("unknown-case " + $Case) }
     }
 } catch {
