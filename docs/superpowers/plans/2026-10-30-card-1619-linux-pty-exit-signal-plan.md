@@ -48,14 +48,14 @@ committed and pushed separately; no product files changed.
 - **D-1 — Preserve exit evidence, not inferred success.** Carry a nullable signal through the PTY, detached host, runner and stored session; retain a distinct unknown state for old producers. Reject guessing signals from historical zero exit codes.
 - **D-2 — Make the change additive across rollout skew.** Old hosts and old runners must still parse each other's messages. Detailed wire, persistence and attribution contracts follow the source audit.
 - **D-3 — Keep settlement authority unchanged.** Correct stop evidence and failure wording without replacing transcript-confirmed report settlement, CARD-1610 holds, or CARD-1614 custody proof.
-- **D-4 — Fold verification design into this plan.** The requested next stage is Opus Review of the plan, then Code. Code slices are bounded to 150 minutes each.
+- **D-4 — Fold verification design into this plan.** Round-3 closes the final plan review; the next stage is Code, with no further plan check required. Code slices are bounded to 150 minutes each.
 - **D-5 — Land as a fix.** RC first, separately reviewed master port; no deployment, tag or publish is authorized by this Plan task.
 - **D-6 — Read the pinned private field, fail closed on drift.** Cache a Linux-only reflection accessor for `Porta.Pty.Unix.PtyConnection.exitSignal` (`private int`) in the real Porta.Pty 1.0.7 assembly (assembly version `1.0.7.0`, informational version `1.0.7+54684ba55148ed6bcd0c827ad7e8841a3289a466`). Read only inside `ProcessExited` or after public `WaitForExit(0)` succeeds. Missing/wrong field, type, version or access failure yields null and a bounded diagnostic, never zero. Reject a managed fork because it adds cross-platform ownership and native-asset coupling for one accessor, contrary to ADR 0002 section 1. Reject a second `waitpid` and inferred `Process.ExitCode`; keep the sole upstream reaper. The loaded-assembly witness fails loudly on any contract/version drift.
-- **D-7 — Keep the existing integer exit-code contract; add `int? ExitSignal`.** Zero explicitly means an observed exit without a POSIX signal; positive values are an observed signal; null means unavailable/legacy/observer failure. Windows producers emit zero (no signal) and retain their exact existing exit codes. A signaled Unix process retains Porta's existing integer zero in legacy fields; every new consumer must inspect the signal first. Do not invent `128+signal` as the actual process exit code. Integer-only adapter APIs may use a documented nonzero compatibility result for a known signal, but must also expose the structured evidence.
+- **D-7 — Keep the existing integer exit-code contract; add `int? ExitSignal`.** Zero explicitly means an observed exit without a POSIX signal; positive values are an observed signal; null means unavailable/legacy/observer failure. Windows producers emit zero (no signal) and retain their exact existing exit codes. A signaled Unix process retains Porta's existing integer zero in legacy fields; every new consumer must inspect the signal first. Do not invent `128+signal` as the actual process exit code. Keep `PtyAgentRunner.Exited` equal to the actual observed integer (including zero for a Linux signal) throughout; its structured completion is authoritative. Only protocol/terminal adapters change in S3b: compatibility is -1 when signal > 0 or code is missing, otherwise the actual code. S1..S3a preserve all existing adapter values. No persistence writer may store this synthetic compatibility value.
 - **D-8 — Attribute intent separately from observed death.** Hold a generation-bound stop intent in issuer memory and attempt a diagnostic record before sending a signal. A request is not proof of its success or of who delivered the fatal signal. Record the signal actually attempted, path, request time and result; combine it with the wait observation conservatively. No new automatic stop, escalation, release deadline or custody authority is added.
 - **D-9 — Recording is best-effort; authorized stops still run.** Catch record create/write/flush/rename failures, retain issuer memory with `durable=false`, log one bounded warning per request, and always attempt the already-authorized signal. This applies to operator/watchdog/compaction/pool/shutdown/disposal/custody routes. A write failure cannot become a stop refusal or a successful-stop receipt. Use `stop sender unknown` on this degraded path. Reject the previous full-disk tradeoff because it would leave runaway processes alive; existing identity/authorization checks still refuse unsafe targets.
 - **D-10 — Disk is diagnostic, never attribution authority.** The same-user agent can write the session log root. Qualify `stopped by Antiphon` only from the actual issuer's in-memory successful attempt, bound to the accepted generation, process/host identity and observed signal, transported from that live owner. A recovered/manifest record is unverified even if it says issued or trusted. The server's already-persisted request can prove that Antiphon requested a stop, but cannot alone prove a matching signal was sent; choose request-only wording when issuer evidence is gone. Reject permission-only hardening and trusting a serialized boolean as substitutes for this boundary.
-- **D-11 — Split S3 at the data/policy boundary.** S3a delivers nullable storage and transport (including the inert intent shape); S3b delivers signal-aware classification and every consumer. Each is commissioned and verified separately before S4. Reject a single 150-minute S3 because migration, adapter plumbing and native consumer tests cannot credibly fit together.
+- **D-11 — Split S3 at the data/policy boundary.** S3a delivers nullable storage and transport (including the inert intent shape), without changing any integer compatibility result; S3b changes protocol/terminal adapter results together with all ownership, persistence and classification consumers. Each is commissioned and verified separately before S4. Reject a single 150-minute S3 because migration, adapter plumbing and native consumer tests cannot credibly fit together.
 - **D-12 — Preserve diagnostic tokens and regression intent.** Keep `ProcessExit` in the outer failure description when that is the recorded source; remove only the claim `exited on its own`. Keep R-3's source/code assertions. Preserve the diagnostic `Process exited (KilledByRequest, code 1)` prefix in the selected generation regression, append unknown-signal evidence, and never treat its untrusted reason as proof of a sender.
 
 ## Ground-truth table
@@ -72,6 +72,7 @@ committed and pushed separately; no product files changed.
 | Host protocol is unversioned | `PtyHostProtocol.Version=1`; framed JSON with optional-member tolerance; host logs a version difference and continues | Add fields without a protocol-version bump |
 | An old host disappears at a runner upgrade | Detached hosts survive and are adopted from their manifest | Null must stay unknown across status, replay and adoption |
 | A local issued record identifies the sender | `SessionRunnerSettings.cs:6` defaults logs under the agent-writable workspace; host/agent share a user | Disk-recovered intent remains unverified; planted records cannot create attribution |
+| Adapter compatibility changes are harmless storage work | `RunnerTerminalSession.cs:365` feeds `AgentSessionService.cs:872-873,904-906,3793` and `AgentSessionRuntime.cs:2323`; actual zero versus compatibility -1 loses ready-gate ownership | Keep the value change in S3b with structured writers and R-6; S3a remains storage-only |
 | The server has no durable stop request | `AgentSessionService.cs:1866-1871,2027-2032` saves `TerminationSource` and `Stopping` before calling the runtime | Reuse this server-owned request evidence, scoped to `StartedAt`; it proves a request, not successful delivery |
 
 ## Native source and evidence contract
@@ -121,10 +122,13 @@ on `IPtySession`, and have `PtyAgentRunner` subscribe then read that cache too.
 These are two separate subscription windows. Deduplicate callback/replay at both
 layers so an early exit is retained and reason/cleanup callbacks execute once.
 Never read the private field before a callback or successful wait barrier.
-Keep `PtyAgentRunner.Exited`'s integer compatibility task where existing consumers
-need it and add structured completion; known signal maps to a documented nonzero
-compatibility result only on that legacy adapter task. Host/session fields retain
-the actual observed code and separate signal. Windows `ModernConPtyConnection`
+Keep `PtyAgentRunner.Exited` equal to the actual native integer, including zero
+for a signaled Linux process; do not change its value in any slice. Add structured
+completion. S1 explicitly changes `HostSession.cs:399` from `await _runner.Exited`
+to the structured completion and reads its actual code; S2 carries its signal to
+all host surfaces. Observer failure is unknown, never an invented native -1.
+Protocol/terminal adapters alone adopt the D-7 compatibility formula in S3b.
+Host/session fields retain actual code and separate signal. Windows `ModernConPtyConnection`
 supplies signal zero with the same signed exit code; no Windows kill or job changes.
 This card qualifies Linux only among Unix platforms. The adapter leaves macOS
 signal evidence unknown until that platform's mapping is separately qualified.
@@ -241,16 +245,16 @@ on the Code target and record any additional session consumer.
 | Consumer / source anchor | Current use | Planned change / branch invariant |
 |---|---|---|
 | `PtySession.cs:41`, `ModernConPtyConnection.cs:428`, `PtyAgentRunner.cs:238-247` | Integer exit callback/completion | Structured observation, single reaper and replay; Windows code unchanged |
-| `HostSession.cs:255,299,395-440` | Attach replay, status, manifest, log, live EXIT | Carry identical signal/intent in every surface; no linger/custody changes |
+| `HostSession.cs:255,299,395-440` | Attach replay, status, manifest, log, live EXIT | S1: `HostSession.cs:399` awaits structured completion and reads actual code; S2: identical signal/intent in every surface; no linger/custody changes |
 | `PtyHostClient.cs:212`, `SessionRunnerRuntime.cs:3454,3583,4380`, `ExitEnvelope:2766`, `ToDto:3990` | Live, status and manifest adoption reduce to code/reason | Carry optional evidence through all routes; retain generation and sequence |
 | `ISessionChild.cs:23`, Herdr/direct-process child routes | Other backends report their own exit | Optional unknown signal unless that backend actually observes it; never infer Linux signal from a numeric code |
 | `RunnerContractMapper.cs:39,106`, `SessionRunnerHttpClient.cs:987,1275`, phone-home event/recovery pumps | DTO/event conversion | Copy fields; no loss in reconnect catch-up |
 | `PhoneHomeCommandDispatcher.cs:963`, `RemoteLaunchAlreadyExitedException`, `AgentSessionService.cs:450,572` | Already-exited launch errors and durable close | Carry evidence in typed exception/problem extensions; honest text; same-generation launch remains refused |
-| `RunnerTerminalSession.cs:365`, `IAgentProtocolAdapter.Exited`, local Raw/Claude/Codex and runner Raw/Claude/Codex/Grok/OpenCode adapters | Integer compatibility completion; null becomes zero | Expose structured observation via additive interface member with unknown default for old/test implementations; known signal or missing code returns -1 on compatibility task, not false zero; consumers persist structured actual fields |
+| `RunnerTerminalSession.cs:365`, `IAgentProtocolAdapter.Exited`, local Raw/Claude/Codex and runner Raw/Claude/Codex/Grok/OpenCode adapters | Integer compatibility completion; null becomes zero | Expose structured observation via additive interface member with unknown default for old/test implementations; S3a preserves current integer results; S3b returns -1 for signal > 0 or missing code, otherwise actual code; all persisting consumers read structured actual fields in that same slice |
 | `AgentSessionRuntime.cs:260` | `exitCode == 0` controls session AND agent Stopped/Failed | Signal-first helper; explicit CPU-spin stop exception; enrich terminal rows; preserve generation fences |
 | `SessionReconciliationService.cs:775` | Same zero-success branch | Use same helper and failure text as live event; same snapshots produce same fate |
-| `AgentSessionService.cs:905-906` | Launch cleanup decides ownership from matching code or null/zero | Replace code-only fallback with generation, issued intent and observed evidence; normal-exit race must not be relabelled |
-| `AgentSessionService.cs:1892,2052-2101,3793`, `AgentSessionRuntime.cs:2324` | Adoption/stop/finalization/test adapter persistence | Copy actual signal/intent; stop ack alone is not exit; RunAttempt stays Canceled/Failed on kill |
+| `AgentSessionService.cs:872-873,904-906` | Launch cleanup compares adapter completion with the stored actual code | S3b reads structured actual code/signal, preserves CARD-1190 generation, time, cause and natural-exit guards, and compares like evidence. Retain the legacy unknown-signal fallback; no dependency on S4 intent. This owns launch-failure text, not sender attribution. R-6 preserves all seven branches. |
+| `AgentSessionService.cs:1892,2052-2101,3793`, `AgentSessionRuntime.cs:2324` | Adoption/stop/finalization/test adapter persistence | S3b switches `AgentSessionService.cs:3792-3793` and `AgentSessionRuntime.cs:2323-2324` explicitly to structured code/signal before adapter values change; copy actual signal/intent elsewhere; stop ack alone is not exit; RunAttempt stays Canceled/Failed on kill |
 | `AgentTaskLiveness.cs`, `AgentTaskDispatcher.cs:3092-3097,3190-3204`, `AttentionService.cs:881-886` | Dead verdict and shared description | Extend snapshot and text; preserve report-first settlement and dead/live predicate |
 | `AttentionService.Leaks.cs:160-207` (SessionStopStuck) | Five-minute Stopping/pending-intent projection, inventory-based liveness | No timeout or release branch change; include structured stop detail when present; an exit code is not absence evidence |
 | `AgentSupervisorService.cs:272,848`, `DiagnosticsBundleService.cs:191,206`, `CardReviewService.cs:208` | Stored incident, diagnostic and attempt text | Show signal and intent; preserve restart policy and audit history |
@@ -370,17 +374,21 @@ own release policy; with parking disabled they have no automatic release deadlin
 ## Slices
 
 Each row is a separately commissioned Code task, at most 150 minutes including
-focused red/green verification. Dispatch the dependent slices in order.
+focused red/green verification. Dispatch the dependent slices in order. S1 starts at the pinned RC plus this
+plan artifact; each subsequent Code checkout uses `-StartRef` equal to the
+preceding slice's pushed tip. Carry this exact plan file into every Code checkout: it
+exists only on the Plan branch, and RC carries no plan documents. Retain it for
+checkpoint import; exclude the plan-only delta from the eventual RC product port.
 Commit and push the failing witness before its repair; a compilation failure is
 not the required red. Keep code frozen during each run. The native Windows rows
 run on an eligible Windows lane at the same source SHA; Linux cannot credit them.
 
 | Slice | Value, files and tests | Budget / closure |
 |---|---|---|
-| **S1 — retain the actual native observation** | Add `src/Antiphon.Agents.Pty/PortaExitSignalReader.cs` and `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, and only the shared observation/completion seam in `ModernConPtyConnection.cs` (native Windows behavior unchanged). Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 120 minutes: 15 pinned accessor, 40 two-level replay/seam, 35 witnesses, 20 checkpoints, 10 notes. CP-1; final Windows closure CP-2 after S4. No dependency, native-file or build-graph change. |
+| **S1 — retain the actual native observation** | Add `src/Antiphon.Agents.Pty/PortaExitSignalReader.cs` and `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, `HostSession.cs:399` (structured actual-code read), and only the shared observation/completion seam in `ModernConPtyConnection.cs` (native Windows behavior unchanged). Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 120 minutes: 15 pinned accessor, 40 two-level replay/seam, 35 witnesses, 20 checkpoints, 10 notes. CP-1; final Windows closure CP-2 after S4. No dependency, native-file or build-graph change. |
 | **S2 — carry it across process/restart boundaries** | Update `PtyHostMessages.cs`, `PtyHostManifest.cs`, `HostSession.cs`, `PtyHostClient.cs` if mapping needed, `SessionRunnerContracts.cs`, `ISessionChild.cs`, `SessionRunnerRuntime.cs`. Add `tests/Antiphon.PtyHost.Tests/Card1619ExitWireTests.cs`, `Card1619LinuxHostExitTests.cs`, `tests/Antiphon.SessionRunner.Tests/Card1619RunnerExitTests.cs`, frozen old-schema fixtures. | 140 minutes: 55 propagation, 45 real detached-host/restart and skew tests, 25 checkpoints, 15 review notes. CP-3/CP-4. Highest transport risk is exit while detached. |
-| **S3a — storage and transport** | Update `server/Domain/Entities/{AgentSession,RunAttempt,AgentIncident}.cs`, migration/snapshot; `SessionRunnerDtos.cs`, `AgentDtos.cs`, `BoardDtos.cs`, `RunnerContractMapper.cs`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter.cs`, all eight listed local/runner adapters and `RunnerTerminalSession.cs`. Add persistence/enrichment/reset copying only in `AgentSessionRuntime.cs`, `AgentSessionService.cs`, `SessionReconciliationService.cs`, `AgentControlService.cs` and `CheckCompactionContinuationService.cs`; map API/event/attempt/incident fields and handwritten `client/src/api/{agents,boards}.ts`. Add `src/Antiphon.PtyHost.Protocol/ProcessStopIntent.cs`; carry its bounded nullable contract through manifest/session record/wire as inert unknown until S4. Add `tests/Antiphon.Tests/Application/Card1619ExitPersistenceTests.cs` and `TestHelpers/Card1619NativeExitFixture.cs`. | 145 minutes: 45 contracts/adapters, 25 storage/reset/migration (including 5 tooling), 20 projections/client, 30 fixture/witnesses, 15 checkpoints, 10 notes. CP-5/CP-8. No classification or DescribeStop change; reader readiness only. |
-| **S3b — classification and every consumer** | Add one application exit helper; update branch/text handling in `AgentSessionRuntime.cs`, `AgentSessionService.cs`, `SessionReconciliationService.cs`, `SessionTermination.cs`, `AgentTaskLiveness.cs`, `AgentTaskDispatcher.cs`, `AttentionService.cs`/`.Leaks.cs`, `AgentSupervisorService.cs`, `CardReviewService.cs`, `DiagnosticsBundleService.cs`, `CheckCompactionContinuationService.cs` and relevant comments/docs. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitConsumerTests.cs`; extend the three selected `SessionGenerationExitTests` regressions without weakening their generation/first-source assertions. Reuse S3a's fixture and data contract. | 145 minutes: 35 helper/classification, 30 consumers, 35 witnesses/regressions, 30 checkpoints, 15 docs/notes. CP-13/CP-6/CP-7/CP-14. Signal-first classification and truthful final text close here. |
+| **S3a — storage and transport** | Update `server/Domain/Entities/{AgentSession,RunAttempt,AgentIncident}.cs`, migration/snapshot; `SessionRunnerDtos.cs`, `AgentDtos.cs`, `BoardDtos.cs`, `RunnerContractMapper.cs`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter.cs`, all eight listed local/runner adapters and `RunnerTerminalSession.cs`. Add persistence/enrichment/reset copying only in `AgentSessionRuntime.cs`, `AgentSessionService.cs`, `SessionReconciliationService.cs`, `AgentControlService.cs` and `CheckCompactionContinuationService.cs`; map API/event/attempt/incident fields and handwritten `client/src/api/{agents,boards}.ts`. Add `src/Antiphon.PtyHost.Protocol/ProcessStopIntent.cs`; carry its bounded nullable contract through manifest/session record/wire as inert unknown until S4. Add `tests/Antiphon.Tests/Application/Card1619ExitPersistenceTests.cs` and `TestHelpers/Card1619NativeExitFixture.cs`. | 145 minutes: 45 contracts/adapters, 25 storage/reset/migration (including 5 tooling), 20 projections/client, 30 fixture/witnesses, 15 checkpoints, 10 notes. CP-5/CP-8. No integer compatibility, classification or DescribeStop change; reader readiness only. |
+| **S3b — classification and every consumer** | Apply the D-7 compatibility formula in `RunnerTerminalSession.cs` and all eight protocol adapters; switch every persisting/ownership consumer to structured actual evidence in this same commit. Keep `PtyAgentRunner.Exited` unchanged. Add one application exit helper; update branch/text handling in `AgentSessionRuntime.cs`, `AgentSessionService.cs`, `SessionReconciliationService.cs`, `SessionTermination.cs`, `AgentTaskLiveness.cs`, `AgentTaskDispatcher.cs`, `AttentionService.cs`/`.Leaks.cs`, `AgentSupervisorService.cs`, `CardReviewService.cs`, `DiagnosticsBundleService.cs`, `CheckCompactionContinuationService.cs` and relevant comments/docs. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitConsumerTests.cs`; extend the three selected `SessionGenerationExitTests` regressions without weakening their generation/first-source assertions. Reuse S3a's fixture and data contract. | 145 minutes: 35 helper/classification, 30 consumers, 35 witnesses/regressions, 30 checkpoints, 15 docs/notes. CP-13/CP-6/CP-7/CP-14/CP-15. Signal-first classification and truthful final text close here. |
 | **S4 — record Antiphon's stop intent** | Add `ProcessStopIntentStore.cs` in `src/Antiphon.PtyHost.Protocol/` and issuer-memory tracking; use an injected low-level stop callback in `PtySession`/`PtyAgentRunner` without a PTY-to-host dependency; wire `HostSession`, `SessionRunnerRuntime`, `PtyHostLauncher`, `IPtyCustodyContainment`, `ILinuxCustodyRecovery`, `RunnerCustodyLedger`. Populate S3a's optional intent transport and S3b's attribution helper. Add `Card1619StopIntentTests.cs` (PtyHost.Tests), `Card1619LinuxStopIntentTests.cs` (SessionRunner.Tests), `Application/Card1619StopAttributionTests.cs` (Antiphon.Tests). Update session/PTY owner docs. | 150 minutes: 40 best-effort store/issuer trust, 30 authorized routes, 35 race/crash/native tests, 35 checkpoints, 10 notes. CP-9..CP-12; final CP-2 runs in native Review. No helper privilege or custody policy expansion. |
 
 S1 is independently reviewable; S2 depends on S1; S3a depends on S2; S3b depends
@@ -391,7 +399,8 @@ paths, the entrypoint namespace marker and delegated v1 pids/freezer roots, as i
 `LinuxRunnerCustodyLifecycleTests`; their absence stays native-pending.
 
 All five slices may be reviewed incrementally, but the complete fix is land-ready
-only after S4 and final native CP-2. S3a alone stores evidence with old policy;
+only after S4 and final native CP-2. **S1, S2, S3a and S3b must not land
+individually**; incremental Review does not authorize a partial land. S3a alone stores evidence with old policy;
 S3b makes the signal affect classification and text. Do not activate new producers
 until S3a migration/readers, S3b consumers and final native gates are ready. S4
 closes attribution. Existing native-asset staging is exercised by detached-host
@@ -453,13 +462,13 @@ importer's 15-minute floor/3x estimate as timeout evidence.
 | Final Windows CP-2 | 4 / 3 | 8 minutes | Two new cases plus five existing tree-kill tests; native timings |
 | S2 Linux CP-3/4 | 4+4 / 2+2 | 8 minutes per row | Host ready, pipe, manifest IO, restart/adoption and teardown |
 | S3a Linux CP-5/8 | 6 / 3+2 | 6/4 minutes | Shared DB template/web host, isolated storage/upgrade cases; separate typecheck span |
-| S3b Linux CP-13/6/7/14 | 6 / 4+1+2+2 | 8/2/4/4 minutes | Same fixture design; final native text, report-first and generation checks |
+| S3b Linux CP-13/6/7/14/15 | 6 / 4+1+2+2+2 | 8/2/4/4/4 minutes | Same fixture design; final native text, report-first and generation checks |
 | S4 Linux CP-9/10/11 | 4+4+6 / 2+2+3 | 8/8/10 minutes | Journal fault cuts, real stop, mapper/persistence, lifecycle |
 | S4 cgroup-v1 CP-12 | reuse CP-10 / 2 | 4 minutes | Exact owned container; no fleet-wide census or kill |
 
 Whole-minute checkpoint estimates include build where needed; reused rows include
-execution only. S1 Linux run 4 minutes; S2 12; S3a 11; S3b 15; S4 23 including
-its native cgroup row; final Windows 7 (72 minutes total, six separate runs).
+execution only. S1 Linux run 4 minutes; S2 12; S3a 11; S3b 17; S4 23 including
+its native cgroup row; final Windows 7 (74 minutes total, six separate runs).
 Run separate committed-slice groups. Never combine
 all slices into a >30-minute run. If any selection/batch/row/run is expected or
 observed over 30 minutes, request Debug with timings before repetition. A timeout
@@ -504,7 +513,7 @@ to remove that floor. No CLI row override is used, since it would erase the pins
 
 Dependency/category map: shared PTY -> PtyHost -> SessionRunner -> server runtime;
 Claude/Codex/Grok adapters are downstream shared-transport consumers. CP-1/2 cover
-native PTY branches, CP-3/4 host/runner, CP-5 storage, CP-6/7/13/14 server/checks/attention/settlement,
+native PTY branches, CP-3/4 host/runner, CP-5 storage, CP-6/7/13/14/15 server/checks/attention/settlement,
 CP-8 client types, CP-13/14 classification/generation, CP-9..12 provenance/custody. No model/provider calls are needed.
 Use Unit for pure classes and Integration/PtyHost/Pty for DB/host classes per their
 assembly. This focused ordinary roster is not Full RC qualification or a substitute
@@ -569,7 +578,7 @@ These files do not exist in this Plan commit.
 
 | IDs / class / lane | Methods or separately reported cases | Discriminating result |
 |---|---|---|
-| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_never_completes_legacy_adapter_as_zero`; `Porta_exitSignal_private_contract_holds`; `Unsupported_contract_keeps_signal_unknown` with 3 separately reported cases (missing field, wrong field type, wrong version) (10) | Real loaded DLL pins version/type/private field; invalid access never yields zero. Native cases distinguish signal 9/15, normal 0/23 and null. Fast exit covers completion before wrapper subscription and before runner subscription, plus callback/replay overlap; assert one completion and reason callback |
+| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_preserves_actual_zero_and_separate_signal`; `Porta_exitSignal_private_contract_holds`; `Unsupported_contract_keeps_signal_unknown` with 3 separately reported cases (missing field, wrong field type, wrong version) (10) | Real loaded DLL pins version/type/private field; invalid access never yields zero. Native cases distinguish signal 9/15, normal 0/23 and null. Fast exit covers completion before wrapper subscription and before runner subscription, plus callback/replay overlap; assert one completion and reason callback |
 | R-1 `Card1619WindowsExitTests`, Agents.Pty.Tests, Windows | `Modern_exit_and_stop_preserve_windows_behavior`, `Inbox_exit_and_stop_preserve_windows_behavior` (2) | Production factory selects actual modern/inbox backend; normal 0/23 and kill result unchanged, signal zero |
 | V-7 `Card1619ExitWireTests`, PtyHost.Tests, portable | `Old_exit_frame_is_unknown`, `New_exit_frame_is_accepted_by_frozen_v1_reader`, `Status_and_attach_preserve_signal`, `Manifest_both_versions_round_trip`, `Unknown_signal_number_is_preserved`, `Null_signal_is_not_normalized_to_zero`, `Old_manifest_writer_drops_signal_and_new_reader_keeps_unknown` (7) | Frozen v1 framing/DTO and read-modify-write fixture from base with provenance, not today's reader twice; length prefix/discriminator and optional null/absence survive |
 | V-8 `Card1619LinuxHostExitTests`, PtyHost.Tests, Linux | `Live_SIGKILL_matches_manifest`, `Live_SIGTERM_matches_manifest`, `Exited_attach_and_status_replay_identical_evidence`, `Normal_exit_code_survives_detached_host` (4) | Actual host wait reaches wire/status/manifest/log; one meaning across all surfaces |
@@ -594,6 +603,13 @@ R-5 selects three existing `SessionGenerationExitTests` methods:
 They exercise stale delivery, accepted closure, real killed-exit capture through
 `ExitScenario`, and reconciliation snapshot fences. Preserve their generation,
 status, source and event-count assertions; extend them with optional evidence.
+R-6 selects the seven existing `AgentSessionLaunchFailureTests.A_ready_gate_kill_*`
+methods (lines 910, 981, 1017, 1057, 1087, 1119 and 1345 at the base), including
+`A_ready_gate_kill_leaves_a_natural_zero_exit_when_the_watcher_is_late`. Run them
+in S3b, the only slice changing adapter values. Extend V-12
+`Launch_cleanup_does_not_steal_a_normal_exit` with the ready-gate SIGKILL arm:
+actual stored code 0 / signal 9, adapter completion -1, and the not-ready error
+still retained. Keep its normal-exit arm and all seven existing R-6 assertions.
 The other suggested broad classes (`AgentSessionRuntimeTests`,
 `SessionReconciliationServiceTests`, `SessionTerminationSourcePersistenceTests`,
 `PtyAgentRunnerTests`) are not added wholesale: V-1..6/V-11/V-12/V-15 and R-5
@@ -602,7 +618,7 @@ the minimal roster choice, not a claim those unrun classes passed.
 CP-8 typechecks optional client fields; it has no invented Vitest assertion count.
 
 Suffix audit repeated at round-2 base: R-4 and R-5 methods are unique;
-`PtyKillProcessTreeTests`, `AgentTaskLivenessTests` and `SessionGenerationExitTests`
+`PtyKillProcessTreeTests`, `AgentTaskLivenessTests`, `AgentSessionLaunchFailureTests` and `SessionGenerationExitTests`
 have no distinct longer-prefix class collision. Proposed
 `Card1619*Tests` names are unused. Repeat the declaration census after adding them
 and after porting. OR operands below are parenthesized, each ending in `*`; table
@@ -634,6 +650,8 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-14 | S3b | CP-13 | linux-generation-exit-regression | `/*/*/SessionGenerationExitTests/(C502_V1_queued_A_exit_released_after_B_resumed_changes_nothing*)\|(C502_V3_matching_B_exit_closes_B_after_the_stale_A_exit_was_ignored*)\|(C502_V9_severed_stream_then_a_snapshot_Exited_A_does_not_close_B*)` | R-5 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 
+| CP-15 | S3b | CP-13 | linux-ready-gate-launch-regression | `/*/*/AgentSessionLaunchFailureTests/(A_ready_gate_kill_*)` | R-6 | all 7 listed, 0 failed/skipped | 7 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+
 ## Exact execution commands
 
 Run commands from the checkout root. Bootstrap the checkpoint tool once through
@@ -652,7 +670,7 @@ dotnet $tool import --plan $plan --out $manifest
 if ($LASTEXITCODE -ne 0) { throw 'Plan import failed' }
 $yaml = Get-Content -LiteralPath $manifest -Raw
 $yaml = $yaml -replace '(?m)^  slotWaitMinutes: 45\r?$', '  slotWaitMinutes: 10'
-$pins = @{ 'CP-1'=4; 'CP-2'=8; 'CP-3'=8; 'CP-4'=8; 'CP-5'=6; 'CP-6'=2; 'CP-7'=4; 'CP-8'=4; 'CP-9'=8; 'CP-10'=8; 'CP-11'=10; 'CP-12'=4; 'CP-13'=8; 'CP-14'=4 }
+$pins = @{ 'CP-1'=4; 'CP-2'=8; 'CP-3'=8; 'CP-4'=8; 'CP-5'=6; 'CP-6'=2; 'CP-7'=4; 'CP-8'=4; 'CP-9'=8; 'CP-10'=8; 'CP-11'=10; 'CP-12'=4; 'CP-13'=8; 'CP-14'=4; 'CP-15'=4 }
 $yaml = [regex]::Replace($yaml, '(?ms)^- id: (CP-\d+)\r?\n.*?(?=^- id: CP-|\z)', {
     param($match)
     $id = $match.Groups[1].Value
@@ -677,7 +695,7 @@ dotnet $tool run $manifest --rows CP-3,CP-4 --expected-source-sha $source --seri
 # S3a, Linux storage/transport and portable client types.
 dotnet $tool run $manifest --rows CP-5,CP-8 --expected-source-sha $source --serial --total-timeout 22 --hard-wall-timeout 32 --max-wait 45s --heartbeat 15s
 # S3b, Linux native final text and portable consumer regressions.
-dotnet $tool run $manifest --rows CP-13,CP-6,CP-7,CP-14 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
+dotnet $tool run $manifest --rows CP-13,CP-6,CP-7,CP-14,CP-15 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
 # S4, Linux; CP-12 additionally requires the owned cgroup-v1 fixture.
 dotnet $tool run $manifest --rows CP-9,CP-10,CP-11,CP-12 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
 # Final source, native Windows. Refresh source/tool/manifest on that checkout.
@@ -718,10 +736,10 @@ dotnet run's implicit build uses its default node count (the host lease was held
 Use the documented build-first/DLL recipe for subsequent checkpoint execution.
 There were no product tests or native process-stop experiments in this Plan task.
 
-Current roster totals: **102 required test results plus one typecheck command**.
-In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./10/7/8/2/21/3; estimates
-are 4/7/6/6/9/1/2/2/6/6/9/2/10/2 whole minutes. Group sums are S1=4, S2=12,
-S3a=11, S3b=15, S4=23, final Windows=7. CP-13 precedes its reuse rows in the
+Current roster totals: **109 required test results plus one typecheck command**.
+In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./10/7/8/2/21/3/7; estimates
+are 4/7/6/6/9/1/2/2/6/6/9/2/10/2/2 whole minutes. Group sums are S1=4, S2=12,
+S3a=11, S3b=17, S4=23, final Windows=7. CP-13 precedes its reuse rows in the
 table because import resolves earlier build references. Final re-import after
 the lane/After-list and narrative refinements is recorded in the handoff report.
 Generated YAML and tool outputs remain ignored/scratch; remove this task's
