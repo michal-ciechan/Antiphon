@@ -129,6 +129,46 @@ public sealed class CustodyNamespaceBootstrapTests
     }
 
     [Test]
+    public async Task C1614_Population_and_drain_read_content_not_size()
+    {
+        RequireLinux();
+        var observed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            source "$1"
+            base=$(mktemp -d)
+            trap 'chmod 644 "$base/closed" 2>/dev/null || true; rm -rf "$base"' EXIT
+            : > "$base/empty"
+            printf '41\n' > "$base/pids"
+            printf 'secret\n' > "$base/closed"
+            chmod 000 "$base/closed"
+            report() {
+              local name="$1" file="$2" pop=0 drain=0
+              if custody_procs_populated "$file"; then pop=0; else pop=$?; fi
+              if custody_drain "$file" 0; then drain=0; else drain=$?; fi
+              echo "${name}_pop=$pop"
+              echo "${name}_drain=$drain"
+            }
+            report empty "$base/empty"
+            report populated "$base/pids"
+            echo "status_size=$(stat -c %s /proc/self/status)"
+            echo "status_bytes=$(wc -c < /proc/self/status | tr -d '[:space:]')"
+            report status /proc/self/status
+            report closed "$base/closed"
+            """);
+        observed.ExitCode.ShouldBe(0, observed.Stdout);
+        Field(observed.Stdout, "empty_pop").ShouldBe("1");
+        Field(observed.Stdout, "empty_drain").ShouldBe("0");
+        Field(observed.Stdout, "populated_pop").ShouldBe("0");
+        Field(observed.Stdout, "populated_drain").ShouldBe("1");
+        Field(observed.Stdout, "status_size").ShouldBe("0");
+        Field(observed.Stdout, "status_bytes").ShouldNotBe("0");
+        Field(observed.Stdout, "status_pop").ShouldBe("0");
+        Field(observed.Stdout, "status_drain").ShouldBe("1");
+        Field(observed.Stdout, "closed_pop").ShouldBe("2");
+        Field(observed.Stdout, "closed_drain").ShouldBe("2");
+    }
+
+    [Test]
     public async Task C1614_Freeze_failure_kills_nothing()
     {
         RequireLinux();
