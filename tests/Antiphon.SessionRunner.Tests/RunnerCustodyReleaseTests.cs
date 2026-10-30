@@ -177,6 +177,56 @@ public sealed class RunnerCustodyReleaseTests
         File.Exists(world.Store.PathFor(world.Binding.ExecutionId, "accepted-receipt.json")).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// A live-client formula must not treat root exit as a Linux seal. Green on the current
+    /// tip; red if Linux starts using HasExited the way Windows does.
+    /// </summary>
+    [Test]
+    public async Task C1614_Root_exit_read_does_not_pass_exited_as_seal()
+    {
+        await using var world = await ReleaseWorld.Open(adopt: true);
+        world.Session!.SetTerminalBackendStateForTest("Exited");
+        bool? seen = null;
+        world.Session.CustodySealProbeForTests = (seal, _) =>
+        {
+            seen = seal;
+            return Task.FromResult(world.Draining());
+        };
+
+        var status = await world.Runtime.ReadCustodyAsync(world.Binding, seal: false, CancellationToken.None);
+        seen.ShouldBe(false);
+        status.State.ShouldBe(VerificationCustodyState.Draining);
+        status.Receipt.ShouldBeNull();
+        world.Recovery.Kills.ShouldBeEmpty();
+        File.Exists(world.Store.PathFor(world.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
+        File.Exists(world.Store.PathFor(world.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A host-pipe failure on an ordinary read must not call the recovery kill, even when a
+    /// prior runner seal exists. One explicit seal request does, once.
+    /// </summary>
+    [Test]
+    public async Task C1614_Pipe_failure_on_ordinary_read_does_not_recover()
+    {
+        await using var world = await ReleaseWorld.Open(adopt: true);
+        world.Store.WriteRecord(world.Binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+        world.Recovery.Pids = [];
+        world.Session!.CustodySealProbeForTests = (_, _) =>
+            throw new IOException("verification_custody_pipe_failed");
+
+        var ordinary = await world.Runtime.ReadCustodyAsync(world.Binding, seal: false, CancellationToken.None);
+        ordinary.State.ShouldBe(VerificationCustodyState.Unknown);
+        ordinary.Receipt.ShouldBeNull();
+        world.Recovery.Kills.ShouldBeEmpty();
+
+        var released = await world.Runtime.ReadCustodyAsync(world.Binding, seal: true, CancellationToken.None);
+        world.Recovery.Kills.ShouldBe([world.ContainerId]);
+        released.State.ShouldBe(VerificationCustodyState.Unknown);
+        released.Reason.ShouldBe("released_unknown");
+        released.Receipt.ShouldBeNull();
+    }
+
     private sealed class RecordingRecovery : ILinuxCustodyRecovery
     {
         public List<Guid> Kills { get; } = [];

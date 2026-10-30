@@ -25,6 +25,12 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     /// </summary>
     internal static readonly AsyncLocal<Guid?> LinuxNamespaceForTests = new();
 
+    /// <summary>
+    /// Test seam. Awaited immediately before an ordinary Linux tree read.
+    /// Production leaves it unset.
+    /// </summary>
+    internal static readonly AsyncLocal<Func<Task>?> BeforeOrdinaryAccountingForTests = new();
+
     public HostCustodyJournal(VerificationCustodyStore store, VerificationExecutionBinding binding,
         Guid hostInstanceId)
     {
@@ -198,6 +204,8 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
             return new(Binding, VerificationCustodyState.Tracking, null, Identity);
         if (_root is null && _seal is null)
             return new(Binding, VerificationCustodyState.Tracking, null, Identity);
+        if (BeforeOrdinaryAccountingForTests.Value is { } beforeAccounting)
+            await beforeAccounting();
         try
         {
             var population = await runner.ObserveLinuxAccountingAsync(fence: false, ct);

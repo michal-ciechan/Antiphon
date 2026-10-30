@@ -1,7 +1,9 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
+using Antiphon.PtyHost;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
-using System.Diagnostics;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -207,13 +209,48 @@ public class LinuxCgroupCustodyTests
         if (!File.Exists("/run/antiphon-custody/namespace"))
             throw new SkipTestException("Requires the entrypoint namespace marker.");
         await using var world = await CustodyWorld.StartAsync();
-        await world.LaunchAsync("echo missing-tree-payload");
-        await world.WaitForRootExitAsync();
-        var status = await world.CustodyAsync(seal: false);
-        status.State.ShouldBe(VerificationCustodyState.Unknown);
-        status.Receipt.ShouldBeNull();
-        File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
-        world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+        HostCustodyJournal.BeforeOrdinaryAccountingForTests.Value = () =>
+        {
+            var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json");
+            if (tracked is null)
+                return Task.CompletedTask;
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(
+                Guid.ParseExact(CurrentNamespace(), "D"), tracked.ContainerId);
+            var tree = Path.GetDirectoryName(procs)!;
+            if (Directory.Exists(tree))
+                Directory.Delete(tree, recursive: false);
+            return Task.CompletedTask;
+        };
+        try
+        {
+            await world.LaunchAsync("echo missing-tree-payload");
+            await world.WaitForRootExitAsync();
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(
+                Guid.ParseExact(CurrentNamespace(), "D"),
+                world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!.ContainerId);
+            var tree = Path.GetDirectoryName(procs)!;
+            VerificationCustodyStatus status = null!;
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            do
+            {
+                status = await world.CustodyAsync(seal: false);
+                if (!Directory.Exists(tree))
+                    break;
+                await Task.Delay(100);
+            }
+            while (DateTime.UtcNow < deadline);
+
+            Directory.Exists(tree).ShouldBeFalse();
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            status.Receipt.ShouldBeNull();
+            File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
+            world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+        }
+        finally
+        {
+            HostCustodyJournal.BeforeOrdinaryAccountingForTests.Value = null;
+        }
     }
 
     [Test]
@@ -222,16 +259,40 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         if (!File.Exists("/run/antiphon-custody/namespace"))
             throw new SkipTestException("Requires the entrypoint namespace marker.");
-        await using var world = await CustodyWorld.StartAsync(TimeSpan.FromMilliseconds(400));
-        await world.LaunchAsync("echo failed-tracking", world.HoldLine());
-        await world.WaitForTreeAsync(atLeast: 1);
-        var status = await world.CustodyAsync(seal: true);
-        status.Receipt.ShouldBeNull();
-        status.State.ShouldBe(VerificationCustodyState.Unknown);
-        (await world.ReadTreeAsync()).ShouldBeEmpty();
-        await Task.Delay(TimeSpan.FromMilliseconds(1200));
-        world.Host.Session.ExitRequested.IsCompleted.ShouldBeTrue();
-        File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+        var ttl = TimeSpan.FromMilliseconds(400);
+        var files = new TrackingRefusal();
+        await using var world = await CustodyWorld.StartAsync(ttl, files);
+        try
+        {
+            var reply = await world.Host.Session.LaunchAsync(
+                world.Spec(world.Binding, "sleep 30"), CancellationToken.None);
+            reply.ShouldBeOfType<ErrorMessage>();
+            files.Failures.ShouldBeGreaterThan(0);
+            File.Exists(world.StorePath("native-start-intent.json")).ShouldBeTrue();
+            File.Exists(world.StorePath("tracking.json")).ShouldBeFalse();
+
+            world.Store.WriteRecord(world.Binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+            var status = await world.CustodyAsync(seal: true);
+            status.Receipt.ShouldBeNull();
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeTrue();
+            File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+
+            var done = await Task.WhenAny(world.Host.RunTask, Task.Delay(ttl + TimeSpan.FromSeconds(2)));
+            done.ShouldBe(world.Host.RunTask);
+            await world.Host.RunTask;
+        }
+        finally
+        {
+            try
+            {
+                if (files.Child is { HasExited: false })
+                    files.Child.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            files.Child?.Dispose();
+            KillOwnedContainer(world);
+        }
     }
 
     // V-30 (d): the seal is what terminates on Linux, and the zero it reports is read back out of
@@ -422,6 +483,54 @@ public class LinuxCgroupCustodyTests
         ? "/sys/fs/cgroup/" + CustodyRootName
         : "/sys/fs/cgroup/pids/" + CustodyRootName;
 
+    private static void KillOwnedContainer(CustodyWorld world)
+    {
+        var host = world.Store.ReadRecord<VerificationHostIdentity>(world.Binding, "host-identity.json");
+        if (host is null || host.ContainerId == Guid.Empty)
+            return;
+        try
+        {
+            using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+            {
+                ArgumentList = { "-n", KillHelper, host.ContainerId.ToString("D") },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            kill?.WaitForExit(10_000);
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch
+        {
+            // The fixture dispose reports a tree this helper could not start against.
+        }
+    }
+
+    /// <summary>Fails the tracking.json commit after the child exists, and keeps that pid.</summary>
+    private sealed class TrackingRefusal : IVerificationCustodyFiles
+    {
+        private readonly VerificationCustodyFiles _files = new();
+        public int Failures { get; private set; }
+        public Process? Child { get; private set; }
+        public byte[]? Read(string path) => _files.Read(path);
+        public void CommitImmutable(string path, byte[] bytes)
+        {
+            if (Path.GetFileName(path) == "tracking.json")
+            {
+                var root = JsonSerializer.Deserialize<CustodyRoot>(bytes,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                Child = Process.GetProcessById(root.Pid);
+                Failures++;
+                throw new IOException("Injected tracking persistence refusal");
+            }
+
+            _files.CommitImmutable(path, bytes);
+        }
+    }
+
     private static string CurrentNamespace()
     {
         var text = File.ReadAllText("/run/antiphon-custody/namespace").Trim();
@@ -530,7 +639,8 @@ public class LinuxCgroupCustodyTests
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
 
-        public static Task<CustodyWorld> StartAsync(TimeSpan? linger = null)
+        public static Task<CustodyWorld> StartAsync(TimeSpan? linger = null,
+            IVerificationCustodyFiles? files = null)
         {
             // The Linux lane spawns through Porta, so the pty backend name here is only the
             // pseudoconsole; the containment is the cgroup, stated separately and independently.
@@ -540,8 +650,8 @@ public class LinuxCgroupCustodyTests
                 CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
                 CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
                 LingerTtl = linger ?? o.LingerTtl,
-            });
-            var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!);
+            }, files);
+            var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!, files: files);
             var snapshot = Path.Combine(host.TempDir, "snapshot");
             var scratch = Path.Combine(host.TempDir, "scratch");
             Directory.CreateDirectory(snapshot);
