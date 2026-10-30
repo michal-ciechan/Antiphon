@@ -336,3 +336,45 @@ The caller must inspect these facts before manual dispatch too. No automatic
 second review/land is inferred from a recovered result. Hold notes always use
 next=decide. Tests cover newer same-role, different-role and no-card lineage,
 including replacement admission between settlement and handoff reservation.
+
+## D-6 detail: scope, target lines and activation order
+
+Deleted outright: round-1 S2 bound release protocol and operator-token policy;
+S3 broker interval ledger, epochs, proxy, durable wait-credit migration and both
+slot-client changes; S4 automatic late correction and lock-order convergence.
+Keep: no-Working-stop janitor guard, held-session visibility, explicit per-task
+ceiling, normal settlement for the new hold population, and small queue-backed
+notice obligations. BuildSlotRequest task/session IDs and aggregate metrics may
+be displayed as **diagnostic/unattributed wait**, never subtracted as proven
+attempt time. Queue waits can trigger a harmless ceiling decision; they no
+longer terminally fail a productive session. The brief's preference for hold
+supersedes the original card's demand for exact queue-time subtraction. Do not
+claim that a >90-minute single queued tool is exempt from its phase deadline.
+
+Implementation target: **master, then separately reviewed rc ports**. No plan
+commit activates a product host. Sequence the deadline work after CARD-1604's
+master landing (or verify its exact equivalent already exists at Code's base),
+preserving token-count behavior. At this Plan read, GET /api/version reports
+`8edda999623a473be2d1970727c172bfb5088d59`, consistent with the brief's rc
+activation; CARD-1604 is still Review on the board. Source here already contains
+CodexTokenCountAt in TaskDeadlinePolicy. These three facts are distinct.
+
+Land S1 (visibility/janitor) first after ordinary Review, then request its own
+reviewed rc port for prompt safety relief. S2/S3 (hold, controls and delivery)
+ship together to master after their shared checkpoint group; port together only
+after independent design Review, TestDesign, ordinary Code/Review and migration
+qualification. S4 (Deploy CLI/docs) follows the CARD-1615 admission resolution
+and integration review; do not concurrently edit its rollout/admission area or
+use this plan as authority to bypass source-writer holds. Until the coordinated
+rc port is active, use existing bounded named-phase waits and explicit operator
+handling of ceiling risk. Speedups CARD-1573/1313/1404/1514/1531 remain separate;
+this plan does not broaden their code surface or depend on unlanded performance
+claims. The caller owns canonical rc activation and source-SHA confirmation.
+This task does no tags, publication, deployment, rc rebase or desktop-file reads.
+
+Placement was read from GET /api/runner-defaults and GET /api/session-runners on
+2026-10-30 around 03:08Z. The catalogue had an eligible Linux and Windows lane,
+plus an unavailable drained Linux entry. Use live defaults at dispatch; omit
+-Runner unless intentionally pinning one host, omit -Platform for portable work
+(-Platform Any unpins). Every checkpoint below names its logical lane; no fleet
+location is baked into a command. The Plan ran in its assigned Linux worktree.
