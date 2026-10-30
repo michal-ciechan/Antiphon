@@ -168,7 +168,12 @@
       "pattern": "^(tests/test-(execution|selection)-policy\\.json|scripts/(lib/)?(nightly[^/]*|release[^/]*|test-selection|test-timings)\\.ps1|scripts/(select-test-rosters|test-test-selection|test-timing-report|run-checkpoint|build-slot|publish-release)\\.ps1|tools/Antiphon\\.Checkpoints/.*|AGENTS\\.md|CLAUDE\\.md|docs/(testing-and-build|release-gates|orchestration-loop)\\.md)$",
       "sets": [],
       "full": true,
-      "id": "P-AUTHORITY"
+      "id": "P-AUTHORITY",
+      "paths": [
+        "scripts/export-nightly-prior-failures.ps1",
+        "scripts/test-nightly-failed-first.ps1",
+        "tests/Antiphon.Tests/Scripts/RcFailureHistoryTests.cs"
+      ]
     },
     {
       "partition": "",
@@ -3084,7 +3089,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "622274b4d95a49bb26d277fcee23085ab61339cc1372ab83799f79835a100c24",
+  "catalogHash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
