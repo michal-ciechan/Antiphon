@@ -22,7 +22,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task imported_props_build_preserves_the_tracked_dependency(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var fixture = CreateImportedProps();
         await AssertPreservedAsync(fixture, "confine-import", cancellationToken);
     }
@@ -31,7 +30,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task directory_build_props_build_preserves_the_tracked_dependency(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var fixture = CreateDirectoryBuildProps();
         await AssertPreservedAsync(fixture, "confine-dirprops", cancellationToken);
     }
@@ -40,7 +38,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task conditional_import_build_preserves_the_tracked_dependency(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var fixture = CreateConditionalImport();
         await AssertPreservedAsync(fixture, "confine-conditional", cancellationToken);
     }
@@ -49,7 +46,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task transitive_import_build_preserves_the_tracked_dependency(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var fixture = CreateTransitiveImport();
         await AssertPreservedAsync(fixture, "confine-transitive", cancellationToken);
     }
@@ -58,7 +54,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     [Timeout(180_000)]
     public async Task unevaluable_import_is_refused_before_the_build(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = InitGitRepo();
         Write(root, ".gitignore", "bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n");
         Write(root, "keep.txt", "KEEP-SENTINEL");
@@ -477,12 +472,6 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     {
         File.WriteAllBytes(fixture.Dll, fixture.DllBytes);
         File.WriteAllBytes(fixture.Assets, fixture.AssetBytes);
-    }
-
-    private static void RequireLinux()
-    {
-        if (!OperatingSystem.IsLinux())
-            Skip.Test("CARD-1199 output confinement real-build proof runs on Linux; Windows is unverified.");
     }
 
     private string InitGitRepo()
