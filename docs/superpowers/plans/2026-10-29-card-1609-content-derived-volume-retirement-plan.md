@@ -22,7 +22,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 | D-6 | Retained-volume deploy refusal, C849 contract, external caches | Done: D-20, W6 |
 | D-7 | Master/rc port order after top-up 38, definition scope | Done: port and ordering section |
 | D-8 | Windows skip roster and closure checkpoint | Done: slice edits and CP-12 |
-| D-9 | Documentation pins and checkpoint | Pending |
+| D-9 | Documentation pins and checkpoint | Done: S5 pin rewrites, CP-13 and CP-8 |
 | D-10 | Real private-origin path baseline-red witness | Pending |
 
 ## Problem and evidence
@@ -661,7 +661,7 @@ made by this Plan task.
 | S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H6 and R3-R6; D-15 full-roster output. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and deploy-temp retained-volume preflight in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations and their skip-roster identities in the same commit. | J1-J10, R1/R2 and N2/N3. |
 | S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. ASCII transport scripts; LF shell files. |
-| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..12; update runbook command examples and refusal recovery. |
+| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..13; update runbook command examples and refusal recovery. |
 
 Relocate the four old historical-image-specific methods in
 `RollingVolumeRecycleScriptTests` (dry-run binding and three C1594 receipt-image
@@ -674,6 +674,19 @@ Retain `C1594_Antiphon_evidence_gitdir` unchanged. In
 `C1105_Temp_cleanup_uses_previous_generation` now proves older actual topology is
 recognized without loading its old build. A changed test name is not coverage loss
 when its behavioral vectors and witnesses remain explicit.
+
+S5 also edits `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs`:
+`Retired_temp_cleanup_and_retirement_gates_match` must pin the new retained-volume
+stop/recovery contract while preserving separate container gates.
+`Main_volume_recycling_is_scripted_only` must distinguish unchanged main v1 from
+new temp v2: replace temp's historical-image/default-network/auth-fallback/no-proof
+sentences with current tooling, offline helpers, all-origin host proof, exact
+volume deletion and complete refusal roster. Retain main's scripted-only rule,
+location/object safeguards and credential omissions. Do not leave obsolete temp
+wording merely to satisfy an old string pin. CP-13 selects both methods.
+Update `RollingVolumeRecycleScriptTests.C1008_Documentation_and_transport_pins_match`
+for the same v1/v2 distinction and run it in CP-8; preserve its transport/custody
+assertions. These doc pins complement behavior tests, not replace them.
 
 Windows Unit admission is part of S1/S3/S5, not deferred cleanup. Update
 `tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs` alongside every source
@@ -833,8 +846,8 @@ Read `GET /api/runner-defaults` and `GET /api/session-runners` again at dispatch
 They were read again on 2026-10-30: revision 2; an eligible Linux default
 and an eligible Windows peer were advertised (8/10 and 2/2 occupied respectively). These are
 observations, not permanent placement instructions. CP-1..10 require the native
-Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11/12
-use the native Windows PowerShell/Git lane (CP-12 reuses its build). No host is pinned. Omit `-Runner`;
+Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11/12/13
+use the native Windows PowerShell/Git lane (CP-12/13 are portable checks reusing its build). No host is pinned. Omit `-Runner`;
 use `-Platform Linux`/`Windows` only for the rows needing that OS. Plan/Review is
 portable and needs no platform flag (`Any` clears a previous pin).
 
@@ -847,7 +860,7 @@ names/arguments and no suffix sibling. No full-path OR. Every OR operand has
 parentheses and a trailing star. Table pipes are escaped. No zero-test credit.
 
 Use the checkpoint tool's `run --plan <this-file> --rows <row-list>` once per
-committed group: S1 CP-1/2; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12. Run bootstrap
+committed group: S1 CP-1/2; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12/13. Run bootstrap
 through `scripts/build-slot.ps1` if needed; the checkpoint runner takes build slots
 for its rows. Continue `wait` until terminal exit (75 is running), in foreground
 wait windows no longer than 60 seconds. Preserve exact CHECKPOINT lines with source
@@ -857,8 +870,8 @@ Remove only task-owned alternate outputs after all runs have joined. CP-11 inten
 Import the manifest to ignored YAML to set per-row deadlines explicitly rather
 than inherit the importer's 15-minute/3x floor: provisional execution caps CP-1=10m,
 CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=2m,
-CP-10=8m, CP-11=10m, CP-12=2m. These are roughly 2x the stated estimates, not measured-p95
-claims. Red-group charged cap 12m, final Linux 29m, Windows 12m; each hard wall
+CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m. These are roughly 2x the stated estimates, not measured-p95
+claims. Red-group charged cap 12m, final Linux 29m, Windows 14m; each hard wall
 adds one finite 45m admission allowance. Reconcile with measured p95 under the
 collection obligation before final qualification. If a group reaches 30m, stop
 repeating it and hand timing evidence to Debug. No full assembly run is authorized.
@@ -874,11 +887,12 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
 | CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
-| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)` | R1,R6 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
+| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Documentation_and_transport_pins_match*)` | R1,R6,doc transport | all 10 methods, 0 failed/skipped | 10 | 1 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
 | CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |
 | CP-12 | S2-S5 | CP-11 | windows-unit-roster | `/*/Antiphon.Tests.Scripts/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | Windows roster closure | all 3 methods, 0 failed/skipped | 3 | 1 | true |
+| CP-13 | S2-S5 | CP-11 | windows-doc-pins | `/*/Antiphon.Tests.Infrastructure/DockerStackDocumentationTests/(Retired_temp_cleanup_and_retirement_gates_match*)\|(Main_volume_recycling_is_scripted_only*)` | S5 doc pins | both methods, 0 failed/skipped | 2 | 1 | true |
 
 ## Rollout and compatibility
 
