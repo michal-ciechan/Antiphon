@@ -300,6 +300,19 @@ public sealed class VolumeRetirementWrapperTests
         tempNoRunner.ShouldContain("exit=0");
         tempNoRunner.ShouldContain("statusBuildVersion");
         tempNoRunner.ShouldNotContain("refused=");
+
+        var emptyMain = await Bash(Extract(remote, "c1008_owned_mounts") + "\n" + """
+            require_lane() { :; }
+            sudo() { [ "$1" = -n ] && shift; command "$@"; }
+            c1008_refuse() { printf 'refused=%s\n' "$1"; exit 2; }
+            C1008_PROJECT=antiphon-runner
+            TEMP_PROJECT=antiphon-runner-temp
+            c1008_owned_mounts '[]' '{"c994Topology":{"services":{"session-runner":[{"kind":"bind","source":"/dev/null","file":true}]}}}' '{}'
+            printf 'main-empty-admitted\n'
+            """);
+        emptyMain.ShouldContain("refused=RecycleContainerStateUnknown",
+            "main retains configured bind metadata validation even when no container remains");
+        emptyMain.ShouldNotContain("main-empty-admitted");
     }
 
     [Test]
