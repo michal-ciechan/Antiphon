@@ -1,5 +1,6 @@
 using Antiphon.HostCleanup.Checkpoints;
 using System.ComponentModel;
+using System.Globalization;
 
 namespace Antiphon.Checkpoints;
 
@@ -49,8 +50,8 @@ public static class SafeDelete
         new CheckpointDelete(CheckpointCleanupDefaults.Context).Stamp(repositoryRoot, gitExecutable);
     public static string? ExistingPathRefusal(string path, string? gitExecutable = null, int? timeoutMs = null) =>
         new CheckpointDelete(CheckpointCleanupDefaults.Context).ExistingPathRefusal(path, gitExecutable, timeoutMs);
-    public static string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null) =>
-        new CheckpointDelete(CheckpointCleanupDefaults.Context).PreflightRoots(repository, roots, gitExecutable, timeoutMs);
+    public static string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null, int? commandLineBudget = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).PreflightRoots(repository, roots, gitExecutable, timeoutMs, commandLineBudget);
 }
 
 public sealed class CheckpointDelete(CheckpointCleanupContext context)
@@ -286,11 +287,33 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         return listed.Stdout.Length == 0 ? null : "tracked";
     }
 
+    // CreateProcess rejects a command line at 32,767 characters, and cmd.exe at 8,191.
+    // 8,000 leaves room for the runner's fixed Git hardening prefix and Windows quoting.
+    internal const int DefaultCommandLineBudget = 8_000;
+
+    internal static int ArgumentCharacters(IReadOnlyList<string> arguments)
+    {
+        long total = 0;
+        foreach (var argument in arguments)
+        {
+            if (total != 0) total++;
+            total += argument.Length;
+            if (total >= int.MaxValue) return int.MaxValue;
+        }
+
+        return (int)total;
+    }
+
     // One ls-files of every write root. A git failure refuses; a missing repository has nothing tracked.
-    public string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
+    // commandLineBudget is the seam tests inject; the default is the real CreateProcess budget.
+    // The list is still one invocation until the batching fix lands.
+    public string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null, int? commandLineBudget = null)
     {
         if (roots.Count == 0)
             return "git-failed";
+        var budget = commandLineBudget ?? DefaultCommandLineBudget;
+        if (budget < 1)
+            return "git-start-failed: argumentCharacters=0 budget=" + budget.ToString(CultureInfo.InvariantCulture);
         var start = Canonical(repository);
         if (start is null)
             return "path-unsafe";
@@ -308,6 +331,7 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
             args.Add(full);
         }
 
+        _ = budget;
         var listed = RunGit(git, owner, args, timeout);
         if (listed.Failure is not null)
             return listed.Failure;
