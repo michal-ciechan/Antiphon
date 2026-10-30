@@ -40,4 +40,5 @@ public sealed class TaskSupervisionNotice
     public string? ReportWatchCloseReason { get; set; }
     public DateTime? NextReportScanAt { get; set; }
     public int? ReportScanAttempts { get; set; }
+    public DateTime? ReportTranscriptStableSince { get; set; }
 }

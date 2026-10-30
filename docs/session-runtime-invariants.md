@@ -388,6 +388,18 @@ Retention shares discovery eligibility and rechecks outbound protections under
 the transcript mutation gate. Activation requires both server and runner support;
 `ChannelOutbound:UnifiedRecoveryEnabled` remains false by default.
 
+CARD-1610 S3 uses a bounded no-growth alternative for Failed-task report watches.
+An ended generation stays watchable until a post-exit scan and a later scan prove
+at least 15 minutes with no growth in its stored transcript sequence frontier.
+`ScanFrontier` records that frontier; nullable `ReportTranscriptStableSince` records
+the first stable post-exit observation and resets on growth. The clock must also
+be at least 15 minutes beyond `EndedAt`. Scan backoff can extend this interval.
+A complete late report forwards immediately and closes as `report_forwarded`;
+absence of a report closes only after the drain bound. Uploads arriving after a
+durably closed drain window are not forwarded and do not reopen it. Unknown
+identity and superseded-attempt closures retain their existing fences. Recovery
+isolates each item and reports errors after processing the remaining batch.
+
 - **CARD-1022 release A uses one runtime backend decision.** Windows defaults to modern;
   Unix uses Porta and reports UnixPty without Windows discovery. The daemon composes nonempty
   environment before config; explicit direct-runtime requests, including empty, override ambient
