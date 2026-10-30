@@ -88,6 +88,8 @@ $out = [ordered]@{
     boundAboveAdmitted = $true
     plannedAboveBoundAdmitted = $true
     clampedE95 = 0
+    ptyPlanRefused = $false
+    ptyPlanWatchdog = 0
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -99,6 +101,8 @@ $out = [ordered]@{
     launchCoverageComplete = $true
     launchTestsPassed = $true
     trxPresentCoverageComplete = $true
+    refusedLaunchStarted = $true
+    refusedLaunchReasonOk = $false
 }
 
 try {
@@ -487,6 +491,52 @@ try {
                     Add-Problem 'planner-watchdog-short'
                 }
             }
+
+            $ptyNode = [pscustomobject]@{
+                ClassName = 'Antiphon.PtyHost.Tests.PricedTests'
+                Namespace = 'Antiphon.PtyHost.Tests'
+                Type = 'PricedTests'
+                Method = 'Run'
+                Uid = 'priced'
+                Categories = @('Integration')
+                Excluded = $false
+            }
+            $script:NightlyClassCostTable = @{ 'Antiphon.PtyHost.Tests.PricedTests' = 1500.0 }
+            $ptyChunk = @([pscustomobject]@{ id = 'all'; classes = @() })
+            $ptyProbe = @(Get-NightlyProfileLaunchPlan @($ptyNode) $ptyChunk @())
+            $ptyProbeAdmitted = $false
+            $ptyProbeWatchdog = 0.0
+            if ($ptyProbe.Count -ge 1 -and $ptyProbe[0].PSObject.Properties.Name -contains 'watchdogSeconds') {
+                $ptyProbeAdmitted = [bool]$ptyProbe[0].watchdogAdmitted
+                $ptyProbeWatchdog = [double]$ptyProbe[0].watchdogSeconds
+            }
+            $ptyRefused = $false
+            $ptyStamp = 0.0
+            $ptyMessage = ''
+            try {
+                $ptyPlanned = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($ptyNode) -Chunks $ptyChunk -Exclusions @() -SuiteId 'pty-host' -PolicyObject $policy.Object)
+                if ($ptyPlanned.Count -ge 1 -and ($ptyPlanned[0].PSObject.Properties.Name -contains 'watchdogAdmitted') -and [bool]$ptyPlanned[0].watchdogAdmitted) {
+                    $ptyStamp = [double]$ptyPlanned[0].watchdogSeconds
+                    $ptyMessage = 'planner-admitted-pty-host W=' + $ptyStamp
+                } else {
+                    $ptyMessage = 'planner-returned-without-admission'
+                }
+            } catch {
+                $ptyMessage = [string]$_.Exception.Message
+                if ($ptyMessage -match 'watchdog-admission-refused' -and $ptyMessage -match 'reason=suite-watchdog-ceiling' -and $ptyMessage -match 'watchdogSeconds=1200(\D|$)') {
+                    $ptyRefused = $true
+                    $ptyStamp = 1200
+                }
+            }
+            $out.ptyPlanRefused = $ptyRefused
+            $out.ptyPlanWatchdog = $ptyStamp
+            if (-not $ptyRefused) {
+                if ($ptyProbeAdmitted -and $ptyProbeWatchdog -eq 3600) {
+                    Add-Problem ('pty-host-plan-admitted-as-antiphon seconds=1500 W=' + $ptyProbeWatchdog)
+                } else {
+                    Add-Problem ('pty-host-plan-not-refused ' + $ptyMessage)
+                }
+            }
         } elseif ($mode -eq 'timeout') {
             $partial = Join-Path $work 'partial.diag'
             [IO.File]::WriteAllText($partial, "TestNodeUid { Value = uid-partial } InProgressTestNodeStateProperty { Explanation = running }`n")
@@ -555,6 +605,51 @@ $NightlySeams = @{
                 [void][int]::TryParse(([System.IO.File]::ReadAllText($record).Trim()), [ref]$launchMs)
                 $out.launchTimeoutMs = $launchMs
                 if ($launchMs -ne 1200000) { Add-Problem ('launch-timeout-ms ' + $launchMs) }
+            }
+
+            $refusedPolicy = Join-Path $launchRoot 'refused-policy.json'
+            $refusedRecord = Join-Path $launchRoot 'refused-started.txt'
+            $refusedSeams = Join-Path $launchRoot 'refused-seams.ps1'
+            $policyRaw = [System.IO.File]::ReadAllText((Join-Path $repo (Join-Path 'tests' 'test-execution-policy.json')))
+            $policyObj = $policyRaw | ConvertFrom-Json
+            $pricedChunk = [pscustomobject]@{ id = 'priced'; classes = @('Antiphon.PtyHost.Tests.PricedTests'); seconds = 1500 }
+            $pricedChunks = [pscustomobject]@{ 'pty-host' = @($pricedChunk) }
+            if ($policyObj.PSObject.Properties.Name -contains 'chunks') {
+                $policyObj.chunks = $pricedChunks
+            } else {
+                Add-Member -InputObject $policyObj -NotePropertyName chunks -NotePropertyValue $pricedChunks -Force
+            }
+            $policyObj.policyHash = Get-NightlyPolicyHash -Object $policyObj
+            [System.IO.File]::WriteAllText($refusedPolicy, ($policyObj | ConvertTo-Json -Depth 100))
+            $reparsed = [System.IO.File]::ReadAllText($refusedPolicy) | ConvertFrom-Json
+            $reparsed.policyHash = Get-NightlyPolicyHash -Object $reparsed
+            [System.IO.File]::WriteAllText($refusedPolicy, ($reparsed | ConvertTo-Json -Depth 100))
+            $refusedSeam = @'
+$NightlySeams = @{
+    HostPlatform = { return 'linux' }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $joined = @($ArgumentList) -join ' '
+        if ($joined.IndexOf('--report-trx') -ge 0) {
+            [System.IO.File]::WriteAllText('__REFUSED__', [string]$TimeoutMilliseconds)
+            return @{ ExitCode = 1; TimedOut = $true; ChildrenExited = $true; CleanupComplete = $true; LogText = '' }
+        }
+        return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; LogText = '' }
+    }
+    WaitCleanup = { param($RunResult) return $true }
+}
+'@
+            $refusedSeam = $refusedSeam.Replace('__REFUSED__', ($refusedRecord -replace '\\', '/'))
+            [System.IO.File]::WriteAllText($refusedSeams, $refusedSeam)
+            try {
+                $refusedRun = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot (Join-Path $launchRoot 'refused-logs') -Suites @('pty-host') -Profile 'nightly' -AllowSharedTree -SeamsPath $refusedSeams -PolicyPath $refusedPolicy -Sha '0' -RunId 's3-refused'
+                $reasonText = @($refusedRun.reasons) -join ' '
+                $out.refusedLaunchStarted = [System.IO.File]::Exists($refusedRecord)
+                $out.refusedLaunchReasonOk = ($reasonText.IndexOf('watchdog-admission-refused') -ge 0)
+                if ($out.refusedLaunchStarted) { Add-Problem 'refused-launch-started-process' }
+                if (-not $out.refusedLaunchReasonOk) { Add-Problem ('refused-launch-reason ' + $reasonText) }
+            } catch {
+                Add-Problem ('refused-launch ' + $_.Exception.Message)
             }
         } else {
             Add-Problem 'unknown-mode'
