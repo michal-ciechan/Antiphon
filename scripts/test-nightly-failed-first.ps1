@@ -195,10 +195,24 @@ function Test-RefusesIncompleteEvidence {
     Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $h $missing PriorFailureSweep } 'current-class-missing') 'missingPartial'
     $renamed=Copy-FFObject $missing; $renamed[0].nodes += New-FFNode ($name+'Renamed')
     Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $h $renamed PriorFailureSweep } 'current-class-missing') 'renamed'
-    $excluded=Copy-FFObject $current
-    $excluded[0].exclusions=@([pscustomobject]@{Class=$name;Methods=@()})
-    $r=Resolve-NightlyPriorFailures $h $excluded Full
-    Assert-FF (@($r.unresolved | Where-Object { $_.className -ceq $name -and $_.reason -ceq 'current-class-excluded' }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $h $excluded PriorFailureSweep } 'current-class-excluded')) 'excluded'
+    # D-21 uses real rc exclusions even when the run caller supplies nightly's empty rows.
+    $policy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $whole='Antiphon.Tests.Card0168InteractiveProbeTests'
+    $methodClass='Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests'
+    $policyRows=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform linux)
+    $methodRow=@($policyRows | Where-Object { $_.Class -ceq 'TestDbFixtureLazyInitializationTests' })[0]
+    $exHistory=Copy-FFObject $h
+    $exHistory.members=@([pscustomobject]@{suite='antiphon';className=$whole;reasons=@('prior-failure');observations=@()})
+    $exNodes=@(New-FFNode $whole)
+    $exSuite=@([pscustomobject]@{id='antiphon';nodes=$exNodes;chunks=@([pscustomobject]@{id='all';classes=@($whole);nodes=$exNodes});exclusions=@()})
+    Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $exHistory $exSuite PriorFailureSweep } 'entirely-excluded-class') 'excluded'
+    $exHistory.members[0].className=$methodClass
+    $exNodes=@(foreach ($method in $methodRow.Methods) { New-FFNode $methodClass $method })
+    $exNodes += New-FFNode $methodClass 'A_db_free_exact_method_selection_constructs_and_starts_no_database'
+    $exSuite[0].nodes=$exNodes; $exSuite[0].chunks=@([pscustomobject]@{id='all';classes=@($methodClass);nodes=$exNodes})
+    $r=Resolve-NightlyPriorFailures $exHistory $exSuite PriorFailureSweep
+    Assert-FF (@($r.members[0].requiredUids).Count -eq 1 -and @($r.excludedUids).Count -eq 3 -and $r.exclusionProfile -ceq 'rc' -and $r.policyDigest -ceq $policy.Hash -and $r.exclusionPolicyFileDigest -ceq (Get-NightlyHistoryDigest $policy.Path) -and $r.exclusionPlatform -ceq 'linux' -and @($r.excludedUids | Where-Object { $_.reason -cne $methodRow.Reason -or $_.owner -cne $methodRow.Owner }).Count -eq 0) 'methodExclusions'
+    Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures -History $exHistory -Suites $exSuite -QualificationMode PriorFailureSweep -ExclusionContext ([pscustomobject]@{profile='nightly'}) } 'partial-exclusion-profile-mismatch') 'exclusionMismatch'
     $noChunk=Copy-FFObject $h
     foreach ($m in $noChunk.members) { foreach ($o in $m.observations) { $o.chunk='' } }
     $r=Resolve-NightlyPriorFailures $noChunk $current PriorFailureSweep
@@ -268,7 +282,7 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=26 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=28 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
