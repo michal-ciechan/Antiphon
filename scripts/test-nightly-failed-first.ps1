@@ -173,26 +173,32 @@ function Test-FFChunkAccounting([string]$Variant) {
     $row=[ordered]@{id='antiphon';chunk='all';name='antiphon all';log='C:\retired\logs\accounting\antiphon-all.log';exitCode=0;timedOut=$false;skipped=$false;result='pass'}
     switch ($Variant) {
         'exit' { $row.exitCode=-1073741819 }
+        'crash' { $row.exitCode=-1073741819; $row.result='FAIL'; $row.detail='missing-terminal-accounting' }
+        'crash-unbound' { $row.exitCode=-1073741819; $row.result='FAIL'; $row.detail='missing-terminal-accounting' }
         'result' { $row.result='FAIL' }
         'detail' { $row.detail='missing-terminal-accounting' }
     }
     $summary=[ordered]@{runId='accounting';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'}
     Write-FFJson (Join-Path $run 'summary.json') $summary
     Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
-    if ($Variant -cne 'missing') { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
+    if ($Variant -cnotin @('missing','crash-unbound')) { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
     $defs=''; $results=''
     foreach ($n in $nodes) {
         if ($Variant -ceq 'short' -and $n.Uid -ceq 'second') { continue }
         $defs += '<UnitTest id="'+$n.Uid+'"><TestMethod className="'+$n.ClassName+'" name="Run" /></UnitTest>'
         $results += '<UnitTestResult testId="'+$n.Uid+'" outcome="Passed" />'
     }
-    if ($Variant -cne 'missing') { [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'),('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><TestDefinitions>'+$defs+'</TestDefinitions><Results>'+$results+'</Results></TestRun>')) }
+    if ($Variant -cnotin @('missing','missing-bound')) { [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'),('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><TestDefinitions>'+$defs+'</TestDefinitions><Results>'+$results+'</Results></TestRun>')) }
     $exp=Export-NightlyPriorFailures $run (Join-Path $root ('accounting-'+$Variant+'.json')) -PassThru
     $history=Read-NightlyPriorFailures $exp.Path $exp.Digest
     $suite=@([pscustomobject]@{id='antiphon';nodes=$nodes;chunks=@([pscustomobject]@{id='all';classes=@($nodes.ClassName);nodes=$nodes});exclusions=@()})
     $full=Resolve-NightlyPriorFailures $history $suite Full
-    $reason=@{exit='summary-nonzero-exit';result='summary-failed-result';detail='summary-detail';short='short-trx';missing='missing-trx'}[$Variant]
-    $wholeChunk=($Variant -ceq 'missing' -or (@($full.members).Count -eq 2 -and @($full.unresolved | Where-Object { $_.className -cin @($nodes.ClassName) }).Count -eq 2))
+    if ($Variant -ceq 'missing-bound') {
+        $partial=Resolve-NightlyPriorFailures $history $suite PriorFailureSweep
+        return ($history.membershipComplete -and @($full.members).Count -eq 2 -and @($full.unresolved).Count -eq 0 -and @($partial.members).Count -eq 2 -and @($history.fallbackChunks).Count -eq 1)
+    }
+    $reason=@{crash='summary-detail';'crash-unbound'='summary-detail';exit='summary-nonzero-exit';result='summary-failed-result';detail='summary-detail';short='short-trx';missing='missing-trx'}[$Variant]
+    $wholeChunk=($Variant -cin @('missing','crash-unbound') -or (@($full.members).Count -eq 2 -and @($full.unresolved | Where-Object { $_.className -cin @($nodes.ClassName) }).Count -eq 2))
     return ($wholeChunk -and @($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $history $suite PriorFailureSweep } 'prior-failure-sweep-unresolved'))
 }
 function Test-OrdinaryFailedChunk {
@@ -238,11 +244,12 @@ function Test-RefusesIncompleteEvidence {
         $plan=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $suite)
         $current += [pscustomobject]@{id=$suite; nodes=$nodes; chunks=$plan; exclusions=@()}
     }
-    $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep
+    $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep -WarningVariable missingContextWarnings
+    Assert-FF (@($missingContextWarnings | Where-Object { [string]$_ -clike 'PARTIAL MISSING EXCLUSION CONTEXT:*' }).Count -eq 1) 'missingContextWarning'
     $candidateSha=git -C $repo rev-parse HEAD
     $candidatePolicy=Read-NightlyExecutionPolicy -RepoRoot $repo
     Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne $candidateSha -and $h.policyHash -cne $candidatePolicy.Hash) 'validControl'
-    foreach ($variant in 'exit','result','detail','short') { Assert-FF (Test-FFChunkAccounting $variant) ('chunk-'+$variant) }
+    foreach ($variant in 'exit','result','detail','short','crash','crash-unbound','missing-bound') { Assert-FF (Test-FFChunkAccounting $variant) ('chunk-'+$variant) }
     # No timeout, diagnostic, failing summary marker or retained plan can mask this witness.
     Assert-FF (Test-FFChunkAccounting 'missing') 'standaloneMissingTrx'
     $retainedPlan=[IO.File]::ReadAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'))
@@ -369,7 +376,7 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=43 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
     'OrdinaryFailedChunk' { Test-OrdinaryFailedChunk; $expected=4 }
     default { throw ('unknown case: '+$Case) }
 }
