@@ -25,6 +25,8 @@ public class NativeLinuxPolicyWitnessMutationTests
         var policy = File.ReadAllText(Path.Combine(RepoRoot(), "tests", "test-execution-policy.json"))
             .ReplaceLineEndings(lineEnding);
         var witnessed = new HashSet<string>(NativeLinuxPolicyWitness.WitnessedRowKeys, StringComparer.Ordinal);
+        foreach (var row in NativeLinuxWindowsReasonAudit.ReadRows(policy).Where(row => row.Witnessed))
+            witnessed.Add(row.Key);
         var legacy = NativeLinuxWindowsReasonAudit.LegacyCanonicalRecords(policy, witnessed);
         NativeLinuxWindowsReasonAudit.Sha256Utf8(legacy.Payload)
             .ShouldBe(NativeLinuxPolicyWitness.LegacyExclusionDigest);
