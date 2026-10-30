@@ -719,3 +719,71 @@ CP-92
 SLOW-TEST TRIPWIRE: 1 unlisted tests >= 5s
 5.106s  Antiphon.Tests.Application.DataRetentionServiceTests.C1610_Unresolved_supervision_retains_evidence_until_told  C1610_Unresolved_supervision_retains_evidence_until_told(source-transcript)
 ```
+
+## Part 2: task 698bf6b9, pre-run assessment
+
+Base 0219ccebf3982b191116dd7d731c8d5b0aaa97c1; Linux/server2. Prior outcomes above
+remain historical. This continuation changes plan accounting only at this point.
+
+### All 28 inherited skips classified
+
+Inspected each runtime guard and its Windows production/path prerequisite.
+No Linux-capable case is being skipped incorrectly. Windows npm shim/drive roots,
+CommandLineToArgvW, drive-rooted report paths, Windows MockFileSystem, the explicitly
+Windows Grok argv guard and local modern ConPTY contrast explain every case.
+None of these requires weakening an assertion or emulating Windows on Linux.
+The portable minima account only for these exact skips; original total coverage
+and the native obligation remain. Existing source-qualified observations are retained
+in the preceding table; no historical observation is rebound to this source.
+
+| Row | Exact skipped identity | Classification | Evidence / prerequisite |
+|---|---|---|---|
+| CP-52 | Antiphon.Tests.Application.AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash | Expected Windows-only | Skipped: Canonical pin cwd is a Windows drive-rooted path |
+| CP-52 | Antiphon.Tests.Application.AgentExecutableResolverTests.Resolves_sibling_flavor_when_configured_one_is_gone | Expected Windows-only | Skipped: Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows |
+| CP-46 | Antiphon.Tests.Agents.AgentRegistrySettingsTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine | Expected Windows-only | Skipped: The npm shim layout is Windows-specific |
+| CP-54 | Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests.Off_settings_path_round_trips_through_LaunchArgvGuard | Expected Windows-only | Skipped: CommandLineToArgvW is Windows-only |
+| CP-55 | Antiphon.Tests.Application.DelegationReportFormatterTests.reported_repository_paths_normalize_relative_and_absolute_windows_forms | Expected Windows-only | Skipped: Drive-letter report paths resolve only against a Windows repo root |
+| CP-56 | Antiphon.Tests.Application.DirectoryBrowseServiceTests.prefix_returns_matching_child_directories | Expected Windows-only | Skipped: Drive-letter directory listing needs a Windows MockFileSystem |
+| CP-56 | Antiphon.Tests.Application.DirectoryBrowseServiceTests.trailing_slash_lists_children_of_that_directory | Expected Windows-only | Skipped: Drive-letter directory listing needs a Windows MockFileSystem |
+| CP-56 | Antiphon.Tests.Application.DirectoryBrowseServiceTests.caches_within_ttl_and_refreshes_after | Expected Windows-only | Skipped: Drive-letter directory listing needs a Windows MockFileSystem |
+| CP-56 | Antiphon.Tests.Application.DirectoryBrowseServiceTests.existing_path_reports_exists_true | Expected Windows-only | Skipped: Drive-letter directory listing needs a Windows MockFileSystem |
+| CP-56 | Antiphon.Tests.Application.DirectoryBrowseServiceTests.partial_leaf_matches_substring_within_child_name | Expected Windows-only | Skipped: Drive-letter directory listing needs a Windows MockFileSystem |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-56 | Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag) | Expected Windows-only | Skipped: CARD-0382 Grok rules argv guard is Windows-only by design |
+| CP-62 | Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_silent_runner_leaves_this_processes_own_decision_standing | Expected Windows-only | Skipped: Windows delivery profile proof |
+| CP-62 | Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_runner_on_the_modern_backend_confirms_the_raised_ceilings | Expected Windows-only | Skipped: Windows delivery profile proof |
+| CP-62 | Antiphon.Tests.Application.PtyDeliveryCeilingsTests.Unknown_runner_backend_downgrades_modern_server | Expected Windows-only | Skipped: Windows delivery profile proof |
+| CP-62 | Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_runner_on_the_inbox_conhost_downgrades_a_modern_server | Expected Windows-only | Skipped: Windows delivery profile proof |
+| CP-64 | Antiphon.Tests.Application.SessionDeliveryProfileTests.Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind | Expected Windows-only | Skipped: ConPTY only on Windows |
+| CP-64 | Antiphon.Tests.Application.SessionDeliveryProfileTests.Phone_home_Grok_never_uses_local_modern_evidence | Expected Windows-only | Skipped: ConPTY only on Windows |
+
+### CP-67 diagnosis plan, before repeating
+
+The previous six-minute timeout had no per-case journal or TRX. No measured row
+p95 or startup/body/teardown split exists, so increasing its deadline would have
+no evidential basis. Five disjoint class partitions (216 total cases) retain
+six-minute limits and enable existing TestTiming early-start/late-end journaling.
+The fixtures use marked isolated temp roots; no database/container migration is
+required by this Unit row. TempDir invokes the shared sweep, whose five-minute
+interval already avoids replaying the sweep per allocation. Assembly sweep and
+process waits remain suspects to measure, not established causes. Cases whose
+subject is startup, output seals, teardown or process custody require their own
+fixture; no speculative setup sharing is applied before measuring.
+
+The rest of the exact inherited rows CP-68..91 use the same source and one producer,
+TEMP=/tmp, UseAppHost=false, serial rows, 25-minute admission bounds. Execution
+and independent wall bounds are finite and reported separately. Mixed-case
+p50/p95/max are collected once per needed case; repeated-history p95 and detailed
+external-call spans remain provisional/unknown where instrumentation is absent.
+The real report validator rejects any skip even if ExpectText documents one;
+this is a separate verification-tool limitation, never a fabricated clean gate.
