@@ -75,6 +75,45 @@ public sealed class CustodyNamespaceBootstrapTests
     }
 
     [Test]
+    public async Task C1614_Failed_namespace_boot_still_clears_a_writable_marker()
+    {
+        RequireLinux();
+        var failed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            base=$(mktemp -d)
+            trap 'chmod 755 "$base/blocked" 2>/dev/null || true; rm -rf "$base"' EXIT
+            mkdir -p "$base/blocked" "$base/run"
+            chmod 555 "$base/blocked"
+            printf 'stale\n' > "$base/run/namespace"
+            source "$1"
+            custody_namespace_entrypoint_step "$base/blocked/state" "$base/run" "$1"
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            if [ -e "$base/run/namespace" ]; then echo "marker=present"; else echo "marker=absent"; fi
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+        failed.Stdout.ShouldContain("marker=absent");
+    }
+
+    [Test]
+    public async Task C1614_Empty_namespace_paths_do_not_stop_boot()
+    {
+        RequireLinux();
+        var failed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            source "$1"
+            custody_namespace_entrypoint_step "" "" ""
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+    }
+
+    [Test]
     public async Task C1614_Verifiers_count_execution_trees_in_current_namespace()
     {
         RequireLinux();
@@ -221,6 +260,21 @@ public sealed class CustodyNamespaceBootstrapTests
             echo "continued=yes"
             echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
             """);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(script);
+        return StartAsync(psi, "custody_namespace_entrypoint_step");
+    }
+
+    private static Task<ShellResult> StepScriptAsync(string script, string body)
+    {
+        var psi = new ProcessStartInfo("bash")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(body);
         psi.ArgumentList.Add("bash");
         psi.ArgumentList.Add(script);
         return StartAsync(psi, "custody_namespace_entrypoint_step");

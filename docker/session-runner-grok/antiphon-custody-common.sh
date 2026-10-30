@@ -120,11 +120,14 @@ custody_publish_marker() {
 # Entrypoint step 3b. state, run and library are the production paths when the
 # entrypoint calls this. A portable test may pass a private filesystem. The
 # installed entrypoint does not take those paths from the environment.
-# Returns 0 after a successful boot. A failed boot must return 0 as well once
-# the failure branch is guarded; an unguarded removal still aborts under set -e.
+# A failed boot leaves custody unadvertised and still returns 0. Every command
+# on that path is guarded: a read-only marker, a closed stderr, or a failed
+# export must not stop the runner. Errexit is restored before the failure path
+# when the caller had it, so the guards are what keep the runner going.
 custody_namespace_entrypoint_step() {
   local state="${1:-}" run="${2:-}" library="${3:-}"
-  local namespace_boot_status=0 namespace_boot_output
+  local namespace_boot_status=0 namespace_boot_output errexit=0
+  case $- in *e*) errexit=1 ;; esac
   set +e
   namespace_boot_output="$(bash -c '
 source "$1" || exit 1
@@ -134,15 +137,17 @@ chmod 0755 -- "$3" || exit 1
 custody_namespace_boot "$2" "$3"
 ' bash "$library" "$state" "$run" 2>&1)"
   namespace_boot_status=$?
-  set -e
+  if [ "$errexit" -eq 1 ]; then
+    set -e
+  fi
   if [ "$namespace_boot_status" -ne 0 ]; then
-    echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2
-    export SessionRunner__LinuxCustodyQualified=false
+    echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2 || true
+    export SessionRunner__LinuxCustodyQualified=false || true
     if [ -n "$run" ] && [ -f "$run/namespace" ] && [ ! -L "$run/namespace" ]; then
-      rm -f -- "$run/namespace"
+      rm -f -- "$run/namespace" 2>/dev/null || true
     fi
   fi
-  unset namespace_boot_output
+  unset namespace_boot_output || true
   return 0
 }
 
