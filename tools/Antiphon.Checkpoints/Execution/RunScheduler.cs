@@ -145,8 +145,9 @@ public sealed class RunScheduler
                     pending.Remove(row);
                     var build = buildStates[row.Build!];
                     var admission = build.AdmissionExitCode != 0;
-                    var state = build.TerminalReason ?? (admission ? build.SlotReason is "source_changed" or "source_unknown" ? build.SlotReason
-                        : build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed");
+                    var state = admission ? build.SlotReason is "source_changed" or "source_unknown" ? build.SlotReason
+                        : build.Slot == "timeout" ? "slot-timeout" : "slot-refused"
+                        : build.TerminalReason ?? "build-failed";
                     var code = admission ? build.AdmissionExitCode : ExitCodes.Invalid;
                     var receipt = Placeholder(row, state, code);
                     receipt.TerminalReason = build.TerminalReason;
