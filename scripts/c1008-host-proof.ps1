@@ -109,6 +109,73 @@ function Read-C1008PrivateOriginLines {
     return @($rows.ToArray())
 }
 
+function Invoke-C1008Git {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string[]]$GitArgs,
+        [int]$TimeoutMs = 30000
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'git'
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+    $argList = $psi.GetType().GetProperty('ArgumentList')
+    if ($null -eq $argList) { throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2) }
+    $list = $argList.GetValue($psi, $null)
+    foreach ($gitArg in $GitArgs) { [void]$list.Add($gitArg) }
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    try {
+        try { [void]$proc.Start() }
+        catch { throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2) }
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $exited = $proc.WaitForExit($TimeoutMs)
+        if (-not $exited) {
+            try { $proc.Kill() } catch { }
+            [void]$proc.WaitForExit()
+            try { $null = $stdoutTask.Result } catch { }
+            try { $null = $stderrTask.Result } catch { }
+            throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 124)
+        }
+        try { $null = $stdoutTask.Result } catch { throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2) }
+        try { $null = $stderrTask.Result } catch { }
+        if ($proc.ExitCode -ne 0) {
+            $status = [int]$proc.ExitCode
+            if ($status -lt 0) { $status = 1 }
+            throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status $status)
+        }
+    }
+    finally { $proc.Dispose() }
+}
+
+function Write-C1008HostBundle {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$OriginUrl,
+        [Parameter(Mandatory = $true)][string]$BundlePath
+    )
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('c1609-' + [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($scratch) | Out-Null
+    try {
+        Invoke-C1008Git -Repo $Repo -GitArgs @('init', '-q', '--bare', $scratch)
+        Invoke-C1008Git -Repo $Repo -GitArgs @('--git-dir', $scratch, 'fetch', '-q', '--no-tags', $OriginUrl, '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*')
+        if ([System.IO.File]::Exists($BundlePath)) { Remove-Item -LiteralPath $BundlePath -Force }
+        Invoke-C1008Git -Repo $Repo -GitArgs @('--git-dir', $scratch, 'bundle', 'create', $BundlePath, '--all')
+        if (-not [System.IO.File]::Exists($BundlePath)) {
+            throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2)
+        }
+    }
+    finally {
+        if ([System.IO.Directory]::Exists($scratch)) {
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Write-C1008HostOriginProof {
     param(
         [Parameter(Mandatory = $true)][string]$OriginUrl,
@@ -198,9 +265,13 @@ function Write-C1008HostOriginProof {
             [void]$refs.Add($refLine)
         }
         if ($refs.Count -lt 1) { throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2) }
-        $createdText = $CreatedUnix.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         $originHash = Get-C1008Sha256 -Text $scrubbed
         $name = Get-C1008Sha256 -Text ($RepoRelative + "`n" + $scrubbed)
+        # The bundle is the advertised graph. The proof file stays the ref list.
+        # A failed fetch refuses before that file exists, so a ref list is never
+        # ancestry without the objects that prove it.
+        Write-C1008HostBundle -Repo $RepoRelative -OriginUrl $scrubbed -BundlePath (Join-Path $ProofDirectory ($name + '.bundle'))
+        $createdText = $CreatedUnix.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         $nl = "`n"
         $body = 'c1008-host-proof 1' + $nl + 'operation ' + $OperationId + $nl + 'origin ' + $originHash + $nl + 'repo ' + $RepoRelative + $nl + 'created ' + $createdText + $nl
         foreach ($refLine in $refs) { $body = $body + $refLine + $nl }

@@ -417,6 +417,17 @@ function Get-C1008RetireProofExports {
         if ($LASTEXITCODE -ne 0) {
             Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
         }
+        $bundleFile = Join-Path $localDir ([string]$row.ProofName + '.bundle')
+        if (Test-Path -LiteralPath $bundleFile) {
+            & scp -o BatchMode=yes $bundleFile ('mc@server2:' + $remoteDir + '/' + $row.ProofName + '.bundle')
+            if ($LASTEXITCODE -ne 0) {
+                Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+            }
+            $bundleMode = Invoke-C590Ssh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName + '.bundle')
+            if ($bundleMode -ne 0) {
+                Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
+            }
+        }
         $chmodCode = Invoke-C590Ssh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName)
         if ($chmodCode -ne 0) {
             Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2

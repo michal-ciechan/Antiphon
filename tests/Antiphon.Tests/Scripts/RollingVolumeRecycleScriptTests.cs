@@ -867,7 +867,7 @@ public sealed class RollingVolumeRecycleScriptTests
             unbound.Exit.ShouldBe(0, "recycle-preview-receipt: unbound preview is not authority; " + unbound.Output);
             unbound.Output.ShouldContain("auditPending=true");
             unbound.Output.ShouldNotContain("auditPending=false");
-            AssertReadonlyPreview(clean, image, audited: false);
+            AssertReadonlyPreview(clean, image, audited: true);
         }
         finally
         {
@@ -1100,7 +1100,7 @@ public sealed class RollingVolumeRecycleScriptTests
             preview.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             preview.Output.ShouldContain("auditPending=true");
             preview.Output.ShouldNotContain("auditPending=false");
-            AssertReadonlyPreview(unpinned, CrossShaImage, audited: false);
+            AssertReadonlyPreview(unpinned, C1008HostFixture.SessionImage, audited: true);
             ResetPreviewTrace(unpinned);
             unpinned.Docker["fault"] = "image-inspect-error";
             var apply = await unpinned.Run("retire-temp-runner");
@@ -1148,7 +1148,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
             run.Output.ShouldContain("auditPending=true");
-            AssertReadonlyPreview(older, CrossShaImage, audited: false);
+            AssertReadonlyPreview(older, C1008HostFixture.SessionImage, audited: true);
         }
 
         using (var bound = new C1008HostFixture(main: false))
@@ -1179,7 +1179,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Exit.ShouldBe(0, "c1594-older-retirement: a partial cross-SHA receipt does not count; " + run.Output);
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(partial, CrossShaImage, audited: false);
+            AssertReadonlyPreview(partial, C1008HostFixture.SessionImage, audited: true);
         }
 
         using (var dry = new C1008HostFixture(main: false))
@@ -1194,7 +1194,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Exit.ShouldBe(0, "c1594-older-retirement: a dry-run cross-SHA receipt does not count; " + run.Output);
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(dry, CrossShaImage, audited: false);
+            AssertReadonlyPreview(dry, C1008HostFixture.SessionImage, audited: true);
         }
     }
 
@@ -1216,12 +1216,12 @@ public sealed class RollingVolumeRecycleScriptTests
         TouchNewer(fixture, otherOperation);
         ResetPreviewTrace(fixture);
         var run = await fixture.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-        run.Exit.ShouldBe(2, "c1594-cross-sha: different images from other SHAs refuse; " + run.Output);
+        run.Exit.ShouldBe(0, "c1594-cross-sha: different images from other SHAs warn; content is the gate; " + run.Output);
         run.Output.ShouldContain("RecycleGitAuditUnknown");
-        run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         run.Output.ShouldNotContain(newerImage);
         fixture.Trace.Any(args => args.Length > 0 && args[0] == "create").ShouldBeFalse(
-            "c1594-cross-sha: a disagreement starts no helper");
+            "c1594-cross-sha: a disagreement does not authorize a delete");
         fixture.Removed.ShouldBeEmpty();
     }
 

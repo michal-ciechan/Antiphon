@@ -16,17 +16,22 @@ public sealed class VolumeRetirementContentTests
     public async Task Current_tooling_and_missing_history_do_not_block()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
+        var probe = "\n" + VolumeRetirementFixture.ShellProbe;
         using var missingHistory = new C1008HostFixture(main: false);
-        var unpinned = await missingHistory.Run("retire-temp-runner", dryRun: true);
+        var unpinned = await missingHistory.Run("retire-temp-runner", probe, dryRun: true);
         unpinned.Exit.ShouldBe(0, "c1609-c1: unpinned preview reaches the current entry; " + unpinned.Output);
         unpinned.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
         unpinned.Output.ShouldContain("auditPending=true");
+        unpinned.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        missingHistory.Removed.ShouldBeEmpty();
 
         using var missingStack = new C1008HostFixture(main: false);
         await File.WriteAllTextAsync(Path.Combine(missingStack.Root, "temp.env"), "");
-        var stack = await missingStack.Run("retire-temp-runner", dryRun: true);
-        stack.Exit.ShouldBe(2, "c1609-c1: missing stack reaches retire-temp; " + stack.Output);
-        stack.Output.ShouldContain("TempStackMissing");
+        var stack = await missingStack.Run("retire-temp-runner", probe, dryRun: true);
+        stack.Exit.ShouldBe(0, "c1609-c1: an empty temp.env is not the content gate; " + stack.Output);
+        stack.Output.ShouldNotContain("TempStackMissing");
+        stack.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        missingStack.Removed.ShouldBeEmpty();
 
         using var conflicting = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.RetainPreviewImage(conflicting);
@@ -37,9 +42,11 @@ public sealed class VolumeRetirementContentTests
             "f84228f2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sha256:" + new string('4', 64));
         ReplaceReceipt(conflicting, seed, "c99400000000000000000000000000000012",
             "dddddddddddddddddddddddddddddddddddddddd", "sha256:" + new string('e', 64), append: true);
-        var conflict = await conflicting.Run("retire-temp-runner", dryRun: true);
-        conflict.Exit.ShouldBe(2, "c1609-c1: conflicting old images reach the lookup; " + conflict.Output);
+        var conflict = await conflicting.Run("retire-temp-runner", probe, dryRun: true);
+        conflict.Exit.ShouldBe(0, "c1609-c1: conflicting old images warn and still prove content; " + conflict.Output);
         conflict.Output.ShouldContain("RecycleGitAuditUnknown");
+        conflict.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        conflicting.Removed.ShouldBeEmpty();
 
         using var missingRuntime = new C1008HostFixture(main: false);
         missingRuntime.Docker["fault"] = "image-inspect-error";

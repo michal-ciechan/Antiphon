@@ -6042,6 +6042,24 @@ c1008_volume() {
          else error("identity") end' || return 2
 }
 
+# Temp runner-state only. A credential-shaped name refuses before any volume delete.
+# Return 1 for a hit, 2 when the mount cannot be read, 0 when clean or absent.
+c1609_state_credential_scan() {
+    local facts mount hit
+    [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] || return 0
+    facts="$(c1008_volume "${TEMP_PROJECT}_runner-state")" || return 2
+    [ "$facts" = null ] && return 0
+    mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+    [ -n "$mount" ] && [ -d "$mount" ] && [ ! -L "$mount" ] && [ -r "$mount" ] && [ -x "$mount" ] || return 2
+    hit="$(find -P "$mount" -xdev \( \
+        -name auth.json -o -name .credentials.json -o -name credentials.json \
+        -o -name id_rsa -o -name id_ed25519 -o -name id_ecdsa \
+        -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \
+        \) -print -quit 2>/dev/null)" || return 2
+    [ -z "$hit" ] || return 1
+    return 0
+}
+
 # CARD-1105 D-3: every bind target this script has shipped. A removed mount keeps its row.
 C1008_BIND_KINDS='/run/antiphon/claude-oauth-token true
 /run/antiphon/gitconfig true
@@ -7633,6 +7651,47 @@ consider_linked() {
 # alternate's refs with a child that drops this environment; that listing is off
 # (core.alternateRefsCommand=true) and the present heads are the proof's own refs,
 # so negotiation still sends them as haves.
+# A host bundle is the advertised graph when the helper cannot fetch. It is a
+# sibling of the proof file. Tags stay in the pack; only branch tips are comparisons.
+c1609_unbundle_host_proof() {
+    local rel url name bundle n=0 oid ref type
+    [ -n "${C1008_HOST_PROOF:-}" ] || return 1
+    [ -d "$proof" ] || return 1
+    rel="$(rel_repo "${audit_repo:-}")" || return 1
+    c1008_rel_safe "$rel" || return 1
+    path_of git --git-dir="$top" remote get-url origin 2>/dev/null || return 1
+    url="$path_out"
+    c1008_scrub_origin "$url" || return 1
+    name="$(c1008_proof_name "$rel" "$c1008_scrubbed")"
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || return 1
+    bundle="${C1008_HOST_PROOF}/${name}.bundle"
+    [ -f "$bundle" ] && [ ! -L "$bundle" ] && [ -r "$bundle" ] || return 1
+    git --git-dir="$proof" bundle unbundle "$bundle" > "$proof.bundle-refs" 2>/dev/null || return 1
+    [ -s "$proof.bundle-refs" ] || return 1
+    : > "$proof.bundle-updates" || return 1
+    while read -r oid ref || [ -n "${oid:-}${ref:-}" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+        case "$ref" in
+            refs/heads/*)
+                n=$((n + 1))
+                printf 'create refs/c1008/origin/%s %s\n' "$n" "$oid" >> "$proof.bundle-updates" || return 1
+                ;;
+            refs/tags/*|HEAD) ;;
+            *) return 1 ;;
+        esac
+    done < "$proof.bundle-refs"
+    [ "$n" -ge 1 ] || return 1
+    git --git-dir="$proof" update-ref --stdin < "$proof.bundle-updates" >/dev/null 2>&1 || return 1
+    fetched=()
+    git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ > "$proof.heads" 2>/dev/null || return 1
+    while IFS=' ' read -r oid type || [ -n "${oid:-}${type:-}" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] && [ "$type" = commit ] || { fetched=(); return 1; }
+        fetched+=("$oid")
+    done < "$proof.heads"
+    [ "${#fetched[@]}" -gt 0 ] || return 1
+    proof_dir="$proof"
+    return 0
+}
 fetch_origin() {
     local proof="$scratch/proof-$1" url oid type n=0 cap=300 started ended status=0
     proof_dir=''
@@ -7657,7 +7716,10 @@ fetch_origin() {
         >/dev/null 2>&1 || status=$?
     ended="$(date +%s%N)" && [[ "$ended" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
     fetch_left_ms=$((fetch_left_ms - (ended - started) / 1000000))
-    [ "$status" = 0 ] || return 1
+    if [ "$status" != 0 ]; then
+        c1609_unbundle_host_proof && return 0
+        return 1
+    fi
     git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ \
         > "$proof.heads" 2>/dev/null || return 1
     while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
@@ -8872,7 +8934,24 @@ c1008_recycle() {
         if [ -z "${C994_IMAGE:-}" ]; then
             case "${C994_LOOKUP:-}" in
                 unpinned) printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n' ;;
+                conflict)
+                    # Historical image disagreement is not a content refusal.
+                    printf 'RecycleGitAuditUnknown\n'
+                    printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n'
+                    ;;
                 *) c1008_refuse RecycleGitAuditUnknown ;;
+            esac
+        fi
+        # Dry-run with no historical pin uses the current runtime image as tooling.
+        # The image is not the publication proof. Apply still refuses a missing runtime.
+        if [ "${C1008_DRY_RUN:-0}" = 1 ] && [ -z "${C994_IMAGE:-}" ]; then
+            case "${C994_LOOKUP:-}" in
+                unpinned|conflict)
+                    C994_IMAGE="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
+                        || c1008_refuse RecycleGitAuditUnknown
+                    [[ "$C994_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || c1008_refuse RecycleGitAuditUnknown
+                    C1609_HISTORICAL_UNPINNED=1
+                    ;;
             esac
         fi
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
@@ -8895,10 +8974,19 @@ c1008_recycle() {
                     *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
                 esac
             fi
-            pending=false
+            if [ "${C1609_HISTORICAL_UNPINNED:-}" != 1 ]; then
+                pending=false
+            fi
+            C1609_CONTENT_READY=1
         fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
+            printf 'C1609_RETIREMENT state=Ready\n'
+            if [ -n "${C1008_HOST_PROOF:-}" ]; then
+                printf 'audit check=origin-present status=0\n'
+            fi
+        fi
         write_result true '' 0
     fi
     c1008_lock
@@ -9023,6 +9111,10 @@ c1008_recycle() {
     after="$(c1008_disk)" || c1008_refuse RecycleDiskUnknown
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskBefore=$disk|.phase="removing"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        c1609_scan=0
+        c1609_state_credential_scan || c1609_scan=$?
+        if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
+        if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
         compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || c1008_refuse RecycleRemoveFailed
     fi
     for name in "${C1008_TARGETS[@]}"; do
@@ -9521,6 +9613,13 @@ c994_lookup_image() {
         candidate="$same_image"
         found_id="$same_original"
     elif [ "$cross_conflict" = 1 ]; then
+        # Audit treats a historical image disagreement as unpinned. Cleanup does not.
+        if [ "$audit" = true ]; then
+            C994_LOOKUP=conflict
+            C994_IMAGE=''
+            C994_ORIGINAL=''
+            return 0
+        fi
         return 2
     elif [ -n "$cross_image" ]; then
         candidate="$cross_image"
@@ -9721,8 +9820,10 @@ case_retire_temp_inventory() {
 
 case_retire_temp_runner() {
     require_lane host
-    if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
-    RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+    # An empty temp.env is not a content refusal. Keep a store dir already set.
+    if [ -s "$SERVER2_TEMP_ENV" ]; then
+        RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+    fi
     c1008_recycle "$TEMP_PROJECT"
     printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
@@ -9945,8 +10046,9 @@ if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
     case "$CASE" in
         deploy-parent) c1008_recycle "$HOST_PROJECT" ;;
         retire-temp-runner)
-            if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
-            RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+            if [ -s "$SERVER2_TEMP_ENV" ]; then
+                RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+            fi
             c1008_recycle "$TEMP_PROJECT"
             ;;
         retire-temp-inventory) case_retire_temp_inventory ;;
