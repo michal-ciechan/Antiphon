@@ -147,6 +147,21 @@ public sealed class TaskSupervisionReceiptTests
             await db.SaveChangesAsync();
         }
         await parent.MarkIdleAsync();
+        await using (var db = h.Context())
+        {
+            var message = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskSupervisionNoticeId != null);
+            if (arm == "retry")
+            {
+                // Recovery must not press Enter or retry an old, interrupted typed attempt.
+                message.Status = QueuedMessageStatus.Sent;
+                message.DeliveryAttempts = 1;
+                message.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-10);
+                message.LastDeliveryGeneration = (await db.AgentSessions.SingleAsync(s => s.Id == parent.SessionId)).StartedAt;
+                message.LastDeliveryBaselineSequence = 0;
+                await db.SaveChangesAsync();
+            }
+            else await parent.Queue.SendNowAsync(parent.SessionId, message.Id, CancellationToken.None);
+        }
         await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
         await RecoverAsync(parent, h.Clock);
         var prompts = await PromptsAsync(h, parent.SessionId, 0);
