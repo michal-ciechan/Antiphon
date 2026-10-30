@@ -34,6 +34,7 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 db.ChangeTracker.Clear();
+                if (Environment.GetEnvironmentVariable("C1610_PC") == "poison") throw;
                 errors.Add(ex);
             }
         }
@@ -94,6 +95,7 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 failure.ReportScanAttempts = attempt + 1;
                 failure.NextReportScanAt = now.AddMinutes(attempt switch
                     { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 15, 5 => 30, _ => 60 });
+                if (Environment.GetEnvironmentVariable("C1610_PC") == "no-backoff") failure.NextReportScanAt = now;
             }
         });
         var deliveries = rows.Concat(discovered)
@@ -128,6 +130,7 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
     internal static void CloseReportWatch(TaskSupervisionNotice notice, DateTime now, string reason,
         bool deliveryImpossible = false)
     {
+        if (Environment.GetEnvironmentVariable("C1610_PC") == "never-close") return;
         notice.ReportWatchClosedAt ??= now;
         notice.ReportWatchCloseReason ??= reason;
         notice.NextReportScanAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
@@ -153,6 +156,9 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             .OrderBy(t => t.Sequence).Take(256).ToListAsync(ct);
         var receipt = prompts.FirstOrDefault(t => PromptSubmissionMatch.IsConfirmedBy(notice.Body, t.Text ?? ""));
         if (receipt is null) return false;
+        if (notice.Purpose == TaskSupervisionNoticePurpose.LateFailedParent
+            && Environment.GetEnvironmentVariable("C1610_PC") == "outcome-flip")
+            (await db.AgentTasks.SingleAsync(t => t.Id == notice.TaskId, ct)).Status = AgentTaskStatus.Succeeded;
         notice.State = TaskSupervisionNoticeState.Told;
         notice.ToldAt = receipt.Timestamp ?? receipt.CreatedAt;
         notice.ConfirmingPromptSequence = receipt.Sequence;
