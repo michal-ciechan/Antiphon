@@ -29,8 +29,26 @@ Ordinary reports settle a hold normally; Cancel and Retry retain their explicit 
 
 The question and ceilingHold DTO expose the transcript tail, age and nullable phase clock.
 For tails without a phase clock they explicitly say the ceiling is the only deadline.
-S2 persists a separate CeilingParent notice obligation. S3 must deliver it durably, forward
-late Failed reports for triage and fence successor admission before S2/S3 can land together.
+S2 persists a separate CeilingParent notice obligation. S3 recovers that note, FailureDelegate
+and LateFailedParent through the existing completion worker and WhenIdle queue. Each purpose
+has its own queue identity and complete UserPrompt receipt beyond the recorded recipient floor;
+Sent, queue admission and another purpose's completion stamp never establish Told. Retry,
+settlement, episode and generation checks run again before queued input. Unavailable identity
+retains visible debt. Historical rows without an original accepted generation require manual
+triage; a current session row cannot supply the missing historical coordinate.
+
+Failure writers save the delegate obligation with their Failed event. The independent bounded
+report scan continues after the delegate notice is Told and can read an ended generation's final
+stored window. A complete later report produces a separate parent triage note with source range,
+digest, lineage facts and next=decide. Failed, its reason/result/completion time and stage outcomes
+stay unchanged. No report-forwarding path settles, retries, lands or reserves a handoff.
+Unresolved notices retain their source, recipient transcript, queue row and task tree.
+
+A held result whose card/role has a successor since dispatch uses next=decide, including a
+replacement created before the hold or one already terminal. Missing card lineage also needs
+a decision. Handoff recording and child admission recheck under their existing card/handoff
+locks; no new card lock is acquired inside the runtime session/task save fence. Detection,
+notices and recovery grant no stop authority. S2/S3 must land together after verification.
 S2 alone is not an activation boundary. S4 dispatch budgets, client controls and Deploy
 changes remain separately ordered after their prerequisites.
 

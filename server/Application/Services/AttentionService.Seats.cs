@@ -221,6 +221,8 @@ public sealed partial class AttentionService
             .ToDictionaryAsync(task => task.Id, ct);
         var working = await SessionMessageQueueService.IsWorkingBatchAsync(
             _db, owners.Keys.ToList(), ct);
+        var notices = await _db.TaskSupervisionNotices.AsNoTracking().Where(n => ownerIds.Contains(n.TaskId)
+            && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate).ToListAsync(ct);
         var snapshot = _seats?.Current;
         var items = new List<AttentionItemDto>(owners.Count);
         foreach (var (sessionId, owner) in owners)
@@ -228,7 +230,9 @@ public sealed partial class AttentionService
             if (!sessions.TryGetValue(sessionId, out var session) || !tasks.TryGetValue(owner.Id, out var task))
                 continue;
             var facts = FailedTaskSessionFacts.Describe(
-                task, session, working.GetValueOrDefault(sessionId), snapshot, now);
+                task, session, working.GetValueOrDefault(sessionId), snapshot, now,
+                notices.Where(n => n.TaskId == task.Id && n.Attempt == task.Attempt)
+                    .OrderByDescending(n => n.CreatedAt).FirstOrDefault()?.State.ToString());
             var actions = new List<AttentionAction> { AttentionAction.OpenDrawer };
             if (task.AgentId is not null)
                 actions.Add(AttentionAction.OpenAgent);
@@ -241,7 +245,7 @@ public sealed partial class AttentionService
                 null,
                 facts.Summary,
                 facts.Activity,
-                "notice=none; failure=" + (task.FailureReason ?? "unknown")
+                $"notice={facts.NoticeState ?? "none"}; failure=" + (task.FailureReason ?? "unknown")
                     + $"; activity={facts.Activity}; session={session.Id:D}; "
                     + $"agent={task.AgentId?.ToString("D") ?? "none"}; "
                     + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed.",

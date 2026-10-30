@@ -9,6 +9,13 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Bounded durable work for the existing completion pump. Queue state is never receipt.</summary>
 internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessageQueueService queue, TimeProvider clock)
 {
+    internal static IQueryable<TaskSupervisionNotice> Unresolved(AppDbContext store) => store.TaskSupervisionNotices
+        .Where(n => n.State == TaskSupervisionNoticeState.Pending
+            || n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.State == TaskSupervisionNoticeState.Superseded
+            || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null
+                && n.SessionStartedAt != null && n.State != TaskSupervisionNoticeState.Superseded
+                && n.ReasonCode != "report_attribution_superseded");
+
     internal async Task RecoverAsync(Guid? taskId, CancellationToken ct)
     {
         var now = clock.GetUtcNow().UtcDateTime;
@@ -37,6 +44,14 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         foreach (var failure in rows.Where(n => n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
         {
             var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
+            if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
+                || task.DispatchedAt != failure.DispatchedAt || task.ParentSessionId != failure.ParentSessionId)
+            {
+                failure.ReasonCode = "report_attribution_superseded";
+                failure.NextAttemptAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
+                if (failure.State == TaskSupervisionNoticeState.Pending) failure.State = TaskSupervisionNoticeState.Superseded;
+                continue;
+            }
             if (task is not null) await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
             failure.NextAttemptAt = now.AddMinutes(1);
         }

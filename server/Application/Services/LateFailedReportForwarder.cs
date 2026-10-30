@@ -14,24 +14,12 @@ internal static class LateFailedReportForwarder
     {
         if (failure.Purpose != TaskSupervisionNoticePurpose.FailureDelegate || failure.ReportForwardedAt is not null
             || !await TaskSupervisionNoticeService.SourceCurrentAsync(db, task, failure, ct)) return;
-        var selected = await TaskReportTurnSelector.SelectAsync(db, failure.SessionId!.Value, task, ct);
-        if (selected.Kind != TaskReportSelectionKind.Selected || selected.BoundarySequence is not { } end
-            || selected.EffectiveOwnerSequence is not { } prompt || end <= failure.FailureFrontier
-            || prompt <= failure.ReportFloor) return;
-        // Read a bounded complete turn, including its pre-failure body. A completion token
-        // after the failure frontier is required even when the report began before failure.
-        var rows = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == failure.SessionId
-                && t.Sequence > prompt && t.Sequence < end && t.Kind == TranscriptKinds.AssistantText && t.Text != null)
-            .OrderBy(t => t.Sequence).Take(257).ToListAsync(ct);
-        if (rows.Count == 0 || rows.Count > 256 || rows.Sum(r => (long)r.Text!.Length) > 256_000)
-        {
-            failure.ReasonCode = "late_report_window_unavailable";
-            return;
-        }
-        var raw = string.Join("\n", rows.Select(r => r.Text));
-        if (!DelegationReportFormatter.TryReadReportVerdict(task.Id, raw, out _, out _)
-            || !rows.Any(r => r.Sequence > failure.FailureFrontier
-                && DelegationReportFormatter.TryFindReportToken(task.Id, r.Text, out _))) return;
+        var latest = await db.TranscriptEntries.Where(t => t.AgentSessionId == failure.SessionId)
+            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+        if (latest <= failure.ScanFrontier) return;
+        var candidate = await ReadReportAsync(db, task, failure, ct);
+        if (candidate is null) { failure.ScanFrontier = latest; return; }
+        var (rows, raw) = candidate.Value;
         if (await db.TaskSupervisionNotices.AnyAsync(n => n.TaskId == task.Id && n.Attempt == failure.Attempt
             && n.SourceEventId == failure.SourceEventId && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent, ct))
         {
@@ -75,8 +63,43 @@ internal static class LateFailedReportForwarder
             ReasonCode = failure.ParentSessionId is null ? "no_parent" : null,
         });
         failure.ReportForwardedAt = now;
-        failure.ScanFrontier = Math.Max(failure.ScanFrontier, end);
+        failure.ScanFrontier = latest;
         await db.SaveChangesAsync(ct);
     }
-}
 
+    private static async Task<(List<TranscriptEntry> Rows, string Raw)?> ReadReportAsync(
+        AppDbContext db, AgentTask task, TaskSupervisionNotice failure, CancellationToken ct)
+    {
+        // Revisit a bounded tail on a newly observed frontier. A later empty notice turn
+        // cannot hide a complete report, and delayed final text keeps its API-call owner.
+        long? cap = null;
+        for (var window = 0; window < 32; window++)
+        {
+            var selected = await TaskReportTurnSelector.SelectAsync(db, failure.SessionId!.Value, task, ct, cap);
+            if (selected.BoundarySequence is not { } end || end <= failure.ReportFloor) return null;
+            cap = end - 1;
+            if (selected.Kind != TaskReportSelectionKind.Selected || selected.EffectiveOwnerSequence is not { } prompt
+                || prompt <= failure.ReportFloor) continue;
+            var call = await db.TranscriptEntries.Where(t => t.AgentSessionId == failure.SessionId && t.Sequence == end)
+                .Select(t => t.ApiCallId).SingleAsync(ct);
+            var before = call is null ? selected.NextRawPromptSequence : selected.NextRealPromptSequence;
+            var query = db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == failure.SessionId
+                && t.Sequence > prompt && t.Kind == TranscriptKinds.AssistantText && t.Text != null);
+            if (call is not null) query = query.Where(t => t.ApiCallId == call);
+            else query = query.Where(t => t.Sequence < end);
+            if (before is { } ceiling) query = query.Where(t => t.Sequence < ceiling);
+            var rows = await query.OrderBy(t => t.Sequence).Take(257).ToListAsync(ct);
+            if (rows.Count > 256 || rows.Sum(r => (long)r.Text!.Length) > 256_000)
+            {
+                failure.ReasonCode = "late_report_window_unavailable";
+                return null;
+            }
+            var raw = string.Join("\n", rows.Select(r => r.Text));
+            if (DelegationReportFormatter.TryReadReportVerdict(task.Id, raw, out _, out _)
+                && rows.Any(r => r.Sequence > failure.FailureFrontier
+                    && DelegationReportFormatter.TryFindReportToken(task.Id, r.Text, out _))) return (rows, raw);
+        }
+        failure.ReasonCode = "late_report_window_limit";
+        return null;
+    }
+}

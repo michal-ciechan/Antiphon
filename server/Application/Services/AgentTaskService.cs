@@ -2857,7 +2857,10 @@ public sealed class AgentTaskService
                     if (owners.TryGetValue(session.Id, out var owner) && owner.Id == task.Id)
                     {
                         failedSession = FailedTaskSessionFacts.Describe(
-                            task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime);
+                            task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime,
+                            await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id
+                                    && n.Attempt == task.Attempt && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate)
+                                .OrderByDescending(n => n.CreatedAt).Select(n => n.State.ToString()).FirstOrDefaultAsync(ct));
                     }
                 }
             }
@@ -2902,7 +2905,12 @@ public sealed class AgentTaskService
                     d.ConfirmedSha, d.ReasonCode, d.Attempts, d.NextAttemptAt, d.SourceReadyAt))
                 .FirstOrDefaultAsync(ct),
             FailedSession: failedSession,
-            CeilingHold: await CeilingHoldFacts.DescribeAsync(_db, task, UtcNow(), _settings, ct));
+            CeilingHold: await CeilingHoldFacts.DescribeAsync(_db, task, UtcNow(), _settings, ct),
+            SupervisionNotices: (await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id)
+                .OrderByDescending(n => n.CreatedAt).ThenBy(n => n.Id).Take(32).ToListAsync(ct))
+                .Select(n => new TaskSupervisionNoticeDto(n.Id, n.Purpose.ToString(), n.State.ToString(), n.ReasonCode,
+                    n.Attempt, n.RecipientSessionId, n.QueueMessageId, n.ToldAt, n.ConfirmingPromptSequence, n.ReportDigest,
+                    n.ReportFromSequence is { } from ? $"/api/sessions/{n.SessionId:D}/transcript?since={from - 1}" : null)).ToList());
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>

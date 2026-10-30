@@ -182,6 +182,7 @@ public sealed class DataRetentionService
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
         var outboundSessions = ChannelOutboundEvidence.ProtectedSessions(_db);
+        var supervision = TaskSupervisionNoticeService.Unresolved(_db);
 
         // Terminal + stale LastSeenAt + not a PersistentSessionId + no surviving task
         // names this row via AgentSessionId OR ParentSessionId.
@@ -189,6 +190,7 @@ public sealed class DataRetentionService
             (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
             && s.LastSeenAt < cutoff
             && !outboundSessions.Contains(s.Id)
+            && !supervision.Any(n => n.SessionId == s.Id || n.RecipientSessionId == s.Id)
             && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == s.Id)
             && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                 && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
@@ -244,11 +246,13 @@ public sealed class DataRetentionService
 
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
         var outboundSessions = ChannelOutboundEvidence.ProtectedSessions(_db);
+        var supervision = TaskSupervisionNoticeService.Unresolved(_db);
 
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
                 && !outboundSessions.Contains(s.Id)
+                && !supervision.Any(n => n.SessionId == s.Id || n.RecipientSessionId == s.Id)
                 && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == s.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
@@ -346,6 +350,7 @@ public sealed class DataRetentionService
         var cutoff = UtcNow().AddDays(-_settings.QueuedMessageRetentionDays);
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
         var outboundSources = ChannelOutboundEvidence.ProtectedSources(_db);
+        var supervision = TaskSupervisionNoticeService.Unresolved(_db);
         await CompletionNoteStamp.RepairFromAsync(
             _db,
             _db.SessionQueuedMessages.Where(m =>
@@ -355,6 +360,7 @@ public sealed class DataRetentionService
         var eligible = _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
+                && !supervision.Any(n => n.Id == m.SourceTaskSupervisionNoticeId || n.QueueMessageId == m.Id)
                 && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == m.AgentSessionId)
                 && m.MaintenanceResult != RemoteControlArmResult.ArmUnconfirmed
                 && !m.MaintenanceSlotActive
@@ -414,6 +420,7 @@ public sealed class DataRetentionService
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
         var outboundTaskIds = await LoadOutboundTaskIdsAsync(ct);
+        var supervision = TaskSupervisionNoticeService.Unresolved(_db);
 
         // A root is ineligible if ANY row in its tree is still live (Queued/Dispatched/Working/Blocked).
         var liveRootIds = _db.AgentTasks
@@ -424,6 +431,7 @@ public sealed class DataRetentionService
 
         var eligibleRootIds = await _db.AgentTasks
             .Where(t => !liveRootIds.Contains(t.RootTaskId)
+                && !supervision.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId))
                 && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId
                     && outboundTaskIds.Contains(member.Id))
                 && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.SourceLandingOperationId != null)
