@@ -181,7 +181,7 @@ function Test-FFChunkAccounting([string]$Variant) {
     $summary=[ordered]@{runId='accounting';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'}
     Write-FFJson (Join-Path $run 'summary.json') $summary
     Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
-    Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})})
+    if ($Variant -cne 'missing') { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
     $defs=''; $results=''
     foreach ($n in $nodes) {
         if ($Variant -ceq 'short' -and $n.Uid -ceq 'second') { continue }
@@ -194,7 +194,8 @@ function Test-FFChunkAccounting([string]$Variant) {
     $suite=@([pscustomobject]@{id='antiphon';nodes=$nodes;chunks=@([pscustomobject]@{id='all';classes=@($nodes.ClassName);nodes=$nodes});exclusions=@()})
     $full=Resolve-NightlyPriorFailures $history $suite Full
     $reason=@{exit='summary-nonzero-exit';result='summary-failed-result';detail='summary-detail';short='short-trx';missing='missing-trx'}[$Variant]
-    return (@($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $history $suite PriorFailureSweep } 'prior-failure-sweep-unresolved'))
+    $wholeChunk=($Variant -ceq 'missing' -or (@($full.members).Count -eq 2 -and @($full.unresolved | Where-Object { $_.className -cin @($nodes.ClassName) }).Count -eq 2))
+    return ($wholeChunk -and @($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $history $suite PriorFailureSweep } 'prior-failure-sweep-unresolved'))
 }
 function Test-RefusesIncompleteEvidence {
     $replay=New-FFReplay
@@ -209,8 +210,12 @@ function Test-RefusesIncompleteEvidence {
         $current += [pscustomobject]@{id=$suite; nodes=$nodes; chunks=$plan; exclusions=@()}
     }
     $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep
-    Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne ('c'*40) -and $h.policyHash -cne ('d'*64)) 'validControl'
+    $candidateSha=git -C $repo rev-parse HEAD
+    $candidatePolicy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne $candidateSha -and $h.policyHash -cne $candidatePolicy.Hash) 'validControl'
     foreach ($variant in 'exit','result','detail','short') { Assert-FF (Test-FFChunkAccounting $variant) ('chunk-'+$variant) }
+    # No timeout, diagnostic, failing summary marker or retained plan can mask this witness.
+    Assert-FF (Test-FFChunkAccounting 'missing') 'standaloneMissingTrx'
     $retainedPlan=[IO.File]::ReadAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'))
     Remove-Item -LiteralPath (Join-Path $fx.Run 'timing/groups-planned-antiphon.json')
     $wrong=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'wrong-suite.json') -PassThru
@@ -254,8 +259,13 @@ function Test-RefusesIncompleteEvidence {
     Assert-FF ((Test-FFRefusal { Read-NightlyPriorFailures $path ('0'*64) } 'history-digest-mismatch') -and (Test-FFRefusal { Read-NightlyPriorFailures -Path '' } 'empty-history-path')) 'digest'
     $bad=Copy-FFObject $h; $bad.format='unsupported'; $badPath=Join-Path $root 'bad.json'; Write-FFJson $badPath $bad
     Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $badPath } 'history-schema') 'schema'
-    $bad=Copy-FFObject $h; $bad.sourceSha='c'*40; Write-FFJson $badPath $bad
-    Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $badPath } 'history-provenance') 'provenance'
+    # Compare each field to bound OLD evidence, never to candidate SHA/policy.
+    foreach ($field in 'sourceRunId','sourceSha','policyHash','profile','platform','sourceAttempt') {
+        $bad=Copy-FFObject $h
+        $value=@{sourceRunId='another-run';sourceSha=('c'*40);policyHash=('d'*64);profile='nightly';platform='linux';sourceAttempt='2'}[$field]
+        $bad.$field=$value; Write-FFJson $badPath $bad
+        Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $badPath } 'history-provenance') ('provenance-'+$field)
+    }
     $diagPath=Join-Path $fx.Run 'antiphon-all-group-105-execution/invocation.diag'
     $old=[IO.File]::ReadAllText($diagPath); [IO.File]::AppendAllText($diagPath,"`nchanged")
     Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $path $exp.Digest } 'evidence-digest-mismatch') 'evidenceTamper'
@@ -314,7 +324,7 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=32 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=38 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
