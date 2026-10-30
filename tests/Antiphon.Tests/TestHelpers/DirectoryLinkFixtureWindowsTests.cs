@@ -9,6 +9,8 @@ namespace Antiphon.Tests.TestHelpers;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DirectoryLinkFixtureWindowsTests
 {
+    internal static ScriptHarnessOptions PipeHolderOptions => ScriptHarnessProcessFixture.Options();
+
     [Test]
     public async Task C1061_Junction_fixture_creates_moves_and_disposes_owned_link()
     {
@@ -193,7 +195,7 @@ public sealed class DirectoryLinkFixtureWindowsTests
         private ScriptHarnessOptions Options(bool substituteScript)
         {
             var options = substituteScript
-                ? ScriptHarnessProcessFixture.Options() with { AdditionalArguments = Windows.Arguments() }
+                ? PipeHolderOptions with { AdditionalArguments = Windows.Arguments() }
                 : DirectoryLinkCommand.DefaultOptions;
             return options with
             {
