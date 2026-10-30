@@ -217,3 +217,38 @@ parent note uses the same transactional queue pattern, `next=decide`, its own
 identity, and the D-9 receipt tests. If the task settles before that note sends,
 retain the audit but suppress stale hold guidance under the recipient gate;
 normal completion is then the only actionable note.
+
+## D-3 detail: existing authority and visible custody
+
+Corrected ground truth: CancelAsync rejects already terminal tasks but calls
+StopDelegateAsync **before** setting an open task Canceled. RetryAsync reaches
+RequeueCoreAsync, which stops the old delegate unless its exact release is
+confirmed, then increments Attempt and queues a replacement. Retry is therefore
+not a harmless status repair; it spends a new attempt and stops old work.
+Existing quota, model availability, commit-recovery and workspace admission
+refusals still apply before requeue. Neither verb proves OS exit merely by
+changing task status.
+
+Delete round-1 `-ReleaseSession`, operator-bound RunnerSeatRelease mode, runner
+capability/receipt transport and the proposed global lock-order convergence.
+No new operator-token requirement is added to Cancel/Retry. Raw single-seat
+force-release remains the existing human-authorized operation; its authority
+is not widened. For held tasks use Cancel if stopping is desired. For terminal
+Failed tasks show existing Retry with its consequences, session inspection,
+and the existing operator release guidance; never auto-retry to reclaim a seat.
+The revised scope intentionally does not make Cancel on Failed a new API verb.
+
+Retain only the useful round-1 visibility: shared FailedTaskSessionFacts in task
+detail, attention and delegate.ps1 -Status. A fresh bounded inventory confirms
+"Failed, session still Running: seat held" and Working/idle/unknown activity;
+stale/unavailable data says "session state unknown: release unconfirmed". Include
+notice Pending/Told/Superseded, task/card/session links and failure source. Detect
+independently of orphan and PoolIdleSince; `SeatDesktopJoin`'s warm-pool exception
+explains why a failed live session need not appear orphaned. Do not call runner
+List per task on every attention GET; reuse bounded cached seat observations.
+Deduplicate generic SeatIdle/SlotOrphan warnings for this same concern, retaining
+other concerns. Clear only after authoritative exit/release or new ownership,
+not because Failed was already written. No new client test rows are required:
+use the existing attention rendering contract and add optional DTO facts; the
+CLI text is covered by its offline script tests. A bespoke client control is
+out of scope for this reduced design.
