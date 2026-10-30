@@ -106,6 +106,37 @@ public class Card1619StopIntentTests
     }
 
     [Test]
+    public async Task Slow_helper_does_not_hold_gate_over_unrelated_stop()
+    {
+        await using var f = await Fixture.StartAsync();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var other = f.Request(9) with { RequestId = Guid.NewGuid(), SessionId = Guid.NewGuid(), Target = ProcessStopTarget.Custody };
+        var helper = Task.Run(() => f.Store.Attempt(other, () => {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(3));
+            return true;
+        }));
+        try
+        {
+            entered.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            var timer = Stopwatch.StartNew();
+            var stopped = f.Store.StopProcess(f.Child, f.Id, f.Generation, ProcessStopTarget.Child, ProcessStopPath.ProcessTree);
+            var latency = timer.Elapsed;
+            var during = f.Store.Snapshot(other.SessionId, f.Generation);
+            release.Set();
+            var completed = await helper.WaitAsync(TimeSpan.FromSeconds(5));
+            (await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5))).ExitSignal.ShouldBe(9);
+            stopped.Outcome.ShouldBe(ProcessStopOutcome.Issued);
+            completed.Outcome.ShouldBe(ProcessStopOutcome.Issued);
+            during.ShouldNotBeNull();
+            during.Outcome.ShouldBe(ProcessStopOutcome.Requested);
+            latency.ShouldBeLessThan(TimeSpan.FromMilliseconds(500), "unrelated SIGKILL must not wait for the helper");
+        }
+        finally { release.Set(); await helper.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
+    [Test]
     public async Task Crash_before_send_is_only_requested()
     {
         await using var f = await Fixture.StartAsync();
