@@ -28,7 +28,7 @@ public static class AgentTaskLiveness
     internal const string DeadSessionFailurePrefix = "Session died before the task settled:";
 
     /// <summary>
-    /// The five fields of a session row the verdict reads. A <c>null</c> snapshot means the row is
+    /// The session fields the verdict reads. A <c>null</c> snapshot means the row is
     /// GONE — that is the only way "row missing" is spelled, so no caller can disagree with another
     /// about what a present-but-empty snapshot would mean.
     /// </summary>
@@ -104,19 +104,19 @@ public static class AgentTaskLiveness
                 ? text
                 : "ProviderSignInRequired";
             return new DeadSessionFailure(
-                Format(what, named, agentSessionId),
+                Format(what, ComposeExisting(session.Value, named), agentSessionId),
                 AgentTaskFailureCode.AuthenticationRequired);
         }
 
         if (session?.FailureReason is { Length: > 0 } existing)
-            return new DeadSessionFailure(Format(what, existing, agentSessionId), null);
+            return new DeadSessionFailure(Format(what, session is { } failed ? ComposeExisting(failed, existing) : existing, agentSessionId), null);
 
         if (session is { Status: SessionStatus.Stopped } stopped && !hasTranscriptEntries)
         {
             if (stopped.TerminationSource == SessionTerminationSource.OperatorRequest)
             {
                 return new DeadSessionFailure(
-                    Format(what, "stopped by an operator request before any prompt was recorded", agentSessionId),
+                    Format(what, "an operator request was recorded before any prompt was recorded" + DescribeStop(stopped), agentSessionId),
                     null);
             }
 
@@ -124,47 +124,42 @@ public static class AgentTaskLiveness
                 Format(
                     what,
                     "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped"
-                    + DescribeStop(stopped.TerminationSource, stopped.ExitCode),
+                    + DescribeStop(stopped),
                     agentSessionId),
                 AgentTaskFailureCode.StoppedBeforeFirstPrompt);
         }
 
-        if (session is { Status: SessionStatus.Stopped, TerminationSource: SessionTerminationSource.OperatorRequest })
+        if (session is { Status: SessionStatus.Stopped, TerminationSource: SessionTerminationSource.OperatorRequest } operatorStop)
         {
             return new DeadSessionFailure(
-                Format(what, "stopped by an operator request before the task settled", agentSessionId),
+                Format(what, "an operator request was recorded before the task settled" + DescribeStop(operatorStop), agentSessionId),
                 null);
         }
 
         var evidence = session?.Status == SessionStatus.Stopped
             ? "stopped before the task settled, with no failure reason recorded"
             : "no failure reason recorded";
-        if (session is { Status: SessionStatus.Stopped } settled
-            && settled.TerminationSource is SessionTerminationSource.SystemRequest
-                or SessionTerminationSource.ProcessExit
-                or SessionTerminationSource.PolicyRefresh)
-        {
-            evidence += DescribeStop(settled.TerminationSource, settled.ExitCode);
-        }
+        if (session is { } settled) evidence += DescribeStop(settled);
 
         return new DeadSessionFailure(Format(what, evidence, agentSessionId), null);
     }
 
-    /// <summary>
-    /// Source-specific clause after the empty-Stopped prefix, and the same clause appended to the
-    /// non-empty Stopped fall-through for <see cref="SessionTerminationSource.SystemRequest"/> and
-    /// <see cref="SessionTerminationSource.ProcessExit"/>. <see cref="SessionTerminationSource.Unknown"/>
-    /// keeps "not recorded"; operator stops do not use this helper.
-    /// </summary>
-    private static string DescribeStop(SessionTerminationSource source, int? exitCode) => source switch
+    private static string ComposeExisting(SessionSnapshot session, string existing)
     {
-        SessionTerminationSource.SystemRequest => "; Antiphon itself ended it (SystemRequest)",
-        SessionTerminationSource.ProcessExit =>
-            $"; the agent process exited on its own (ProcessExit, exit code {exitCode?.ToString() ?? "unknown"})",
-        SessionTerminationSource.PolicyRefresh =>
-            "; Antiphon relaunched it to pick up standing instructions (PolicyRefresh)",
-        _ => ", and the stop origin was not recorded",
-    };
+        var detail = SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal,
+            session.TerminationSource, session.ExitStopIntent);
+        return existing.Contains(detail, StringComparison.Ordinal)
+            ? existing + SourceClause(session) : existing + "; " + detail + SourceClause(session);
+    }
+
+    private static string SourceClause(SessionSnapshot session) =>
+        session.TerminationSource == SessionTerminationSource.Unknown
+            ? "; stop origin was not recorded" : $" ({session.TerminationSource})";
+
+    private static string DescribeStop(SessionSnapshot session) =>
+        "; " + SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal, session.TerminationSource,
+            session.ExitStopIntent)
+        + SourceClause(session);
 
     private static string Format(string what, string evidence, Guid? sessionId) =>
         $"{DeadSessionFailurePrefix} {what} ({evidence}). No report is coming"

@@ -20,7 +20,7 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter, IAttachablePr
         _settings = options.Value;
     }
 
-    public Task<int> Exited => _terminal.Exited;
+    public Task<int> Exited => AgentExitObservation.CompatibilityAsync(Completion);
     public Task<AgentExitObservation> Completion => _terminal.Completion;
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;

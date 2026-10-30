@@ -902,12 +902,13 @@ public sealed partial class AttentionService
 
         var sessions = await _db.AgentSessions.AsNoTracking()
             .Where(s => sessionIds.Contains(s.Id))
-            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
+            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal, s.ExitStopIntentJson })
             .ToListAsync(ct);
         var sessionById = sessions.ToDictionary(
             s => s.Id,
             s => new AgentTaskLiveness.SessionSnapshot(
-                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
+                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal,
+                    SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)));
 
         // "Has the session written anything at all" — the FailNeverStartedAsync predicate, asked in
         // one query for the whole candidate set rather than once per task.

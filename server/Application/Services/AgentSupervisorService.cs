@@ -269,7 +269,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             {
                 await RecordIncidentWithExitAsync(
                     agent.Id, dead.Id, AgentIncidentKind.Crash, AlertSeverity.Warning,
-                    $"Session died (exit {dead.ExitCode?.ToString() ?? "unknown"}: {dead.FailureReason ?? "no reason recorded"}).",
+                    $"Session died ({SessionExitPolicy.Describe(dead.ExitCode, dead.ExitSignal, dead.TerminationSource,
+                        SessionExitEvidence.ReadIntent(dead.ExitStopIntentJson))}: {dead.FailureReason ?? "no reason recorded"}).",
                     dead.ExitCode, dead.FailureReason, ct: ct, exitSignal: dead.ExitSignal);
             }
 

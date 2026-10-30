@@ -39,6 +39,7 @@ internal static class Card1619ConsumerFixture
     {
         private readonly IsolatedTestSchema _schema;
         private readonly List<ServiceProvider> _providers = [];
+        private readonly List<IServiceScope> _scopes = [];
         private Scenario(IsolatedTestSchema schema) => _schema = schema;
         public static async Task<Scenario> CreateAsync() => new(await TestDbFixture.CreateIsolatedSchemaAsync());
         public string ConnectionString => _schema.ConnectionString;
@@ -105,8 +106,10 @@ internal static class Card1619ConsumerFixture
             var provider = services.BuildServiceProvider();
             _providers.Add(provider);
             Runtime = provider.GetRequiredService<AgentSessionRuntime>();
+            var scope = provider.CreateScope();
+            _scopes.Add(scope);
             return new Harness(
-                provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+                scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
                 runner, stopper, firstSeen, bootWedge, clock);
         }
 
@@ -343,8 +346,9 @@ internal static class Card1619ConsumerFixture
 
         public async Task<List<AttentionItemDto>> AttentionItemsAsync()
         {
+            await using var db = CreateContext();
             var service = new AttentionService(
-                CreateContext(), new FakeRunnerClient(_schema.ConnectionString), Options.Create(new SupervisionSettings()),
+                db, new FakeRunnerClient(_schema.ConnectionString), Options.Create(new SupervisionSettings()),
                 Options.Create(new DelegationSettings()), TimeProvider.System,
                 NullLogger<AttentionService>.Instance);
             var result = await service.GetAsync(CancellationToken.None);
@@ -386,6 +390,7 @@ internal static class Card1619ConsumerFixture
                 .Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
+            foreach (var scope in _scopes) scope.Dispose();
             foreach (var provider in _providers) await provider.DisposeAsync();
             await _schema.DisposeAsync();
         }

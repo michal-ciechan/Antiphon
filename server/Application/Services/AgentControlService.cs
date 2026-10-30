@@ -530,7 +530,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             {
                 throw new ServiceUnavailableException("Runner liveness is unavailable; refresh and retry.", "standing_resume_runner_unavailable", ex);
             }
-            if (processes.Any(p => involved.Contains(p.SessionId) && p.Status != "Exited" && p.ExitCode is null))
+            if (processes.Any(p => involved.Contains(p.SessionId) && p.Status != "Exited" && p.ExitCode is null && p.ExitSignal is not > 0))
                 throw new ConflictException("An involved conversation still has a live runner process.", "standing_resume_target_active");
         }
         // Coordinate with delivery before taking the short database reservation. These are the
