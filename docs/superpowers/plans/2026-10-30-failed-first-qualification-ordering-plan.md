@@ -4,7 +4,11 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
-## Round-3 amendment status
+## Round-4 amendment status
+
+Task `af154d25`, base `abf60b0e37612b50bbb63e489b94c2d978e3024a`; review `a0aad3d0` read in full. Amendment in progress: preserve the confirmed rc Partial ingress refusal, active identity/legacy heartbeat contract and seven-slice budget. Correct Partial exclusions to use the history profile, with forced filtering and a discriminating method-level exclusion witness; take A-1 through A-4 (supported-command refusal text, explicit checkout/coordination commands, inventories for every protected root, pre-agreed S3 split). Both plan copies remain byte-identical. Validation and final Code handoff will be recorded before settlement; no product source or live run is changed.
+
+## Round-3 amendment status (historical)
 
 Task `4e264f6c`, base `2c727e270ddd81944397e062e1e78ea5b8c751d5`; review `20f68d70` read in full and its cited code checked. Both new defects and all seven advisories are addressed in design. The six confirmed round-1 closures remain intact. Verification design is folded in; **next: code**, after reviewed M1/M2 is on rc. Because this amendment changes admission/root and heartbeat behavior, request a quick Opus check of this diff only before implementation, not another full planning round.
 
