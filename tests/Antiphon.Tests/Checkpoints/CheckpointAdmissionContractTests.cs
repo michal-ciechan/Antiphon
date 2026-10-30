@@ -151,7 +151,7 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             new CheckpointApp.Runtime { Output = validation })).ShouldBe(2);
         validation.ToString().ShouldContain("report_failed");
         var log = File.ReadAllText(Path.Combine(run, "executor.log"));
-        foreach (var phase in new[] { "evidence", "output-discovery", "cleanup", "report-publication" })
+        foreach (var phase in new[] { "evidence", "output-discovery", "output-cleanup", "report-publication" })
             log.ShouldContain($"FINALIZATION phase={phase} seconds=");
     }
 
