@@ -160,9 +160,10 @@ if ($Case -eq 'deploy-temp-runner') {
         $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
         exit 1
     }
-    $state.tempDeployed = $true
-    $state.tempOffline = $false
-    $state.tempContainer = $true
+    # c1008 state tracks the slot under statuses and does not carry the legacy flags.
+    if ($state.PSObject.Properties.Name -contains 'tempDeployed') { $state.tempDeployed = $true }
+    if ($state.PSObject.Properties.Name -contains 'tempOffline') { $state.tempOffline = $false }
+    if ($state.PSObject.Properties.Name -contains 'tempContainer') { $state.tempContainer = $true }
     if ($state.scenario -eq 'c1008' -and $state.statuses.'server2-temp') {
         $temp = $state.statuses.'server2-temp'
         $temp.buildVersion = $state.sha
@@ -176,5 +177,7 @@ elseif ($Case -eq 'deploy-parent') {
     if ($state.PSObject.Properties.Name -contains 'seedImageAvailable') { $state.seedImageAvailable = $false }
 }
 elseif ($Case -notin @('runner-cache-seed', 'verify-runner-caches', 'retire-temp-runner')) { exit 2 }
-$state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
+# c1008 keeps the runner slot under statuses. The default depth drops that object.
+$jsonDepth = if ($state.scenario -eq 'c1008') { 30 } else { 2 }
+$state | ConvertTo-Json -Compress -Depth $jsonDepth | Set-Content -LiteralPath $env:C727_TEST_STATE
 exit 0
