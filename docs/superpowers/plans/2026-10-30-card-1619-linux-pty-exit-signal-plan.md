@@ -1,7 +1,7 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: round-3 design complete; amended checkpoint import pending below.
+Status: round-3 complete; 15-row import passed; Code-ready, no further plan check needed.
 Plan tasks: `9a468e98` (round 1), `3b469108` (round 2), `af4bf774` (round 3); no product code edits.
 Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
 
@@ -794,12 +794,34 @@ dotnet run's implicit build uses its default node count (the host lease was held
 Use the documented build-first/DLL recipe for subsequent checkpoint execution.
 There were no product tests or native process-stop experiments in this Plan task.
 
+Round-3 import at `36bf0b810827dd4446f56a97539a5cc02a506325` accepted
+**15 rows**, exit 0. Command: `pwsh -NoProfile -File scripts/build-slot.ps1
+-Label card1619-round3-import -SlotWaitMinutes 10 -- dotnet run --project
+tools/Antiphon.Checkpoints --property:OutputPath=/tmp/card1619-round3-af4bf774/bin-tools/
+-- import --plan docs/superpowers/plans/2026-10-30-card-1619-linux-pty-exit-signal-plan.md
+--out .antiphon/card1619-round3-af4bf774.yaml`. Slot wait was 0 seconds,
+held time 14 seconds; five existing compiler warnings, no product tests.
+The wrapper reported its existing implicit-build node-count caveat; use the
+build-first/DLL recipe above for Code. A declaration census confirmed R-4=3,
+R-5=3 and R-6=7 method matches, no suffix collisions, and no existing new-class
+names. Parsed table totals matched the imported YAML: 15 rows, 113 results,
+one command and 78 whole minutes. Generated YAML remains ignored.
+
+Round-3 merge-tree against pinned RC
+`e4c9547e10e3da59fd20684b49c029cdc6063fa8` was clean. Freshly fetched master
+remained `698bf1b73e8abf449d5569ea74ac8c82e80f92a1`; its 12 conflict paths
+were identical at the round-3 base and amended tip, none on the plan path.
+No merge, rebase, target publication or product test was performed.
+The evidence guard over the four amendment commits reported 0 violations.
+All amendment commits were pushed on the assigned task branch; final publication
+SHA and final-tip checks are reported in the handoff.
+
 Current roster totals: **113 required test results plus one typecheck command**.
 In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./11/8/8/2/23/3/7; estimates
 are 4/7/6/6/9/1/2/2/6/6/9/6/10/2/2 whole minutes. Group sums are S1=4, S2=12,
 S3a=11, S3b=17, S4=21, S4-native=6, final Windows=7 (78 total). CP-13 precedes its reuse rows in the
-table because import resolves earlier build references. Final re-import after
-the lane/After-list and narrative refinements is recorded in the handoff report.
+table because import resolves earlier build references. The 15-row import includes the separated S4-native build and the R-6 row;
+final metadata-only re-import is recorded in the handoff report.
 Generated YAML and tool outputs remain ignored/scratch; remove this task's
 isolated tool output before settlement.
 
