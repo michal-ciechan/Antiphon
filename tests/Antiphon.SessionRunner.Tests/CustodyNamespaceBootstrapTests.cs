@@ -89,6 +89,44 @@ public sealed class CustodyNamespaceBootstrapTests
         failed.Stdout.ShouldContain("qualified=false");
     }
 
+    // The entrypoint's own step 3b, extracted from dind-entrypoint.sh by the
+    // step markers. A bare source of a missing or broken library exits the
+    // entrypoint before dockerd; the guard must continue unadvertised instead.
+    [Test]
+    public async Task C1614_Entrypoint_library_guard_continues_unadvertised()
+    {
+        RequireLinux();
+        var block = ExtractStep3b(File.ReadAllText(EntrypointPath()));
+        block.ShouldContain("/usr/local/lib/antiphon-custody-common.sh");
+        foreach (var mode in new[] { "missing", "broken", "functionless", "readonly-marker" })
+        {
+            var continued = await GuardBlockAsync(block, mode);
+            continued.ExitCode.ShouldBe(0, mode + " " + continued.Stdout);
+            continued.Stdout.ShouldContain("SENTINEL_AFTER_STEP_3B");
+            continued.Stdout.ShouldContain("qualified=false");
+            continued.Stdout.ShouldContain("CustodyNamespaceUnready");
+        }
+
+        // Same harness against the guard replaced by a plain source. Missing
+        // exits 1 and a syntax error exits 2, before the sentinel. A library
+        // that loads without the step function continues with qualification unset.
+        var bareSource = "source /usr/local/lib/antiphon-custody-common.sh\n";
+        var missing = await GuardBlockAsync(bareSource, "missing");
+        missing.ExitCode.ShouldBe(1, missing.Stdout);
+        missing.Stdout.ShouldNotContain("SENTINEL_AFTER_STEP_3B");
+        var broken = await GuardBlockAsync(bareSource, "broken");
+        broken.ExitCode.ShouldBe(2, broken.Stdout);
+        broken.Stdout.ShouldNotContain("SENTINEL_AFTER_STEP_3B");
+        var functionless = await GuardBlockAsync(bareSource, "functionless");
+        functionless.ExitCode.ShouldBe(0, functionless.Stdout);
+        functionless.Stdout.ShouldContain("qualified=unset");
+        functionless.Stdout.ShouldNotContain("CustodyNamespaceUnready");
+        var stale = await GuardBlockAsync(bareSource, "readonly-marker");
+        stale.ExitCode.ShouldBe(0, stale.Stdout);
+        stale.Stdout.ShouldContain("qualified=unset");
+        stale.Stdout.ShouldNotContain("CustodyNamespaceUnready");
+    }
+
     [Test]
     public async Task C1614_Failed_namespace_boot_still_clears_a_writable_marker()
     {
@@ -321,6 +359,92 @@ public sealed class CustodyNamespaceBootstrapTests
 
     private static string CommonScript() =>
         Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-common.sh");
+
+    // ANTIPHON_C1614_ENTRYPOINT_OVERLAY is the red-proof seam. Unset reads the
+    // real entrypoint. A proof run points it at a copy whose step 3b guard was
+    // replaced by a plain source, then the copy is discarded before commit.
+    private static string EntrypointPath()
+    {
+        var overlay = Environment.GetEnvironmentVariable("ANTIPHON_C1614_ENTRYPOINT_OVERLAY");
+        if (!string.IsNullOrWhiteSpace(overlay))
+            return overlay;
+        return Path.Combine(RepoRoot(), "docker", "session-runner-grok", "dind-entrypoint.sh");
+    }
+
+    private static string ExtractStep3b(string text)
+    {
+        const string startMarker = "# --- step 3b";
+        const string endMarker = "# --- step 4";
+        var start = text.IndexOf(startMarker, StringComparison.Ordinal);
+        var end = text.IndexOf(endMarker, StringComparison.Ordinal);
+        if (start < 0 || end < 0 || end <= start)
+            throw new InvalidOperationException(
+                "dind-entrypoint.sh is missing the step 3b or step 4 marker");
+        return text[start..end];
+    }
+
+    private static async Task<ShellResult> GuardBlockAsync(string block, string mode)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c1614-step3b-" + Guid.NewGuid().ToString("N") + ".sh");
+        try
+        {
+            File.WriteAllText(path, block);
+            var psi = new ProcessStartInfo("unshare")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add("-rm");
+            psi.ArgumentList.Add("bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("""
+                set -euo pipefail
+                mode=$1
+                library=$2
+                block=$3
+                trap 'umount /usr/local 2>/dev/null || true; umount /var/lib 2>/dev/null || true; umount /run 2>/dev/null || true' EXIT
+                mount -t tmpfs tmpfs /usr/local
+                mount -t tmpfs tmpfs /var/lib
+                mount -t tmpfs tmpfs /run
+                mkdir -p /usr/local/lib /var/lib/antiphon-custody /run/antiphon-custody
+                case "$mode" in
+                  missing) ;;
+                  broken)
+                    printf 'this is not shell (\n' > /usr/local/lib/antiphon-custody-common.sh
+                    ;;
+                  functionless)
+                    printf 'true\n' > /usr/local/lib/antiphon-custody-common.sh
+                    ;;
+                  readonly-marker)
+                    cp "$library" /usr/local/lib/antiphon-custody-common.sh
+                    printf 'stale\n' > /run/antiphon-custody/namespace
+                    mount --bind /run/antiphon-custody /run/antiphon-custody
+                    mount -o remount,bind,ro /run/antiphon-custody
+                    ;;
+                  *)
+                    echo "unknown mode $mode" >&2
+                    exit 99
+                    ;;
+                esac
+                set +e
+                bash -c 'set -euo pipefail; source "$1"; echo SENTINEL_AFTER_STEP_3B; echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"' bash "$block"
+                rc=$?
+                set -e
+                echo "entry_rc=$rc"
+                exit "$rc"
+                """);
+            psi.ArgumentList.Add("bash");
+            psi.ArgumentList.Add(mode);
+            psi.ArgumentList.Add(CommonScript());
+            psi.ArgumentList.Add(path);
+            return await StartAsync(psi, "entrypoint-step-3b-" + mode);
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
 
     private static string KillScript() =>
         Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-kill.sh");
