@@ -8940,8 +8940,14 @@ c1008_bind_generation() {
         saved_sha="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousSha==null then "" else .previousSha end')"
         saved_digest="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousComposeDigest==null then "" else .previousComposeDigest end')"
         if printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true' >/dev/null; then
-            stack="$(c1008_stack_revision)"
-            [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                # Retirement does not recreate a generation. Once cleanup is
+                # journaled, fresh absence and v2 incarnations govern resume.
+                [ "$(printf '%s' "$gen_owned" | jq length)" = 0 ] || c1008_refuse RecycleResumeMismatch
+            else
+                stack="$(c1008_stack_revision)"
+                [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
+            fi
             C1008_PREVIOUS_SHA="$saved_sha"
         else
             # A crashed removal can resume after the session-runner is already gone.
