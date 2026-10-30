@@ -385,6 +385,8 @@ report; a resume takes remaining time from that timestamp (at most 5 minutes
 per next default slice), never a new 240-minute allowance. A longer operator
 commission retains its explicitly specified absolute deadline. No broker ledger.
 
+Update the docs' delegated examples in steps 4/8 to named five-minute slices;
+keep the standalone operator 240-minute examples and original absolute deadline.
 **Keep docs/docker-stack.md step 5's existing stop authority verbatim.** At the
 four-hour OldRunnerStillBusy cap the operator has explicitly authorized stopping
 remaining server2 sessions: inspect each exact seat, prefer resumable owner stop,
@@ -497,7 +499,7 @@ claim that a >90-minute single queued tool is exempt from its phase deadline.
 Implementation target: **master, then separately reviewed rc ports**. No plan
 commit activates a product host. Sequence the deadline work after CARD-1604's
 master landing (or verify its exact equivalent already exists at Code's base),
-preserving token-count behavior. At this Plan read, GET /api/version reports
+preserving token-count behavior. At the prior round-2 Plan read, GET /api/version reported
 `8edda999623a473be2d1970727c172bfb5088d59`, consistent with the brief's rc
 activation; CARD-1604 is still Review on the board. Source here already contains
 CodexTokenCountAt in TaskDeadlinePolicy. These three facts are distinct.
@@ -530,18 +532,18 @@ base. It reviewed Astra's round-1 plan task c90aa6c9, tip
 plan supersedes that design; its 27 imported rows were valid syntax, not executed
 product-test evidence. The original historical source observations remain in Git.
 
-| Evidence / related card | Verified fact and implication |
+| Prior round-2 evidence / related card | Verified fact and implication |
 |---|---|
-| Review 7ee3b07a, CARD-1610 description read this round | 240-minute failure with ToolCall only six minutes old; motivates the Working ceiling hold |
+| Review 7ee3b07a, CARD-1610 description read in round 2 | 240-minute failure with ToolCall only six minutes old; motivates the Working ceiling hold |
 | Astra Plan 30f56bd5, CARD-1604 description read this round | Failed at 20-minute model wait despite continuing token_count; later pushed plan 63036f8e with result/nextStage still absent. Preserve 1604's heartbeat fix; historical report remains explicit triage |
 | Astra round-1 Plan c90aa6c9 | Compensation design rejected by review 25f7ce83; this round removes its release/ledger/late-correction machinery |
-| Deploy 2e4f7375, fresh delegate -Status read | Still Failed, session now ended at 2026-10-30 02:03:19; retained report describes completed redeploy-old and a requested later drain-temp -WaitIdleMinutes 240. The brief reports its earlier live failure; do not claim it remains live now or that this report proves the earlier failure occurred inside that drain |
+| Deploy 2e4f7375, round-2 delegate -Status read | Still Failed, session now ended at 2026-10-30 02:03:19; retained report describes completed redeploy-old and a requested later drain-temp -WaitIdleMinutes 240. The brief reports its earlier live failure; do not claim it remains live now or that this report proves the earlier failure occurred inside that drain |
 | CARD-1604 (Review) | Source heartbeat changes exist here; live API reports rc 8edda999; master/rc sequencing is D-6 |
 | CARD-1606 (Backlog) | Supervisor CPU counts its own monitor and masks hangs. Neither monitor ticks, queue polling nor this new notice are useful agent progress |
 | CARD-1615 (InProgress; Plan task 7734ac39 in caller brief) | A Shared Deploy task holds a bound land, which blocks redeploy-old. Resolve admission separately; do not relax recycle gates |
 | CARD-1573 (Review) | Actual title is output-inventory >64 MiB, with later card text explicitly adding a sharded Unit strategy after long Full runs. It is not solely a Unit speedup card; no unleased workaround receives checkpoint credit |
 | CARD-1151 (Review) | Source BootStallDetectAsync records detection without changing task outcome or sending input. Preserve this exact safety precedent |
-| CARD-0153 (Done) | TaskProgressPolicy fingerprint/file novelty detects chatty loops; include typed ceiling-held tasks in its active-task selector, keep detection-only behavior |
+| CARD-0153 (Done) | TaskProgressPolicy fingerprint/file novelty detects chatty loops; Working holds remain in its existing active-task selector, keep detection-only behavior |
 | CARD-1083 / CARD-0079 | Parking off supplies no release deadline; only the narrowly qualified Check compaction continuation has the existing automatic Working-stop exception |
 
 No current runner setting was inferred from a historical report. No desktop
@@ -564,7 +566,7 @@ file per named class. These replace all seven round-1 proposed classes.
 | TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 21 |
 | TaskCeilingScriptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 11 |
 
-Total new cases **96**, not 90 assertions. Category guards are explicit checkpoint
+Total new cases **96**; these are expanded executions, not assertion counts. Category guards are explicit checkpoint
 rows at each green source group: TestLaneCategoryGuardTests (1), shared
 TestClassificationGuardTests (1), ProcessSpawnLimitTests (21 expanded cases:
 seven singleton methods, six CPU arguments, eight override arguments) = **23**.
@@ -625,7 +627,7 @@ The first three arms also replay the transcript and prove one forward, independe
 of the already delivered original Failed caller note. The delivery/identity methods have 15 cases; six writer-save cases bring the class to 21.
 There is no correction producer; these witnesses prove forwarding only. Retain the existing C1161 Failed
 **parent** receipt method (three cases) and C1259 accepted-attempt replacement
-fence (two cases) as independent regression checkpoints.
+fence (two cases) within their full affected-class regression checkpoints.
 
 ## D-10 detail: pooled Working detection without reclamation
 
