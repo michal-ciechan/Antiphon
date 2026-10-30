@@ -25,6 +25,10 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public class RemoteControlMaintenanceQueueTests
 {
+    // The per-test bound covers recovery, not cold shared-store startup in a narrow selection.
+    [Before(Class)]
+    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
     [Test]
     public async Task C514_Executor_rechecks_kind()
     {
