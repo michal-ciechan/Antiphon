@@ -267,7 +267,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
             if (dead is not null && dead.Status == SessionStatus.Failed)
             {
-                await RecordIncidentAsync(
+                await RecordIncidentWithExitAsync(
                     agent.Id, dead.Id, AgentIncidentKind.Crash, AlertSeverity.Warning,
                     $"Session died (exit {dead.ExitCode?.ToString() ?? "unknown"}: {dead.FailureReason ?? "no reason recorded"}).",
                     dead.ExitCode, dead.FailureReason, ct: ct, exitSignal: dead.ExitSignal);
@@ -285,7 +285,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             state.NextRestartAt = now + delay;
             state.UpdatedAt = now;
 
-            await RecordIncidentAsync(
+            await RecordIncidentWithExitAsync(
                 agent.Id, dead?.Id, AgentIncidentKind.RestartScheduled, AlertSeverity.Warning,
                 $"Restart attempt {attempt} scheduled for {state.NextRestartAt:u} (backing off {Describe(delay)}).",
                 dead?.ExitCode, dead?.FailureReason, ct: ct, exitSignal: dead?.ExitSignal);
@@ -822,7 +822,13 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         return state;
     }
 
-    public async Task RecordIncidentAsync(
+    public Task RecordIncidentAsync(
+        Guid? agentId, Guid? sessionId, AgentIncidentKind kind, AlertSeverity severity, string message,
+        int? exitCode = null, string? failureReason = null, bool raiseAlert = true, CancellationToken ct = default) =>
+        RecordIncidentWithExitAsync(agentId, sessionId, kind, severity, message, exitCode, failureReason,
+            raiseAlert, exitSignal: null, ct: ct);
+
+    private async Task RecordIncidentWithExitAsync(
         Guid? agentId,
         Guid? sessionId,
         AgentIncidentKind kind,
