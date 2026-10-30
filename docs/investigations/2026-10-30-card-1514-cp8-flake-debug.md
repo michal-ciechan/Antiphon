@@ -12,5 +12,110 @@ the first reader receives 200 ms, while the second has a separate default 500 ms
 watch. The launch witness combines child exit, exit code, launch marker and a
 12-second body ceiling inside a 12-second parent process ceiling.
 
-Measurements, structural controls and final checkpoint outcomes will be appended
-after execution. No clean result is claimed by this initial record.
+## Measurement and decision
+
+All numbers below are seconds, nearest-rank empirical p50/p95/max, with 20 fresh
+PowerShell child processes per witness per arm. The probe extracts the committed
+FIFO/launch here-strings, preserves the actual product calls and inputs, and only
+extends the observation timeout to 60 seconds and persists discarded timings. The
+FIFO stopwatch encloses the same two calls, not process startup or library import.
+The launch body stopwatch encloses the real `Invoke-AntiphonNightlyTests` with the
+existing fake process seam. Its child wall includes startup, dot-sourcing and
+reader warmup. The seam still creates no real qualification/test launch.
+
+| Assertion/span | What it measures / bound owner | Alone p50 / p95 / max | Loaded p50 / p95 / max | Decision and protective intent |
+|---|---|---|---|---|
+| FIFO combined body, formerly `<0.2` | Test-only outer wall for bounded FIFO read plus own-directory phase enumeration; **not a foreign-journal read** | .0135712 / .0214237 / .0546215 | .0232277 / .0663999 / .0667877 | `<0.5` wall, zero stream opens, exactly one listing of exactly the own chunk directory and its one entry. Preserve `Complete=false`, zero records, null process-wait contribution. |
+| FIFO first reader alone | Product call receives its own 200 ms watch | .0037561 / .0067923 / .0080928 | .0059195 / .0117180 / .0366980 | No product change. Combined outer test wall is not that watch. |
+| Launch body, formerly `<12` | Test-only whole nightly wrapper call, including fake build/discovery/run/publication work | 3.0789313 / 6.9710063 / 7.7503037 | 5.3534600 / 6.3884039 / 6.6696224 | Separate `<15` assertion, approximately 2x worse p95; preserve real result and exactly one launch. |
+| Launch child, formerly `WaitForExit(12000)` | Test-only cold process, imports/warmup, body and shutdown | 6.5031929 / 11.6432822 / 12.5650205 | 9.5037337 / 12.3959586 / 12.4335206 | 26-second parent wait, approximately 2x worse p95; split exit/exit-code/body/marker facts and assert zero sidecar reads/FIFO opens before launch. |
+| Time to launch marker inside body | Real fake-StartProcess witness, excluding cold startup/import | 2.3627672 / 4.8955302 / 5.2793252 | 3.6937186 / 4.5244522 / 4.9467043 | Structural launch ordering is primary; whole-body wall remains finite. |
+
+The caller explicitly requires a wall floor of 0.5 seconds for the replaced FIFO
+expectation; that floor exceeds 2x this small sample's p95. The launch limits round
+2x the worse observed body/child p95 upward. These are diagnostic shared-host
+measurements, not a Windows p95 or qualification receipt. CARD-1514/1404 owns
+collecting comparable Windows/cold/warm/load observations at the next ordinary rc
+pick. No timeout is derived dynamically from a run's own observed duration.
+
+Alone means no owned build active. A script-only diagnostic harness and tool
+`--no-build` import overlapped some baseline samples. Loaded samples all observed
+dotnet build PID 12647 and its unchanged start time before and after each trial.
+That build compiled the actual Antiphon.Tests graph, maxcpucount=1 within a granted
+six-CPU host slot, from 15:45:20.985Z to 15:52:14.889Z; 413.23 seconds, zero errors,
+1406 warnings in the inherited graph. The checkpoint/audit tool bootstrap and real
+land check also briefly overlapped this arm. Host: 4551c5a7852f, Linux, TEMP=/tmp;
+host load observed during sampling was 16.90 / 25.55 / 27.51.
+
+The launch child's old 12-second allowance was exceeded in 1/20 alone and 2/20
+loaded diagnostic samples, although their marker and result existed. No body
+sample exceeded 12 seconds. This directly identifies startup/import overhead in
+the parent allowance, rather than a blocked FIFO reader. Raw instrumented harness
+runs at the original tight limits passed both alone (79 s) and loaded (120 s);
+the latter measured FIFO .0785187 s and launch child/body 11.8536886/6.2814753 s.
+Historical failures are retained, not replaced by these passes.
+
+The original FIFO failure's exact elapsed time was discarded by its old cleanup.
+It did not reproduce in the 40 cold samples or in 1200 additional loaded warm
+calls (p50 .0107043, p95 .0203333, max .0757434; zero over .2). Thus a specific
+historical descheduling interval cannot be proved. What is proved is that its
+assertion is a test-only scheduling proxy around **two independent watches**;
+the stronger zero-open/directory oracle detects regressions without treating that
+proxy as a product deadline. No claim of a reproduced product regression is made.
+
+## Product deadline and verdict boundary
+
+Unchanged production `scripts/lib/test-phase-evidence.ps1`:
+
+- `Read-TestPhaseJsonlBounded` at line 1163 shares its 200 ms watch between
+  `Read-TestPhaseBoundedBytes` (1034) and JSONL conversion. The bounded byte reader
+  rejects nonregular identity **before** stream open (1047); FIFO means no bytes
+  are read. The native Linux open (993) also uses nonblocking/no-follow flags and
+  refuses nonregular descriptors, so bypassing the first guard is still safe but
+  unnecessary work and is detected by the new zero-open assertion.
+- `Get-QualificationPhaseSums` at 3500 creates a separate default 500 ms watch
+  (3508) when called as in this witness; it lists only the identity directory and
+  rejects its FIFO by identity at 3564 before header/content readers. It never
+  scans the foreign corpus in this witness. The distinct foreign-journal witness
+  and its actual-byte assertions remain unchanged.
+- Actual terminal publication supplies one shared 200 ms watch to prior sidecar,
+  TRX and journal reading (`Update-QualificationChunkTiming`, 4230-4294). Expiry
+  sets phase metrics and stats to null and `why=timing-read-refused` when no earlier
+  reason exists. This is an observable diagnostic gap, not only a `complete=false`
+  flag; explicit timing-summary quality/incompleteness may also reflect missing
+  evidence. It cannot manufacture complete timing evidence.
+- `Invoke-QualificationPostRunAggregation` at 4359 catches timing update failures
+  and returns the supplied `ChunkExitCode` and `ChunkResult` unchanged. Verdict
+  assertions, including the foreign witness's `5` / `KEEP-5`, are retained.
+
+No evidence here justifies changing a production deadline for loaded Windows.
+Only test expectations and test instrumentation change; the real consumer remains
+owed native verification and the timing publication path still cannot change a
+verdict.
+
+## Evidence and pending verification
+
+Raw retained artifacts are under `.antiphon/79c0c349-evidence/`: extracted probe
+scripts, `alone-samples.json`, `loaded-samples.json`, per-child results/markers,
+`statistics.json`, `loaded-warm-fifo.json`, host/build receipts and raw logs.
+Each cold arm contains 20 observations of each witness, not 20 total observations.
+Product code measured at `0d72d646fe92f33c6bf2525e0b20dbe1bf742449` is byte-identical
+to assigned base. Probe setup failures (unavailable Python, missing generated
+script, then result-variable/path collision) were corrected before accepted
+samples; their short failed setup attempts earn no product-test credit. Earlier
+setup logs reused the accepted-run filename, so only transcript errors and the
+retained accidental result artifact remain for those attempts.
+
+All requested extra probes/builds are explicitly brief-directed diagnostics, not
+unlisted ordinary coverage. No DB, Docker, migrations, web host, or production
+runner is started by these witnesses. IO and CLI are measured at the call/body
+boundaries above; finer startup/import/IO subdivisions remain unknown rather than
+zero. Slot admission is separate from execution in retained `BUILD SLOT` logs.
+
+The real `scripts/audit-land-verification-graph.ps1 -Check` passed both evaluator
+passes and canary comparison: digest
+`20DE49F6B177E5A238F20D4F8C7F33EAEE6B511A9163CDB902D9136EF06DECB6`, count 66.
+`-Update` was not run. No definition file changed.
+
+Structural controls and required checkpoint outcomes remain pending at this
+measurement/fix commit; no clean overall receipt is claimed yet.

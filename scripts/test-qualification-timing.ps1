@@ -560,7 +560,10 @@ $payload = [ordered]@{
             Write-Host ('MEASURED fifo-child=' + $fifoRun.Seconds + ' body=' + $fifoDoc.seconds + ' read=' + $fifoDoc.readSeconds + ' opens=' + $fifoDoc.openCalls + ' lists=' + $fifoDoc.listCalls + ' entries=' + $fifoDoc.listedEntries)
             Assert-Check ([int]$fifoDoc.openCalls -eq 0) 'fifo-cases-file-never-opens-stream'
             Assert-Check ([int]$fifoDoc.listCalls -eq 1 -and [int]$fifoDoc.listedEntries -eq 1 -and [string]$fifoDoc.listedFolder -eq $fifoChunk) 'fifo-cases-file-lists-only-own-chunk'
-            Assert-Check ([double]$fifoDoc.seconds -lt 0.2) 'fifo-cases-file-in-process-budget'
+            # These two calls have independent product watches. Refusal before
+            # stream open and one bounded listing are the regression oracle;
+            # this outer wall allowance includes shared-host scheduling.
+            Assert-Check ([double]$fifoDoc.seconds -lt 0.5) 'fifo-cases-file-in-process-budget'
             $fifoOk = (-not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
         }
         Assert-Check $fifoOk 'fifo-cases-file-refuses-unsafe-input'
@@ -669,16 +672,21 @@ $payload = [ordered]@{
     launchCount = $script:launchWitnessCount
 }
 [IO.File]::WriteAllText($ResultPath, ($payload | ConvertTo-Json -Compress))
-if ($launched -and $null -ne $result -and $sw.Elapsed.TotalSeconds -lt 12) { exit 0 }
+if ($launched -and $null -ne $result) { exit 0 }
 exit 1
 '@
         [IO.File]::WriteAllText($launchScript, $launchBody.Replace("`r", ''))
         $launchResult = Join-Path $launchRoot 'result.json'
-        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker, $launchResult) -TimeoutMilliseconds 12000
+        # 20 cold children per arm: worse p95 body=6.971 s, child=12.396 s.
+        # Keep startup separate from body and protect launch order structurally.
+        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker, $launchResult) -TimeoutMilliseconds 26000
         Write-Host ('MEASURED launch-child=' + $launchRun.Seconds + ' exited=' + $launchRun.Exited + ' exit=' + $launchRun.ExitCode + ' marker=' + (Test-Path -LiteralPath $launchMarker))
+        Assert-Check $launchRun.Exited 'fifo-sidecar-launch-child-exited'
+        Assert-Check ($launchRun.ExitCode -eq 0) 'fifo-sidecar-launch-child-exit-code'
         if (Test-Path -LiteralPath $launchResult) {
             $launchDoc = Get-Content -LiteralPath $launchResult -Raw | ConvertFrom-Json
             Write-Host ('MEASURED launch-body=' + $launchDoc.seconds + ' count=' + $launchDoc.launchCount)
+            Assert-Check ([double]$launchDoc.seconds -lt 15) 'fifo-sidecar-launch-body-budget'
             Assert-Check ([bool]$launchDoc.resultPresent -and [int]$launchDoc.launchCount -eq 1) 'fifo-sidecar-launch-result-and-count'
         } else { Assert-Check $false 'fifo-sidecar-launch-result-and-count' }
         if (Test-Path -LiteralPath $launchMarker) {
