@@ -426,60 +426,42 @@ A no-index checkout is accepted only with no content outside its top-level .git,
 
 The receipt records `repositories` and `partial` on success. On refusal `auditFailure` names the check, exit status and redacted repository path relative to the work volume; a first refusal also initializes `audit`. A saved successful `audit` is never overwritten by failure diagnostics, so unchanged publication proof can resume after connectivity recovers. The audit lines carry only local Git facts (one line per repository entry and per retained tip of each common directory), so ignored content and a moving origin leave the before/after comparison equal. An ordinary land never moves the task's source branch (schema 3 pushes the rebased target only), so a land finishing between the two audits leaves them equal as well; the one land shape that can refuse is an adoption land, which rewinds origin's task branch to the reviewed SHA so that commits past it on a runner mirror become unpublished work and the audit refuses `RecycleUnpublishedWork` (CARD-1353). `GithubTokenAbsent` stays a warning: this audit does not read the token. The token is used only for secondary receive-pack probes.
 
-Preview each destructive phase with `-DryRun`; `all` is not a preview phase. A
-retire-temp preview bound to a cleanup receipt runs the same publication audit as
-apply, inside the same pinned image, so it uses that image's Git and the production
-`/work` path. Docker mounts the work volume and, when present, `runner-tmp`
-read-only (`--mount type=volume,source=<volume>,target=/work,readonly` and the
-same for `runner-tmp`). The helper's scratch is a private tmpfs at `/tmp`. The
-preview uses apply's network: there is no `--network` argument, which is Docker's
-default bridge, the same mode as apply's `docker create`. The audit's
-`git ls-remote origin` and origin-proof fetch need that network. The container is
-`--rm`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user 1654:1654`,
-and `--init`. Apply's helper receives `C1008_AUDIT_TIMEOUT_SECONDS`,
-`C1008_SCRATCH_QUOTA_BYTES` when that variable is set, and `C1008_TMP_MOUNT` when
-`runner-tmp` is mounted. When no host proof is supplied, the preview passes that same environment and nothing further. No GitHub token, SSH agent, or git credential helper is passed. A private origin whose in-container `git ls-remote` fails only for authentication is proved by the desktop, which runs `git ls-remote` with ambient credentials and passes only ref names and object ids through a read-only bind. No credential enters the container. Any other ls-remote failure stays a refusal. The proof is bound to operation id, operation start, repository path, and origin URL hash; a missing, empty, unreadable, stale, or mismatched proof refuses `RecycleGitAuditUnknown`. Apply asks the desktop again rather than reusing the preview proof. State
-and auth volumes are not mounted. The audit program sets `GIT_CONFIG_SYSTEM` and
-`GIT_CONFIG_GLOBAL` to `/dev/null`. The helper name is
-`c1008-preview-<operation id>-<16 hex token>` and its label is
-`io.antiphon.preview-audit=<operation id>:<token>`. `--cidfile` records the id
-this run created. If that name already exists, the preview refuses with
-`RecycleGitAuditUnknown` and leaves the existing container in place. The shared
-audit budget above (default 10800 s, from the 5225 s clean-volume measurement
-and the 1404 s read-only OLD-volume replay) is enforced with `docker kill` of the
-owned id, so a client timeout or a dropped session cannot leave the helper
-running for the rest of that budget. On timeout, SIGHUP, SIGINT, SIGTERM, and
-exit, the preview `docker kill`s that id while it is still running and
-`docker rm -f`s it only after the label matches, then checks the id is gone.
-That is the only container a preview may create: one read-only, capability-less,
-auto-removed, pinned-image helper on apply's network. A container that can write
-a volume, a rollout stop or rm, a volume rm, and a recycle journal are not part
-of a preview. The preview prints `auditPending=false` and grants no apply
-authority when it binds an image. That image comes from a cleanup receipt for
-this project, project id, and the normalized retirement stamp. A receipt for the
-current source SHA is preferred when it carries a `sha256` image and is not a
-dry-run, unless the caller named that dry-run for a preview. Two current-SHA
-images that differ refuse. Otherwise the lookup uses completed, non-dry-run
-receipts from another source SHA, including across run IDs. Partial, preview,
-refused, pending, and dry-run receipts from another SHA do not count. Those
-other-SHA receipts must carry the same `sha256` image; if two of them differ,
-the lookup refuses `RecycleGitAuditUnknown` instead of taking the newest. When
-they agree, the newest file (mtime, then operation id) is the one recorded. A
-receipt for a different project, project id, or retirement is ignored. It does
-not refuse. A named cleanup operation whose own file is a different project or
-retirement still refuses `RecycleGitAuditUnknown` and does not borrow a sibling.
-The image must still be present on the host (`docker image inspect` by id). A
-missing image refuses `RecycleGitAuditUnknown` and starts no helper. An empty
-image on a matching receipt refuses only when no other receipt binds an image,
-rather than printing `auditPending=true` and exiting 0. A pending receipt is
-not an empty match. Container cleanup does not use this refusal. When no
-receipt matches, the preview prints
-`C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`, prints
-`auditPending=true`, does not audit, and starts no container. Apply prints that
-same warning. It still audits with `antiphon-server2/session-testing:<sha12>`
-when that image is present, and refuses `RecycleGitAuditUnknown` when it is not.
-Apply keeps its own helper, asks the desktop again for fresh proofs,
-stops and removes only inspected owned container IDs, and never prunes.
+Preview each destructive phase with `-DryRun`; `all` is not a preview phase.
+Temp retirement uses the protected host `audit-current.json` descriptor (schema 1,
+audit protocol 2, policy 1). Deployment publishes its installed image digest after
+a successful image build. Retirement resolves that current reference once per phase
+and passes its digest to the helper. Missing, linked, writable, duplicate-key,
+unsupported or unreadable configuration, or an unavailable current image, refuses
+`RecycleGitAuditUnknown`. Install reviewed current tools; recovering an old build
+is not a recovery step. The creating `-Sha` is optional retirement provenance.
+Other rolling phases still require their deployment SHA.
+
+The bridge stages c590-remote, c1008-retirement, c1008-content-audit and
+c1008-volume-metadata in a fresh owner-only operation directory, verifies every
+SHA-256 against the local files and seals the bundle read-only before executing it.
+Each bundle retains `tooling.sha256`. Concurrent retirement requests do not overwrite
+each other's scripts. Historical cleanup images and receipts do not select the
+audit runtime. A complete zero-finding preview reports `auditPending=false` and
+writes a protected schema-2 Ready receipt. Apply consumes the exact receipt and
+reruns content and publication checks before any volume effect.
+
+The helper mounts work and present runner-tmp volumes read-only, uses UID 1654,
+`--cap-drop ALL`, `--security-opt no-new-privileges`, `--init` and an owned name,
+label and cidfile. It retains the production `/work` namespace. No GitHub token, SSH agent, or git credential helper is passed.
+No credential enters the container. Host publication transport passes only ref names and object ids through a read-only bind
+plus the credential-free graph bundle. The proof is bound to operation id, operation start, repository path, and origin URL hash;
+a missing, empty, unreadable, stale, or mismatched proof refuses `RecycleGitAuditUnknown`.
+Apply asks the desktop again rather than reusing the preview proof. It asks the desktop again for fresh proofs.
+Any other ls-remote failure stays a refusal. Main's v1 scanner adapter remains separate:
+When no host proof is supplied, the preview passes that same environment and nothing further.
+
+Production deletes remain disabled pending the complete S5 acceptance. In particular,
+N1 must prove the kernel read-only/offline/nocopy namespace and cancellation contract;
+the manual/Close path and strict v2 publication consumption also require their
+planned acceptance. The wrapper's full content Preview/Apply flow must be qualified;
+a census-only DryRun is not a completed content preview. The first live action
+remains a read-only preview after reviewed tooling activation, with findings and
+unknown denominators retained. No apply follows an incomplete or refused preview.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under
@@ -555,26 +537,12 @@ abandonment procedure above.
 After retaining the matching cleanup receipt, the wrapper re-reads status and
 requires fresh host absence before the independent C1008 volume gate. Explicit
 null live inventory is accepted only for a retired, offline, absent temp with
-zero bound/queued work. The pinned original image supplies the offline UID-1654 publication audit. A
-receipt matches on project, project id, and the retirement stamp. The current
-source SHA is preferred when that receipt carries a `sha256` image and is not a
-dry-run, unless the caller named that dry-run for a preview. Two current-SHA
-images that differ refuse. Otherwise completed, non-dry-run receipts from
-another source SHA are used, including across run IDs. Partial, preview,
-refused, pending, and dry-run receipts from another SHA do not count. If two of
-those other-SHA receipts carry different images, the gate refuses
-`RecycleGitAuditUnknown` instead of taking the newest. When they agree, the
-newest file (mtime, then operation id) is recorded. A receipt for a different
-project, project id, or retirement is ignored. It does not refuse. A named
-cleanup operation whose own file is a different retirement still refuses. The
-image must be present on the host or the gate refuses `RecycleGitAuditUnknown`
-and starts no helper. An empty image on a matching receipt refuses only when no
-other receipt binds an image. A pending receipt is not an empty match.
-Unpublished or dirty work preserves the volumes. When no receipt matches, the gate warns
-`C994_IMAGE_UNPINNED reason=no-matching-cleanup-record`. Apply then uses the
-current SHA `antiphon-server2/session-testing:<sha12>` image when that image
-exists, and refuses when it does not. Container removal retains all four private
-volumes, provider binds, caches and images until this audit passes.
+zero bound/queued work. Current `audit-current.json` supplies the audit runtime.
+Old source SHAs, cleanup receipt images and missing historical images are provenance.
+Unpublished or dirty content still refuses and retains every remaining volume.
+Container cleanup never supplies a volume deletion capability. The current Ready
+receipt, fresh content/publication proof and exact incarnation/live guards remain
+mandatory before `docker volume rm -- <name>`.
 
 `retire-temp -DryRun` previews exact container IDs and four volume targets.
 With exited containers present, volume proof is pending confirmed absence and the
@@ -599,26 +567,24 @@ from 17.6 GiB to 272 GiB (60% used).
 
 ### Mount generations and the rolling proofs (CARD-1105)
 
-`redeploy-old` proves the containers it stops against the generation those containers were created
-from, then proves the replacement against the generation this checkout renders. `retire-temp`
-proves any owned temp containers against that same previous generation and does not start a
-replacement runner. The previous generation is `SOURCE_REVISION` in the stack env (`SERVER2_ENV` on
-main, `SERVER2_TEMP_ENV` on temp). That value must be 40 lowercase hex and equal the runner status
-`buildVersion`. When the project owns exactly one session-runner image, `docker image inspect` of
-`antiphon-server2/session-testing:<sha12>` must equal that container's image id. A missing stack
-file, a value that is not 40 lowercase hex, a status body that cannot be read, a git or render
-failure, an unknown bind target, or a structurally invalid previous Compose file refuses
-`RecycleGenerationUnknown`. A `buildVersion` that is not the stack SHA, or a session-runner image
-id that is not the inspected tag, refuses `RecycleGenerationMismatch`. No owned session-runner or
-state-init means the previous generation is not derived.
+`redeploy-old` proves the containers it stops against their creating generation,
+and the replacement against this checkout's target generation. Main retains its
+`SOURCE_REVISION` / runner-status `buildVersion` equality and installed image
+equality, historical Compose reconstruction and resume guards. Missing or malformed
+main source/Compose/image facts refuse `RecycleGenerationUnknown`; a source or
+image mismatch refuses `RecycleGenerationMismatch`. Main still requires one
+session-runner image. Its running proof emits `C1008_GENERATION`.
 
-A state-init-only temp binds by SOURCE_REVISION alone. The stack SHA must still be 40 lowercase
-hex and equal the temp registration `buildVersion`; the recorded image tag and image id are null
-and no image is inspected. The image leg applies only while a session-runner remains. Main still
-requires exactly one session-runner image and refuses `RecycleGenerationUnknown` when it has none.
-`retire-temp-containers` and `retire-temp-runner` both reach this proof through
-`c1008_previous_generation` (`retire-temp-runner` calls `c1008_recycle`), so neither keeps a
-stricter image refusal for that state-init-only shape.
+Temp retirement uses the shipped topology catalog in `c1609_temp_topology_model`.
+Historical source and image are diagnostic. It admits both complete supported
+runner rosters (with and without the GitHub-token directory bind) and the supported
+state-init roster. Every actual mount type, exact name/source, destination, RW bit
+and ephemeral mount remains checked. Unknown, partial or altered actual topology
+refuses `RecycleContainerStateUnknown`; changing an old Compose file alone does
+not change admission. With no temp containers, no old source, image or credential
+bind metadata is needed. A state-init-only temp needs no creating SHA or image.
+Volume retirement requires container absence and the current content proof;
+it never reconstructs a deployment generation.
 
 The target roster is the hard-coded contract in `c1008_compose_model`, including the read-only
 directory bind `/run/antiphon/github-token`. `RecycleComposeMismatch` refuses a target render
@@ -634,7 +600,7 @@ The real-Docker fixture copies `$SERVER2_COMPOSE` byte for byte, so that refusal
 The running proof prints
 `C1008_GENERATION project=<p> previous=<sha|none> target=<sha> previousMounts=<n> targetMounts=<n>`.
 
-Inside `c1008_recycle`, `RecycleGenerationUnknown` and `RecycleGenerationMismatch` happen before
+For main inside `c1008_recycle`, `RecycleGenerationUnknown` and `RecycleGenerationMismatch` happen before
 the recycle lock and before any recycle journal. A foreign extra mount is
 `RecycleContainerStateUnknown` after that lock, before the recycle journal is written, and before
 any `docker stop`; the volumes stay. `retire-temp-containers` takes the rollout lock and writes

@@ -589,8 +589,49 @@ function Invoke-C590LiveCase {
             Remove-Item -LiteralPath $filterPath -Force
         }
 
-        [void](Invoke-C590Ssh "mkdir -p /home/mc/antiphon-c590")
-        & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c590-remote.sh') mc@server2:/home/mc/antiphon-c590/c590-remote.sh
+        $remoteScript = '/home/mc/antiphon-c590/c590-remote.sh'
+        if ($Case -cin @('retire-temp-containers', 'retire-temp-runner', 'retire-temp-inventory', 'deploy-parent', 'deploy-temp-runner')) {
+            # One private immutable bundle per invocation. No concurrent request
+            # can overwrite a running retirement's script or its current helpers.
+            $stage = '/home/mc/antiphon-c590/retirement-tools/' + [guid]::NewGuid().ToString('N')
+            $prepare = @'
+set -eu
+umask 077
+parent=/home/mc/antiphon-c590/retirement-tools
+[ ! -L "$parent" ]
+mkdir -p -- "$parent"
+[ "$(readlink -e -- "$parent")" = "$parent" ]
+[ "$(stat -c %u -- "$parent")" = "$(id -u)" ]
+mode="$(stat -c %a -- "$parent")"
+(( (8#$mode & 022) == 0 ))
+mkdir -- '{0}'
+'@ -f $stage
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($prepare))
+            if ((Invoke-C590Ssh "printf '%s' '$encoded' | base64 -d | bash") -ne 0) {
+                Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+            }
+            $hashRows = @()
+            foreach ($name in @('c590-remote.sh', 'c1008-retirement.sh', 'c1008-content-audit.sh', 'c1008-volume-metadata.sh')) {
+                $local = Join-Path $PSScriptRoot $name
+                $hashRows += (Get-FileHash -LiteralPath $local -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $name
+                & scp -o BatchMode=yes -o ConnectTimeout=15 $local ('mc@server2:' + $stage + '/' + $name)
+                if ($LASTEXITCODE -ne 0) {
+                    Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+                }
+            }
+            $seal = "set -eu`ncd '$stage'`nprintf '%s\n' '" + ($hashRows -join "`n") + "' > tooling.sha256`n" +
+                "sha256sum -c tooling.sha256 >/dev/null`nchmod 0400 -- ./*.sh tooling.sha256`n"
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($seal))
+            if ((Invoke-C590Ssh "printf '%s' '$encoded' | base64 -d | bash") -ne 0) {
+                Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+            }
+            $remoteScript = $stage + '/c590-remote.sh'
+        }
+        else {
+            [void](Invoke-C590Ssh "mkdir -p /home/mc/antiphon-c590")
+            & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c590-remote.sh') mc@server2:/home/mc/antiphon-c590/c590-remote.sh
+        }
+        $remoteEntry = "bash '$remoteScript'"
         # CARD-1316. The shell resolver accepts the same positive integer. Reject a
         # bad desktop override before it is quoted into the remote command.
         $auditTimeoutExport = @()
@@ -638,10 +679,10 @@ function Invoke-C590LiveCase {
                 else { $export }
             })
             if ($recycleDryRun -ceq '1') { $inventoryExports += "export C1008_INVENTORY_ALLOW_PREVIEW='1'" }
-            $inventoryRemote = ($inventoryExports + @('bash /home/mc/antiphon-c590/c590-remote.sh')) -join '; '
+            $inventoryRemote = ($inventoryExports + @($remoteEntry)) -join '; '
             $retireProofExports = @(Get-C1008RetireProofExports -EvidenceRoot $root -Run $run -RecycleOperation $recycleOperation -InventoryRemote $inventoryRemote)
         }
-        $remote = ($bridgeExports + $retireProofExports + @('bash /home/mc/antiphon-c590/c590-remote.sh')) -join '; '
+        $remote = ($bridgeExports + $retireProofExports + @($remoteEntry)) -join '; '
         $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null

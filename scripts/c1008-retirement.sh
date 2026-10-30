@@ -73,6 +73,36 @@ c1609_census_v2_loop() {
     return 2
 }
 
+# Current runtime is protected host configuration, never a creating SHA or a
+# cleanup receipt. Resolve a mutable reference once per phase; helpers receive
+# only the resulting installed digest. The explicit Docker --user remains 1654.
+c1609_resolve_current_audit() {
+    local file="$SERVER2_ROOT/audit-current.json" canonical ref image
+    c1609_custody "$file" file || return 1
+    [ "$(stat -c %s -- "$file")" -le 8192 ] || return 1
+    canonical="$(jq -cS -s 'if length==1 then .[0] else error("runtime") end' "$file" 2>/dev/null)" || return 1
+    [ "$(cat -- "$file")" = "$canonical" ] || return 1
+    jq -e 'type=="object" and keys==["image","policyVersion","protocol","schema"] and
+        .schema==1 and .protocol==2 and .policyVersion==1 and (.image|type)=="string" and
+        (.image|length)<=256 and (.image|test("^[A-Za-z0-9][A-Za-z0-9._/:@-]*$"))' "$file" >/dev/null 2>&1 || return 1
+    ref="$(jq -r .image "$file")" || return 1
+    image="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null)" || return 1
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    if [[ "$ref" == sha256:* ]]; then [ "$ref" = "$image" ] || return 1; fi
+    printf '%s\n' "$image"
+}
+
+# Deployment installs current tooling after the image build. This is installation
+# provenance, not a requirement to recover that build when retiring old content.
+c1609_publish_current_audit() {
+    local ref="$1" image
+    c1609_custody "$SERVER2_ROOT" dir || return 1
+    image="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null)" || return 1
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    jq -ncS --arg image "$image" '{schema:1,protocol:2,policyVersion:1,image:$image}' |
+        c1609_persist "$SERVER2_ROOT/audit-current.json"
+}
+
 # Only local safety facts enter the preview/apply inventory comparison. A new
 # advertised remote tip can prove the same retained objects without changing it.
 c1609_inventory_digest() {

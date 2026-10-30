@@ -348,8 +348,9 @@ public sealed class RetiredTempContainerScriptTests
             const root=process.env.C994_TEST_BRIDGE_ROOT,kind=path.basename(process.argv[1]),args=process.argv.slice(2);
             fs.appendFileSync(root+'/arguments.jsonl',JSON.stringify({kind,args})+'\n');
             if(kind==='ssh'&&args.at(-1).startsWith('export ')) {
-              const remote=args.at(-1),end='bash /home/mc/antiphon-c590/c590-remote.sh';
-              if(!remote.endsWith(end))throw Error('unexpected host executable');
+              const remote=args.at(-1),match=remote.match(/bash '(\/home\/mc\/antiphon-c590\/retirement-tools\/[0-9a-f]{32}\/c590-remote\.sh)'$/);
+              if(!match)throw Error('unexpected host executable');
+              const end=match[0];
               const script=remote.slice(0,-end.length)+"printf '%s\\n' \"$C994_VERSION\" \"$C994_OPERATION\" \"$C994_PROJECT\" \"$C994_PROJECT_ID\" \"$C994_DRY_RUN\" \"$C994_RETIRED_AT\"";
               const child=cp.spawnSync('bash',['-c',script],{encoding:'utf8',timeout:5000});
               if(child.status!==0)process.exit(2);
@@ -401,7 +402,12 @@ public sealed class RetiredTempContainerScriptTests
         }
         var calls = File.ReadAllLines(root + "/arguments.jsonl").Select(x => JsonNode.Parse(x)!).ToArray();
         var ssh = calls.Where(x => x["kind"]!.GetValue<string>() == "ssh").ToArray();
-        ssh.Length.ShouldBe(4, "c994-literal-transport: exact transport calls");
+        ssh.Length.ShouldBe(6, "c1609-literal-transport: private stage, hash verification and phase per invocation");
+        var staged = calls.Where(x => x["kind"]!.GetValue<string>() == "scp" &&
+            !x["args"]!.AsArray().Any(a => a!.GetValue<string>() == "-r")).ToArray();
+        staged.Length.ShouldBe(8, "c1609-literal-transport: all four tools for both invocations");
+        staged.All(x => x["args"]!.AsArray().Last()!.GetValue<string>().Contains("/retirement-tools/", StringComparison.Ordinal))
+            .ShouldBeTrue("c1609-literal-transport: no shared script overwrite");
         foreach (var call in ssh) {
             var args = call["args"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
             args.Length.ShouldBe(10, "c994-literal-transport: remote command is one literal argument");

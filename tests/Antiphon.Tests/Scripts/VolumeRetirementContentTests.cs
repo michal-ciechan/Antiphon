@@ -20,8 +20,8 @@ public sealed class VolumeRetirementContentTests
         using var missingHistory = new C1008HostFixture(main: false);
         var unpinned = await missingHistory.Run("retire-temp-runner", probe, dryRun: true);
         unpinned.Exit.ShouldBe(0, "c1609-c1: unpinned preview reaches the current entry; " + unpinned.Output);
-        unpinned.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
-        unpinned.Output.ShouldContain("auditPending=true");
+        unpinned.Output.ShouldContain("C1609_TOOLING protocol=2 policy=1");
+        unpinned.Output.ShouldContain("auditPending=false");
         unpinned.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         missingHistory.Removed.ShouldBeEmpty();
 
@@ -44,7 +44,7 @@ public sealed class VolumeRetirementContentTests
             "dddddddddddddddddddddddddddddddddddddddd", "sha256:" + new string('e', 64), append: true);
         var conflict = await conflicting.Run("retire-temp-runner", probe, dryRun: true);
         conflict.Exit.ShouldBe(0, "c1609-c1: conflicting old images warn and still prove content; " + conflict.Output);
-        conflict.Output.ShouldContain("RecycleGitAuditUnknown");
+        conflict.Output.ShouldContain("C1609_TOOLING protocol=2 policy=1");
         conflict.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         conflicting.Removed.ShouldBeEmpty();
 
@@ -66,7 +66,8 @@ public sealed class VolumeRetirementContentTests
         var selected = await current.Run("retire-temp-runner", probe, dryRun: true);
         selected.Exit.ShouldBe(0, "c1609 current compatible tooling; " + selected.Output);
         selected.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
-        current.Trace.Where(a => a.Length > 0 && a[0] == "run").Last().ShouldContain(currentImage,
+        var helper = current.Trace.Where(a => a.Length > 0 && a[0] == "run").Last();
+        helper[Array.IndexOf(helper, "-c") - 1].ShouldBe(currentImage,
             "current descriptor, independent of historical cleanup image and caller SHA");
         current.Removed.ShouldBeEmpty();
 

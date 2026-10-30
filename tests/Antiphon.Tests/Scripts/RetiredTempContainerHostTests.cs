@@ -452,8 +452,11 @@ public sealed class RetiredTempContainerHostTests
         historical.Removed.ShouldBeEmpty("c1609-historical-image: container cleanup does not remove volumes");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C994_Audit_image_is_pinned_and_required() {
-        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();if(fault=="original-image-missing")PinReceiptImage(f,"sha256:"+new string('b',64));f.Docker["fault"]=fault;
+    public async Task C1609_Audit_uses_current_image() {
+        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();if(fault=="original-image-missing"){
+            PinReceiptImage(f,"sha256:"+new string('b',64));
+            File.WriteAllText(Path.Combine(f.Root,"server/audit-current.json"), "{\"image\":\"sha256:"+new string('b',64)+"\",\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
+        }f.Docker["fault"]=fault;
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
         foreach(var work in new[]{"published","dirty","unpublished"}) {
             using var f=Fixture("session-runner");
@@ -489,7 +492,7 @@ public sealed class RetiredTempContainerHostTests
             run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
             var audits = f.Trace.Where(a=>a[0]=="run"&&a.Contains("--entrypoint")).Skip(previousAudits).ToArray();
             audits.ShouldNotBeEmpty("c994-image-required: apply offline audit reached");
-            audits.All(a=>a.Contains("sha256:"+new string('b',64))&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c994-image-required: exact pinned readonly uid-1654 helper");
+            audits.All(a=>a.Contains(C1008HostFixture.SessionImage)&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c1609-current-image: inspected current readonly uid-1654 helper, independent of historical image");
             if(work!="published") {
                 run.Output.ShouldContain(work=="dirty"?"RecycleWorktreeDirty":"RecycleUnpublishedWork",customMessage:"c994-audit-required");
                 f.Removed.ShouldBeEmpty("c994-audit-required");f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-audit-required: generations retained");
@@ -589,6 +592,10 @@ public sealed class RetiredTempContainerHostTests
         foreach (var unpublished in new[] { false, true })
         {
             using var content = new C1008HostFixture(main: false);
+            (await Cleanup(content)).Exit.ShouldBe(0, "c1609: absent historical cleanup");
+            PinReceiptImage(content, "sha256:" + new string('b', 64));
+            content.ReloadDocker();
+            content.Docker["fault"] = "original-image-missing";
             var seed = await VolumeRetirementFixture.SeedPublishedOuter(content);
             File.WriteAllText(Path.Combine(content.Root, "temp.env"),
                 "RUNNER_GROK_STORE_DIR=" + content.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");

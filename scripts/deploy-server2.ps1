@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][switch]$Rolling,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha,
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha = '',
     [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-census', 'check-host-jq', 'provision-host-jq')]
     [string]$Phase = 'all',
     [string]$SavedDonor = '',
@@ -25,6 +25,13 @@ if ($PSBoundParameters.ContainsKey('ResumeRecycle') -and $ResumeRecycle -cnotmat
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required' }
 if (($DryRun -or $ResumeRecycle) -and $Phase -notin @('redeploy-old', 'retire-temp')) { throw 'RecycleContextInvalid' }
 if ($DryRun -and $ResumeRecycle) { throw 'RecycleContextInvalid' }
+if ([string]::IsNullOrWhiteSpace($Sha)) {
+    if ($Phase -ne 'retire-temp') { throw 'ShaRequired' }
+    # Current source identity is transport provenance only for retirement. No old
+    # checkout, Compose render or image tag is resolved from a creating SHA.
+    $Sha = (& git -C (Split-Path -Parent $PSScriptRoot) rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $Sha -cnotmatch '^[0-9a-f]{40}$') { throw 'CurrentToolingIdentityUnavailable' }
+}
 . (Join-Path $PSScriptRoot 'lib/runner-operator-token.ps1')
 . (Join-Path $PSScriptRoot 'c590-real.ps1')
 

@@ -1345,6 +1345,10 @@ build_server2_images() {
     docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
         -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
         || write_result false StateInitBuildFailed 2
+    c1609_load_retirement
+    declare -F c1609_publish_current_audit >/dev/null || write_result false CurrentAuditToolingMissing 2
+    c1609_publish_current_audit "antiphon-server2/session-testing:${SHA:0:12}" \
+        || write_result false CurrentAuditToolingUnavailable 2
 }
 
 # CARD-0849: these names are deliberately fixed. The project names never prefix them.
@@ -8540,7 +8544,7 @@ c1008_audit() {
         # v1 create/start adapter below remains the main-recycle path.
         image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
         if [ -z "$image" ]; then
-            image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" || return 2
+            image="$(c1609_resolve_current_audit)" || return 2
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$image" '.image=$image')" || return 2
         fi
         c1609_load_volume_metadata
@@ -9141,39 +9145,11 @@ c1008_recycle() {
         printf '%s' "$current" | jq -e 'all(.owned[]?; .Topology.version==1)' >/dev/null || c1008_refuse RecycleResumeMismatch
     elif [ -e "$C1008_JOURNAL" ]; then c1008_refuse RecycleResumeMismatch; fi
     c1008_status_proof
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
-        C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
-        if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || c1008_refuse RecycleGitAuditUnknown
-        else
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || c1008_refuse RecycleGitAuditUnknown
-        fi
-        # No pin: warn and leave apply on the current SHA image. A chosen image that
-        # is not on the host refuses. An empty matching receipt refuses only when
-        # nothing else binds.
-        if [ -z "${C994_IMAGE:-}" ]; then
-            case "${C994_LOOKUP:-}" in
-                unpinned) printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n' ;;
-                conflict)
-                    # Historical image disagreement is not a content refusal.
-                    printf 'RecycleGitAuditUnknown\n'
-                    printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n'
-                    ;;
-                *) c1008_refuse RecycleGitAuditUnknown ;;
-            esac
-        fi
-        # Dry-run with no historical pin uses the current runtime image as tooling.
-        # The image is not the publication proof. Apply still refuses a missing runtime.
-        if [ "${C1008_DRY_RUN:-0}" = 1 ] && [ -z "${C994_IMAGE:-}" ]; then
-            case "${C994_LOOKUP:-}" in
-                unpinned|conflict)
-                    C994_IMAGE="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
-                        || c1008_refuse RecycleGitAuditUnknown
-                    [[ "$C994_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || c1008_refuse RecycleGitAuditUnknown
-                    C1609_HISTORICAL_UNPINNED=1
-                    ;;
-            esac
-        fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        declare -F c1609_resolve_current_audit >/dev/null || c1008_refuse 'RecycleGitAuditUnknown reason=current-tooling-missing'
+        C994_IMAGE="$(c1609_resolve_current_audit)" || c1008_refuse 'RecycleGitAuditUnknown reason=current-tooling-unavailable'
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleReceiptUnavailable
+        printf 'C1609_TOOLING protocol=2 policy=1 image=%s\n' "$C994_IMAGE"
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
@@ -9216,9 +9192,7 @@ c1008_recycle() {
             if [ "$meta" != 0 ]; then
                 c1008_refuse "RecycleGitAuditUnknown reason=${c1609_meta_reason:-metadata}"
             fi
-            if [ "${C1609_HISTORICAL_UNPINNED:-}" != 1 ]; then
-                pending=false
-            fi
+            pending=false
             C1609_CONTENT_READY=1
         fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
@@ -10071,7 +10045,9 @@ case_retire_temp_containers() {
     done
     volumes="$(printf '%s' "$volumes" | jq -c --argjson caches "$(c1008_cache_preservation)" '. + $caches')" || c994_refuse RecycleVolumeIdentityMismatch
     c1008_owned_mounts "$owned" "$model" "$volumes"; owned="$C1008_OWNED"
-    c994_lookup_image || c994_refuse TempContainerReceiptUnavailable
+    # Best-effort history can enrich diagnostics but cannot admit/refuse cleanup.
+    # The actual candidate's image is observed and pinned until its exact rm.
+    C994_IMAGE="$(c994_lookup_image >/dev/null 2>&1 && printf '%s' "${C994_IMAGE:-}")" || C994_IMAGE=''
     image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
     if [ -n "$image" ]; then
         [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || c994_refuse TempContainerStateUnknown
@@ -10146,30 +10122,10 @@ case_retire_temp_inventory() {
     C994_PROJECT_ID="$C1008_PROJECT_ID"
     C994_STAMP="$(date -u -d "${C590_TEMP_RETIRED_AT:-}" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" \
         || write_result false RecycleGitAuditUnknown 2
-    local lookup_status=0 image='' out='' code=0 detail=''
-    if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || lookup_status=$?
-    else
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || lookup_status=$?
-    fi
-    if [ "$lookup_status" != 0 ]; then
-        write_result false RecycleGitAuditUnknown 2
-    fi
-    image="${C994_IMAGE:-}"
-    if [ -z "$image" ]; then
-        case "${C994_LOOKUP:-}" in
-            unpinned)
-                if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
-                    : > "$CASE_DIR/private-origins.txt"
-                    write_result true '' 0
-                fi
-                image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
-                    || write_result false RecycleGitAuditUnknown 2
-                ;;
-            *) write_result false RecycleGitAuditUnknown 2 ;;
-        esac
-    fi
-    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false RecycleGitAuditUnknown 2
+    c1609_load_retirement
+    local image='' out='' code=0 detail=''
+    declare -F c1609_resolve_current_audit >/dev/null || write_result false RecycleGitAuditUnknown 2
+    image="$(c1609_resolve_current_audit)" || write_result false 'RecycleGitAuditUnknown reason=current-tooling-unavailable' 2
     C1008_RECORD="$(jq -cn --arg image "$image" '{image:$image}')" || write_result false RecycleGitAuditUnknown 2
     out="$(c1008_audit_readonly inventory)" || code=$?
     if [ "$code" != 0 ]; then
