@@ -38,6 +38,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         await lane.Queue.EnqueueAsync(lane.SessionId, work, MessageSendMode.Now, CancellationToken.None);
         (await lane.WaitForPersistedPromptsAsync([work], TimeSpan.FromSeconds(20)))
             .ShouldBeTrue("the child must record its prompt in its own JSONL");
+        (await lane.WaitForPersistedIdleAsync(TimeSpan.FromSeconds(20)))
+            .ShouldBeTrue("the child's real turn must finish before the synthetic Working marker");
 
         await lane.MarkWorkingAsync("c514 lane body the recipient is still working on");
         var busy = await lane.ReserveAndExecuteAsync();
