@@ -252,6 +252,7 @@ public sealed partial class AttentionService
         items.AddRange(await BuildTaskInputUnreadableItemsAsync(open.Concat(blocked).ToList(), ct));
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildSupervisionNoticeItemsAsync(ct));
         items.AddRange(await BuildPendingNotesAgedItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
         items.AddRange(await BuildDispatchHeldItemsAsync(now, ct));

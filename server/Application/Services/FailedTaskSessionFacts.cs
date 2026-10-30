@@ -7,7 +7,7 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-1610 S1. One reading of a Failed task whose session has not authoritatively exited.
 /// Attention and task detail both call this so the two surfaces cannot disagree.
-/// Notice state stays null until the notice ledger exists.
+/// Notice state comes from the independent supervision ledger when available.
 /// </summary>
 internal static class FailedTaskSessionFacts
 {
@@ -21,7 +21,7 @@ internal static class FailedTaskSessionFacts
         AgentSession session,
         bool working,
         SeatOccupancySnapshot? snapshot,
-        DateTime now)
+        DateTime now, string? noticeState = null)
     {
         var fresh = IsFreshListed(snapshot, session, now);
         var activity = fresh ? (working ? "Working" : "idle") : "unknown";
@@ -32,7 +32,7 @@ internal static class FailedTaskSessionFacts
             task.CardId,
             session.Id,
             task.FailureReason,
-            NoticeState: null);
+            NoticeState: noticeState);
     }
 
     /// <summary>

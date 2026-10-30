@@ -488,7 +488,12 @@ public sealed record AgentTaskDetailDto(
     TaskSyncDebtDto? SyncDebt = null,
     /// <summary>CARD-1610. Null unless this Failed task still has an unreleased session.</summary>
     FailedTaskSessionFactsDto? FailedSession = null,
-    CeilingHoldDto? CeilingHold = null);
+    CeilingHoldDto? CeilingHold = null,
+    IReadOnlyList<TaskSupervisionNoticeDto>? SupervisionNotices = null);
+
+public sealed record TaskSupervisionNoticeDto(Guid Id, string Purpose, string State, string? ReasonCode,
+    int Attempt, Guid? RecipientSessionId, Guid? QueueMessageId, DateTime? ToldAt,
+    long? ConfirmingPromptSequence, string? ReportDigest, string? ReportLink);
 
 public sealed record CeilingHoldDto(Guid EpisodeId, DateTime HeldAt, int Attempt,
     DateTime SessionStartedAt, int InitialMinutes, string InitialSource, double NextCeilingMinutes,

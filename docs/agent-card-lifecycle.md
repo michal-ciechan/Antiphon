@@ -20,6 +20,15 @@ Blocked question. Continue/Extend record a finite bound without sending a delega
 or moving the report watermark. At 720 elapsed minutes an ordinary decision refuses;
 authenticated operator Extend or existing Cancel remains available. An unanswered hold
 never grants automatic release. S2 requires S3's notices and successor fencing before land.
+
+CARD-1610 S3 keeps a Failed outcome unchanged when a later complete report arrives. Its
+original caller receives a distinct triage note with next=decide and superseder facts; no
+stage, card transition or landing is inferred from the quoted report. A previously held
+task may settle normally, but a newer same-card/role task since its dispatch forces a
+decision and blocks automatic handoff admission. A different role alone is not a conflict.
+Notice delivery remains WhenIdle and requires a complete correlated UserPrompt; an unknown
+or reused recipient keeps visible debt and is never replaced with another recipient.
+
 An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
 
 An attributable provider usage-limit API error blocks its delegated task with

@@ -104,6 +104,13 @@ internal static class TaskProgressPolicy
                 t.Timestamp ?? t.CreatedAt))
             .ToListAsync(ct);
 
+        // Supervision debt is detection, not useful agent work. Use the durable full-prompt
+        // receipt, never a text prefix or the mere presence of a queued notice.
+        var supervisionPrompts = (await db.TaskSupervisionNotices.AsNoTracking()
+            .Where(n => n.RecipientSessionId == sessionId && n.ConfirmingPromptSequence != null)
+            .Select(n => n.ConfirmingPromptSequence!.Value).ToListAsync(ct)).ToHashSet();
+        rows.RemoveAll(r => r.Kind == TranscriptKinds.UserPrompt && supervisionPrompts.Contains(r.Sequence));
+
         var inWindow = rows
             .Where(r => r.At >= windowStart)
             .OrderBy(r => r.At)
