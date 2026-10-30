@@ -52,7 +52,12 @@ public class RemoteControlRecoveryPtyIntegrationTests
 
         await lane.MarkIdleAsync();
         var idle = await lane.ExecuteAsync(id);
-        idle.ShouldBe(RemoteControlArmResult.ArmedObserved, "screen tail: " + Tail(lane));
+        await using (var db = lane.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            idle.ShouldBe(RemoteControlArmResult.ArmedObserved,
+                "maintenance evidence: " + row.MaintenanceEvidence + "; screen tail: " + Tail(lane));
+        }
 
         // The child's own output is the receipt: fakeclaude only prints these after a SUBMITTED
         // /remote-control actually reached it through the guarded conditional write.
