@@ -572,7 +572,11 @@ public sealed class RunnerWorkspaceBindingTests
             if (OperatingSystem.IsWindows() && originalRegistrationAcl is not null)
             {
                 var registration = new FileInfo(storePath);
-                registration.SetAccessControl(originalRegistrationAcl);
+                // SetAccessControl persists only modified sections, not an untouched snapshot.
+                var restoredAcl = new FileSecurity();
+                restoredAcl.SetSecurityDescriptorBinaryForm(originalRegistrationAcl.GetSecurityDescriptorBinaryForm(),
+                    AccessControlSections.Access);
+                registration.SetAccessControl(restoredAcl);
                 registration.GetAccessControl(AccessControlSections.Access)
                     .GetSecurityDescriptorSddlForm(AccessControlSections.Access)
                     .ShouldBe(originalRegistrationAcl.GetSecurityDescriptorSddlForm(AccessControlSections.Access),
