@@ -9,7 +9,7 @@ function Assert-NightlyHistoryNoLink {
     while ($part) {
         $item = Get-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
         if ($null -ne $item) {
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'evidence-link' }
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.LinkType) { throw 'evidence-link' }
         }
         $parent = [IO.Path]::GetDirectoryName($part)
         if ($parent -ceq $part) { break }
@@ -281,6 +281,8 @@ function Export-NightlyPriorFailures {
                 $incomplete=$true; $why.Add('malformed-trx')
             }
         }
+        if ($chunk.coverageComplete -is [bool] -and -not $chunk.coverageComplete) { $incomplete=$true; $why.Add('retained-incomplete-coverage') }
+        if ($chunk.trxMissing -eq $true) { $incomplete=$true; $why.Add('retained-missing-trx') }
         if ($chunk.timedOut -eq $true) { $incomplete=$true; $why.Add('timed-out') }
         $executionName=[string]$chunk.execution
         if (-not $executionName) {
