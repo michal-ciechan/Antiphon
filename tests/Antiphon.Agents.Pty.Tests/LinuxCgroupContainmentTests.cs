@@ -112,6 +112,49 @@ public sealed class LinuxCgroupContainmentTests
         legacyPath.ShouldNotBe(currentPath);
     }
 
+    // The production reader must use the runtime namespace. A legacy tree at the old
+    // global root is a different container and must not be reported as this one.
+    [Test]
+    public void C1614_Production_reader_uses_namespace_and_refuses_unknown()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1614-reader-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var execution = Guid.NewGuid();
+        var marker = Path.Combine(root, "run", "namespace");
+        try
+        {
+            WriteProcs(root, Path.Combine(ns.ToString("D"), execution.ToString("D")), "41\n42\n");
+            WriteProcs(root, execution.ToString("D"), "99\n");
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
+            operations.ReadTreePids(execution).ShouldBe([41, 42]);
+
+            File.Delete(marker);
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var missingProcs = Guid.NewGuid();
+            Directory.CreateDirectory(Path.Combine(
+                root, "pids", "antiphon-custody", ns.ToString("D"), missingProcs.ToString("D"), "tree"));
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(missingProcs))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static void WriteProcs(string root, string relative, string body)
+    {
+        var procs = Path.Combine(root, "pids", "antiphon-custody", relative, "tree", "cgroup.procs");
+        Directory.CreateDirectory(Path.GetDirectoryName(procs)!);
+        File.WriteAllText(procs, body);
+    }
+
     [Test]
     public void The_helper_paths_are_absolute_and_image_owned()
     {
