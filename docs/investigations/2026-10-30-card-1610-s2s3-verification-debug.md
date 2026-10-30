@@ -148,3 +148,43 @@ passes and canary approved, exit 0. Digest
 canary /work/worktrees/antiphon-landgraph-canary-74a71fbe2eb04c46bb0cca94caf4213f.
 Outer slot waited 90s, held 39s. No -Update or definition-file mutation occurred.
 Evidence-history guard over be2e50a..bbd0a546e: four commits, zero violations.
+
+## Completed broad witnesses and newly exposed reds (before repair)
+
+Run 20261030-164314-bf74 at d36e79f432307ff26ab687d06bad5e9a5f92cff1
+verified full CP-28 **382/382**, including all 45 historical failure identities
+(exact test-name comparison: 45 Passed). CP-27 also passed **341/341**, so the
+broad-class aggregate is **723/723**, zero failures/skips. CP-16 met its unchanged
+44 floor, CP-15 passed 12, CP-19 passed 22. The remainder's per-row state/TRX and
+original CHECKPOINT lines are retained; final tables follow after repairs.
+
+New red witnesses at that same source, before any repair:
+
+| Row/test | Observed failure | Cause and required repair |
+|---|---|---|
+| CP-22 a_queued_only_prompt_is_no_boot_and_keeps_the_ceiling_failure(working-inherited-mid-turn) | expected Failed, actual Working | Obsolete pre-S2 expectation. Preserve no boot/failure/stop, assert the typed counted Working hold and one Held event. Idle arm still proves exact ceiling failure. |
+| same method(terminal-session) | expected Failed, actual Dispatched | Live-ceiling sweep correctly defers a terminal session to dead-session ownership. Assert unchanged terminal-task status, no hold/completion/failure, no boot event and no stop. Existing complete dispatch-recovery class independently covers dead-session reconciliation. |
+| CP-23 a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it | missing Closing on the deadline | Production copy collapsed approaching and breached ceilings. Keep the existing temporal assertion and give approaching decisions their own prefix. |
+| CP-23 a_breached_deadline_says_the_sweep_is_about_to_fail_it | missing Past its deadline | Restore a distinct breached-decision prefix without promising failure for Working ceilings. Keep assertion and phase copy. |
+| CP-26 C1151_Boot_branch_statement_counts(working-first-detection), (operator-escalation), (event-save-fault), (non-working-listed), (absent-proof-refused) | exact SQL budget 29 observed 30 | S2 adds an unnecessary generation SELECT after BootStallFacts already carries SessionStartedAt. Reuse that accepted observation for boot paths, retain non-boot reads and writer generation fences. Do not increase budgets. |
+| same method(identity-changed-before-event) | exact SQL budget 23 observed 24 | Same redundant query; retain original exact budget and identity interleaving assertions. |
+| CP-26 C1151_Only_an_accepted_prompt_is_protected(queued-only-past-ceiling) | expected overdue count 1, actual 0 | Fixture has a matching accepted runner generation but supplies no complete ceiling observation. Use the established seeded-observation seam for this arm only; keep every original idle-failure/no-boot/no-stop assertion. |
+
+CP-22 executed 36 / passed 34 / failed 2 / skipped 0. CP-23: 167 / 165 / 2 / 0.
+CP-26: 59 / 52 / 7 / 0. All are introduced S2 behavior/cost integration issues;
+none is blamed on master or waived as inherited red. No assertion budget, timer,
+retry or selection is relaxed. Their committed pre-fix tests are the red witness.
+
+CP-46 passed 215, failed 0, skipped 1, min 216 unchanged (roster-miss):
+AgentLaunchSpecTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine
+reports `The npm shim layout is Windows-specific`. Retain this native-placement
+gap alongside CP-52's two skips; no unchanged Linux rerun is warranted.
+
+Stopped the broad scheduler using its supported stop after CP-48: 27 green rows,
+three red rows and CP-46 roster-miss; CP-49 was waiting for a slot (195 seconds,
+zero tests), 42 later rows queued. Wait returned stopped/6 and executor PID 25017
+was absent before source edits. This prevents leaving the known product defects
+unrepaired inside the 150-minute task budget. No stopped run is a completed gate.
+The next single producer runs the affected rows first, then the exact unexecuted
+roster. Previously passing unrelated rows are not repeated. Historical outcomes
+and costs remain intact, including the earlier stopped CP-17 green observation.
