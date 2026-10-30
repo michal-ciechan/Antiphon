@@ -11,8 +11,7 @@ Source `7ad5d070fcf52b02acf1ce961037e56d85eea645`, run
 `/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/`.
 Debian 12, 24 cores, initial load 14.63/13.87/24.61, available RAM 100354 MiB.
 Run wall 2790.860 s; charged execution 2595.326 s; admission 195.445 s; exit 5.
-The prior report incorrectly calls four green rows three: CP-5/7/15 are green
-and the actual receipt has three green, two red, four timed-out rows.
+The receipt has three green, two red, four timed-out rows.
 
 | Row | Historical executed/pass/fail/skip | Execution s | Row admission s | Cap s |
 |---|---|---:|---:|---:|
@@ -66,3 +65,27 @@ aggregate. No green row, full assembly or Windows/native-Docker qualification is
 selected. The forthcoming measurements and results will be appended here.
 
 Production deletes remain disabled: the first rollout remains preview-only.
+
+## Fixture repair and setup lifetime
+
+CP-8's fake Git printed a successful advertisement for every command but never
+created a real origin graph or bundle. The current host writer requires that
+bundle before publishing its ref proof. Repaired the existing redaction method
+to route its clean approved fixture origin to an isolated real bare repository;
+real init/fetch/bundle operations now run, with synthetic credential noise still
+injected into ls-remote stdout/stderr. All artifact/log/argv sentinel assertions
+remain, and the test additionally inspects the real bundle's exact head.
+
+`C1008ComposeSeed` uses TUnit's PerTestSession shared-data container. It renders
+the two current and two previous Compose models once in owned scratch, retains
+only immutable strings, then removes that scratch. Each host fixture receives
+fresh JSON nodes and inert file copies with its own paths; mutable fault,
+status, census, volume contents, journals and proofs are never shared. The
+existing fixture-custody method now checks path rebinding, model isolation and
+file isolation. This removes four Node/Compose launches per fault vector after
+the first vector. Compose config is read-only; no daemon/image/DB is started.
+
+Added opt-in setup, teardown and CLI phase spans at the shared fixture boundaries.
+Deleted the legacy timeout-function body so the receipt/content probes also
+retain real GNU timeout through the already-installed executable fake Docker.
+No product assertion or test was removed or weakened.

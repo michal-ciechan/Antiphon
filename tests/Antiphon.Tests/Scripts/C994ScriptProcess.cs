@@ -5,6 +5,7 @@ namespace Antiphon.Tests.Scripts;
 internal static class C994ScriptProcess
 {
     internal static async Task<(int Exit,string Output)> Run(string file, params string[] args) {
+        using var processPhase = TestTiming.BeginProcess(Path.GetFileName(file), args.Length, "cli");
         var psi=new ProcessStartInfo(file){UseShellExecute=false,RedirectStandardOutput=true,RedirectStandardError=true,
             WorkingDirectory=DelegateScriptRunner.RepoRoot};
         foreach(var arg in args)psi.ArgumentList.Add(arg);

@@ -504,6 +504,20 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Fixture_custody_is_bounded() {
+        using (var first = new C1008HostFixture())
+        using (var second = new C1008HostFixture())
+        {
+            var firstModel = first.Docker["models"]!.ToJsonString();
+            var secondModel = second.Docker["models"]!.ToJsonString();
+            firstModel.ShouldContain(first.Root);
+            secondModel.ShouldContain(second.Root);
+            secondModel.ShouldNotContain(first.Root);
+            secondModel.ShouldBe(firstModel.Replace(first.Root, second.Root, StringComparison.Ordinal));
+            first.Docker["models"]!["antiphon-runner"]!["services"]!["session-runner"]!["volumes"] = new JsonArray();
+            second.Docker["models"]!.ToJsonString().ShouldBe(secondModel, "shared seed cannot share mutable nodes");
+            File.WriteAllText(Path.Combine(first.Root, "deploy-key"), "changed-fixture");
+            File.ReadAllText(Path.Combine(second.Root, "deploy-key")).ShouldBe("inert-fixture-deployKey\n");
+        }
         var script = """
             import fs from 'node:fs';import os from 'node:os';
             import {ownedRoot,ownedObject,ownedDaemon,boundedChild} from './scripts/fixtures/c994-real-custody.mjs';

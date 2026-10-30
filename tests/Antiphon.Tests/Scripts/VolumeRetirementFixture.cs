@@ -13,22 +13,9 @@ internal static class VolumeRetirementFixture
     internal const string ReadyMarker = "C1609_RETIREMENT state=Ready";
     internal const string OriginUrl = "https://fixture.invalid/card-1609/private.git";
 
-    // An external timeout executes docker by name and skips the fixture function.
-    internal const string ShellProbe = """
-        timeout() {
-            local saw=0
-            while [ $# -gt 0 ]; do
-                case "$1" in
-                    --kill-after=*|--foreground|--preserve-status) shift ;;
-                    --kill-after) shift 2 ;;
-                    *s|[0-9]*) shift; saw=1; break ;;
-                    *) break ;;
-                esac
-            done
-            [ "$saw" = 1 ]
-            "$@"
-        }
-        """;
+    // C1008HostFixture supplies an executable Docker shim on its child PATH.
+    // Keep GNU timeout active for every fixture caller, including these probes.
+    internal const string ShellProbe = "";
 
     internal static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 

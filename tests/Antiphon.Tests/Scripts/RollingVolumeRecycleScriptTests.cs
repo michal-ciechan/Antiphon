@@ -2851,13 +2851,30 @@ public sealed class RollingVolumeRecycleScriptTests
         Directory.CreateDirectory(proof);
         try
         {
+            var origin = Path.Combine(root, "origin.git");
+            var seed = Path.Combine(root, "seed");
+            var prepared = await C994ScriptProcess.Run("bash", "-c", $$"""
+                set -euo pipefail
+                git init -q --bare {{BashSingle(origin)}}
+                git init -q -b main {{BashSingle(seed)}}
+                git -C {{BashSingle(seed)}} -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm seed --allow-empty
+                git -C {{BashSingle(seed)}} push -q {{BashSingle(origin)}} main
+                git -C {{BashSingle(seed)}} rev-parse HEAD
+                """);
+            prepared.Exit.ShouldBe(0, prepared.Output);
+            var tip = prepared.Output.Trim();
+            var resolvedGit = await C994ScriptProcess.Run("bash", "-c", "command -v git");
+            resolvedGit.Exit.ShouldBe(0, resolvedGit.Output);
             var git = Path.Combine(root, "bin", "git");
             await File.WriteAllTextAsync(git,
-                "#!/bin/bash\nprintf '%s\\n' \"$*\" > \"$C1008_FAKE_GIT_ARGS\"\n" +
-                "printf '%s\\n' \"password=" + token + "\" >&2\n" +
-                "printf '%s\\n' \"note " + token + "\"\n" +
-                "printf '%s\\n' \"0123456789abcdef0123456789abcdef01234567\trefs/heads/main\"\n" +
-                "exit 0\n");
+                "#!/bin/bash\nset -euo pipefail\nprintf '%s\\n' \"$*\" >> \"$C1008_FAKE_GIT_ARGS\"\n" +
+                "args=(); for arg in \"$@\"; do\n" +
+                "  if [ \"$arg\" = https://github.com/example/private.git ]; then arg=" + BashSingle(origin) + "; fi\n" +
+                "  args+=(\"$arg\"); done\n" +
+                "if [ \"$1\" = ls-remote ]; then\n" +
+                "  printf '%s\\n' \"password=" + token + "\" >&2\n" +
+                "  printf '%s\\n' \"note " + token + "\"\nfi\n" +
+                "exec " + BashSingle(resolvedGit.Output.Trim()) + " \"${args[@]}\"\n");
             var mode = await C994ScriptProcess.Run("chmod", "0755", git);
             mode.Exit.ShouldBe(0, "private-origin: fake git; " + mode.Output);
             var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
@@ -2888,8 +2905,12 @@ public sealed class RollingVolumeRecycleScriptTests
             var output = stdout + stderr;
             proc.ExitCode.ShouldBe(0, "private-origin: host proof writer; " + output);
             var proofText = string.Join('\n', Directory.GetFiles(proof).Select(File.ReadAllText));
-            proofText.ShouldContain("0123456789abcdef0123456789abcdef01234567\trefs/heads/main");
+            proofText.ShouldContain(tip + "\trefs/heads/main");
             proofText.ShouldContain("operation c100800000000000000000000000000000001");
+            var bundle = Directory.GetFiles(proof, "*.bundle").ShouldHaveSingleItem();
+            var heads = await C994ScriptProcess.Run(resolvedGit.Output.Trim(), "bundle", "list-heads", bundle);
+            heads.Exit.ShouldBe(0, heads.Output);
+            heads.Output.ShouldContain(tip + " refs/heads/main");
             foreach (var artifact in new[] { proofText, output, File.Exists(log) ? File.ReadAllText(log) : "",
                          File.Exists(Path.Combine(root, "git-args.txt")) ? File.ReadAllText(Path.Combine(root, "git-args.txt")) : "" })
                 artifact.ShouldNotContain(token);
@@ -2950,6 +2971,7 @@ internal sealed class C1008WrapperFixture : IDisposable
 
     internal C1008WrapperFixture()
     {
+        using var setupPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
         var vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!;
         State = new JsonObject
@@ -2997,6 +3019,7 @@ internal sealed class C1008WrapperFixture : IDisposable
         // bounds that wait so a bound-land vector still refuses inside the 30 s run deadline.
         psi.Environment["C727_TEST_LAND_WAIT_MS"] = "100";
         foreach (var (key, value) in Environment) psi.Environment[key] = value;
+        using var processPhase = TestTiming.BeginProcess("pwsh", psi.ArgumentList.Count, "cli");
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("fixture child did not start");
         var stdout = proc.StandardOutput.ReadToEndAsync();
         var stderr = proc.StandardError.ReadToEndAsync();
@@ -3008,7 +3031,11 @@ internal sealed class C1008WrapperFixture : IDisposable
         return (proc.ExitCode, output, trace);
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        using var teardownPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
+        Directory.Delete(Root, recursive: true);
+    }
 }
 
 internal sealed class C1008HostFixture : IDisposable
@@ -3047,6 +3074,7 @@ internal sealed class C1008HostFixture : IDisposable
 
     internal C1008HostFixture(bool main = true, string? root = null)
     {
+        using var setupPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
         Root = root ?? Directory.CreateTempSubdirectory("c1008-host-").FullName;
         Directory.CreateDirectory(Root);
         Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
@@ -3058,7 +3086,9 @@ internal sealed class C1008HostFixture : IDisposable
             ["server2-temp"] = Vectors[main ? "tempAccepting" : "tempRetiredAbsent"]!.DeepClone()
         };
         var volumes = new JsonObject();
-        var models = new JsonObject();
+        var seed = SharedDataSources.GetOrCreate(SharedType.PerTestSession, typeof(C1008HostFixture),
+            "c1008-compose", () => new C1008ComposeSeed());
+        var models = seed.CloneInto(Root);
         foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
         {
             var model = new JsonObject();
@@ -3077,43 +3107,6 @@ internal sealed class C1008HostFixture : IDisposable
                 { ["io.antiphon.owner"] = "server2-runner", ["io.antiphon.cache-schema"] = "1", ["io.antiphon.cache-role"] = role });
                 model[key] = new JsonObject { ["name"] = name, ["external"] = true };
             }
-            var psi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
-                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
-            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
-                project == "antiphon-runner-temp" ? "true" : "false" }) psi.ArgumentList.Add(arg);
-            using var process = Process.Start(psi)!;
-            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(30000)) { process.Kill(true); process.WaitForExit(); throw new InvalidOperationException("Compose config timeout"); }
-            if (process.ExitCode != 0) throw new InvalidOperationException("Compose config: " + stderr.GetAwaiter().GetResult());
-            var resolved = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.DeepClone();
-            // JSON member order is not Compose topology. Keep the existing fake
-            // down boundary's deterministic deletion order without changing its assertion.
-            var declarations = resolved["volumes"]!.AsObject();
-            var ordered = new JsonObject();
-            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
-                ordered[role] = declarations[role]!.DeepClone();
-            foreach (var (key, value) in declarations)
-                if (!ordered.ContainsKey(key)) ordered[key] = value?.DeepClone();
-            resolved["volumes"] = ordered;
-            models[project] = resolved;
-            var previousPsi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
-                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
-            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
-                project == "antiphon-runner-temp" ? "true" : "false", "previous" }) previousPsi.ArgumentList.Add(arg);
-            using var previous = Process.Start(previousPsi)!;
-            var previousOut = previous.StandardOutput.ReadToEndAsync(); var previousErr = previous.StandardError.ReadToEndAsync();
-            if (!previous.WaitForExit(30000)) { previous.Kill(true); previous.WaitForExit(); throw new InvalidOperationException("Previous compose config timeout"); }
-            if (previous.ExitCode != 0) throw new InvalidOperationException("Previous compose config: " + previousErr.GetAwaiter().GetResult());
-            var previousResolved = JsonNode.Parse(previousOut.GetAwaiter().GetResult())!["model"]!.DeepClone().AsObject();
-            var previousDeclarations = previousResolved["volumes"]!.AsObject();
-            var previousOrdered = new JsonObject();
-            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
-                previousOrdered[role] = previousDeclarations[role]!.DeepClone();
-            foreach (var (key, value) in previousDeclarations)
-                if (!previousOrdered.ContainsKey(key)) previousOrdered[key] = value?.DeepClone();
-            previousResolved["volumes"] = previousOrdered;
-            // Keyed by the previous SHA only. The target proof must keep falling back to models[project].
-            models[project + "@" + PreviousSha12] = previousResolved;
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
             volumes[name] = Volume(name, new JsonObject());
@@ -3199,6 +3192,7 @@ internal sealed class C1008HostFixture : IDisposable
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false,
         Func<string, string>? sourceTransform = null)
     {
+        using var runPhase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
         // GNU timeout execs by name rather than calling the shell function below.
         // Keep its real deadline and put the owned fake CLI on the child PATH.
         // This also prevents an unprobed apply from reaching the worker daemon.
@@ -3269,6 +3263,7 @@ internal sealed class C1008HostFixture : IDisposable
         psi.Environment["C590_RUN"] = "c1008fixture";
         psi.Environment["C590_REEXEC"] = "1";
         psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
+        using var processPhase = TestTiming.BeginProcess("bash", psi.ArgumentList.Count, "cli");
         using var proc = Process.Start(psi)!;
         var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
         // CARD-1130. A deploy-parent Run measures 22-30s and exceeds 30s at load 19-23
@@ -3279,5 +3274,9 @@ internal sealed class C1008HostFixture : IDisposable
         return (proc.ExitCode, await stdout + await stderr);
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        using var teardownPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
+        Directory.Delete(Root, recursive: true);
+    }
 }
