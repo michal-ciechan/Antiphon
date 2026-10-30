@@ -13,7 +13,7 @@ This is the pushed skeleton; each item is resolved in place before handoff.
 
 - R3-1 resolved: Working + typed fields; exclusive Reply action, separate question projection, four counting/Check witnesses (D-1).
 - R3-2 resolved: bounded Continue, explicit 720-minute final hold and authenticated bounded operator Extend; no-phase-tail witnesses (D-4).
-- R3-3: preserve docker-stack step-5 stop authority; use ANTIPHON_TASK_TOKEN and foreground-safe resumable slices.
+- R3-3 resolved: keep step-5 authority; token presence defines delegation; 5-minute default/8-minute maximum drain slices with 9-minute foreground bound (D-4).
 - R3-4: forward Failed late reports as durable parent triage notes without settlement or handoff.
 - R3-5: include full affected classes and sharded Unit lane; recount and re-import.
 
@@ -332,35 +332,57 @@ CeilingMinutes=600 with a reason allocating 480 minutes drain plus 120 minutes
 for other phases. A total 240-minute drain can request 360 on the same basis.
 These are explicit estimates, not global role-default increases or guarantees.
 
-A ceiling override does **not** exempt a 240/480-minute single ToolCall from the
-90-minute local-tool deadline. Avoid that second defect by changing the script's
-**default WaitIdleMinutes to 30**, retaining its existing named safe timeout
-and drain state when time expires. Delegate rollout instructions require named
-phases with each command bounded to at most 60 minutes (30 by default), returning
-to the agent between calls. While running in a delegated context, reject an
-explicit WaitIdleMinutes above 60 or Phase=all before mutating anything and
-explain how to split it. Standalone human invocations retain their explicit
-long-wait range and all-phase command.
-No wait expiry authorizes stopping a seat, undeploying a container, clearing a
-drain, skipping census, recycling a volume or advancing to the next phase.
+A ceiling override does not exempt a 240/480-minute ToolCall from the 90-minute
+local-tool deadline. The exact delegated-context predicate is
+!IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN), already used at deploy-server2.ps1:35.
+An operator shell launched inside a delegate inherits it and remains delegated;
+no bypass based on an operator token, caller name or shell parent.
 
-The delegate brief records an **absolute overall drain deadline** (e.g. 240 or
-480 minutes from the first drain request) and finite 30-minute command slices.
-After each named still-busy outcome, inspect status/census and continue only the
-same idempotent drain phase within that original deadline; never restart the
-overall budget on each call. At the overall deadline report Blocked with actual
-state. This is a documented rollout procedure, not a broker wait ledger or a
-background process; the delegate owns and awaits every command. The sanctioned
-240-minute drain remains available as eight bounded waits. If a transport or
-other failure occurs, do not treat it as the named safe still-busy result.
+For delegated drain commands default WaitIdleMinutes to **5**, reject explicit
+values above **8** and Phase=all before any token-file read, HTTP, SSH, evidence
+creation or mutation. Preserve standalone operator default 480 and explicit
+long-wait range. Use PSBoundParameters to distinguish default from an explicit
+argument. Each foreground delegated drain call has a total 9-minute wall budget
+including HTTP/SSH and bounded output drain; cancellation must leave drain state
+and all live containers intact. Pass the remaining cancellation budget to waits
+and external calls. This leaves room within the 10-minute foreground tool limit.
+No background job, poll orphan or return-with-child-running is allowed.
 
-Files: `scripts/delegate.ps1`, `server/Application/Dtos/AgentTaskDtos.cs`,
-`server/Domain/Entities/AgentTask.cs`, dispatch/clone/retry/formatter bindings,
-API reply/create binding, EF mapping/migration, `scripts/deploy-server2.ps1`,
-`docs/docker-stack.md` and `docs/ops-http.md`. Offline tests exercise actual
-script entry validation and existing HTTP stubs: default 30, delegated >60
-refusal before mutation, explicit standalone 240, still-busy preservation, and
-finite overall-deadline guidance. No live Docker rollout is a Plan checkpoint.
+Resume by invoking the SAME named phase, SHA and target after inspecting its
+status/census. drain-old already validates/reuses draining+redirect state
+(:1231-1252); drain-temp already tolerates retiredAt and rechecks old accepting
+(:1294-1313). Continue only for the phase's named still-busy/exit-wait result;
+transport, census, identity and version failures stop for triage. Never clear a
+drain or restart a container to resume a slice. Verify these idempotence claims
+with the actual offline script harness. If a foreground budget expires during
+an external operation, retain its exact observed state and require a fresh
+census before resuming; timeout alone is not success.
+
+The delegate records the first drain request time and an **absolute 240-minute
+drain deadline** per the existing documented steps 5/8, in its durable rollout
+report; a resume takes remaining time from that timestamp (at most 5 minutes
+per next default slice), never a new 240-minute allowance. A longer operator
+commission retains its explicitly specified absolute deadline. No broker ledger.
+
+**Keep docs/docker-stack.md step 5's existing stop authority verbatim.** At the
+four-hour OldRunnerStillBusy cap the operator has explicitly authorized stopping
+remaining server2 sessions: inspect each exact seat, prefer resumable owner stop,
+use the existing runner-slots.ps1 release with its recorded reason as documented,
+record IDs/effects, and recheck all three zero counters before redeploy-old.
+This is existing CARD-0934 authority, not authority from a ceiling hold or a
+5-minute slice expiry. Do not extend it to temp or another runner: step 8 keeps
+its own stop-and-report/retirement/exit rules and four-hour wait. Intermediate
+slice expiry authorizes no release, redeploy, drain-clear, volume recycling or
+phase advance. If the existing cap procedure refuses, report Blocked with state.
+
+Files: scripts/deploy-server2.ps1, scripts/delegate.ps1, API/DTO budget bindings,
+EF mapping/migration, docs/docker-stack.md and docs/ops-http.md. Offline tests:
+delegated default 5; explicit 8 allowed; >8 and all refused before side effects;
+inherited token still delegated; token-absent standalone 240/default 480 retained;
+consecutive drain-old/drain-temp calls retain identity/drain and original deadline;
+cap instructions preserve the exact step-5 authority and step-8 limitations.
+No live Docker rollout is a checkpoint. Other named phases remain governed by
+their existing bounded foreground/recycle procedures and CARD-1615 integration.
 CARD-1615 owns the source-writer/landing circular wait; no amount of extra time
 fixes it. Do not bypass that hold in this card.
 
