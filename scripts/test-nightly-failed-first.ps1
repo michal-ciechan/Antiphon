@@ -278,4 +278,31 @@ $phases.wallSeconds=$clock.Elapsed.TotalSeconds
 $load='unknown'
 if ([IO.Path]::DirectorySeparatorChar -eq '/' -and [IO.File]::Exists('/proc/loadavg')) { $load=[IO.File]::ReadAllText('/proc/loadavg').Trim() }
 Write-FFJson (Join-Path $root 'performance.json') ([ordered]@{ case=$Case; source=$sourceSha; load=$load; assertions=$script:FFAssertions.ToArray(); operations=$script:FFOperations.ToArray(); hostName=[Environment]::MachineName; platform=[Environment]::OSVersion.ToString(); category='qualification-tooling'; phases=$phases; docker='not-used'; database='not-used'; appHost='not-used'; http='not-used'; teardown='owned ScriptHarness cleanup; see host receipt'; unclassified='wall minus measured spans' })
+# ScriptHarness owns and removes its temporary ResultsDirectory. Retain the
+# synthetic inputs, digests and measured phases before returning to that owner.
+$archiveWatch=[Diagnostics.Stopwatch]::StartNew()
+$archive=Join-Path $repo ('.antiphon/failfirst/'+$sourceSha+'/portable/'+$Case+'-'+[guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($archive)
+$inventory=[Collections.Generic.List[object]]::new()
+foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
+    $relative=$file.FullName.Substring($root.Length).TrimStart('\','/')
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.LinkType) {
+        $inventory.Add([ordered]@{path=$relative;kind='fixture-link';copied=$false})
+        continue
+    }
+    if ($relative -ceq 'performance.json') { continue }
+    $destination=Join-Path $archive $relative
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
+    [IO.File]::Copy($file.FullName,$destination,$false)
+    $inventory.Add([ordered]@{path=$relative;kind='regular';copied=$true;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()})
+}
+Write-FFJson (Join-Path $archive 'inventory.json') ([ordered]@{source=$sourceSha;case=$Case;testClass='Antiphon.Tests.Scripts.RcFailureHistoryTests';files=$inventory.ToArray()})
+$performancePath=Join-Path $root 'performance.json'
+$performance=[IO.File]::ReadAllText($performancePath) | ConvertFrom-Json
+$performance.phases | Add-Member -NotePropertyName archiveSeconds -NotePropertyValue $archiveWatch.Elapsed.TotalSeconds
+$performance.phases.wallSeconds=$clock.Elapsed.TotalSeconds
+$performance | Add-Member -NotePropertyName retainedEvidence -NotePropertyValue $archive
+Write-FFJson $performancePath $performance
+[IO.File]::Copy($performancePath,(Join-Path $archive 'performance.json'),$false)
+Write-Host ('FF EVIDENCE '+$archive)
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
