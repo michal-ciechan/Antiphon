@@ -21,9 +21,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1610 S1. Eight arms through the janitor, attention projection and task detail.
-/// Six are red until Working and Failed-live sessions are retained and reported.
-/// real-idle and source-custody are safety guards that already hold.
+/// CARD-1610 S1. Janitor, attention and task detail.
+/// reuse is red until a historical Failed task stops holding a reused session.
+/// absent-transcript is red until a transcript with no turn-end is retained.
+/// retain-* pass on the current janitor and fail if those states are treated as idle.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -43,6 +44,7 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("restart-resolution")]
     [Arguments("failed-dedup")]
     [Arguments("source-custody")]
+    [Arguments("reuse")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -70,6 +72,9 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "source-custody":
                 await SourceCustodyAsync();
+                break;
+            case "reuse":
+                await ReuseAsync();
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -294,6 +299,35 @@ public sealed class TaskSupervisionVisibilityTests
         (await db.AgentIncidents.AnyAsync(i => i.Kind == AgentIncidentKind.PooledSessionWorkingPastTtl)).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Historical Failed, then a later Succeeded task on the same session, proved idle past TTL.
+    /// The session must retire and the old failure must not keep a seat-held row.
+    /// </summary>
+    private static async Task ReuseAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, tasks, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+        await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
+        var cardId = Guid.NewGuid();
+        var failed = await SeedFailedTaskAsync(schema.ConnectionString, agent, session, workspace.Path, cardId, clock);
+        await SeedLaterSucceededTaskAsync(schema.ConnectionString, agent, session, workspace.Path, clock);
+
+        var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        retired.ShouldBeGreaterThanOrEqualTo(1);
+        stopper.Killed.ShouldContain(session);
+        var attention = await ReadAttentionAsync(schema.ConnectionString, clock, State());
+        attention.Items.ShouldNotContain(i => i.Kind == AttentionKind.FailedTaskSessionHeld);
+        var detail = await tasks.GetAsync(failed.Id, CancellationToken.None);
+        detail.FailedSession.ShouldBeNull();
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+    }
+
     private static async Task SourceCustodyAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -453,6 +487,35 @@ public sealed class TaskSupervisionVisibilityTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
+    }
+
+    private static async Task SeedLaterSucceededTaskAsync(
+        string connectionString, Guid agentId, Guid sessionId, string directory, FakeTimeProvider clock)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        var id = Guid.NewGuid();
+        await using var db = Open(connectionString);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "CARD-1610 later success",
+            Goal = "the reused session's later work",
+            Role = AgentTaskRole.Review,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            AgentId = agentId,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Succeeded,
+            Attempt = 1,
+            Result = "done",
+            CreatedAt = now.AddMinutes(-20),
+            DispatchedAt = now.AddMinutes(-15),
+            CompletedAt = now.AddMinutes(-5),
+        });
+        await db.SaveChangesAsync();
     }
 
     private static async Task SeedSourcedTaskAsync(
