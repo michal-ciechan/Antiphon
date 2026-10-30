@@ -1074,6 +1074,28 @@ The four proposed classes do not yet exist and have no source-name/suffix collis
 the exact CP-3 class has no suffixed sibling. CP-4/CP-5 OR expansion has been
 checked against declared source classes; their proposed floors are 126/12.
 
+**Round-4 validation at `4487a919d965474d67114407df31a21b79753369`:**
+slot-gated isolated checkpoint-tool build succeeded in **6.45 seconds**, five
+warnings, zero errors (lease `e7b33b2a-b4ab-40c5-9d1e-b86dbbf463bb`, wait 0 s,
+held 7 s). Import exited **0**, **6 rows**, one shared build, floors
+**9/5/6/126/12/6**, every row serial; whole-minute Linux estimates **6/4/2/1/3/3**,
+Windows **9/6/3/2/4/4** (lease `a64ff302-925b-4f09-8c23-573631965210`, wait 0 s,
+held 2 s). Generated YAML remains ignored at
+`.antiphon/c1615-r4-plan-scratch/import.yaml`. Its default timeouts are superseded
+by the explicit Performance budget before Code execution. **Zero product tests**
+ran; this is document validation only. The 164 Linux / 15 Windows result totals
+are proposed acceptance counts, not executed tests.
+
+Source class-prefix audit found one exact match and no suffixed siblings for each
+of the eight CP-4 classes, AgentTaskCallerResolutionTests and the CP-3 census class;
+all four new class names remain unused. The added bootstrap watchdog text touches
+only the existing StandingPipelinePolicyDocumentationTests owner pointer, already
+in CP-4; KeepSix/Grok bootstrap readers pin unrelated sections and remain unchanged.
+Evidence diff at that tip: six commits, zero entries, zero violations. Live GETs
+`/api/runner-defaults` and `/api/session-runners` succeeded on 2026-10-30 at
+04:41 UTC (revision 2; one Windows and two Linux entries); effective instructions
+remain `fed0edf3`, revision 600. No host address is stored in the design.
+
 **Round-3 validation at `ef75a59413125a3ba92424ade043104abc7e1700`:**
 the slot-gated isolated checkpoint-tool build completed in 6.44 seconds, five
 warnings, zero errors (lease `cf1f0e45-f743-475f-a0ba-bf743778b66b`, wait 0 s,
@@ -1133,15 +1155,17 @@ parking remains disabled and there is no automatic release deadline; caller reso
 or separately authorized explicit stop/release must establish actual process exit.
 The role ceiling and a terminal task status are not that proof.
 
-Reproduce import after a slot-gated isolated tool build:
+Reproduce import from the assigned checkout; keep both projects' output inside
+this task's ignored scratch root (the absolute path is resolved locally):
 
 ```sh
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r3-import-build -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj --property:OutputPath=bin-c1615-r3/ --property:UseAppHost=false -nodeReuse:false --verbosity minimal
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r3-import -SlotWaitMinutes 5 -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1615-r3/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md --out .antiphon/c1615-r3-plan-scratch/import.yaml
+task_scratch="$(pwd)/.antiphon/c1615-r4-plan-scratch"
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r4-import-build -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj "--property:OutputPath=$task_scratch/bin-tools/" --property:UseAppHost=false -nodeReuse:false --verbosity minimal
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r4-import -SlotWaitMinutes 5 -- dotnet run --no-build --project tools/Antiphon.Checkpoints "--property:OutputPath=$task_scratch/bin-tools/" --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md --out .antiphon/c1615-r4-plan-scratch/import.yaml
 ```
 
-Delete only this task's owned `tools/Antiphon.Checkpoints/bin-c1615-r3/` and
-`src/Antiphon.HostCleanup/bin-c1615-r3/` output directories afterward.
+Remove only the owned scratch `bin-tools/` after validation; keep the ignored
+manifest/evidence. No output directory outside this task's scratch is removed.
 
 ## Placement and publication
 
@@ -1186,3 +1210,13 @@ four paths listed above. The same command against the round-3 assigned base
 rebase, target push or conflict edit was performed; only this plan changes.
 Do not land the whole rc-derived branch directly onto master. Code starts after
 the caller confirms CARD-1609 on both target lines and records its SHAs.
+
+Round-4 publication preflight at `4487a919d965474d67114407df31a21b79753369`:
+fetched `origin/master=98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`;
+`git merge-tree --write-tree origin/master HEAD` exited 1 with the same four
+paths listed above. Repeating against assigned base
+`dbae0d65de7142ff61c8ec05cdd8b965d8b2f2f7` reproduced all four conflicts.
+They are inherited rc/master divergence, not plan changes. The only tracked
+delta is this plan; no merge, rebase, target push, deployment or product edit
+was performed. The caller should use the rc plan and separately commission the
+master port; this whole rc-derived branch is not directly landable on master.
