@@ -468,6 +468,12 @@ public sealed class VolumeRetirementReceiptTests
             fixture.Removed.Length.ShouldBe(4);
         }
         failures.ShouldBeEmpty("J8 crash/resume safety; " + string.Join(" | ", failures));
+        using var closeFixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(closeFixture);
+        var close = await C994ScriptProcess.Run("node",
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-close-cases.mjs"), closeFixture.Root);
+        close.Exit.ShouldBe(0, "J8 actual public Close, same host locks and complete census: " + close.Output);
+        close.Output.ShouldContain("C1609_CLOSE passed");
     }
 
     [Test]
