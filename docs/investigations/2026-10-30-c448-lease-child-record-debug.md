@@ -66,3 +66,38 @@ The transient cases require recovery before completion and exclusion release;
 the permanent cases require a bounded loud error, a durable reason, and refused
 admission even after the lock handle closes. The baseline does not provide the
 required retry/reason. No assertion in the qualification test is changed yet.
+
+## Red result and repair
+
+Red source `59b4bf077eec7a8f4de31cc23ac63c7a848b10b6`: build passed, zero
+errors (238 s lease). The first exact-name filter selected zero argument cases
+(exit 8), retained as invalid evidence in `red/`. Corrected filter:
+`/*/*/RepositoryMutationLeaseTests/(C448_JournalRemovalRetriesTransientDeleteFailuresBeforeRelease*)|(C448_JournalRemovalFailureKeepsFenceAndRecordsReason*)`.
+It executed 8, failed 8, passed 0, skipped 0 (exit 2; 2.504 s test-host span,
+5 s slot held). First lines: transient `IOException: fixture sharing violation`
+(or ShouldAssertException: should not throw but threw System.IO.IOException);
+permanent `ShouldAssertException: failure.Message` should contain
+`repository_child_journal_cleanup_failed` but was `fixture permanent sharing violation`.
+These are expected behavior failures, not build/fixture errors.
+
+The repair centralizes the four removers: retry IO/access failures with a
+monotonic two-second allowance and 50 ms backoff, independently of command
+cancellation. Final failure retains the record, annotates `CleanupFailure:
+delete_failed`, writes a fixed error/recovery diagnostic and throws IOException.
+If the same external handle also denies record replacement, the annotation may
+fail; an explicit `cleanup_reason_unwritten` error records that fact. The EOF
+continuation observes cleanup IOException. The retained journal continues to
+exclude future writers even if exception unwinding closes the lock handle;
+keeping that existing fail-closed admission contract avoids leaking an OS lock.
+No dead-root or age-based auto-clear is added.
+
+The inspector previously used File.OpenRead (no delete sharing on Windows).
+It now uses Read | Delete sharing like the admission reader, preventing an
+observer from denying the owner's removal/replacement. This is a concrete
+Windows hazard, not proof that the qualification observer caused this failure.
+
+The cancellation test keeps all original assertions and holds its lease while
+waiting on HasUnfinishedAsync, the same standing evidence used by admission.
+The new cleanup-only deadline is four seconds (2 x loaded p95 1.6088 s rounded
+up); persistent residue still fails the original empty-directory assertion.
+Green execution follows; native root cause remains unconfirmed.

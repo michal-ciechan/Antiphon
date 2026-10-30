@@ -75,7 +75,7 @@ public class RepositoryChildJournalInspector(ILandingGit git)
         RepositoryChildJournal.ChildRecord? record;
         try
         {
-            await using var stream = File.OpenRead(path);
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             record = await JsonSerializer.DeserializeAsync<RepositoryChildJournal.ChildRecord>(stream, cancellationToken: ct);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
