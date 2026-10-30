@@ -209,6 +209,15 @@ public sealed class VolumeRetirementContentTests
         var dropTag = await VolumeRetirementFixture.Bash(
             "git -C " + VolumeRetirementFixture.Quote(outer) + " tag -d public-peeled");
         dropTag.Exit.ShouldBe(0, "c1609-c3: drop tag; " + dropTag.Output);
+        var reflogOnly = await VolumeRetirementFixture.Preview(fixture);
+        var reflogText = reflogOnly.Output + await VolumeRetirementFixture.AuditText(fixture);
+        reflogOnly.Exit.ShouldBe(2, "c1609-c3: HEAD reflog still names the private commit; " + VolumeRetirementFixture.Truncate(reflogText));
+        reflogText.ShouldContain("RecycleUnpublishedWork");
+        reflogText.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        fixture.Removed.ShouldBeEmpty();
+        var expire = await VolumeRetirementFixture.Bash(
+            "git -C " + VolumeRetirementFixture.Quote(outer) + " reflog expire --expire=now --all");
+        expire.Exit.ShouldBe(0, "c1609-c3: expire reflog; " + expire.Output);
         var admitted = await VolumeRetirementFixture.Preview(fixture);
         var admittedText = admitted.Output + await VolumeRetirementFixture.AuditText(fixture);
         admitted.Exit.ShouldBe(0, "c1609-c3: published main; " + VolumeRetirementFixture.Truncate(admittedText));
