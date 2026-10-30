@@ -49,6 +49,7 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("retain-stopping")]
     [Arguments("retain-no-generation")]
     [Arguments("retain-remote-pending")]
+    [Arguments("absent-transcript")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -91,6 +92,9 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "retain-remote-pending":
                 await RetainUnprovedAsync(SessionStatus.Running, startedAt: null, remotePending: true);
+                break;
+            case "absent-transcript":
+                await AbsentTranscriptAsync();
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -240,6 +244,8 @@ public sealed class TaskSupervisionVisibilityTests
         await using var owned = provider;
         using var workspace = new TempWorkspace();
         var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+        // Positive idle proof: a turn that ended. An empty transcript is not this guard.
+        await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
 
         var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
 
@@ -247,6 +253,28 @@ public sealed class TaskSupervisionVisibilityTests
         stopper.Killed.ShouldContain(session);
         await using var db = Open(schema.ConnectionString);
         (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A live session whose transcript has no turn-end cannot prove idle. A title row is
+    /// not a turn boundary and is not Working, so the janitor must keep the seat.
+    /// </summary>
+    private static async Task AbsentTranscriptAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+        await SeedTitleOnlyAsync(schema.ConnectionString, session, clock);
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldNotContain(session);
+        await using var db = Open(schema.ConnectionString);
+        (await db.AgentSessions.SingleAsync(s => s.Id == session)).Status.ShouldBe(SessionStatus.Running);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeTrue();
     }
 
     private static async Task RestartResolutionAsync()
@@ -472,6 +500,22 @@ public sealed class TaskSupervisionVisibilityTests
                 CreatedAt = at.AddMinutes(1),
             });
         }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedTitleOnlyAsync(string connectionString, Guid sessionId, FakeTimeProvider clock)
+    {
+        var at = clock.GetUtcNow().UtcDateTime.AddMinutes(-10);
+        await using var db = Open(connectionString);
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = 1,
+            Kind = TranscriptKinds.TurnTitle,
+            Text = "untitled",
+            CreatedAt = at,
+        });
         await db.SaveChangesAsync();
     }
 
