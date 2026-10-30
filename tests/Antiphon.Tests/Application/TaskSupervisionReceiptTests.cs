@@ -104,7 +104,7 @@ public sealed class TaskSupervisionReceiptTests
             decoy.Adapter.SubmittedBodies.ShouldBeEmpty();
             await using (var db = h.Context())
             {
-                (await db.AgentTaskStageOutcomes.CountAsync()).ShouldBe(0);
+                (await db.StageOutcomes.CountAsync()).ShouldBe(0);
                 (await db.PipelineHandoffActions.CountAsync()).ShouldBe(0);
                 (await db.AgentTasks.CountAsync()).ShouldBe(1);
             }
