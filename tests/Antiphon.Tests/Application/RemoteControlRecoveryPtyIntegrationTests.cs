@@ -125,6 +125,50 @@ public class RemoteControlRecoveryPtyIntegrationTests
     }
 
     [Test]
+    public async Task C514_Queued_prompts_resume_after_a_delayed_persisted_turn_end()
+    {
+        var saves = 0;
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var lane = await RemoteControlPtyLane.CreateAsync(beforeTranscriptSave: async () =>
+        {
+            // FakeClaude's first JSONL record is the UserPrompt. Its second contains the
+            // response and TurnEnd. Hold that commit, never fabricate a receipt or idle fact.
+            if (Interlocked.Increment(ref saves) == 2)
+            {
+                held.TrySetResult();
+                await release.Task;
+            }
+        });
+        string[] bodies =
+        [
+            "c514 delayed shared prefix alpha",
+            "c514 delayed shared prefix bravo",
+            "c514 delayed shared prefix charlie",
+        ];
+        try
+        {
+            await lane.Queue.EnqueueAsync(lane.SessionId, bodies[0], MessageSendMode.WhenIdle, CancellationToken.None);
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            (await lane.PersistedUserPromptsAsync()).ShouldBe([bodies[0]]);
+            await using (var db = lane.CreateDb())
+                (await SessionMessageQueueService.IsWorkingAsync(db, lane.SessionId, CancellationToken.None)).ShouldBeTrue();
+            foreach (var body in bodies.Skip(1))
+                await lane.Queue.EnqueueAsync(lane.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+            await lane.Queue.FlushSessionAsync(lane.SessionId, CancellationToken.None);
+            lane.ChildFileUserPrompts().ShouldBe([bodies[0]], "a painted idle screen cannot override an uncommitted TurnEnd");
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        (await lane.DrainQueuedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
+            .ShouldBeTrue("the persisted turn end must wake the next queue delivery. " + await lane.DeliveryEvidenceAsync());
+        lane.ChildFileUserPrompts().ShouldBe(bodies);
+        (await lane.PersistedUserPromptsAsync()).ShouldBe(bodies);
+    }
+
+    [Test]
     public async Task C514_Working_modal_waits_for_operator_then_converts_without_replay()
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
