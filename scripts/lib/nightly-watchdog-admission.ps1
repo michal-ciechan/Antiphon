@@ -54,8 +54,22 @@ function Get-NightlyWatchdogErrorFactors {
         }
         $wallText = Get-NightlyWatchdogField $sample 'Wall'
         $wall = 0.0
-        if (-not [double]::TryParse([string]$wallText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$wall)) { continue }
-        if ([double]::IsNaN($wall) -or [double]::IsInfinity($wall)) { continue }
+        $wallKnown = $false
+        if ($null -ne $wallText) {
+            $wallInvariant = $null
+            if ($wallText -is [string]) {
+                $wallInvariant = [string]$wallText
+            } else {
+                try { $wallInvariant = [System.Convert]::ToString($wallText, [Globalization.CultureInfo]::InvariantCulture) } catch { $wallInvariant = $null }
+            }
+            if ($null -ne $wallInvariant) {
+                $wallKnown = [double]::TryParse($wallInvariant, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$wall)
+            }
+        }
+        if (-not $wallKnown -or [double]::IsNaN($wall) -or [double]::IsInfinity($wall) -or $wall -le 0) {
+            $censored = $true
+            continue
+        }
         $complete++
         $outcome = [string](Get-NightlyWatchdogField $sample 'Outcome')
         if ($outcome -ceq 'Failed') { $failed++ }
@@ -201,12 +215,15 @@ function Resolve-NightlyLaunchWatchdog {
             $bound = [double]$boundValue
             $wmax = [double]$wmaxValue
         }
-        if ($censored -ne $true -and $nKnown -and $nParsed -ge 20 -and $hashOk -and $stratumOk -and $numbersOk -and $emax -ge $e95 -and $e95 -gt 0 -and $margin -ge 0 -and $bound -gt 0 -and $wmax -gt 0) {
+        if ($censored -ne $true -and $nKnown -and $nParsed -ge 20 -and $hashOk -and $stratumOk -and $numbersOk -and $emax -ge $e95 -and $e95 -ge 1 -and $margin -ge 0 -and $bound -gt 0 -and $wmax -gt 0) {
             $eligible = $true
             $n = $nParsed
         }
     }
     if (-not $eligible) {
+        if ($planned -gt $suiteSeconds) {
+            return (New-NightlyWatchdogDecision -Admitted $false -WatchdogSeconds $suiteSeconds -Reason 'suite-watchdog-ceiling' -E95 $e95 -Emax $emax -N $n)
+        }
         return (New-NightlyWatchdogDecision -Admitted $true -WatchdogSeconds $suiteSeconds -Reason 'unmeasured-cost' -E95 $e95 -Emax $emax -N $n)
     }
     if ($planned -gt $bound) {
