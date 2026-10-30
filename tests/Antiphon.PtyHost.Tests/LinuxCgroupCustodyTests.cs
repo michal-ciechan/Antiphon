@@ -238,7 +238,7 @@ public class LinuxCgroupCustodyTests
         (await world.Host.Session.LaunchAsync(world.Spec(foreign, "true"), CancellationToken.None))
             .ShouldBeOfType<ErrorMessage>();
         File.Exists(world.StorePath("native-start-intent.json", foreign)).ShouldBeFalse();
-        Directory.Exists(Path.Combine(CustodyRoot(), foreign.ExecutionId.ToString("D"))).ShouldBeFalse(
+        Directory.Exists(Path.Combine(CustodyRoot(), CurrentNamespace(), foreign.ExecutionId.ToString("D"))).ShouldBeFalse(
             "a refused binding must never reach the placement shim");
     }
 
@@ -267,6 +267,14 @@ public class LinuxCgroupCustodyTests
     private static string CustodyRoot() => File.Exists("/sys/fs/cgroup/cgroup.controllers")
         ? "/sys/fs/cgroup/" + CustodyRootName
         : "/sys/fs/cgroup/pids/" + CustodyRootName;
+
+    private static string CurrentNamespace()
+    {
+        var text = File.ReadAllText("/run/antiphon-custody/namespace").Trim();
+        if (!Guid.TryParseExact(text, "D", out var id) || id == Guid.Empty)
+            throw new IOException("verification_custody_tree_unreadable");
+        return id.ToString("D");
+    }
 
     private static async Task<int> WaitForPidFileAsync(string path)
     {
@@ -316,7 +324,7 @@ public class LinuxCgroupCustodyTests
             };
         foreach (var root in roots)
         {
-            var procs = Path.Combine(root, id, "tree", "cgroup.procs");
+            var procs = Path.Combine(root, CurrentNamespace(), id, "tree", "cgroup.procs");
             yield return File.ReadAllLines(procs)
                 .Where(line => line.Length != 0)
                 .Select(int.Parse)
@@ -429,9 +437,8 @@ public class LinuxCgroupCustodyTests
 
         public Task<IReadOnlyList<int>> ReadTreeAsync()
         {
-            var procs = Path.Combine(CustodyRoot(),
-                (TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json.")).ToString("D"),
-                "tree", "cgroup.procs");
+            var id = TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json.");
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(Guid.ParseExact(CurrentNamespace(), "D"), id);
             if (!File.Exists(procs)) return Task.FromResult<IReadOnlyList<int>>([]);
             return Task.FromResult<IReadOnlyList<int>>(File.ReadAllLines(procs)
                 .Where(line => line.Length != 0).Select(int.Parse).ToArray());
