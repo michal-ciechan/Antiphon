@@ -21,6 +21,7 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter, IAttachablePr
     }
 
     public Task<int> Exited => _terminal.Exited;
+    public Task<AgentExitObservation> Completion => _terminal.Completion;
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;
     public string? AuditDirectory => null;

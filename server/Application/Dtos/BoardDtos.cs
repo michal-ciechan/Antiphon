@@ -224,7 +224,9 @@ public sealed record AgentSessionSummaryDto(
     string? HerdrOrigin = null,
     // CARD-0316: who ended the session. Additive; older clients omit it. Unknown on a row
     // closed after this card ships is a bug to file, not a state.
-    SessionTerminationSource? TerminationSource = null);
+    SessionTerminationSource? TerminationSource = null,
+    int? ExitSignal = null,
+    Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

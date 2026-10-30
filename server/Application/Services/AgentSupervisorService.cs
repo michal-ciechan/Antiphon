@@ -311,7 +311,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 await RecordIncidentAsync(
                     agent.Id, dead.Id, AgentIncidentKind.Crash, AlertSeverity.Warning,
                     $"Session died (exit {dead.ExitCode?.ToString() ?? "unknown"}: {dead.FailureReason ?? "no reason recorded"}).",
-                    dead.ExitCode, dead.FailureReason, ct: ct);
+                    dead.ExitCode, dead.FailureReason, ct: ct, exitSignal: dead.ExitSignal);
             }
 
             if (await TryHoldRepeatedResumeFailureAsync(
@@ -329,7 +329,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             await RecordIncidentAsync(
                 agent.Id, dead?.Id, AgentIncidentKind.RestartScheduled, AlertSeverity.Warning,
                 $"Restart attempt {attempt} scheduled for {state.NextRestartAt:u} (backing off {Describe(delay)}).",
-                dead?.ExitCode, dead?.FailureReason, ct: ct);
+                dead?.ExitCode, dead?.FailureReason, ct: ct, exitSignal: dead?.ExitSignal);
             await EscalateIfTierCrossedAsync(agent, state, delay, ct);
 
             _logger.LogWarning(
@@ -895,6 +895,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         int? exitCode = null,
         string? failureReason = null,
         bool raiseAlert = true,
+        int? exitSignal = null,
         CancellationToken ct = default)
     {
         _db.AgentIncidents.Add(new AgentIncident
@@ -910,6 +911,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             // context's SaveChanges.
             Message = ColumnText.Clip(message, AgentIncident.MessageMaxLength),
             ExitCode = exitCode,
+            ExitSignal = exitSignal,
             FailureReason = ColumnText.ClipOrNull(failureReason, AgentIncident.FailureReasonMaxLength),
             CreatedAt = UtcNow(),
         });

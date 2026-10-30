@@ -416,7 +416,8 @@ public sealed class BoardService
                     s.FailureReason,
                     s.TuiProfileRevisionId,
                     s.EffectiveModelId,
-                    TerminationSource: s.TerminationSource))
+                    TerminationSource: s.TerminationSource, ExitSignal: s.ExitSignal,
+                    ExitStopIntent: SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)))
                 .ToList(),
             card.RevisionCount,
             card.ArchivedAt,

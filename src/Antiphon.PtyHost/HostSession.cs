@@ -26,6 +26,7 @@ public sealed class HostSession : IAsyncDisposable
     private string _status = PtyHostStatus.WaitingForLaunch;
     private int? _exitCode;
     private int? _exitSignal;
+    private Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? _exitStopIntent = null;
     private string? _exitReason;
     private int _cols;
     private int _rows;
@@ -254,7 +255,7 @@ public sealed class HostSession : IAsyncDisposable
             _sink = sink;
 
             if (_status == PtyHostStatus.Exited)
-                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq, _exitSignal));
+                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq, _exitSignal, _exitStopIntent));
         }
 
         return null;
@@ -306,7 +307,7 @@ public sealed class HostSession : IAsyncDisposable
                 _lastSeq,
                 _exitCode,
                 _exitReason,
-                _exitSignal);
+                _exitSignal, _exitStopIntent);
         }
     }
 
@@ -435,6 +436,7 @@ public sealed class HostSession : IAsyncDisposable
             {
                 ExitCode = exitCode,
                 ExitSignal = exitSignal,
+                ExitStopIntent = _exitStopIntent,
                 ExitReason = exitReason,
                 ExitedAtUtc = DateTime.UtcNow,
             };
@@ -445,7 +447,7 @@ public sealed class HostSession : IAsyncDisposable
         _log.Info($"Child exited (code {exitCode}, signal {exitSignal?.ToString() ?? "unknown"}, reason {exitReason}); lingering for runner ack");
         lock (_gate)
         {
-            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq, exitSignal));
+            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq, exitSignal, _exitStopIntent));
         }
 
     }

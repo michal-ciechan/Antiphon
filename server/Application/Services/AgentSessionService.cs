@@ -447,7 +447,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 // rather than a platform stop.
                 if (ex is RemoteLaunchAlreadyExitedException exited)
                 {
-                    session.ExitCode = exited.ExitCode;
+                    SessionExitEvidence.Apply(session, exited.ExitCode, exited.ExitSignal, exited.ExitStopIntent);
                     SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
                 }
                 else if (boundToThisKill)
@@ -1889,7 +1889,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return killed;
 
         var runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
-        session.ExitCode = runnerSession.ExitCode;
+        SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent);
         await _runtime.DisposeSessionAsync(sessionId);
         session.Status = killed ? SessionStatus.Stopped : SessionStatus.Failed;
         session.EndedAt = UtcNow();
@@ -2059,7 +2059,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         var exitReason = runnerSession.ExitReason;
-        session.ExitCode = runnerSession.ExitCode;
+        SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent);
         await _runtime.DisposeSessionAsync(sessionId);
 
         var memoryKilled = exitReason == AgentExitReason.MemoryKilled;
@@ -2086,6 +2086,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 memoryKilled ? RunPhase.Failed : killed ? RunPhase.Canceled : RunPhase.Failed,
                 UtcNow());
             attempt.ExitCode = session.ExitCode;
+            attempt.ExitSignal = session.ExitSignal;
             attempt.ErrorDetails = memoryKilled
                 ? MemoryKilledFailureReason
                 : killed ? "Agent session was killed by request."
@@ -2098,7 +2099,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(sessionId),
             "SessionExited",
-            new { sessionId, status = session.Status.ToString(), session.ExitCode },
+            new { sessionId, status = session.Status.ToString(), session.ExitCode, session.ExitSignal, exitStopIntent = SessionExitEvidence.ReadIntent(session.ExitStopIntentJson) },
             ct);
         // Cardless (interactive) sessions have nothing to notify a board about.
         if (session.CardId is Guid cardId)
@@ -2172,6 +2173,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.LastSeenAt = now;
         session.EndedAt = null;
         session.ExitCode = null;
+        session.ExitSignal = null;
+        session.ExitStopIntentJson = null;
         session.FailureReason = null;
         session.Cwd = cwd;
         session.Card.OwnerSessionId = session.Id;
@@ -3792,6 +3795,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (adapter.Exited.IsCompletedSuccessfully)
             session.ExitCode = adapter.Exited.Result;
         attempt.ExitCode = session.ExitCode;
+        attempt.ExitSignal = session.ExitSignal;
         attempt.ErrorDetails = MemoryKilledFailureReason;
         await adapter.DisposeAsync();
         return true;

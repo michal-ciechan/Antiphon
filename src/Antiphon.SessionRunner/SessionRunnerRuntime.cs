@@ -2569,6 +2569,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string _status = "Starting";
         private int? _exitCode;
         private int? _exitSignal;
+        private ProcessStopIntentDto? _exitStopIntent;
         private string _exitReason = PtyExitReason.Unknown.ToString();
         private string? _exitReasonOverride;
         private bool _adopted;
@@ -2764,8 +2765,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             lock (_gate) _deliveryEvidence.Invalidate();
         }
 
-        private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence, int? exitSignal = null) =>
-            new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt, ExitSignal: exitSignal);
+        private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence, int? exitSignal = null, ProcessStopIntentDto? exitStopIntent = null) =>
+            new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt, ExitSignal: exitSignal, ExitStopIntent: exitStopIntent);
 
         public RunnerSession(
             Guid sessionId,
@@ -2963,6 +2964,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         _status = "Exited";
                         _exitCode = exit.ExitCode;
                         _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                         _exitReason = exit.Reason;
                     }
 
@@ -2970,7 +2972,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -3043,6 +3045,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         _status = "Exited";
                         _exitCode = exit.ExitCode;
                         _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                         _exitReason = exit.Reason;
                     }
 
@@ -3050,7 +3053,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -3454,7 +3457,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (status.Status == PtyHostStatus.Exited)
             {
                 // HandleExited publishes the missed event and acks Shutdown.
-                HandleExited(new ExitedMessage(status.ExitCode, status.ExitReason ?? "Unknown", status.LastSeq, status.ExitSignal));
+                HandleExited(new ExitedMessage(status.ExitCode, status.ExitReason ?? "Unknown", status.LastSeq, status.ExitSignal, status.ExitStopIntent));
                 return false;
             }
 
@@ -3585,6 +3588,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _status = "Exited",
                 _exitCode = manifest.ExitCode ?? -1,
                 _exitSignal = manifest.ExitSignal,
+                _exitStopIntent = ProcessStopIntent.Recovered(manifest.ExitStopIntent),
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
                 _acceptedStartedAt = manifest.AcceptedStartedAt is { } accepted
                     ? SessionGeneration.Normalize(accepted) : null,
@@ -3595,7 +3599,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                session.ExitEnvelope(session._exitCode, session._exitReason, 0, session._exitSignal));
+                session.ExitEnvelope(session._exitCode, session._exitReason, 0, session._exitSignal, session._exitStopIntent));
             return session;
         }
 
@@ -3783,6 +3787,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _status = "Exited";
                     _exitCode = exit.ExitCode;
                     _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                     _exitReason = exit.Reason;
                 }
 
@@ -3790,7 +3795,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exited.TrySetResult();
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal));
+                    ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                 _onHerdrPaneSetChanged?.Invoke();
             };
             if (beforePublication is not null)
@@ -3947,7 +3952,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt)
         {
             _herdrChild = child;
-            child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence, exit.ExitSignal));
+            child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence, exit.ExitSignal, exit.ExitStopIntent));
             Tailer = tailer;
             _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
             BindAcceptedGeneration(acceptedStartedAt);
@@ -4016,7 +4021,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         GrokRulesReceipt: GrokRulesReceipt,
                         VerificationBinding: VerificationBinding,
                         AcceptedStartedAt: _acceptedStartedAt,
-                        ExitSignal: _exitSignal);
+                        ExitSignal: _exitSignal, ExitStopIntent: _exitStopIntent);
             }
         }
 
@@ -4401,6 +4406,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _status = "Exited";
                     _exitCode = exited.ExitCode;
                     _exitSignal = exited.ExitSignal;
+                    _exitStopIntent = exited.ExitStopIntent;
                     _exitReason = exitReason;
                     _lastSequence = Math.Max(_lastSequence, exited.LastSeq);
                 }
@@ -4410,7 +4416,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    ExitEnvelope(exited.ExitCode, exitReason, exited.LastSeq, exited.ExitSignal));
+                    ExitEnvelope(exited.ExitCode, exitReason, exited.LastSeq, exited.ExitSignal, exited.ExitStopIntent));
             }
 
             _clientReady.TrySetResult(false);

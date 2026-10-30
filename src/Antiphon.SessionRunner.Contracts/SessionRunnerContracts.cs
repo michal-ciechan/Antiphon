@@ -257,7 +257,8 @@ public sealed record RunnerSessionDto(
     VerificationExecutionBinding? VerificationBinding = null,
     DateTime? AcceptedStartedAt = null,
     HerdrLabelObservation? LabelObservation = null,
-    int? ExitSignal = null);
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -290,7 +291,8 @@ public sealed record RunnerSessionExitedEvent(
     string ExitReason,
     long LastSequence,
     DateTime? AcceptedStartedAt = null,
-    int? ExitSignal = null);
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 /// <summary>
 /// A restarted runner re-attached to a still-live pty-host (the session kept running the whole
