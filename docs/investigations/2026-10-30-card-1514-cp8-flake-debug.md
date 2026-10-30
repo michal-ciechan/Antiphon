@@ -203,3 +203,13 @@ finite 45-minute admission allowance. Two independent M1/M2 runs each execute
 their own manifest build once. Native CP-10/11 are excluded explicitly. No plan,
 policy, definition or test selection changed. Final required outcomes remain
 pending until these fresh builds and repetitions finish.
+
+## Reopened Debug: deterministic publication budget and recovery
+
+Caller decision on 2026-10-30 keeps the production 200 ms deadline and designed refusal. The 600-journal complete-metrics oracle now injects a stopped Stopwatch with an unexhausted budget through New-QualificationReadBudget at the actual terminal reader. A separate zero-remaining-budget publication proves timing-read-refused, null timing metrics and unchanged exit/result; the next publication must restore complete metrics and clear its transient gap reason. Neither case waits for wall time. Exactly four stream opens, exclusively the own TRX and two own journals, retain the no-foreign-rescan guard.
+
+Red-first commit d5769e36f7f9b7d16a6afd1c0c4226299757b70d failed only six-hundred-journals-next-publication-recovers: fresh metrics were correct but the old timing-read-refused reason survived in memory and on disk. The repair clears inherited read-gap reasons at a new terminal attempt and ignores that transient reason when importing a prior sidecar; explicit Why values remain preserved. Recovery is checked with and without process memory. This is a production behavior repair, not a deadline increase.
+
+The oversized child now emits all run/reader facts to captured stdout before temporary cleanup and has separate assertions for child exit, exit code, result existence, reader wall, peak working set, incomplete read, and zero records. Its inherited 8-second child and .2-second reader bounds are unchanged pending the required repetitions; further flaky wall expectations require structural/injected-clock repair, per caller.
+
+The initial reopened run accidentally preceded source edits because Python is absent; it is retained as reply-inherited-baseline.log and passed. It is not the red-first proof. The intended red-first leased run is reply-red.log, exited 1 with the named recovery assertion, all other checks passed. Both runs and the tool bootstrap were joined before the repair. Final same-source matrix, mutation and repetition outcomes are recorded in .antiphon/task-79c0c349.md.

@@ -4234,6 +4234,8 @@ function Update-QualificationChunkTiming {
         $phaseSpawn = $null
         $phaseWait = $null
         if ($Terminal) {
+            # A refused read is a gap for that publication, not a permanent suite failure.
+            if (-not $bound.ContainsKey('Why') -and $whyText -eq 'timing-read-refused') { $whyText = '' }
             $budget = New-QualificationReadBudget
             $watch = $budget.Watch
             $deadline = [int]$budget.DeadlineMilliseconds
@@ -4257,7 +4259,7 @@ function Update-QualificationChunkTiming {
                 if (-not $bound.ContainsKey('DiscoverySeconds') -and $null -eq $discovery -and $priorSide.PSObject.Properties.Name -contains 'discoverySeconds') { $discovery = $priorSide.discoverySeconds }
                 if (-not $bound.ContainsKey('RunWallSeconds') -and $null -eq $runWall -and $priorSide.PSObject.Properties.Name -contains 'runWallSeconds') { $runWall = $priorSide.runWallSeconds }
                 if (-not $bound.ContainsKey('TrxPath') -and [string]::IsNullOrWhiteSpace($trx) -and $priorSide.PSObject.Properties.Name -contains 'trx') { $trx = [string]$priorSide.trx }
-                if (-not $bound.ContainsKey('Why') -and [string]::IsNullOrWhiteSpace($whyText) -and $priorSide.PSObject.Properties.Name -contains 'why') { $whyText = [string]$priorSide.why }
+                if (-not $bound.ContainsKey('Why') -and [string]::IsNullOrWhiteSpace($whyText) -and $priorSide.PSObject.Properties.Name -contains 'why' -and [string]$priorSide.why -ne 'timing-read-refused') { $whyText = [string]$priorSide.why }
                 if (-not $bound.ContainsKey('CompletedAt') -and [string]::IsNullOrWhiteSpace($completedText) -and $priorSide.PSObject.Properties.Name -contains 'completedAt') {
                     $completedText = ConvertTo-QualificationStampText $priorSide.completedAt
                 }
