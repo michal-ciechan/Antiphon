@@ -53,9 +53,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             foreach (var session in _sessions.Values) session.StopIntents = value;
         }
     }
-    internal void StopOwnedProcess(int pid, DateTime start, Guid sessionId, DateTime generation, ProcessStopTarget target)
+    internal void StopOwnedProcess(int pid, DateTime start, Guid sessionId, DateTime generation, ProcessStopTarget target,
+        LinuxProcessIdentity? linuxIdentity = null)
     {
-        KillPidBestEffort(pid, StopIntents, sessionId, generation, target, start);
+        KillPidBestEffort(pid, StopIntents, sessionId, generation, target, start, linuxIdentity, _logger);
     }
 
     private readonly SessionRunnerSettings _settings;
@@ -2262,8 +2263,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             catch (HerdrApiException)
             {
                 // R4/R5: unknown pane. OS-alive → orphan kill (R5); then RestartPresumedDead.
-                TryKillOrphanedChild(sidecar, probe);
-                return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+                var killed = TryKillOrphanedChild(sidecar, probe);
+                return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
                     && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
                     ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
@@ -2274,8 +2275,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (!childPresent)
             {
                 // R2/R3: restored-but-empty (P7) or orphan. OS-alive → kill by pid (R3).
-                TryKillOrphanedChild(sidecar, probe);
-                return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+                var killed = TryKillOrphanedChild(sidecar, probe);
+                return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
                     && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
                     ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
@@ -2294,8 +2295,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _logger.LogWarning(ex,
                 "Herdr adoption bar failed for session {SessionId}; treating as RestartPresumedDead",
                 sidecar.SessionId);
-            TryKillOrphanedChild(sidecar, probe);
-            return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+            var killed = TryKillOrphanedChild(sidecar, probe);
+            return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
                 && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
                 ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
         }
@@ -2365,12 +2366,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return false;
         }
 
-        KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
-                ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
-        _logger.LogWarning(
-            "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
+        var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+            ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+        _logger.LogWarning(killed
+            ? "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid}; kill issued and exit observed"
+            : "HerdrOrphanedChildStopUnconfirmed: pane {PaneId} session {SessionId} pid {Pid}; stop refused, failed or exit unobserved",
             sidecar.PaneId, sidecar.SessionId, pid);
-        return true;
+        return killed;
     }
 
     private static bool IsOsAlive(HerdrPaneSidecar sidecar, IProcessLivenessProbe probe) =>
@@ -2445,19 +2447,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
-    private static void KillPidBestEffort(int pid, ProcessStopIntentStore? intents, Guid sessionId,
-        DateTime generation, ProcessStopTarget target, DateTime? expectedStart)
+    private static bool KillPidBestEffort(int pid, ProcessStopIntentStore? intents, Guid sessionId,
+        DateTime generation, ProcessStopTarget target, DateTime? expectedStart,
+        LinuxProcessIdentity? linuxIdentity = null, ILogger? logger = null)
     {
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById(pid);
-            if (process.HasExited) return;
-            if (OperatingSystem.IsLinux() && expectedStart is { } start && !SessionGeneration.Equal(process.StartTime.ToUniversalTime(), start)) return;
+            if (process.HasExited) return false;
+            if (OperatingSystem.IsLinux() && target == ProcessStopTarget.Child
+                && (linuxIdentity is null || LinuxProcessIdentity.TryRead(pid) != linuxIdentity))
+            {
+                logger?.LogWarning("Owned child stop refused for pid {Pid}: Linux start identity missing, unreadable or changed", pid);
+                return false;
+            }
             if (OperatingSystem.IsLinux() && intents is not null)
-                intents.StopProcess(process, sessionId, generation, target, ProcessStopPath.ProcessTree);
+            {
+                var intent = intents.StopProcess(process, sessionId, generation, target, ProcessStopPath.ProcessTree);
+                if (intent.Outcome != ProcessStopOutcome.Issued) return false;
+            }
             else process.Kill(entireProcessTree: true);
+            // A successful syscall is not immediate death: at most one second of exit observation.
+            return !OperatingSystem.IsLinux() || process.WaitForExit(1000);
         }
-        catch { /* already gone; never manufacture observed child exit */ }
+        catch { return false; /* already gone; never manufacture observed child exit */ }
     }
 
     /// <summary>
@@ -2972,12 +2985,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (sidecar.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
-                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
-                _logger.LogWarning(
-                    "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
+                var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+                _logger.LogWarning(killed
+                    ? "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid}; kill issued and exit observed"
+                    : "HerdrOrphanedChildStopUnconfirmed: pane {PaneId} session {SessionId} pid {Pid}; stop refused, failed or exit unobserved",
                     sidecar.PaneId, sidecar.SessionId, pid);
-                if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc)) return;
+                if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc)) return;
                 herdr.RaiseVerifiedClosed(HerdrExitReasons.RestartPresumedDead);
                 return;
             }
@@ -4341,9 +4355,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 && sidecar?.ChildPid is int pid
                 && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
-                ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
-                if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+                var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+                if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
                 {
                     _logger.LogWarning("Pending session {SessionId} stop remains unobserved; retaining owner and sidecar", _sessionId);
                     return;

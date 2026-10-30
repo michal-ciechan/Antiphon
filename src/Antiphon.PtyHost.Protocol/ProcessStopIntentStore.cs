@@ -15,8 +15,7 @@ public sealed class ProcessStopIntentStore : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<Guid, ProcessStopIntentDto> _attempts = new();
-    private readonly List<ProcessStopIntentDto> _deferredRecords = new();
-    private int _attemptDepth;
+    private readonly Queue<Guid> _attemptOrder = new();
     private readonly object _writerGate = new();
     private readonly Channel<WriteOffer> _offers = Channel.CreateBounded<WriteOffer>(new BoundedChannelOptions(1) {
         SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
@@ -47,40 +46,55 @@ public sealed class ProcessStopIntentStore : IDisposable
     public ProcessStopIntentDto? Snapshot(Guid sessionId, DateTime generation, int? signal = null)
     {
         lock (_gate)
-            return _attempts.Values.LastOrDefault(value => value.SessionId == sessionId
+            return _attemptOrder.Reverse().Select(id => _attempts[id]).FirstOrDefault(value => value.SessionId == sessionId
                 && SessionGeneration.Equal(value.AcceptedStartedAt, generation)
                 && (signal is null || value.AttemptedSignal == signal));
     }
 
     public ProcessStopIntentDto Attempt(ProcessStopIntentDto request, Func<bool?> send)
     {
-        ProcessStopIntentDto attempt;
-        ProcessStopIntentDto[] records = [];
+        var attempt = request with { IssuerBootId = BootId, Provenance = ProcessStopProvenance.LiveIssuer,
+            Outcome = ProcessStopOutcome.Requested, Durable = false };
+        var helper = request.Target is ProcessStopTarget.Custody or ProcessStopTarget.Helper;
         lock (_gate)
         {
-            _attemptDepth++;
-            attempt = request with { IssuerBootId = BootId, Provenance = ProcessStopProvenance.LiveIssuer,
-                Outcome = ProcessStopOutcome.Requested, Durable = false };
-            _attempts[attempt.RequestId] = attempt;
-            bool? sent;
-            try { sent = send(); }
-            catch (Exception) { sent = false; }
-            attempt = attempt with { Outcome = sent switch { true => ProcessStopOutcome.Issued,
-                false => ProcessStopOutcome.Failed, _ => ProcessStopOutcome.Requested } };
+            if (!_attempts.ContainsKey(attempt.RequestId)) _attemptOrder.Enqueue(attempt.RequestId);
             _attempts[attempt.RequestId] = attempt;
             // Bound diagnostics memory; never reconstruct evicted authority from disk.
-            while (_attempts.Count > 256) _attempts.Remove(_attempts.Keys.First());
-            _deferredRecords.Add(attempt);
-            if (--_attemptDepth == 0)
+            while (_attemptOrder.Count > 256) _attempts.Remove(_attemptOrder.Dequeue());
+            // Direct signal publication stays atomic with respect to the exit observer.
+            // A helper can take 45 seconds and must never hold this shared gate.
+            if (!helper) attempt = CompleteAttempt(attempt, send);
+        }
+        if (helper)
+        {
+            var completed = Send(attempt, send);
+            lock (_gate)
             {
-                records = _deferredRecords.ToArray();
-                _deferredRecords.Clear();
+                // An old helper finishing cannot resurrect evicted issuer authority.
+                if (_attempts.ContainsKey(attempt.RequestId)) _attempts[attempt.RequestId] = completed;
             }
+            attempt = completed;
         }
         // Signal and issued-memory publication have finished. This offer never invokes IO inline.
-        foreach (var record in records)
-            Volatile.Write(ref _lastRecord, RecordAndEnrichAsync(record));
+        Volatile.Write(ref _lastRecord, RecordAndEnrichAsync(attempt));
         return attempt;
+    }
+
+    private ProcessStopIntentDto CompleteAttempt(ProcessStopIntentDto attempt, Func<bool?> send)
+    {
+        var completed = Send(attempt, send);
+        _attempts[attempt.RequestId] = completed;
+        return completed;
+    }
+
+    private static ProcessStopIntentDto Send(ProcessStopIntentDto attempt, Func<bool?> send)
+    {
+        bool? sent;
+        try { sent = send(); }
+        catch (Exception) { sent = false; }
+        return attempt with { Outcome = sent switch { true => ProcessStopOutcome.Issued,
+            false => ProcessStopOutcome.Failed, _ => ProcessStopOutcome.Requested } };
     }
 
     private async Task<bool> RecordAndEnrichAsync(ProcessStopIntentDto attempt)

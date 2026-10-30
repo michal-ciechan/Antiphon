@@ -80,9 +80,38 @@ public class Card1619LinuxStopIntentTests
         // The PID boundary used after orphan/pending sidecar authorization repeats start validation.
         f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime().AddSeconds(1), f.Id, f.Generation, ProcessStopTarget.Child);
         f.Child.HasExited.ShouldBeFalse();
-        f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child);
+        f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child,
+            LinuxProcessIdentity.TryRead(f.Child.Id));
         await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         AssertIssued(f.Store.Snapshot(f.Id, f.Generation, 9), f.Id, f.Generation);
+    }
+
+    [Test]
+    public async Task Reused_pid_generation_missing_identity_and_previous_boot_are_refused()
+    {
+        await using var f = await Fixture.StartAsync();
+        var identity = LinuxProcessIdentity.TryRead(f.Child.Id);
+        identity.ShouldNotBeNull();
+        // Replay a stale generation against the same PID, and a matching tick from an old boot.
+        foreach (var stale in new LinuxProcessIdentity?[] { identity with { StartTicks = identity.StartTicks + 1 },
+                     identity with { BootId = Guid.NewGuid().ToString("D") }, null })
+        {
+            f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation,
+                ProcessStopTarget.Child, stale);
+            f.Child.HasExited.ShouldBeFalse("an unproven or reused PID must never be signalled");
+            f.Store.Snapshot(f.Id, f.Generation, 9).ShouldBeNull();
+        }
+        LinuxProcessIdentity.TryRead(int.MaxValue).ShouldBeNull("gone/unreadable proc identity is not a PID guess");
+    }
+
+    [Test]
+    public void Proc_stat_parser_handles_spaces_and_parentheses_in_comm()
+    {
+        var stat = "42 (name (with) spaces)) S " + string.Join(' ', Enumerable.Range(4, 19));
+        LinuxProcessIdentity.TryParseStartTicks(stat, out var ticks).ShouldBeTrue();
+        ticks.ShouldBe(22);
+        LinuxProcessIdentity.TryParseStartTicks("42 (bad) S 1", out _).ShouldBeFalse();
+        LinuxProcessIdentity.TryParseStartTicks("42 missing comm", out _).ShouldBeFalse();
     }
 
     [Test]

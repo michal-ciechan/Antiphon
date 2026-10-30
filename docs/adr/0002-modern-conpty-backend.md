@@ -89,7 +89,13 @@ The normal tree SIGKILL and Porta's pinned native SIGHUP fallback are separate
 attempts. Native PID/start checks bind the live owner; a host kill is not a child's
 wait observation. Windows spawn, kill, job and teardown order are unchanged.
 
-Issuer memory is published around the actual operation under a gate. Diagnostic
+Issuer memory is published around the actual operation under a gate. Custody/helper
+operations run outside the shared gate between requested and final publication, so
+their bounded helper wait cannot stall an unrelated stop or status read. Direct
+signals retain atomic publication with exit observation. Herdr child PID recovery
+uses persisted Linux boot ID and kernel start ticks; a missing/unreadable/mismatched
+identity refuses the kill and retains stop debt. Issued PID kills allow at most one
+second to observe asynchronous kernel teardown. Diagnostic
 writing starts afterward, outside it, on one bounded worker with a 100 ms offer
 deadline and one pending snapshot. No stop/observer waits for disk. WriteThrough,
 Flush(true), atomic rename and Linux directory fsync protect diagnostic durability
