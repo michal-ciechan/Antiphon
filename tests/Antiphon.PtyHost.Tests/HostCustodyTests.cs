@@ -211,6 +211,129 @@ public class HostCustodyTests
         status.State.ShouldBe(VerificationCustodyState.Exited);
     }
 
+    /// <summary>
+    /// CARD-1614. Unchanged Windows release: a tracked root exits while a descendant stays in the
+    /// kill-on-close job, no receipt is accepted, and the short linger exits the host. The retained
+    /// descendant handle is then dead because the job closed with the host. Linux skips.
+    /// </summary>
+    [Test]
+    public async Task C1614_Windows_tracked_linger_releases_job()
+    {
+        RequireModern();
+        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "antiphon-c1614-win-linger", Guid.NewGuid().ToString("N")));
+        var worktree = Path.Combine(root, "snapshot");
+        var custodyRoot = Path.Combine(root, "custody");
+        Directory.CreateDirectory(worktree);
+        var sessionId = Guid.NewGuid();
+        var pipeName = $"antiphon-c1614-linger-{sessionId:N}";
+        var store = new VerificationCustodyStore(custodyRoot);
+        var now = DateTime.UtcNow;
+        var binding = new VerificationExecutionBinding(Guid.NewGuid(),
+            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+            new(sessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
+            new(root, Path.Combine(root, ".git"), worktree,
+                Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
+            VerificationCustodyBackends.WindowsJob, store.StoreId);
+        store.Reserve(binding);
+        var seen = new HashSet<int>();
+        foreach (var existing in Process.GetProcessesByName("PING"))
+        {
+            seen.Add(existing.Id);
+            existing.Dispose();
+        }
+
+        var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(root, "bin")), AppContext.BaseDirectory);
+        var hostPid = 0;
+        Process? host = null;
+        Process? held = null;
+        try
+        {
+            hostPid = await launcher.LaunchDetachedAsync(
+                sessionId, Path.Combine(root, "manifests"), Path.Combine(root, "host.log"), pipeName,
+                launchTimeout: TimeSpan.FromSeconds(20), lingerTtl: TimeSpan.FromSeconds(2),
+                ptyBackend: "modern", custodyStoreRoot: custodyRoot,
+                custodyBackend: VerificationCustodyBackends.WindowsJob);
+            host = Process.GetProcessById(hostPid);
+            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(15));
+            await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
+            (await client.ExpectAsync<HelloAckMessage>()).Features.ShouldNotBeNull()
+                .ShouldContain("verificationCustodyV1");
+            var batch = Path.Combine(root, "hold.cmd");
+            File.WriteAllText(batch, "@echo off\r\nstart /b ping.exe -n 40 127.0.0.1 > nul\r\nexit /b 0\r\n");
+            await client.SendAsync(new LaunchMessage(
+                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                ["/d", "/q", "/c", batch], new Dictionary<string, string>(), worktree,
+                120, 30, 0, false, Path.Combine(root, "session.ansi.log"),
+                VerificationBinding: binding, RunnerStoreId: store.StoreId));
+            var launched = await client.ExpectAsync<LaunchedMessage>(TimeSpan.FromSeconds(20));
+            launched.ChildPid.ShouldBeGreaterThan(0);
+
+            var findBy = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+            while (held is null && DateTime.UtcNow < findBy && host is { HasExited: false })
+            {
+                foreach (var candidate in Process.GetProcessesByName("PING"))
+                {
+                    if (seen.Contains(candidate.Id) || held is not null)
+                    {
+                        candidate.Dispose();
+                        continue;
+                    }
+                    held = candidate;
+                }
+                if (held is null)
+                    await Task.Delay(50);
+            }
+
+            held.ShouldNotBeNull("the tracked job must hold the ping descendant before linger closes the host");
+            host.HasExited.ShouldBeFalse("the descendant must still be observed while the host is alive");
+            var rootGone = false;
+            try
+            {
+                using var rootProc = Process.GetProcessById(launched.ChildPid);
+                rootGone = rootProc.HasExited || rootProc.WaitForExit(5000);
+            }
+            catch (ArgumentException)
+            {
+                rootGone = true;
+            }
+            rootGone.ShouldBeTrue("the tracked root exits while its descendant remains");
+            held.HasExited.ShouldBeFalse("kill-on-close has not run before the host leaves linger");
+            File.Exists(store.PathFor(binding.ExecutionId, "accepted-receipt.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+            host.WaitForExit(8000).ShouldBeTrue("the short tracked linger exits the host");
+            var reapBy = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+            while (!held.HasExited && DateTime.UtcNow < reapBy)
+                await Task.Delay(50);
+            held.HasExited.ShouldBeTrue("closing the host closes the kill-on-close job and releases the descendant");
+            held.Refresh();
+            File.Exists(store.PathFor(binding.ExecutionId, "accepted-receipt.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            try
+            {
+                if (held is { HasExited: false })
+                    held.Kill(entireProcessTree: true);
+            }
+            catch { }
+            held?.Dispose();
+            try
+            {
+                if (host is { HasExited: false })
+                    host.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                if (hostPid > 0)
+                {
+                    try { Process.GetProcessById(hostPid).Kill(entireProcessTree: true); } catch { }
+                }
+            }
+            host?.Dispose();
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
     [Test]
     public async Task Inbox_is_unsupported_and_never_becomes_no_start_proof()
     {

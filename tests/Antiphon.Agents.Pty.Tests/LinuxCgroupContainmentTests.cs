@@ -320,6 +320,67 @@ public sealed class LinuxCgroupContainmentTests
         File.WriteAllText(procs, body);
     }
 
+    // CP-34. A missing tree directory is unknown. Today's reader returns an empty list.
+    [Test]
+    public void C1614_Missing_tree_throws_before_termination()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1614-missing-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var marker = Path.Combine(root, "run", "namespace");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
+            var missing = Guid.NewGuid();
+            Should.Throw<IOException>(() => operations.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var absentRoot = Path.Combine(root, "no-such-root");
+            var gone = new LinuxCustodyOperations(new LinuxCustodyLayout(absentRoot, marker, null));
+            Should.Throw<IOException>(() => gone.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var other = Guid.NewGuid();
+            File.WriteAllText(marker, other.ToString("D") + "\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+
+            var malformed = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), malformed.ToString("D")), "nope\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(malformed))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            if (OperatingSystem.IsLinux())
+            {
+                var hidden = Guid.NewGuid();
+                var hiddenProcs = Path.Combine(root, "pids", "antiphon-custody", ns.ToString("D"),
+                    hidden.ToString("D"), "tree", "cgroup.procs");
+                Directory.CreateDirectory(Path.GetDirectoryName(hiddenProcs)!);
+                File.WriteAllText(hiddenProcs, "7\n");
+                File.SetUnixFileMode(hiddenProcs, UnixFileMode.None);
+                try
+                {
+                    Should.Throw<IOException>(() => operations.ReadTreePids(hidden))
+                        .Message.ShouldBe("verification_custody_tree_unreadable");
+                }
+                finally
+                {
+                    File.SetUnixFileMode(hiddenProcs, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+            }
+
+            var empty = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), empty.ToString("D")), "");
+            operations.ReadTreePids(empty).ShouldBeEmpty();
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
     [Test]
     public void The_helper_paths_are_absolute_and_image_owned()
     {
