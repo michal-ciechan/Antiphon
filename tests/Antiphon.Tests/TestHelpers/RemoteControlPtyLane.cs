@@ -271,6 +271,22 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
         return false;
     }
 
+    /// <summary>Finish the real child turn before a test inserts synthetic busy/idle facts.</summary>
+    public async Task<bool> WaitForPersistedIdleAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var db = CreateDb();
+            if (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId
+                    && t.Sequence > Baseline && t.Kind == TranscriptKinds.TurnEnd)
+                && !await SessionMessageQueueService.IsWorkingAsync(db, SessionId, CancellationToken.None))
+                return true;
+            await Task.Delay(150);
+        }
+        return false;
+    }
+
     /// <summary>
     /// This fixture ingests the child's records but has no hosted turn-end queue worker.
     /// Drive the production idle flush, whose working gate reads those persisted records,
