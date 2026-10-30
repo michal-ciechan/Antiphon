@@ -69,7 +69,7 @@ function New-FFHistoricalFixture {
         'Scripts.TestSelectionTests','Scripts.ChangeAwareReleaseTests','Scripts.EvidenceDiffGuardTests','Scripts.RunCheckpointRepeatScriptTests',
         'Scripts.C1008PlatformContractTests','Scripts.WindowsUnitPlatformAdmissionTests','Scripts.CardRelationshipScriptTests',
         'Scripts.NightlyDeadOwnerLockTests','Scripts.ScriptsLaneRepairTests','Scripts.RemoteScriptContractTests','TestHelpers.TestPhaseSummaryTests')
-    $classes = @($names | ForEach-Object { 'Antiphon.Tests.' + $_ }) + @('Antiphon.SessionRunner.Tests.GrokRulesHttpAcceptanceTests','Antiphon.Agents.Pty.Tests.FakeClaudeContractTests','Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests')
+    $classes = @($names | ForEach-Object { 'Antiphon.Tests.' + $_ }) + @('Antiphon.SessionRunner.Tests.GrokRulesHttpAcceptanceTests','Antiphon.Agents.Pty.Tests.FakeClaudeContractTests','Antiphon.E2E.BoardE2ETests')
     $suites = @(); $nodesBySuite = @{}; $defsBySuite = @{}; $rowsBySuite = @{}
     for ($i = 0; $i -lt 36; $i++) {
         $c = $classes[$i % 28]; $suite = 'antiphon'
