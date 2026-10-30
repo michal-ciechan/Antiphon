@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -140,6 +141,38 @@ public sealed class ScriptHarnessProcessContractTests
         timeout.Message.ShouldContain("holder=stdout");
         timeout.Message.ShouldNotContain("execution budget");
         owner.Terminations.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C1061_Junction_pipe_holders_use_execution_budget()
+    {
+        foreach (var stdout in new[] { true, false })
+        {
+            var clock = new FakeTimeProvider();
+            var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var owner = new FakeOwner(rootComplete: false, holdStdout: stdout, holdStderr: !stdout);
+            // Use the native junction test's actual options without launching a native process.
+            var options = DirectoryLinkFixtureWindowsTests.PipeHolderOptions with
+            {
+                ExecutablePath = "fake", OwnerFactory = _ => owner, Clock = clock,
+                OnPostExitDrainArmed = () => armed.TrySetResult()
+            };
+            var run = Run(options);
+            var launch = TimeSpan.FromSeconds(1);
+            clock.Advance(launch);
+            owner.CompleteRoot();
+            await armed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var remaining = options.ExecutionBudget - launch;
+            // Advance only to the first deadline, so a short drain cannot hide behind
+            // an execution cancellation that would arrive later on a busy scheduler.
+            clock.Advance(options.EffectivePostExitDrain < remaining ? options.EffectivePostExitDrain : remaining);
+            var timeout = (await Capture(run)).ShouldBeOfType<TimeoutException>();
+            owner.Terminations.ShouldBe(1);
+            owner.StreamsClosed.ShouldBeTrue();
+            owner.DisposeCount.ShouldBe(1);
+            timeout.Message.ShouldContain("execution budget");
+            timeout.Message.ShouldNotContain("post-exit drain");
+        }
     }
 
     [Test]
