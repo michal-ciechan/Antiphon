@@ -99,6 +99,9 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("setupNpmBuild").GetBoolean().ShouldBeTrue("npm-build setup phase was not written");
         observed.GetProperty("setupLint").GetBoolean().ShouldBeTrue("lint setup phase was not written");
         observed.GetProperty("setupDotnet").GetBoolean().ShouldBeTrue("dotnet-build setup phase was not written");
+        observed.GetProperty("planningPresent").GetBoolean().ShouldBeTrue("planning-<suite> was not written");
+        observed.GetProperty("planningSeconds").GetDouble().ShouldBeGreaterThan(0, "planning-<suite> seconds were zero");
+        observed.GetProperty("supplementalIsMarker").GetBoolean().ShouldBeTrue("supplemental discovery was not the marker");
     }
 
     [Test]
@@ -175,6 +178,21 @@ public sealed class RcFullTimingContractTests
         var spent = observed.GetProperty("summaryAggregationMilliseconds").GetInt32();
         spent.ShouldBeGreaterThan(0, "aggregate re-read recorded no time");
         spent.ShouldBeLessThanOrEqualTo(5000, "aggregate re-read exceeded the shared budget");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task NativeOwnerExitWitnessIsUnconditional(CancellationToken cancellationToken)
+    {
+        var root = FreshRoot();
+        var observed = await Run(OwnerWitnessShapeScript, cancellationToken, root);
+        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
+        observed.GetProperty("declared").GetBoolean().ShouldBeTrue("Invoke-RcWindowsOwnerExitWitness was not declared");
+        observed.GetProperty("assertsImages").GetBoolean().ShouldBeTrue("DescendantImages was not asserted");
+        observed.GetProperty("assertsRootExit").GetBoolean().ShouldBeTrue("RootExitedAtUtc was not asserted");
+        observed.GetProperty("assertsMissed").GetBoolean().ShouldBeTrue("MissedDescendantPids was not asserted");
+        observed.GetProperty("caseCalls").GetBoolean().ShouldBeTrue("C1039_DescendantExit does not call the witness");
+        observed.GetProperty("caseUnconditional").GetBoolean().ShouldBeTrue("owner witness is still behind the packaged PowerShell condition");
     }
 
     private static string[] Uids(JsonElement observed, string name)
@@ -919,6 +937,9 @@ public sealed class RcFullTimingContractTests
         $setupNpmBuild = $false
         $setupLint = $false
         $setupDotnet = $false
+        $planningPresent = $false
+        $planningSeconds = 0.0
+        $supplementalIsMarker = $false
         try {
             $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $log -TimingRoot $timing -Suites @('scripts') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'call-site' -Trigger 'manual' -SeamsPath $seamPath -AllowSharedTree
         } catch {
@@ -928,11 +949,33 @@ public sealed class RcFullTimingContractTests
         if (Test-Path -LiteralPath $setupPath) {
             $setup = [IO.File]::ReadAllText($setupPath) | ConvertFrom-Json
             $names = @()
-            if ($null -ne $setup.phases) { foreach ($row in @($setup.phases)) { $names += [string]$row.name } }
+            if ($null -ne $setup.phases) {
+                foreach ($row in @($setup.phases)) {
+                    $phaseName = [string]$row.name
+                    $names += $phaseName
+                    if ($phaseName -eq 'planning-antiphon') {
+                        $planningPresent = $true
+                        if ($null -ne $row.seconds) { $planningSeconds = [double]$row.seconds }
+                    }
+                }
+            }
             $setupNpmCi = $names -contains 'npm-ci'
             $setupNpmBuild = $names -contains 'npm-build'
             $setupLint = $names -contains 'lint'
             $setupDotnet = $names -contains 'dotnet-build'
+        }
+        $supplementalPath = Join-Path (Join-Path $log 'supplemental') 'antiphon-all.timing.json'
+        if (Test-Path -LiteralPath $supplementalPath) {
+            $supplementalRaw = [IO.File]::ReadAllText($supplementalPath)
+            $supplementalMatch = [regex]::Match($supplementalRaw, '"discoverySeconds":([^,}]+)')
+            $supplementalToken = ''
+            if ($supplementalMatch.Success) { $supplementalToken = $supplementalMatch.Groups[1].Value.Trim() }
+            $supplementalValue = 0.0
+            $supplementalParsed = $false
+            if ($supplementalToken -ne '' -and $supplementalToken -ne 'null') {
+                $supplementalParsed = [double]::TryParse($supplementalToken, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$supplementalValue)
+            }
+            if ($supplementalParsed -and $supplementalValue -gt 0.2) { $supplementalIsMarker = $true }
         }
         $timingPath = Join-Path $log 'scripts-all.timing.json'
         $token = ''
@@ -947,6 +990,9 @@ public sealed class RcFullTimingContractTests
         if (-not $setupNpmBuild) { $problems.Add('missing-npm-build') }
         if (-not $setupLint) { $problems.Add('missing-lint') }
         if (-not $setupDotnet) { $problems.Add('missing-dotnet-build') }
+        if (-not $planningPresent) { $problems.Add('planning-suite-missing') }
+        if ($planningSeconds -le 0) { $problems.Add('planning-seconds-zero') }
+        if (-not $supplementalIsMarker) { $problems.Add('supplemental-not-marker') }
         $exit = 0
         $text = ''
         if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
@@ -958,6 +1004,9 @@ public sealed class RcFullTimingContractTests
             setupNpmBuild = [bool]$setupNpmBuild
             setupLint = [bool]$setupLint
             setupDotnet = [bool]$setupDotnet
+            planningPresent = [bool]$planningPresent
+            planningSeconds = [double]$planningSeconds
+            supplementalIsMarker = [bool]$supplementalIsMarker
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
@@ -1009,6 +1058,91 @@ public sealed class RcFullTimingContractTests
             absentPresent = [bool]$absentPresent
             emptyPresent = [bool]$emptyPresent
             setCopied = [bool]$setCopied
+        }
+        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
+        """;
+
+    private const string OwnerWitnessShapeScript = """
+        $ErrorActionPreference = 'Stop'
+        $repo = $args[0]
+        $work = $args[1]
+        $problems = New-Object System.Collections.Generic.List[string]
+        $declared = $false
+        $assertsImages = $false
+        $assertsRootExit = $false
+        $assertsMissed = $false
+        $caseCalls = $false
+        $caseUnconditional = $false
+        function Get-BraceBody([string]$Text, [int]$OpenIndex) {
+            $depth = 0
+            for ($j = $OpenIndex; $j -lt $Text.Length; $j++) {
+                $ch = $Text[$j]
+                if ($ch -eq '{') { $depth++ }
+                elseif ($ch -eq '}') {
+                    $depth--
+                    if ($depth -eq 0) { return $Text.Substring($OpenIndex, ($j - $OpenIndex) + 1) }
+                }
+            }
+            return $null
+        }
+        function Strip-LineComments([string]$Text) {
+            $lines = $Text -split "`n"
+            $kept = New-Object System.Collections.Generic.List[string]
+            foreach ($line in $lines) {
+                $mark = $line.IndexOf('#')
+                if ($mark -ge 0) { $line = $line.Substring(0, $mark) }
+                $kept.Add($line)
+            }
+            return ($kept -join "`n")
+        }
+        try {
+            $witnessPath = Join-Path $repo 'scripts/test-rc-speed-os-witness.ps1'
+            $nativePath = Join-Path $repo 'scripts/test-nightly-native.ps1'
+            $witness = [IO.File]::ReadAllText($witnessPath)
+            $native = [IO.File]::ReadAllText($nativePath)
+            $fn = [regex]::Match($witness, '(?m)^function\s+Invoke-RcWindowsOwnerExitWitness\s*\{')
+            if (-not $fn.Success) { $problems.Add('function-missing') }
+            else {
+                $body = Get-BraceBody $witness ($fn.Index + $fn.Length - 1)
+                if ([string]::IsNullOrWhiteSpace($body)) { $problems.Add('function-body-missing') }
+                else {
+                    $code = Strip-LineComments $body
+                    $declared = $code.Contains('[Antiphon.Nightly.NativeProcessOwner]::Start')
+                    $assertsImages = $code.Contains('DescendantImages')
+                    $assertsRootExit = $code.Contains('RootExitedAtUtc')
+                    $assertsMissed = $code.Contains('MissedDescendantPids')
+                    if (-not $declared) { $problems.Add('start-missing') }
+                    if (-not $assertsImages) { $problems.Add('images-missing') }
+                    if (-not $assertsRootExit) { $problems.Add('root-exit-missing') }
+                    if (-not $assertsMissed) { $problems.Add('missed-pids-missing') }
+                }
+            }
+            $caseAt = $native.IndexOf("'C1039_DescendantExit'")
+            if ($caseAt -lt 0) { $problems.Add('case-missing') }
+            else {
+                $nextAt = $native.IndexOf("'C1039_", $caseAt + 1)
+                if ($nextAt -lt 0) { $nextAt = $native.Length }
+                $section = $native.Substring($caseAt, $nextAt - $caseAt)
+                $caseCalls = $section.Contains('Invoke-RcWindowsOwnerExitWitness')
+                $caseUnconditional = $caseCalls -and (-not $section.Contains('$packaged.Count'))
+                if (-not $caseCalls) { $problems.Add('case-does-not-call-witness') }
+                if ($section.Contains('$packaged.Count')) { $problems.Add('case-still-conditional') }
+            }
+        } catch {
+            $problems.Add('shape-threw')
+        }
+        $exit = 0
+        $text = ''
+        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
+        $out = [ordered]@{
+            exitCode = [int]$exit
+            text = [string]$text
+            declared = [bool]$declared
+            assertsImages = [bool]$assertsImages
+            assertsRootExit = [bool]$assertsRootExit
+            assertsMissed = [bool]$assertsMissed
+            caseCalls = [bool]$caseCalls
+            caseUnconditional = [bool]$caseUnconditional
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
         """;
