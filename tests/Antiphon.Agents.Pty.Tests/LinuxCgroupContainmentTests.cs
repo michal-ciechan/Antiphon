@@ -110,6 +110,7 @@ public sealed class LinuxCgroupContainmentTests
         otherPath.ShouldContain(other.ToString("D"));
         currentPath.ShouldNotBe(otherPath);
         legacyPath.ShouldNotBe(currentPath);
+        LinuxCgroupContainment.ExecutionProcsPath(current, execution).ShouldBe(currentPath);
     }
 
     // The production reader must use the runtime namespace. A legacy tree at the old
@@ -130,17 +131,63 @@ public sealed class LinuxCgroupContainmentTests
 
             var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
             operations.ReadTreePids(execution).ShouldBe([41, 42]);
+            operations.ReadTreePids(Guid.NewGuid()).ShouldBeEmpty();
+
+            var malformed = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), malformed.ToString("D")), "nope\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(malformed))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            File.WriteAllText(marker, "not-a-guid\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+            File.WriteAllText(marker, Guid.Empty.ToString("D") + "\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
 
             File.Delete(marker);
             Should.Throw<IOException>(() => operations.ReadTreePids(execution))
                 .Message.ShouldBe("verification_custody_tree_unreadable");
 
+            var record = Path.Combine(root, "linux-namespace.json");
+            File.WriteAllText(record,
+                "{\"revision\":1,\"namespaceId\":\"" + ns.ToString("D") + "\",\"containerId\":\"" + execution.ToString("D") + "\"}");
+            var fromRecord = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, record));
+            fromRecord.ReadTreePids(execution).ShouldBe([41, 42]);
+
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
             var missingProcs = Guid.NewGuid();
             Directory.CreateDirectory(Path.Combine(
                 root, "pids", "antiphon-custody", ns.ToString("D"), missingProcs.ToString("D"), "tree"));
-            File.WriteAllText(marker, ns.ToString("D") + "\n");
             Should.Throw<IOException>(() => operations.ReadTreePids(missingProcs))
                 .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            if (OperatingSystem.IsLinux())
+            {
+                var elsewhere = Path.Combine(root, "elsewhere");
+                File.WriteAllText(elsewhere, Guid.NewGuid().ToString("D") + "\n");
+                var link = Path.Combine(root, "run", "linked-namespace");
+                File.CreateSymbolicLink(link, elsewhere);
+                var linked = new LinuxCustodyOperations(new LinuxCustodyLayout(root, link, record));
+                Should.Throw<IOException>(() => linked.ReadTreePids(execution))
+                    .Message.ShouldBe("verification_custody_tree_unreadable");
+
+                var hidden = Guid.NewGuid();
+                var hiddenProcs = Path.Combine(root, "pids", "antiphon-custody", ns.ToString("D"),
+                    hidden.ToString("D"), "tree", "cgroup.procs");
+                Directory.CreateDirectory(Path.GetDirectoryName(hiddenProcs)!);
+                File.WriteAllText(hiddenProcs, "7\n");
+                File.SetUnixFileMode(hiddenProcs, UnixFileMode.None);
+                try
+                {
+                    Should.Throw<IOException>(() => operations.ReadTreePids(hidden))
+                        .Message.ShouldBe("verification_custody_tree_unreadable");
+                }
+                finally
+                {
+                    File.SetUnixFileMode(hiddenProcs, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+            }
         }
         finally
         {
