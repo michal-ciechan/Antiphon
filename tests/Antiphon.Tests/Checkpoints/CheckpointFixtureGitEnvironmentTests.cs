@@ -115,7 +115,7 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
             new DriverRequest("/bin/sh", ["-c", "printf %s \"$GIT_CONFIG_GLOBAL\""], repo),
             cancellationToken);
         shown.ExitCode.ShouldBe(0, shown.Stderr);
-        shown.Stdout.ShouldBe(environment.GlobalConfigPath);
+        shown.Stdout.TrimEnd('\r', '\n').ShouldBe(environment.GlobalConfigPath);
 
         using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         await Should.ThrowAsync<OperationCanceledException>(() =>
