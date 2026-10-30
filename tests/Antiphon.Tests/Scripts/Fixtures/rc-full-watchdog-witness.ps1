@@ -97,6 +97,9 @@ $out = [ordered]@{
     missingFieldWatchdog = 0
     missingFieldReason = ''
     missingCensoredFieldAdmitted = $false
+    invalidPlanCensored = $false
+    invalidPlanWatchdog = 0
+    invalidPlanKilled = $true
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -574,6 +577,30 @@ try {
             if (-not $out.missingCensoredFieldAdmitted) {
                 Add-Problem ('missing-censored-field W=' + $noCensoredField.WatchdogSeconds + ' reason=' + $noCensoredField.Reason + ' adm=' + $noCensoredField.Admitted)
             }
+
+            $invalidPlanOk = $true
+            $invalidWatch = 0.0
+            $invalidKilled = $true
+            $invalidPlans = @($null, 0, [double]::NaN, '1,5')
+            foreach ($badPlan in $invalidPlans) {
+                $invalidSamples = @(New-Walls 20 900 'Passed') + @([pscustomobject]@{ Wall = 1936.0; Outcome = 'Failed'; Censored = $false })
+                $invalidFactors = Get-NightlyWatchdogErrorFactors -Samples $invalidSamples -PlannedSeconds $badPlan
+                $invalidRow = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                    N = [int]$invalidFactors.N; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$invalidFactors.E95; Emax = [double]$invalidFactors.Emax
+                    M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$invalidFactors.Censored
+                })
+                $invalidKilled = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$invalidRow.WatchdogSeconds) -Terminal $true)
+                $invalidWatch = [double]$invalidRow.WatchdogSeconds
+                $planLabel = 'null'
+                if ($null -ne $badPlan) { $planLabel = [string]$badPlan }
+                if (-not $invalidFactors.Censored -or [double]$invalidRow.WatchdogSeconds -ne 3600 -or [string]$invalidRow.Reason -ne 'unmeasured-cost' -or $invalidKilled) {
+                    Add-Problem ('invalid-plan-uncensored ' + $planLabel + ' N=' + $invalidFactors.N + ' censored=' + $invalidFactors.Censored + ' E95=' + $invalidFactors.E95 + ' Emax=' + $invalidFactors.Emax + ' W=' + $invalidRow.WatchdogSeconds + ' killed=' + $invalidKilled)
+                    $invalidPlanOk = $false
+                }
+            }
+            $out.invalidPlanCensored = $invalidPlanOk
+            $out.invalidPlanWatchdog = $invalidWatch
+            $out.invalidPlanKilled = $invalidKilled
         } elseif ($mode -eq 'timeout') {
             $partial = Join-Path $work 'partial.diag'
             [IO.File]::WriteAllText($partial, "TestNodeUid { Value = uid-partial } InProgressTestNodeStateProperty { Explanation = running }`n")
