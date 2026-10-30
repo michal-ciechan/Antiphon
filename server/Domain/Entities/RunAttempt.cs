@@ -20,6 +20,8 @@ public class RunAttempt
     public string Prompt { get; set; } = string.Empty;
     public string? ErrorDetails { get; set; }
     public int? ExitCode { get; set; }
+    /// <summary>Null = unavailable; zero = observed without a POSIX signal; positive = actual signal.</summary>
+    public int? ExitSignal { get; set; }
 
     public Card Card { get; set; } = null!;
     public AgentSession? AgentSession { get; set; }

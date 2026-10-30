@@ -20,7 +20,8 @@ internal interface ISessionChild : IAsyncDisposable
 
 internal sealed record ChildStarted(int? ChildPid, int? HostPid, DateTime ChildStartUtc);
 
-internal sealed record ChildExit(int? ExitCode, string Reason, int? ExitSignal = null);
+internal sealed record ChildExit(int? ExitCode, string Reason, int? ExitSignal = null,
+    Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent = null);
 
 /// <param name="ContentSequence">
 /// CARD-0164: runner-owned monotonic counter bumped when visible text changes. Folded into

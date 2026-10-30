@@ -34,6 +34,9 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
         DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
         Task.FromResult(new AdapterGenerationKill(false, null));
     Task<int> Exited { get; }
+    // Old implementations report their existing code and unknown signal evidence.
+    Task<AgentExitObservation> Completion => LegacyCompletionAsync(Exited);
+    private static async Task<AgentExitObservation> LegacyCompletionAsync(Task<int> exited) => new(await exited);
     int? Pid { get; }
     AgentExitReason ExitReason { get; }
 

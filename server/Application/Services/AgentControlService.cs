@@ -657,6 +657,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 previous.LastSeenAt = resumeNow;
                 previous.EndedAt = null;
                 previous.ExitCode = null;
+                previous.ExitSignal = null;
+                previous.ExitStopIntentJson = null;
                 previous.FailureReason = null;
                 previous.HerdrSupervisionFailureKind = null;
                 previous.RestartFailureKind = null;
@@ -1138,6 +1140,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 session.LastSeenAt = resumeNow;
                 session.EndedAt = null;
                 session.ExitCode = null;
+                session.ExitSignal = null;
+                session.ExitStopIntentJson = null;
                 session.FailureReason = null;
                 session.RestartFailureKind = null;
                 session.InteractiveLaunchCompletedAt = null;

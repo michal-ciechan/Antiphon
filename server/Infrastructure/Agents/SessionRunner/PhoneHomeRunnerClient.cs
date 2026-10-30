@@ -204,7 +204,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         {
             throw new RemoteLaunchAlreadyExitedException(
                 _connection.RunnerId, sessionId, exited.ExitCode,
-                RunnerContractMapper.MapExitReason(exited.ExitReason), exited.ExitReason);
+                RunnerContractMapper.MapExitReason(exited.ExitReason), exited.ExitReason, exited.ExitSignal, exited.ExitStopIntent);
         }
 
         var started = _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("launch"));

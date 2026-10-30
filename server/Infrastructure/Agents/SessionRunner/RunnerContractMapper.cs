@@ -53,7 +53,7 @@ public sealed class RunnerContractMapper
             dto.GrokRulesReceipt,
             dto.AcceptedStartedAt,
             dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null,
-            dto.VerificationBinding);
+            dto.VerificationBinding, dto.ExitSignal, dto.ExitStopIntent);
 
     public SessionRunnerTranscriptDto MapTranscript(RunnerTranscriptDto transcript) =>
         new(transcript.SessionId, transcript.Entries.Select(MapTranscript).ToList(), transcript.LastSequence,
@@ -104,7 +104,7 @@ public sealed class RunnerContractMapper
                     eventName, exited.SessionId,
                     Exited: new SessionRunnerExitedEvent(
                         exited.SessionId, exited.ExitCode, MapExitReason(exited.ExitReason),
-                        exited.LastSequence, exited.AcceptedStartedAt));
+                        exited.LastSequence, exited.AcceptedStartedAt, exited.ExitSignal, exited.ExitStopIntent));
         }
 
         if (eventName == SessionRunnerEventNames.SessionAdopted)

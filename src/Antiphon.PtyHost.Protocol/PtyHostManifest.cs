@@ -31,6 +31,7 @@ public sealed record PtyHostManifest
     public DateTime CreatedAtUtc { get; init; }
     public int? ExitCode { get; init; }
     public int? ExitSignal { get; init; }
+    public global::Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent { get; init; }
     public string? ExitReason { get; init; }
     public DateTime? ExitedAtUtc { get; init; }
     public DateTime? AcceptedStartedAt { get; init; }
@@ -79,7 +80,8 @@ public sealed record PtyHostManifest
     {
         try
         {
-            return JsonSerializer.Deserialize<PtyHostManifest>(File.ReadAllText(path), Options);
+            var manifest = JsonSerializer.Deserialize<PtyHostManifest>(File.ReadAllText(path), Options);
+            return manifest is null ? null : manifest with { ExitStopIntent = ProcessStopIntent.Recovered(manifest.ExitStopIntent) };
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {

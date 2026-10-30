@@ -246,7 +246,7 @@ public sealed class AgentService
             .OrderByDescending(i => i.CreatedAt)
             .Take(Math.Clamp(take, 1, 200))
             .Select(i => new AgentIncidentDto(
-                i.Id, i.AgentId!.Value, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt))
+                i.Id, i.AgentId!.Value, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt, i.ExitSignal))
             .ToListAsync(ct);
     }
 
@@ -318,7 +318,7 @@ public sealed class AgentService
                     null,
                     null,
                     null,
-                    s.TerminationSource),
+                    s.TerminationSource, s.ExitSignal, SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)),
                 s.ComposedBundleStamp,
                 s.InstructionFileStamp,
                 s.RunnerId != null && s.RunnerStoreId != null && s.RunnerCwd != null ? s.RunnerId : null))
