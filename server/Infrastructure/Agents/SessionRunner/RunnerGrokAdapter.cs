@@ -66,7 +66,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
         _time = time ?? TimeProvider.System;
     }
 
-    public Task<int> Exited => _terminal.Exited;
+    public Task<int> Exited => AgentExitObservation.CompatibilityAsync(Completion);
     public Task<AgentExitObservation> Completion => _terminal.Completion;
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;

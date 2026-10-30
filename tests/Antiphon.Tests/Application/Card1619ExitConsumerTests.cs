@@ -165,6 +165,8 @@ public class Card1619ExitConsumerTests
             NullLogger<AttentionService>.Instance);
         var item = (await attention.GetAsync(default)).Items.Single(x => x.Kind == AttentionKind.SessionStopStuck && x.SessionId == task.SessionId);
         item.Evidence.ShouldContain("signal unknown");
+        item.Evidence.ShouldContain("exit unobserved");
+        item.Evidence.ShouldNotContain("process ended");
         await s.PastGraceAsync(s.Harness());
         (await s.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
         await using var verify = s.CreateContext();
@@ -203,6 +205,7 @@ public class Card1619ExitConsumerTests
             await db.SaveChangesAsync();
         }
         await warm.ReleaseFromSettlementAsync();
+        await warm.SweepAsync(janitor: true);
         warm.Wire.ConditionalCommands.ShouldBe(0);
         warm.RecordedStops.Killed.ShouldBeEmpty();
         await using var warmed = warm.Db();
@@ -264,6 +267,10 @@ public class Card1619ExitConsumerTests
         ((bool)method.Invoke(null, [row, kill, generation])!).ShouldBeFalse("known normal exit cannot belong to a signal kill");
         row.ExitSignal = 9;
         ((bool)method.Invoke(null, [row, kill, generation])!).ShouldBeTrue("compare actual zero/signal 9, never compatibility -1");
+        row.ExitCode = 1;
+        row.ExitSignal = 0;
+        var windowsKill = ctor.Invoke([true, generation, generation, AgentExitReason.KilledByRequest, 1, 0]);
+        ((bool)method.Invoke(null, [row, windowsKill, generation])!).ShouldBeTrue("Windows no-signal kill ownership remains unchanged");
     }
 
     [Test]
@@ -271,13 +278,14 @@ public class Card1619ExitConsumerTests
     {
         var failures = new List<Exception>();
         foreach (var check in new Func<Task>[] { AssertUnknownRecoveryAsync, AssertOptionalProjectionAsync,
-            async () => {
-        await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
-            "Exited", null, AgentExitReason.Unknown, 0));
-        // Windows producers report signal zero with the original signed code. This portable
-        // consumer witness complements the still-owed native modern/inbox CP-2.
-        await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
-            "Exited", -1, AgentExitReason.KilledByRequest, 0, ExitSignal: 0));
+            async () =>
+            {
+                await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
+                    "Exited", null, AgentExitReason.Unknown, 0));
+                // Windows producers report signal zero with the original signed code. This portable
+                // consumer witness complements the still-owed native modern/inbox CP-2.
+                await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
+                    "Exited", -1, AgentExitReason.KilledByRequest, 0, ExitSignal: 0));
             } })
         {
             try { await check(); } catch (Exception ex) { failures.Add(ex); }

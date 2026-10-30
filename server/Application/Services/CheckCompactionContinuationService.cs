@@ -388,6 +388,8 @@ public sealed class CheckCompactionContinuationService
             session.Status = SessionStatus.Stopped;
             session.EndedAt = UtcNow();
             session.TerminationSource = SessionTerminationSource.CompactionContinuationRecovery;
+            // Policy-stop compatibility only, not a native wait observation. Unknown signal
+            // remains unknown and a later real observation may enrich this terminal row.
             session.ExitCode ??= 0;
         }
 

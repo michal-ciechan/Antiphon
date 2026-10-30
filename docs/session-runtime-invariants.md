@@ -1,5 +1,27 @@
 # Session runtime invariants
 
+## Exit evidence (CARD-1619; combined qualification pending)
+
+Process exit evidence consists of an actual nullable code and a separate nullable
+signal: null is unknown, zero is observed without a POSIX signal, and a positive
+signal is an observed Linux signal. A zero legacy code does not prove success or
+self-exit. Newly observed unsolicited signals fail the session and its agent;
+already authorized policy stops and CPU-spin reclamation retain their resumable
+stop semantics. Memory kills fail. Only a report can supply a task outcome.
+
+Protocol adapters return compatibility -1 for a positive signal or missing code,
+otherwise the actual code. Persistence and launch-cleanup ownership read the
+structured observation, never that compatibility value. PtyAgentRunner.Exited
+retains the actual integer. Unknown replay cannot erase complete evidence, and
+generation/time/first-source guards remain mandatory.
+
+Dispatcher, attention, supervisor, attempts and diagnostics describe the signal,
+a known normal code, or unknown evidence. ProcessExit is an observation source,
+not proof of a voluntary exit. A stored stop request proves a request only; S4
+owns live issuer attribution and diagnostic recording. Exit codes supply no new
+custody, janitor, terminal-seat or stop-debt release authority. Windows native
+spawn, kill and signed exit-code behavior remain unchanged.
+
 CARD-1521: a queued Delegation Codex task-brief pointer requires the complete
 normalized pointer in the current bottom composer before any submitting Enter.
 Recheck after the existing settle window. A complete UserPrompt beyond the original

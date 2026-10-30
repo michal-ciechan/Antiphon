@@ -200,6 +200,10 @@ public sealed partial class AttentionService
                 $"Runner liveness: {liveness}; runner={session?.RunnerId ?? "local/unknown"}; "
                     + $"AgentKind={session?.AgentKind.ToString() ?? "unknown"}. "
                     + $"{Excerpt(session?.FailureReason)} "
+                    + (session is null ? "" : session.Status == SessionStatus.Stopping && session.ExitSignal is null
+                        ? "Antiphon stop requested; signal unknown; exit unobserved. "
+                        : SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal,
+                            session.TerminationSource, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)) + ". ")
                     + string.Join("; ", debt.Take(5).Select(i => $"{i.FailureReason}: {Excerpt(i.Message)}")),
                 since, null, owner is null ? [AttentionAction.OpenDrawer] : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer],
                 ModelKind: session?.AgentKind.ToString(), ConditionKey: $"session-stop-stuck:{id:N}"));

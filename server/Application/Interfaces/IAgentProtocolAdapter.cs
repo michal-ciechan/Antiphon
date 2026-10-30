@@ -33,6 +33,7 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     Task<AdapterGenerationKill> KillGenerationAsync(
         DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
         Task.FromResult(new AdapterGenerationKill(false, null));
+    /// <summary>Compatibility only: -1 for a known signal or unknown code. Persist Completion.</summary>
     Task<int> Exited { get; }
     // Old implementations report their existing code and unknown signal evidence.
     Task<AgentExitObservation> Completion => LegacyCompletionAsync(Exited);

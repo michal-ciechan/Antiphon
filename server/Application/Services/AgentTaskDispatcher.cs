@@ -3089,12 +3089,13 @@ public sealed partial class AgentTaskDispatcher
             .ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
+                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal, s.ExitStopIntentJson })
                 .ToListAsync(ct))
             .ToDictionary(
                 s => s.Id,
                 s => new AgentTaskLiveness.SessionSnapshot(
-                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
+                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal,
+                    SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)));
 
         var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
         foreach (var task in open)

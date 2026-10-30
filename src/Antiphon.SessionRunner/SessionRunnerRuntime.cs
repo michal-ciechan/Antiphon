@@ -3586,7 +3586,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _ansiLogPath = manifest.AnsiLogPath,
                 _adopted = true,
                 _status = "Exited",
-                _exitCode = manifest.ExitCode ?? -1,
+                _exitCode = manifest.ExitCode,
                 _exitSignal = manifest.ExitSignal,
                 _exitStopIntent = ProcessStopIntent.Recovered(manifest.ExitStopIntent),
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
@@ -4314,7 +4314,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (_status != "Running")
                     return false; // a real exit event won the race — keep its verdict
                 _status = "Exited";
-                _exitCode ??= -1;
+                // No native wait status exists for a vanished process; keep the code unknown.
                 _exitReason = "ProcessVanished";
                 exitCode = _exitCode;
                 lastSequence = _lastSequence;

@@ -188,7 +188,7 @@ public sealed class DiagnosticsBundleService
                             i.Id, i.AgentId, i.SessionId,
                             kind = i.Kind.ToString(),
                             severity = i.Severity.ToString(),
-                            i.Message, i.ExitCode, i.FailureReason, i.CreatedAt
+                            i.Message, i.ExitCode, i.ExitSignal, i.FailureReason, i.CreatedAt
                         })
                         .ToListAsync(ct);
 
@@ -204,6 +204,8 @@ public sealed class DiagnosticsBundleService
                         session.LastSeenAt,
                         session.EndedAt,
                         session.ExitCode,
+                        session.ExitSignal,
+                        exitStopIntent = SessionExitEvidence.ReadIntent(session.ExitStopIntentJson),
                         session.FailureReason,
                         sessionBackend = session.SessionBackend.ToString(),
                         session.EffectiveModelId,

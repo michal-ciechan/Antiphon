@@ -264,13 +264,16 @@ public sealed partial class AgentSessionRuntime
             // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open, and
             // CARD-0383 detect-timeout keep-pane, are never a clean stop — Stopped is operator
             // intent and reconciliation's auto-kill key.
-            var cleanStop = exitCode == 0 || exitReason == AgentExitReason.CpuSpinKilled;
+            var cleanStop = SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
+                session.TerminationSource);
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
                 session.Status = cleanStop ? SessionStatus.Stopped : SessionStatus.Failed;
                 // Actual code and optional signal were merged under the generation fence above.
                 if (session.Status == SessionStatus.Failed)
-                    session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
+                    session.FailureReason = $"Process exited ({exitReason}, code {session.ExitCode?.ToString() ?? "unknown"}). "
+                        + SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal, session.TerminationSource,
+                            SessionExitEvidence.ReadIntent(session.ExitStopIntentJson));
                 // A prior KillAsync may already have persisted OperatorRequest/SystemRequest;
                 // an exit event must not erase it (CARD-0256).
                 SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
@@ -2312,7 +2315,7 @@ public sealed partial class AgentSessionRuntime
             return await adapter.KillAsync(timeout, ct);
 
         var session = await _runnerClient.KillAsync(sessionId, ct);
-        return session.Status == "Exited" || session.ExitCode is not null;
+        return session.Status == "Exited" || session.ExitCode is not null || session.ExitSignal is > 0;
     }
 
     public async Task<bool> KillGenerationAsync(
@@ -2329,22 +2332,23 @@ public sealed partial class AgentSessionRuntime
     {
         if (_testAdapters.TryGetValue(sessionId, out var adapter))
         {
-            int? exitCode = adapter.Exited.IsCompletedSuccessfully
-                ? adapter.Exited.Result
-                : null;
+            var completion = adapter.Completion;
+            var observation = completion.IsCompletedSuccessfully ? completion.Result : null;
+            int? exitCode = observation?.ExitCode;
             _testPending.TryGetValue(sessionId, out var pending);
             return Task.FromResult(new SessionRunnerSessionDto(
                 sessionId,
                 adapter.Pid,
                 UtcNow(),
-                exitCode is null ? "Running" : "Exited",
+                observation is null ? "Running" : "Exited",
                 exitCode,
                 adapter.ExitReason,
                 GetDeltaSequenceOrDefault(sessionId),
                 Pending: pending,
                 AcceptedStartedAt: _testAcceptedStartedAt.TryGetValue(sessionId, out var accepted)
                     ? accepted
-                    : null));
+                    : null,
+                ExitSignal: observation?.ExitSignal, ExitStopIntent: observation?.ExitStopIntent));
         }
 
         return _runnerClient.GetAsync(sessionId, ct);
