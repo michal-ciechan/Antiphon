@@ -299,7 +299,7 @@ public class RemoteControlMaintenanceQueueTests
     [Arguments("working")]
     [Arguments("unknown")]
     [Arguments("redraw")]
-    public async Task C514_Enter_refresh_preserves_custody_and_ambiguity_barriers(string change)
+    public async Task C514_Enter_refresh_preserves_custody_and_ambiguity_barriers(string change, CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var generation = h.Generation;
@@ -327,7 +327,7 @@ public class RemoteControlMaintenanceQueueTests
             return snapshot;
         };
 
-        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
         changed.ShouldBeTrue();
         h.Adapter.ConditionalInputs.ShouldBe(change == "unknown" ? ["/remote-control", "\r"] : ["/remote-control"]);
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
