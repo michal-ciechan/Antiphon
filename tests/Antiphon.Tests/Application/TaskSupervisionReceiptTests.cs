@@ -127,6 +127,32 @@ public sealed class TaskSupervisionReceiptTests
     }
 
     [Test]
+    public async Task C1610_Report_rows_stored_five_seconds_after_exit_are_forwarded()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await using (var db = h.Context())
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.Status = SessionStatus.Stopped;
+            session.EndedAt = h.Clock.GetUtcNow().UtcDateTime;
+            await db.SaveChangesAsync();
+        }
+        await RecoverAsync(parent, h.Clock);
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        await h.FinishAsync();
+        h.Clock.Advance(TimeSpan.FromMinutes(2));
+        await RecoverAsync(parent, h.Clock);
+        await using var verify = h.Context();
+        (await verify.TaskSupervisionNotices.AnyAsync(n => n.TaskId == h.TaskId
+            && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent)).ShouldBeTrue(
+                "session exit precedes transcript upload and cannot close the report watch");
+        (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     [Arguments("ended")]
     [Arguments("legacy")]
     public async Task C1610_Failure_watch_closes_without_a_report(string arm)
