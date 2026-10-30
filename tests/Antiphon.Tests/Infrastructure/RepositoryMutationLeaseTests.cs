@@ -187,6 +187,97 @@ public sealed class RepositoryMutationLeaseTests
         }
     }
 
+    [Test]
+    [Arguments("exited")]
+    [Arguments("streams-closed")]
+    [Arguments("not-started")]
+    [Arguments("exited-async")]
+    public async Task C448_JournalRemovalRetriesTransientDeleteFailuresBeforeRelease(string completion)
+    {
+        using var repo = new ScratchGitRepo("c448-delete-retry");
+        var provider = new RepositoryMutationLease(new LandingGit());
+        await using var lease = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        var attempts = 0;
+        var journal = await RepositoryChildJournal.BeginAsync(repo.Path, null, path =>
+        {
+            provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue("every delete attempt precedes exclusion release");
+            if (++attempts <= 2) throw new IOException("fixture sharing violation");
+            File.Delete(path);
+        }, CancellationToken.None);
+        using var child = await ExitedJournalChildAsync(journal, completion);
+
+        await Should.NotThrowAsync(() => CompleteJournalAsync(journal, child, completion));
+
+        attempts.ShouldBe(3, "two transient failures must be retried before completion returns");
+        (await RepositoryChildJournal.HasUnfinishedAsync(lease.CommonDirectory, new LandingGit(), CancellationToken.None)).ShouldBeFalse();
+        Directory.EnumerateFiles(Path.Combine(lease.CommonDirectory, "antiphon", "children")).ShouldBeEmpty();
+        await lease.DisposeAsync();
+        await using var admitted = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
+        admitted.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("exited")]
+    [Arguments("streams-closed")]
+    [Arguments("not-started")]
+    [Arguments("exited-async")]
+    public async Task C448_JournalRemovalFailureKeepsFenceAndRecordsReason(string completion)
+    {
+        using var repo = new ScratchGitRepo("c448-delete-failure");
+        var provider = new RepositoryMutationLease(new LandingGit());
+        await using var lease = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        var attempts = 0;
+        var journal = await RepositoryChildJournal.BeginAsync(repo.Path, null, _ =>
+        {
+            provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue();
+            attempts++;
+            throw new IOException("fixture permanent sharing violation");
+        }, CancellationToken.None);
+        using var child = await ExitedJournalChildAsync(journal, completion);
+        var watch = Stopwatch.StartNew();
+
+        var failure = await Should.ThrowAsync<IOException>(() => CompleteJournalAsync(journal, child, completion));
+
+        failure.Message.ShouldContain("repository_child_journal_cleanup_failed");
+        attempts.ShouldBeGreaterThan(1);
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "cleanup retries have a finite two-second allowance");
+        provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue();
+        var path = Directory.EnumerateFiles(Path.Combine(lease.CommonDirectory, "antiphon", "children")).ShouldHaveSingleItem();
+        using var record = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        record.RootElement.GetProperty("CleanupFailure").GetString().ShouldBe("delete_failed");
+        await lease.DisposeAsync();
+        await using var fenced = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
+        fenced.ShouldBeNull("releasing the OS handle must not admit a writer across failed cleanup");
+        (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None)).ShouldContain("recover-repository-children.ps1");
+    }
+
+    private static async Task<Process?> ExitedJournalChildAsync(RepositoryChildJournal journal, string completion)
+    {
+        if (completion == "not-started") return null;
+        var child = StartSleeper();
+        try { await journal.StartedAsync(child, CancellationToken.None); }
+        finally
+        {
+            if (!child.HasExited) child.Kill(true);
+            await child.WaitForExitAsync();
+        }
+        return child;
+    }
+
+    private static Task CompleteJournalAsync(RepositoryChildJournal journal, Process? child, string completion)
+    {
+        switch (completion)
+        {
+            case "exited": journal.Exited(child!); break;
+            case "streams-closed": journal.StreamsClosed(); break;
+            case "not-started": journal.NotStarted(); break;
+            case "exited-async": return journal.ExitedAsync(CancellationToken.None);
+            default: throw new ArgumentOutOfRangeException(nameof(completion));
+        }
+        return Task.CompletedTask;
+    }
     private static Process StartSleeper()
     {
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true };

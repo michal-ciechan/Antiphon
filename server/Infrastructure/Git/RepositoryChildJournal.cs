@@ -11,21 +11,28 @@ internal sealed class RepositoryChildJournal
     // flushed temporary before the only replacement; normal server processes leave it null.
     internal static Func<string, Task>? BeforeReplaceForTests { get; set; }
     private readonly string _path;
+    private readonly Action<string> _deleteRecord;
     private ChildRecord _record;
 
-    private RepositoryChildJournal(string path, ChildRecord record) { _path = path; _record = record; }
+    private RepositoryChildJournal(string path, ChildRecord record, Action<string> deleteRecord)
+    { _path = path; _record = record; _deleteRecord = deleteRecord; }
 
     public static Task<RepositoryChildJournal> BeginAsync(string repository, CancellationToken ct)
         => BeginAsync(repository, tag: null, ct);
 
     /// <summary>CARD-1076: <paramref name="tag"/> is stored on the record. A null tag is the untagged journal.</summary>
-    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag, CancellationToken ct)
+    internal static Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag, CancellationToken ct)
+        => BeginAsync(repository, tag, File.Delete, ct);
+
+    // Instance-scoped filesystem seam: deletion sharing failures are Windows-only on real handles.
+    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
+        Action<string> deleteRecord, CancellationToken ct)
     {
         var common = await new LandingGit().CommonDirectoryAsync(repository, ct);
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
-            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId));
+            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId), deleteRecord);
         await journal.SaveAsync(ct); // Unknown/start intent is durable before Process.Start.
         return journal;
     }
@@ -75,23 +82,23 @@ internal sealed class RepositoryChildJournal
     public void Exited(Process child)
     {
         if (!child.HasExited) throw new InvalidOperationException("owned_child_still_running");
-        File.Delete(_path); // Only this operation's journal, after its exact handle exited.
+        _deleteRecord(_path); // Only this operation's journal, after its exact handle exited.
     }
 
     /// <summary>Removes this journal without a Process handle. The caller has already observed the
     /// root exit and is invoking this only once both redirected streams have closed. A server crash
     /// before that leaves the file for recover-repository-children.ps1.</summary>
-    internal void StreamsClosed() => File.Delete(_path);
+    internal void StreamsClosed() => _deleteRecord(_path);
 
     /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
-    public void NotStarted() => File.Delete(_path);
+    public void NotStarted() => _deleteRecord(_path);
 
     public async Task ExitedAsync(CancellationToken ct)
     {
         if (_record.ProcessId is null || _record.StartTicks is null
             || await new LandingGit().IsProcessAliveAsync(_record.ProcessId.Value, _record.StartTicks.Value, ct) != false)
             throw new InvalidOperationException("owned_child_exit_unconfirmed");
-        File.Delete(_path);
+        _deleteRecord(_path);
     }
 
     private async Task SaveAsync(CancellationToken ct)
