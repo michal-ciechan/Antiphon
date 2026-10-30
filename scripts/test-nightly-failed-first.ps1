@@ -85,9 +85,7 @@ function New-FFHistoricalFixture {
     foreach ($suite in @('antiphon','session-runner','agents-pty','e2e')) {
         $name = $suite + '-failed.trx'
         [IO.File]::WriteAllText((Join-Path $run $name), ('<TestRun><TestDefinitions>'+$defsBySuite[$suite]+'</TestDefinitions><Results>'+$rowsBySuite[$suite]+'</Results></TestRun>'))
-        # Identity-union control isolates evidence from summary accounting faults.
-        # Real failed-summary shapes are independently exercised below.
-        $suites += [ordered]@{ id=$suite; chunk='failed'; trx=$name; exitCode=0; timedOut=$false }
+        $suites += [ordered]@{ id=$suite; chunk='failed'; trx=$name; exitCode=1; result='FAIL'; timedOut=$false }
     }
     $extra = @('CheckpointOrFilterTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointAppTests','CheckpointAdmissionContractTests','CheckpointSlotExecutorTests','CheckpointExecutorLogTests')
     $diag = "    version: 2.2.2`nTest framework UID: 'TUnitExtension' Version: '1.44.0.0'`n"
@@ -107,7 +105,7 @@ function New-FFHistoricalFixture {
     [IO.File]::WriteAllText((Join-Path $run 'recovered.diag'),$recoveredDiag)
     [IO.File]::WriteAllText((Join-Path $run 'recovered.trx'),'<TestRun><TestDefinitions><UnitTest id="recovered"><TestMethod className="Antiphon.Tests.Checkpoints.RecoveredTests" name="Case8" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="recovered" outcome="Passed" /></Results></TestRun>')
     $suites += [ordered]@{id='antiphon';chunk='recovered';trx='recovered.trx';execution='recovered.diag';timedOut=$false;exitCode=0}
-    $suites += [ordered]@{ id='antiphon'; chunk='all-group-105'; trx='antiphon-all-group-105.trx'; execution='antiphon-all-group-105-execution/invocation.diag'; timedOut=$true; exitCode=0 }
+    $suites += [ordered]@{ id='antiphon'; chunk='all-group-105'; trx='antiphon-all-group-105.trx'; execution='antiphon-all-group-105-execution/invocation.diag'; timedOut=$true; exitCode=1; result='FAIL' }
     $summary = [ordered]@{ runId='retained-run'; attempt='1'; invocationId='retained-run'; completedAt='2026-10-29T00:00:00Z'; sha=('a'*40); profile='rc'; platform='windows'; policyHash=('b'*64); selectedSuites=@('antiphon','session-runner','agents-pty','e2e'); suites=$suites; timingRoot='timing' }
     Write-FFJson (Join-Path $run 'summary.json') $summary
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
@@ -197,7 +195,38 @@ function Test-FFChunkAccounting([string]$Variant) {
     $wholeChunk=($Variant -ceq 'missing' -or (@($full.members).Count -eq 2 -and @($full.unresolved | Where-Object { $_.className -cin @($nodes.ClassName) }).Count -eq 2))
     return ($wholeChunk -and @($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $history $suite PriorFailureSweep } 'prior-failure-sweep-unresolved'))
 }
+function Test-OrdinaryFailedChunk {
+    foreach ($retainedPlan in @($true,$false)) {
+        $variant=if ($retainedPlan) { 'bound' } else { 'unbound' }
+        $run=Join-Path $root ('ordinary-'+$variant)
+        [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
+        $nodes=@((New-FFNode 'Antiphon.Tests.Accounting.FailedTests' 'Run' 'failed'),(New-FFNode 'Antiphon.Tests.Accounting.PassedTests' 'Run' 'passed'))
+        $row=[ordered]@{id='antiphon';chunk='all';exitCode=2;result='FAIL';timedOut=$false}
+        Write-FFJson (Join-Path $run 'summary.json') ([ordered]@{runId='ordinary';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'})
+        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+        if ($retainedPlan) { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='ordinary';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
+        $defs=''; $results=''
+        foreach ($n in $nodes) {
+            $defs += '<UnitTest id="'+$n.Uid+'"><TestMethod className="'+$n.ClassName+'" name="Run" /></UnitTest>'
+            $outcome=if ($n.Uid -ceq 'failed') { 'Failed' } else { 'Passed' }
+            $results += '<UnitTestResult testId="'+$n.Uid+'" outcome="'+$outcome+'" />'
+        }
+        [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'),('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><TestDefinitions>'+$defs+'</TestDefinitions><Results>'+$results+'</Results></TestRun>'))
+        $exp=Export-NightlyPriorFailures $run (Join-Path $root ('ordinary-'+$variant+'.json')) -PassThru
+        $history=Read-NightlyPriorFailures $exp.Path $exp.Digest
+        $suite=@([pscustomobject]@{id='antiphon';nodes=$nodes;chunks=@([pscustomobject]@{id='all';classes=@($nodes.ClassName);nodes=$nodes});exclusions=@()})
+        $full=Resolve-NightlyPriorFailures $history $suite Full
+        Assert-FF ($history.membershipComplete -and @($full.unresolved).Count -eq 0 -and @($full.members).Count -eq 1 -and $full.members[0].className -ceq $nodes[0].ClassName -and @($history.fallbackChunks).Count -eq 0) ('ordinary-'+$variant+'-full')
+        $accepted=$false; $detail=''
+        try {
+            $partial=Resolve-NightlyPriorFailures $history $suite PriorFailureSweep
+            $accepted=(@($partial.members).Count -eq 1 -and $partial.members[0].className -ceq $nodes[0].ClassName -and @($partial.members[0].requiredUids).Count -eq 1 -and $partial.members[0].requiredUids[0] -ceq 'failed' -and @($partial.unresolved).Count -eq 0)
+        } catch { $detail=$_.Exception.Message }
+        Assert-FF $accepted ('ordinary-'+$variant+'-partial') $detail
+    }
+}
 function Test-RefusesIncompleteEvidence {
+    Test-OrdinaryFailedChunk
     $replay=New-FFReplay
     $fx=New-FFHistoricalFixture
     $path=Join-Path $root 'valid-history.json'
@@ -340,7 +369,8 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=39 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=43 }
+    'OrdinaryFailedChunk' { Test-OrdinaryFailedChunk; $expected=4 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
