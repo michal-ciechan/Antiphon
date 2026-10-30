@@ -180,6 +180,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_object_completeness", 4, ExistingReason, true),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_overall_timeout", 1, ExistingReason, true),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_resume_preserves_proof", 1, ExistingReason, true),
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Resume_extraction_is_closed", 1, ExistingReason, true),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_hidden_locations", 132, ExistingReason, true),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Option_manifest_is_strict", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleScriptTests", "C1008_Documentation_and_transport_pins_match", 1, ExistingReason),
