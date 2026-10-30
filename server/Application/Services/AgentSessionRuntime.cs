@@ -2271,7 +2271,12 @@ public sealed partial class AgentSessionRuntime
         if (await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.AgentKind).SingleAsync(ct) == AgentKind.ClaudeCode)
         {
             var observation = await ObserveDialogAsync(sessionId, ct);
-            if (observation?.OutputSequence != request.ExpectedLastSequence)
+            if (observation is null || observation.OutputSequence != request.ExpectedLastSequence)
+                return new(sessionId, ConditionalInputOutcomes.StaleObservation);
+            // A caller retaining a typed body may refresh output evidence after a refused write,
+            // but must not acquire authority over input written by somebody else in between.
+            if ((request.ExpectedInputRevision is { } revision && observation.InputRevision != revision)
+                || (request.ExpectedRuntimeEpoch is { } epoch && observation.RuntimeEpoch != epoch))
                 return new(sessionId, ConditionalInputOutcomes.StaleObservation);
             try
             {

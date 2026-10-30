@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -32,8 +31,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal sealed class RemoteControlPtyLane : IAsyncDisposable
 {
-    /// <summary>CARD-0045: fakeclaude models the INBOX conhost's typed-input path; say so rather
-    /// than inheriting whatever the launching shell exported.</summary>
+    /// <summary>CARD-0045: pin the legacy Windows typed-input lane; on Linux this resolves to
+    /// UnixPty. Never inherit the launching shell's backend selection.</summary>
     public const string PinnedBackend = "inbox";
 
     public required DirectSessionRunnerClient Client { get; init; }
@@ -52,13 +51,13 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
     public RemoteControlRecoveryService Recovery => Provider.GetRequiredService<RemoteControlRecoveryService>();
 
     public static string FakeClaudeExe =>
-        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
+        Path.Combine(AppContext.BaseDirectory, "fakeclaude", OperatingSystem.IsWindows() ? "fakeclaude.exe" : "fakeclaude");
 
-    /// <summary>Real ConPTY plus a staged child; a lane test cannot be faked past either.</summary>
+    /// <summary>Real platform PTY plus a staged child; a lane test cannot be faked past either.</summary>
     public static void SkipIfUnavailable()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            throw new SkipTestException("ConPTY only on Windows");
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+            throw new SkipTestException("RC lane requires Windows ConPTY or Linux UnixPty");
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
     }

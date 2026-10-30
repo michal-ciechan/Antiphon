@@ -226,12 +226,13 @@ public class RemoteControlMaintenanceQueueTests
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
+        var generation = h.Generation;
         var redraws = 0;
         h.Runner.SnapshotOverride = sessionId =>
         {
             var snapshot = new SessionRunnerSnapshotDto(sessionId,
                 h.Adapter.SnapshotRawOutput(), h.Adapter.SnapshotRenderedScreen(),
-                h.Adapter.SnapshotSequence, h.Generation, h.Generation);
+                h.Adapter.SnapshotSequence, generation, generation);
             // The command is visible, but the terminal emits the rest of its frame after this
             // snapshot and before AgentSessionRuntime's separate dialog observation. No input
             // changed and the first guarded Enter must be refused with zero backend bytes.
@@ -250,6 +251,51 @@ public class RemoteControlMaintenanceQueueTests
         await using var db = h.CreateDb();
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
             && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments("input")]
+    [Arguments("menu")]
+    [Arguments("working")]
+    [Arguments("unknown")]
+    [Arguments("redraw")]
+    public async Task C514_Enter_refresh_preserves_custody_and_ambiguity_barriers(string change)
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var generation = h.Generation;
+        var changed = false;
+        h.Runner.SnapshotOverride = async sessionId =>
+        {
+            var snapshot = new SessionRunnerSnapshotDto(sessionId,
+                h.Adapter.SnapshotRawOutput(), h.Adapter.SnapshotRenderedScreen(),
+                h.Adapter.SnapshotSequence, generation, generation);
+            if (h.Adapter.ConditionalInputs.SequenceEqual(["/remote-control"]) && (!changed || change == "redraw"))
+            {
+                changed = true;
+                h.Adapter.SnapshotSequence++;
+                switch (change)
+                {
+                    case "input":
+                        await h.Runtime.SendInteractiveInputAsync(sessionId, "operator draft", CancellationToken.None,
+                            trackManualTurn: false);
+                        break;
+                    case "menu": h.Adapter.RemoteControlMenuOpen = true; break;
+                    case "working": await h.MarkWorkingAsync(); break;
+                    case "unknown": h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown; break;
+                }
+            }
+            return snapshot;
+        };
+
+        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        changed.ShouldBeTrue();
+        h.Adapter.ConditionalInputs.ShouldBe(change == "unknown" ? ["/remote-control", "\r"] : ["/remote-control"]);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Runner.RawInputs.ShouldBeEmpty();
+        h.Adapter.ConditionalOutcomeOverride = null;
+        (await h.ReserveAsync()).ShouldBeNull("an unconfirmed arm cannot replay later in the generation");
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
     }
 
     [Test]
