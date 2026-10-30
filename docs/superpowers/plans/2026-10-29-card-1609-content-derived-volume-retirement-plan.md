@@ -15,7 +15,7 @@ The round-2 findings and validation below remain historical evidence.
 | Review defect | Required revision | Status |
 |---|---|---|
 | D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Done: D-20, S3/S4, J8/W6 |
-| D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Dispositions/16-row roster complete; final import recorded below |
+| D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Done: 16 rows imported; 360 executions reconcile; final validation below |
 | D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Done: D-21 and master/rc order; current 1615 D-11 checked |
 | D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Done: D-17 exact raw bytes, C13/PC-SeedHeaders |
 | A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Done: rollout step 4 is preview-only with measured refusal prevalence |
@@ -105,6 +105,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 | Private host proof already proves ancestry | CARD-1607 emits advertised refs only after classified auth failure; the shell then uses fetched/present heads. `created >= started` has no upper age bound. | All origins move to a complete, fresh host proof; retain fail-closed error handling. |
 | Branches and worktree HEADs are the whole safety gate | Existing scanner protects loose/packed refs, reflogs, pseudorefs, linked admins, indices, object completeness and unknown Git shapes. | Preserve that closure; no reflog or tag weakening. |
 | Every target volume is audited | `c1008_audit` reads work plus registered tmp checkouts. No work volume returns `absent` before other content checks; state is not mounted. | Typed role inventory for every present target, including state and non-work content. |
+| The no-remote seed can be recognized by tree and identity fields alone | `ReportBudgetWorkspace.TemplateAsync` writes the two exact files and invokes `git commit -m seed`; Git commit objects can also contain extra headers, and this invocation does not explicitly turn ambient signing/encoding off. | D-17 compares the entire raw commit byte shape and intentionally refuses extra headers, including fixture-produced ones. |
 | Repeated census reads are stable | PowerShell retries Drift only; Unstable throws. Shell also permits final Drift after journaled container removal. | D-19 defines bounded v2 retry without accepting incomplete proof; keep v1 adapter explicit. |
 | Container absence proves no access | `c1008_references` additionally detects bind sources overlapping a volume mount; named-volume queries alone miss them. | Preserve all-container census and canonical alias checks. |
 | Existing receipts bind an immutable Docker ID | `c1008_volume` has Name/CreatedAt/Mountpoint/selected labels/driver/options; named local volumes have no container-style immutable Id in this implementation. | Bind daemon identity and the whole incarnation tuple; never substitute name alone. |
@@ -271,6 +272,7 @@ not a giant jq argv (the prototype already exceeds practical argv limits).
 | Publication | Complete requested-object roster, one unambiguous verdict/witness per object, origin advertisement digest, origin observations, inventory digest, operation/phase and host completion. |
 | Provenance | Optional old source/image/Compose/cleanup refs; current script hashes/image digest and protocol; warnings. Historical conflicts never change Ready to refused. |
 | Apply ledger | Preview digest, fresh validation digests, ordered exact targets, per-target delete intent/result, final absence, partial/refused/completed state; attestation when manual. |
+| Deploy admission / Close | D-20 phase and active-owner/child facts, all container/volume intents/results, current absence and journal census. Close appends prior digest, actor/authority/reason/UTC, observed reconciliations and terminal Closed digest; never a Ready capability. |
 
 Write a temporary private regular file, flush file data, atomically rename and
 flush directory metadata on the Linux deletion host before acknowledging Ready or
@@ -349,7 +351,7 @@ content via volume authorization: retain C994's separate established container
 retirement contract. Main generation reconstruction remains unchanged.
 
 **D-10 — Manual is an attested entry to the same gate.** Add
-`scripts/retire-runner-volumes.ps1` with mutually exclusive Preview and Apply
+`scripts/retire-runner-volumes.ps1` with mutually exclusive Preview, Apply and Close
 parameter sets. It is callable by the operator on the credential-capable control
 host, or a specifically commissioned delegate with recorded human authority and
 access to the existing owner-only operator credential. Possessing an operation
@@ -884,12 +886,15 @@ W6/J8 own its behavioral matrix, and those stubs must not mask its own test call
 | `C849_Deploy_ordering_contract_is_pinned` | 1 | Rewrite obsolete `compose_temp down -v` assertions to exact v2 intent/proof/rm ordering; preserve main v1/cache ordering. |
 | `C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads` | 1 | Unchanged/run: both deploy blocks retain cold mount/writability verification. |
 | `C912_Cold_exception_never_weakens_maintenance_or_donor_gates` | 1 | Unchanged/run: jq guard and unchanged maintenance/donor zero/attachment gates. |
-| `C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers` | 6 | Rewrite `scripts/fixtures/c973-marker-reader.sh` inputs for deploy/retire v2; preserve all six reader identities, marker-independent retirement and external-cache identity protection. |
+| `C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers` | 6 | Unchanged/run: its harness extracts only the real cache prepare/ready slice and cache-preservation predicate, not the new deployment preflight. Preserve all six reader identities, marker-independent retirement and external-cache identity protection; do not rewrite this narrow reader into a fake full retirement success. |
 
 Shared fixture scope in S3/S4 includes `C1008WrapperFixture` and
 `C1008HostFixture`, both declared in
 `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs`, plus
-`scripts/fixtures/c1008-fake-docker.sh` and `scripts/fixtures/c973-marker-reader.sh`. Preserve old main paths; add complete typed observations
+`scripts/fixtures/c1008-fake-docker.sh`, `scripts/fixtures/c727-fake-http.ps1` and
+`scripts/fixtures/c727-fake-verify.ps1` (the actual wrapper fixture boundaries).
+`scripts/fixtures/c973-marker-reader.sh` is read and retained unchanged.
+Preserve old main paths; add complete typed observations
 for v2, not a global audit-success stub. Record exact changed fixture paths in
 the implementation report. Changes to skip identities remain in CP-12.
 
@@ -1134,8 +1139,8 @@ ordinary checkpoint execution beyond C13 in CP-3 and does not change S1's four r
 ### Lanes, roster and execution
 
 Read `GET /api/runner-defaults` and `GET /api/session-runners` again at dispatch.
-They were read again on 2026-10-30: revision 2; an eligible Linux default
-and an eligible Windows peer were advertised (8/10 and 2/2 occupied respectively). These are
+They were read again during round 3 on 2026-10-30: revision 2; an eligible Linux default
+and an eligible Windows peer were advertised (7/10 and 2/2 occupied respectively). These are
 observations, not permanent placement instructions. CP-1..10 and CP-14/15/16 require the native
 Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11/12/13
 use the native Windows PowerShell/Git lane (CP-12/13 are portable checks reusing its build). No host is pinned. Omit `-Runner`;
@@ -1340,6 +1345,9 @@ explicitly pending measurement; no fabricated timing or test success is claimed.
 
 ## Round-2 validation record
 
+Historical record retained unchanged below; its 14-row/294-execution totals and
+then-current checkpoint digest are superseded by the round-3 validation record.
+
 Only this plan was edited. All ten defects and mount/performance/OS-witness
 advisories are incorporated; no implementation, native test execution, live audit
 or volume operation was performed. The original corrected 11-row table imported
@@ -1373,3 +1381,73 @@ above; these are expectations, not executed test counts.
 `git merge-tree --write-tree origin/master HEAD` was conflict-free against
 `98fc3ceb6440a17b68cafe3ecc21c76d190b18ca` at the validated tip. Final task-branch
 publication and merge simulation are reported with the final full commit SHA.
+
+## Round-3 validation record
+
+This round changes only this plan, in place. No product code, product test run,
+live audit, deployment or volume operation was performed. All four re-review
+defects and the preview-only advisory are incorporated; no further Plan or
+TestDesign is required. Code starts from then-current origin/master under the
+stated fail-closed defaults. Independent implementation Review remains required.
+
+Read the full round-2 re-review before work. Re-fetched origin/master and checked
+source at `98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`; inspected wrapper clear order,
+retirement-epoch guard, host proof's `origin-present` refusal, fixture creation,
+all added test dispositions and their consuming harnesses. The four production
+scripts remain byte-identical against the recorded rc snapshot
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`. Desktop historical receipts remain
+unavailable here; their evidence is explicitly attributed to the earlier plan
+and reviews, not represented as a new observation.
+
+The committed manifest at `18d2c19cce0b93534aaaeb650e8305a30deda484` imported
+successfully through the host build-slot gate, exit 0, **16 rows**. Command:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1609-r3-import -SlotWaitMinutes 5 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1609r3/ -- import --plan docs/superpowers/plans/2026-10-29-card-1609-content-derived-volume-retirement-plan.md --out .antiphon/card-1609-plan-r3.yaml
+```
+
+Unedited essential output:
+
+```text
+BUILD SLOT granted lease=91ef2745-e3c8-4ed8-be93-34ede1421a40 waited=0s maxcpucount=6
+WARNING CP-11: Build 'bin-c1609-windows' duplicates 'bin-c1609-final' from CP-3 (same project 'tests/Antiphon.Tests', After 'S2,S3,S4,S5', Repeat 1); write 'CP-3' in the Build cell to reuse it and save one build
+imported 16 rows -> .antiphon/card-1609-plan-r3.yaml
+BUILD SLOT released lease=91ef2745-e3c8-4ed8-be93-34ede1421a40 held=10s
+```
+
+The isolated tool bootstrap emitted five compiler/analyzer warnings and no errors;
+no product tests ran. The CP-11 warning is intentional: native Windows builds
+cannot reuse Linux output. The wrapper also noted that dotnet run's implicit
+build does not take the grant's maxcpucount argument; it remained slot-leased.
+Use a fresh ignored output for rerun. Both owned `bin-c1609r3/` directories
+(HostCleanup and Checkpoints) and the generated YAML were removed after exit.
+
+The final checkpoint section is unchanged by this validation prose:
+SHA-256 `8454ccaf80e6096375615923fb96c7de3910489815ce0221e1a4767fe61a8e9b`
+(from `### Checkpoints` through the bytes immediately before `## Rollout`).
+All 16 estimates are whole minutes. Static floor sums are **360 planned** results:
+S1 4 red; Linux 325 green; Windows 31 green. Estimated group costs are 7/26/7
+minutes. These are planned counts/costs, not execution receipts or measured p95.
+Source recount: Script 16; Host 22 after two one-for-one replacements; Docs 16;
+CP-16 15 methods/23 results (C1067 four, C973 six, 13 singleton methods).
+R3/R4/R5 floors remain 30/132/52. All selected existing class and method prefixes
+were checked against the fetched source: zero suffix collisions; the five new
+classes remain absent/reserved. Recheck new declarations and TRX at Code time.
+
+The exact seed tree/blobs were independently recomputed with Node SHA-1 and
+Git `hash-object` over the specified raw bytes, agreeing with D-17; no objects
+were written. PC-SeedHeaders is designed, not executed by Plan. Live GETs for
+runner defaults and runners confirmed the lane observations above; no host pin
+or fleet address is prescribed.
+
+`git diff --check` passed. `git merge-tree --write-tree origin/master HEAD`
+was conflict-free at the imported commit (tree
+`19e909b901e93c0b3ae54f999e5880340f5986f3`); final-tip fetch/simulation and remote
+publication are repeated and reported at settlement. Only this Markdown path is
+in the task delta. Slice publications, all fast-forward on the assigned branch:
+
+- Skeleton: `278561924db5d5e5c200e6131b3cf002435fe49f`.
+- D-1 pre-clear admission/journal closure: `1107de7b132d45c0a94d797ad649c633ec5edc6c`.
+- D-2 test dispositions/checkpoints: `e7eabbf1eab61166f739da5ee6bf13b8c455a2fe`.
+- D-3 CARD-1615 order: `5e1ae4e0acf0c298610c25d9b5ec3a7aa9e6935b`.
+- D-4 exact seed bytes/preview-only rollout: `18d2c19cce0b93534aaaeb650e8305a30deda484`.
