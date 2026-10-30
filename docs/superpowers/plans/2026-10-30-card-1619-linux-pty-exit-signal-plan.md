@@ -1,7 +1,7 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: initial skeleton; source audit and executable verification design in progress.
+Status: source-audited plan with verification design folded in; checkpoint import pending.
 Plan task: `9a468e98`; product code is outside this dispatch.
 
 ## Decisions
@@ -62,6 +62,8 @@ need it and add structured completion; known signal maps to a documented nonzero
 compatibility result only on that legacy adapter task. Host/session fields retain
 the actual observed code and separate signal. Windows `ModernConPtyConnection`
 supplies signal zero with the same signed exit code; no Windows kill or job changes.
+This card qualifies Linux only among Unix platforms. The adapter leaves macOS
+signal evidence unknown until that platform's mapping is separately qualified.
 
 ## Wire and rollout compatibility
 
@@ -296,20 +298,86 @@ Authorized preparatory tooling (separate from the closed product-test roster):
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph -- dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-card1619-graph/Release/net10.0/
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-update -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-check -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-migration -- dotnet ef migrations add AddSessionExitSignalEvidence --project server/Antiphon.Server.csproj --output-dir Migrations -- --property:OutputPath=bin-card1619-migration/
 ```
 
-For EF, verify the installed CLI's output-path forwarding before execution; if
-its `--` arguments are application arguments, use the documented isolated build
-plus `--no-build`/matching assembly instead. Do not let a scaffolding command
-rebuild a daemon's standard bin. Record these tooling costs separately (provisional
+For EF, restore the repository-pinned tool and scaffold
+`AddSessionExitSignalEvidence` with `dotnet ef migrations add`, project `server`,
+output directory `Migrations`, under `scripts/build-slot.ps1`. Arrange an isolated
+`bin-card1619-migration/` build and matching EF metadata before using `--no-build`;
+verify EF's resolved assembly path. `-- --property:OutputPath=...` is NOT an EF
+build-output override (it forwards application arguments), and is forbidden here.
+Do not let scaffolding rebuild a daemon's standard bin. Record tooling costs separately (provisional
 5 minutes graph, 5 minutes migration), and remove only producer-owned alternate
 outputs after use. Do not run migrations on a live database from Code tests.
 
 ## Performance budget
 
 Apply `docs/testing-and-build.md#performance-standards` and `docs/test-performance-standards.md`.
-This Plan runs no product tests. Its only planned build/tool validation is the requested checkpoint import, through the host build-slot gate. Code measurements are currently unavailable, not measured p95. The completed design will give exact test selections, bounded collection, phase/setup ownership, whole-minute estimates and provisional exceptions tracked by CARD-1619; derive final timeouts near twice measured p95. Any selection or run over 30 minutes requires Debug with retained timing evidence.
+This Plan runs no product tests. Its only build/tool validation is checkpoint
+import through the host build-slot gate. The new selections have **no measured
+p95 yet**. All estimates below are provisional engineering budgets, tracked by
+CARD-1619 under the R5 small-sample exception; they are not measured performance
+claims. The investigation measures incidence, not test runtime. Do not use the
+importer's 15-minute floor/3x estimate as timeout evidence.
+
+| Group | Expected build / execution wall minutes | Initial execution ceiling | Measurement obligation |
+|---|---|---|---|
+| S1 Linux CP-1 | 3 / 1 | 4 minutes | Six native cases; per-case expected 5 seconds, provisional 15-second bound |
+| Final Windows CP-2 | 4 / 3 | 8 minutes | Two new cases plus five existing tree-kill tests; native timings |
+| S2 Linux CP-3/4 | 4+4 / 2+2 | 8 minutes per row | Host ready, pipe, manifest IO, restart/adoption and teardown |
+| S3 Linux CP-5/6/7/8 | 6 / 5+1+2+2 | 12/2/4/4 minutes | Shared DB template/web host, isolated cases; separate typecheck span |
+| S4 Linux CP-9/10/11 | 4+4+6 / 2+2+3 | 8/8/10 minutes | Journal fault cuts, real stop, mapper/persistence, lifecycle |
+| S4 cgroup-v1 CP-12 | reuse CP-10 / 2 | 4 minutes | Exact owned container; no fleet-wide census or kill |
+
+Whole-minute checkpoint estimates include build where needed; reused rows include
+execution only. S1 Linux run 4 minutes; S2 12; S3 16; S4 23 including its native
+cgroup row; final Windows 7. Run separate committed-slice groups. Never combine
+all slices into a >30-minute run. If any selection/batch/row/run is expected or
+observed over 30 minutes, request Debug with timings before repetition. A timeout
+is red/blocked evidence, never permission for a silent retry or deadline increase.
+
+Collect timings from each necessary red/green run and independent native Review,
+retaining SHA, OS/architecture, runner build, load, sample count, exact group
+membership, per-test TRX duration and nearest-rank p95. Keep platforms, cold builds
+and warm execution separate. Within Code plus Review obtain three comparable
+passing samples per new group before replacing provisional ceilings with about
+`ceil(2 * p95)`; label the small sample. Extra timing repetitions are only for this
+documented uncertainty, not a second full suite. Budget them separately and amend
+cost/timeouts from evidence; collection is inside each task's 150-minute ceiling.
+
+Share one TestDbFixture container/template and migration per assembly run, one
+in-process test application per selection, and isolate cases by schema/transaction
+or template clone. No per-test AppHost, Docker, npm install or dotnet build. Stage
+native hosts/helpers once in the producing build. A fresh host per case is allowed
+only for spawn/exit/restart witnesses, whose subject is that lifetime. All native
+spawners carry the assembly-local `ParallelLimiter<ProcessSpawnLimit>`; rows are
+serial with width one. Never overlap Antiphon.Tests and Antiphon.Agents.Pty.Tests.
+
+Provisional phase targets: container readiness 30 seconds, migration/template 30,
+web host 10, per-case clone 3, native host readiness 5, body 5, output/exit wait 5,
+teardown/join 5. The migration-upgrade witness gets one extra isolated DB because
+upgrade is its subject. These are phase targets, not sleeps. Initial individually
+cancellable IO/pipe/process bounds are 10 seconds and DB readiness/migration 60;
+refine near 2x measured phase p95. Cancellation joins owned processes; residue is
+a failure. Production stop deadlines and CARD-1614's 30-second drain do not change.
+
+Record admission, build, discovery, process startup, schema/seed/migration, clone,
+body, drain/teardown and remainder separately. Use `tests/Shared/TestTiming.cs`
+and valid `ANTIPHON_TEST_PHASE_*` run/group/attempt/suite metadata in actual test
+children. Store ignored TRX, timings, rosters and receipts under
+`.antiphon/card1619/<run-id>/`. Missing spans are unknown, never zero. Slot admission
+is separately bounded to 10 minutes; exit 4 never permits an unleased retry.
+`--row-timeout` also bounds builds: the initial commands use 8 minutes for S1/S2/S4
+host/runner and 12 for S3/S4 server, with smaller per-row YAML pins after shared
+builds. These build allowances carry the same CARD-1619 provisional exception.
+
+Dependency/category map: shared PTY -> PtyHost -> SessionRunner -> server runtime;
+Claude/Codex/Grok adapters are downstream shared-transport consumers. CP-1/2 cover
+native PTY branches, CP-3/4 host/runner, CP-5..7 server/checks/attention/settlement,
+CP-8 client types, CP-9..12 provenance/custody. No model/provider calls are needed.
+Use Unit for pure classes and Integration/PtyHost/Pty for DB/host classes per their
+assembly. This focused ordinary roster is not Full RC qualification or a substitute
+for CARD-1545 downstream release gates.
 
 ## Verification design
 
