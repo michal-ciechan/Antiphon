@@ -722,6 +722,18 @@ function Invoke-V5 {
         if (-not $hasA -or -not $hasC -or ($hasB -ne $expectB) -or (($ids | Group-Object).Count -ne $ids.Count)) {
             Fail-Mp ("recovered-prefix stage=" + $stage + " ids=" + ($ids -join ','))
         }
+        $savedTiming = $script:QualificationTimingRoot
+        try {
+            $script:QualificationTimingRoot = Join-Path $childWork 'oracle'
+            $expectedChunks = @('chunk-a')
+            if ($expectB) { $expectedChunks += 'chunk-b' }
+            $expectedChunks += 'chunk-c'
+            foreach ($chunkId in $expectedChunks) {
+                $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $false; testsPassed = $false }
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $childWork -TrxPath $trx -Suite 'antiphon' -Chunk $chunkId -RunId 'run-v5' -Attempt '1' -HostWallSeconds 1
+            }
+            if ((Get-MpSha (Join-Path $script:QualificationTimingRoot 'groups-executed.json')) -ne (Get-MpSha (Join-Path $childWork 'timing/groups-executed.json'))) { Fail-Mp ('recovered-prefix-bytes-differ ' + $stage) }
+        } finally { $script:QualificationTimingRoot = $savedTiming }
     }
     Write-MpResult -Ok $true -Reason 'v5'
 }
@@ -1313,6 +1325,22 @@ function Invoke-V10 {
     if (-not (Test-Path -LiteralPath $flat)) { Fail-Mp 'recovery-did-not-project' }
     $sealPath = Join-Path (Join-Path (Join-Path (Join-Path $journal 'timing') 'groups-executed.journal') '*') 'seal.json'
     if (@(Get-Item -Path $sealPath -ErrorAction SilentlyContinue).Count -gt 0) { Fail-Mp 'recovery-invented-seal' }
+    $externalLog = Join-Path $Work 'external-log'
+    $externalTiming = Join-Path $Work 'external-timing'
+    $savedTiming = $script:QualificationTimingRoot
+    try {
+        $script:QualificationTimingRoot = $externalTiming
+        $ctx = Open-TestPhaseExecutedContext -LogRoot $externalLog -TimingRoot $externalTiming -RunId 'external' -Attempt '1' -Suite 'external-suite' -Source 'unknown'
+        $trx = Join-Path $externalLog 'external.trx'
+        Write-MpDefinedTrx -Path $trx -ClassName 'Fixture.External' -Outcome 'Passed'
+        Publish-MpChunk -LogRoot $externalLog -TrxPath $trx -Suite 'external-suite' -Chunk 'external-chunk' -RunId 'external' -Attempt '1' -HostWallSeconds 1
+        Close-TestPhaseExecutedContext -Context $ctx
+        $script:QualificationTimingRoot = $null
+        $lines = & $recover -RunDirectory $externalLog -TimingRoot $externalTiming -RecoverExecutedManifest -Top 5
+        if (($lines -join ',') -notmatch 'publication generation=.+ sequence=1') { Fail-Mp 'external-timing-progress-absent' }
+        if (-not (Test-Path -LiteralPath (Join-Path $externalTiming 'groups-executed.json'))) { Fail-Mp 'external-timing-recovery-absent' }
+        if (Test-Path -LiteralPath (Join-Path $externalLog 'timing/groups-executed.json')) { Fail-Mp 'external-timing-recovery-wrong-root' }
+    } finally { $script:QualificationTimingRoot = $savedTiming }
     Write-MpResult -Ok $true -Reason 'v10'
 }
 

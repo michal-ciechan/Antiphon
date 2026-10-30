@@ -8,6 +8,8 @@ Default output is a read-only summary. It prints one publication progress line w
 Qualification log directory whose timing root is RunDirectory/timing unless a caller already set the process timing root.
 .PARAMETER Top
 Maximum rows written to the timing summary tables.
+.PARAMETER TimingRoot
+Explicit timing directory when qualification stored it separately from RunDirectory.
 .PARAMETER RecoverExecutedManifest
 Acquire the writer lock, rebuild the flat projection and state from the committed journal, then summarize. Refuses a live writer. Never writes a terminal seal. An intact sealed generation is restored only when the rebuilt digests match that seal. Corrupt committed history becomes a successor and the old seal stays in place.
 #>
@@ -15,13 +17,17 @@ Acquire the writer lock, rebuild the flat projection and state from the committe
 param(
     [Parameter(Mandatory = $true)][string]$RunDirectory,
     [int]$Top = 50,
-    [switch]$RecoverExecutedManifest
+    [switch]$RecoverExecutedManifest,
+    [string]$TimingRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'test-phase-evidence.ps1')
+if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) {
+    $script:QualificationTimingRoot = [System.IO.Path]::GetFullPath($TimingRoot)
+}
 if ($RecoverExecutedManifest) {
     Invoke-TestPhaseExecutedRecovery -LogRoot $RunDirectory | Out-Null
 }
