@@ -117,9 +117,26 @@ public interface ILinuxCustodyOperations
     PtyTerminationObservation Kill(Guid containerId);
 }
 
+/// <summary>
+/// Where the real reader looks. Production is the host cgroup and the runtime marker.
+/// A test may supply a private root. There is no environment override.
+/// </summary>
+internal readonly record struct LinuxCustodyLayout(
+    string CgroupRoot,
+    string NamespaceMarkerPath,
+    string? NamespaceRecordPath)
+{
+    public static LinuxCustodyLayout Production { get; } =
+        new("/sys/fs/cgroup", "/run/antiphon-custody/namespace", null);
+}
+
 internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
 {
-    public static readonly LinuxCustodyOperations Real = new();
+    public static readonly LinuxCustodyOperations Real = new(LinuxCustodyLayout.Production);
+
+    private readonly LinuxCustodyLayout _layout;
+
+    public LinuxCustodyOperations(LinuxCustodyLayout layout) => _layout = layout;
 
     public IReadOnlyList<int> ReadTreePids(Guid containerId)
     {
@@ -175,11 +192,13 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
             : $"/sys/fs/cgroup/pids/{root}/{ns}/{id}/tree/cgroup.procs";
     }
 
-    private static string TreeProcsPath(Guid containerId)
+    private string TreeProcsPath(Guid containerId)
     {
         var id = containerId.ToString("D");
-        return File.Exists("/sys/fs/cgroup/cgroup.controllers")
-            ? $"/sys/fs/cgroup/{LinuxCgroupContainment.CustodyRootName}/{id}/tree/cgroup.procs"
-            : $"/sys/fs/cgroup/pids/{LinuxCgroupContainment.CustodyRootName}/{id}/tree/cgroup.procs";
+        var root = _layout.CgroupRoot;
+        var name = LinuxCgroupContainment.CustodyRootName;
+        return File.Exists(Path.Combine(root, "cgroup.controllers"))
+            ? Path.Combine(root, name, id, "tree", "cgroup.procs")
+            : Path.Combine(root, "pids", name, id, "tree", "cgroup.procs");
     }
 }
