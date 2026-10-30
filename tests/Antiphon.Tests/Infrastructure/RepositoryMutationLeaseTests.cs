@@ -167,6 +167,14 @@ public sealed class RepositoryMutationLeaseTests
             child.HasExited.ShouldBeTrue("cancellation must await the exact owned process before returning");
             unrelated.HasExited.ShouldBeFalse();
             provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue();
+            // Cancellation can hand pipe draining to the EOF continuation. Keep the lease
+            // until the same standing-journal evidence used by admission confirms cleanup.
+            // Loaded Linux p95 was 1.61s (30 cases); round twice that up to four seconds.
+            var cleanup = Stopwatch.StartNew();
+            while (await RepositoryChildJournal.HasUnfinishedAsync(lease.CommonDirectory, fixture.Git, CancellationToken.None)
+                   && cleanup.Elapsed < TimeSpan.FromSeconds(4))
+                await Task.Delay(50);
+            Console.WriteLine($"C448_CANCEL journalCleanupSeconds={cleanup.Elapsed.TotalSeconds:F3}");
             Directory.EnumerateFiles(Path.Combine(lease.CommonDirectory, "antiphon", "children")).ShouldBeEmpty();
             await lease.DisposeAsync();
             await using var admitted = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None);
