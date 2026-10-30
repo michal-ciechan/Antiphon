@@ -166,7 +166,7 @@ credential; neither filesystem markers nor operator-token custody promise that.
    the owned command's bounded outcome/exit and a quiescent receipt. Do not restart
    automatically or claim completion. Caller commissions an explicit recovery or
    new rollout with a named SHA after reconciling both runner images and resume
-   state; a task status change alone does not release the restart prohibition.
+   state; task status alone does not prove quiescence or release a live marker.
    Unexpected mid-phase API drift is not detected continuously by this change;
    the next phase refuses. Existing phase/census refusals remain authoritative.
 5. After joined completion at X, record active server/runner SHAs and retained
@@ -190,19 +190,20 @@ Schema 1: `rolloutId, sha, controllerId, callerClass, phase, sequence,
 createdAtUtc, heartbeatAtUtc, expiresAtUtc, state, journalPath`; IDs and SHA are
 validated, paths are bounded local paths, no tokens or task prose. Heartbeat every
 30 seconds, expiry five minutes after the last heartbeat, UTC with one-minute
-future-skew tolerance. A valid active record with `now < expiresAtUtc` is live.
+future-skew tolerance. Validate createdAt <= heartbeatAt and expiry exactly heartbeatAt + five minutes;
+a valid active record with `now < expiresAtUtc` is live.
 Only a valid expired record is stale. A completed record is historical, not live.
 These are explicit provisional operating defaults; expiry is a liveness fallback,
 not proof the prior process exited.
 
 Create/renew atomically (same-directory temporary file plus replace) under a short
 exclusive `logs/active-rollout.gate` file handle. Never use the marker as a long
-blocking lock. A controller first validates identity/source/API, acquires the gate,
-refuses an active AppHost launch/restart lock or foreign live rollout, writes its
-marker and journal, then releases the gate before credentials/phase effects.
+blocking lock. A controller first validates identity/source, acquires the gate,
+refuses an active AppHost launch/restart lock or foreign live rollout, probes the
+API version while holding the gate, then writes its marker and journal, then releases the gate before credentials/phase effects.
 Restart takes the same gate **before any kill/build/start**, reads the marker and
 publishes its existing restart lock while still holding the gate. That ordering
-closes check/create races: controller sees the restart lock, or restart sees the
+closes version-check/create and restart-check/create races: controller sees the restart lock, or restart sees the
 marker. Keep existing launch/restart lock semantics and cleanup. Probe and gate
 acquisition have bounded deadlines; unknown gate ownership refuses.
 
@@ -218,7 +219,10 @@ Restart decision table (all existing worktree/source/lock guards still apply):
 
 A foreground controller owns its heartbeat runspace and joins/disposes it in
 finally; never leave a background writer. Renewals serialize through the same
-short gate and require rollout ID/controller ID/sequence equality. Renewal failure
+short gate and require rollout ID/controller ID/sequence equality, a still-live
+heartbeat and no active restart/launch lock. Expired owners cannot silently renew;
+re-admission needs the quiescent successor/recovery proof. Any journal/marker
+generation mismatch after a partial write refuses; do not repair it by guessing. Renewal failure
 stops new effects and records uncertainty; it does not authorize killing remote
 work. Preserve command exit/census receipts and the bounded cancellation/join
 policy. A successor renews only after the journal handover described below.
@@ -238,7 +242,10 @@ Add `tests/Antiphon.Tests/Scripts/ActiveRolloutMarkerTests.cs`, six methods:
 Use actual helper/script admission, temporary canonical/controller Git roots,
 a controlled clock and existing process-effect stubs. Assert no restart effects
 on refusal; matching-X and stale controls reach the effect sentinel. Race tests
-use barriers, never sleeps. Native Windows runs cover replacement/file sharing.
+use barriers, never sleeps. Native Windows runs cover replacement/file sharing. Heartbeat/completion vectors
+also exercise phase deadline, owned child exit/output drain, failed cleanup and
+unknown remote outcome: only joined proven outcomes permit succession. No timeout
+is credited as a successful remote completion.
 
 ### Checkout pinning (review D-4)
 
@@ -338,7 +345,8 @@ Successor procedure:
    `-ResumeRecycle`/`-SavedDonor` only where supported, and receipt roots.
    No CARD-1610 hold or predecessor Reply is required. Keep dispatching ordinary
    work through the existing continuous-dispatch rules.
-4. Fresh token identity/source/API admission runs again. Under the gate, compare
+4. Fresh token identity/source admission runs again. Under the gate, reject restart
+   locks, probe API X, then compare
    the expected predecessor/generation and joined proof before assigning the new
    controller ID and incrementing sequence; a concurrent successor loses and
    refuses `RolloutHandoverConflict`. A foreign live marker cannot be stolen.
@@ -363,7 +371,7 @@ barriers, never real 30-minute sleeps.
 S1 adds the four classes named below, extends only their reusable test fixtures
 and stages tests first. S2 adds the identity DTO/route/service projection and
 controller helper. S2b adds the marker helper, restart hook and bounded phase
-journal. S3 changes the seven instruction/API documents listed above and the two
+journal. S3 changes the eight instruction/API documents listed above and the two
 existing doc-pin test methods. No migrations, project files, props/targets,
 global.json, launch composer or landing/census policy change is commissioned.
 AGENTS/skills are executable instructions for land classification: this is a build
@@ -458,7 +466,7 @@ Replace these existing passages, rather than appending contradictory guidance
 
 | File / existing text | Required replacement |
 |---|---|
-| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. never pull while a land runs; the rolling phases need no land freeze. During rollout X, rc lands may advance the rc ref while canonical detached HEAD stays X, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; same-X recovery needs a quiescent journal and explicit X. The live marker mechanically refuses other AppHost restarts; a valid expired marker warns and fails open. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
+| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Outside this detached preparation, never pull while a land runs; the rolling phases need no land freeze. During rollout X, rc lands may advance the rc ref while canonical detached HEAD stays X, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; same-X recovery needs a quiescent journal and explicit X. The live marker mechanically refuses other AppHost restarts; a valid expired marker warns and fails open. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
 | `docs/docker-stack.md:473-474`, "From the canonical desktop checkout" for manual running-main cleanup | "From the pinned controller checkout on the Windows operational host, record main's status and exact candidates under that controller's printed rollout receipt path." Keep every existing running-main/ownership/publication/zero-work condition. The manual attested retirement path introduced by CARD-1609 also uses the controller tree; replace its canonical absolute evidence example with `<controller-root>/.antiphon/rolling-server2/manual-retire-<run>/`. This changes location, not cleanup authority. |
 | `docs/docker-stack.md:513-514`, normal `retire-temp` "from the canonical desktop checkout" | "Run normal retire-temp from the pinned controller checkout with the same rollout SHA X and preserved resume context, after the phase identity/version admission checks." Preserve offline publication audit and strict volume proof. |
 | `AGENTS.md:55`, "Restart and deploy scripts refuse ... when run from a linked Git worktree" | "`scripts/restart-apphost.ps1` and `scripts/deploy-local.ps1` refuse linked worktrees by default because they control the shared local stack. Their source is the canonical checkout. `scripts/deploy-server2.ps1` runs its rolling phases from the pinned controller worktree; only `provision-host-jq` requires canonical source. Desktop runner restarts remain canonical operations by policy; do not claim its script implements a linked-worktree guard. Never use `-AllowWorktree` for rollout preparation." |
@@ -809,6 +817,26 @@ The four proposed classes do not yet exist and have no source-name/suffix collis
 the exact CP-3 class has no suffixed sibling. CP-4/CP-5 OR expansion has been
 checked against declared source classes; their proposed floors are 123/12.
 
+**Round-3 validation at `ef75a59413125a3ba92424ade043104abc7e1700`:**
+the slot-gated isolated checkpoint-tool build completed in 6.44 seconds, five
+warnings, zero errors (lease `cf1f0e45-f743-475f-a0ba-bf743778b66b`, wait 0 s,
+held 7 s). Import exited 0: **6 rows**, one build, floors **9/5/6/123/12/6**,
+all serial, Linux whole-minute estimates **6/4/2/1/3/3** and Windows
+**9/6/3/2/4/4**. Lease `4d9a0617-d23b-4770-b2a2-e00823918f2f`, wait 0 s,
+held 2 s. Generated YAML stays ignored at
+`.antiphon/c1615-r3-plan-scratch/import.yaml`. Default imported timeouts
+18/15/15/15/15/15 are explicitly superseded by the Performance budget before
+execution. This validates the document; **zero product tests** ran.
+Evidence history check at that tip: six commits, zero entries, zero violations.
+The final prose reconciliation is re-imported before publication below.
+
+Round-3 route reads succeeded on 2026-10-30: runner defaults revision 2;
+catalogue one Windows and two Linux runner entries; effective orchestrator
+instructions version `fed0edf3`. No fleet address was added. Source audit also
+corrected the inherited plan's nonexistent `/api/version.sha` member to the
+actual JSON `version` member. This is a wire-contract correction, not a new API
+version field or deployment.
+
 **Historical round-2 validation:** at `25530ecc98293f6c81e6721de2d0dffcc45120d2`, the
 slot-gated isolated tool build finished in 5.13 seconds (5 warnings, 0 errors;
 lease `16baf3a8-1af6-43ae-8cf5-20ca77adb25d`, waited 0 seconds, held 6 seconds).
@@ -880,3 +908,12 @@ rc/master divergence. The round-2 task delta is this one revised plan file, with
 `git diff --check`; it is reviewable, but the whole rc-derived branch is not
 declared directly landable on master. Caller-owned publication must preserve
 that distinction; no merge, rebase or conflict edits were performed here.
+
+Round-3 publication preflight at `ef75a59413125a3ba92424ade043104abc7e1700`:
+fetched `origin/master=98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`;
+`git merge-tree --write-tree origin/master HEAD` returned exit 1 with the same
+four paths listed above. The same command against the round-3 assigned base
+`30b76fbf22dc90161acbcf5622e5d4f6ba4fc57c` reproduced all four. No merge,
+rebase, target push or conflict edit was performed; only this plan changes.
+Do not land the whole rc-derived branch directly onto master. Code starts after
+the caller confirms CARD-1609 on both target lines and records its SHAs.
