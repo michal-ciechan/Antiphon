@@ -2515,6 +2515,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// <summary>Production leaves this null. Tests return a non-final status without a live host pipe.</summary>
         internal Func<VerificationExecutionBinding, CancellationToken, Task<VerificationCustodyStatus>>? CustodyObserveOverride { get; set; }
 
+        /// <summary>
+        /// Test seam. When set, stands in for the live host client and receives the seal flag
+        /// the Linux or Windows formula computed. Production leaves it unset.
+        /// </summary>
+        internal Func<bool, CancellationToken, Task<VerificationCustodyStatus>>? CustodySealProbeForTests { get; set; }
+
         internal void MarkLaunchFinishedForTests() => _launchFinished.TrySetResult();
 
         internal Task StartCustodyObserverForTests()
@@ -4546,7 +4552,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     if (CustodyObserveOverride is { } observe)
                         observed = await observe(binding, ct);
-                    else if (_client is not { } client)
+                    else if (_client is null && CustodySealProbeForTests is null)
                     {
                         if (binding.Backend == VerificationCustodyBackends.LinuxCgroup && RunnerSealPresent(binding))
                             return _custodyLedger.ReleaseDeadHost(binding);
@@ -4556,10 +4562,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     {
                         var linux = binding.Backend == VerificationCustodyBackends.LinuxCgroup;
                         var runnerSeal = RunnerSealPresent(binding);
+                        // Linux must not treat root exit as a seal. Windows still does.
                         var seal = linux ? runnerSeal : HasExited || runnerSeal;
                         try
                         {
-                            observed = await client.GetCustodyAsync(binding, seal, ct);
+                            if (CustodySealProbeForTests is { } probe)
+                                observed = await probe(seal, ct);
+                            else
+                                observed = await _client!.GetCustodyAsync(binding, seal, ct);
                         }
                         catch (Exception ex) when (linux && runnerSeal
                             && ex is not OperationCanceledException and not VerificationCustodyException)

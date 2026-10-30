@@ -74,8 +74,98 @@ public sealed class LinuxCustodyReleaseHostTests
         }
     }
 
+    /// <summary>
+    /// Root exit with a live descendant is Draining. The host must not terminate.
+    /// Green on the current tip; red if Linux seals because Status is Exited.
+    /// </summary>
+    [Test]
+    public async Task C1614_Root_exit_with_live_descendants_does_not_terminate()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        containment.Pids.Add(424242);
+        await using var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        });
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files: null);
+        var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
+        reply.ShouldBeOfType<LaunchedMessage>();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+        await Task.Delay(300);
+        containment.Terminations.ShouldBe(0);
+
+        var status = await host.Session.GetCustodyAsync(binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Draining);
+        status.Reason.ShouldBe("descendants_running");
+        status.Receipt.ShouldBeNull();
+        containment.Terminations.ShouldBe(0);
+        File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        File.Exists(store.PathFor(binding.ExecutionId, "producer-seal.json")).ShouldBeFalse();
+        File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// An ordinary read of a missing tree stays Unknown and does not terminate or receipt.
+    /// Green on the current tip; red if an unreadable tree is certified as a natural zero.
+    /// </summary>
+    [Test]
+    public async Task C1614_Missing_tree_ordinary_read_stays_unknown()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var namespaceId = Guid.Parse("16140000-0000-4000-8000-0000000000b3");
+        var containment = new FakeContainment();
+        var files = new RememberTracking(containment);
+        HostCustodyJournal.LinuxNamespaceForTests.Value = namespaceId;
+        await using var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        }, files);
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files);
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>();
+            var placement = store.ReadRecord<LinuxPlacementRecord>(binding, "linux-placement.json");
+            placement.ShouldNotBeNull();
+            placement!.NamespaceId.ShouldBe(namespaceId);
+            containment.Pids.ShouldContain(((LaunchedMessage)reply).ChildPid);
+            containment.Missing = true;
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+
+            var status = await host.Session.GetCustodyAsync(binding, false, CancellationToken.None);
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            status.Reason.ShouldBe("observation_failed");
+            status.Receipt.ShouldBeNull();
+            containment.Terminations.ShouldBe(0);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-seal.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+        }
+    }
+
     private static (VerificationCustodyStore Store, VerificationExecutionBinding Binding) Reserve(
-        HostHarness host, IVerificationCustodyFiles files)
+        HostHarness host, IVerificationCustodyFiles? files)
     {
         var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!, files: files);
         var snapshot = Path.Combine(host.TempDir, "snapshot");
@@ -142,6 +232,26 @@ public sealed class LinuxCustodyReleaseHostTests
                 Child = Process.GetProcessById(root.Pid);
                 Failures++;
                 throw new IOException("Injected tracking persistence refusal");
+            }
+
+            _files.CommitImmutable(path, bytes);
+        }
+    }
+
+    /// <summary>Records the spawned pid into the fake tree so placement can succeed, then commits.</summary>
+    private sealed class RememberTracking : IVerificationCustodyFiles
+    {
+        private readonly VerificationCustodyFiles _files = new();
+        private readonly FakeContainment _containment;
+        public RememberTracking(FakeContainment containment) => _containment = containment;
+        public byte[]? Read(string path) => _files.Read(path);
+        public void CommitImmutable(string path, byte[] bytes)
+        {
+            if (Path.GetFileName(path) == "tracking.json")
+            {
+                var root = JsonSerializer.Deserialize<CustodyRoot>(bytes,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                _containment.Pids.Add(root.Pid);
             }
 
             _files.CommitImmutable(path, bytes);
