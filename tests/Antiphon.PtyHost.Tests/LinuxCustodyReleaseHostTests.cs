@@ -95,10 +95,18 @@ public sealed class LinuxCustodyReleaseHostTests
         });
         host.Session.UseContainmentForTests(containment);
         var (store, binding) = Reserve(host, files: null);
+        var release = Path.Combine(host.TempDir, "release");
+        var child = 0;
         try
         {
-            var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
-            reply.ShouldBeOfType<LaunchedMessage>();
+            // Inbox does not replay an exit that landed before Exited is subscribed.
+            // Hold the child until LaunchAsync returns, then let it exit.
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            File.WriteAllText(release, "go");
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
                 await Task.Delay(50);
@@ -117,6 +125,7 @@ public sealed class LinuxCustodyReleaseHostTests
         }
         finally
         {
+            KillChild(child);
             await Finish(host);
         }
     }
@@ -143,15 +152,22 @@ public sealed class LinuxCustodyReleaseHostTests
         }, files);
         host.Session.UseContainmentForTests(containment);
         var (store, binding) = Reserve(host, files);
+        var release = Path.Combine(host.TempDir, "release");
+        var child = 0;
         try
         {
-            var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
-            reply.ShouldBeOfType<LaunchedMessage>();
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            var launched = (LaunchedMessage)reply;
+            child = launched.ChildPid;
             var placement = store.ReadRecord<LinuxPlacementRecord>(binding, "linux-placement.json");
             placement.ShouldNotBeNull();
             placement!.NamespaceId.ShouldBe(namespaceId);
-            containment.Pids.ShouldContain(((LaunchedMessage)reply).ChildPid);
+            containment.Pids.ShouldContain(launched.ChildPid);
             containment.Missing = true;
+            File.WriteAllText(release, "go");
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
@@ -169,7 +185,26 @@ public sealed class LinuxCustodyReleaseHostTests
         finally
         {
             HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+            KillChild(child);
             await Finish(host);
+        }
+    }
+
+    private static string HoldUntil(string releasePath) =>
+        $"while [ ! -f '{releasePath}' ]; do sleep 0.05; done";
+
+    private static void KillChild(int pid)
+    {
+        if (pid <= 0)
+            return;
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
         }
     }
 
