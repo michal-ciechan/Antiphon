@@ -168,8 +168,10 @@ credential; neither filesystem markers nor operator-token custody promise that.
    advance the rc ref X -> Y while canonical detached HEAD and API remain X.
    Do not reattach canonical HEAD to the moving target until rollout completion. Never pull/switch/build
    or restart the canonical stack from the controller. The deferred-activation policy applies to unrelated orchestrators too,
-   through joined retire-temp completion. A same-X recovery restart is allowed
-   by the marker but commissioned only at a proven quiescent boundary. The active-rollout marker below enforces the AppHost SHA restriction across
+   through joined retire-temp completion. Planned same-X recovery requires a
+   proven quiescent boundary. The watchdog exception below permits recovery of a
+   down stack at the same X during a phase, subject to existing restart guards.
+   The active-rollout marker below enforces the AppHost SHA restriction across
    phases. Its expiry is explicitly fail-open with a loud warning; do not claim
    indefinite exclusion when the controller stops heartbeating.
 3. For all admitted caller classes, GET `/api/version` once per mutating invocation
@@ -185,9 +187,10 @@ credential; neither filesystem markers nor operator-token custody promise that.
    `all` is still forbidden by the operating recipe; if invoked through its existing
    script API, its initial check precedes credentials and version is checked again
    before each subsequent subphase (no owner recheck within an admitted phase).
-4. If a restart is needed before completion, stop starting phases and establish
+4. If a planned restart is needed before completion, stop starting phases and establish
    the owned command's bounded outcome/exit and a quiescent receipt. Do not restart
-   automatically or claim completion. Caller commissions an explicit recovery or
+   automatically from the controller or claim completion. Watchdog crash recovery
+   is the narrow automatic same-X exception below. Caller commissions an explicit recovery or
    new rollout with a named SHA after reconciling both runner images and resume
    state; task status alone does not prove quiescence or release a live marker.
    Unexpected mid-phase API drift is not detected continuously by this change;
@@ -235,7 +238,7 @@ Restart decision table (all existing worktree/source/lock guards still apply):
 | Marker | Explicit `-ExpectedServerSha` | Result |
 |---|---|---|
 | Live active X | Missing, malformed or different Y | Exit 3 `ActiveRolloutRestartRefused`, expected X/controller/phase printed; zero kill/build/start. Defaulting to canonical HEAD never supplies explicit consent. |
-| Live active X | X | Marker permits restart; existing source HEAD must still equal X. Operating contract additionally requires quiescent same-X recovery. |
+| Live active X | X | Marker permits restart; existing source HEAD must still equal X. Planned recovery requires quiescence; watchdog recovery of a down stack follows the narrow exception below. |
 | Valid stale active | Any ordinarily valid restart request | Loud `ActiveRolloutMarkerStale` warning with bounded IDs/timestamps, then ordinary restart checks. Retain marker and stale observation; do not silently clear it. |
 | Absent or completed | Any ordinarily valid request | Existing restart behavior. |
 | Malformed, unreadable, unsafe path or future-skewed | Any | Exit 3 `ActiveRolloutMarkerUnknown`; no automatic overwrite or bypass. |
@@ -249,11 +252,75 @@ generation mismatch after a partial write refuses; do not repair it by guessing.
 stops new effects and records uncertainty; it does not authorize killing remote
 work. Preserve command exit/census receipts and the bounded cancellation/join
 policy. A successor renews only after the journal handover described below.
+If a same-X restart fails with exit 4/5, its retained restart lock ordinarily
+lasts 15 minutes. Heartbeat renewal must stop on that lock even before the
+five-minute heartbeat expiry. This is intentional fail-closed phase custody:
+record RecoveryRequired, join owned local children, and require reconciliation
+before succession. Do not clear the restart lock or keep renewing to hide failure.
+The existing two-fire dead-launch proof may reclaim a proven-dead lock earlier;
+CARD-1615 neither bypasses that proof nor treats a retained lock as successful recovery.
 At joined final retire-temp completion, atomically mark `state=Completed` only if
 the marker still belongs to this rollout/generation; retain historical receipts.
 No marker deletion, general unlock flag, global DB lock, new service, or fleet
 location is required. Direct dev-aspire/other restart paths are not covered by this
 specific guard; operating policy continues to require restart-apphost as the front door.
+
+### Watchdog same-X recovery (round-4 review D-1)
+
+Inspected `watchdog-apphost.ps1:318-332` calls
+`Invoke-AppHostRestartCaptured`; `scripts/apphost-common.ps1:600-613` currently
+passes no expected SHA and watchdog exit 3 is merely logged without a restart
+stamp. Add an optional validated `ExpectedServerSha` argument to that capture
+helper and pass it as a literal child argument only when supplied. Preserve
+existing no-marker behavior and the `-RestartScript` test seam.
+
+The watchdog reads the shared rollout helper and canonical Git HEAD, using a
+five-second total local observation budget. When its existing health classifier
+finds a down stack and the durable active rollout names X, **HEAD == X permits
+automatic recovery with `-ExpectedServerSha X`**, including during an active phase
+or a handover. It never fetches, switches source, defaults to Y, or waits for the
+controller to heartbeat. Same-X recovery cannot activate a different source SHA.
+All existing worktree/clean-source, maintenance, launch/restart lock, Docker,
+three-down-round, cooldown and flap-cap guards still apply. Restart re-reads the
+marker and HEAD under admission; watchdog observation is not a lock or authority
+to bypass a concurrent change. The controller stops effects on renewal failure
+and reconciles its in-flight outcome before any successor, even if restart succeeds.
+
+HEAD != X or unknown HEAD/marker must produce ERROR
+`ActiveRolloutRecoveryRefused` with bounded reason, rollout/journal, expected X and
+observed SHA (null when unknown), **zero restart-child calls**, and a durable
+`logs/active-rollout.alert.json`. Emit a Windows Event Log alert through the
+existing `Write-AppHostWindowsEvent` sink, with fixed kind
+`rollout-recovery-refused`; no AppHost API dependency. Persist a condition/event ID
+before sending and deduplicate Event Log attempts per condition; refresh local
+last-observed time and log ERROR on each refused fire. Sink failure is loud and
+does not suppress the other sink. Existing outage alerts and optional webhook
+continue independently at 180 seconds; no new notification service or secret is
+required. On a changed/resolved condition retain the audit and record resolution,
+never erase the rollout's unfinished state. ProbeOnly logs the proposed action
+and sends no alert or restart. Observe this condition after health observation
+and before recovery guards so a retained lock/cooldown does not hide it.
+
+Preserve cadence: scheduled fire every **2 minutes**; three down probes **15 seconds**
+apart; **15-minute** cooldown after an actual attempt; **3 attempts / 60 minutes**.
+A refusal consumes no restart stamp/flap budget. Re-evaluate HEAD and durable state
+on the next scheduled fire (no tight retry loop); it must remain loudly refused
+until corrected. Do not change the installer schedule. Qualify
+`docs/bootstrap.md:579` and its CARD-1527 refinement, plus the watchdog/runbook
+recovery text, with this policy.
+
+Within CP-6's `Live_marker_requires_explicit_matching_sha`, drive the **real
+watchdog** with its `-RestartScript` stub: HEAD X captures explicit X and one
+attempt; HEAD Y/unknown captures zero attempts plus alert/log; a race changing
+HEAD after observation is refused by real restart admission. Controlled-clock
+fires at +2/+4 minutes prove repeated mismatch observation without restart
+stamps, and recovery after correction respects the 15-minute/3-per-hour guards.
+Test 15-second probe spacing through a controlled wait seam, never real sleeps;
+verify installer cadence remains two minutes. In
+`Heartbeat_and_completion_preserve_owner`, failed same-X restart exit 4/5 retains
+the lock, stops renewal and forbids effects/succession until reconciliation.
+No extra methods/rows: all six CP-6 methods remain non-parameterized; native
+Windows vectors cover the actual Event Log call boundary with inert transports.
 
 Add `tests/Antiphon.Tests/Scripts/ActiveRolloutMarkerTests.cs`, six methods:
 `Live_marker_requires_explicit_matching_sha`,
