@@ -135,3 +135,25 @@ the retained censored rows and measured slow methods; they are explicitly not
 measured 2x-p95 claims. The completed-row measurements will determine the final
 rounded 2x recommendations. Collect at most five samples through ordinary later
 S5/Review work; do not repeat green rows merely to fill the sample.
+
+## Assigned-base attribution replay
+
+Replayed only the two CP-8 methods in an isolated detached scratch checkout at
+the exact assigned base `0080d76f8021ebdf6f73650f3c1b2b3d9816dc2d`:
+**2 executed, 0 passed, 2 failed, 0 skipped**, test wall 122.134 s. The redaction
+method fails at baseline `RollingVolumeRecycleScriptTests.cs:2889` with
+`host-ls-remote status=2` (0.992 s); the private-origin matrix fails at baseline
+`:2823` with `reason=preview-required` and zero removals (120.315 s).
+Both additional CP-8 defects are therefore inherited, not caused by setup sharing.
+Baseline build: 365.95 s, zero errors, 45 s admission wait; test slot wait 0 s,
+held 125 s. Evidence: `.antiphon/c1609-debug-base/run.trx`, matching `.log` and
+`c1609-debug-base-build.log`. No native Windows/real-Docker test ran.
+
+The real land-graph `-Check` exited 0 after a 60 s slot wait and 49 s held:
+digest `20DE49F6B177E5A238F20D4F8C7F33EAEE6B511A9163CDB902D9136EF06DECB6`,
+count 66, approved. No definition file changed and `-Update` was not run.
+The evidence-history guard passed the first two commits with zero violations.
+OS-witness inventory lint passed the five changed test/fixture paths, including
+the unchanged Linux selector; no production OS branch or restart requirement
+changed. The first lint call supplied a nonexistent input declaration and exited
+2; the corrected declaration run exited 0. Neither static lint grants native credit.
