@@ -1,7 +1,7 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: round-3 amendment in progress; round-2 import is historical only.
+Status: round-3 design complete; amended checkpoint import pending below.
 Plan tasks: `9a468e98` (round 1), `3b469108` (round 2), `af4bf774` (round 3); no product code edits.
 Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
 
@@ -10,12 +10,13 @@ Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
 Final review `10e7c145` was read in full at round-3 base
 `1d1ac16723ed370700ea10be429de0c70bdc51f6`. Its verified Porta contract,
 same-process issuer/observer path and closed round-1 findings are retained.
-This initial skeleton records the chosen corrections; the sections below and
-checkpoint import will be reconciled before the final Code-ready handoff.
+The sections below resolve both defects and all six advisories. The simpler
+fail-closed defaults are stated in D-7/D-9/D-10/D-11; no operator choice remains.
+The final import result is recorded under Plan validation and publication.
 
-| Finding | Round-3 decision / remaining amendment |
+| Finding | Round-3 resolution |
 |---|---|
-| D-1 | Move every integer compatibility-value change into S3b, alongside ownership/classification consumers. Name HostSession's structured read and add the seven ready-gate regressions. |
+| D-1 | Protocol/terminal compatibility changes occur only in S3b with structured ownership/persistence consumers and seven R-6/CP-15 regressions. PtyAgentRunner.Exited keeps the actual integer; S1 explicitly switches HostSession:399 to structured completion. |
 | D-2 | Signal first; publish issuer memory under the gate, then attempt diagnostic writes outside it with a 100 ms deadline enforced at the production journal boundary. A never-completing writer must not delay signaling or stop completion. |
 | A-1/A-2 | Issuer memory remains authority when disk fails; specify server-request/no-issuer and host-target/no-child-observation text. |
 | A-3 | Exercise the production PortaExitSignalReader in the real-assembly contract witness. |
@@ -23,12 +24,14 @@ checkpoint import will be reconciled before the final Code-ready handoff.
 | A-5 | Re-create the master migration after CARD-1610's migration; do not copy the RC Designer/snapshot. |
 | A-6 | Chain Code slices from preceding tips, carry this branch-only plan in every checkout, and forbid landing S1..S3b individually. |
 
-## Round-2 amendment register
+## Round-2 amendment register (historical)
 
 Review `0e97ad1e` was read in full. All four defects are addressed in this plan.
 The confirmed consumer inventory, additive reader compatibility, RC-first landing
 and CARD-1610/1614 boundaries remain. A skeleton and each defect correction were
-committed and pushed separately; no product files changed.
+committed and pushed separately; no product files changed. The round-3 decisions
+above supersede the pre-signal ordering and disk-failure attribution in this
+historical register; its test/import counts describe that earlier plan only.
 
 | Review finding | Resolution |
 |---|---|
@@ -455,7 +458,15 @@ and janitor tests. Preserve its new predicates, hold fields and report-first
 ordering whichever lands first; do not import its earlier automatic Failed-to-
 Succeeded proposal. Re-run the precise dead-session/report witnesses after the
 separate master port. The corrected CARD-1610 plan targets master; that is not a
-reason to redirect this fix's RC-first instruction.
+reason to redirect this fix's RC-first instruction. Its Code task `00861a7a` at
+`cf80deb5860024bdc1a1e42514ed6c721905dc2e` includes migration
+`20261030114738_AddTaskCeilingSupervision` and snapshot changes. The separate
+master port must **re-create CARD-1619's migration on top of CARD-1610's migration**
+using EF CLI after resolving the entity changes; never copy the RC Designer or
+model snapshot onto master. Preserve CARD-1610's dispatcher/attention edits
+(including file encoding) while porting; it does not change DescribeStop or the
+dead-session failure clause. CARD-1609 has no source overlap and affects rollout
+order only.
 
 No build-definition change is planned. If an unforeseen `*.csproj`, solution,
 props/targets or lock-file change is necessary, report the reason and apply
@@ -492,11 +503,12 @@ importer's 15-minute floor/3x estimate as timeout evidence.
 | S3a Linux CP-5/8 | 6 / 3+2 | 6/4 minutes | Shared DB template/web host, isolated storage/upgrade cases; separate typecheck span |
 | S3b Linux CP-13/6/7/14/15 | 6 / 4+1+2+2+2 | 8/2/4/4/4 minutes | Same fixture design; final native text, report-first and generation checks |
 | S4 Linux CP-9/10/11 | 4+4+6 / 2+2+3 | 8/8/10 minutes | Journal fault cuts, real stop, mapper/persistence, lifecycle |
-| S4 cgroup-v1 CP-12 | reuse CP-10 / 2 | 4 minutes | Exact owned container; no fleet-wide census or kill |
+| S4-native cgroup-v1 CP-12 | 4 / 2 | 4 minutes | Exact owned container; no fleet-wide census or kill |
 
 Whole-minute checkpoint estimates include build where needed; reused rows include
-execution only. S1 Linux run 4 minutes; S2 12; S3a 11; S3b 17; S4 23 including
-its native cgroup row; final Windows 7 (74 minutes total, six separate runs).
+execution only. S1 Linux run 4 minutes; S2 12; S3a 11; S3b 17; S4 portable/Linux stop routes 21; S4-native cgroup-v1 6;
+final Windows 7 (**78 minutes total, seven separate runs**). The extra cgroup
+run owns its isolated build; it does not reuse another run's build receipt.
 Run separate committed-slice groups. Never combine
 all slices into a >30-minute run. If any selection/batch/row/run is expected or
 observed over 30 minutes, request Debug with timings before repetition. A timeout
@@ -656,7 +668,8 @@ exercise the changed native, source and live/reconcile branches directly. This i
 the minimal roster choice, not a claim those unrun classes passed.
 CP-8 typechecks optional client fields; it has no invented Vitest assertion count.
 
-Suffix audit repeated at round-2 base: R-4 and R-5 methods are unique;
+Suffix audit repeated at round-3 base: R-4 and R-5 methods are unique;
+R-6 matches exactly the seven listed ready-gate methods;
 `PtyKillProcessTreeTests`, `AgentTaskLivenessTests`, `AgentSessionLaunchFailureTests` and `SessionGenerationExitTests`
 have no distinct longer-prefix class collision. Proposed
 `Card1619*Tests` names are unused. Repeat the declaration census after adding them
@@ -664,7 +677,7 @@ and after porting. OR operands below are parenthesized, each ending in `*`; tabl
 pipes are escaped. Fresh TRX must contain each named class/method with zero skips
 on its required lane. A skipped native witness remains owed.
 
-Linux-native CP-1/3/4/5/9/10/11/13/14 and cgroup-v1 CP-12 are required Linux evidence.
+Linux-native CP-1/3/4/5/9/10/11/13/14/15 and cgroup-v1 CP-12 are required Linux evidence.
 Portable subcases do not replace native rows. CP-2 runs on Windows at the **final
 S1/S2/S3a/S3b/S4 source**, covering modern and explicit inbox paths. macOS and cgroup-v2 are
 outside this card's activation claim; CARD-1614's v2 obligation stays open. No
@@ -686,9 +699,8 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 8 listed, 0 failed/skipped | 8 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | linux-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-12 | S4-native | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-cgroup-intent/` | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-14 | S3b | CP-13 | linux-generation-exit-regression | `/*/*/SessionGenerationExitTests/(C502_V1_queued_A_exit_released_after_B_resumed_changes_nothing*)\|(C502_V3_matching_B_exit_closes_B_after_the_stale_A_exit_was_ignored*)\|(C502_V9_severed_stream_then_a_snapshot_Exited_A_does_not_close_B*)` | R-5 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-
 | CP-15 | S3b | CP-13 | linux-ready-gate-launch-regression | `/*/*/AgentSessionLaunchFailureTests/(A_ready_gate_kill_*)` | R-6 | all 7 listed, 0 failed/skipped | 7 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 
 ## Exact execution commands
@@ -735,8 +747,10 @@ dotnet $tool run $manifest --rows CP-3,CP-4 --expected-source-sha $source --seri
 dotnet $tool run $manifest --rows CP-5,CP-8 --expected-source-sha $source --serial --total-timeout 22 --hard-wall-timeout 32 --max-wait 45s --heartbeat 15s
 # S3b, Linux native final text and portable consumer regressions.
 dotnet $tool run $manifest --rows CP-13,CP-6,CP-7,CP-14,CP-15 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
-# S4, Linux; CP-12 additionally requires the owned cgroup-v1 fixture.
-dotnet $tool run $manifest --rows CP-9,CP-10,CP-11,CP-12 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
+# S4, Linux; its receipt covers exactly CP-9..11.
+dotnet $tool run $manifest --rows CP-9,CP-10,CP-11 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
+# S4-native: separate run ONLY on an owned cgroup-v1 fixture; otherwise native-pending.
+dotnet $tool run $manifest --rows CP-12 --expected-source-sha $source --serial --total-timeout 14 --hard-wall-timeout 24 --max-wait 45s --heartbeat 15s
 # Final source, native Windows. Refresh source/tool/manifest on that checkout.
 dotnet $tool run $manifest --rows CP-2 --expected-source-sha $source --serial --total-timeout 16 --hard-wall-timeout 26 --max-wait 45s --heartbeat 15s
 ```
@@ -747,6 +761,11 @@ After **each** run invocation returning 75, use its printed exact run directory:
 $runDirectory = 'replace-with-the-exact-printed-run-directory'
 dotnet $tool wait --run $runDirectory --expected-source-sha $source --max-wait 45s --heartbeat 15s
 ```
+
+Validate S4's CP-9..11 run independently. Never add CP-12 to it: a skipped
+cgroup witness would invalidate the combined receipt. A missing cgroup-v1 fixture
+leaves CP-12 native-pending, never green, and the complete fix cannot land until
+that separate run passes.
 
 Continue waiting until exit is not 75 before starting the next group or ending
 the task. Do not leave an executor orphaned. Exit 4 means not run/blocked by slot
@@ -777,8 +796,8 @@ There were no product tests or native process-stop experiments in this Plan task
 
 Current roster totals: **113 required test results plus one typecheck command**.
 In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./11/8/8/2/23/3/7; estimates
-are 4/7/6/6/9/1/2/2/6/6/9/2/10/2/2 whole minutes. Group sums are S1=4, S2=12,
-S3a=11, S3b=17, S4=23, final Windows=7. CP-13 precedes its reuse rows in the
+are 4/7/6/6/9/1/2/2/6/6/9/6/10/2/2 whole minutes. Group sums are S1=4, S2=12,
+S3a=11, S3b=17, S4=21, S4-native=6, final Windows=7 (78 total). CP-13 precedes its reuse rows in the
 table because import resolves earlier build references. Final re-import after
 the lane/After-list and narrative refinements is recorded in the handoff report.
 Generated YAML and tool outputs remain ignored/scratch; remove this task's
@@ -791,7 +810,9 @@ fleet pin. Re-read before dispatch, omit `-Runner`, and set `-Platform Linux` or
 `-Platform Windows` only for their native rows; portable work omits Platform.
 Round-2 re-read both at 11:41 UTC: default revision 2, eligible Linux and Windows
 lanes available; an additional Linux lane was unavailable/draining. These reads
-do not pin a host. `-Platform Any` explicitly removes an inherited OS pin.
+do not pin a host. Round-3 re-read both routes at 12:24 UTC: revision 2,
+default eligible Linux lane and an eligible Windows lane; another Linux lane
+unavailable/draining. No host is embedded in checkpoint or dispatch commands. `-Platform Any` explicitly removes an inherited OS pin.
 
 `git fetch origin master` observed
 `698bf1b73e8abf449d5569ea74ac8c82e80f92a1`. The required master merge-tree check
@@ -810,18 +831,21 @@ to the handoff report.
 ## Review and handoff
 
 Read the investigation at `docs/investigations/2026-10-30-codex-session-exit-no-report.md`.
-Review the completed plan with Opus before Code. Resolve placement from `GET /api/runner-defaults` and `GET /api/session-runners`; use portable, Linux-native and Windows-native lane names, not a fixed fleet location.
+Final Opus plan review `10e7c145` has been addressed in this last round.
+**Next: Code. No further plan Review or separate TestDesign is needed.**
+Verification design, exact roster and conservative defaults are in this plan;
+product checks, measured p95 and ordinary/native Final Review remain owed.
 
-The design changed materially: the fork is removed, stop availability and trust
-rules change, and S3 is split. Therefore dispatch **final Opus plan Review**, not
-Code yet. Review D-6's pinned private-field/replay contract, D-9/D-10's best-effort
-and untrusted-record behavior, generation-safe enrichment and the five bounded
-slices. There is no unresolved operator choice; simpler conservative defaults
-are enumerated in Decisions.
+Commission S1 Code from pinned RC
+`e4c9547e10e3da59fd20684b49c029cdc6063fa8` (`rc/2026-10-27`), copying this
+plan artifact from the pushed Plan branch into that checkout. Chain S2, S3a,
+S3b and S4 from each preceding pushed tip with `-StartRef`, carrying the plan
+into every checkout. Do not land S1..S3b separately. Keep plan documents out of
+RC; review and land the complete product delta after S4 and all required native
+rows. The separate master port re-creates its migration after CARD-1610.
 
-On acceptance commission S1 Code from pinned RC
-`e4c9547e10e3da59fd20684b49c029cdc6063fa8` (`rc/2026-10-27`), applying this plan
-artifact; follow with S2, S3a, S3b and S4 in order, then native Final Review. If
-the caller changes that source pin, re-audit overlapping CARD-1610/1614 files and
-the precise roster at dispatch. Product tests, native gates and measured p95
-remain owed; import success is not product verification or mixed-fleet activation.
+Resolve placement from `GET /api/runner-defaults` and `GET /api/session-runners`;
+omit `-Runner`, use `-Platform Linux`/`Windows` only for native rows and no
+Platform for portable work (`Any` unpins). If the caller changes the RC source
+pin, re-audit overlapping CARD-1610/1614 files and the roster at dispatch.
+Import success is not product verification, release qualification or activation.
