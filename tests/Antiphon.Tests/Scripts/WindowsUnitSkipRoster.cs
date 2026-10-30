@@ -89,6 +89,10 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Only_exact_known_seed_fixtures_are_disposable", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Gone_tracking_retains_original_commit_protection", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Preview_receipt_is_required_and_consumed", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Receipt_shape_custody_and_digest_are_strict", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Volume_incarnation_and_operation_are_bound", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Freshness_and_policy_version_are_rechecked", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Legacy_receipts_are_history_only", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
     ];
     internal static readonly Entry[] Portable =
     [
