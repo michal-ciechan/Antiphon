@@ -61,7 +61,10 @@ public sealed class PosixHarnessToolTests
     }
 
     private static string[] SnapshotCases(bool windows)
-        => ["StagingRefusesLink", "StagingRefusesForeignRoot", "DrillRefusesIdPrefix"];
+        // The harness skips Unix ownership and extensionless sh fakes on Windows;
+        // its ACL scenario exercises the Windows staging protection instead.
+        => windows ? ["StagingRefusesLink", "WindowsAclRules"]
+            : ["StagingRefusesLink", "StagingRefusesForeignRoot", "DrillRefusesIdPrefix"];
 
     private static void RunSnapshotCases(bool windows)
     {
