@@ -444,7 +444,10 @@ public sealed class TaskSupervisionVisibilityTests
             DefinitionName = "fake",
             AgentKind = AgentKind.ClaudeCode,
             Status = status,
+            // CK_AgentSessions_RunnerBinding_AllOrNone: RunnerId, RunnerStoreId and RunnerCwd move together.
             RunnerId = runnerId,
+            RunnerStoreId = runnerId is null ? null : Guid.NewGuid(),
+            RunnerCwd = runnerId is null ? null : directory,
             Cwd = directory,
             Cols = 120,
             Rows = 30,
