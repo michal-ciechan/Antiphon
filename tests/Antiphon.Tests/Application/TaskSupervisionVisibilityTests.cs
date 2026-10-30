@@ -416,6 +416,32 @@ public sealed class TaskSupervisionVisibilityTests
             CompletedAt = now.AddMinutes(-1),
         };
         await using var db = Open(connectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        db.Projects.Add(new Project { Id = projectId, Name = "c1610", CreatedAt = now, UpdatedAt = now });
+        db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "c1610", CreatedAt = now, UpdatedAt = now });
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = columnId,
+            BoardId = boardId,
+            Name = "Doing",
+            StateKey = "doing",
+            CardStatus = CardStatus.InProgress,
+            IsActive = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.Cards.Add(new Card
+        {
+            Id = cardId,
+            BoardId = boardId,
+            BoardColumnId = columnId,
+            Identifier = "C1610-" + cardId.ToString("N")[..8],
+            Title = "CARD-1610",
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
@@ -426,8 +452,28 @@ public sealed class TaskSupervisionVisibilityTests
     {
         var now = clock.GetUtcNow().UtcDateTime;
         var id = Guid.NewGuid();
+        var ownerId = Guid.NewGuid();
         var operation = Guid.NewGuid();
         await using var db = Open(connectionString);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = ownerId,
+            RootTaskId = ownerId,
+            Title = "CARD-1610 source owner",
+            Goal = "source owner",
+            Status = AgentTaskStatus.Succeeded,
+            CreatedAt = now.AddMinutes(-40),
+            CompletedAt = now.AddMinutes(-35),
+        });
+        db.AgentTaskLandings.Add(new AgentTaskLanding
+        {
+            Id = operation,
+            TaskId = ownerId,
+            Phase = LandPhase.Inspected,
+            OriginalSourceSha = new string('a', 40),
+            CreatedAt = now.AddMinutes(-40),
+            UpdatedAt = now.AddMinutes(-35),
+        });
         db.AgentTasks.Add(new AgentTask
         {
             Id = id,
