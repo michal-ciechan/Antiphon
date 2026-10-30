@@ -19,8 +19,13 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
     [Test]
     public Task C1608_invalid_utf8_git_output_is_refused() => Run("encoding");
 
-    private async Task Run(string mode)
+    [Test]
+    public Task C1608_invalid_utf8_comes_from_the_configured_executable() => Run("encoding", verifyConfiguredGit: true);
+
+    private async Task Run(string mode, bool verifyConfiguredGit = false)
     {
+        var root = TempDir();
+        var invocationLog = Path.Combine(root, "git-invocations.txt");
         var psi = new ProcessStartInfo("pwsh")
         {
             RedirectStandardOutput = true,
@@ -30,9 +35,18 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
         foreach (var arg in new[]
         {
             "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-git-encoding.ps1"),
-            "-Root", TempDir(), "-Repository", CheckpointFixtures.RepoRoot, "-Mode", mode,
+            "-Root", root, "-Repository", CheckpointFixtures.RepoRoot, "-Mode", mode,
         })
             psi.ArgumentList.Add(arg);
+        if (verifyConfiguredGit)
+        {
+            var executable = Path.Combine(AppContext.BaseDirectory, "checkpoint-git-fixture",
+                "Antiphon.Checkpoints.GitFixture" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+            File.Exists(executable).ShouldBeTrue("native git fixture must be staged by the build");
+            psi.ArgumentList.Add("-GitExecutable");
+            psi.ArgumentList.Add(executable);
+            psi.Environment["C1608_GIT_LOG"] = invocationLog;
+        }
         using var process = Process.Start(psi)!;
         RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync();
@@ -47,5 +61,10 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
         }
         process.ExitCode.ShouldBe(0, await stdout + await stderr);
         (await stdout).ShouldContain("C1608 " + mode + " PASS");
+        if (verifyConfiguredGit)
+        {
+            File.Exists(invocationLog).ShouldBeTrue("the configured executable must serve the actual git queries");
+            File.ReadAllLines(invocationLog).ShouldBe(["config", "status", "config", "ls-files"]);
+        }
     }
 }
