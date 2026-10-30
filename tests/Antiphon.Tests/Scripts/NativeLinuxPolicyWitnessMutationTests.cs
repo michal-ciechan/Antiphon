@@ -133,8 +133,34 @@ public class NativeLinuxPolicyWitnessMutationTests
     {
         var ungated = Inspect("R13", "R13-ungated.cs.txt", true, Row("UngatedNew", Prefix));
         Has(ungated, "missing-marker", "UngatedNew");
+        Lacks(ungated, "unwitnessed-suite", "");
         Lacks(ungated, "legacy-digest-mismatch", "");
         Lacks(ungated, "policy-hash", "");
+
+        // A prefixed or frozen row whose suite has no compiled witness must fail every suite witness.
+        var foreignAssembly = Compile("R13Foreign", "R13-ungated.cs.txt", true);
+        foreach (var (suiteName, className) in new (string Suite, string Class)[]
+        {
+            ("messaging", "SlackGatewayTests"),
+            ("client", "ClientOnlyTests"),
+            ("e2e", "BrowserOnlyTests"),
+        })
+        {
+            foreach (var witness in new[] { "antiphon", "session-runner", "pty-host", "agents-pty" })
+            {
+                var foreign = InspectAssembly(
+                    foreignAssembly,
+                    Policy(OtherSuite(suiteName, className)),
+                    checkPin: false,
+                    baseline: "",
+                    suite: witness);
+                Has(foreign, "unwitnessed-suite", suiteName);
+                Has(foreign, "unwitnessed-suite", className);
+                Lacks(foreign, "unresolved-row", className);
+                Lacks(foreign, "missing-marker", className);
+                Lacks(foreign, "legacy-digest-mismatch", "");
+            }
+        }
 
         var droppedPrefix = Inspect("R13b", "R13-ungated.cs.txt", true, Row("UngatedNew", "a different reason"));
         Has(droppedPrefix, "legacy-digest-mismatch", "");
@@ -176,6 +202,16 @@ public class NativeLinuxPolicyWitnessMutationTests
 
         var deleted = InspectAssembly(stubs, RemoveFrozenRow("GitMinimumVersionGuardTests"), checkPin: false, baseline: "");
         Has(deleted, "witnessed-row-missing", "GitMinimumVersionGuardTests");
+
+        // First duplicate key is linux, so canonical stays inert; the effective platform is windows.
+        var duplicatePlatform = InspectAssembly(
+            stubs,
+            RewriteFrozenRow("UnixDelegateLaunchArgvTests", "\"platform\": \"windows\"", "\"platform\": \"linux\", \"platform\": \"windows\""),
+            checkPin: false,
+            baseline: "");
+        Has(duplicatePlatform, "duplicate-key", "platform");
+        Lacks(duplicatePlatform, "witnessed-row-reshaped", "UnixDelegateLaunchArgvTests");
+        Lacks(duplicatePlatform, "policy-hash", "");
     }
 
     [Test]
