@@ -43,7 +43,7 @@ internal static class CheckpointShapeWindowsFixture
             "mv -f -- user-move.txt tracked.txt" =>
                 "$ErrorActionPreference = 'Stop'\n"
                 + $"if (-not [System.IO.File]::Exists({userMove})) {{ throw 'user-move.txt missing' }}\n"
-                + $"[System.IO.File]::Move({userMove}, {tracked}, $$true)\n"
+                + "[System.IO.File]::Move(" + userMove + ", " + tracked + ", $true)\n"
                 + $"if ([System.IO.File]::Exists({userMove})) {{ throw 'move left the source' }}\n",
             "rm -f -- user-move.txt && printf %s MUTATED > tracked.txt" =>
                 "$ErrorActionPreference = 'Stop'\n"
