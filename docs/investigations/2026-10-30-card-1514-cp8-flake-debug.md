@@ -119,3 +119,39 @@ passes and canary comparison: digest
 
 Structural controls and required checkpoint outcomes remain pending at this
 measurement/fix commit; no clean overall receipt is claimed yet.
+
+## Additional inherited wall proxy exposed by the exact baseline
+
+The first exact CP-8 control baseline at `2dff9f80f21e2d05f7c910b995183e33cbab2ec1`
+executed one test and failed it in 112.95 s. The repaired FIFO/launch guards passed
+(FIFO .1172675 s, launch child/body 12.6102721/5.1037013 s), but the unchanged
+`post-run-hostile-files-keep-exit-inside-budget` combined assertion failed. No
+mutation had started. Its original receipt remains under `pc-baseline/1/`.
+
+Before attributing it, the **assigned base** hostile-aggregation fixture and old
+predicate were extracted with `git show eaea94cffa8363f6074d51e146916992545a32da`.
+The production library and compiled exact test are unchanged from that base. The
+focused baseline probe reused its 100 MB hostile corpus, reset the same dense
+sidecar before each invocation, and ran its exact `Invoke-QualificationPostRunAggregation`
+call and predicate 200 times. No own build or other own test was active. This is
+base-footprint diagnostic execution, not a clean checkpoint at a different HEAD.
+
+| Assertion/span | Alone p50 / p95 / max (s) | Original failures | Decision |
+|---|---|---|---|
+| Hostile terminal aggregation outer `<0.2` | .0743901 / .1442766 / .6720185, n=200 | 7/200; all 200 retained exit 7, KEEP-7, timing-read-refused and null metrics | Test-only outer wall includes read-budget expiry, JSON rendering and atomic write; use `<1.5`, approximately 2x observed max, and structural read bounds. |
+
+Evidence: `base-agg-source.ps1`, `base-agg-probe.ps1`, `base-agg-samples.json`,
+`base-agg.log`. The latter diagnostic held its granted slot 28 s after 15 s
+admission. A separate loaded p95 was not collected for this newly exposed proxy;
+its 1.5-second individual assertion is a provisional shared-host allowance tracked
+under CARD-1514/1404, not a changed per-test/row timeout. The explicit CPU-only
+two-arm measurement obligation above remains fulfilled for both commissioned
+FIFO/launch witnesses.
+
+The replacement observes stream positions at disposal in the actual bounded,
+header, JSONL and TRX readers, plus every attempted stream-open path. It permits
+at most two opens, only the dense regular sidecar and huge regular journal, and at
+most 524288 total consumed bytes (two 256 KiB read caps); FIFO, link and denied
+paths must not open. This protects bounded work on the 100 MB corpus independently
+of shared-host scheduling. The exit/result/refusal/null-metric assertion is
+unchanged except for extracting its old wall predicate into its own named check.
