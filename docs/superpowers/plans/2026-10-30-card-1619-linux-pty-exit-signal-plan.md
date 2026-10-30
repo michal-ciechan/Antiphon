@@ -30,7 +30,7 @@ compatibility, RC-first landing and CARD-1610/1614 boundaries.
 - **D-3 — Keep settlement authority unchanged.** Correct stop evidence and failure wording without replacing transcript-confirmed report settlement, CARD-1610 holds, or CARD-1614 custody proof.
 - **D-4 — Fold verification design into this plan.** The requested next stage is Opus Review of the plan, then Code. Code slices are bounded to 150 minutes each.
 - **D-5 — Land as a fix.** RC first, separately reviewed master port; no deployment, tag or publish is authorized by this Plan task.
-- **D-6 — Own a small, pinned Porta managed patch.** Porta 1.0.7 has no public signal accessor: the signal is private on the Unix connection, not on `PtyExitedEventArgs`. Vendor its managed sources at the package's exact source revision, retain its license/provenance, and expose the already-decoded signal in the event and a completed-exit snapshot. Continue using the pinned package's native runtime assets. Do not use reflection, race a second `waitpid`, infer from `Process.ExitCode`, or write a new PTY implementation. A future upstream replacement requires the same real-path witnesses.
+- **D-6 — Read the pinned private field, fail closed on drift.** Cache a Linux-only reflection accessor for `Porta.Pty.Unix.PtyConnection.exitSignal` (`private int`) in the real Porta.Pty 1.0.7 assembly (assembly version `1.0.7.0`, informational version `1.0.7+54684ba55148ed6bcd0c827ad7e8841a3289a466`). Read only inside `ProcessExited` or after public `WaitForExit(0)` succeeds. Missing/wrong field, type, version or access failure yields null and a bounded diagnostic, never zero. Reject a managed fork because it adds cross-platform ownership and native-asset coupling for one accessor, contrary to ADR 0002 section 1. Reject a second `waitpid` and inferred `Process.ExitCode`; keep the sole upstream reaper. The loaded-assembly witness fails loudly on any contract/version drift.
 - **D-7 — Keep the existing integer exit-code contract; add `int? ExitSignal`.** Zero explicitly means an observed exit without a POSIX signal; positive values are an observed signal; null means unavailable/legacy/observer failure. Windows producers emit zero (no signal) and retain their exact existing exit codes. A signaled Unix process retains Porta's existing integer zero in legacy fields; every new consumer must inspect the signal first. Do not invent `128+signal` as the actual process exit code. Integer-only adapter APIs may use a documented nonzero compatibility result for a known signal, but must also expose the structured evidence.
 - **D-8 — Attribute intent separately from observed death.** Persist a generation-bound stop intent before sending a signal. A request is not proof of its success or of who delivered the fatal signal. Record the signal actually attempted, path, request time and result; combine it with the wait observation conservatively. No new automatic stop, escalation, release deadline or custody authority is added.
 - **D-9 — Make provenance failure visible.** A new instrumented Linux stop whose intent cannot be durably written refuses before signaling and retains existing stop debt/ownership. Reject silently performing an unattributable kill. This deliberate stop-path availability tradeoff must be checked in plan Review; Windows is not gated by this Linux journal.
@@ -42,7 +42,7 @@ compatibility, RC-first landing and CARD-1610/1614 boundaries.
 | The Linux exit signal is lost | `src/Antiphon.Agents.Pty/PtySession.cs:41` forwards only `e.ExitCode` | Replace the integer-only exit seam with explicit evidence |
 | Exit zero proves a clean self-exit | Investigation found 75/75 logged requested Linux kills reported zero | Unknown old evidence must not claim self-exit |
 | This is a missing-report settlement defect | Investigation found no final message; dispatcher already tries report settlement before dead-session failure | Keep the existing settlement ordering |
-| Porta exposes the signal on its exit event | Pinned upstream `PtyExitedEventArgs.cs:17-25` contains only `ExitCode`; `Unix/PtyConnection.cs:25` has a private `exitSignal` | A one-line `e.ExitSignal` edit cannot compile; first expose the existing native observation |
+| Porta exposes the signal on its exit event | Pinned upstream event contains only `ExitCode`; the loaded `Porta.Pty.Unix.PtyConnection` declares private `System.Int32 exitSignal`, set before event publication | Read the field with a pinned reflection contract; absent evidence is null |
 | Linux uses .NET Process to obtain the PTY wait result | Upstream `Linux/PtyConnection.cs:38-40` calls `pty_waitpid`; native `porta_pty.c:245-247` calls libc `waitpid`; `Unix/PtyConnection.cs:179-182` decodes and drops the signal | Keep one reaper; use its result |
 | Stops send TERM then KILL | `PtySession.cs:55-66` tree-kills with .NET; fallback Porta Linux `Kill:27` sends SIGHUP | Record SIGKILL or fallback SIGHUP; do not describe a nonexistent SIGTERM grace period |
 | Only the sentence is wrong | `AgentSessionRuntime.cs:260` and `SessionReconciliationService.cs:775` classify zero as clean | Audit and fix signal-aware classification as well as presentation |
@@ -60,29 +60,42 @@ There is no repository-owned Linux `waitpid` implementation in PtyHost today.
 The native shim is packaged `runtimes/linux-*/native/libporta_pty.so`.
 Successful blocking wait decodes `status & 127` and, only for no signal,
 `(status >> 8) & 255`. Wait errors, including ECHILD, are not a known normal exit.
-The patch must preserve EINTR handling and represent unavailable observation explicitly.
+Upstream EINTR handling is unchanged. Its silent ECHILD/other wait-error path
+does not set the completion event or raise `ProcessExited`; that existing observer
+gap is out of scope. Absence of completion never authorizes reading the default
+field value as observed zero.
 
-Import managed upstream files into `src/Antiphon.Porta.Pty/` with an MIT license
-and provenance README, use assembly name `Antiphon.Porta.Pty`, retain the Porta
-namespaces, and replace the managed package reference in
-`src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj` with a project reference.
-The new project pins Porta.Pty 1.0.7 with `IncludeAssets="native"` and
-`PrivateAssets="all"`, and explicitly retains the upstream Vanara 4.2.1 dependency.
-Prove native assets flow to the detached host output; do not ship two managed Porta
-assemblies. The vendored patch is limited to exit evidence/replay; do not modernize
-unrelated upstream code. This is a bounded exception to ADR 0002's rejected broad
-Windows fork: Windows spawning and both native shims remain unchanged.
-Implement the new completion members in the vendored Windows connection as well
-as Unix, returning the observed Windows code and zero signal; do not edit its
-spawn/kill algorithm. If native-only dependency metadata does not propagate the
-shim through project references, explicitly stage the pinned package assets as
-Content using the repository's existing RID layout and copy/publish metadata;
-the detached-host witness must prove the shadow copy resolves that file.
+Round-2 verification independently read the pinned source and loaded the installed
+package DLL using `Assembly.LoadFrom` (metadata inspection, no product test).
+The nuspec revision and DLL informational version both name the commit above;
+assembly version is `1.0.7.0`. The declaring type is
+`Porta.Pty.Unix.PtyConnection`, the field is private instance `System.Int32
+exitSignal`, and `Porta.Pty.Linux.PtyConnection` derives directly from that type.
+Public `ExitCode` and `WaitForExit(int)` exist. Source sets signal, then code,
+then the manual-reset event, then invokes `ProcessExited` on the same watcher
+thread. The reviewer is correct about event ordering and the replay barrier.
+This is source/metadata verification, not a claim of reproducible binary equivalence.
+
+Add `PortaExitSignalReader.cs` inside the existing Agents.Pty project. Resolve
+the exact declaring type with `BindingFlags.Instance | NonPublic | DeclaredOnly`,
+validate the real connection's Linux type/base and the pinned assembly versions,
+and cache the validated `FieldInfo`. On mismatch/access failure return unknown
+without throwing from the exit callback. Never reflect on Windows or macOS.
+Keep the existing package reference and native assets unchanged; no new project,
+solution, package setting, land-graph inventory or ADR exception is needed.
+The private contract is intentionally fragile across package upgrades: a loud
+test on the real loaded assembly makes that maintenance cost explicit, while
+runtime failure stays conservative. An upgrade must re-audit ordering and run
+the native signal/replay witnesses before updating the pin.
 
 Add an immutable `PtyExitObservation(ExitCode, ExitSignal)` at the PTY seam.
-`IPtySession.Exited` and `PtyAgentRunner` consume it. Cache completed exit before
-notifying; subscribe then replay a completed snapshot with exactly-once completion
-so an immediately exiting child cannot lose its result before subscription.
+`IPtySession.Exited` and `PtyAgentRunner` consume it. In `PortaPtySession`, subscribe
+to `ProcessExited`, then call public `WaitForExit(0)` and replay code/signal if true.
+Cache the immutable observation before notifying, expose a read-completed seam
+on `IPtySession`, and have `PtyAgentRunner` subscribe then read that cache too.
+These are two separate subscription windows. Deduplicate callback/replay at both
+layers so an early exit is retained and reason/cleanup callbacks execute once.
+Never read the private field before a callback or successful wait barrier.
 Keep `PtyAgentRunner.Exited`'s integer compatibility task where existing consumers
 need it and add structured completion; known signal maps to a documented nonzero
 compatibility result only on that legacy adapter task. Host/session fields retain
@@ -283,7 +296,7 @@ run on an eligible Windows lane at the same source SHA; Linux cannot credit them
 
 | Slice | Value, files and tests | Budget / closure |
 |---|---|---|
-| **S1 — retain the actual native observation** | Add `src/Antiphon.Porta.Pty/` pinned managed sources/license/provenance and project; update `Antiphon.sln` and `src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj`; patch vendored `Unix/PtyConnection.cs`, `PtyExitedEventArgs.cs`, `IPtyConnection.cs` completion snapshot; add `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, `ModernConPtyConnection.cs`. Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 135 minutes: 25 native dependency/staging, 55 seam/replay, 25 witnesses, 15 checkpoints, 15 graph/review notes. CP-1; final Windows closure CP-2 after S4. No broad native fork. |
+| **S1 — retain the actual native observation** | Add `src/Antiphon.Agents.Pty/PortaExitSignalReader.cs` and `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, and only the shared observation/completion seam in `ModernConPtyConnection.cs` (native Windows behavior unchanged). Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 120 minutes: 15 pinned accessor, 40 two-level replay/seam, 35 witnesses, 20 checkpoints, 10 notes. CP-1; final Windows closure CP-2 after S4. No dependency, native-file or build-graph change. |
 | **S2 — carry it across process/restart boundaries** | Update `PtyHostMessages.cs`, `PtyHostManifest.cs`, `HostSession.cs`, `PtyHostClient.cs` if mapping needed, `SessionRunnerContracts.cs`, `ISessionChild.cs`, `SessionRunnerRuntime.cs`. Add `tests/Antiphon.PtyHost.Tests/Card1619ExitWireTests.cs`, `Card1619LinuxHostExitTests.cs`, `tests/Antiphon.SessionRunner.Tests/Card1619RunnerExitTests.cs`, frozen old-schema fixtures. | 140 minutes: 55 propagation, 45 real detached-host/restart and skew tests, 25 checkpoints, 15 review notes. CP-3/CP-4. Highest transport risk is exit while detached. |
 | **S3 — persist and describe it without false success** | Update `AgentSession`, `RunAttempt`, `AgentIncident`, generated migration/snapshot; `SessionRunnerDtos`, `AgentDtos`, `BoardDtos`; `RunnerContractMapper`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter`, listed local/runner adapters and `RunnerTerminalSession`; `AgentSessionRuntime`, `AgentSessionService`, `SessionReconciliationService`, `SessionTermination`, `AgentTaskLiveness`, dispatcher/attention projections, supervisor/review/diagnostics projections, reset writers and `CheckCompactionContinuationService`; handwritten client types. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitPersistenceTests.cs`, `Card1619ExitConsumerTests.cs` under `tests/Antiphon.Tests/`. Update owner docs. | 150 minutes: 60 mapping/helper/persistence, 25 migration/reset/API, 35 witnesses, 20 checkpoints, 10 notes. CP-5..CP-8. If the audit reveals further branching consumers, split a follow-on Code slice before widening this budget. |
 | **S4 — record Antiphon's stop intent** | Add `ProcessStopIntent.cs` and `ProcessStopIntentStore.cs` in `src/Antiphon.PtyHost.Protocol/`; use an injected low-level stop callback in `PtySession`/`PtyAgentRunner` without introducing a PTY-to-host dependency; wire `HostSession`, `SessionRunnerRuntime`, `IPtyCustodyContainment`, `ILinuxCustodyRecovery`, `RunnerCustodyLedger`; append optional intent to wire/manifest/DTO and S3 persistence/helper. Add `Card1619StopIntentTests.cs` (PtyHost.Tests), `Card1619LinuxStopIntentTests.cs` (SessionRunner.Tests), `Application/Card1619StopAttributionTests.cs` (Antiphon.Tests). Update session/PTY owner docs. | 150 minutes: 45 durable journal/order, 35 alternate authorized paths, 30 race/crash/native tests, 30 checkpoints, 10 notes. CP-9..CP-12; final CP-2 runs in native Review. No helper privilege or custody policy expansion. |
@@ -327,24 +340,12 @@ Succeeded proposal. Re-run the precise dead-session/report witnesses after the
 separate master port. The corrected CARD-1610 plan targets master; that is not a
 reason to redirect this fix's RC-first instruction.
 
-Definition-file changes in S1 (`*.csproj`, solution, any props/targets/lock file)
-require `scripts/audit-land-verification-graph.ps1 -Update` after committing the
-definition input, using the real built evaluator and current pins. Commit the
-generated `LandVerificationBuildGraph.manifest.txt` and `.evaluation.txt` records;
-never hand-edit them or bypass a refused pin. Check again with `-Check`. EF
-migration `.cs` and snapshot files alone are not definition-inventory entries;
-adding migration references, package/project settings or a fixture csproj is.
-Re-run Update in any later slice/port that changes that inventory. Audit includes
-native-only package asset handling and the new project graph. A refused dynamic
-vendor build target must be simplified/reviewed, not exempted.
-
-Authorized preparatory tooling (separate from the closed product-test roster):
-
-```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph -- dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-card1619-graph/Release/net10.0/
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-update -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-check -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
-```
+No build-definition change is planned. If an unforeseen `*.csproj`, solution,
+props/targets or lock-file change is necessary, report the reason and apply
+`scripts/audit-land-verification-graph.ps1 -Update` then `-Check` with the real
+isolated evaluator under the build-slot gate. Never hand-edit its generated
+inventory. EF migration `.cs` and snapshot files alone are not definition inputs;
+the named integration fixture below requires no new staging/project reference.
 
 For EF, restore the repository-pinned tool and scaffold
 `AddSessionExitSignalEvidence` with `dotnet ef migrations add`, project `server`,
@@ -353,7 +354,7 @@ output directory `Migrations`, under `scripts/build-slot.ps1`. Arrange an isolat
 verify EF's resolved assembly path. `-- --property:OutputPath=...` is NOT an EF
 build-output override (it forwards application arguments), and is forbidden here.
 Do not let scaffolding rebuild a daemon's standard bin. Record tooling costs separately (provisional
-5 minutes graph, 5 minutes migration), and remove only producer-owned alternate
+5 minutes migration), and remove only producer-owned alternate
 outputs after use. Do not run migrations on a live database from Code tests.
 
 ## Performance budget
@@ -368,7 +369,7 @@ importer's 15-minute floor/3x estimate as timeout evidence.
 
 | Group | Expected build / execution wall minutes | Initial execution ceiling | Measurement obligation |
 |---|---|---|---|
-| S1 Linux CP-1 | 3 / 1 | 4 minutes | Six native cases; per-case expected 5 seconds, provisional 15-second bound |
+| S1 Linux CP-1 | 3 / 1 | 4 minutes | Six native cases plus four contract/fail-closed results; per-case expected 5 seconds, provisional 15-second bound |
 | Final Windows CP-2 | 4 / 3 | 8 minutes | Two new cases plus five existing tree-kill tests; native timings |
 | S2 Linux CP-3/4 | 4+4 / 2+2 | 8 minutes per row | Host ready, pipe, manifest IO, restart/adoption and teardown |
 | S3 Linux CP-5/6/7/8 | 6 / 5+1+2+2 | 12/2/4/4 minutes | Shared DB template/web host, isolated cases; separate typecheck span |
@@ -473,7 +474,7 @@ These files do not exist in this Plan commit.
 
 | IDs / class / lane | Methods or separately reported cases | Discriminating result |
 |---|---|---|
-| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_never_completes_legacy_adapter_as_zero` (6) | Signal 9/15 separate from raw code; zero/no-signal distinct from null; code 23 intact; exactly-once completion; compatibility task never false zero |
+| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_never_completes_legacy_adapter_as_zero`; `Porta_exitSignal_private_contract_holds`; `Unsupported_contract_keeps_signal_unknown` with 3 separately reported cases (missing field, wrong field type, wrong version) (10) | Real loaded DLL pins version/type/private field; invalid access never yields zero. Native cases distinguish signal 9/15, normal 0/23 and null. Fast exit covers completion before wrapper subscription and before runner subscription, plus callback/replay overlap; assert one completion and reason callback |
 | R-1 `Card1619WindowsExitTests`, Agents.Pty.Tests, Windows | `Modern_exit_and_stop_preserve_windows_behavior`, `Inbox_exit_and_stop_preserve_windows_behavior` (2) | Production factory selects actual modern/inbox backend; normal 0/23 and kill result unchanged, signal zero |
 | V-7 `Card1619ExitWireTests`, PtyHost.Tests, portable | `Old_exit_frame_is_unknown`, `New_exit_frame_is_accepted_by_frozen_v1_reader`, `Status_and_attach_preserve_signal`, `Manifest_both_versions_round_trip`, `Unknown_signal_number_is_preserved`, `Null_signal_is_not_normalized_to_zero` (6) | Frozen v1 framing/DTO fixture from base with provenance, not today's reader twice; length prefix/discriminator and optional null/absence survive |
 | V-8 `Card1619LinuxHostExitTests`, PtyHost.Tests, Linux | `Live_SIGKILL_matches_manifest`, `Live_SIGTERM_matches_manifest`, `Exited_attach_and_status_replay_identical_evidence`, `Normal_exit_code_survives_detached_host` (4) | Actual host wait reaches wire/status/manifest/log; one meaning across all surfaces |
@@ -510,7 +511,7 @@ new fleet host provisioning or Linux custody advertisement is implied.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-pty/` | linux-native-pty-exit | `/*/*/Card1619UnixExitTests/*` | V-1..6 | all 6 listed, 0 failed/skipped | 6 | 4 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-pty/` | linux-native-pty-exit | `/*/*/Card1619UnixExitTests/*` | V-1..6 plus private-contract guards | all 10 listed, 0 failed/skipped | 10 | 4 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-2 | S1-S4 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-windows/` | windows-native-exit-regression | `/*/*/(Card1619WindowsExitTests*)\|(PtyKillProcessTreeTests*)/*` | R-1,R-2 | all 7 listed, 0 failed/skipped | 7 | 7 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-3 | S2 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host/` | linux-host-wire-and-skew | `/*/*/(Card1619ExitWireTests*)\|(Card1619LinuxHostExitTests*)/*` | V-7,V-8 | all 10 listed, 0 failed/skipped | 10 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-4 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner/` | linux-runner-exit-adoption | `/*/*/Card1619RunnerExitTests/*` | V-9 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
