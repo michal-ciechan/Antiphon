@@ -8781,7 +8781,9 @@ c1008_audit_readonly() {
 c1008_audit_checked() {
     local audit code=0 work_state detail
     work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
-    if [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
+    # Only main's v1 recreation adapter may reuse a saved audit after removal.
+    # Temp must freshly prove every remaining role even when work is absent.
+    if [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
         { [ "$work_state" = pending ] && [ "$(printf '%s' "$C1008_RECORD" | jq -r .phase)" = removing ]; }; }; then
         if [ "$(c1008_volume "${C1008_PROJECT}_work")" = null ]; then
             printf '%s' "$C1008_RECORD" | jq -e '(.audit|type)=="string"' >/dev/null \
