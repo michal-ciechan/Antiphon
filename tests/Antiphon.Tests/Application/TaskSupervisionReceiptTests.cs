@@ -116,6 +116,7 @@ public sealed class TaskSupervisionReceiptTests
             await db.SaveChangesAsync();
         }
         await h.FinishAsync();
+        await parent.MarkIdleAsync();
         await RecoverAsync(parent, h.Clock);
         await using var verify = h.Context();
         var triage = await verify.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
