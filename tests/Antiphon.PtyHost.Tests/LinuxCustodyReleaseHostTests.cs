@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
+using Antiphon.PtyHost;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -23,7 +24,9 @@ public sealed class LinuxCustodyReleaseHostTests
         if (!OperatingSystem.IsLinux())
             throw new SkipTestException("The inbox pty launch runs on Linux.");
         var ttl = TimeSpan.FromMilliseconds(400);
+        var namespaceId = Guid.Parse("16140000-0000-4000-8000-0000000000b2");
         var files = new TrackingRefusal();
+        HostCustodyJournal.LinuxNamespaceForTests.Value = namespaceId;
         await using var host = HostHarness.Start(o => o with
         {
             PtyBackend = "inbox",
@@ -44,11 +47,7 @@ public sealed class LinuxCustodyReleaseHostTests
 
             var ns = store.ReadRecord<LinuxNamespaceRecord>(binding, "linux-namespace.json");
             ns.ShouldNotBeNull();
-            if (ns!.NamespaceId == Guid.Empty)
-            {
-                store.WriteRecord(binding, "linux-namespace.json",
-                    ns with { NamespaceId = Guid.NewGuid() });
-            }
+            ns!.NamespaceId.ShouldBe(namespaceId);
 
             store.WriteRecord(binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
             containment.Pids.Clear();
@@ -64,6 +63,7 @@ public sealed class LinuxCustodyReleaseHostTests
         }
         finally
         {
+            HostCustodyJournal.LinuxNamespaceForTests.Value = null;
             try
             {
                 if (files.Child is { HasExited: false })

@@ -19,6 +19,12 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     public VerificationHostIdentity Identity { get; }
     public Guid ContainerId => Identity.ContainerId;
 
+    /// <summary>
+    /// Test seam. When set, the first linux-namespace.json write uses this id.
+    /// Production leaves it unset and reads /run/antiphon-custody/namespace.
+    /// </summary>
+    internal static readonly AsyncLocal<Guid?> LinuxNamespaceForTests = new();
+
     public HostCustodyJournal(VerificationCustodyStore store, VerificationExecutionBinding binding,
         Guid hostInstanceId)
     {
@@ -37,6 +43,8 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
 
     private static Guid ReadLinuxNamespace()
     {
+        if (LinuxNamespaceForTests.Value is Guid injected)
+            return injected;
         const string marker = "/run/antiphon-custody/namespace";
         try
         {
