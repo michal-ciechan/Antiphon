@@ -265,12 +265,26 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(unsafeFixture, unsafeContext);
         var cleanManual = await File.ReadAllTextAsync(unsafeReceipt);
         await File.AppendAllTextAsync(Path.Combine(repo, "readme.txt"), "unpublished dirty bytes\n");
+        // This method-scoped PC changes only the owned child's audit. The clean
+        // authority control above prevents an authority refusal hiding dirty work.
+        var bypass = Environment.GetEnvironmentVariable("C1609_J10_MANUAL_BYPASS") == "1"
+            ? "\nc1008_audit_readonly() { printf 'repositories=1\\n'; }" : "";
         var refused = await unsafeFixture.Run("retire-temp-runner",
-            unsafeContext, dryRun: true);
+            unsafeContext + bypass, dryRun: true);
         refused.Exit.ShouldNotBe(0, "J10 manual authority cannot waive content findings; " + refused.Output);
         refused.Output.ShouldContain("RecycleWorktreeDirty");
         unsafeFixture.Removed.ShouldBeEmpty();
         (await File.ReadAllTextAsync(unsafeReceipt)).ShouldBe(cleanManual, "J10 unsafe manual preview preserves the prior Ready receipt");
+        unsafeIntent["phase"] = "Apply";
+        unsafeIntent["previewDigest"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            await File.ReadAllBytesAsync(unsafeReceipt))).ToLowerInvariant();
+        await WriteAttestation(unsafeAttestation, unsafeIntent);
+        var dirtyApply = await unsafeFixture.Run("retire-temp-runner", unsafeContext);
+        dirtyApply.Exit.ShouldNotBe(0, "J10 exact Apply attestation cannot waive dirty content; " + dirtyApply.Output);
+        dirtyApply.Output.ShouldContain("RecycleWorktreeDirty");
+        unsafeFixture.Removed.ShouldBeEmpty();
+        JsonNode.Parse(await File.ReadAllTextAsync(unsafeReceipt))!["consumed"]!.GetValue<bool>()
+            .ShouldBeFalse("J10 content refusal cannot consume Ready");
     }
 
     private static Task WriteAttestation(string path, JsonNode value)
