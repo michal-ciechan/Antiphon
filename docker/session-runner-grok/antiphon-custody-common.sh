@@ -152,12 +152,8 @@ custody_namespace_boot "$2" "$3"
 }
 
 custody_namespace_boot() {
-  local state="${1:-}" run="${2:-}" fail_step="${3:-}"
+  local state="${1:-}" run="${2:-}"
   local record value mode owner guid
-  if [ -n "$fail_step" ]; then
-    printf 'continued=yes\n'
-    return 0
-  fi
   if [ -z "$state" ] || [ -L "$state" ] || [ ! -d "$state" ]; then
     return 1
   fi
