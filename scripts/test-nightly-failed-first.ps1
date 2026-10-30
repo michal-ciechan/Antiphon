@@ -83,7 +83,7 @@ function New-FFHistoricalFixture {
         $uid = if ($i -ge 8) { 'recovered' } else { 'diag-'+$i }
         $method = if ($i -eq 7) { 'concurrent_callbacks_append_each_line_once_without_overlap' } else { 'Case'+$i }
         if ($i -eq 9) { $method='Case8' }
-        $diag += 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = '+$uid+' }, Properties = [ TestMethodIdentifierProperty { Namespace = Antiphon.Tests.Checkpoints, TypeName = '+$type+', MethodName = '+$method+', MethodArity = 0 }, '+$state+'TestNodeStateProperty { Explanation =  } ] } }' + "`n"
+        $diag += 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = '+$uid+' }, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Fixture, Namespace = Antiphon.Tests.Checkpoints, TypeName = '+$type+', MethodName = '+$method+', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, '+$state+'TestNodeStateProperty { Explanation =  } ] } }' + "`n"
         if ($i -lt 8) { $nodesBySuite.antiphon += New-FFNode ('Antiphon.Tests.Checkpoints.'+$type) $method $uid }
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'antiphon-all-group-105-execution'))
