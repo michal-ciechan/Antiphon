@@ -193,15 +193,9 @@ public class CapacityObsoleteStandingTests
             var detail = await fx.Harness.Control.StartAsync(agent.Id,
                 new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true), CancellationToken.None);
             detail.LiveSession.ShouldNotBeNull();
-            commands.Texts.Clear();
+            commands.Clear();
             await fx.Recovery.ReconcileAsync(CancellationToken.None);
-            var order = string.Join("\n", commands.Texts);
-            var sessionLock = order.IndexOf("AgentSessions", StringComparison.Ordinal);
-            var agentLock = order.IndexOf("FROM \"Agents\"", StringComparison.Ordinal);
-            var provider = order.IndexOf("pg_try_advisory_xact_lock", StringComparison.Ordinal);
-            sessionLock.ShouldBeGreaterThanOrEqualTo(0);
-            agentLock.ShouldBeGreaterThan(sessionLock);
-            provider.ShouldBeGreaterThan(agentLock);
+            commands.AssertStandingLockOrder();
             (await fx.ReloadWaitAsync(wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Superseded);
             return;
         }
@@ -276,7 +270,7 @@ public class CapacityObsoleteStandingTests
                 // provider. GrantReady's blocking lock waits behind it, so release only
                 // after those tries have finished and before that wait can time out.
                 var completed = await Task.WhenAny(commands!.TriesCompleted, Task.Delay(TimeSpan.FromSeconds(20)));
-                completed.ShouldBe(commands.TriesCompleted, string.Join("\n", commands.Texts));
+                completed.ShouldBe(commands.TriesCompleted, string.Join("\n", commands.Snapshot()));
                 foreach (var id in ids)
                     (await fx.ReloadWaitAsync(id)).State.ShouldNotBe(CapacityRecoveryWaitState.Superseded);
                 await tx.RollbackAsync();
@@ -488,12 +482,14 @@ public class CapacityObsoleteStandingTests
                 $"SELECT \"Id\" FROM \"{table}\" WHERE \"Id\" = @id FOR UPDATE", connection, tx);
             command.Parameters.AddWithValue("id", id);
             (await command.ExecuteScalarAsync()).ShouldBe(id);
-            commands.Texts.Clear();
+            commands.Clear();
             try
             {
                 await Recovery.ReconcileAsync(CancellationToken.None);
                 (await ReloadWaitAsync(waitId)).State.ShouldNotBe(CapacityRecoveryWaitState.Superseded);
-                string.Join("\n", commands.Texts).ShouldNotContain("pg_try_advisory_xact_lock");
+                var trace = commands.CleanupTrace();
+                var observed = trace.Count > 0 ? trace : commands.Snapshot();
+                string.Join("\n", observed).ShouldNotContain("pg_try_advisory_xact_lock");
             }
             finally
             {
@@ -527,19 +523,72 @@ public class CapacityObsoleteStandingTests
 
     private sealed class CommandLog : DbCommandInterceptor
     {
+        private readonly object _gate = new();
+        private readonly List<LoggedCommand> _entries = [];
         private int _completedTries;
         private readonly TaskCompletionSource _triesCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public List<string> Texts { get; } = [];
 
         public int ExpectedCompletedTries { get; init; }
 
         public Task TriesCompleted => _triesCompleted.Task;
 
+        public void Clear()
+        {
+            lock (_gate)
+                _entries.Clear();
+        }
+
+        public IReadOnlyList<string> Snapshot()
+        {
+            lock (_gate)
+                return _entries.Select(entry => entry.Text).ToArray();
+        }
+
+        /// <summary>
+        /// Commands on the connection that issued a standing row lock. Discovery and
+        /// grant work use other connections and are not the cleanup's lock order.
+        /// </summary>
+        public IReadOnlyList<string> CleanupTrace()
+        {
+            List<LoggedCommand> snapshot;
+            lock (_gate)
+                snapshot = _entries.ToList();
+
+            var rowLocks = snapshot.Where(entry => IsSessionRowLock(entry.Text) || IsAgentRowLock(entry.Text)).ToArray();
+            if (rowLocks.Length == 0)
+                return [];
+
+            var connectionIds = rowLocks.Select(entry => entry.ConnectionId).Distinct().ToArray();
+            var chosen = connectionIds[0];
+            if (connectionIds.Length > 1)
+            {
+                var withProvider = connectionIds.FirstOrDefault(id =>
+                    snapshot.Any(entry => entry.ConnectionId == id && IsProviderLock(entry.Text)));
+                if (withProvider != Guid.Empty)
+                    chosen = withProvider;
+            }
+
+            return snapshot.Where(entry => entry.ConnectionId == chosen).Select(entry => entry.Text).ToArray();
+        }
+
+        public void AssertStandingLockOrder()
+        {
+            var trace = CleanupTrace();
+            var dump = trace.Count == 0
+                ? "no row-lock connection\n" + string.Join("\n", Snapshot())
+                : string.Join("\n", trace);
+            var sessionLock = First(trace, IsSessionRowLock);
+            var agentLock = First(trace, IsAgentRowLock);
+            var provider = First(trace, IsProviderLock);
+            sessionLock.ShouldBeGreaterThanOrEqualTo(0, dump);
+            agentLock.ShouldBeGreaterThan(sessionLock, dump);
+            provider.ShouldBeGreaterThan(agentLock, dump);
+        }
+
         public override InterceptionResult<DbDataReader> ReaderExecuting(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
         {
-            Texts.Add(command.CommandText);
+            Record(command, eventData);
             return base.ReaderExecuting(command, eventData, result);
         }
 
@@ -547,8 +596,23 @@ public class CapacityObsoleteStandingTests
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
-            Texts.Add(command.CommandText);
+            Record(command, eventData);
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+        {
+            Record(command, eventData);
+            return base.NonQueryExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Record(command, eventData);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
 
         public override ValueTask<DbDataReader> ReaderExecutedAsync(
@@ -561,5 +625,36 @@ public class CapacityObsoleteStandingTests
                 _triesCompleted.TrySetResult();
             return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
         }
+
+        private void Record(DbCommand command, CommandEventData eventData)
+        {
+            var entry = new LoggedCommand(eventData.ConnectionId, command.CommandText);
+            lock (_gate)
+                _entries.Add(entry);
+        }
+
+        private static int First(IReadOnlyList<string> commands, Func<string, bool> match)
+        {
+            for (var i = 0; i < commands.Count; i++)
+            {
+                if (match(commands[i]))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private static bool IsSessionRowLock(string text) =>
+            text.Contains("""FROM "AgentSessions" WHERE "Id" """, StringComparison.Ordinal)
+            && text.Contains("FOR UPDATE NOWAIT", StringComparison.Ordinal);
+
+        private static bool IsAgentRowLock(string text) =>
+            text.Contains("""FROM "Agents" WHERE "Id" """, StringComparison.Ordinal)
+            && text.Contains("FOR UPDATE NOWAIT", StringComparison.Ordinal);
+
+        private static bool IsProviderLock(string text) =>
+            text.Contains("pg_try_advisory_xact_lock", StringComparison.Ordinal);
+
+        private readonly record struct LoggedCommand(Guid ConnectionId, string Text);
     }
 }

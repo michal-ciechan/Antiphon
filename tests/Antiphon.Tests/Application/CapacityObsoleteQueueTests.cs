@@ -228,6 +228,16 @@ public class CapacityObsoleteQueueTests
             return;
         }
 
+        // Five seconds is inside the 120s stall bound. A release that waits for
+        // expiry still holds the finished wait here and does not grant the competitor.
+        fx.Advance(TimeSpan.FromSeconds(5));
+        await fx.Recovery.ReconcileAsync(CancellationToken.None);
+        await using (var early = fx.Ctx())
+        {
+            (await early.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(competitor.Id);
+        }
+
         var stillHeld = false;
         DateTime? grantedAt = null;
         for (var window = 0; window < 3; window++)
@@ -249,9 +259,28 @@ public class CapacityObsoleteQueueTests
         finished.ActionKey.ShouldBe(before.ActionKey);
         finished.Version.ShouldBe(before.Version);
         stillHeld.ShouldBeFalse($"finished wait kept the grant at {grantedAt:o}");
+
+        // The early grant moves the 120s re-arm phase, so the closing read may
+        // land in the gap after a later expiry. Advance to the competitor's due
+        // tick when that happens, then require the same grant.
+        await using (var probe = fx.Ctx())
+        {
+            var grant = await probe.Set<CapacityRecoveryProviderState>().AsNoTracking()
+                .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+            if (grant.GrantedWaitId != competitor.Id)
+            {
+                var row = await fx.ReloadWaitAsync(competitor.Id);
+                if (row.DueAt is { } due && due > fx.Now)
+                    fx.Advance(due - fx.Now + TimeSpan.FromSeconds(1));
+                await fx.Recovery.ReconcileAsync(CancellationToken.None);
+            }
+        }
+
         await using var end = fx.Ctx();
-        (await end.Set<CapacityRecoveryProviderState>().AsNoTracking()
-            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(competitor.Id);
+        var endGrant = await end.Set<CapacityRecoveryProviderState>().AsNoTracking()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        endGrant.GrantedWaitId.ShouldNotBe(wait.Id, $"finished wait kept the grant at {endGrant.GrantedAt:o}");
+        endGrant.GrantedWaitId.ShouldBe(competitor.Id);
     }
 
     [Test]
