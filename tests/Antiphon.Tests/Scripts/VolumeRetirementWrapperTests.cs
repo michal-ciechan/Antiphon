@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -361,7 +362,7 @@ public sealed class VolumeRetirementWrapperTests
                 "],\"intents\":[" + string.Join(",", Enumerable.Repeat("{\"name\":\"antiphon-runner-temp_work\"}", intents)) + "]}";
             var output = await Bash(probe,
                 ("PRESENT", present), ("STATE", state), ("RECEIPT", receipt), ("CLOSED", closed));
-            output.ShouldContain(expect, output);
+            output.ShouldContain(expect, customMessage: output);
         }
         await Shell("1", "", 0, 0, "0", "exit=1 reason=TempVolumesRetained");
         await Shell("0", "Refused", 0, 0, "0", "exit=0 reason=ok");

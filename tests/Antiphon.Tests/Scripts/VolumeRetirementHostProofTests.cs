@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -133,13 +134,13 @@ public sealed class VolumeRetirementHostProofTests
             "$text = $env:C1609_LINES; " +
             "try { $rows = @(Read-C1008PrivateOriginLines -Text $text); Write-Output ('rows=' + $rows.Count) } " +
             "catch { Write-Output ('refused=' + $_.Exception.Message); exit 2 }";
-        var one = await Pwsh(command, ("C1609_LINES", line + "\n"));
+        var one = await Pwsh(command, new[] { ("C1609_LINES", line + "\n") });
         one.Exit.ShouldBe(0, one.Output);
         one.Output.ShouldContain("rows=1");
-        var duplicate = await Pwsh(command, ("C1609_LINES", line + "\n" + line + "\n"));
+        var duplicate = await Pwsh(command, new[] { ("C1609_LINES", line + "\n" + line + "\n") });
         duplicate.Exit.ShouldBe(2, duplicate.Output);
         duplicate.Output.ShouldContain("RecycleGitAuditUnknown");
-        var wrong = await Pwsh(command, ("C1609_LINES", line.Replace(hash, new string('0', 64), StringComparison.Ordinal) + "\n"));
+        var wrong = await Pwsh(command, new[] { ("C1609_LINES", line.Replace(hash, new string('0', 64), StringComparison.Ordinal) + "\n") });
         wrong.Exit.ShouldBe(2, wrong.Output);
         wrong.Output.ShouldContain("RecycleGitAuditUnknown");
 
