@@ -15,7 +15,7 @@ c1609_note_census_attempt() {
         '{gateId:$gate,attempt:$attempt,backoffSeconds:$delay,cause:$cause,
           startedMonotonicMs:$started,finishedMonotonicMs:$finished,elapsedMs:($finished-$started)}' \
         >> "$CASE_DIR/c1609-census.jsonl") || return 1
-    sync -f "$CASE_DIR/c1609-census.jsonl"
+    sync -- "$CASE_DIR/c1609-census.jsonl"
 }
 
 c1609_monotonic_ms() {
@@ -139,7 +139,9 @@ c1609_persist() {
     c1609_custody "$dir" dir || return 1
     if [ -e "$file" ] || [ -L "$file" ]; then c1609_custody "$file" file || return 1; fi
     tmp="$(umask 077; mktemp "$dir/record.XXXXXXXX")" || return 1
-    if ! jq -cS . > "$tmp" || ! sync -f "$tmp" || ! mv -T -- "$tmp" "$file" || ! sync -f "$dir"; then
+    # GNU sync with file operands fsyncs those objects. -f would syncfs the
+    # containing filesystem, unnecessarily coupling each intent to unrelated IO.
+    if ! jq -cS . > "$tmp" || ! sync -- "$tmp" || ! mv -T -- "$tmp" "$file" || ! sync -- "$dir"; then
         [ ! -e "$tmp" ] || rm -f -- "$tmp"
         return 1
     fi

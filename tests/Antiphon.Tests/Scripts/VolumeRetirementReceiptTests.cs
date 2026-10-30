@@ -36,7 +36,7 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(fixture);
         var receipt = ReceiptPath(fixture);
         var original = await File.ReadAllTextAsync(receipt);
-        foreach (var vector in new[] { "duplicate", "unknown", "truncated", "hardlink", "symlink", "writable", "digest", "flush" })
+        foreach (var vector in new[] { "duplicate", "unknown", "truncated", "hardlink", "symlink", "writable", "digest", "flush", "flush-directory" })
         {
             await File.WriteAllTextAsync(receipt, original);
             var mutation = vector switch
@@ -49,6 +49,7 @@ public sealed class VolumeRetirementReceiptTests
                 "writable" => "chmod 0777 \"$root\"",
                 "digest" => "C1008_EXPECTED_PROOF_DIGEST=" + new string('0', 64),
                 "flush" => "sync() { return 1; }",
+                "flush-directory" => "sync() { [ ! -d \"${@: -1}\" ] || return 1; command sync \"$@\"; }",
                 _ => throw new InvalidOperationException(vector)
             };
             var check = await CheckPreview(fixture, mutation);
