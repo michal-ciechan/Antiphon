@@ -222,6 +222,55 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
+    public async Task C514_Composer_redraw_before_Enter_reobserves_without_retyping()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        var redraws = 0;
+        h.Runner.SnapshotOverride = sessionId =>
+        {
+            var snapshot = new SessionRunnerSnapshotDto(sessionId,
+                h.Adapter.SnapshotRawOutput(), h.Adapter.SnapshotRenderedScreen(),
+                h.Adapter.SnapshotSequence, h.Generation, h.Generation);
+            // The command is visible, but the terminal emits the rest of its frame after this
+            // snapshot and before AgentSessionRuntime's separate dialog observation. No input
+            // changed and the first guarded Enter must be refused with zero backend bytes.
+            if (h.Adapter.ConditionalInputs.SequenceEqual(["/remote-control"]) && redraws++ == 0)
+                h.Adapter.SnapshotSequence++;
+            return Task.FromResult(snapshot);
+        };
+
+        var result = await h.ReserveAndExecuteAsync();
+
+        result.ShouldBe(RemoteControlArmResult.ArmedObserved);
+        redraws.ShouldBeGreaterThan(1, "the refused Enter must obtain a new observation");
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control", "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe(["/remote-control"]);
+        h.Runner.RawInputs.ShouldBeEmpty();
+        await using var db = h.CreateDb();
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C514_Pinned_arm_input_custody_cannot_be_replaced_by_a_fresh_dialog_read()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var before = (await h.Runtime.ObserveDialogAsync(h.SessionId, CancellationToken.None))!;
+        await h.Runtime.SendInteractiveInputAsync(h.SessionId, "operator draft", CancellationToken.None,
+            trackManualTurn: false);
+
+        var result = await h.Runtime.SendConditionalInputAsync(h.SessionId,
+            new RunnerConditionalInputRequest(h.Generation, h.Adapter.SnapshotSequence, "\r",
+                RequireClaudeDialogClear: true, ExpectedInputRevision: before.InputRevision,
+                ExpectedRuntimeEpoch: before.RuntimeEpoch), CancellationToken.None);
+
+        result.Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task C514_Arm_without_UserPrompt_submits_one_Enter()
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
