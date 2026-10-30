@@ -118,7 +118,7 @@ public class Card1619RunnerExitTests
         // A reconnect obtains the registry through the actual List command dispatcher.
         var reply = await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 8,
             Guid.NewGuid(), Operation: PhoneHomeOperation.List), default);
-        reply.Kind.ShouldBe(PhoneHomeFrameKind.Reply);
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
         reply.Payload!.Value.Deserialize<RunnerSessionDto[]>(PhoneHomeFraming.Json)!
             .Single(value => value.SessionId == fixture.Id).ExitSignal.ShouldBe(15);
     }
