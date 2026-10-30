@@ -133,8 +133,6 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         notice.ToldAt = receipt.Timestamp ?? receipt.CreatedAt;
         notice.ConfirmingPromptSequence = receipt.Sequence;
         notice.ReasonCode = null;
-        if (Environment.GetEnvironmentVariable("C1610_MUTANT") == "M3" && notice.Purpose == TaskSupervisionNoticePurpose.LateFailedParent)
-            (await db.AgentTasks.SingleAsync(t => t.Id == notice.TaskId, ct)).Status = AgentTaskStatus.Succeeded;
         return true;
     }
 

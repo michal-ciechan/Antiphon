@@ -276,7 +276,7 @@ internal static class TaskDeadlinePolicy
 
     // A real overdue phase is never hidden by a larger ceiling fraction.
     internal static Verdict? Select(Verdict? ceiling, Verdict? phase) =>
-        Environment.GetEnvironmentVariable("C1610_MUTANT") != "M6" && phase is { Breached: true, Kind: DeadlineKind.ModelWait or DeadlineKind.LocalExecution or DeadlineKind.ProviderInputWait } ? phase
+        phase is { Breached: true, Kind: DeadlineKind.ModelWait or DeadlineKind.LocalExecution or DeadlineKind.ProviderInputWait } ? phase
         : ceiling is null || phase is not null && phase.Fraction > ceiling.Fraction ? phase : ceiling;
 
     internal static TimeSpan ModelWaitElapsed(DateTime now, DateTime dispatched, DateTime lastAt, DateTime? heartbeat) =>
