@@ -378,3 +378,30 @@ plus an unavailable drained Linux entry. Use live defaults at dispatch; omit
 -Runner unless intentionally pinning one host, omit -Platform for portable work
 (-Platform Any unpins). Every checkpoint below names its logical lane; no fleet
 location is baked into a command. The Plan ran in its assigned Linux worktree.
+
+## D-7 detail: evidence and related owners
+
+The full independent Opus review is `.antiphon/task-25f7ce83.md` at the assigned
+base. It reviewed Astra's round-1 plan task c90aa6c9, tip
+`7960ee532981c13d9d5f2d039acadeacfdcf84b8`, and rejected ten defects. This revised
+plan supersedes that design; its 27 imported rows were valid syntax, not executed
+product-test evidence. The original historical source observations remain in Git.
+
+| Evidence / related card | Verified fact and implication |
+|---|---|
+| Review 7ee3b07a, CARD-1610 description read this round | 240-minute failure with ToolCall only six minutes old; motivates the Working ceiling hold |
+| Astra Plan 30f56bd5, CARD-1604 description read this round | Failed at 20-minute model wait despite continuing token_count; later pushed plan 63036f8e with result/nextStage still absent. Preserve 1604's heartbeat fix; historical report remains explicit triage |
+| Astra round-1 Plan c90aa6c9 | Compensation design rejected by review 25f7ce83; this round removes its release/ledger/late-correction machinery |
+| Deploy 2e4f7375, fresh delegate -Status read | Still Failed, session now ended at 2026-10-30 02:03:19; retained report describes completed redeploy-old and a requested later drain-temp -WaitIdleMinutes 240. The brief reports its earlier live failure; do not claim it remains live now or that this report proves the earlier failure occurred inside that drain |
+| CARD-1604 (Review) | Source heartbeat changes exist here; live API reports rc 8edda999; master/rc sequencing is D-6 |
+| CARD-1606 (Backlog) | Supervisor CPU counts its own monitor and masks hangs. Neither monitor ticks, queue polling nor this new notice are useful agent progress |
+| CARD-1615 (InProgress; Plan task 7734ac39 in caller brief) | A Shared Deploy task holds a bound land, which blocks redeploy-old. Resolve admission separately; do not relax recycle gates |
+| CARD-1573 (Review) | Actual title is output-inventory >64 MiB, with later card text explicitly adding a sharded Unit strategy after long Full runs. It is not solely a Unit speedup card; no unleased workaround receives checkpoint credit |
+| CARD-1151 (Review) | Source BootStallDetectAsync records detection without changing task outcome or sending input. Preserve this exact safety precedent |
+| CARD-0153 (Done) | TaskProgressPolicy fingerprint/file novelty detects chatty loops; include typed ceiling-held tasks in its active-task selector, keep detection-only behavior |
+| CARD-1083 / CARD-0079 | Parking off supplies no release deadline; only the narrowly qualified Check compaction continuation has the existing automatic Working-stop exception |
+
+No current runner setting was inferred from a historical report. No desktop
+qualification files were read, no completed qualification was resumed, and no
+session was stopped. Runtime reads establish observations only, not a same-build
+execution test of the proposed code.
