@@ -761,8 +761,18 @@ public sealed class TaskSupervisionVisibilityTests
             agentId, seatClass, idleSince ?? started, "unknown");
 
     /// <summary>Remote runner whose inventory has not answered, so its sessions are unproved.</summary>
-    private sealed class PendingInventoryDirectory(ISessionRunnerClient client) : SingleRunnerDirectory(client, "server2"), ISessionRunnerDirectory
+    private sealed class PendingInventoryDirectory(ISessionRunnerClient client) : ISessionRunnerDirectory
     {
+        public ISessionRunnerClient Local { get; } = client;
+        public IReadOnlyList<string> KnownRunnerIds => ["server2"];
+        public ISessionRunnerClient Resolve(string? runnerId) => client;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerOwner?>(null);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("pending"));
+        public Guid? GetLiveStoreId(string? runnerId) => null;
         public bool RemoteInventoryPending(string? runnerId) =>
             string.Equals(runnerId, "server2", StringComparison.Ordinal);
     }
