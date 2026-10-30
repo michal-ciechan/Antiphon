@@ -217,6 +217,7 @@ export type AttentionKind =
    * Detection only. The seat stays until authoritative exit or a new owner.
    */
   | 'FailedTaskSessionHeld'
+  | 'CeilingHold'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -126,6 +126,8 @@ public sealed partial class SessionMessageQueueService
             _completionNotes?.Recovery.Check(task.Id);
     }
 
+    internal void SupervisionChanged(Guid taskId) => _completionNotes?.Recovery.Check(taskId);
+
     internal void CompletionDeliveryFailed() => _completionNotes?.Recovery.RequestSweep();
 
     internal void CompletionHoldReleased(Guid sessionId) =>

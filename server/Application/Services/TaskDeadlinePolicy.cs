@@ -119,6 +119,9 @@ internal static class TaskDeadlinePolicy
         /// detection only.
         /// </summary>
         internal BootStallFacts? Boot { get; init; }
+        internal Verdict? PhaseDeadline { get; init; }
+        internal Verdict? CeilingDeadline { get; init; }
+        internal bool Working { get; init; }
     }
 
     /// <summary>
@@ -147,7 +150,7 @@ internal static class TaskDeadlinePolicy
         if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId
             && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct)) return null;
 
-        var ceiling = Minutes(CeilingMinutes(settings, task.Role));
+        var ceiling = TimeSpan.FromMinutes(CeilingHoldFacts.Bound(task, settings));
         var modelWait = Minutes(settings.ModelWaitDeadlineMinutes);
         var localExecution = Minutes(settings.LocalExecutionDeadlineMinutes);
         var bootWait = Minutes(settings.BootModelWaitDeadlineMinutes);
@@ -187,6 +190,7 @@ internal static class TaskDeadlinePolicy
         }
 
         Verdict? best = null;
+        Verdict? phaseDeadline = null;
         if (ceiling > TimeSpan.Zero)
         {
             best = new Verdict(
@@ -194,6 +198,8 @@ internal static class TaskDeadlinePolicy
                 $"Ran {Duration(elapsed)} against the {(int)ceiling.TotalMinutes}-minute ceiling for "
                 + $"role {task.Role}. {DescribeLast(last, lastAge)}");
         }
+        var ceilingDeadline = best;
+        var working = last is not null && await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct);
 
         // The phase arm. Working is asked BEFORE Kind is looked at, and only for a task that could
         // actually be near a phase deadline — see the class comment for why that order is the whole
@@ -202,8 +208,7 @@ internal static class TaskDeadlinePolicy
         if (last is not null
             && lastAge is TimeSpan age
             && phaseLimitFloor > TimeSpan.Zero
-            && Smaller(age, elapsed) >= phaseLimitFloor * PreviewFraction
-            && await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
+            && working)
         {
             var (phaseKind, phaseLimit) = ClassifyPhase(last.Kind, modelWait, localExecution);
             if (phaseKind == DeadlineKind.LocalExecution && providerWait is { IsWait: true })
@@ -252,8 +257,8 @@ internal static class TaskDeadlinePolicy
                         : string.Empty));
                 if (phaseKind == DeadlineKind.ProviderInputWait)
                     candidate = candidate with { Summary = $"Mid-turn with a current Claude {providerWait!.DialogLabel}. The local-tool clock is {Duration(phaseElapsed)}, against its {(int)phaseLimit.TotalMinutes}-minute budget. Tool execution is not confirmed. {DescribeLast(last, lastAge)}" };
-                if (best is null || candidate.Fraction > best.Fraction)
-                    best = candidate;
+                phaseDeadline = candidate;
+                best = Select(ceilingDeadline, candidate);
             }
         }
 
@@ -267,8 +272,13 @@ internal static class TaskDeadlinePolicy
             await ReadBootAsync();
         if (providerWait is { IsWait: true } && best.Kind != DeadlineKind.ProviderInputWait)
             best = best with { Summary = best.Summary + " " + providerWait.Diagnosis };
-        return best with { Boot = bootFacts };
+        return best with { Boot = bootFacts, PhaseDeadline = phaseDeadline, CeilingDeadline = ceilingDeadline, Working = working };
     }
+
+    // A real overdue phase is never hidden by a larger ceiling fraction.
+    internal static Verdict? Select(Verdict? ceiling, Verdict? phase) =>
+        phase is { Breached: true } ? phase
+        : ceiling is null || phase is not null && phase.Fraction > ceiling.Fraction ? phase : ceiling;
 
     /// <summary>
     /// Which deadline a mid-turn session's last entry selects. <c>TurnEnd</c> is deliberately absent

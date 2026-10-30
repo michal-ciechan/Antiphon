@@ -2899,7 +2899,8 @@ public sealed class AgentTaskService
                 .Select(d => new TaskSyncDebtDto(d.Id, d.State.ToString(), d.SourceSha,
                     d.ConfirmedSha, d.ReasonCode, d.Attempts, d.NextAttemptAt, d.SourceReadyAt))
                 .FirstOrDefaultAsync(ct),
-            FailedSession: failedSession);
+            FailedSession: failedSession,
+            CeilingHold: await CeilingHoldFacts.DescribeAsync(_db, task, UtcNow(), _settings, ct));
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
@@ -3891,6 +3892,7 @@ public sealed class AgentTaskService
 
         var now = UtcNow();
         task.Attempt++;
+        CeilingHoldFacts.Reset(task);
         if (acceptedAnswerId is null)
         {
             task.ReleasedSeatAnswer = null;

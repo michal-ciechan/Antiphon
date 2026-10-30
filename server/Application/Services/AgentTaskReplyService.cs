@@ -29,7 +29,7 @@ namespace Antiphon.Server.Application.Services;
 /// Singleton — invoked from the singleton <see cref="AgentSessionRuntime"/> transcript observer,
 /// with a DI scope per operation, mirroring the channel dispatcher's pattern.
 /// </summary>
-public sealed class AgentTaskReplyService
+public sealed partial class AgentTaskReplyService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly DelegationSettings _settings;

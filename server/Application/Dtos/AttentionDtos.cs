@@ -404,6 +404,7 @@ public enum AttentionKind
     /// session. Detection only — nothing is stopped, retried, or released.
     /// </summary>
     FailedTaskSessionHeld = 63,
+    CeilingHold = 64,
 }
 
 /// <summary>

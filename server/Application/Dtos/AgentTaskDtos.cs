@@ -487,7 +487,15 @@ public sealed record AgentTaskDetailDto(
     /// <summary>CARD-1082 D-7. Null when this attempt has no settlement sync debt row.</summary>
     TaskSyncDebtDto? SyncDebt = null,
     /// <summary>CARD-1610. Null unless this Failed task still has an unreleased session.</summary>
-    FailedTaskSessionFactsDto? FailedSession = null);
+    FailedTaskSessionFactsDto? FailedSession = null,
+    CeilingHoldDto? CeilingHold = null);
+
+public sealed record CeilingHoldDto(Guid EpisodeId, DateTime HeldAt, int Attempt,
+    DateTime SessionStartedAt, int InitialMinutes, string InitialSource, double NextCeilingMinutes,
+    string? LastTranscriptKind, double? LastTranscriptAgeSeconds, string? PhaseKind,
+    double? PhaseLimitMinutes, DateTime? PhaseDeadlineAt, bool CapReached, string Question);
+
+public enum CeilingAction { Continue = 0, Extend = 1 }
 
 /// <summary>Desktop source readiness is independent of the historical task verdict and release.</summary>
 public sealed record TaskParkSyncDto(Guid ParkId, string State, string? SourceSha, string? ReasonCode,
@@ -661,11 +669,16 @@ public sealed record ScopeOverlapDto(
     string? Areas);
 
 public sealed record ReplyToAgentTaskRequest(
-    string Message,
+    string? Message = null,
     int? Round = null,
     AnswerOrigin? Origin = null,
     bool InterruptCurrentTurn = false,
-    Guid? RequestId = null);
+    Guid? RequestId = null,
+    CeilingAction? CeilingAction = null,
+    Guid? EpisodeId = null,
+    int? ExtendMinutes = null,
+    bool OperatorExtend = false,
+    string? CeilingReason = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
 public sealed record CommitAgentTaskRequest(IReadOnlyList<string>? Paths, string Message);

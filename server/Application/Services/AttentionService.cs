@@ -1248,6 +1248,17 @@ public sealed partial class AttentionService
                 continue;
             }
 
+            if (await CeilingHoldFacts.DescribeAsync(_db, task, now, _delegation, ct) is { } ceilingHold)
+            {
+                items.Add(new AttentionItemDto(AttentionKind.CeilingHold, AlertSeverity.Warning,
+                    task.Id, task.AgentSessionId, task.AgentId, null, task.Title,
+                    "Ceiling decision needed; the delegate continues and still consumes capacity.",
+                    ceilingHold.Question, ceilingHold.HeldAt, cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.Cancel],
+                    ConditionKey: $"ceiling-hold:{task.Id:N}:{ceilingHold.EpisodeId:N}"));
+                continue;
+            }
+
             if (providerWait is { IsWait: true })
             {
                 var last = await TaskDeadlinePolicy.LoadLastEntryAsync(_db, task.AgentSessionId!.Value, ct);
