@@ -33,14 +33,13 @@
   <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
     <PropertyGroup>
       <_PtyHostNativeDir>$(TargetDir)ptyhost-native/</_PtyHostNativeDir>
-      <_PtyHostNativeProps>Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;RuntimeIdentifier=linux-x64;SelfContained=false;OutDir=$(_PtyHostNativeDir)</_PtyHostNativeProps>
     </PropertyGroup>
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Restore"
-             Properties="$(_PtyHostNativeProps)" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;RuntimeIdentifier=linux-x64;SelfContained=false;OutDir=$(_PtyHostNativeDir)" />
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Build"
-             Properties="$(_PtyHostNativeProps)" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;RuntimeIdentifier=linux-x64;SelfContained=false;OutDir=$(_PtyHostNativeDir)" />
     <Copy SourceFiles="$(_PtyHostNativeDir)Antiphon.PtyHost"
           DestinationFiles="$(TargetDir)Antiphon.PtyHost" />
     <Copy SourceFiles="$(_PtyHostNativeDir)libporta_pty.so"
