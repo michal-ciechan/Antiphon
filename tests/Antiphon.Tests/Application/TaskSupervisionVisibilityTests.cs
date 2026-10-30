@@ -45,6 +45,10 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("failed-dedup")]
     [Arguments("source-custody")]
     [Arguments("reuse")]
+    [Arguments("retain-created")]
+    [Arguments("retain-stopping")]
+    [Arguments("retain-no-generation")]
+    [Arguments("retain-remote-pending")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -75,6 +79,18 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "reuse":
                 await ReuseAsync();
+                break;
+            case "retain-created":
+                await RetainUnprovedAsync(SessionStatus.Created, startedAt: null, remotePending: false);
+                break;
+            case "retain-stopping":
+                await RetainUnprovedAsync(SessionStatus.Stopping, startedAt: null, remotePending: false);
+                break;
+            case "retain-no-generation":
+                await RetainUnprovedAsync(SessionStatus.Running, startedAt: DateTime.SpecifyKind(default, DateTimeKind.Utc), remotePending: false);
+                break;
+            case "retain-remote-pending":
+                await RetainUnprovedAsync(SessionStatus.Running, startedAt: null, remotePending: true);
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -328,6 +344,32 @@ public sealed class TaskSupervisionVisibilityTests
         (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Past TTL with a proved turn-end, so only the unproved-idle state keeps the session.
+    /// A mutation that treats Created, Stopping, a missing generation, or a pending remote
+    /// inventory as idle kills the session and fails this witness.
+    /// </summary>
+    private static async Task RetainUnprovedAsync(SessionStatus status, DateTime? startedAt, bool remotePending)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString, remotePending);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(
+            schema.ConnectionString, workspace.Path, idleMinutes: 10, clock,
+            status: status, startedAt: startedAt, runnerId: remotePending ? "server2" : null);
+        await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldNotContain(session);
+        await using var db = Open(schema.ConnectionString);
+        var stored = await db.AgentSessions.SingleAsync(s => s.Id == session);
+        stored.Status.ShouldBe(status);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeTrue();
+    }
+
     private static async Task SourceCustodyAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -361,7 +403,8 @@ public sealed class TaskSupervisionVisibilityTests
     }
 
     private static async Task<(Guid Agent, Guid Session)> SeedWarmAsync(
-        string connectionString, string directory, int idleMinutes, FakeTimeProvider clock)
+        string connectionString, string directory, int idleMinutes, FakeTimeProvider clock,
+        SessionStatus status = SessionStatus.Running, DateTime? startedAt = null, string? runnerId = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -372,12 +415,13 @@ public sealed class TaskSupervisionVisibilityTests
             Id = sessionId,
             DefinitionName = "fake",
             AgentKind = AgentKind.ClaudeCode,
-            Status = SessionStatus.Running,
+            Status = status,
+            RunnerId = runnerId,
             Cwd = directory,
             Cols = 120,
             Rows = 30,
             CreatedAt = now,
-            StartedAt = now,
+            StartedAt = startedAt ?? now,
             LastSeenAt = now,
         });
         db.Agents.Add(new Agent
@@ -573,10 +617,16 @@ public sealed class TaskSupervisionVisibilityTests
         new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, AgentTaskService Tasks, ServiceProvider Provider)
-        CreateHarness(FakeTimeProvider clock, string connectionString)
+        CreateHarness(FakeTimeProvider clock, string connectionString, bool remotePending = false)
     {
         var stopper = new RecordingSessionStopper { StopsSessionsIn = connectionString };
         var services = new ServiceCollection();
+        if (remotePending)
+        {
+            var client = new FakeSessionRunnerClient();
+            services.AddSingleton<ISessionRunnerClient>(client);
+            services.AddSingleton<ISessionRunnerDirectory>(new PendingInventoryDirectory(client));
+        }
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
@@ -665,6 +715,13 @@ public sealed class TaskSupervisionVisibilityTests
         new("server2", sessionId, occupies ? "Running" : "Exited", 42, started, occupies, orphan,
             PooledWarm: true, "Running", taskId, AgentTaskStatus.Failed, 1, AgentTaskRole.Review, cardId, null,
             agentId, seatClass, idleSince ?? started, "unknown");
+
+    /// <summary>Remote runner whose inventory has not answered, so its sessions are unproved.</summary>
+    private sealed class PendingInventoryDirectory(ISessionRunnerClient client) : SingleRunnerDirectory(client, "server2"), ISessionRunnerDirectory
+    {
+        public bool RemoteInventoryPending(string? runnerId) =>
+            string.Equals(runnerId, "server2", StringComparison.Ordinal);
+    }
 
     private sealed class TempWorkspace : IDisposable
     {
