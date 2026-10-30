@@ -555,7 +555,8 @@ dotnet $tool run $manifest --rows CP-2 --expected-source-sha $source --serial --
 After **each** run invocation returning 75, use its printed exact run directory:
 
 ```powershell
-dotnet $tool wait --run <printed-run-directory> --expected-source-sha $source --max-wait 45s --heartbeat 15s
+$runDirectory = 'replace-with-the-exact-printed-run-directory'
+dotnet $tool wait --run $runDirectory --expected-source-sha $source --max-wait 45s --heartbeat 15s
 ```
 
 Continue waiting until exit is not 75 before starting the next group or ending
