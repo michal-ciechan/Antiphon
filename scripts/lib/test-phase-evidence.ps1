@@ -4155,6 +4155,12 @@ function Initialize-TestPhaseReadWarmup {
     }
 }
 
+# One shared reader budget per terminal publication. Tests can supply a stopped
+# Stopwatch and an exhausted/unexhausted budget without replacing the readers.
+function New-QualificationReadBudget {
+    return @{ Watch = [Diagnostics.Stopwatch]::StartNew(); DeadlineMilliseconds = 200 }
+}
+
 function Update-QualificationChunkTiming {
     param(
         [string]$LogRoot,
@@ -4228,7 +4234,9 @@ function Update-QualificationChunkTiming {
         $phaseSpawn = $null
         $phaseWait = $null
         if ($Terminal) {
-            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $budget = New-QualificationReadBudget
+            $watch = $budget.Watch
+            $deadline = [int]$budget.DeadlineMilliseconds
             $refused = $false
             $sideIdentity = Get-TestPhasePathIdentity -Path $path
             $priorSide = $null
@@ -4237,7 +4245,7 @@ function Update-QualificationChunkTiming {
             } elseif ($sideIdentity.Kind -ne 'regular' -or [int64]$sideIdentity.Size -gt 262144) {
                 $refused = $true
             } else {
-                $priorSide = Read-QualificationSidecar -Path $path -Watch $watch -DeadlineMilliseconds 200
+                $priorSide = Read-QualificationSidecar -Path $path -Watch $watch -DeadlineMilliseconds $deadline
                 if ($null -eq $priorSide) { $refused = $true }
             }
             if ($null -ne $priorSide -and -not $refused) {
@@ -4261,20 +4269,20 @@ function Update-QualificationChunkTiming {
                     $trxMissing = $true
                 } elseif ($trxIdentity.Kind -ne 'regular') {
                     $refused = $true
-                } elseif ($watch.ElapsedMilliseconds -ge 200) {
+                } elseif ($watch.ElapsedMilliseconds -ge $deadline) {
                     $trxMissing = $false
                     $refused = $true
                 } else {
                     $trxMissing = $false
-                    $stats = Get-QualificationTrxStats -TrxPath $trx -Watch $watch -DeadlineMilliseconds 200
+                    $stats = Get-QualificationTrxStats -TrxPath $trx -Watch $watch -DeadlineMilliseconds $deadline
                     if ($null -eq $stats -or -not [bool]$stats.Complete) { $refused = $true }
                 }
             }
             if (-not [string]::IsNullOrWhiteSpace($timingRootText)) {
-                if ($watch.ElapsedMilliseconds -ge 200) {
+                if ($watch.ElapsedMilliseconds -ge $deadline) {
                     $refused = $true
                 } else {
-                    $sums = Get-QualificationPhaseSums -TimingRoot $timingRootText -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt -Watch $watch -DeadlineMilliseconds 200
+                    $sums = Get-QualificationPhaseSums -TimingRoot $timingRootText -Chunk $Chunk -RunId $RunId -Suite $Suite -Attempt $Attempt -Watch $watch -DeadlineMilliseconds $deadline
                     if ($null -ne $sums -and [bool]$sums.refused) { $refused = $true }
                     elseif ($null -ne $sums) {
                         $phaseSetup = $sums.fixtureSetupSeconds
@@ -4284,7 +4292,7 @@ function Update-QualificationChunkTiming {
                     }
                 }
             }
-            if ($watch.ElapsedMilliseconds -ge 200) { $refused = $true }
+            if ($watch.ElapsedMilliseconds -ge $deadline) { $refused = $true }
             if ($refused) {
                 $phaseSetup = $null
                 $phaseTear = $null
