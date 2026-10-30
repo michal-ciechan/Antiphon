@@ -245,15 +245,32 @@ public sealed class VolumeRetirementReceiptTests
         fixture.Removed.Count(name => name.StartsWith("antiphon-runner-temp_", StringComparison.Ordinal)).ShouldBe(4);
         using var unsafeFixture = new C1008HostFixture(main: false);
         var (_, repo) = await VolumeRetirementFixture.SeedPublishedOuter(unsafeFixture);
-        await File.AppendAllTextAsync(Path.Combine(repo, "readme.txt"), "unpublished dirty bytes\n");
+        await VolumeRetirementFixture.ReadyPreview(unsafeFixture);
+        var unsafeReceipt = ReceiptPath(unsafeFixture);
+        var unsafePreview = JsonNode.Parse(await File.ReadAllTextAsync(unsafeReceipt))!;
         var unsafeAttestation = Path.Combine(unsafeFixture.Root, "manual.json");
-        await File.WriteAllTextAsync(unsafeAttestation, intent.ToJsonString());
+        var unsafeGrantPath = Path.Combine(unsafeFixture.Root, "server", "manual-authority", VolumeRetirementFixture.Operation + ".json");
+        Directory.CreateDirectory(Path.GetDirectoryName(unsafeGrantPath)!);
+        var unsafeGrant = grant.DeepClone();
+        unsafeGrant["targets"] = unsafePreview["targets"]!.DeepClone();
+        await WriteAttestation(unsafeGrantPath, unsafeGrant);
+        var unsafeIntent = intent.DeepClone();
+        unsafeIntent["phase"] = "Preview";
+        unsafeIntent["previewDigest"] = null;
+        unsafeIntent["targets"] = unsafePreview["targets"]!.DeepClone();
+        unsafeIntent["fingerprints"] = unsafePreview["fingerprints"]!.DeepClone();
+        await WriteAttestation(unsafeAttestation, unsafeIntent);
+        var unsafeContext = "C1008_MODE=manual\nC1008_MANUAL_AUTHORITY_FILE=" + VolumeRetirementFixture.Quote(unsafeGrantPath) +
+            "\nC1008_ATTESTATION_FILE=" + VolumeRetirementFixture.Quote(unsafeAttestation);
+        await VolumeRetirementFixture.ReadyPreview(unsafeFixture, unsafeContext);
+        var cleanManual = await File.ReadAllTextAsync(unsafeReceipt);
+        await File.AppendAllTextAsync(Path.Combine(repo, "readme.txt"), "unpublished dirty bytes\n");
         var refused = await unsafeFixture.Run("retire-temp-runner",
-            context.Replace(attestation, unsafeAttestation, StringComparison.Ordinal), dryRun: true);
+            unsafeContext, dryRun: true);
         refused.Exit.ShouldNotBe(0, "J10 manual authority cannot waive content findings; " + refused.Output);
         refused.Output.ShouldContain("RecycleWorktreeDirty");
         unsafeFixture.Removed.ShouldBeEmpty();
-        File.Exists(ReceiptPath(unsafeFixture)).ShouldBeFalse("J10 unsafe manual preview cannot publish Ready");
+        (await File.ReadAllTextAsync(unsafeReceipt)).ShouldBe(cleanManual, "J10 unsafe manual preview preserves the prior Ready receipt");
     }
 
     private static Task WriteAttestation(string path, JsonNode value)

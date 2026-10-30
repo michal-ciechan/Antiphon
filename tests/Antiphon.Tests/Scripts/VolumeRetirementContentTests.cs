@@ -160,8 +160,7 @@ public sealed class VolumeRetirementContentTests
         inventory.Exit.ShouldBe(0, "c1609-h7: inventory lists the private origin; " + inventory.Output);
         inventory.Output.ShouldContain("C1008_PRIVATE_ORIGIN repo=repos/school-revision origin=" + VolumeRetirementFixture.OriginUrl);
         var helperTrace = Path.Combine(root, "helper-git-trace");
-        File.Exists(helperTrace).ShouldBeTrue("c1609-h7: the helper invoked ls-remote");
-        (await File.ReadAllTextAsync(helperTrace)).ShouldContain("ls-remote");
+        File.Exists(helperTrace).ShouldBeFalse("c1609-h7: offline inventory never invokes a remote from the helper");
 
         var denyEvidence = Path.Combine(root, "deny-evidence");
         var denied = await VolumeRetirementFixture.InvokeHostProof(
@@ -208,14 +207,13 @@ public sealed class VolumeRetirementContentTests
         var proofText = string.Join('\n', Directory.EnumerateFiles(evidence, "*", SearchOption.AllDirectories).Select(File.ReadAllText));
         proofText.ShouldContain(seeded.B + "\trefs/heads/main");
         (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("ls-remote");
+        (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("fetch");
         var proofDir = Directory.EnumerateDirectories(evidence).Single(path => Path.GetFileName(path).StartsWith("c1008-proof-", StringComparison.Ordinal));
 
         var preview = await fixture.Run("retire-temp-runner",
             bound + "\nexport C1008_HOST_PROOF=" + VolumeRetirementFixture.Quote(proofDir) +
             "\nexport C1008_OPERATION_STARTED=1700000000\n" + probe, dryRun: true);
-        preview.Output.ShouldContain("origin-present", Case.Sensitive,
-            "c1609-h7: the base publication check refuses an advanced head the volume does not contain");
-        (await File.ReadAllTextAsync(helperTrace)).ShouldContain("ls-remote");
+        File.Exists(helperTrace).ShouldBeFalse("c1609-h7: admission consumes host ancestry without a helper remote lookup");
         fixture.Removed.ShouldBeEmpty();
         var admitted = preview.Exit == 0 &&
             preview.Output.Contains(VolumeRetirementFixture.ReadyMarker, StringComparison.Ordinal);
