@@ -267,13 +267,20 @@ tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, U
 POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as
 Windows obligations (junctions, case-sensitivity, CARD-1199 unverified Windows behavior, and
 opt-in) stay required and have no exclusion row.
-CARD-1199 S-A keeps all thirty-five checkpoint identities required on both platforms.
+CARD-1199 runtime skip census: 0 of 35. S-A, S-B1, S-B2, S-C1 and S-C2
+removed the runtime gates; all thirty-five checkpoint identities remain required
+on both platforms, with no policy exclusions.
 `test-rc-platform.ps1 -Case C1199_WindowsRequiredRoster` compares the compiled S/T/O
 roster, minus the existing Windows confinement sibling, with that required set and
-pins the remaining runtime skips. It is a census contract, not native Windows
-execution evidence. Ten shape mutations, eight tracked-baseline cases, and five
-confinement cases stay runtime-skipped on Windows until their own slices. R-2
-junction and custody qualification stays open.
+pins the six unrelated Windows and seven Linux runtime-skip patterns. It also
+checks that a NotExecuted result for any of the thirty-five prevents completeness.
+Native Windows verification remains owed for those slices and S-F; removing gates
+and passing Linux checks do not grant Windows Full credit. S-F requires final
+source-bound receipts and CP-46's independently built evaluator, exact `approved`
+log line and evaluator SHA-256.
+S-F-cost requires S3 admission on its target base and complete successful native
+Windows S/T/O class-cost samples before Windows Full credit.
+R-2 junction and custody qualification stays pending/required.
 `test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` checks the shipped
 rows and that those obligation gaps still leave coverage incomplete. The compiled
 marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
