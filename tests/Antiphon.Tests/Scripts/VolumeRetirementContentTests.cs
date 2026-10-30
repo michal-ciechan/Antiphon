@@ -402,6 +402,11 @@ public sealed class VolumeRetirementContentTests
         trace.ShouldContain("readonly");
         trace.ShouldContain("target=/work");
         trace.ShouldContain("--cap-drop");
+        trace.ShouldContain("--network none");
+        trace.ShouldContain("--read-only");
+        trace.ShouldContain("target=/work,readonly,volume-nocopy");
+        trace.ShouldContain("target=/tmp,readonly,volume-nocopy");
+        trace.ShouldContain("TMPDIR=/audit-scratch");
         run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         fixture.Removed.ShouldBeEmpty();
     }

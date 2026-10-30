@@ -69,7 +69,7 @@ const classifyAudit = (mounts, envs) => {
       auditMounts = mounts.slice(0, -1);
     }
   }
-  const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp' && !proofEnvs.includes(e) && !inventoryEnv.includes(e));
+  const extra = envs.filter(e => e !== 'C1008_TMP_MOUNT=/runner-tmp' && e !== 'C1008_TMP_MOUNT=/tmp' && !proofEnvs.includes(e) && !inventoryEnv.includes(e));
   return {mounts: auditMounts, extra, proofSource};
 };
 // CARD-1105. Run the pty-host probe against one fixture shape. tmpAssets===false
@@ -160,24 +160,27 @@ const previewRun = () => {
   if (programAt < 1 || !/^sha256:[0-9a-f]{64}$/.test(args[programAt - 1] || '')) reason('preview image must be the pinned id');
   const mounts = args.flatMap((a, i) => a === '--mount' ? [args[i + 1]] : []);
   const envs = args.flatMap((a, i) => a === '--env' ? [args[i + 1]] : []);
+  const v2 = envs.includes('C1609_CONTENT_V2=1');
+  const suffix = v2 ? ',readonly,volume-nocopy' : ',readonly';
+  if (v2 && (!offline || !args.includes('--read-only') || !envs.includes('TMPDIR=/audit-scratch'))) reason('v2 isolation refused');
   const mount = mounts[0] || '';
-  if (!mount.endsWith(',readonly') || !mount.includes('target=/work')) reason('preview work mount refused');
+  if (!mount.endsWith(suffix) || !mount.includes('target=/work')) reason('preview work mount refused');
   const vol = (mount.match(/source=([^,]+)/) || [])[1];
   if (!vol || !state.volumes[vol]) reason('preview work volume missing');
-  if (mounts[1] !== 'type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648') reason('preview tmpfs refused');
+  if (mounts[1] !== (v2 ? 'type=tmpfs,destination=/audit-scratch,tmpfs-mode=1777,tmpfs-size=2147483648' : 'type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648')) reason('preview tmpfs refused');
   const classified = classifyAudit(mounts, envs);
   if (!classified) reason('preview mount set refused');
   const auditMounts = classified.mounts;
   const proofSource = classified.proofSource;
   const tmpVol = vol.replace(/_work$/, '_runner-tmp');
-  const mountEnv = envs.filter(e => e === 'C1008_TMP_MOUNT=/runner-tmp');
+  const mountEnv = envs.filter(e => e === (v2 ? 'C1008_TMP_MOUNT=/tmp' : 'C1008_TMP_MOUNT=/runner-tmp'));
   const extra = classified.extra;
-  const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e) || /^C1609_CONTENT_V2=1$/.test(e))
+  const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e) || /^C1609_CONTENT_V2=1$/.test(e) || (v2 && e === 'TMPDIR=/audit-scratch'))
     && new Set(extra.map(e => e.split('=', 1)[0])).size === extra.length;
-  if (!auditMounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(',readonly'))) reason('preview volume mount is writable');
+  if (!auditMounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(suffix))) reason('preview volume mount is writable');
   let tmpMount = '';
   if (auditMounts.length === 3) {
-    if (auditMounts[2] !== 'type=volume,source=' + tmpVol + ',target=/runner-tmp,readonly' || !state.volumes[tmpVol] || mountEnv.length !== 1 || !forwarded) reason('preview runner-tmp mount refused');
+    if (auditMounts[2] !== 'type=volume,source=' + tmpVol + (v2 ? ',target=/tmp,readonly,volume-nocopy' : ',target=/runner-tmp,readonly') || !state.volumes[tmpVol] || mountEnv.length !== 1 || !forwarded) reason('preview runner-tmp mount refused');
     tmpMount = state.volumes[tmpVol].Mountpoint;
   } else if (auditMounts.length !== 2 || mountEnv.length || !forwarded || state.volumes[tmpVol]) reason('preview mount set refused');
   const program = args[programAt + 1];
@@ -212,7 +215,7 @@ const previewRun = () => {
   // helper-auth-128 is a CARD-1609 observation cut: the helper's ls-remote/fetch
   // is an auth-classified 128. It does not manufacture a publication verdict.
   const helperAuth = fs.existsSync(path.join(root, 'helper-auth-128'));
-  if (offline || helperAuth) {
+  if ((offline && !v2) || helperAuth) {
     const shim = path.join(root, 'git-shim');
     fs.mkdirSync(shim, {recursive: true});
     const realGit = cp.execFileSync('which', ['git'], {encoding: 'utf8'}).trim();
@@ -235,6 +238,10 @@ const previewRun = () => {
     : pathWithChroot(inheritedPath);
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
+  // Validate real /tmp Docker arguments above. This file-backed adapter retains
+  // its private alias so its isolated local-origin fixtures remain reachable.
+  // Native N1 independently proves the actual /tmp kernel namespace.
+  if (v2 && tmpMount) env.C1008_TMP_MOUNT = '/runner-tmp';
   if (proofSource) env.C1008_SIM_PROOF = proofSource;
   const outer = [
     'set -euo pipefail',
@@ -256,6 +263,8 @@ const previewRun = () => {
     // Scratch /tmp is a private tmpfs. The fixture root is bind-mounted afterwards
     // at its own path, so a fixture under /tmp stays visible above that tmpfs.
     'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/tmp"',
+    'mkdir -p "$C1008_SIM_STAGE/audit-scratch"',
+    'mount -t tmpfs -o mode=1777,size=2147483648 none "$C1008_SIM_STAGE/audit-scratch"',
     '[ -n "${C1008_FIXTURE_ROOT:-}" ] && [ "$C1008_FIXTURE_ROOT" != / ]',
     'mkdir -p -- "$C1008_SIM_STAGE$C1008_FIXTURE_ROOT"',
     'mount --bind -- "$C1008_FIXTURE_ROOT" "$C1008_SIM_STAGE$C1008_FIXTURE_ROOT"',

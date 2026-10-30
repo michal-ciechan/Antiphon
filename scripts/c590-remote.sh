@@ -8184,7 +8184,11 @@ if [ -n "${C1008_TMP_MOUNT:-}" ]; then
     [ -d "$tmp_root" ] && [ "$tmp_root" != / ] || fail 2
 fi
 audit_check=scratch
-scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
+if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+    scratch="$(mktemp -d /audit-scratch/c1008-audit-XXXXXXXX)" || fail $?
+else
+    scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
+fi
 c1609_list_offenders || fail $?
 # Capture enumeration before reading it: process substitution loses find failures.
 audit_check=find-repositories
@@ -8714,15 +8718,13 @@ c1008_preview_finish() {
     printf '%s' "$output" | sort
 }
 
-# A bound retire-temp preview runs the same program as apply inside the pinned
-# image. Docker mounts both volumes read-only and drops every capability. The
-# network is apply's: no --network argument. --init, a run-owned name and label,
-# and docker kill of that id keep the helper inside the audit budget. The host
-# does not invoke Git. A container that can write a volume is not a preview.
+# Temp preview/apply share an offline, read-only root and production /work,/tmp
+# mounts. No named mount copies image content. Scratch has its own tmpfs. Main's
+# v1 preview keeps its existing namespace and transport through this adapter.
 c1008_audit_readonly() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image cap resolve_status=0
     local name token label cidfile program code=0 run_status=0 attempt raw=""
-    local -a mounts=()
+    local -a mounts=() isolation=()
     c1008_preview_owned_id=''
     c1008_preview_owned_label=''
     c1008_preview_cidfile=''
@@ -8734,10 +8736,21 @@ c1008_audit_readonly() {
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
         return 2
     fi
-    mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        isolation=(--network none --read-only)
+        mounts=(--mount "type=volume,source=$work,target=/work,readonly,volume-nocopy"
+            --mount "type=tmpfs,destination=/audit-scratch,tmpfs-mode=1777,tmpfs-size=2147483648"
+            --env TMPDIR=/audit-scratch)
+    else
+        mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
+    fi
     tmp_facts="$(c1008_volume "$tmp")" || return 2
     if [ "$tmp_facts" != null ]; then
-        mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            mounts+=(--mount "type=volume,source=$tmp,target=/tmp,readonly,volume-nocopy" --env C1008_TMP_MOUNT=/tmp)
+        else
+            mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
+        fi
     fi
     image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
     [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
@@ -8785,7 +8798,7 @@ c1008_audit_readonly() {
     # Stderr stays beside the audit so a helper that prints no check line can
     # name the startup failure without copying it on the success path.
     (
-        timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
+        timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL "${isolation[@]}" \
             --security-opt no-new-privileges --user 1654:1654 --init \
             --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
             --entrypoint /bin/bash \

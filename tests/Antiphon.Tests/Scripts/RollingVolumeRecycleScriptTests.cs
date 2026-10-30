@@ -1501,7 +1501,11 @@ public sealed class RollingVolumeRecycleScriptTests
             var args = runs[0];
             args.ShouldContain("--rm");
             args.ShouldContain("--init");
-            Array.IndexOf(args, "--network").ShouldBe(-1, "recycle-preview-readonly: preview uses apply's network");
+            var network = Array.IndexOf(args, "--network");
+            network.ShouldBeGreaterThanOrEqualTo(0, "temp preview and apply are offline");
+            args[network + 1].ShouldBe("none");
+            args.ShouldContain("--read-only");
+            args.ShouldContain("TMPDIR=/audit-scratch");
             var security = Array.IndexOf(args, "--security-opt");
             security.ShouldBeGreaterThanOrEqualTo(0, "recycle-preview-readonly: preview sets no-new-privileges");
             args[security + 1].ShouldBe("no-new-privileges");
@@ -1523,10 +1527,10 @@ public sealed class RollingVolumeRecycleScriptTests
             var program = Array.IndexOf(args, "-c");
             program.ShouldBeGreaterThan(0);
             args[program - 1].ShouldBe(image);
-            args.ShouldContain("type=volume,source=antiphon-runner-temp_work,target=/work,readonly");
-            args.ShouldContain("type=volume,source=antiphon-runner-temp_runner-tmp,target=/runner-tmp,readonly");
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_work,target=/work,readonly,volume-nocopy");
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_runner-tmp,target=/tmp,readonly,volume-nocopy");
             args.Where(arg => arg.StartsWith("type=volume,", StringComparison.Ordinal))
-                .ShouldAllBe(arg => arg.EndsWith(",readonly", StringComparison.Ordinal));
+                .ShouldAllBe(arg => arg.EndsWith(",readonly,volume-nocopy", StringComparison.Ordinal));
             var timeoutLog = Path.Combine(fixture.Root, "timeout-invocations");
             File.Exists(timeoutLog).ShouldBeTrue("recycle-preview-readonly: the helper has a hard timeout");
             var timeout = File.ReadAllText(timeoutLog);

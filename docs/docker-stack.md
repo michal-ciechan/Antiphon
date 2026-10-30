@@ -445,9 +445,12 @@ audit runtime. A complete zero-finding preview reports `auditPending=false` and
 writes a protected schema-2 Ready receipt. Apply consumes the exact receipt and
 reruns content and publication checks before any volume effect.
 
-The helper mounts work and present runner-tmp volumes read-only, uses UID 1654,
+Temp's helper mounts work at `/work` and present runner-tmp at `/tmp`, both read-only
+with `volume-nocopy`. It uses `--network none`, a read-only root filesystem, UID 1654,
 `--cap-drop ALL`, `--security-opt no-new-privileges`, `--init` and an owned name,
-label and cidfile. It retains the production `/work` namespace. No GitHub token, SSH agent, or git credential helper is passed.
+label and cidfile. Writable scratch is a separate `/audit-scratch` tmpfs with
+`TMPDIR=/audit-scratch`. Main's v1 namespace remains unchanged.
+No GitHub token, SSH agent, or git credential helper is passed.
 No credential enters the container. Host publication transport passes only ref names and object ids through a read-only bind
 plus the credential-free graph bundle. The proof is bound to operation id, operation start, repository path, and origin URL hash;
 a missing, empty, unreadable, stale, or mismatched proof refuses `RecycleGitAuditUnknown`.
