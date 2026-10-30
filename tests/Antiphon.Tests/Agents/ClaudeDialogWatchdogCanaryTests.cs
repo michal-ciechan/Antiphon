@@ -90,40 +90,24 @@ public class ClaudeDialogWatchdogCanaryTests
                     debug.Composer(screen, empty, settled);
                     previous = empty ? screen : null;
                     return settled;
-                }, TimeSpan.FromSeconds(30), ct);
+                }, TimeSpan.FromSeconds(30), "C680 submission precondition failed: no empty settled composer.", ct);
                 var probe = question
                     ? "Use AskUserQuestion now to ask which color I prefer, with Blue and Green as choices. Wait for my answer; do not choose for me."
                     : "Run exactly node permission-probe.cjs using Bash now. Do not edit files or run any other command. Wait for my permission.";
-                if (debug.ControlledSubmission)
-                    await debug.SubmitAsync(runner, probe, ct);
-                else
-                {
-                    await f.Harness.Runtime.SendInputAsync(f.SessionId, PtyInputEncoding.EncodeBody(probe), ct);
-                    await Task.Delay(100, ct);
-                    await f.Harness.Runtime.SendInputAsync(f.SessionId, "\r", ct);
-                }
                 var tool = question ? "AskUserQuestion" : "Bash";
-                try
+                await SubmitProbeAsync(runner, f.SessionId, probe, tool, debug, ct);
+                await WaitAsync(async () =>
                 {
-                    await WaitAsync(async () =>
-                    {
-                        var snapshot = await runner.GetSnapshotAsync(f.SessionId, ct);
-                        var transcript = await runner.GetTranscriptAsync(f.SessionId, ct);
-                        var blocked = snapshot.Dialog?.State == ProviderDialogState.Blocked;
-                        var submitted = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
-                            && PromptSubmissionMatch.IsCompleteIn(probe, e.Text));
-                        var called = transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
-                        debug.Observe(snapshot, transcript, blocked, submitted, called);
-                        return blocked && submitted && called;
-                    }, TimeSpan.FromMinutes(2), ct);
-                }
-                catch (System.TimeoutException) when (question && debug.ControlledSubmission)
-                {
-                    // Preserve the failed precondition. Diagnostic dismissal only reveals when
-                    // the CLI persists its pending tool call; it never converts this run to green.
-                    await debug.CaptureAfterQuestionDismissalAsync(runner, probe, ct);
-                    throw;
-                }
+                    var snapshot = await runner.GetSnapshotAsync(f.SessionId, ct);
+                    var transcript = await runner.GetTranscriptAsync(f.SessionId, ct);
+                    var blocked = snapshot.Dialog?.State == ProviderDialogState.Blocked;
+                    var submitted = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
+                        && PromptSubmissionMatch.IsCompleteIn(probe, e.Text));
+                    var called = transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
+                    debug.Observe(snapshot, transcript, blocked, submitted, called);
+                    return blocked && submitted && called;
+                }, TimeSpan.FromMinutes(2),
+                    $"C680 {tool} dialog precondition failed after confirmed prompt submission: the blocked dialog and tool call were not observed.", ct);
                 File.Exists(marker).ShouldBeFalse();
                 var before = await runner.GetSnapshotAsync(f.SessionId, ct);
                 var pendingTool = (await runner.GetTranscriptAsync(f.SessionId, ct)).Entries.Last(e =>
@@ -155,7 +139,44 @@ public class ClaudeDialogWatchdogCanaryTests
         }
     }
 
-    private static async Task WaitAsync(Func<Task<bool>> predicate, TimeSpan budget, CancellationToken ct)
+    private static async Task SubmitProbeAsync(DirectSessionRunnerClient runner, Guid sessionId,
+        string probe, string tool, ClaudeDialogCanaryDiagnostics debug, CancellationToken ct)
+    {
+        // Explicit fixture input to this owned child; watchdog delivery still uses its real guard.
+        var initial = await runner.GetSnapshotAsync(sessionId, ct);
+        if (ClaudeDialogObservation.Observe(initial.RenderedScreen).State != ClaudeDialogState.Clear)
+            throw new InvalidOperationException($"C680 {tool} submission precondition failed: initial screen is not clear.");
+        var floor = (await runner.GetTranscriptAsync(sessionId, ct)).LastSequence;
+        var body = PtyInputEncoding.NormalizeBody(probe);
+        // These single-line probes also need paste framing to avoid Claude's typed-paste heuristic.
+        await runner.SendInputAsync(sessionId, PtyInputEncoding.PasteStart + body + PtyInputEncoding.PasteEnd, ct);
+        string? previous = null;
+        await Task.Delay(500, ct);
+        await WaitAsync(async () =>
+        {
+            var screen = (await runner.GetSnapshotAsync(sessionId, ct)).RenderedScreen;
+            // Fixture-only recognition of 2.1.312's footer; no change to product admission.
+            var fixtureScreen = screen.Replace("⏸ manual mode on", "? for shortcuts", StringComparison.Ordinal);
+            var complete = ClaudeScreen.TryReadComposer(fixtureScreen, out var draft)
+                && PromptSubmissionMatch.IsCompleteIn(body, draft);
+            var settled = complete && previous is not null && ClaudeScreen.IsSettled(previous, screen);
+            debug.Draft(screen, complete, settled);
+            previous = complete ? screen : null;
+            return settled;
+        }, TimeSpan.FromSeconds(10),
+            $"C680 {tool} submission precondition failed: no complete settled draft; Enter was not sent.", ct);
+        await runner.SendInputAsync(sessionId, "\r", ct);
+        await WaitAsync(async () =>
+        {
+            var transcript = await runner.GetTranscriptAsync(sessionId, ct);
+            return transcript.Entries.Any(e => e.Sequence > floor && e.Kind == TranscriptKinds.UserPrompt
+                && PromptSubmissionMatch.IsCompleteIn(body, e.Text));
+        }, TimeSpan.FromSeconds(30),
+            $"C680 {tool} submission precondition failed: Enter was sent but no complete transcript UserPrompt receipt arrived; prompt submission is unconfirmed, watchdog assertions were not reached.", ct);
+        Console.WriteLine($"C680 case={tool} submission=confirmed evidence=UserPrompt");
+    }
+
+    private static async Task WaitAsync(Func<Task<bool>> predicate, TimeSpan budget, string failure, CancellationToken ct)
     {
         var clock = Stopwatch.StartNew();
         while (clock.Elapsed < budget)
@@ -163,7 +184,7 @@ public class ClaudeDialogWatchdogCanaryTests
             if (await predicate()) return;
             await Task.Delay(500, ct);
         }
-        throw new System.TimeoutException("The required native dialog/composer/transcript conjunct was not observed.");
+        throw new System.TimeoutException(failure);
     }
 
     private static string Resolve(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "")
