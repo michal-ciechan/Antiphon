@@ -291,6 +291,18 @@ public sealed partial class AttentionService
             items.AddRange(BuildSlotOrphanItems(occupancy, now));
         }
         var supervision = await BuildSupervisionVisibilityItemsAsync(now, ct);
+        // CARD-0691 already folds a Stopping session's Failed task into the one SessionStopStuck
+        // feed row. A second FailedTaskSessionHeld row would split that contract.
+        var stopStuckSessions = items
+            .Where(item => item.Kind == AttentionKind.SessionStopStuck && item.SessionId is not null)
+            .Select(item => item.SessionId!.Value)
+            .ToHashSet();
+        if (stopStuckSessions.Count > 0)
+        {
+            supervision.RemoveAll(item => item.Kind == AttentionKind.FailedTaskSessionHeld
+                && item.SessionId is Guid sid
+                && stopStuckSessions.Contains(sid));
+        }
         items.AddRange(supervision);
         var heldSessions = supervision
             .Where(item => item.Kind == AttentionKind.FailedTaskSessionHeld && item.SessionId is not null)
