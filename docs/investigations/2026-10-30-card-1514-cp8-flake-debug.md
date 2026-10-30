@@ -165,3 +165,41 @@ instead of two streams plus the refused mode-000 attempt. It recorded .100705 s,
 470345 bytes and three attempts. No product behavior or verdict failed. The test
 now distinguishes attempts from successful streams and accounts for the scanner's
 8 KiB sentinel refill; the failed receipt is retained in `pc-baseline-final/1/`.
+
+## Structural positive controls
+
+Final harness source: `1c67818f5cabecbf7d0a8017ca304054a48052f9`. One exact
+`PosixHarnessToolTests.Qualification_timing_completes_without_mkfifo_chmod_or_ln_on_path`
+selection per fresh process. Baseline: 1 executed/passed, 97.557 s. Each red below
+executed one and failed one at its named assertion; each restored green executed
+and passed one, zero skipped. No build, fixture or empty-selection error is credited.
+
+| Control | Intended named failure | Red / restored green seconds | Result |
+|---|---|---|---|
+| Bypass initial FIFO identity refusal before the native regular-file check | fifo-cases-file-never-opens-stream | 82.500 / 93.521 | Killed, restored green |
+| Replace identity directory with shared timing root | fifo-cases-file-lists-only-own-chunk | 107.595 / 100.241 | Killed, restored green |
+| Read sidecars on the nonterminal path before fake process launch | fifo-sidecar-no-reads-before-launch | 70.262 / 71.634 | Killed, restored green |
+| Add three redundant opens to the sidecar reader | post-run-hostile-files-bounded-reads | 86.372 / 111.271 | Killed (6 attempts/5 streams), restored green |
+
+Evidence: `controls.json`, `controls-certified.log`, exact-method TRX/logs in
+`pc-*-red/1/` and `pc-*-green/1/`, `control-provenance.json`, `restoration.json`.
+The one gated driver held its lease 837 s, waited zero. It owned and awaited every
+child and restored between every red/green pair. Original/restored production
+library SHA256 is
+`0B384A9E866476C400002CC55E7D94B4ADB922B8F1E50FE26F226057D754EF02`.
+Tracked source is clean after restoration. These are pre-land controls, not
+SourceLanding credit. The unchanged compiled .NET test pack was built at
+`0d72d646fe92f33c6bf2525e0b20dbe1bf742449`; these controls load the final harness
+from disk. They do not substitute for the upcoming fresh checkpoint build or its
+ten-alone/five-loaded repetitions.
+
+The checkpoint table was imported unchanged. An ignored execution manifest keeps
+the closed CP-1..CP-9 selections and applies provisional coupled row/build ceilings
+CP-1=40 minutes, CP-2=32, CP-3=4, CP-4=2, CP-5=6, CP-6=6, CP-7=4, CP-8=6, CP-9=2.
+CP-1 and CP-2 account for the review's 12-14 minute loaded builds plus measured
+test work, as recommended in the predecessor report; they are not measured p95s.
+Selected-group execution allowances are M1=40 and M2=58 minutes, with a separate
+finite 45-minute admission allowance. Two independent M1/M2 runs each execute
+their own manifest build once. Native CP-10/11 are excluded explicitly. No plan,
+policy, definition or test selection changed. Final required outcomes remain
+pending until these fresh builds and repetitions finish.
