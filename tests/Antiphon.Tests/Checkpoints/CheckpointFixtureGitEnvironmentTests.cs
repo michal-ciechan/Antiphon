@@ -56,9 +56,9 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         origin.Stdout.Contains("false", StringComparison.Ordinal).ShouldBeTrue("local autocrlf value");
         var sentinel = Run(first, repo, "git", "config", "--get", "antiphon.sentinel");
         sentinel.Stdout.Trim().ShouldBeEmpty();
-        var global = Run(first, repo, "/bin/sh", "-c", "printf %s \"$GIT_CONFIG_GLOBAL\"");
+        var global = Run(first, repo, "pwsh", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Write($env:GIT_CONFIG_GLOBAL)");
         global.Stdout.ShouldBe(first.GlobalConfigPath);
-        var system = Run(first, repo, "/bin/sh", "-c", "printf %s \"$GIT_CONFIG_SYSTEM\"");
+        var system = Run(first, repo, "pwsh", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Write($env:GIT_CONFIG_SYSTEM)");
         system.Stdout.ShouldBe(first.SystemConfigPath);
         File.ReadAllText(first.GlobalConfigPath).Contains("c1199-home", StringComparison.Ordinal).ShouldBeFalse("sentinel leaked into the global file");
 
@@ -106,22 +106,22 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
 
         var lines = new List<string>();
         var echoed = await driver.RunAsync(
-            new DriverRequest("/bin/echo", ["c1199-driver"], repo, OnOutput: line => { if (line is not null) lines.Add(line); }),
+            new DriverRequest("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "[Console]::WriteLine('c1199-driver')"], repo, OnOutput: line => { if (line is not null) lines.Add(line); }),
             cancellationToken);
         echoed.ExitCode.ShouldBe(0, echoed.Stderr);
         echoed.Exited.HasValue.ShouldBeTrue("driver exit stamp");
         lines.Contains("c1199-driver").ShouldBeTrue("driver output");
         var shown = await driver.RunAsync(
-            new DriverRequest("/bin/sh", ["-c", "printf %s \"$GIT_CONFIG_GLOBAL\""], repo),
+            new DriverRequest("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "[Console]::Write($env:GIT_CONFIG_GLOBAL)"], repo),
             cancellationToken);
         shown.ExitCode.ShouldBe(0, shown.Stderr);
         shown.Stdout.TrimEnd('\r', '\n').ShouldBe(environment.GlobalConfigPath);
 
         using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         await Should.ThrowAsync<OperationCanceledException>(() =>
-            driver.RunAsync(new DriverRequest("/bin/sleep", ["30"], repo), cancel.Token));
+            driver.RunAsync(new DriverRequest("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"], repo), cancel.Token));
 
-        var sleep = driver.RunAsync(new DriverRequest("/bin/sleep", ["30"], repo), cancellationToken);
+        var sleep = driver.RunAsync(new DriverRequest("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"], repo), cancellationToken);
         await Task.Delay(500, cancellationToken);
         driver.Kill(true);
         await sleep.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
