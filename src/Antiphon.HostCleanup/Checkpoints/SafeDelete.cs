@@ -304,9 +304,16 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         return (int)total;
     }
 
+    private static string FormatStartFailure(Win32Exception ex, IReadOnlyList<string> arguments) =>
+        "git-start-failed: Win32Exception win32="
+        + ex.NativeErrorCode.ToString(CultureInfo.InvariantCulture)
+        + " " + ex.Message
+        + " argumentCharacters="
+        + ArgumentCharacters(arguments).ToString(CultureInfo.InvariantCulture);
+
     // One ls-files of every write root. A git failure refuses; a missing repository has nothing tracked.
-    // commandLineBudget is the seam tests inject; the default is the real CreateProcess budget.
-    // The list is still one invocation until the batching fix lands.
+    // Paths that fit the command-line budget stay one invocation, in the same order.
+    // A longer list is split. Any batch failure fails the call. Emptiness is the union.
     public string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null, int? commandLineBudget = null)
     {
         if (roots.Count == 0)
@@ -322,24 +329,56 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
             return string.IsNullOrWhiteSpace(gitExecutable) ? null : "git-failed";
         var timeout = timeoutMs ?? GitTimeoutMs;
         var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
-        var args = new List<string> { "-C", owner, "ls-files", "-z", "--" };
+        var paths = new List<string>(roots.Count);
         foreach (var root in roots)
         {
             var full = Canonical(root);
             if (full is null)
                 return "path-unsafe";
-            args.Add(full);
+            paths.Add(full);
         }
 
-        _ = budget;
-        var listed = RunGit(git, owner, args, timeout);
-        if (listed.Failure is not null)
-            return listed.Failure;
-        if (listed.ExitCode != 0)
-            return listed.Stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)
-                ? "git-failed"
-                : "git-failed";
-        return listed.Stdout.Length == 0 ? null : "tracked";
+        var prefix = new[] { "-C", owner, "ls-files", "-z", "--" };
+        var batch = new List<string>(prefix);
+        var matched = false;
+        foreach (var path in paths)
+        {
+            if (batch.Count > prefix.Length)
+            {
+                var trial = (long)ArgumentCharacters(batch) + 1 + path.Length;
+                if (trial > budget)
+                {
+                    var flushed = Consume(batch, ref matched);
+                    if (flushed is not null)
+                        return flushed;
+                    batch = new List<string>(prefix);
+                }
+            }
+
+            batch.Add(path);
+            if (ArgumentCharacters(batch) > budget)
+                return "git-start-failed: argumentCharacters="
+                    + ArgumentCharacters(batch).ToString(CultureInfo.InvariantCulture)
+                    + " budget=" + budget.ToString(CultureInfo.InvariantCulture)
+                    + " one path exceeds the command-line budget";
+        }
+
+        var last = Consume(batch, ref matched);
+        if (last is not null)
+            return last;
+        return matched ? "tracked" : null;
+
+        string? Consume(List<string> arguments, ref bool any)
+        {
+            var listed = RunGit(git, owner, arguments, timeout);
+            if (listed.Failure is not null)
+                return listed.Failure;
+            if (listed.ExitCode != 0)
+                return "git-failed";
+            if (listed.Stdout.Length != 0)
+                any = true;
+            return null;
+        }
     }
 
     private string? FindOwner(string start)
@@ -365,10 +404,11 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
     // exit and both output drains. Expiry kills the owned Linux process group (Windows job), so an
     // exited child's descendant cannot keep a pipe open, and Git runs with fsmonitor, hooks,
     // optional locks, global/system config and named filter/textconv drivers disabled.
-    // A start that fails before a child exists is git-unavailable. ETXTBSY, EAGAIN, and a
-    // settle race are retried a few times inside that deadline when the executable is present,
-    // then still reported as git-unavailable. A child that was created and then does not finish
-    // is git-timeout, including a custody failure after that start.
+    // A missing executable is git-unavailable. ETXTBSY, EAGAIN, and a settle race are retried
+    // a few times inside that deadline when the executable is present, then still reported as
+    // git-unavailable. Any other Win32 start failure names the native code, the OS message,
+    // and argumentCharacters. A child that was created and then does not finish is git-timeout,
+    // including a custody failure after that start.
     private GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
         if (timeoutMs < 1)
@@ -386,6 +426,8 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
             }
             catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
             {
+                if (ex is Win32Exception win && ExecutableExists(git) && !IsTransientSpawn(ex, git))
+                    return new GitRun(-1, "", "", FormatStartFailure(win, args));
                 if (attempt >= SpawnAttempts || !IsTransientSpawn(ex, git))
                     return new GitRun(-1, "", "", "git-unavailable");
                 context.Delay(TimeSpan.FromMilliseconds(Math.Min(25 << (attempt - 1), Math.Max(0, timeoutMs - context.Time.GetElapsedTime(started).TotalMilliseconds))));
