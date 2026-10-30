@@ -19,6 +19,11 @@ internal static class TaskSupervisionNoticeWriter
             .SingleOrDefaultAsync(s => s.Id == sid, ct) : null;
         var parent = task.ParentSessionId is { } pid ? await db.AgentSessions.AsNoTracking()
             .SingleOrDefaultAsync(s => s.Id == pid, ct) : null;
+        var parentGeneration = historical ? await db.TaskSupervisionNotices.AsNoTracking()
+            .Where(n => n.TaskId == task.Id && n.Attempt == task.Attempt
+                && n.Purpose == TaskSupervisionNoticePurpose.CeilingParent && n.ParentSessionId == task.ParentSessionId)
+            .OrderByDescending(n => n.CreatedAt).Select(n => n.ParentStartedAt).FirstOrDefaultAsync(ct)
+            : parent?.StartedAt;
         // New saves follow their existing generation-fenced writer. Old rows must carry an
         // original accepted coordinate; the current session row alone cannot reconstruct one.
         DateTime? generation = historical
@@ -43,7 +48,7 @@ internal static class TaskSupervisionNoticeWriter
             Id = id, TaskId = task.Id, Attempt = task.Attempt, SourceEventId = failed.Id,
             Purpose = TaskSupervisionNoticePurpose.FailureDelegate, SessionId = task.AgentSessionId,
             SessionStartedAt = generation, DispatchedAt = task.DispatchedAt,
-            ParentSessionId = task.ParentSessionId, ParentStartedAt = parent?.StartedAt,
+            ParentSessionId = task.ParentSessionId, ParentStartedAt = parentGeneration,
             RecipientSessionId = task.AgentSessionId, RecipientStartedAt = generation,
             RecipientFloor = frontier, FailureFrontier = frontier,
             ReportFloor = task.RepliedAtSequence ?? 0, ScanFrontier = frontier,
