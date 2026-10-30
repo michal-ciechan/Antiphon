@@ -15,17 +15,27 @@ internal static class LateFailedReportForwarder
         if (failure.Purpose != TaskSupervisionNoticePurpose.FailureDelegate || failure.ReportForwardedAt is not null
             || failure.ReportWatchClosedAt is not null
             || !await TaskSupervisionNoticeService.SourceCurrentAsync(db, task, failure, ct)) return;
-        var ended = await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == failure.SessionId
+        var endedAt = await db.AgentSessions.AsNoTracking().Where(s => s.Id == failure.SessionId
             && s.StartedAt == failure.SessionStartedAt && s.EndedAt != null
-            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed), ct);
+            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))
+            .Select(s => s.EndedAt).SingleOrDefaultAsync(ct);
+        var ended = endedAt is not null;
         var latest = await db.TranscriptEntries.Where(t => t.AgentSessionId == failure.SessionId)
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
         if (latest <= failure.ScanFrontier && !ended) return;
         var candidate = await ReadReportAsync(db, task, failure, ct);
         if (candidate is null)
         {
+            // Terminal status is not EOF (CARD-0519). Start the durable drain clock
+            // at a post-exit observation, and restart it whenever the stored tail grows.
+            if (ended && (failure.ReportTranscriptStableSince is null || latest != failure.ScanFrontier))
+                failure.ReportTranscriptStableSince = now;
             failure.ScanFrontier = latest;
-            if (ended) TaskSupervisionNoticeService.CloseReportWatch(failure, now, "final_transcript_scanned", deliveryImpossible: true);
+            if (endedAt is { } end && failure.ReportTranscriptStableSince is { } stable
+                && now >= end.AddMinutes(15) && now >= stable.AddMinutes(15))
+                TaskSupervisionNoticeService.CloseReportWatch(failure, now,
+                    failure.ReasonCode is "late_report_window_unavailable" or "late_report_window_limit"
+                        ? failure.ReasonCode : "final_transcript_scanned", deliveryImpossible: true);
             return;
         }
         var (rows, raw) = candidate.Value;

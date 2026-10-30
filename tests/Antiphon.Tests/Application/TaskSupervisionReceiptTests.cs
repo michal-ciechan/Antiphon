@@ -140,6 +140,9 @@ public sealed class TaskSupervisionReceiptTests
             await db.SaveChangesAsync();
         }
         await RecoverAsync(parent, h.Clock);
+        await using (var db = h.Context())
+            (await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
+                && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate)).ReportWatchClosedAt.ShouldBeNull();
         h.Clock.Advance(TimeSpan.FromSeconds(5));
         await h.FinishAsync();
         h.Clock.Advance(TimeSpan.FromMinutes(2));
@@ -150,6 +153,118 @@ public sealed class TaskSupervisionReceiptTests
                 "session exit precedes transcript upload and cannot close the report watch");
         (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
         h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Transcript_growth_restarts_the_post_exit_drain_wait()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await EndAsync(h);
+        await RecoverAsync(parent, h.Clock);
+        h.Clock.Advance(TimeSpan.FromMinutes(14));
+        await h.AppendAsync(TranscriptKinds.AssistantText, "Delayed upload, still draining");
+        await RecoverAsync(parent, h.Clock);
+        h.Clock.Advance(TimeSpan.FromMinutes(14));
+        await RecoverAsync(parent, h.Clock);
+        await using (var db = h.Context())
+        {
+            var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId);
+            watch.ReportWatchClosedAt.ShouldBeNull("14 minutes without growth is not the 15-minute drain bound");
+            watch.ReportTranscriptStableSince.ShouldBe(h.Clock.GetUtcNow().UtcDateTime.AddMinutes(-14));
+            watch.ScanFrontier.ShouldBe(await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => t.Sequence));
+        }
+        h.Clock.Advance(TimeSpan.FromMinutes(4));
+        await RecoverAsync(parent, h.Clock);
+        await using var verify = h.Context();
+        (await verify.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId)).ReportWatchClosedAt.ShouldNotBeNull();
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Report_after_a_closed_drain_window_is_not_forwarded()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await EndAsync(h);
+        await RecoverAsync(parent, h.Clock);
+        h.Clock.Advance(TimeSpan.FromMinutes(16));
+        await RecoverAsync(parent, h.Clock);
+        await using (var db = h.Context())
+            (await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId)).ReportWatchClosedAt.ShouldNotBeNull();
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        await h.FinishAsync();
+        h.Clock.Advance(TimeSpan.FromMinutes(61));
+        await RecoverAsync(parent, h.Clock);
+        await using var verify = h.Context();
+        (await verify.TaskSupervisionNotices.AnyAsync(n => n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent))
+            .ShouldBeFalse("uploads beyond the documented no-growth bound do not reopen a closed watch");
+        (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Complete_report_stored_before_exit_closes_the_watch()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await h.FinishAsync();
+        await EndAsync(h);
+        await RecoverAsync(parent, h.Clock);
+        await using var db = h.Context();
+        var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
+            && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate);
+        watch.ReportWatchCloseReason.ShouldBe("report_forwarded");
+        watch.ReportWatchClosedAt.ShouldNotBeNull();
+        (await db.TaskSupervisionNotices.CountAsync(n => n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent)).ShouldBe(1);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Poisoned_watch_does_not_starve_other_items()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        Guid poisonedId;
+        await using (var db = h.Context())
+        {
+            var original = await db.TaskSupervisionNotices.AsNoTracking().SingleAsync(n => n.TaskId == h.TaskId);
+            var poisoned = new TaskSupervisionNotice();
+            db.Entry(poisoned).CurrentValues.SetValues(original);
+            poisoned.Id = poisonedId = Guid.NewGuid();
+            poisoned.SourceEventId = Guid.NewGuid();
+            poisoned.State = TaskSupervisionNoticeState.NotApplicable;
+            poisoned.NextReportScanAt = poisoned.NextAttemptAt = h.Clock.GetUtcNow().UtcDateTime.AddMinutes(-1);
+            db.TaskSupervisionNotices.Add(poisoned);
+            await db.SaveChangesAsync();
+        }
+        var fault = new NoticeInsertFault { PoisonNoticeId = poisonedId };
+        await using var parent = await OpenAsync(h, h.ParentId, fault);
+        await h.FinishAsync();
+        for (var sweep = 0; sweep < 2; sweep++)
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() => RecoverAsync(parent, h.Clock));
+            await using var db = h.Context();
+            (await db.TaskSupervisionNotices.CountAsync(n => n.TaskId == h.TaskId
+                && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent)).ShouldBe(1,
+                    "a deterministic first-row failure cannot skip the healthy watch");
+            h.Clock.Advance(TimeSpan.FromMinutes(2));
+        }
+        fault.PoisonHits.ShouldBe(2);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    private static async Task EndAsync(TaskCeilingHarness h)
+    {
+        await using var db = h.Context();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+        session.Status = SessionStatus.Stopped;
+        session.EndedAt = h.Clock.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync();
     }
 
     [Test]
@@ -170,6 +285,13 @@ public sealed class TaskSupervisionReceiptTests
             await db.SaveChangesAsync();
         }
         await RecoverAsync(parent, h.Clock);
+        if (arm == "ended")
+        {
+            await using (var db = h.Context())
+                (await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId)).ReportWatchClosedAt.ShouldBeNull();
+            h.Clock.Advance(TimeSpan.FromMinutes(15));
+            await RecoverAsync(parent, h.Clock);
+        }
         await using (var db = h.Context())
         {
             var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
@@ -592,6 +714,8 @@ public sealed class TaskSupervisionReceiptTests
 
     private sealed class NoticeInsertFault : DbCommandInterceptor
     {
+        public Guid? PoisonNoticeId { get; init; }
+        public int PoisonHits { get; private set; }
         public string? BodyFragment { get; init; }
         public bool Armed { get; set; }
         public bool FailSupervisionRead { get; init; }
@@ -599,6 +723,13 @@ public sealed class TaskSupervisionReceiptTests
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
+            if (PoisonNoticeId is { } poisoned
+                && command.CommandText.Contains("FROM \"TaskSupervisionNotices\"", StringComparison.Ordinal)
+                && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == poisoned))
+            {
+                PoisonHits++;
+                throw new InvalidOperationException("C1610 deterministic poisoned watch");
+            }
             if (Armed && !Fired && FailSupervisionRead
                 && command.CommandText.Contains("FROM \"TaskSupervisionNotices\"", StringComparison.Ordinal))
             {

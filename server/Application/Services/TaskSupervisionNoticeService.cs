@@ -20,6 +20,23 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
     internal async Task RecoverAsync(Guid? taskId, CancellationToken ct)
     {
         var now = clock.GetUtcNow().UtcDateTime;
+        var errors = new List<Exception>();
+        var discovered = new List<TaskSupervisionNotice>();
+        // Discard a failed item's unsaved changes before processing the next row.
+        async Task IsolateAsync(Func<Task> work)
+        {
+            db.ChangeTracker.Clear();
+            try
+            {
+                await work();
+                await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                db.ChangeTracker.Clear();
+                errors.Add(ex);
+            }
+        }
         var due = db.TaskSupervisionNotices.Where(n =>
             n.State == TaskSupervisionNoticeState.Pending && n.NextAttemptAt <= now
             || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null
@@ -27,7 +44,7 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 && (n.NextReportScanAt == null || n.NextReportScanAt <= now));
         if (taskId is { } id) due = due.Where(n => n.TaskId == id);
         // Delivery and report discovery have independent clocks. Closed watches use no scan slot.
-        var rows = await due.OrderBy(n => n.State == TaskSupervisionNoticeState.Pending
+        var rows = await due.AsNoTracking().OrderBy(n => n.State == TaskSupervisionNoticeState.Pending
             ? n.NextAttemptAt : n.NextReportScanAt ?? n.CreatedAt).ThenBy(n => n.Id).Take(24).ToListAsync(ct);
         if (rows.Count < 32)
         {
@@ -37,24 +54,27 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 && db.AgentTaskEvents.Any(e => e.AgentTaskId == t.Id && e.Type == AgentTaskEventType.Failed));
             if (taskId is { } one) missing = missing.Where(t => t.Id == one);
             foreach (var task in await missing.OrderBy(t => t.Id).Take(32 - rows.Count).ToListAsync(ct))
-            {
-                var failed = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id
-                    && e.Type == AgentTaskEventType.Failed).OrderByDescending(e => e.At).FirstAsync(ct);
-                await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, historical: true, ct);
-            }
-            await db.SaveChangesAsync(ct);
-            rows = rows.Concat(db.TaskSupervisionNotices.Local.Where(n => n.CreatedAt == now)).DistinctBy(n => n.Id).Take(32).ToList();
+                await IsolateAsync(async () =>
+                {
+                    var failed = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id
+                        && e.Type == AgentTaskEventType.Failed).OrderByDescending(e => e.At).FirstAsync(ct);
+                    await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, historical: true, ct);
+                    await db.SaveChangesAsync(ct);
+                    rows.AddRange(db.TaskSupervisionNotices.Local.Where(n => n.CreatedAt == now));
+                });
         }
-        // A Told receipt does not close report discovery. An ended source gets one final scan.
-        foreach (var failure in rows.Where(n => n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
+        // A Told receipt does not close discovery; exit alone is not transcript EOF.
+        foreach (var saved in rows.Where(n => n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
+            await IsolateAsync(async () =>
         {
+            var failure = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
             if (failure.ReportWatchClosedAt is not null || failure.ReportForwardedAt is not null
-                || failure.NextReportScanAt > now) continue;
+                || failure.NextReportScanAt > now) return;
             if (failure.SessionStartedAt is null || failure.SessionStartedAt == default(DateTime)
                 || failure.SessionId is null)
             {
                 CloseReportWatch(failure, now, "legacy_identity_unknown", deliveryImpossible: true);
-                continue;
+                return;
             }
             var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
             if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
@@ -63,9 +83,11 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             {
                 CloseReportWatch(failure, now, "report_attribution_superseded", deliveryImpossible: true);
                 failure.State = TaskSupervisionNoticeState.Superseded;
-                continue;
+                return;
             }
             await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
+            discovered.AddRange(db.TaskSupervisionNotices.Local.Where(n =>
+                n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.CreatedAt == now));
             if (failure.ReportWatchClosedAt is null)
             {
                 var attempt = Math.Min(failure.ReportScanAttempts ?? 0, 30);
@@ -73,17 +95,18 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 failure.NextReportScanAt = now.AddMinutes(attempt switch
                     { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 15, 5 => 30, _ => 60 });
             }
-        }
-        var deliveries = rows.Concat(db.TaskSupervisionNotices.Local.Where(n =>
-                n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.CreatedAt == now))
+        });
+        var deliveries = rows.Concat(discovered)
             .DistinctBy(n => n.Id).OrderBy(n => n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent ? 0 : 1).Take(32).ToList();
-        foreach (var notice in deliveries)
+        foreach (var saved in deliveries.Where(n => n.State == TaskSupervisionNoticeState.Pending))
+            await IsolateAsync(async () =>
         {
-            if (notice.State != TaskSupervisionNoticeState.Pending) continue;
-            if (await ConfirmAsync(notice, ct)) continue;
+            var notice = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
+            if (notice.State != TaskSupervisionNoticeState.Pending) return;
+            if (await ConfirmAsync(notice, ct)) return;
             // Unknown/gone recipients must yield the bounded batch to newer delivery debt.
             notice.NextAttemptAt = now.AddMinutes(1);
-            if (!await CanSendAsync(db, notice, ct)) continue;
+            if (!await CanSendAsync(db, notice, ct)) return;
             try
             {
                 await queue.EnqueueSupervisionNoticeAsync(notice, message => notice.QueueMessageId = message, ct);
@@ -97,8 +120,9 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 notice.ReasonCode = "queue_enqueue_failed";
                 notice.NextAttemptAt = now.AddMinutes(1);
             }
-        }
-        await db.SaveChangesAsync(ct);
+        });
+        if (errors.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(errors[0]).Throw();
+        if (errors.Count > 1) throw new AggregateException("Supervision items failed after processing the batch", errors);
     }
 
     internal static void CloseReportWatch(TaskSupervisionNotice notice, DateTime now, string reason,
