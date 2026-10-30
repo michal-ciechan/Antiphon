@@ -341,8 +341,13 @@ public sealed class HostSession : IAsyncDisposable
             using var observation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             observation.CancelAfter(TimeSpan.FromSeconds(5));
             var linux = _custody.Binding.Backend == VerificationCustodyBackends.LinuxCgroup;
-            return await _custody.ObserveAsync(_runner, () => Volatile.Read(ref _hostOutputFailed),
+            var status = await _custody.ObserveAsync(_runner, () => Volatile.Read(ref _hostOutputFailed),
                 linux ? seal : seal || Status == PtyHostStatus.Exited, observation.Token);
+            // Launch failure never starts the exit observer, so a released-zero disposition
+            // has to arm its own fresh TTL or the host lives until something else stops it.
+            if (linux && _custody.HasReleaseDisposition())
+                ArmLinger();
+            return status;
         }
         finally { _admission.Release(); }
     }
