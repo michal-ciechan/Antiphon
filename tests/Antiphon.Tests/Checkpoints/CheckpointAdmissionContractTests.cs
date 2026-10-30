@@ -122,7 +122,7 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             SourceCapture = _ => CheckpointFixtures.CleanSource(), TimeProvider = clock,
             Slots = new FixedSlotClient("off"), Driver = driver, Output = TextWriter.Null };
         var run = CheckpointApp.CreateRun(manifest,
-            new RunRequest { Commit = new string('a', 40), Slots = "off", TotalTimeoutMinutes = 1 }, root, runtime);
+            new RunRequest { Commit = new string('a', 40), Slots = "off", TotalTimeoutMinutes = 1, KeepOutputs = true }, root, runtime);
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(5);
         driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
@@ -145,11 +145,10 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             row.ExitCode.ShouldBe(5);
             row.TerminalReason.ShouldBe(reason);
         }
-        using var validation = new StringWriter();
+        ReportValidator.Validate(report, new string('a', 40)).ShouldBe("report_failed");
         (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", Path.Combine(run, "report.json"),
             "--expected-source-sha", new string('a', 40), "--repo-root", root],
-            new CheckpointApp.Runtime { Output = validation })).ShouldBe(2);
-        validation.ToString().ShouldContain("report_failed");
+            new CheckpointApp.Runtime { Output = TextWriter.Null })).ShouldBe(2);
         var log = File.ReadAllText(Path.Combine(run, "executor.log"));
         foreach (var phase in new[] { "evidence", "output-discovery", "output-cleanup", "report-publication" })
             log.ShouldContain($"FINALIZATION phase={phase} seconds=");
