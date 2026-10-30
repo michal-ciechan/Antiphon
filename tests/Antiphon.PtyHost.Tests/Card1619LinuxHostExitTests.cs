@@ -44,7 +44,7 @@ public class Card1619LinuxHostExitTests
             client = await PtyHostClient.ConnectAsync(pipe, TimeSpan.FromSeconds(10), default);
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var exit = new TaskCompletionSource<ExitedMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            client.OnOutput += output => { if (output.Chunk.Contains("card1619-ready")) ready.TrySetResult(); };
+            client.OnOutput += (_, chunk) => { if (chunk.Contains("card1619-ready")) ready.TrySetResult(); };
             client.OnExited += value => exit.TrySetResult(value);
             var generation = SessionGeneration.Normalize(DateTime.UtcNow);
             var launched = await client.LaunchAsync(new LaunchMessage("/bin/sh",
