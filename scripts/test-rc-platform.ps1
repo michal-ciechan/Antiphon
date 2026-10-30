@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
-param([string]$Case, [string]$ResultsDirectory)
+param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
 foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
@@ -657,6 +657,145 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
     Assert-C1323 ($linuxLaunched.Count -eq $linuxOnly.Count -and $linuxOnly.Count -gt 0) 'linux-still-requires-the-rows' ("linux=" + $linuxLaunched.Count + ' inventory=' + $linuxOnly.Count)
 }
 
+function Test-C1199_WindowsRequiredRoster {
+    # The wrapper passes compiled S/T/O identities. Do not scan test source for that roster.
+    $expected = @(
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_directory_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_file_on_directory'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_symlink_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_untracked_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_ignored_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_staged_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_modified_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_clean_build'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_regular_user_move'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_changed_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_stamp'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_compiler_collision'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_directory'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_symlink'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.missing_receipt_is_not_negative_success'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.local_output_property_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.intermediate_output_path_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.generated_target_file_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.imported_props_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.transitive_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.dirty_tracked_tree_is_refused_and_unmodified'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.clean_untracked_output_build_exits_zero'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.fresh_checkout_run_executes_a_test'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.tracked_snapshot_contains_committed_files'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_untracked_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_ignored_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.index_added_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.passing_script_requires_writable_source_receipt'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.transitive_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.unevaluable_import_is_refused_before_the_build'
+    )
+    if ([string]::IsNullOrWhiteSpace($CompiledRosterPath) -or -not (Test-Path -LiteralPath $CompiledRosterPath -PathType Leaf)) {
+        foreach ($name in @('c1199-roster-35', 'c1199-windows-required', 'c1199-linux-required', 'c1199-each-gap-incomplete', 'c1199-all-passed-complete', 'c1199-residual-skips-exact')) {
+            Assert-C1323 $false $name 'compiled roster path missing'
+        }
+        return
+    }
+    $parsed = Get-Content -LiteralPath $CompiledRosterPath -Raw | ConvertFrom-Json
+    $roster = @($parsed | ForEach-Object { [string]$_ })
+    $groups = @($roster | Group-Object -CaseSensitive)
+    $rosterOk = ($roster.Count -eq 35 -and $groups.Count -eq 35 -and (Same-C1323Set $roster $expected))
+    $legacy = @($roster | Where-Object { $_ -like '*.shape_conflict_rule' }).Count
+    Assert-C1323 $rosterOk 'c1199-roster-35' ("count=" + $roster.Count + " unique=" + $groups.Count + " shape_conflict_rule=" + $legacy)
+
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $exclusionCache = @{}
+    function Test-C1199Excluded([string]$ClassName, [string]$Method, [string]$Platform) {
+        $key = 'antiphon|' + $Platform
+        if (-not $exclusionCache.ContainsKey($key)) {
+            $exclusionCache[$key] = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $Platform)
+        }
+        $probe = [pscustomobject]@{ ClassName = $ClassName; Type = $ClassName; Method = $Method }
+        return (Test-NightlyProfileNodeExcluded $probe $exclusionCache[$key])
+    }
+    $windowsMiss = @()
+    $linuxMiss = @()
+    foreach ($id in $expected) {
+        $dot = $id.LastIndexOf('.')
+        $class = $id.Substring(0, $dot)
+        $method = $id.Substring($dot + 1)
+        if (Test-C1199Excluded $class $method 'windows') { $windowsMiss += $id }
+        if (Test-C1199Excluded $class $method 'linux') { $linuxMiss += $id }
+    }
+    Assert-C1323 ($windowsMiss.Count -eq 0) 'c1199-windows-required' ($windowsMiss -join ',')
+    Assert-C1323 ($linuxMiss.Count -eq 0) 'c1199-linux-required' ($linuxMiss -join ',')
+
+    function New-C1199Verdict([object[]]$Rows) {
+        return (ConvertTo-NightlyCoverageVerdict -TerminalRows $Rows -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash)
+    }
+    $gapMiss = @()
+    foreach ($id in $expected) {
+        $rows = @($expected | ForEach-Object {
+            [pscustomobject]@{ Identity = $_; Outcome = $(if ($_ -ceq $id) { 'NotExecuted' } else { 'Passed' }) }
+        })
+        $verdict = New-C1199Verdict $rows
+        $reason = @($verdict.reasons) -join ','
+        if ($verdict.coverageComplete -or $reason -notlike ('*' + $id + '*')) { $gapMiss += $id }
+    }
+    Assert-C1323 ($gapMiss.Count -eq 0) 'c1199-each-gap-incomplete' ($gapMiss -join ',')
+    $passed = @($expected | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
+    $complete = New-C1199Verdict $passed
+    $completeReason = @($complete.reasons) -join ','
+    Assert-C1323 ($complete.coverageComplete -and $complete.passed -eq 35 -and $completeReason -notlike '*unexecuted-outcome*') 'c1199-all-passed-complete' $completeReason
+
+    . "$PSScriptRoot/lib/checkpoint-usage.ps1"
+    $census = Get-NamespaceCensus
+    $expectedWindows = @(
+        'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
+        'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
+        'Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests.*'
+        'Antiphon.Tests.Checkpoints.SafeDeleteProcessBoundaryTests.*'
+        'Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests.*'
+        'Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests.unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_directory_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_file_on_directory'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_symlink_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_untracked_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_ignored_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_modified_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_regular_user_move'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_changed_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.local_output_property_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.imported_props_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.transitive_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.clean_untracked_output_build_exits_zero'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.fresh_checkout_run_executes_a_test'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_untracked_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_ignored_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.passing_script_requires_writable_source_receipt'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.transitive_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.unevaluable_import_is_refused_before_the_build'
+    )
+    $expectedLinux = @(
+        'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
+        'Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests.*'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_quick_row_finishes_beside_a_slow_row'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_chatty_row_drains_interleaved_stdout_and_stderr'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_timeout_kills_the_start_b_grandchild'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.windows_confined_build_leaves_use_app_host_unset'
+    )
+    $windowsOk = Same-C1323Set @($census.windowsSkips) $expectedWindows
+    $linuxOk = Same-C1323Set @($census.linuxSkips) $expectedLinux
+    Assert-C1323 ($windowsOk -and $linuxOk) 'c1199-residual-skips-exact' ("windows=" + @($census.windowsSkips).Count + " linux=" + @($census.linuxSkips).Count)
+}
+
 try {
     switch ($Case) {
         'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
@@ -665,6 +804,7 @@ try {
         'LinuxSessionRunnerAdmission' { Test-LinuxSessionRunnerAdmission }
         'LinuxOnlyWindowsExclusions' { throw 'LinuxOnlyWindowsExclusions was retired by CARD-1613. Use -Case LinuxOnlyWindowsExclusionPolicy for the shipped rows. The compiled witness is NativeLinuxPolicyWitnessTests.' }
         'LinuxOnlyWindowsExclusionPolicy' { Test-LinuxOnlyWindowsExclusionPolicy }
+        'C1199_WindowsRequiredRoster' { Test-C1199_WindowsRequiredRoster }
         default { throw "unknown case: $Case" }
     }
 } catch {
