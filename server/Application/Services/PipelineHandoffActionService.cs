@@ -42,6 +42,8 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
             e.Id == request.SettlementEventId && e.AgentTaskId == predecessorId
             && e.Type == AgentTaskEventType.Completed && e.At == current.CompletedAt, ct)
             ?? throw Refuse("settlement_changed");
+        if (await TaskSuccessorFence.ReasonAsync(db, current, ct) is not null)
+            throw Refuse("successor_held");
         await RequireWorkflowAsync(current, request, ct);
 
         var action = await db.PipelineHandoffActions.SingleOrDefaultAsync(a =>

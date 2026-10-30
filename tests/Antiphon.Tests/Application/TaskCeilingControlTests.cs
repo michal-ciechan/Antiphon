@@ -203,6 +203,7 @@ public sealed class TaskCeilingControlTests
         await using var h = await TaskCeilingHarness.CreateAsync();
         if (arm != "no-card") await SeedCardAsync(h);
         Guid successor = arm == "pre-hold-successor" ? await SeedSuccessorAsync(h) : Guid.Empty;
+        if (arm == "pre-hold-successor") h.Clock.Advance(TimeSpan.FromMinutes(1));
         await h.SweepAsync();
         (await h.TaskAsync()).CeilingHoldEpisodeId.ShouldNotBeNull();
         if (arm != "pre-hold-successor")
@@ -214,6 +215,11 @@ public sealed class TaskCeilingControlTests
         settled.NextStage.ShouldBe(arm == "different-role" ? PipelineHandoffKind.Review : PipelineHandoffKind.Decide,
             "a held result must not launch a second same-card/role chain; missing lineage needs a decision");
         if (arm != "different-role" && arm != "no-card") settled.NextHandoff.ShouldContain(successor.ToString("D"));
+        await using (var db = h.Context())
+        {
+            var note = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == h.TaskId);
+            note.Body.Split('\n')[0].ShouldContain(arm == "different-role" ? "next=review" : "next=decide");
+        }
         h.Stopper.Killed.ShouldBeEmpty();
     }
 
