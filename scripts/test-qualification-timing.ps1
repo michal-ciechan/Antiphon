@@ -497,12 +497,18 @@ $payload = [ordered]@{
 '@
         [IO.File]::WriteAllText($hugeScript, $hugeBody.Replace("`r", ''))
         $hugeRun = Invoke-QualificationWitness -ScriptPath $hugeScript -Arguments @($huge, $hugeResult, $lib) -TimeoutMilliseconds 8000
-        $hugeOk = $false
-        if ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $hugeResult)) {
-            $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $hugeOk = ([double]$hugeDoc.seconds -lt 0.2 -and [int64]$hugeDoc.peak -lt 256MB -and -not [bool]$hugeDoc.complete -and [int]$hugeDoc.count -eq 0)
-        }
-        Assert-Check $hugeOk 'oversized-line-stays-inside-byte-and-time-cap'
+        $hugePresent = Test-Path -LiteralPath $hugeResult
+        $hugeDoc = $null
+        if ($hugePresent) { $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json }
+        # Keep the child facts in captured stdout/TRX before the temporary root is removed.
+        Write-Host ('MEASURED oversized-child ' + (@{ run = $hugeRun; resultPresent = $hugePresent; reader = $hugeDoc } | ConvertTo-Json -Depth 5 -Compress))
+        Assert-Check $hugeRun.Exited 'oversized-line-child-exited'
+        Assert-Check ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0) 'oversized-line-child-exit-code'
+        Assert-Check $hugePresent 'oversized-line-child-result-present'
+        Assert-Check ($null -ne $hugeDoc -and [double]$hugeDoc.seconds -lt 0.2) 'oversized-line-reader-wall-budget'
+        Assert-Check ($null -ne $hugeDoc -and [int64]$hugeDoc.peak -lt 256MB) 'oversized-line-peak-memory'
+        Assert-Check ($null -ne $hugeDoc -and -not [bool]$hugeDoc.complete) 'oversized-line-incomplete'
+        Assert-Check ($null -ne $hugeDoc -and [int]$hugeDoc.count -eq 0) 'oversized-line-no-records'
 
         $fifoDir = Join-Path $boundTiming 'fifo-dir'
         New-Item -ItemType Directory -Path $fifoDir -Force | Out-Null
@@ -1558,20 +1564,51 @@ try {
     $crowdList = [Diagnostics.Stopwatch]::StartNew()
     $crowdListed = @(Get-ChildItem -LiteralPath $crowdTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $crowdList.Stop()
+    $savedCrowdBudget = ${function:New-QualificationReadBudget}
+    $savedCrowdOpen = ${function:Open-TestPhaseReadStream}
+    $script:crowdOpens = [Collections.Generic.List[string]]::new()
+    function Open-TestPhaseReadStream {
+        param([string]$Path)
+        $script:crowdOpens.Add($Path)
+        & $savedCrowdOpen -Path $Path
+    }
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdArgs = @{ ChunkExitCode = 0; ChunkResult = 'KEEP-0'; LogRoot = $crowdLog; TimingRoot = $crowdTiming; Suite = 'antiphon'; Chunk = 'g-600'; TrxPath = $crowdTrx; LastPhase = 'complete'; StartedAt = '2026-10-28T00:00:00.0000000Z'; CompletedAt = '2026-10-28T00:01:00.0000000Z'; RunId = 'run-600'; Attempt = '2' }
     $crowdSw = [Diagnostics.Stopwatch]::StartNew()
-    $crowdAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 0 -ChunkResult 'KEEP-0' -LogRoot $crowdLog -TimingRoot $crowdTiming -Suite 'antiphon' -Chunk 'g-600' -TrxPath $crowdTrx -LastPhase 'complete' -StartedAt '2026-10-28T00:00:00.0000000Z' -CompletedAt '2026-10-28T00:01:00.0000000Z' -RunId 'run-600' -Attempt '2'
+    $crowdAgg = Invoke-QualificationPostRunAggregation @crowdArgs
     $crowdSw.Stop()
-    $crowdDoc = Get-Content -LiteralPath (Join-Path $crowdLog 'antiphon-g-600.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    Write-Host ('MEASURED six-hundred-journals files=' + $crowdListed.Count + ' root-list-ms=' + [math]::Round($crowdList.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($crowdSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$crowdDoc.why + ' setup=' + $crowdDoc.fixtureSetupSeconds + ' teardown=' + $crowdDoc.fixtureTeardownSeconds + ' spawn=' + $crowdDoc.processSpawnSeconds + ' wait=' + $crowdDoc.processWaitSeconds)
-    $crowdPhases = ([string]$crowdDoc.why -eq '' -and [math]::Abs([double]$crowdDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$crowdDoc.fixtureTeardownSeconds - 0.5) -lt 0.001 -and [math]::Abs([double]$crowdDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $crowdDoc.processWaitSeconds)
+    $crowdPath = Join-Path $crowdLog 'antiphon-g-600.timing.json'
+    $crowdDoc = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED six-hundred-journals terminal-ms=' + $crowdSw.Elapsed.TotalMilliseconds + ' opens=' + $script:crowdOpens.Count + ' document=' + ($crowdDoc | ConvertTo-Json -Compress -Depth 5))
+    $crowdAllowed = @($crowdTrx, (Join-Path $crowdDir 'cases-42-own1.jsonl'), (Join-Path $crowdDir 'cases-7-bare.jsonl'))
     Assert-Check ($crowdListed.Count -eq 601) 'six-hundred-journal-corpus-size'
-    Assert-Check ($crowdSw.Elapsed.TotalSeconds -lt 0.75) 'six-hundred-journal-wall-budget'
-    $crowdExit = ([int]$crowdAgg.ChunkExitCode -eq 0 -and [string]$crowdAgg.ChunkResult -eq 'KEEP-0')
-    Assert-Check ($crowdPhases -and $crowdExit) 'six-hundred-journals-stay-inside-budget'
+    Assert-Check ($script:crowdOpens.Count -eq 4 -and @($script:crowdOpens | Where-Object { $_ -notin $crowdAllowed }).Count -eq 0) 'six-hundred-journals-only-own-bounded-reads'
+    Assert-Check ([string]$crowdDoc.why -eq '' -and $crowdDoc.fixtureSetupSeconds -eq 1.25 -and $crowdDoc.fixtureTeardownSeconds -eq 0.5 -and $crowdDoc.processSpawnSeconds -eq 0.4 -and $null -eq $crowdDoc.processWaitSeconds -and $crowdDoc.testCount -eq 1) 'six-hundred-journals-unexhausted-complete'
+    Assert-Check ($crowdAgg.ChunkExitCode -eq 0 -and $crowdAgg.ChunkResult -eq 'KEEP-0') 'six-hundred-journals-unexhausted-verdict'
+
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    $crowdArgs.ChunkExitCode = 7
+    $crowdArgs.ChunkResult = 'KEEP-7'
+    $crowdExhausted = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdGap = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED exhausted-publication ' + ($crowdGap | ConvertTo-Json -Compress -Depth 5))
+    Assert-Check ($crowdGap.why -eq 'timing-read-refused') 'six-hundred-journals-exhausted-refused'
+    $crowdMetrics = @('fixtureSetupSeconds','fixtureTeardownSeconds','processSpawnSeconds','processWaitSeconds','p50Seconds','p95Seconds','maxSeconds')
+    Assert-Check (@($crowdMetrics | Where-Object { $null -ne $crowdGap.$_ }).Count -eq 0 -and $crowdGap.testCount -eq 0 -and @($crowdGap.slowest).Count -eq 0) 'six-hundred-journals-exhausted-null-metrics'
+    Assert-Check ($crowdExhausted.ChunkExitCode -eq 7 -and $crowdExhausted.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-exhausted-verdict'
+
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED recovered-publication ' + ($crowdRecovery | ConvertTo-Json -Compress -Depth 5))
+    Assert-Check ($crowdRecovery.why -eq '' -and $crowdRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdRecovery.fixtureTeardownSeconds -eq 0.5 -and $crowdRecovery.processSpawnSeconds -eq 0.4 -and $crowdRecovery.testCount -eq 1) 'six-hundred-journals-next-publication-recovers'
+    Assert-Check ($crowdRecovered.ChunkExitCode -eq 7 -and $crowdRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-recovery-verdict'
 } catch {
     Write-Host ('FAIL six-hundred-journals-stay-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedCrowdBudget) { ${function:New-QualificationReadBudget} = $savedCrowdBudget }
+    if ($null -ne $savedCrowdOpen) { ${function:Open-TestPhaseReadStream} = $savedCrowdOpen }
     Remove-Item -LiteralPath $crowdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
