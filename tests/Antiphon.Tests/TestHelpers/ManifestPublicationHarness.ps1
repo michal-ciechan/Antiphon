@@ -726,7 +726,64 @@ function Invoke-V5 {
     Write-MpResult -Ok $true -Reason 'v5'
 }
 
+
+function Assert-MpSuccessorPrefixes {
+    foreach ($mode in @('torn', 'sealed', 'identity')) {
+        $root = Join-Path $Work ('prefix-' + $mode)
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $ctx = Open-MpContext -LogRoot $root -RunId 'prefix' -Attempt '1' -Suite 'antiphon' -Source 'src-a'
+        if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp ('prefix-parent-refused ' + $mode) }
+        $trx = Join-Path $root 'one.trx'
+        New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'kept' -Outcome 'Passed'))
+        for ($i = 1; $i -le 3; $i++) {
+            Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk ('kept-' + $i) -RunId 'prefix' -Attempt '1' -HostWallSeconds $i
+        }
+        $expected = Get-TestPhaseProjectedDocument -Context $ctx
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText((Join-Path $root 'expected.json'), $expected, $utf8)
+        $parent = [string]$ctx.Generation
+        if ($mode -eq 'sealed') { Complete-TestPhaseExecutedProjection -Context $ctx -Terminal 'success' | Out-Null }
+        if ($mode -eq 'torn') {
+            Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk 'excluded-4' -RunId 'prefix' -Attempt '1' -HostWallSeconds 4
+            $bad = Join-Path (Join-Path (Join-Path $root 'timing/groups-executed.journal') $parent) '00000004.json'
+            [System.IO.File]::WriteAllText($bad, '{"torn":', $utf8)
+        }
+        Close-MpContext -Context $ctx
+        $before = @{}
+        $parentDir = Join-Path (Join-Path $root 'timing/groups-executed.journal') $parent
+        foreach ($file in @(Get-ChildItem -LiteralPath $parentDir -File)) { $before[$file.FullName] = Get-MpSha $file.FullName }
+        $source = 'src-a'
+        if ($mode -eq 'identity') { $source = 'src-b' }
+        $childWork = Join-Path $root 'child'
+        $child = Start-MpCase -CaseName 'prefix-successor' -ChildWork $childWork -Env @{ MP_SOURCE = $root; MP_SOURCE_ID = $source; MP_PARENT = $parent; MP_PREFIX_MODE = $mode }
+        if (-not $child.WaitForExit(30000)) { Stop-MpProcess $child; Fail-Mp ('prefix-child-timeout ' + $mode) }
+        $result = Get-Content -Raw (Join-Path $childWork 'result.json') | ConvertFrom-Json
+        if (-not $result.ok) { Fail-Mp ([string]$result.reason) }
+        foreach ($file in $before.Keys) { if ((Get-MpSha $file) -ne $before[$file]) { Fail-Mp ('prefix-parent-mutated ' + $mode) } }
+    }
+}
+
+function Invoke-MpPrefixSuccessor {
+    $root = $env:MP_SOURCE
+    $mode = $env:MP_PREFIX_MODE
+    $ctx = Open-MpContext -LogRoot $root -RunId 'prefix' -Attempt '1' -Suite 'antiphon' -Source $env:MP_SOURCE_ID
+    if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp ('prefix-successor-refused ' + $mode) }
+    try {
+        if ($ctx.Generation -eq $env:MP_PARENT) { Fail-Mp ('prefix-generation-not-advanced ' + $mode) }
+        $expected = Get-MpSha (Join-Path $root 'expected.json')
+        if (-not $ctx.HasSeed -or (Get-MpSha $ctx.SeedPath) -ne $expected) { Fail-Mp ('successor-seed-lost-valid-prefix ' + $mode) }
+        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
+        $flat = Join-Path $root 'timing/groups-executed.json'
+        if ((Get-MpSha $flat) -ne $expected) { Fail-Mp ('successor-projection-lost-valid-prefix ' + $mode) }
+        $ids = @(Read-MpChunkIds -Path $flat)
+        if (($ids -join ',') -ne 'kept-1,kept-2,kept-3') { Fail-Mp ('successor-prefix-rows ' + $mode) }
+        if ($mode -eq 'torn' -and -not $ctx.Unresolved) { Fail-Mp 'successor-cleared-corruption' }
+    } finally { Close-MpContext -Context $ctx }
+    Write-MpResult -Ok $true -Reason ('prefix-' + $mode)
+}
+
 function Invoke-V6 {
+    Assert-MpSuccessorPrefixes
     $malformed = 'NOT JSON {'
     $root = Join-Path $Work 'malformed'
     New-Item -ItemType Directory -Path (Join-Path $root 'timing') -Force | Out-Null
@@ -1410,6 +1467,7 @@ try {
         'v5' { Invoke-V5 }
         'v5-child' { Invoke-V5Child }
         'v6' { Invoke-V6 }
+        'prefix-successor' { Invoke-MpPrefixSuccessor }
         'v7' { Invoke-V7 }
         'v7-holder' { Invoke-V7Holder }
         'v8' { Invoke-V8 }
