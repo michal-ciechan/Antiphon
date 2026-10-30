@@ -15,6 +15,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 {
     private const string OutputPath = "bin-probe/";
     private const string TrackedBytes = "TRACKED-ORIGINAL";
+    private CheckpointFixtureGitEnvironment _git = null!;
 
     [Test]
     [Timeout(240_000)]
@@ -175,7 +176,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         }
     }
 
-    private static string Judge(string shape, RunResult result, string root, RunResult? receipt)
+    private string Judge(string shape, RunResult result, string root, RunResult? receipt)
     {
         var output = result.Output;
         switch (shape)
@@ -362,7 +363,10 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private string BeginRepo(string shape)
     {
-        var root = TempDir();
+        var scope = TempDir();
+        var root = Path.Combine(scope, "repo");
+        Directory.CreateDirectory(root);
+        _git = CheckpointFixtureGitEnvironment.Create(Path.Combine(scope, "git-isolation"));
         Git(root, "init", "-b", "card1199");
         Git(root, "config", "core.autocrlf", "false");
         var ignore = "bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n";
@@ -520,7 +524,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "--name", name, "--project", "App/App.csproj",
             "--output-path", OutputPath, "--filter", filter,
             "--results-root", ".antiphon/tool-results", "--min-executed", min,
-        ], new Antiphon.Checkpoints.CheckpointApp.Runtime { Output = output });
+        ], _git.ToolRuntime(output));
         cancellationToken.ThrowIfCancellationRequested();
         return new RunResult(exit, output.ToString());
     }
@@ -547,6 +551,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
 
@@ -565,6 +570,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "-Evidence", receipt, "-ExpectedSourceSha", head,
         })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
 
@@ -581,9 +587,9 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         File.WriteAllBytes(path, Encoding.ASCII.GetBytes(content));
     }
 
-    private static string GitOut(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
+    private string GitOut(string root, params string[] args) => _git.Git(root, args);
 
-    private static void Git(string root, params string[] args) => _ = GitOut(root, args);
+    private void Git(string root, params string[] args) => _ = GitOut(root, args);
 
     private static void RequireLinux()
     {

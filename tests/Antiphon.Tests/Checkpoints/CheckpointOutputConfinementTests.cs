@@ -16,6 +16,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 {
     private const string TrackedDllText = "TRACKED DEPENDENCY ORIGINAL";
     private const string OutputPath = "bin-confined/";
+    private CheckpointFixtureGitEnvironment _git = null!;
 
     [Test]
     [Timeout(300_000)]
@@ -192,7 +193,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             "--name", name, "--project", "App/App.csproj",
             "--output-path", OutputPath, "--filter", "/*/*/Unused/*",
             "--results-root", ".antiphon/tool-results", "--min-executed", "1",
-        ], new CheckpointApp.Runtime { Output = output });
+        ], _git.ToolRuntime(output));
         cancellationToken.ThrowIfCancellationRequested();
         return (exit, output.ToString());
     }
@@ -215,6 +216,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await RunScriptAsync(start, cancellationToken);
     }
 
@@ -292,6 +294,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var path = Environment.GetEnvironmentVariable("Path") ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         start.Environment["Path"] = shimBin + Path.PathSeparator + path;
         start.Environment["C1310_DOTNET_LOG"] = log;
+        _git.Apply(start);
         return await RunConfinedScriptAsync(start, cancellationToken);
     }
 
@@ -454,7 +457,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         return new Fixture(root, dll, File.ReadAllBytes(dll), assets, File.ReadAllBytes(assets));
     }
 
-    private static void SeedBuild(string root)
+    private void SeedBuild(string root)
     {
         var start = new ProcessStartInfo("dotnet") { WorkingDirectory = root };
         foreach (var arg in new[]
@@ -465,6 +468,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             start.ArgumentList.Add(arg);
         start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
+        _git.Apply(start);
         var output = CheckpointFixtureProcess.Run(start, 120_000);
         output.Exit.ShouldBe(0, output.Stdout + output.Stderr);
     }
@@ -483,7 +487,10 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 
     private string InitGitRepo()
     {
-        var root = TempDir();
+        var scope = TempDir();
+        var root = Path.Combine(scope, "repo");
+        Directory.CreateDirectory(root);
+        _git = CheckpointFixtureGitEnvironment.Create(Path.Combine(scope, "git-isolation"));
         Git(root, "init", "-b", "card1199");
         return root;
     }
@@ -502,7 +509,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         File.WriteAllText(path, content);
     }
 
-    private static void Git(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
+    private void Git(string root, params string[] args) => _git.Git(root, args);
 
     private sealed record Fixture(string Root, string Dll, byte[] DllBytes, string Assets, byte[] AssetBytes);
 }

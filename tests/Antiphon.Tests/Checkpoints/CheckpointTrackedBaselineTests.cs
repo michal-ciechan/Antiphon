@@ -13,12 +13,12 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 {
     private const string OutputPath = "bin-probe/";
     private const string OriginalText = "TRACKED-ORIGINAL";
+    private CheckpointFixtureGitEnvironment _git = null!;
 
     [Test]
     [Timeout(300_000)]
     public async Task local_output_property_tampering_is_reported(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
@@ -78,7 +78,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task imported_props_reference_tampering_is_reported(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "Lib/Lib.csproj", """
             <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
@@ -115,7 +114,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task transitive_reference_tampering_is_reported(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "Lib/Lib.csproj", """
             <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
@@ -187,7 +185,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task clean_untracked_output_build_exits_zero(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -220,7 +217,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(420_000)]
     public async Task fresh_checkout_run_executes_a_test(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -304,7 +300,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         // case: the build runs git add on user-keep.txt, which is absent from HEAD.
         // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
         // red: user-keep.txt is missing or its bytes differ after the tool or the script row.
-        RequireLinux();
         var root = BeginRepo();
         WriteStageProject(root, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
         var bytes = Encoding.ASCII.GetBytes("USER-KEEP");
@@ -318,7 +313,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         // case: the build runs git add -f on user-ignored.dat, an ignored path absent from HEAD.
         // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
         // red: user-ignored.dat is missing or its bytes differ after the tool or the script row.
-        RequireLinux();
         var root = BeginRepo();
         File.AppendAllText(Path.Combine(root, ".gitignore"), "user-ignored.dat\n");
         WriteStageProject(root, "git --git-dir=.git --work-tree=. add -f -- user-ignored.dat");
@@ -453,7 +447,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(420_000)]
     public async Task passing_script_requires_writable_source_receipt(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -496,6 +489,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             "-Evidence", receipt, "-ExpectedSourceSha", head,
         })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
 
@@ -508,7 +502,10 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     private string BeginRepo()
     {
-        var root = TempDir();
+        var scope = TempDir();
+        var root = Path.Combine(scope, "repo");
+        Directory.CreateDirectory(root);
+        _git = CheckpointFixtureGitEnvironment.Create(Path.Combine(scope, "git-isolation"));
         Git(root, "init", "-b", "card1199");
         Write(root, ".gitignore", "bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n");
         return root;
@@ -533,7 +530,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             "--name", name, "--project", "App/App.csproj",
             "--output-path", OutputPath, "--filter", filter,
             "--results-root", ".antiphon/tool-results", "--min-executed", minExecuted,
-        ], new Antiphon.Checkpoints.CheckpointApp.Runtime { Output = output });
+        ], _git.ToolRuntime(output));
         cancellationToken.ThrowIfCancellationRequested();
         return new RunResult(exit, output.ToString());
     }
@@ -562,6 +559,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             "-MinExecuted", minExecuted, "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
 
@@ -576,6 +574,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         };
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command })
             start.ArgumentList.Add(arg);
+        _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
 
@@ -599,20 +598,14 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         WriteBytes(root, relative, Encoding.UTF8.GetBytes(content));
     }
 
-    private static string GitOut(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
+    private string GitOut(string root, params string[] args) => _git.Git(root, args);
 
-    private static void Git(string root, params string[] args)
+    private void Git(string root, params string[] args)
     {
         _ = GitOut(root, args);
     }
 
     private static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
-
-    private static void RequireLinux()
-    {
-        if (!OperatingSystem.IsLinux())
-            Skip.Test("CARD-1199 tracked-baseline proof runs on Linux; Windows is unverified.");
-    }
 
     private sealed record Victim(string Relative, string FullPath, byte[] Bytes);
 
