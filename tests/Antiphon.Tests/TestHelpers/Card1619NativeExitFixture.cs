@@ -30,7 +30,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 
     private async Task<string> RunAsync(int signal, int code)
     {
-        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Directory.CreateDirectory(Root);
         _runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings {
             SessionLogPath = Root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false
