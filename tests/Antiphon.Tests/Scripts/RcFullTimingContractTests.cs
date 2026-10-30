@@ -101,6 +101,8 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("setupDotnet").GetBoolean().ShouldBeTrue("dotnet-build setup phase was not written");
         observed.GetProperty("planningPresent").GetBoolean().ShouldBeTrue("planning-<suite> was not written");
         observed.GetProperty("planningSeconds").GetDouble().ShouldBeGreaterThan(0, "planning-<suite> seconds were zero");
+        observed.GetProperty("successPlanningPresent").GetBoolean().ShouldBeTrue("rc success path did not write planning-<suite>");
+        observed.GetProperty("successPlanningSeconds").GetDouble().ShouldBeGreaterThan(0, "rc success path planning seconds were zero");
         observed.GetProperty("supplementalIsMarker").GetBoolean().ShouldBeTrue("supplemental discovery was not the marker");
     }
 
@@ -197,8 +199,9 @@ public sealed class RcFullTimingContractTests
         observed.GetProperty("assertsImages").GetBoolean().ShouldBeTrue("DescendantImages was not asserted");
         observed.GetProperty("assertsRootExit").GetBoolean().ShouldBeTrue("RootExitedAtUtc was not asserted");
         observed.GetProperty("assertsMissed").GetBoolean().ShouldBeTrue("MissedDescendantPids was not asserted");
+        observed.GetProperty("assertsJobEmpty").GetBoolean().ShouldBeTrue("JobEmptyObserved was not asserted");
         observed.GetProperty("caseCalls").GetBoolean().ShouldBeTrue("C1039_DescendantExit does not call the witness");
-        observed.GetProperty("caseUnconditional").GetBoolean().ShouldBeTrue("owner witness is still behind the packaged PowerShell condition");
+        observed.GetProperty("caseUnconditional").GetBoolean().ShouldBeTrue("owner witness call is nested under a conditional");
     }
 
     private static string[] Uids(JsonElement observed, string name)
@@ -1028,6 +1031,8 @@ public sealed class RcFullTimingContractTests
         $setupDotnet = $false
         $planningPresent = $false
         $planningSeconds = 0.0
+        $successPlanningPresent = $false
+        $successPlanningSeconds = 0.0
         $supplementalIsMarker = $false
         try {
             $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $log -TimingRoot $timing -Suites @('scripts') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'call-site' -Trigger 'manual' -SeamsPath $seamPath -AllowSharedTree
@@ -1043,6 +1048,15 @@ public sealed class RcFullTimingContractTests
             $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $supplementalLog -TimingRoot $timing -Suites @('antiphon') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'supplemental-site' -Trigger 'manual' -SeamsPath $supplementalSeamPath -AllowSharedTree
         } catch {
             $problems.Add('supplemental-threw')
+        }
+        $successLog = Join-Path $log 'planning-success'
+        $successTiming = Join-Path $work 'timing-success'
+        New-Item -ItemType Directory -Path $successLog -Force | Out-Null
+        New-Item -ItemType Directory -Path $successTiming -Force | Out-Null
+        try {
+            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $successLog -TimingRoot $successTiming -Suites @('antiphon') -Profile 'rc' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'planning-success' -Trigger 'manual' -SeamsPath $supplementalSeamPath -AllowSharedTree
+        } catch {
+            $problems.Add('planning-success-threw')
         }
         $setupPath = Join-Path $timing 'setup-phases.json'
         if (Test-Path -LiteralPath $setupPath) {
@@ -1089,8 +1103,22 @@ public sealed class RcFullTimingContractTests
         if (-not $setupNpmBuild) { $problems.Add('missing-npm-build') }
         if (-not $setupLint) { $problems.Add('missing-lint') }
         if (-not $setupDotnet) { $problems.Add('missing-dotnet-build') }
+        $successSetupPath = Join-Path $successTiming 'setup-phases.json'
+        if (Test-Path -LiteralPath $successSetupPath) {
+            $successSetup = [IO.File]::ReadAllText($successSetupPath) | ConvertFrom-Json
+            if ($null -ne $successSetup.phases) {
+                foreach ($row in @($successSetup.phases)) {
+                    if ([string]$row.name -eq 'planning-antiphon') {
+                        $successPlanningPresent = $true
+                        if ($null -ne $row.seconds) { $successPlanningSeconds = [double]$row.seconds }
+                    }
+                }
+            }
+        }
         if (-not $planningPresent) { $problems.Add('planning-suite-missing') }
         if ($planningSeconds -le 0) { $problems.Add('planning-seconds-zero') }
+        if (-not $successPlanningPresent) { $problems.Add('planning-success-missing') }
+        if ($successPlanningSeconds -le 0) { $problems.Add('planning-success-seconds-zero') }
         if (-not $supplementalIsMarker) { $problems.Add('supplemental-not-marker') }
         $exit = 0
         $text = ''
@@ -1105,6 +1133,8 @@ public sealed class RcFullTimingContractTests
             setupDotnet = [bool]$setupDotnet
             planningPresent = [bool]$planningPresent
             planningSeconds = [double]$planningSeconds
+            successPlanningPresent = [bool]$successPlanningPresent
+            successPlanningSeconds = [double]$successPlanningSeconds
             supplementalIsMarker = [bool]$supplementalIsMarker
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
@@ -1170,65 +1200,121 @@ public sealed class RcFullTimingContractTests
         $assertsImages = $false
         $assertsRootExit = $false
         $assertsMissed = $false
+        $assertsJobEmpty = $false
         $caseCalls = $false
         $caseUnconditional = $false
-        function Get-BraceBody([string]$Text, [int]$OpenIndex) {
-            $depth = 0
-            for ($j = $OpenIndex; $j -lt $Text.Length; $j++) {
-                $ch = $Text[$j]
-                if ($ch -eq '{') { $depth++ }
-                elseif ($ch -eq '}') {
-                    $depth--
-                    if ($depth -eq 0) { return $Text.Substring($OpenIndex, ($j - $OpenIndex) + 1) }
-                }
+        function Test-DisabledCondition([System.Management.Automation.Language.Ast]$Condition) {
+            $expr = $Condition
+            if ($expr -is [System.Management.Automation.Language.PipelineAst]) {
+                if (@($expr.PipelineElements).Count -ne 1) { return $false }
+                $element = $expr.PipelineElements[0]
+                if ($element -isnot [System.Management.Automation.Language.CommandExpressionAst]) { return $false }
+                $expr = $element.Expression
             }
-            return $null
+            if ($expr -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                return ($expr.VariablePath.UserPath -eq 'false')
+            }
+            if ($expr -is [System.Management.Automation.Language.BinaryExpressionAst] -and [string]$expr.Operator -eq 'And') {
+                $left = $expr.Left
+                if ($left -is [System.Management.Automation.Language.VariableExpressionAst] -and $left.VariablePath.UserPath -eq 'false') { return $true }
+            }
+            return $false
         }
-        function Strip-LineComments([string]$Text) {
-            $lines = $Text -split "`n"
-            $kept = New-Object System.Collections.Generic.List[string]
-            foreach ($line in $lines) {
-                $mark = $line.IndexOf('#')
-                if ($mark -ge 0) { $line = $line.Substring(0, $mark) }
-                $kept.Add($line)
+        function Test-ReachableAst([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Stop) {
+            $cursor = $Node.Parent
+            while ($null -ne $cursor -and $cursor -ne $Stop) {
+                if ($cursor -is [System.Management.Automation.Language.IfStatementAst]) {
+                    foreach ($clause in $cursor.Clauses) {
+                        $body = $clause.Item2
+                        $inside = $false
+                        $walk = $Node
+                        while ($null -ne $walk) {
+                            if ($walk -eq $body) { $inside = $true; break }
+                            $walk = $walk.Parent
+                        }
+                        if ($inside -and (Test-DisabledCondition $clause.Item1)) { return $false }
+                    }
+                }
+                $cursor = $cursor.Parent
             }
-            return ($kept -join "`n")
+            return $true
+        }
+        function Test-DirectCaseCall([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Block) {
+            $cursor = $Node
+            while ($null -ne $cursor -and $cursor -ne $Block) {
+                if ($cursor -is [System.Management.Automation.Language.IfStatementAst]) { return $false }
+                $cursor = $cursor.Parent
+            }
+            return ($cursor -eq $Block)
         }
         try {
             $witnessPath = Join-Path $repo 'scripts/test-rc-speed-os-witness.ps1'
             $nativePath = Join-Path $repo 'scripts/test-nightly-native.ps1'
             $witness = [IO.File]::ReadAllText($witnessPath)
             $native = [IO.File]::ReadAllText($nativePath)
-            $fn = [regex]::Match($witness, '(?m)^function\s+Invoke-RcWindowsOwnerExitWitness\s*\{')
-            if (-not $fn.Success) { $problems.Add('function-missing') }
+            $parseErrors = $null
+            $witnessAst = [System.Management.Automation.Language.Parser]::ParseInput($witness, [ref]$null, [ref]$parseErrors)
+            if (@($parseErrors).Count -gt 0) { $problems.Add('witness-parse-failed') }
+            $fn = $null
+            if ($null -ne $witnessAst) {
+                $fn = $witnessAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RcWindowsOwnerExitWitness' }, $false)
+            }
+            if ($null -eq $fn) { $problems.Add('function-missing') }
             else {
-                $body = Get-BraceBody $witness ($fn.Index + $fn.Length - 1)
-                if ([string]::IsNullOrWhiteSpace($body)) { $problems.Add('function-body-missing') }
-                else {
-                    $code = Strip-LineComments $body
-                    $declared = $code.Contains('[Antiphon.Nightly.NativeProcessOwner]::Start')
-                    $assertsImages = $code.Contains('DescendantImages')
-                    $assertsRootExit = $code.Contains('RootExitedAtUtc')
-                    $assertsMissed = $code.Contains('MissedDescendantPids')
-                    if (-not $declared) { $problems.Add('start-missing') }
-                    if (-not $assertsImages) { $problems.Add('images-missing') }
-                    if (-not $assertsRootExit) { $problems.Add('root-exit-missing') }
-                    if (-not $assertsMissed) { $problems.Add('missed-pids-missing') }
+                $start = $fn.Find({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and $n.Expression.TypeName.FullName -eq 'Antiphon.Nightly.NativeProcessOwner' -and $n.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Member.Value -eq 'Start' }, $true)
+                $declared = ($null -ne $start) -and (Test-ReachableAst $start $fn)
+                if (-not $declared) { $problems.Add('start-missing') }
+                $needles = @{ images = 'descendant image survives process exit'; root = 'root exit time missing'; missed = 'missed descendant pids missing'; job = 'job empty not observed' }
+                $members = @{ images = 'DescendantImages'; root = 'RootExitedAtUtc'; missed = 'MissedDescendantPids'; job = 'JobEmptyObserved' }
+                $throws = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.ThrowStatementAst] }, $true))
+                $memberNodes = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true))
+                foreach ($key in @('images', 'root', 'missed', 'job')) {
+                    $throwOk = $false
+                    foreach ($one in $throws) {
+                        if ($one.Extent.Text.IndexOf([string]$needles[$key], [StringComparison]::Ordinal) -ge 0 -and (Test-ReachableAst $one $fn)) { $throwOk = $true }
+                    }
+                    $memberOk = $false
+                    foreach ($one in $memberNodes) {
+                        $name = ''
+                        if ($one.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $name = [string]$one.Member.Value }
+                        if ($name -eq [string]$members[$key] -and (Test-ReachableAst $one $fn)) { $memberOk = $true }
+                    }
+                    $ok = $throwOk -and $memberOk
+                    if ($key -eq 'images') { $assertsImages = $ok; if (-not $ok) { $problems.Add('images-missing') } }
+                    if ($key -eq 'root') { $assertsRootExit = $ok; if (-not $ok) { $problems.Add('root-exit-missing') } }
+                    if ($key -eq 'missed') { $assertsMissed = $ok; if (-not $ok) { $problems.Add('missed-pids-missing') } }
+                    if ($key -eq 'job') { $assertsJobEmpty = $ok; if (-not $ok) { $problems.Add('job-empty-missing') } }
                 }
             }
-            $caseAt = $native.IndexOf("'C1039_DescendantExit'")
-            if ($caseAt -lt 0) { $problems.Add('case-missing') }
+            $nativeErrors = $null
+            $nativeAst = [System.Management.Automation.Language.Parser]::ParseInput($native, [ref]$null, [ref]$nativeErrors)
+            if (@($nativeErrors).Count -gt 0) { $problems.Add('native-parse-failed') }
+            $caseBlock = $null
+            if ($null -ne $nativeAst) {
+                $switches = @($nativeAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
+                foreach ($switchNode in $switches) {
+                    foreach ($clause in $switchNode.Clauses) {
+                        $cond = $clause.Item1
+                        if ($cond -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $cond.Value -eq 'C1039_DescendantExit') {
+                            $caseBlock = $clause.Item2
+                        }
+                    }
+                }
+            }
+            if ($null -eq $caseBlock) { $problems.Add('case-missing') }
             else {
-                $nextAt = $native.IndexOf("'C1039_", $caseAt + 1)
-                if ($nextAt -lt 0) { $nextAt = $native.Length }
-                $section = $native.Substring($caseAt, $nextAt - $caseAt)
-                $caseCalls = $section.Contains('Invoke-RcWindowsOwnerExitWitness')
-                $caseUnconditional = $caseCalls -and (-not $section.Contains('$packaged.Count'))
+                $calls = @($caseBlock.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-RcWindowsOwnerExitWitness' }, $true))
+                $caseCalls = @($calls).Count -gt 0
+                $direct = $false
+                foreach ($call in @($calls)) {
+                    if (Test-DirectCaseCall $call $caseBlock) { $direct = $true }
+                }
+                $caseUnconditional = $caseCalls -and $direct
                 if (-not $caseCalls) { $problems.Add('case-does-not-call-witness') }
-                if ($section.Contains('$packaged.Count')) { $problems.Add('case-still-conditional') }
+                if (-not $direct) { $problems.Add('case-still-conditional') }
             }
         } catch {
-            $problems.Add('shape-threw')
+            $problems.Add(('shape-threw ' + [string]$_.Exception.Message))
         }
         $exit = 0
         $text = ''
@@ -1240,6 +1326,7 @@ public sealed class RcFullTimingContractTests
             assertsImages = [bool]$assertsImages
             assertsRootExit = [bool]$assertsRootExit
             assertsMissed = [bool]$assertsMissed
+            assertsJobEmpty = [bool]$assertsJobEmpty
             caseCalls = [bool]$caseCalls
             caseUnconditional = [bool]$caseUnconditional
         }
