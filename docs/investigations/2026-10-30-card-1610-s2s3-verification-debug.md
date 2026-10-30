@@ -43,3 +43,32 @@ The preceding custody refusal executed zero tests and remains incomplete evidenc
 Pending. Exact rows: CP-15/16/17/19 and CP-21 through CP-91. S4-only
 CP-13/14/18/20 and S1-only runner/native rows are excluded. Historical red
 provenance is retained, never rewritten or rebound to this tip.
+
+## S2 baseline reproduction (before repair)
+
+Run 20261030-160625-cf79 on detached S2 tip
+b588cb5d058d810c1d56e4c6bca0196435f78349: the exact C1151 method executed
+3, passed 0, failed 3, skipped 0; clean source and verified build. All modes
+(eligible/busy/crash) failed `await host.OverdueAsync(): expected 1, actual 0`.
+The fixture supplies no `CountingRunner` session and no transcript observation.
+S2 correctly defers an unknown ceiling observation, including this idle fixture.
+This is an S2 integration-fixture incompatibility; it is not proved pre-existing
+on master. Preserve the caller-note protection: provide the same seeded idle
+session's actual accepted generation and complete two-entry transcript, then
+retain every original failure, complete UserPrompt, dedup, busy/crash, decoy,
+zero-stop, zero-input assertion. No production weakening is indicated.
+
+Baseline build 326.992s; row wall 75.213s/admission 0s/execution 75.128s;
+host startup 58.887s/tests wall 9.770s/teardown 5.413s/host 74.070s.
+Run wall 425.106s, charged execution 425.093s, admission-only 0.013s.
+Per-component DB/container/IO timing not yet extracted; unknown stays unknown.
+Row deadline 4 minutes; source/build receipt and original report/TRX copied under
+`.antiphon/c1610-debug/base-evidence/20261030-160625-cf79` before scratch cleanup.
+Tool-bootstrap build (unlisted, required to execute the checkpoint CLI): 4.70s
+compiler, 0 errors/5 existing warnings; admission 30s, slot held 6s. Import reused
+that tool under a separate granted slot (0s admission, held 3s), accepted 92 rows.
+The initial `--output` spelling was ignored by the importer; its default
+`.antiphon/checkpoints.yaml` is the retained authoritative import. A scratch-cwd
+preparation attempt and wrong-root wait refused before any build/test; no credit.
+
+CHECKPOINT CP-28-s2-c1151 commit=b588cb5d058d810c1d56e4c6bca0196435f78349 build=ok filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Ceiling_failure_note_has_one_complete_user_prompt executed=3 passed=0 failed=3 skipped=0 trx=/tmp/c1610-debug-s2-b588cb5d/.antiphon/checkpoints/20261030-160625-cf79/rows/CP-28-s2-c1151/run.trx slot=granted waited=0s dirty=0 source=b588cb5d058d810c1d56e4c6bca0196435f78349 sourceState=clean buildSource=verified
