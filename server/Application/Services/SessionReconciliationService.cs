@@ -814,7 +814,7 @@ public sealed class SessionReconciliationService
                 + SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal, session.TerminationSource,
                     SessionExitEvidence.ReadIntent(session.ExitStopIntentJson));
         }
-        SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));
+        SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason, session.ExitSignal, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
         session.EndedAt ??= now;
         session.LastSeenAt = now;
         closedSessionIds.Add(session.Id);

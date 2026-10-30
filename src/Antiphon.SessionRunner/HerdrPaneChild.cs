@@ -1,4 +1,5 @@
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.SessionRunner;
@@ -13,6 +14,7 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 internal sealed partial class HerdrPaneChild : ISessionChild
 {
+    internal ProcessStopIntentStore? StopIntents { get; set; }
     private readonly HerdrClient _client;
     private readonly SessionRunnerSettings _settings;
     private readonly ILogger _logger;
@@ -1147,6 +1149,8 @@ internal sealed partial class HerdrPaneChild : ISessionChild
                     && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
                 {
                     KillPidBestEffort(child);
+                    if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
+                        return false; // preserve ownership until the child actually disappears
                 }
 
                 _logger.LogWarning(
@@ -1198,11 +1202,17 @@ internal sealed partial class HerdrPaneChild : ISessionChild
         return true;
     }
 
-    private static void KillPidBestEffort(int pid)
+    private void KillPidBestEffort(int pid)
     {
         try
         {
-            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            if (process.HasExited) return;
+            if (OperatingSystem.IsLinux() && _sidecar?.ChildStartedAtUtc is { } start && !SessionGeneration.Equal(start, process.StartTime.ToUniversalTime())) return;
+            if (OperatingSystem.IsLinux() && StopIntents is { } intents)
+                intents.StopProcess(process, _sessionId, _sidecar?.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, ProcessStopPath.ProcessTree);
+            else process.Kill(entireProcessTree: true);
         }
         catch
         {

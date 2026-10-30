@@ -276,7 +276,7 @@ public sealed partial class AgentSessionRuntime
                             SessionExitEvidence.ReadIntent(session.ExitStopIntentJson));
                 // A prior KillAsync may already have persisted OperatorRequest/SystemRequest;
                 // an exit event must not erase it (CARD-0256).
-                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason, session.ExitSignal, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 changed = true;
@@ -286,7 +286,7 @@ public sealed partial class AgentSessionRuntime
             {
                 // Race C.1: a closer wrote the terminal status first and left the column empty.
                 // The exit event is the backfill path; it must not change the already-closed status.
-                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason, session.ExitSignal, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
                 session.ExitCode ??= exitCode;
                 changed = true;
             }

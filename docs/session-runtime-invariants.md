@@ -17,8 +17,37 @@ generation/time/first-source guards remain mandatory.
 
 Dispatcher, attention, supervisor, attempts and diagnostics describe the signal,
 a known normal code, or unknown evidence. ProcessExit is an observation source,
-not proof of a voluntary exit. A stored stop request proves a request only; S4
-owns live issuer attribution and diagnostic recording. Exit codes supply no new
+not proof of a voluntary exit. A stored server stop request proves a request only.
+Known signals are attributed to Antiphon's matching request only when the actual
+issuer retains successful attempt evidence in memory, bound to the accepted
+generation, issuer boot, host instance and target PID/start (or custody identity).
+Live host replay is checked against the connected host and child. Disk/manifest
+loads always become RecoveredUnverified, even when a planted file says LiveIssuer.
+A new process cannot rebuild issuer authority from that file. An observed policy
+cause alone cannot create a server request for a known signal.
+
+ProcessStopIntentStore publishes requested, attempts the authorized signal, and
+publishes issued/failed under its memory gate. Only after releasing that gate does
+it offer diagnostic IO. TryRecordAsync enforces 100 ms from offer, including queue
+wait, on an injected clock. One worker and one pending snapshot bound each owner's
+IO; an expired in-flight writer remains owned and rejects additional work until
+it returns. Stop, observation and shutdown never await it. Timeout does not cancel
+kernel fsync. Failure/timeout/saturation leaves the record nondurable and logs once;
+it cannot revoke matching live issuer attribution. Fakes release and join stalled
+writers in teardown. A normal-exit race or failed call cannot become an issued kill.
+
+Durable diagnostic writes use create-new, WriteThrough, Flush(true), atomic rename,
+and Linux directory fsync. The ordinary host manifest's file flush alone does not
+supply directory durability. Recovered files remain untrusted regardless of their
+durability claim. Qualified text says either matching stop request recorded or stop
+record not durable; server request alone says sender unconfirmed; a planted record
+says sender unconfirmed (untrusted stop record). Host-target and helper-target stops
+never substitute for child wait evidence. Linux disposal records the existing
+master-close/SIGHUP as an unobservable request, and closes before joining the reader.
+Refused/unobserved Linux PID stops retain their existing owner/sidecar and stop debt.
+Only observed process exit or existing custody accounting discharges that debt.
+
+Exit codes and diagnostic records supply no new
 custody, janitor, terminal-seat or stop-debt release authority. Windows native
 spawn, kill and signed exit-code behavior remain unchanged.
 

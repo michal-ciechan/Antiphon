@@ -24,8 +24,22 @@ public static class SessionExitEvidence
         }
         session.ExitCode ??= code;
         session.ExitSignal ??= signal;
-        if (session.ExitStopIntentJson is null && Bound(intent, session.Id, session.StartedAt) is { } bounded)
-            session.ExitStopIntentJson = JsonSerializer.Serialize(bounded, Json);
+        if (Bound(intent, session.Id, session.StartedAt) is { } bounded)
+        {
+            var current = ReadIntent(session.ExitStopIntentJson);
+            // A diagnostic replay cannot erase stronger server-accepted live owner evidence.
+            // Later owner-memory/durability enrichment preserves the actual first exit pair.
+            var stronger = current is null || bounded.Provenance == ProcessStopProvenance.LiveIssuer
+                && (current.Provenance != ProcessStopProvenance.LiveIssuer
+                    || bounded.Outcome == ProcessStopOutcome.Issued && current.Outcome != ProcessStopOutcome.Issued
+                    || SessionExitPolicy.CanAttribute(bounded, session.ExitSignal)
+                        && !SessionExitPolicy.CanAttribute(current, session.ExitSignal)
+                    || bounded.RequestId == current.RequestId && bounded.IssuerBootId == current.IssuerBootId
+                    && bounded.HostInstanceId == current.HostInstanceId
+                    && (bounded.Outcome == ProcessStopOutcome.Issued && current.Outcome != ProcessStopOutcome.Issued
+                        || bounded.Outcome == current.Outcome && bounded.Durable && !current.Durable));
+            if (stronger) session.ExitStopIntentJson = JsonSerializer.Serialize(bounded, Json);
+        }
         return true;
     }
 

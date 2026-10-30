@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost.Client;
 
@@ -53,6 +54,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         string? ptyBackend = null,
         string? custodyStoreRoot = null,
         string? custodyBackend = null,
+        DateTime? acceptedStartedAt = null,
         CancellationToken ct = default)
     {
         var shadowDir = CurrentShadowDir;
@@ -113,7 +115,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         }
         catch
         {
-            await TryKillSpawnedHostAsync(reads);
+            await TryKillSpawnedHostAsync(reads, sessionId, manifestDir, acceptedStartedAt);
             throw;
         }
     }
@@ -204,7 +206,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
     /// swallowed so it never replaces the launch exception. Stderr is not drained here: it is the
     /// stream the spawned host can hold open indefinitely.
     /// </summary>
-    private static async Task TryKillSpawnedHostAsync(IntermediaryReads reads)
+    private async Task TryKillSpawnedHostAsync(IntermediaryReads reads, Guid sessionId, string manifestDir, DateTime? generation)
     {
         try
         {
@@ -227,7 +229,20 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
                 {
                     using var host = Process.GetProcessById(hostPid);
                     if (!host.HasExited)
-                        host.Kill(entireProcessTree: true);
+                    {
+                        if (OperatingSystem.IsLinux())
+                        {
+                            // A returned PID can be recycled while failure cleanup drains. Bind
+                            // the native image and exact session argument before authorizing it.
+                            if (!string.Equals(host.MainModule?.FileName, Path.Combine(CurrentShadowDir, HostExeName), StringComparison.Ordinal)) return;
+                            var argv = System.Text.Encoding.UTF8.GetString(File.ReadAllBytes($"/proc/{hostPid}/cmdline")).Split('\0');
+                            if (!argv.Zip(argv.Skip(1)).Any(pair => pair.First == "--session" && pair.Second == sessionId.ToString("D"))) return;
+                            StopIntents ??= new(Path.Combine(Path.GetDirectoryName(manifestDir)!, "stop-intents"));
+                            StopIntents.StopProcess(host, sessionId, generation ?? DateTime.MinValue,
+                                ProcessStopTarget.Host, ProcessStopPath.LaunchCleanup);
+                        }
+                        else host.Kill(entireProcessTree: true);
+                    }
                 }
                 catch
                 {

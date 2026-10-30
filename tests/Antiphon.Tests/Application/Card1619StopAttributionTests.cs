@@ -92,6 +92,11 @@ public class Card1619StopAttributionTests
             .ShouldContain("matching stop request recorded");
         SessionExitEvidence.Apply(row, null, null, intent with { Provenance = ProcessStopProvenance.RecoveredUnverified });
         SessionExitEvidence.ReadIntent(row.ExitStopIntentJson)!.Provenance.ShouldBe(ProcessStopProvenance.LiveIssuer);
+        var retry = intent with { RequestId = Guid.NewGuid() };
+        row.ExitStopIntentJson = JsonSerializer.Serialize(retry with { Outcome = ProcessStopOutcome.Requested });
+        SessionExitEvidence.Apply(row, null, null, intent);
+        SessionExitEvidence.ReadIntent(row.ExitStopIntentJson)!.RequestId.ShouldBe(intent.RequestId,
+            "a matching issued attempt supersedes a different earlier requested-only attempt");
         row.ExitCode.ShouldBe(0); row.ExitSignal.ShouldBe(9);
         await db.SaveChangesAsync();
     }
