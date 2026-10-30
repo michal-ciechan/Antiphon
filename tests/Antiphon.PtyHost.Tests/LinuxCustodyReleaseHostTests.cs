@@ -27,7 +27,7 @@ public sealed class LinuxCustodyReleaseHostTests
         var namespaceId = Guid.Parse("16140000-0000-4000-8000-0000000000b2");
         var files = new TrackingRefusal();
         HostCustodyJournal.LinuxNamespaceForTests.Value = namespaceId;
-        await using var host = HostHarness.Start(o => o with
+        var host = HostHarness.Start(o => o with
         {
             PtyBackend = "inbox",
             CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
@@ -71,6 +71,7 @@ public sealed class LinuxCustodyReleaseHostTests
             }
             catch (InvalidOperationException) { }
             files.Child?.Dispose();
+            await Finish(host);
         }
     }
 
@@ -85,7 +86,7 @@ public sealed class LinuxCustodyReleaseHostTests
             throw new SkipTestException("The inbox pty launch runs on Linux.");
         var containment = new FakeContainment();
         containment.Pids.Add(424242);
-        await using var host = HostHarness.Start(o => o with
+        var host = HostHarness.Start(o => o with
         {
             PtyBackend = "inbox",
             CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
@@ -94,23 +95,30 @@ public sealed class LinuxCustodyReleaseHostTests
         });
         host.Session.UseContainmentForTests(containment);
         var (store, binding) = Reserve(host, files: null);
-        var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
-        reply.ShouldBeOfType<LaunchedMessage>();
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-        host.Session.Status.ShouldBe(PtyHostStatus.Exited);
-        await Task.Delay(300);
-        containment.Terminations.ShouldBe(0);
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding, "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+            await Task.Delay(300);
+            containment.Terminations.ShouldBe(0);
 
-        var status = await host.Session.GetCustodyAsync(binding, false, CancellationToken.None);
-        status.State.ShouldBe(VerificationCustodyState.Draining);
-        status.Reason.ShouldBe("descendants_running");
-        status.Receipt.ShouldBeNull();
-        containment.Terminations.ShouldBe(0);
-        File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
-        File.Exists(store.PathFor(binding.ExecutionId, "producer-seal.json")).ShouldBeFalse();
-        File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeFalse();
+            var status = await host.Session.GetCustodyAsync(binding, false, CancellationToken.None);
+            status.State.ShouldBe(VerificationCustodyState.Draining);
+            status.Reason.ShouldBe("descendants_running");
+            status.Receipt.ShouldBeNull();
+            containment.Terminations.ShouldBe(0);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-seal.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            await Finish(host);
+        }
     }
 
     /// <summary>
@@ -126,7 +134,7 @@ public sealed class LinuxCustodyReleaseHostTests
         var containment = new FakeContainment();
         var files = new RememberTracking(containment);
         HostCustodyJournal.LinuxNamespaceForTests.Value = namespaceId;
-        await using var host = HostHarness.Start(o => o with
+        var host = HostHarness.Start(o => o with
         {
             PtyBackend = "inbox",
             CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
@@ -161,7 +169,22 @@ public sealed class LinuxCustodyReleaseHostTests
         finally
         {
             HostCustodyJournal.LinuxNamespaceForTests.Value = null;
+            await Finish(host);
         }
+    }
+
+    /// <summary>
+    /// The pty read can ignore cancellation until the master closes, and dispose closes that
+    /// master only after the read returns. A stuck teardown must not hide the witness.
+    /// </summary>
+    private static async Task Finish(HostHarness host)
+    {
+        var dispose = host.DisposeAsync().AsTask();
+        var done = await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(8)));
+        if (done == dispose)
+            await dispose;
+        else
+            _ = dispose.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private static (VerificationCustodyStore Store, VerificationExecutionBinding Binding) Reserve(
