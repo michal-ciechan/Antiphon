@@ -795,6 +795,7 @@ public class AgentTaskPoolTests
         var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
         var (agentId, sessionId) = await SeedRecoveredWorktreeDelegateAsync(
             worktreePath, idleMinutes: 10, withIncident: true);
+        await SeedProvedIdleAsync(sessionId);
 
         // Offset clock is in the graph (CARD-0222). A large Advance would move the cutoff into
         // the future and retire other suites' just-idled rows in the shared fixture DB; the
@@ -936,6 +937,9 @@ public class AgentTaskPoolTests
         var agents = new List<(Guid AgentId, Guid SessionId)>();
         for (var i = 0; i < 5; i++)
             agents.Add(await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, i));
+        // Proved-idle on the four that may be capped. agents[4] stays mid-turn and is skipped.
+        for (var i = 0; i < 4; i++)
+            await SeedProvedIdleAsync(agents[i].SessionId);
         await SeedMidTurnTranscriptAsync(agents[4].SessionId);
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
         stopper.Killed.ShouldNotContain(agents[4].SessionId);
@@ -976,6 +980,22 @@ public class AgentTaskPoolTests
         await db.SaveChangesAsync();
     }
 
+    /// <summary>One TurnEnd, so a real turn-ended session is proved idle.</summary>
+    private static async Task SeedProvedIdleAsync(Guid session, string? connectionString = null)
+    {
+        await using var db = CreateContext(connectionString);
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = session,
+            Sequence = 1,
+            Kind = TranscriptKinds.TurnEnd,
+            StopReason = "end_turn",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     [Test]
     public async Task the_janitor_retires_agents_idle_past_the_ttl()
     {
@@ -983,6 +1003,7 @@ public class AgentTaskPoolTests
         var (dispatcher, stopper, _) = CreateHarness();
         var (agentId, sessionId) = await SeedWarmAgentAsync(
             workspace.Path, AgentModelLevel.Medium, idleMinutes: 10);
+        await SeedProvedIdleAsync(sessionId);
 
         var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
 
@@ -1016,7 +1037,9 @@ public class AgentTaskPoolTests
         for (var i = 0; i < 5; i++)
         {
             // All inside the TTL; idleMinutes spread so "oldest" is unambiguous.
-            var (id, _) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, idleMinutes: i);
+            // TurnEnd keeps the cap's oldest-first retirement: these are proved idle.
+            var (id, sessionId) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, idleMinutes: i);
+            await SeedProvedIdleAsync(sessionId);
             ids.Add(id);
         }
 
@@ -1167,6 +1190,7 @@ public class AgentTaskPoolTests
         stopper.StopsSessionsIn = null;
         var (agentId, sessionId) = await SeedWarmAgentAsync(
             workspace.Path, AgentModelLevel.Medium, idleMinutes: 10, connectionString: cs);
+        await SeedProvedIdleAsync(sessionId, cs);
 
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
 
