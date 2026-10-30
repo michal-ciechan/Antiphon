@@ -311,7 +311,7 @@ public sealed class VolumeRetirementWrapperTests
             printf 'main-empty-admitted\n'
             """);
         emptyMain.ShouldContain("refused=RecycleContainerStateUnknown",
-            "main retains configured bind metadata validation even when no container remains");
+            customMessage: "main retains configured bind metadata validation even when no container remains");
         emptyMain.ShouldNotContain("main-empty-admitted");
     }
 
