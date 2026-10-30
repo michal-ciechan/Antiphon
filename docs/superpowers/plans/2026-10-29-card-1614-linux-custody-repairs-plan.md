@@ -342,13 +342,14 @@ NP-15/17 are owed qualification targets, not executable v2 admission while the v
 | CP-23 | B3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1614-windows-pty/` | windows-pty-custody | `/*/*/PtyCustodyTests/*` | R-2 | all methods and arguments; >=30 passed, 0 failed/skipped | 30 | 3 | true |
 | CP-29 | B3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-windows-runner/` | windows-runner-custody | `/*/*/(RunnerCustodyTests*)\|(RunnerCustodyCrashTests*)/*` | R-2 | all methods and arguments; >=25 passed, 0 failed/skipped | 25 | 4 | true |
 | CP-30 | B3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-b-windows-host/` | windows-untracked-linger | `/*/*/PtyHostLauncherTests/A_host_whose_exit_manifest_cannot_be_saved_still_exits_on_its_linger_TTL` | R-3 | 1 passed, 0 failed/skipped | 1 | 1 | true |
-| CP-38 | B3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-b-linux-runner/` | portable-release-disposition | `/*/*/RunnerCustodyReleaseTests/*` | V-17,V-19 | all 4 methods passed, 0 failed/skipped | 4 | 2 | true |
+| CP-38 | B3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1614-b-linux-runner/` | portable-release-disposition | `/*/*/RunnerCustodyReleaseTests/*` | V-17,V-19 | at least 4 passed, 0 failed/skipped; includes ordinary-read and pipe-failure refusal | 4 | 2 | true |
 | CP-44 | B3 | CP-30 | windows-final-host-custody | `/*/*/(HostCustodyTests*)\|(HostCustodyPlatformTests*)/*` | R-2,V-13 | 19 passed, 0 failed/skipped; includes tracked linger | 19 | 3 | true |
 | CP-46 | B3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1614-b-linux-pty/` | linux-final-accounting-contracts | `/*/*/(LinuxCgroupContainmentTests*)\|(UnixPtyArgvTests*)\|(TestClassificationGuardTests*)/*` | V-18,V-19,R-3,V-16 | 27 passed, 0 failed/skipped (26 contracts plus classification) | 27 | 2 | true |
 | CP-47 | B3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-b-linux-host/` | linux-final-host-contracts | `/*/*/(HostCustodyPlatformTests*)\|(CustodyReceiptBackendTests*)\|(VerificationCustodyStoreTests*)\|(HostCustodyTests*)/*` | R-1,R-2,V-13 | 29 passed, 15 Windows-only skips; includes new linger exclusion | 29 | 2 | true |
 | CP-48 | B3 | CP-47 | linux-final-host-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
 | CP-49 | B3 | CP-38 | linux-final-runner-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
 | CP-51 | B3 | n/a | portable-final-policy-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case C1323_PlatformPolicy` | V-16 | exit 0; retain harness count and new B roster/hash | n/a | 1 | true |
+| CP-52 | B3 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-b-release-host/` | portable-release-host | `/*/*/LinuxCustodyReleaseHostTests/*` | V-17 | 3 passed, 0 failed; launch-failure linger, root-exit, missing tree | 3 | 2 | true |
 
 ## Safe residue cleanup and release
 
