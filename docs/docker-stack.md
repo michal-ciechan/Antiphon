@@ -130,7 +130,16 @@ Keep dispatching through every gate under [Continuous dispatch](#continuous-disp
 | 9. Retire temp | Always run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp` immediately after successful gate 8, including already-absent cleanup; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. |
 
 At gate 1, `deploy-temp` accepts either a retired temp placeholder or a cleared offline
-one, whether its drain is set or clear. For a retired start it checks offline zero work,
+one, whether its drain is set or clear. For a retired start it checks offline zero work
+and container absence, then `Assert-TempRetirementClearable` reads the four temp-private
+volumes and the retirement journal. That read is before `/drain/clear`, `/drain`,
+`runner-cache-seed`, or any mutating host case. A present volume refuses
+`TempVolumesRetained` and names it. An unresolved journal (Applying, Partial,
+PartialRefused, or any record that still has effects or intents) also refuses while
+the four volumes are absent. Recovery is Resume of that operation, or
+`pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <id> -ExpectedJournalDigest <sha256> -ReasonFile <file>`.
+Close is a journal transition, not a delete, and it does not clear `retiredAt`.
+There is no `-Adopt` and no force-close. Only a clearable journal continues,
 then POSTs `/drain/clear` with reason `CARD-0948 retired temp placeholder reactivation`,
 and POSTs `/drain` with `redirectTo=server2`, `retireWhenIdle=false`. A cleared start
 establishes that same non-retiring drain if needed. Both paths hold new work away from
@@ -320,6 +329,15 @@ Always retire `server2-temp` once scheduling has moved back to the verified, acc
 main runner. After drain and the checks below, temp is disposable: `compose_temp down -v`
 removes all four private volumes (work, runner-tmp, dind-data, runner-state). This is
 part of the rollout's disk reclaim, not a reason to retain temp for rollback.
+Temp volume deletion uses a v2 census: four attempts, and only Drift and Unstable
+are retried, with backoffs of 2s, 5s and 10s. The retry stops before `compose_temp down -v`.
+A failed `down -v` marks PartialRefused and does not report the volumes removed.
+Main keeps the v1 collector: three attempts, a 30s sleep between Drift retries, and
+after the journal records container removal the third attempt may keep those rows.
+A content or census refusal at gate 9 returns nonzero and leaves the rollout incomplete.
+Do not run the C849 Retired check as if that gate passed. `-Case Retired` still
+requires `tempPrivateVolumes=0` together with `externalVolumes=3` and
+`mainTmpRetained=true`. Retained private volumes are not a successful retired state.
 
 Main volume recycling is **scripted only**: the rolling script implements recycling
 `antiphon-runner_work`, `antiphon-runner_runner-tmp` and `antiphon-runner_dind-data`
