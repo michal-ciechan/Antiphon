@@ -54,6 +54,8 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("zero-row-ttl")]
     [Arguments("zero-row-cap")]
     [Arguments("zero-row-recheck")]
+    [Arguments("reuse-other-agent")]
+    [Arguments("later-agent-task")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -108,6 +110,12 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "zero-row-recheck":
                 await ZeroRowRecheckAsync();
+                break;
+            case "reuse-other-agent":
+                await ReuseOtherAgentAsync();
+                break;
+            case "later-agent-task":
+                await LaterAgentTaskAsync();
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -460,6 +468,64 @@ public sealed class TaskSupervisionVisibilityTests
     }
 
     /// <summary>
+    /// A later task on the same session belongs to another agent. The Failed task is
+    /// no longer the latest on the session, so the seat retires and no hold row remains.
+    /// </summary>
+    private static async Task ReuseOtherAgentAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, tasks, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+        await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
+        var cardId = Guid.NewGuid();
+        var failed = await SeedFailedTaskAsync(schema.ConnectionString, agent, session, workspace.Path, cardId, clock);
+        await SeedLaterSucceededTaskAsync(schema.ConnectionString, Guid.NewGuid(), session, workspace.Path, clock);
+
+        var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        retired.ShouldBeGreaterThanOrEqualTo(1);
+        stopper.Killed.ShouldContain(session);
+        var attention = await ReadAttentionAsync(schema.ConnectionString, clock, State());
+        attention.Items.ShouldNotContain(i => i.Kind == AttentionKind.FailedTaskSessionHeld);
+        var detail = await tasks.GetAsync(failed.Id, CancellationToken.None);
+        detail.FailedSession.ShouldBeNull();
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A later Canceled task on the same agent was never dispatched and has no session.
+    /// It is still a later task, so the Failed hold releases and the proved-idle session retires.
+    /// </summary>
+    private static async Task LaterAgentTaskAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, tasks, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+        await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
+        var cardId = Guid.NewGuid();
+        var failed = await SeedFailedTaskAsync(schema.ConnectionString, agent, session, workspace.Path, cardId, clock);
+        await SeedCanceledNeverDispatchedAsync(schema.ConnectionString, agent, workspace.Path, clock);
+
+        var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        retired.ShouldBeGreaterThanOrEqualTo(1);
+        stopper.Killed.ShouldContain(session);
+        var attention = await ReadAttentionAsync(schema.ConnectionString, clock, State());
+        attention.Items.ShouldNotContain(i => i.Kind == AttentionKind.FailedTaskSessionHeld);
+        var detail = await tasks.GetAsync(failed.Id, CancellationToken.None);
+        detail.FailedSession.ShouldBeNull();
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+    }
+
+    /// <summary>
     /// Past TTL with a proved turn-end, so only the unproved-idle state keeps the session.
     /// A mutation that treats Created, Stopping, a missing generation, or a pending remote
     /// inventory as idle kills the session and fails this witness.
@@ -692,6 +758,33 @@ public sealed class TaskSupervisionVisibilityTests
             CreatedAt = now.AddMinutes(-20),
             DispatchedAt = now.AddMinutes(-15),
             CompletedAt = now.AddMinutes(-5),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedCanceledNeverDispatchedAsync(
+        string connectionString, Guid agentId, string directory, FakeTimeProvider clock)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        var id = Guid.NewGuid();
+        await using var db = Open(connectionString);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "CARD-1610 canceled never dispatched",
+            Goal = "never started",
+            Role = AgentTaskRole.Review,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            AgentId = agentId,
+            AgentSessionId = null,
+            Status = AgentTaskStatus.Canceled,
+            Attempt = 1,
+            CreatedAt = now.AddMinutes(-5),
+            CompletedAt = now.AddMinutes(-4),
         });
         await db.SaveChangesAsync();
     }
