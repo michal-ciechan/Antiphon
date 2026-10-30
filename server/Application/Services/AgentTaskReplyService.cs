@@ -1287,6 +1287,7 @@ public sealed partial class AgentTaskReplyService
             handoff = InterimVerificationPolicy.CapHandoff(task, handoff);
             task.NextStage = handoff.Kind;
             task.NextHandoff = handoff.Handoff;
+            await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
             if (remoteBlock is not null)
             {
                 // Nobody dispatches Review against an unknown SHA.
@@ -1514,6 +1515,9 @@ public sealed partial class AgentTaskReplyService
                 && services.GetService<IOptions<BlockedTaskParkingOptions>>()?.Value.Enabled == true
             ? TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
             : TaskCompletionNotification.Applies(task);
+        // Snapshot the final successor observation before composing the caller's header.
+        // Child reservation rechecks under the existing card/handoff admission locks.
+        await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
         var completion = owesCompletion
             ? await AddCompletionObligationAsync(services, db, task, settlementEvent, settledBody, now,
                 workspaceNote, callerWarning, drift, gitHeader, ct)
@@ -3014,7 +3018,8 @@ public sealed partial class AgentTaskReplyService
             && task.NextHandoff?.StartsWith(ReviewRepairRefusalPrefix, StringComparison.Ordinal) == true;
         return task.NextStage == PipelineHandoffKind.Decide
             && parsed.Kind != PipelineHandoffKind.Decide
-            && (repairRefusal || task.Status == AgentTaskStatus.Blocked && RemoteWorkspaceService.IsEligible(task))
+            && (TaskSuccessorFence.Forced(task) || repairRefusal
+                || task.Status == AgentTaskStatus.Blocked && RemoteWorkspaceService.IsEligible(task))
                 ? parsed with { Found = true, Kind = PipelineHandoffKind.Decide, Handoff = task.NextHandoff ?? parsed.Handoff }
                 : parsed;
     }

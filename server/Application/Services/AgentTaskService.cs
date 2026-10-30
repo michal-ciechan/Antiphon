@@ -1620,6 +1620,8 @@ public sealed class AgentTaskService
                         && e.AgentTaskId == handoff.PredecessorTaskId && e.Type == AgentTaskEventType.Completed
                         && e.At == predecessor.CompletedAt && e.At == handoff.SettledAt, ct))
                     throw new ConflictException("The handoff predecessor changed.", "handoff_predecessor_changed");
+                if (await TaskSuccessorFence.ReasonAsync(_db, predecessor, ct) is { } successorReason)
+                    throw new ConflictException(successorReason, "handoff_successor_held");
                 if (admissionCard?.ActiveWorkflowRunId != handoff.WorkflowRunId)
                     throw new ConflictException("The handoff workflow changed.", "handoff_workflow_changed");
                 if (handoff.WorkflowRunId is Guid runId)
