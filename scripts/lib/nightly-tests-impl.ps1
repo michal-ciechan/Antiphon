@@ -4,6 +4,7 @@
 
 if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
+. (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -442,6 +443,17 @@ function Get-NightlyProfileLaunchPlan {
         if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt $ceiling) {
             throw ('launch-estimate-ceiling id={0} seconds={1} ceiling={2}' -f $launch.id, $seconds, $ceiling)
         }
+        $suiteForWatchdog = 'antiphon'
+        foreach ($class in @($launch.classes)) {
+            if ([string]$class -clike 'Antiphon.E2E.*') { $suiteForWatchdog = 'e2e' }
+        }
+        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteForWatchdog -PlannedSeconds $seconds -Basis 'default'
+        if (-not $admission.Admitted) {
+            throw ('watchdog-admission-refused id={0} reason={1}' -f $launch.id, $admission.Reason)
+        }
+        Add-Member -InputObject $launch -NotePropertyName watchdogSeconds -NotePropertyValue ([double]$admission.WatchdogSeconds) -Force | Out-Null
+        Add-Member -InputObject $launch -NotePropertyName watchdogReason -NotePropertyValue ([string]$admission.Reason) -Force | Out-Null
+        Add-Member -InputObject $launch -NotePropertyName watchdogAdmitted -NotePropertyValue ([bool]$admission.Admitted) -Force | Out-Null
     }
     return $plan
 }
@@ -1380,10 +1392,22 @@ function Invoke-AntiphonNightlyTests {
                         $phaseEnv = @{}
                         foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
                         Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
+                        $plannedSeconds = $null
+                        if ($null -ne $chunk.PSObject.Properties['seconds'] -and $null -ne $chunk.seconds) {
+                            $plannedSeconds = $chunk.seconds
+                        }
+                        $costBasis = 'default'
+                        if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
+                            $costBasis = [string]$chunk.costBasis
+                        }
+                        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteId -PlannedSeconds $plannedSeconds -Basis $costBasis -PolicyObject $policy.Object
+                        if (-not $admission.Admitted) {
+                            throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
+                        }
                         $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
                         try {
                             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
-                                -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
+                                -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
                                 -Environment $phaseEnv -LogPath $logPath
                         } catch {
                             Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
@@ -1507,8 +1531,9 @@ function Invoke-AntiphonNightlyTests {
                     }
                     if ($run.TimedOut) {
                         $overallFailed = $true
-                        $coverageComplete = $false
-                        $testsPassed = $false
+                        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false
+                        $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
+                        $testsPassed = [bool]$timeoutDisposition.TestsPassed
                         Set-NightlyOutcome TIMEOUT
                         $reasons += ('timeout {0}' -f $suiteId)
                     } elseif ($run.ExitCode -ne 0) {
