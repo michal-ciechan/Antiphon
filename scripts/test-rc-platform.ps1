@@ -761,13 +761,6 @@ function Test-C1199_WindowsRequiredRoster {
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_directory_on_file'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_file_on_directory'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_symlink_on_file'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_untracked_descendant'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_ignored_descendant'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_modified_tracked'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_tracked'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_regular_user_move'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_untracked'
-        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_changed_untracked'
     )
     $expectedLinux = @(
         'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'

@@ -43,19 +43,13 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_untracked_descendant(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("untracked-descendant", cancellationToken);
-    }
+    public Task shape_untracked_descendant(CancellationToken cancellationToken) =>
+        AssertShapeAsync("untracked-descendant", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_ignored_descendant(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("ignored-descendant", cancellationToken);
-    }
+    public Task shape_ignored_descendant(CancellationToken cancellationToken) =>
+        AssertShapeAsync("ignored-descendant", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
@@ -64,19 +58,13 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_modified_tracked(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("modified-tracked", cancellationToken);
-    }
+    public Task shape_modified_tracked(CancellationToken cancellationToken) =>
+        AssertShapeAsync("modified-tracked", cancellationToken);
 
     [Test]
     [Timeout(240_000)]
-    public Task shape_deleted_tracked(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("deleted-tracked", cancellationToken);
-    }
+    public Task shape_deleted_tracked(CancellationToken cancellationToken) =>
+        AssertShapeAsync("deleted-tracked", cancellationToken);
 
     [Test]
     [Timeout(240_000)]
@@ -85,27 +73,18 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_regular_user_move(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("regular-user-move", cancellationToken);
-    }
+    public Task shape_regular_user_move(CancellationToken cancellationToken) =>
+        AssertShapeAsync("regular-user-move", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_deleted_untracked(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("deleted-untracked", cancellationToken);
-    }
+    public Task shape_deleted_untracked(CancellationToken cancellationToken) =>
+        AssertShapeAsync("deleted-untracked", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_changed_untracked(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        return AssertShapeAsync("changed-untracked", cancellationToken);
-    }
+    public Task shape_changed_untracked(CancellationToken cancellationToken) =>
+        AssertShapeAsync("changed-untracked", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
@@ -476,6 +455,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private void WriteProject(string root, string command)
     {
+        if (CheckpointShapeWindowsFixture.IsOrdinaryMutation(command))
+            command = CheckpointShapeWindowsFixture.WriteNoOp(root);
         var xml = """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
