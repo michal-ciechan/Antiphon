@@ -156,6 +156,7 @@ public sealed class TaskSupervisionReceiptTests
                 message.Status = QueuedMessageStatus.Sent;
                 message.DeliveryAttempts = 1;
                 message.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-10);
+                message.SentAt = message.LastDeliveryStartedAt;
                 message.LastDeliveryGeneration = (await db.AgentSessions.SingleAsync(s => s.Id == parent.SessionId)).StartedAt;
                 message.LastDeliveryBaselineSequence = 0;
                 await db.SaveChangesAsync();
