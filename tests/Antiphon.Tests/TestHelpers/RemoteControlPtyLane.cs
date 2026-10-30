@@ -70,7 +70,8 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
     public static async Task<RemoteControlPtyLane> CreateAsync(
         string? rcScenario = null,
         IReadOnlyDictionary<string, string>? extraEnv = null,
-        Action<SupervisionSettings>? configureSupervision = null)
+        Action<SupervisionSettings>? configureSupervision = null,
+        Func<Task>? beforeTranscriptSave = null)
     {
         SkipIfUnavailable();
 
@@ -173,7 +174,8 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
 
             var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
             var pumpCts = new CancellationTokenSource();
-            var pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pumpCts.Token);
+            var pumping = SessionQueueTranscriptPump.RunAsync(
+                transcriptPath, sessionId, pumpCts.Token, beforeSave: beforeTranscriptSave);
 
             return new RemoteControlPtyLane
             {
@@ -267,6 +269,26 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
         }
 
         return false;
+    }
+
+    /// <summary>The fixture has no hosted turn-end worker; the caller must drive its queue.</summary>
+    public Task<bool> DrainQueuedPromptsAsync(IReadOnlyCollection<string> bodies, TimeSpan timeout) =>
+        WaitForPersistedPromptsAsync(bodies, timeout);
+
+    public async Task<string> DeliveryEvidenceAsync()
+    {
+        await using var db = CreateDb();
+        var transcript = await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Kind, t.Text, t.StopReason }).ToArrayAsync();
+        var queue = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId)
+            .OrderBy(m => m.Sequence)
+            .Select(m => new { m.Sequence, m.Body, m.Status, m.DeliveryAttempts, m.DeliveryVerdict,
+                m.MaintenanceEvidence }).ToArrayAsync();
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            child = ChildFileUserPrompts(), transcript, queue, screen = RawOutput(),
+        });
     }
 
     /// <summary>Reserve then execute one automatic arm under the production per-session queue lock.</summary>
