@@ -808,8 +808,8 @@ are included in the sharded Unit lane below. No product test executes in Plan.
 The source-derived Unit roster contains **471 class-tagged classes / 6,252
 expanded cases**, including the shared linked Antiphon.TestSupport guard. The
 new TaskCeilingPolicyTests contributes 12 via its own green row. A separate exact
-method row covers MatrixDefaultComplexityCreateTests' method-only Unit tag (1).
-Thus final Unit membership is **6,265 cases** at this design base. The Unit
+method row covers MatrixDefaultComplexityCreateTests' method-only Unit tag (8 Arguments).
+Thus final Unit membership is **6,272 cases** at this design base. The Unit
 shards partition existing classes; CP policy plus the method-only row completes
 the lane. Do not claim Full from class shards alone (CARD-1573). Compare the
 union of TRX test identities/categories against source discovery at the actual
@@ -927,7 +927,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-81 | S2-S4 | CP-15 | server-unit-shard-37 | `/*/Antiphon.Tests.TestHelpers/(BuildOutputNestingTests*)\|(CheckCompactionFixtureTests*)\|(ControlledLandingGitTests*)\|(DelegationHarnessCensusTests*)\|(DelegationTestServicesTests*)\|(DirectoryLinkFixtureTests*)\|(EntityScalarSnapshotConsumerGuardTests*)\|(EntityScalarSnapshotTests*)\|(LiveFixtureTextTests*)\|(LoadTimeoutBoundWitnessTests*)\|(LoadTimeoutWaitTests*)\|(PairedOverheadStatisticsTests*)\|(ScaledTimeProviderTests*)\|(SlowTestTripwireTests*)\|(TestAppHostPathTests*)\|(TestClassificationPolicyTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)\|(TestLaneCategoryGuardTests*)\|(TestPhaseSummaryTests*)/*` | Final Unit partition | 250 passed; no failed/skipped | 250 | 4 |
 | CP-82 | S2-S4 | CP-15 | server-unit-shard-38 | `/*/Antiphon.Tests.TestHelpers/(TestPhaseSupervisorTests*)\|(TestSchemaCacheTests*)\|(TestTimingLifecycleTests*)\|(TestTimingRecorderTests*)\|(WindowsDeliveryFixtureWitnessTests*)/*` | Final Unit partition | 37 passed; no failed/skipped | 37 | 2 |
 | CP-83 | S2-S4 | CP-15 | server-unit-shard-39 | `/*/Antiphon.TestSupport/TestClassificationGuardTests/*` | Final Unit partition | 1 passed; no failed/skipped | 1 | 2 |
-| CP-84 | S2-S4 | CP-15 | server-unit-method-tag | `/*/Antiphon.Tests.Application/MatrixDefaultComplexityCreateTests/The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` | method-only Unit | 1 passed; Category=Unit; no failed/skipped | 1 | 1 |
+| CP-84 | S2-S4 | CP-15 | server-unit-method-tag | `/*/Antiphon.Tests.Application/MatrixDefaultComplexityCreateTests/The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` | method-only Unit | 8 passed; Category=Unit; no failed/skipped | 8 | 1 |
 | CP-85 | S2-S4 | CP-15 | server-integration-CheckCompactionContinuationTests | `/*/*/CheckCompactionContinuationTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 2 |
 | CP-86 | S2-S4 | CP-15 | server-integration-CheckCompactionCrashTests | `/*/*/CheckCompactionCrashTests/*` | CARD-0079 full regression | 9 passed; no failed/skipped | 9 | 3 |
 | CP-87 | S2-S4 | CP-15 | server-integration-CheckCompactionAttentionTests | `/*/*/CheckCompactionAttentionTests/*` | CARD-0079 full regression | 1 passed; no failed/skipped | 1 | 1 |
@@ -949,10 +949,10 @@ exit and total/passed/failed/pending/todo counts.
 ### Cost and performance execution contract
 
 **91 rows, 5 producer builds, 335 provisional build/execution minutes**, excluding
-admission. TUnit floors sum to **8,159 executions** (97 red-phase, 8,062 green/
-regression); client adds 3 red and 3 green = **8,165 total**. New cases are 96
+admission. TUnit floors sum to **8,166 executions** (97 red-phase, 8,069 green/
+regression); client adds 3 red and 3 green = **8,172 total**. New cases are 96
 TUnit plus 3 client; the renamed janitor case is existing. Final Unit covers
-6,265 identities, while guards and S1 classes intentionally repeat on different
+6,272 identities, while guards and S1 classes intentionally repeat on different
 source groups. No full assembly run beyond the specified Unit lane is added.
 
 | Committed group | Rows | Estimated execution/build minutes | TUnit floor | Provisional execution cap | Independent hard wall |
@@ -960,7 +960,7 @@ source groups. No full assembly run beyond the specified Unit lane is added.
 | S1-red | 2 | 7 | 9 | 14 minutes | 44 minutes |
 | S1 | 7 | 32 | 294 | 64 minutes | 94 minutes |
 | S2-S4-red | 5 | 18 | 88 | 36 minutes | 66 minutes |
-| S2-S4 | 77 | 278 | 7768 | 556 minutes | 586 minutes |
+| S2-S4 | 77 | 278 | 7775 | 556 minutes | 586 minutes |
 
 These are missing-sample scheduling bounds, not measured p95. The hard wall
 allows at most 30 total extra wall minutes for admission/other excluded time;
