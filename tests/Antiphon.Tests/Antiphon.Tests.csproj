@@ -82,6 +82,7 @@
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.Checkpoints.GitFixture\Antiphon.Checkpoints.GitFixture.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
     <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
@@ -111,6 +112,7 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.GitFixture\Antiphon.Checkpoints.GitFixture.csproj" Folder="checkpoint-git-fixture" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" Folder="timing-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" Folder="native-linux-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" Folder="fakeclaude" Glob="**\*" />
