@@ -1739,23 +1739,23 @@ function Invoke-MpScaleReplay {
     $candidate = New-Object System.Collections.Generic.List[double]
     $legacy = New-Object System.Collections.Generic.List[double]
     try {
-        foreach ($input in $inputs) {
-            if (($input.index % 16) -eq 0) { Write-Output ('REPLAY publication=' + $input.index + '/' + $count) }
+        foreach ($replayInput in $inputs) {
+            if (($replayInput.index % 16) -eq 0) { Write-Output ('REPLAY publication=' + $replayInput.index + '/' + $count) }
             $exitCode = 0
-            if ($input.outcome -eq 'Failed') { $exitCode = 1 }
-            $verdict = [pscustomobject]@{ ExitCode = $exitCode; coverageComplete = $false; testsPassed = ($input.outcome -eq 'Passed') }
-            if (($input.index % 2) -eq 0) {
+            if ($replayInput.outcome -eq 'Failed') { $exitCode = 1 }
+            $verdict = [pscustomobject]@{ ExitCode = $exitCode; coverageComplete = $false; testsPassed = ($replayInput.outcome -eq 'Passed') }
+            if (($replayInput.index % 2) -eq 0) {
                 $sw = [Diagnostics.Stopwatch]::StartNew()
-                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $replayInput.trx -Suite $replayInput.suite -Chunk $replayInput.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $replayInput.wall
                 $sw.Stop(); $legacy.Add($sw.Elapsed.TotalMilliseconds)
             }
             $sw = [Diagnostics.Stopwatch]::StartNew()
-            Publish-MpChunk -LogRoot $prod -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall -ExitCode $exitCode -Passed ($input.outcome -eq 'Passed')
+            Publish-MpChunk -LogRoot $prod -TrxPath $replayInput.trx -Suite $replayInput.suite -Chunk $replayInput.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $replayInput.wall -ExitCode $exitCode -Passed ($replayInput.outcome -eq 'Passed')
             $sw.Stop(); $candidate.Add($sw.Elapsed.TotalMilliseconds)
             if ((Get-MpSha (Join-Path $prod 'timing/groups-executed.json')) -ne '') { Fail-Mp 'replay-projected-per-chunk' }
-            if (($input.index % 2) -eq 1) {
+            if (($replayInput.index % 2) -eq 1) {
                 $sw = [Diagnostics.Stopwatch]::StartNew()
-                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $input.trx -Suite $input.suite -Chunk $input.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $input.wall
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $oracle -TrxPath $replayInput.trx -Suite $replayInput.suite -Chunk $replayInput.chunk -RunId 'replay-385' -Attempt '1' -HostWallSeconds $replayInput.wall
                 $sw.Stop(); $legacy.Add($sw.Elapsed.TotalMilliseconds)
             }
         }
