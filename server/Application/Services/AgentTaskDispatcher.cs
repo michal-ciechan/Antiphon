@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -3896,6 +3896,8 @@ public sealed partial class AgentTaskDispatcher
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         var evaluatedAttempt = task.Attempt;
         var evaluatedDispatch = task.DispatchedAt;
+        var evaluatedGeneration = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt).FirstOrDefaultAsync(ct);
         await CatchUpTranscriptAsync(sessionId, ct);
         var wait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, true, ct);
         await _db.Entry(task).ReloadAsync(ct);
@@ -3924,6 +3926,22 @@ public sealed partial class AgentTaskDispatcher
         // edit to the policy cannot turn a boot clock into a failure.
         if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.BootModelWait)
             return false;
+
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling)
+        {
+            var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is null || evaluatedGeneration is not { } generation || generation == default
+                || session.StartedAt != generation || session.Status != SessionStatus.Running
+                || _runtime?.RemoteInventoryPending(session.RunnerId) == true)
+                return false;
+            if (verdict.Working)
+            {
+                await TryHoldCeilingAsync(task, generation, ct);
+                return false;
+            }
+            // No transcript is uncertainty, never proof of an idle session.
+            if (!await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct)) return false;
+        }
 
         // Gate 3 — CARD-0085, and ONLY for the population CARD-0085 was written for: a session that
         // ingested nothing. Same predicate as the dead-session reconciler. A session with rows is
@@ -6144,6 +6162,7 @@ public sealed partial class AgentTaskDispatcher
                 return await FinishParallelHoldAsync(claimed, ct);
             claimed.Status = AgentTaskStatus.Dispatched;
             claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
             claimed.ConcurrencyToken = Guid.NewGuid();
             ArmFirstCheck(claimed, now);
 
@@ -6597,6 +6616,7 @@ public sealed partial class AgentTaskDispatcher
 
         task.AgentSessionId = session.Id;
         task.DispatchedAt = now;
+        CeilingHoldFacts.Resolve(task, _settings);
         task.BootWedgeRelaunchCount++;
         task.ConcurrencyToken = Guid.NewGuid();
         agent.PersistentSessionId = session.Id.ToString("D");
@@ -8566,6 +8586,7 @@ public sealed partial class AgentTaskDispatcher
             return await FinishParallelReuseAsync(claimed, ct);
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
         claimed.ConcurrencyToken = Guid.NewGuid();
         ArmFirstCheck(claimed, now);
 
@@ -8824,6 +8845,7 @@ public sealed partial class AgentTaskDispatcher
         }
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
         claimed.ConcurrencyToken = Guid.NewGuid();
         ArmFirstCheck(claimed, now);
 

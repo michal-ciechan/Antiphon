@@ -34,6 +34,7 @@ public class AppDbContext : DbContext
     public DbSet<PipelineDefinition> PipelineDefinitions => Set<PipelineDefinition>();
     public DbSet<PipelineDefinitionRevision> PipelineDefinitionRevisions => Set<PipelineDefinitionRevision>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
+    public DbSet<TaskSupervisionNotice> TaskSupervisionNotices => Set<TaskSupervisionNotice>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
     public DbSet<SessionRuntimeAction> SessionRuntimeActions => Set<SessionRuntimeAction>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
@@ -177,6 +178,13 @@ public class AppDbContext : DbContext
     private void RequireImmutablePipelineEvidence()
     {
         ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<AgentTask>().Where(e => e.State == EntityState.Modified))
+        {
+            var task = entry.Entity;
+            if (task.CeilingHoldEpisodeId is not null && task.CeilingAcknowledgedAt is null
+                && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled or AgentTaskStatus.Blocked)
+                task.CeilingAcknowledgedAt = task.CompletedAt ?? DateTime.UtcNow;
+        }
         foreach (var entry in ChangeTracker.Entries())
             if (entry.State is EntityState.Modified or EntityState.Deleted
                 && entry.Entity is ReviewEvidenceCorrection or PipelineHandoffObservation or CardCompletionAcceptance or CardCompletionReceipt)
@@ -186,6 +194,29 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<TaskSupervisionNotice>(entity =>
+        {
+            entity.HasKey(n => n.Id);
+            entity.HasIndex(n => new { n.TaskId, n.Attempt, n.SourceEventId, n.Purpose }).IsUnique()
+                .HasDatabaseName("IX_TaskSupervisionNotices_PurposeIdentity");
+            entity.HasIndex(n => new { n.NextAttemptAt, n.Id });
+            entity.Property(n => n.Body).HasMaxLength(4000);
+            entity.Property(n => n.Digest).HasMaxLength(64);
+            entity.Property(n => n.ReportDigest).HasMaxLength(64);
+            entity.Property(n => n.ReasonCode).HasMaxLength(200);
+            entity.Property(n => n.ReportText).HasMaxLength(16000);
+            foreach (var name in new[] { nameof(TaskSupervisionNotice.TaskId), nameof(TaskSupervisionNotice.Attempt),
+                         nameof(TaskSupervisionNotice.SourceEventId), nameof(TaskSupervisionNotice.Purpose),
+                         nameof(TaskSupervisionNotice.EpisodeId), nameof(TaskSupervisionNotice.SessionId),
+                         nameof(TaskSupervisionNotice.SessionStartedAt), nameof(TaskSupervisionNotice.DispatchedAt),
+                         nameof(TaskSupervisionNotice.ParentSessionId), nameof(TaskSupervisionNotice.ParentStartedAt),
+                         nameof(TaskSupervisionNotice.RecipientSessionId), nameof(TaskSupervisionNotice.RecipientStartedAt),
+                         nameof(TaskSupervisionNotice.RecipientFloor), nameof(TaskSupervisionNotice.Body),
+                         nameof(TaskSupervisionNotice.Digest), nameof(TaskSupervisionNotice.CreatedAt),
+                         nameof(TaskSupervisionNotice.FailureFrontier), nameof(TaskSupervisionNotice.ReportFloor) })
+                entity.Property(name).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
+        });
 
         modelBuilder.Entity<ReviewEvidenceCorrection>(entity =>
         {
@@ -2245,6 +2276,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.SourceLandingSha).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
             entity.HasKey(t => t.Id);
             entity.Property(t => t.RootTaskId).IsRequired();
+            entity.Property(t => t.ResolvedCeilingSource).HasMaxLength(80);
+            entity.Property(t => t.RequestedCeilingReason).HasMaxLength(1000);
             entity.Property(t => t.Depth).IsRequired();
             entity.Property(t => t.Title).IsRequired().HasMaxLength(300);
             // Internal specialist goals include a wrapper around an independently capped raw
