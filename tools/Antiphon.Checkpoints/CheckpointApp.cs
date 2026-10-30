@@ -383,7 +383,15 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
         }
 
-        var finalizationStarted = (runtime.TimeProvider ?? TimeProvider.System).GetTimestamp();
+        var finalizationTime = runtime.TimeProvider ?? TimeProvider.System;
+        var finalizationStarted = finalizationTime.GetTimestamp();
+        var finalizationPhaseStarted = finalizationStarted;
+        void FinalizationPhase(string phase)
+        {
+            var ended = finalizationTime.GetTimestamp();
+            Note(FormattableString.Invariant($"FINALIZATION phase={phase} seconds={finalizationTime.GetElapsedTime(finalizationPhaseStarted, ended).TotalSeconds:F3}"));
+            finalizationPhaseStarted = ended;
+        }
         state.Budget = model.Budget = budget.Snapshot(admissionLimit);
         model.Evidence = Path.Combine(runDirectory, "report.md");
         var gitAppend = write.Append(Path.Combine(runDirectory, "git.txt"),
@@ -401,6 +409,7 @@ public static class CheckpointApp
         {
             Note("evidence failed: " + ex.GetType().Name + ": " + ex.Message);
         }
+        FinalizationPhase("evidence");
 
         bool OwnedOutputRemains(IReadOnlyCollection<string>? created)
         {
@@ -424,6 +433,7 @@ public static class CheckpointApp
             .SelectMany(build => new CheckpointOutputCleanup(context).MatchingIsolatedDirectories(repo, build.Id))
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        FinalizationPhase("output-discovery");
         try
         {
             if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
@@ -508,8 +518,9 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
+        FinalizationPhase("output-cleanup");
         state.Budget = model.Budget = budget.Snapshot(admissionLimit);
-        model.Budget.FinalizationSeconds = (runtime.TimeProvider ?? TimeProvider.System).GetElapsedTime(finalizationStarted).TotalSeconds;
+        model.Budget.FinalizationSeconds = finalizationTime.GetElapsedTime(finalizationStarted).TotalSeconds;
         model.EndedAt = context.Time.GetUtcNow();
         model.WallSeconds = (model.EndedAt - model.StartedAt).TotalSeconds;
         if (budget.Reason is not null && model.ExitCode == ExitCodes.Green)
@@ -519,6 +530,7 @@ public static class CheckpointApp
             model.Reason = budget.Reason;
         }
         ReportWriter.WriteFiles(context, runDirectory, model);
+        FinalizationPhase("report-publication");
         watchCancel.Cancel();
         await watcher.ConfigureAwait(false);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
