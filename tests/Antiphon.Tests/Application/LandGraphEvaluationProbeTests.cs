@@ -101,4 +101,33 @@ public sealed partial class LandGraphEvaluationTests
         run.Lines.ShouldContain("approved", run.Text);
         run.Text.ShouldContain("not-built: docs/investigations/evidence/card-0462/Reproduce.csproj");
     }
+
+    // CARD-1614: the land pre-check refuses a definition file that sets a property outside its
+    // allow-list before it compares the digest. These two projects are definition files, and the
+    // check walks every definition file, so a new disallowed property cannot pass silently.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1614_RealDefinitionFilesSetOnlyAllowListedProperties()
+    {
+        var root = RepoRoot();
+        foreach (var path in new[]
+        {
+            "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+            "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+        })
+        {
+            File.Exists(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar))).ShouldBeTrue(path);
+        }
+
+        var run = await RunScriptAsync(root, "-Check", "audit-land-verification-precheck.ps1");
+        run.Text.ShouldNotContain("sets a property the audit does not allow", Case.Sensitive, run.Text);
+        run.Text.ShouldNotContain("_PtyHostNativeProps", Case.Sensitive, run.Text);
+        run.Text.ShouldContain("digest=", Case.Sensitive, run.Text);
+        run.Text.ShouldContain("count=", Case.Sensitive, run.Text);
+        if (run.ExitCode != 0)
+        {
+            run.ExitCode.ShouldBe(1, run.Text);
+            run.Text.ShouldContain("manifest does not match the selected graph", Case.Sensitive, run.Text);
+        }
+    }
 }
