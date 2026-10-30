@@ -116,6 +116,12 @@ and then removing them would weaken the existing gate and misstate the change.
   bounded cost-only follow-up, before Windows Full credit. Do not seed measured
   rows from failed or mixed historical runs. This follow-up is a required test
   infrastructure fix on rc and master, not an optional performance feature.
+- D-12: CP-46 uses a bare, quote-free `dotnet build ... && pwsh -File ...`
+  command on both shells. Require the evaluator's exact `approved` output line
+  and its freshly built DLL digest before credit. The importer retains this
+  requirement in ExpectText; the mandatory post-run assertion below enforces it.
+  Reject an invented YAML log-assertion field or a new runner feature in this
+  narrow amendment: command rows currently enforce exit/source status only.
 
 ## Landing target and prerequisite order
 
@@ -175,6 +181,8 @@ reviewed plan document to the other target as needed, without replaying reports.
 | Approval refresh follows every C# edit | `LandVerificationBuildGraph.Includes` selects project/props/targets/solution/SDK/package definition inputs, not arbitrary C# or execution-policy JSON | Default definition delta is empty; final audit verifies, not invents, a new graph |
 | 35m44s is the successful incremental Full cost | Initial run includes 23 early failures and one extra Windows sibling; build separate | Measure successful cost; do not reuse failing timings as success p95 |
 | Table order makes CP-46 wait for CP-41 | Scheduler prioritizes a ready serial command; importer ignores command Build cells | CP-46 builds its own evaluator before its check, in a distinct owned output |
+| Exit 0 proves a quoted command ran its audit | Windows command rows use cmd /d /s /c through ArgumentList; nested quotes can turn the PowerShell command into an echoed string | Bare quote-free chain plus exact `approved` line and fresh evaluator digest required |
+| Command-row Expect text is an automatic log assertion | Importer stores ExpectText; RowRunner returns from its command branch before test-roster Expect checks | Mandatory post-run assertion implements CP-46's Expect contract; runner green alone is insufficient |
 | The policy wrapper keeps its round-1 name/count | CARD-1613/top-up 38 uses LinuxOnlyWindowsExclusionPolicy with six internal assertions | Select the new method, keeping CP-36=3 and CP-45=7 TUnit results |
 | Execution policy contains class prices | Separate nightly-class-costs.json has O=25s/6 with five failures; S/T absent | Require native S/T/O cost refresh and separate cost digest before Full |
 | One Code delegate can supply both native lanes | Assigned worktrees execute on one OS | Separate Linux Code and native Windows Verify for every slice |
@@ -426,8 +434,50 @@ builds; `Pick` does not wait for a command row's Build cell, and
 `PlanTableImporter` ignores that cell. Consequently table order, `After`, or a
 nominal `CP-41` Build reference cannot supply this dependency. The shell's `&&`
 provides the actual dependency within CP-46, even when CP-46 is scheduled first.
+The command is bare and contains no inner quotes or `pwsh -Command` wrapper:
+Windows uses `cmd.exe /d /s /c` with `ProcessStartInfo.ArgumentList`, while Linux
+uses `/bin/sh -lc`. All command arguments are space-free relative paths; keep
+them that way. The working-directory path is supplied separately by the driver.
 Reject merely moving CP-46 to a later invocation: test-build outputs are removed
 after joined execution and are not a cross-run prerequisite.
+
+**Mandatory CP-46 output assertion, on each lane:** after terminal `wait` and
+before deleting its owned outputs, require build/audit exit 0, unchanged pins
+and exact committed graph, plus exactly one case-sensitive whole line `approved`
+in that run's `rows/CP-46/console.log`. `AuditPhases.Run` in
+`tools/Antiphon.LandGraphAudit.Core/PhaseClock.cs` emits it only after pass 1,
+canary copy and pass 2 all succeed; the audit script forwards that output.
+An echoed command, pre-check `digest=...` line or build success is insufficient.
+The table's supported Expect cell retains this assertion as `expectText`.
+`PlanTableImporter` does not turn it into a log matcher, and RowRunner's command
+branch does not inspect `Expect`. As in existing plan acceptance contracts,
+Code/Verify must run this explicit fail-closed assertion in addition to checking
+the runner result. Do not add an unsupported manifest property or claim that
+import/runner exit alone validates it.
+
+Execute this in PowerShell directly (or an owned scratch `.ps1` via `-File`),
+never as a quoted command-row wrapper. Set `$c1199FinalRunRoot` to the exact
+directory printed for this S-F run, not a glob or latest-run lookup; unset/missing
+input fails. Retain its output with the source SHA and run receipt:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($c1199FinalRunRoot)) { throw 'CP-46 run root required' }
+$c1199AuditLog = Join-Path $c1199FinalRunRoot 'rows/CP-46/console.log'
+$c1199AuditLines = [System.IO.File]::ReadAllLines($c1199AuditLog)
+if (@($c1199AuditLines | Where-Object { $_ -ceq 'approved' }).Count -ne 1) {
+    throw 'CP-46 incomplete: expected exactly one audit approved line'
+}
+$c1199AuditDll = 'tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll'
+$c1199AuditDigest = (Get-FileHash -LiteralPath $c1199AuditDll -Algorithm SHA256).Hash
+Write-Output ('CP-46 audit-output=approved evaluator-sha256=' + $c1199AuditDigest)
+```
+
+Missing/ambiguous output or DLL leaves CP-46 incomplete even if the runner is
+green. This read-only evidence assertion adds no build/test run and fits CP-46's
+existing five-minute estimate. The command-row audit covers all 53 rows: CP-46
+is the only command row; the other 52 are test filters, so no second command
+needs the quoting repair. Recheck that census after import.
 
 The scheduler acquires CP-46's host slot before starting its shell. Its explicit
 `-maxcpucount:1` stays within any positive grant; do not acquire a second nested
@@ -641,7 +691,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-43 | S-F | `CP-41` | both-final-confinement | `/*/*/CheckpointOutputConfinementTests/(imported_props_build_preserves_the_tracked_dependency*)\|(directory_build_props_build_preserves_the_tracked_dependency*)\|(conditional_import_build_preserves_the_tracked_dependency*)\|(transitive_import_build_preserves_the_tracked_dependency*)\|(unevaluable_import_is_refused_before_the_build*)` | V-1 V-2 R-1 R-4 | exactly 5 passed; 0 failed/skipped | 5 | 10 | true |
 | CP-44 | S-F | `CP-41` | windows-final-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusionPolicy*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
-| CP-46 | S-F | n/a | both-final-audit | `pwsh -NoProfile -Command "dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll"` | R-3 | build and audit exit 0; exact committed graph and unchanged pins | n/a | 5 | true |
+| CP-46 | S-F | n/a | both-final-audit | `dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll` | R-3 | build and audit exit 0; exact committed graph and unchanged pins; require exactly one whole line `approved` in rows/CP-46/console.log and fresh evaluator SHA-256 via mandatory post-run assertion | n/a | 5 | true |
 | CP-47 | S-B1 | `CP-13` | both-shared-git-regressions | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/(shape_staged_untracked*)\|(intermediate_output_path_tampering_is_reported*)\|(generated_target_file_tampering_is_reported*)\|(dirty_tracked_tree_is_refused_and_unmodified*)\|(tracked_snapshot_contains_committed_files*)\|(index_added_file_is_kept_and_indexed*)` | V-1 V-2 R-1 | exactly 6 passed; 0 failed/skipped | 6 | 11 | true |
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
