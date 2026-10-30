@@ -30,6 +30,26 @@ No AppHost/runner restart or source change is authorized or needed.
 
 ## Remaining evidence
 
+First native class completed: **ShapeConflict 17 total, 7 passed, 10 failed,
+0 skipped**, 12m51.773s. Build: 0 errors, 1,380 warnings, 9m56.13s. The failures
+are the ten shell-driven arrangements; Windows cannot resolve their POSIX
+commands. The existing directory-symlink refusal case passed unchanged.
+Raw evidence: `.antiphon/probe-6a38c2dd/shape-native/results.trx`,
+`shape-native.log`, `shape-rows.json`; all are local ignored artifacts. This is
+an investigative build with three local gate edits, not clean-source release
+qualification. The product source remains the base SHA above.
+
+Unedited console outcome:
+
+```text
+  total: 17
+  failed: 10
+  succeeded: 7
+  skipped: 0
+  duration: 12m 51s 773ms
+BUILD SLOT released lease=30108bdc-f780-426b-ba0b-62417fc8639b held=778s
+```
+
 Native executions, row-level outcomes, platform code references, exact failure
 mechanisms, timing, restoration and final publication are pending. This skeleton
 does not claim verification or a confirmed product gap.
