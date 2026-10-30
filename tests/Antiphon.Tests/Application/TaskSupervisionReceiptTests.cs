@@ -26,6 +26,42 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskSupervisionReceiptTests
 {
     [Test]
+    [Arguments("ended")]
+    [Arguments("legacy")]
+    public async Task C1610_Failure_watch_closes_without_a_report(string arm)
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await using (var db = h.Context())
+        {
+            if (arm == "legacy")
+                db.TaskSupervisionNotices.RemoveRange(await db.TaskSupervisionNotices.ToListAsync());
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.Status = SessionStatus.Stopped;
+            session.EndedAt = h.Clock.GetUtcNow().UtcDateTime;
+            await db.SaveChangesAsync();
+        }
+        await RecoverAsync(parent, h.Clock);
+        await using (var db = h.Context())
+        {
+            var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
+                && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate);
+            watch.ReasonCode.ShouldBe(arm == "legacy" ? "legacy_identity_unknown" : "final_transcript_scanned");
+            watch.NextAttemptAt.ShouldBeGreaterThan(h.Clock.GetUtcNow().UtcDateTime.AddYears(1));
+            (await TaskSupervisionNoticeService.Unresolved(db).AnyAsync(n => n.Id == watch.Id)).ShouldBeFalse(
+                "a closed report watch must stop protecting retention");
+            if (arm == "ended")
+                watch.ScanFrontier.ShouldBe(await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                    .MaxAsync(t => t.Sequence));
+        }
+        h.Clock.Advance(TimeSpan.FromDays(5));
+        await RecoverAsync(parent, h.Clock);
+        (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task C1610_Unknown_parent_backlog_does_not_starve_a_deliverable_notice()
     {
         await using var h = await TaskCeilingHarness.CreateAsync(role: AgentTaskRole.Deploy,
@@ -161,6 +197,15 @@ public sealed class TaskSupervisionReceiptTests
                 (await h.TaskAsync()).Result.ShouldBe(before.Result);
                 (await h.TaskAsync()).CompletedAt.ShouldBe(before.CompletedAt);
                 (await h.TaskAsync()).FailureReason.ShouldBe(before.FailureReason);
+                var after = await h.TaskAsync();
+                after.Status.ShouldBe(AgentTaskStatus.Failed);
+                after.NextStage.ShouldBe(before.NextStage);
+                after.NextHandoff.ShouldBe(before.NextHandoff);
+                await using var outcomeDb = h.Context();
+                (await outcomeDb.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.TaskId
+                    && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+                (await outcomeDb.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.TaskId
+                    && e.Type == AgentTaskEventType.Completed)).ShouldBeFalse();
             }
             notice.State.ShouldBe(TaskSupervisionNoticeState.Told);
             notice.ConfirmingPromptSequence.ShouldBe(receipt.Sequence);
