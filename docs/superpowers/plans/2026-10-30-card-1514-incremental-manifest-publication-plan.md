@@ -317,3 +317,32 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-plan-import -- dotn
 ```
 
 Raw logs, imported manifest and static totals stay ignored in `.antiphon/9fe15cf1-plan-validation/`. Importer default timeouts are retained in this validation-only manifest; Code must apply the explicit Performance budget before executing it. The tool output is removed at task completion; rebuild it before rerunning. Plan-only OS inventory, evidence-policy guard and merge-tree checks are recorded with exact checked SHAs in the task report; no runtime coverage is inferred from them. Windows CP-10/CP-11, recorded full-run byte replay, positive controls, candidate p95 and deployed/private watcher inventory remain OWED.
+
+### Round 3 (task c4f27e76)
+
+Read the entire round-2 re-review before editing. Source inspection at S3 `5548074c83f3731e45c16dee030724b0491734dc` confirmed its S1 ancestry, :1426 prior-JSON parse, :1435 replacement comparison, :1563 summary-only manifest reader, :1764 quality/complete formula, shared TimingRoot forwarding and the diagnostic byte-offset/UID reader. The live S3 tip `d1d49d8906c814152cd61ef31600156d257eb2ff` adds only its report; no publication code drift. The policy canonicalizer hashes JSON values and does not open `slowRegistry`; the allowlist path is hashed, its contents are not. CP-10 must recheck that property on the commissioned implementation source.
+
+Read-only AST-extracted production serializer/normalizer probes used pwsh 7.5.4 Core, .NET 9.0.10, Newtonsoft assembly 13.0.0.0, invariant culture/UI culture. The offset input `2026-10-30T03:02:00+05:00` settled to `10/29/2026 22:02:00` under UTC (+00:00), `10/30/2026 03:32:00` under Asia/Kolkata (+05:30), and `10/29/2026 18:02:00` under America/New_York (-04:00 at the fixture date). Each was a fixed point for the sampled row (including 1/3). In all three processes, soft-hyphen and composed/decomposed accent pairs matched under both PowerShell `-eq` and `StringComparer.InvariantCultureIgnoreCase`, but not OrdinalIgnoreCase; ordinary case pairs and tr-TR i/I also matched. These are diagnosis probes, not candidate V-3 or Windows receipts.
+
+The real importer at `5f7af7fb8b6dfa408f23e295ff44af4bc92e8eb8` accepted eleven rows. After the explicit Linux timezone-lane correction, the final import at `c9869b88a6a7676c6eb479f63578c6e85aa1ae85` accepted **11 rows / 3 builds / 41 minimum results / 49 whole estimated minutes**, with no importer warnings. Static source and manifest audits independently agree. Seven existing class-prefix selections have exactly one declaration each at S3, the four proposed RcManifest prefixes have none, and the only OR uses escaped table pipes plus parentheses/trailing stars on both operands. The source counts are 10 timing callers, 2 supervisor methods, 3 authority methods, 6 summary argument results and four exact single-method regressions. Candidate discovery/TRX roster checking remains Code work.
+
+One gated tool bootstrap took 5.55 s: 0 errors, 5 warnings in unchanged tool/HostCleanup sources; lease `efbfe468-f434-4f84-8779-0713aed0015f`, waited 0 s / held 7 s. Initial successful import used lease `d74bec4c-9f06-4f16-b316-42e9f3c811c0` (wait 0 s / held 2 s). The changed-lane reimport to the already-existing output refused with exit 2, `unrecorded-existing`, under lease `f7d0aeda-1abb-492e-a02f-713c7567a888` (wait 0 s / held 2 s). No file was overwritten or deleted: a fresh output path then succeeded under lease `14bf0806-ebaa-473d-870a-e5ecfb37f9a0` (wait 0 s / held 2 s). All leases released. **Zero product tests/checkpoint rows were executed.** No candidate performance, native replay or positive-control result is claimed.
+
+Validation scratch is ignored under `.antiphon/c4f27e76-plan-validation/`; final manifest is `checkpoints-v3-final.yaml`. Its importer default timeouts are validation-only: Code applies the Performance budget before execution. Reproduce after a gated isolated tool build, using a new output filename:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-plan-import -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c4f27e76-plan/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1514-incremental-manifest-publication-plan.md --out .antiphon/c4f27e76-plan-validation/checkpoints-fresh.yaml
+```
+
+The two owned alternate tool output directories are removed at completion; no product output or external data is deleted. At `5f7af7fb8b6dfa408f23e295ff44af4bc92e8eb8`, the evidence-policy guard found zero violations over five task commits; `git merge-tree --write-tree origin/master HEAD` was conflict-free against fetched master `98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`. Final-tip guard/merge-tree and remote publication are reported on settlement; no merge/rebase/target publication is performed.
+
+Pushed design slices (the final validation commit is identified in the task report):
+
+- `b0b3a698cdcc85d2efadd341026867ede93a771a`: revision skeleton within the first ten minutes.
+- `2e3a458cbf368ef201fb8a8a6736716078eef907`: writer-settled forms, keys and V-3.
+- `50d0825d9b7ed5081247ee0791df6937ede591b8`: corrupt-prefix successors and second-process witnesses.
+- `960318695642065c12502231e5fc00da04259182`: summary gap/state quality and complete=false witnesses.
+- `5f7af7fb8b6dfa408f23e295ff44af4bc92e8eb8`: one-rescan outage bound, S3 anchors, policy-hash finding and handoff.
+- `c9869b88a6a7676c6eb479f63578c6e85aa1ae85`: explicit Linux timezone lane; counts and filters unchanged.
+
+Native Windows CP-10/CP-11, historical full-run replay, candidate p95, positive controls and private/deployed watcher inventory remain **OWED**. Next: Code after S3 and the rc top-up carrying S1, with the same eleven-row roster; these documentation checks grant no qualification or activation credit.
