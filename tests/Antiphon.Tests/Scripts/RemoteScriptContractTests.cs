@@ -5469,7 +5469,9 @@ public sealed class RemoteScriptContractTests
         retire.ShouldContain("c1008_recycle \"$TEMP_PROJECT\"");
         Block(text, "c1008_recycle").ShouldContain("c1008_status_proof");
         Block(text, "c1008_status_proof").ShouldContain("TempRunnerNotRetired");
-        Block(text, "c1008_recycle").ShouldContain("compose_temp down -v");
+        Block(text, "c1008_recycle").ShouldNotContain("compose_temp down -v");
+        Block(text, "c1008_recycle").ShouldContain("c1609_target_intent");
+        Block(text, "c1008_recycle").ShouldContain("docker volume rm -- \"$name\"");
         retire.ShouldContain("temp-down.txt");
         retire.ShouldNotContain("docker image rm");
         Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
@@ -7108,8 +7110,12 @@ public sealed class RemoteScriptContractTests
         retire.ShouldNotContain("c849_require_ready");
         retire.ShouldNotContain("c849_budget_gate");
         var recycle = Block(remote, "c1008_recycle");
-        Order(recycle, "c1008_status_proof", "compose_temp down -v").ShouldBeTrue();
-        Order(recycle, "c1008_cache_preservation", "compose_temp down -v").ShouldBeTrue();
+        recycle.ShouldNotContain("compose_temp down -v");
+        Order(recycle, "c1008_status_proof", "c1609_target_intent").ShouldBeTrue();
+        Order(recycle, "c1609_recheck_target", "c1609_target_intent").ShouldBeTrue();
+        Order(recycle, "c1609_target_intent", "docker volume rm --").ShouldBeTrue();
+        Order(recycle, "docker volume rm --", "c1609_target_result").ShouldBeTrue();
+        Order(recycle, "c1008_cache_preservation", "c1609_target_intent").ShouldBeTrue();
         Order(Block(remote, "case_deploy_parent"), "c1008_recycle", "c849_budget_gate").ShouldBeTrue();
         Order(Block(remote, "case_deploy_parent"), "c849_budget_gate", "build_server2_images").ShouldBeTrue();
     }

@@ -9036,6 +9036,9 @@ c1008_recycle() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         C1008_TARGETS=("${C1008_PROJECT}_runner-state" "${C1008_PROJECT}_dind-data" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_work")
         C1609_APPLY_INVENTORY_FILE="$CASE_DIR/apply-audit.out"
+        # Preview holds the same rollout/cache locks as apply. Helper children
+        # explicitly drop these descriptors before entering their namespace.
+        c1008_lock
     fi
     local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha="" detail pending=true
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
@@ -9295,6 +9298,7 @@ c1008_recycle() {
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
                 || c1008_refuse RecycleResumeMismatch
             if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_recheck_target "$name" || c1008_refuse RecycleResumeMismatch
                 c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
             fi
             docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse

@@ -176,9 +176,12 @@ public sealed class DockerStackDocumentationTests
                 "manual main-volume removal cannot precede redeploy-old");
         // CARD-1609: temp deletion uses the v2 census. Main stays on the v1 collector.
         section.ShouldContain("four attempts", Case.Sensitive, "c1609-docs: temp census attempts");
+        section.ShouldContain("180-second monotonic budget", Case.Sensitive);
+        section.ShouldContain("docker volume rm -- <name>", Case.Sensitive);
+        section.ShouldContain("work is last", Case.Sensitive);
         section.ShouldContain("backoffs of 2s, 5s and 10s", Case.Sensitive, "c1609-docs: temp census backoff");
         section.ShouldContain("Drift and Unstable", Case.Sensitive, "c1609-docs: only those causes retry");
-        section.ShouldContain("PartialRefused", Case.Sensitive, "c1609-docs: a failed down -v stays partial");
+        section.ShouldContain("PartialRefused", Case.Sensitive, "c1609-docs: a failed exact delete stays partial");
         section.ShouldContain("Main keeps the v1 collector: three attempts", Case.Sensitive, "c1609-docs: main census is unchanged");
         section.ShouldContain("tempPrivateVolumes=0", Case.Sensitive, "c1609-docs: Retired zero is still required");
     }

@@ -62,6 +62,10 @@ id, the expected journal digest, and a reason file. It is a journal transition,
 not a delete. `verify-card0849-caches.ps1 -Case Retired` still requires
 `tempPrivateVolumes=0`. The publication audit is the content proof. The helper
 image is the tooling that runs that audit, not a substitute for it.
+Temp retirement deletes exact names in state, dind, tmp, work order, with a durable
+intent and fresh guards before each delete. Its four-attempt census uses one
+180-second monotonic budget and 2/5/10-second backoffs; a later refusal records
+PartialRefused and retains the remaining volumes.
 
 Still requires a human: `Reset`, Docker prune, recycling runner-state or cache volumes
 beyond that policy (main state/cache recycling requires explicit opt-in), deleting

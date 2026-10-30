@@ -147,7 +147,9 @@ c1609_persist() {
 
 c1609_target_snapshot() {
     local name facts mount identity raw labels_digest result='{}'
-    for name in "${C1008_TARGETS[@]}"; do
+    local -a names=("${C1008_TARGETS[@]}")
+    if [ "$#" = 1 ]; then names=("$1"); fi
+    for name in "${names[@]}"; do
         case "$name" in
             "${C1008_PROJECT}_work"|"${C1008_PROJECT}_runner-tmp"|"${C1008_PROJECT}_runner-state"|"${C1008_PROJECT}_dind-data") ;;
             *) return 1 ;;
@@ -174,6 +176,17 @@ c1609_target_snapshot() {
         result="$(printf '%s' "$result" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')" || return 1
     done
     printf '%s' "$result" | jq -cS .
+}
+
+c1609_recheck_target() {
+    local name="$1" file current expected daemon
+    file="$(c1609_retirement_root)/receipt.json"
+    c1609_custody "$file" file || return 1
+    daemon="$(docker info --format '{{.ID}}')" || return 1
+    [ "$daemon" = "$(jq -r .daemon "$file")" ] || return 1
+    current="$(c1609_target_snapshot "$name")" || return 1
+    expected="$(jq -cS --arg name "$name" '{($name):.fingerprints[$name]}' "$file")" || return 1
+    [ "$current" = "$expected" ]
 }
 
 c1609_write_ready_receipt() {

@@ -162,17 +162,65 @@ c1609_seed_bytes() {
     printf 'disposable-fixture classifier=v1 path=%s commit=%s\n' "$(rel_repo "$rep")" "$oid"
 }
 
+c1609_inventory_git_file() {
+    local file="$1" value
+    [ -e "$file" ] || { [ ! -L "$file" ]; return $?; }
+    [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] || return 2
+    [ "$(stat -c %h -- "$file")" = 1 ] || return 2
+    value="$(sha256sum < "$file" | cut -d' ' -f1)" || return 2
+    printf '%s\0%s\0' "${file#"$top/"}" "$value" >> "$c1609_metadata_roster"
+}
+
+c1609_inventory_git_admin() {
+    local admin="$1" name directory file
+    for name in HEAD ORIG_HEAD FETCH_HEAD REBASE_HEAD BISECT_HEAD MERGE_AUTOSTASH AUTO_MERGE \
+        index config config.worktree packed-refs shallow commondir gitdir; do
+        c1609_inventory_git_file "$admin/$name" || return 2
+    done
+    for directory in "$admin/refs" "$admin/logs"; do
+        [ -e "$directory" ] || { [ ! -L "$directory" ] || return 2; continue; }
+        [ -d "$directory" ] && [ ! -L "$directory" ] || return 2
+        find -P "$directory" -mindepth 1 -print0 > "$scratch/c1609-meta-paths" 2>/dev/null || return 2
+        sort -z "$scratch/c1609-meta-paths" > "$scratch/c1609-meta-sorted" || return 2
+        while IFS= read -r -d '' file; do
+            [ -d "$file" ] && [ ! -L "$file" ] && continue
+            c1609_inventory_git_file "$file" || return 2
+        done < "$scratch/c1609-meta-sorted"
+    done
+}
+
+c1609_inventory_git_state() {
+    local c1609_metadata_roster="$scratch/c1609-local-metadata" admin value
+    : > "$c1609_metadata_roster" || return 2
+    c1609_inventory_git_admin "$top" || return 2
+    if [ -e "$top/worktrees" ] || [ -L "$top/worktrees" ]; then
+        [ -d "$top/worktrees" ] && [ ! -L "$top/worktrees" ] || return 2
+        find -P "$top/worktrees" -mindepth 1 -maxdepth 1 -print0 > "$scratch/c1609-meta-admins" 2>/dev/null || return 2
+        sort -z "$scratch/c1609-meta-admins" > "$scratch/c1609-meta-admins-sorted" || return 2
+        while IFS= read -r -d '' admin; do
+            [ -d "$admin" ] && [ ! -L "$admin" ] || return 2
+            c1609_inventory_git_admin "$admin" || return 2
+        done < "$scratch/c1609-meta-admins-sorted"
+    fi
+    value="$(sha256sum "$c1609_metadata_roster" | cut -d' ' -f1)" || return 2
+    printf 'inventory-local-state=%s common=%s\n' "$value" "$(digest "$top")"
+}
+
 c1609_prepare_common() {
     local rep="${common_repo[$top]}"
     c1609_skip_publication=0
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 0
+    # Only Git metadata is hashed. Agent evidence and ignored payloads are never
+    # opened by this inventory. Hashes bind reflog sides and linked-admin files
+    # as well as the ref/object roster, without exporting their raw bytes.
+    c1609_inventory_git_state || refuse_unknown local-inventory 2 "$rep"
     # Hash names as well as OIDs: adding a published ref still changes the local
     # inventory. Remote advertisements are deliberately outside this digest.
     local ref_digest
     git --git-dir="$top" for-each-ref --format='%(refname)%00%(objectname)%00%(objecttype)' \
-        > "$scratch/c1609-local-refs" 2>/dev/null || return 2
-    ref_digest="$(sha256sum "$scratch/c1609-local-refs" | cut -d' ' -f1)" || return 2
-    printf 'inventory-local-refs=%s common=%s\n' "$ref_digest" "$(digest "$top")"
+        > "$scratch/c1609-local-refs" 2>/dev/null || refuse_unknown local-inventory 2 "$rep"
+    ref_digest="$(sha256sum "$scratch/c1609-local-refs" | cut -d' ' -f1)" || refuse_unknown local-inventory 2 "$rep"
+    printf 'inventory-local-refs=%s common=%s\n' "$ref_digest" "$(digest "$top")" || refuse_unknown local-inventory 2 "$rep"
     if c1609_origin_configured; then
         return 0
     fi
