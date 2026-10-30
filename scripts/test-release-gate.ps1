@@ -1622,7 +1622,10 @@ function Test-C599_DraftRecovery {
 function Get-C599NotesCredentialFindings {
     # Return metadata only: note contents must never reach a failure diagnostic.
     param([string]$Notes)
-    $patterns = [ordered]@{ bearer = 'Bearer '; token = 'token' }
+    # A token label may be underscore-delimited (GITHUB_TOKEN/access_token).
+    # An embedded word in a test class, such as RefreshGithubTokenRemoteCommandTests,
+    # is not a credential label. PowerShell -match remains case-insensitive.
+    $patterns = [ordered]@{ bearer = 'Bearer '; token = '(?<![a-z0-9])token(?![a-z0-9])' }
     $lines = $Notes -split "`r?`n"
     for ($i = 0; $i -lt $lines.Count; $i++) {
         foreach ($name in $patterns.Keys) {
