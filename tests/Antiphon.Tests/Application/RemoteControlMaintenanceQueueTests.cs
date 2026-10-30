@@ -297,7 +297,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    [Timeout(10_000)]
+    // Includes cold DI/EF setup: two narrow-run first cases exhausted 10s before recovery.
+    [Timeout(30_000)]
     [Arguments("input")]
     [Arguments("menu")]
     [Arguments("working")]
