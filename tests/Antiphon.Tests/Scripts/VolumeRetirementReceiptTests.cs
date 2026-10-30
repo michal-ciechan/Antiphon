@@ -308,6 +308,7 @@ public sealed class VolumeRetirementReceiptTests
             record["intents"]!.AsArray().Count.ShouldBe(4);
             record["effects"]!.AsArray().Count.ShouldBe(4);
             record["intents"]!.AsArray().All(row => row!["result"]!.GetValue<string>() is "removed" or "removed-observed").ShouldBeTrue();
+            fixture.ReloadDocker();
             var again = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
             again.Exit.ShouldBe(0, "J8 final receipt copy/replay does not repeat deletions; " + again.Output);
             fixture.Removed.Length.ShouldBe(4);

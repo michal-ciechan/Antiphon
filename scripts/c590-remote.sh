@@ -9033,7 +9033,7 @@ c1008_recycle() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
     require_lane host
     c1609_load_retirement
-    C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0
+    C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0; C1609_RESUME_VALIDATED=0
     unset C1609_APPLY_INVENTORY_FILE
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     # Inventory is a docker --env only. A shell export must not reach the helper.
