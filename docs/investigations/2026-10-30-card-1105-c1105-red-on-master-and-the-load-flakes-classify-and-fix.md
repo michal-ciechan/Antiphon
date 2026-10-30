@@ -1,6 +1,6 @@
 # C1105 red on master and the load flakes: classify and fix
 
-Investigation in progress, 2026-10-30. Task `1ada4d4c`; assigned source `ade54222543381e2e1b31ad79d8ae33a4035f70b` on `feat/card-task-1ada4d4c`.
+Investigation evidence, 2026-10-30. Task `1ada4d4c`; assigned source `ade54222543381e2e1b31ad79d8ae33a4035f70b` on `feat/card-task-1ada4d4c`.
 
 This Investigate stage records evidence and classification only. No repair, approval regeneration, deployment, or safety-deadline change is permitted by its stage contract.
 
@@ -51,7 +51,7 @@ These are distinct observations. Historical labels of “load flake” establish
 | C1105 resume preservation | **TEST DEFECT, confirmed** | Missing extracted function; named master and rc both reproduce; pre-change fixture passes; details above | None in this Investigate stage | C1105 fixture / CARD-1607 dependency integration; Plan | Rollout-safety witness fails before the successful resume arm; a test defect is not approval to recycle |
 | C1364 wrapper retire volumes | **Unresolved; environment/native-child failure is a live hypothesis** | Prior review `.antiphon/task-8ef7bb9e.md:154` reports exit 139, isolated master/tip passes; current exact method passes 1/1 | None | Script-test/PowerShell runtime owner; retain the first child stderr, failing vector and crash evidence if it recurs | Exit 139 is not evidence of a wait timeout; the root of the native exit is unknown |
 | C1008 legacy jq roster, failing-shell | **Unresolved; environment or test timing/roster failure** | Prior review `.antiphon/task-8ef7bb9e.md:155` reports failure under load and 4/4 isolated passes; no original assertion or deadline available | None | Rolling test harness owner; preserve failed T-number, child exit, elapsed time and `harness.log` | Raising a timeout would obscure an unclassified failure; every mode executes 62/66 child invocations |
-| C1008 dry-run cleanup receipt | **Unresolved; pipe peer exit, cause unknown** | Brief reports one broken pipe; source has several nested process boundaries and a 60-second preview child ceiling; fresh witness pending below | None | Preview fixture owner; capture exact exception stack, producer/consumer PIDs, child exit and `preview-helper-stderr` | Broken pipe alone does not distinguish a crash, early exit, timeout or program defect |
+| C1008 dry-run cleanup receipt | **ENVIRONMENT confirmed for this runner's fresh status-127 failure; historical broken pipe unresolved** | Missing `chroot` on inherited child PATH; 127 reproduced twice, then 1/1 passed with a child-only PATH adjustment; trace below | No source change | Runner image/child prerequisite owner; preserve raw stderr for the historical pipe incident | This environment witness must not be mislabeled as reproducing the earlier broken pipe |
 | C1385 narrow graph registry | **ENVIRONMENT/elapsed-copy refusal mechanism reconstructed; underlying delay unconfirmed** | Brief's exact `evaluating Antiphon.sln copy exceeded 5 s` message is emitted only by the copy-phase safety refusal described below | None; **do not widen the 5-second bound** | LandGraphAudit owner; run read-only `-Check` at recorded load and retain copy timing and refusal output | A timed-out copy cannot approve the graph; apparent load correlation does not prove CPU vs IO vs scheduling |
 
 ### Actual deadline boundaries at the assigned rc
@@ -72,3 +72,17 @@ The C1105 audit family completed 165 cases: 164 passed, only the resume case fai
 The first preview rerun failed at `RollingVolumeRecycleScriptTests.cs:839`: `RecycleGitAuditUnknown audit check=preview-helper status=127 repo=. detail=`, test duration 19.773 s. This is a new observed signature, distinct from the brief's broken pipe; diagnosis continues without changing the test.
 
 The first C1385 rerun failed in 1.006 s with `audit refused: source differs from HEAD; commit source and pins before auditing`. The uncommitted change was this report's two citation-line corrections. This is an **investigator-created setup refusal**, not an inherited graph failure and not a copy-timeout reproduction. The refusal is retained at `c1385-alone/run.log:23`; commit the documentation correction before the clean rerun.
+
+## Confirmed fresh preview environment failure
+
+The unmodified method failed twice: first 19.773 s test time, then 11.665 s with a Node diagnostic preload that only records the existing `spawnSync` result. The underlying read-only helper returned **127 in 0.105 s**, well below its 60-second limit. Unedited `preview-child-trace.jsonl:1`:
+
+```json
+{"exe":"unshare","status":127,"signal":null,"seconds":0.105,"stderr":"unshare: failed to execute chroot: No such file or directory\n","stdout":""}
+```
+
+`scripts/fixtures/c1008-fake-docker.sh:237` invokes bare `chroot` via `unshare`. `command -v chroot` fails on the inherited child PATH, although `/usr/sbin/chroot` exists, root:root, mode 0755, 48,112 bytes, SHA-256 `dc44f0ec5a5f7d2a881061b047b7bbd8e9de3b41db5daadbd672ebdbf24190b6`. The fake helper saves stderr in `preview-helper-stderr` (line 251), then exits 127 without forwarding that stderr to the production wrapper's error file (line 253). That accounts for the empty `detail=` diagnostic.
+
+Appending `/usr/sbin:/sbin` to **only the test child's** inherited PATH made the exact method pass 1/1, 71.127 s test-run duration / 73.425 s wall. No executable was installed or changed; no assertion, safety bound or production setting was altered. The subsequent C1008 class-family run uses that same explicitly qualified child PATH. The earlier reported broken pipe remains unconfirmed: the new failure is a different, now explained signature.
+
+C1385 clean-tree execution passed 1/1 (31.616 s wall), then the two C1385 methods in its class passed 2/2 (83.895 s wall). No 5-second copy refusal was reproduced. The supplemental graph-safety run initially selected zero tests (exit 8): its OR operands lacked the wildcard suffix required by pinned TUnit discovery, as documented in `docs/testing-and-build.md:1121`. That invocation is preserved as a selection error, not a passing check; a canonical-filter rerun follows.
