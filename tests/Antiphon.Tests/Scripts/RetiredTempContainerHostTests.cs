@@ -454,6 +454,10 @@ public sealed class RetiredTempContainerHostTests
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
         foreach(var work in new[]{"published","dirty","unpublished"}) {
             using var f=Fixture("session-runner");
+            // Both the legacy path and the read-only helper must see the same
+            // volume bytes; /work in the fixture is an alias, not a second repo.
+            Directory.Delete(Path.Combine(f.Root, "work"));
+            Directory.CreateSymbolicLink(Path.Combine(f.Root, "work"), VolumeRetirementFixture.WorkMount(f));
             var setup=await C994ScriptProcess.Run("bash","-c",$$"""
                 set -euo pipefail
                 git init -q --bare '{{f.Root}}/origin'
@@ -467,6 +471,9 @@ public sealed class RetiredTempContainerHostTests
                 git -C '{{f.Root}}/work/repo' push -qu origin main
                 """);setup.Exit.ShouldBe(0,"c994-audit-required: real Git setup; "+setup.Output);
             (await Cleanup(f)).Exit.ShouldBe(0,"c994-image-required: preserve original digest");PinReceiptImage(f,"sha256:"+new string('b',64));f.ReloadDocker();
+            // Establish Ready while clean, then mutate actual target contents.
+            // Missing Ready must not mask the dirty/unpublished refusal vectors.
+            await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             if(work=="dirty")File.WriteAllText(f.Root+"/work/repo/dirty","unpublished-sentinel");
             if(work=="unpublished") {
                 File.WriteAllText(f.Root+"/work/repo/local","unpublished-sentinel");
@@ -474,14 +481,12 @@ public sealed class RetiredTempContainerHostTests
                 commit=await C994ScriptProcess.Run("git","-C",f.Root+"/work/repo","commit","-qm","unpublished");commit.Exit.ShouldBe(0);
             }
             var before=f.Docker["volumes"]!.ToJsonString();
-            // Published work is the only exit-0 apply. A Ready preview keeps that delete reachable.
-            // Dirty and unpublished must still refuse at the content audit, before this gate.
-            if(work=="published")
-                await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
+            var previousAudits = f.Trace.Count(a=>a[0]=="run"&&a.Contains("--entrypoint"));
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
-            f.Trace.Where(a=>a[0]=="create").ShouldNotBeEmpty("c994-image-required: offline audit reached");
-            f.Trace.Where(a=>a[0]=="create").All(a=>a.Contains("sha256:"+new string('b',64))&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c994-image-required: exact pinned readonly uid-1654 helper");
+            var audits = f.Trace.Where(a=>a[0]=="run"&&a.Contains("--entrypoint")).Skip(previousAudits).ToArray();
+            audits.ShouldNotBeEmpty("c994-image-required: apply offline audit reached");
+            audits.All(a=>a.Contains("sha256:"+new string('b',64))&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c994-image-required: exact pinned readonly uid-1654 helper");
             if(work!="published") {
                 run.Output.ShouldContain(work=="dirty"?"RecycleWorktreeDirty":"RecycleUnpublishedWork",customMessage:"c994-audit-required");
                 f.Removed.ShouldBeEmpty("c994-audit-required");f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-audit-required: generations retained");

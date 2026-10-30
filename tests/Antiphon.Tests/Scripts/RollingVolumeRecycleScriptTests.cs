@@ -2829,10 +2829,15 @@ public sealed class RollingVolumeRecycleScriptTests
             applied.Output.ShouldNotContain("RecycleGitAuditUnknown");
             applied.Output.ShouldNotContain("RecycleUnpublishedWork");
             applied.Output.ShouldNotContain("RecycleWorktreeDirty");
-            var created = fixture.Trace.Where(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint")).ToArray();
-            created.Length.ShouldBeGreaterThan(0, "private-origin: apply forwards the proof bind");
-            foreach (var args in created)
+            var audits = fixture.Trace.Where(args => args.Length > 0 && args[0] == "run" && args.Contains("--entrypoint")).ToArray();
+            audits.Length.ShouldBeGreaterThan(0, "private-origin: apply forwards the proof bind");
+            foreach (var args in audits)
             {
+                args.ShouldContain("--rm");
+                args.ShouldContain("--init");
+                args.ShouldContain("--cap-drop");
+                args.ShouldContain("1654:1654");
+                args.ShouldContain("C1609_CONTENT_V2=1");
                 args.ShouldContain("type=bind,source=" + proofDir + ",target=/c1008-host-proof,readonly");
                 args.ShouldContain("C1008_HOST_PROOF=/c1008-host-proof");
             }

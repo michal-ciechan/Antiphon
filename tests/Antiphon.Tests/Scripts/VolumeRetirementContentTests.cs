@@ -90,6 +90,24 @@ public sealed class VolumeRetirementContentTests
     public async Task Private_origin_advanced_head_uses_real_host_proof()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
+        // A refusal still has to drain its producer. An early diagnostic reader
+        // must not turn a large, classified audit failure into SIGPIPE/exit 1.
+        foreach (var hostCase in new[] { "retire-temp-runner", "retire-temp-inventory" })
+        {
+            using var diagnostic = new C1008HostFixture(main: false);
+            var refused = await diagnostic.Run(hostCase, """
+                c1008_audit_readonly() {
+                    printf 'audit check=stream-fault status=2 repo=.\n'
+                    printf '%1048576s\n' '' | tr ' ' x
+                    return 2
+                }
+                """, dryRun: hostCase == "retire-temp-runner");
+            refused.Exit.ShouldBe(2, "H7 large audit refusal is typed, not a broken pipe; " + refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown audit check=stream-fault status=2 repo=.");
+            refused.Output.ShouldNotContain("UnhandledExit");
+            refused.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            diagnostic.Removed.ShouldBeEmpty();
+        }
         var root = Path.Combine("/var/tmp", "c1008-host-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         using var fixture = new C1008HostFixture(main: false, root);
