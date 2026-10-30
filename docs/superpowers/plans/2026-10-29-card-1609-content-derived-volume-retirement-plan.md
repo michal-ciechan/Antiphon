@@ -16,7 +16,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 |---|---|---|
 | D-1 | Whole-minute checkpoint estimates; import verification recorded below | Done: original 11 rows import successfully after correction |
 | D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Done: baseline and preservation R6 |
-| D-3 | Complete read-only offender preview, human and machine forms | Pending |
+| D-3 | Complete read-only offender preview, human and machine forms | Done: D-15, C11 |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Pending |
 | D-5 | Bounded census retries, durable partial/resume behavior | Pending |
 | D-6 | Retained-volume deploy refusal, C849 contract, external caches | Pending |
@@ -85,6 +85,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 | Card assumption | Code / evidence at the pinned source | Consequence |
 |---|---|---|
 | All preview failures are still the original dry-run mismatch | Base `c994_lookup_image` accepts a named preview and has cross-SHA fallback, but still rejects conflicting or missing images and binds historical cleanup context. | Replace the dependency, not just one refusal branch. |
+| The audit already lists every blocker | Landed `fail`, `refuse_unknown`, `refuse_dirty` and `refuse_unpublished` exit 2 immediately; one finding hides later repositories. | D-15 adds complete v2 collection; v1 behavior stays separate. |
 | A passing preview is a delete capability | `c1008_recycle` returns from preview without an authorizing journal; missing image can yield `auditPending=true`. Apply independently audits. | Introduce explicit Ready proof; pending never authorizes apply. |
 | Current tooling means current creating SHA | Apply falls back to `session-testing:${SHA:0:12}`; preview reads `.image` from cleanup. `case_retire_temp_runner` requires old stack.env. | Resolve trusted current audit runtime separately from retirement history and deployment `-Sha`. |
 | Audit is already offline and equally hardened | Apply uses create/start/rm, read-only work/tmp mounts, but lacks preview's cap/security/init flags. Preview runs on the default network; neither uses `--network none`. | One owned, offline, read-only helper implementation for both phases. |
@@ -100,7 +101,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 
 ## Decisions
 
-D-1 through D-14 are the stated defaults for review. They make the design concrete;
+D-1 through D-15 are the stated defaults for review. They make the design concrete;
 they do not authorize relaxing a refusal. Operator questions are collected below.
 
 **D-1 — Separate retirement from deployment, starting with retired temp.** Add a
@@ -281,7 +282,7 @@ complete publication proof AND trusted Ready receipt AND no current references`.
    volume receipt. No workload container/volume removal occurs in preview.
 2. Once container absence is established, inventory all target roles, obtain the
    host proof, validate again, join/remove the owned audit helper, and publish
-   Ready with zero findings and its target/incarnation roster. Failed observation
+   Ready with zero findings and its target/incarnation roster. D-15 collects all findings before refusal; failed observation
    is Refused, not an empty roster. Release locks; no lock survives waiting for
    an operator to invoke apply.
 3. Apply requires a protected unexpired Ready receipt for the exact operation.
@@ -395,6 +396,42 @@ observations, so sharing their mutable evidence is forbidden. Share expensive
 test setup once per run. Exact checkpoint selection below is the ordinary scope;
 no full Unit/assembly or old 34-case Docker comparison is implicitly added.
 
+**D-15 — List every offender in one read-only preview.** Both scripted DryRun and
+manual Preview use the same list-all mode by default. Replace v2's first-failure
+exit path with a typed findings collector; preserve v1's fail-fast adapter.
+Enumerate each common directory/worktree/role once, keep scanning independent
+locations after a dirty/unpublished/unknown finding, and request host proof for
+all safely identifiable repositories even if another repository already refused.
+Do not restart an audit per finding. A broken directory is a typed unknown with
+its exact path and scope; continue other safely traversable scopes. It is never
+represented as an empty or complete subtree. Fatal loss of custody, confinement,
+or time/output budget stops the scan with complete=false, preserving every row
+already collected and listing each unvisited scope. Neither findings nor an
+incomplete enumeration can produce Ready or permit any container/volume deletion.
+
+Write streamed `findings.jsonl` plus a strict summary (complete, visited/unvisited
+scopes, counts by reason, artifact digest), and render `proof.md` from those rows.
+Each row carries volume name/role, repository and admin/worktree paths relative to
+that volume, location kind, ref/pseudoref/reflog-side/index path, full object ID and
+type where present, offending commit IDs (all unpublished retained commits, not
+only their tip), reason code and safe recovery advice. Non-Git findings use null
+objectId/commitId with an explicit not-applicable reason. Deduplicate identical
+object proofs, never their distinct location provenance. Use reversible JSON path
+escaping and deterministic ordering, without reading evidence/credential payloads.
+Raw credential-bearing origins or Git stderr never enter either form. To preserve
+existing secret-name redaction, credential-shaped path components are represented
+by an opaque finding ID and safe redacted path in exported artifacts; the exact
+path mapping is retained only in the protected host-local roster, never transcript
+or exported receipt. The operator uses that roster locally for exact recovery.
+Both forms state that limitation; no redacted path is silently called exact.
+
+A successful complete inventory with findings is Refused with the whole roster;
+a successful zero-finding inventory may continue to Ready only through all other
+gates. No pagination, clipping or summary-only counts substitute for the stored
+roster. Recovery is outside this command; run one fresh complete preview afterward.
+Rejected: five redeploy attempts to discover five blockers, suppressing later
+findings after the first unsafe repo, or calling an interrupted scan complete.
+
 ## Locks, concurrency and deletion failure modes
 
 Canonical order: host rollout lock (existing FD 8) -> cache-maintenance lock
@@ -490,7 +527,7 @@ made by this Plan task.
 | Slice | Files and concrete change | Tests / closure |
 |---|---|---|
 | S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. | C1/C2/J1 fail on intended readiness/no-deletion assertions against unchanged production at the task base; CP-1/2. |
-| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C10, H1-H6 and R3-R5. |
+| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C11, H1-H6 and R3-R6; D-15 full-roster output. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch of `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations. | J1-J10, R1/R2 and N2/N3. |
 | S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W5. ASCII transport scripts; LF shell files. |
 | S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..11; update runbook command examples and refusal recovery. |
@@ -607,6 +644,7 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | C8 | `Audit_identity_and_namespace_are_stable` | Current digest resolution, UID, offline flags, /work and /tmp, helper scratch and mounts; PC: move /work or drop readonly. N1 supplies kernel evidence. |
 | C9 | `No_content_or_credentials_are_executed_or_exported` | Repo hook/fsmonitor/filter/config and credential sentinel data cannot execute/leak; host scanner records names only. PC: allow hook or raw stderr. |
 | C10 | `Absent_work_does_not_skip_other_volumes` | Work absent plus unsafe state/tmp/dind still refuses; all absent is a typed no-op, creates nothing. PC: early return from absent work. |
+| C11 | `Preview_lists_every_offender_without_effects` | Two repos across work and tmp with distinct unpublished/reflog/FETCH_HEAD commits plus dirty/evidence/state findings: assert every exact location/kind/OID in JSONL and rendered proof, no deletes. An unreadable repo still lists other repos, marks unvisited scope and complete=false. PC: restore first-finding exit. |
 | J1 | `Preview_receipt_is_required_and_consumed` | D-7/8: direct low-level apply without Ready refuses; wrapper auto-preview uses exact durable proof once. Red at base: low-level apply deletes despite absent authorizing preview. |
 | J2 | `Receipt_shape_custody_and_digest_are_strict` | Invalid/duplicate fields, foreign owner/links/writable ancestor/truncated files/digest mismatch/failed flush refuse. PC: trust copied PASS or skip custody. |
 | J3 | `Volume_incarnation_and_operation_are_bound` | Alter name/CreatedAt/daemon/inode/role/labels/op/nonce individually; each refuses. PC: compare name only. |
@@ -683,7 +721,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
 | CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 1 | true |
-| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C10,J1-J10 | all 20 listed methods, 0 failed/skipped | 20 | 5 | true |
+| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C11,J1-J10 | all 21 listed methods, 0 failed/skipped | 21 | 5 | true |
 | CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 | all 11 listed methods, 0 failed/skipped | 11 | 1 | true |
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
@@ -719,7 +757,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ## Operator questions and independent review gates
 
-The plan is written under D-1..D-14 rather than waiting for answers. These are
+The plan is written under D-1..D-15 rather than waiting for answers. These are
 explicit review choices, not permission questions during this Plan:
 
 - Confirm D-2 retains reflog and original tag-object protection despite the manual
