@@ -35,6 +35,11 @@ public class ClaudeDialogWatchdogCanaryTests
         await versionProcess.WaitForExitAsync(ct);
         var version = Regex.Match(versionText, @"\d+\.\d+\.\d+").Value;
         version.ShouldNotBeEmpty();
+        var debugRoot = Environment.GetEnvironmentVariable("ANTIPHON_C680_DEBUG_ROOT");
+        var model = string.IsNullOrWhiteSpace(debugRoot) ? "haiku"
+            : Environment.GetEnvironmentVariable("ANTIPHON_C680_DEBUG_MODEL") ?? "haiku";
+        if (model is not ("haiku" or "sonnet" or "opus"))
+            throw new InvalidOperationException("C680 diagnostic model must be haiku, sonnet or opus.");
 
         foreach (var question in new[] { false, true })
         {
@@ -61,6 +66,8 @@ public class ClaudeDialogWatchdogCanaryTests
                 f.Harness.Runtime.TryRemove(f.SessionId, out var fake).ShouldBeTrue();
                 if (fake is not null) await fake.DisposeAsync();
                 var generation = await f.GenerationAsync();
+                var debug = new ClaudeDialogCanaryDiagnostics(debugRoot, root, cwd, f.SessionId,
+                    version, model, question ? "AskUserQuestion" : "Bash");
                 var env = new Dictionary<string, string>
                 {
                     ["CLAUDE_CODE_CHILD_SESSION"] = "", ["CLAUDE_CODE_SESSION_ID"] = "",
@@ -69,7 +76,7 @@ public class ClaudeDialogWatchdogCanaryTests
                     ["ANTIPHON_API"] = "", ["ANTIPHON_ORCHESTRATOR_INSTRUCTIONS"] = ""
                 };
                 await runner.StartAsync(f.SessionId, new AgentLaunchSpec("c680-native", AgentKind.ClaudeCode,
-                    exe, ["--session-id", f.SessionId.ToString("D"), "--model", "haiku", "--permission-mode", "default",
+                    exe, ["--session-id", f.SessionId.ToString("D"), "--model", model, "--permission-mode", "default",
                         "--setting-sources", "", "--settings", settings, "--strict-mcp-config", "--tools", "Bash,AskUserQuestion"],
                     env, cwd, 120, 40, SessionId: f.SessionId, AcceptedStartedAt: generation), ct);
                 runner.ActualBackend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty);
@@ -80,6 +87,7 @@ public class ClaudeDialogWatchdogCanaryTests
                     var empty = ClaudeScreen.TryReadComposer(screen, out var content) && ClaudeScreen.ComposerContentIsEmpty(content)
                         && ClaudeDialogObservation.Observe(screen).State == ClaudeDialogState.Clear;
                     var settled = empty && previous is not null && ClaudeScreen.IsSettled(previous, screen);
+                    debug.Composer(screen, empty, settled);
                     previous = empty ? screen : null;
                     return settled;
                 }, TimeSpan.FromSeconds(30), ct);
@@ -94,10 +102,12 @@ public class ClaudeDialogWatchdogCanaryTests
                 {
                     var snapshot = await runner.GetSnapshotAsync(f.SessionId, ct);
                     var transcript = await runner.GetTranscriptAsync(f.SessionId, ct);
-                    return snapshot.Dialog?.State == ProviderDialogState.Blocked
-                        && transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
-                            && PromptSubmissionMatch.IsCompleteIn(probe, e.Text))
-                        && transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
+                    var blocked = snapshot.Dialog?.State == ProviderDialogState.Blocked;
+                    var submitted = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
+                        && PromptSubmissionMatch.IsCompleteIn(probe, e.Text));
+                    var called = transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
+                    debug.Observe(snapshot, transcript, blocked, submitted, called);
+                    return blocked && submitted && called;
                 }, TimeSpan.FromMinutes(2), ct);
                 File.Exists(marker).ShouldBeFalse();
                 var before = await runner.GetSnapshotAsync(f.SessionId, ct);
