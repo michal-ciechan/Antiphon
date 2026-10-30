@@ -673,9 +673,6 @@ function Get-NamespaceCensus {
             'Antiphon.Tests.Checkpoints.SafeDeleteProcessBoundaryTests.*'
             'Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests.*'
             'Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests.unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted'
-            'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_directory_on_file'
-            'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_file_on_directory'
-            'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_symlink_on_file'
         )
         linuxSkips = @(
             'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
