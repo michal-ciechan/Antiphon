@@ -49,8 +49,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
     public void C1210_Native_linux_entries_guard_before_work()
     {
         var methods = SourceMethods();
-        WindowsUnitSkipRoster.Native.Length.ShouldBe(84, "c1210-native-identity-count");
-        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(95, "c1210-native-result-count");
+        WindowsUnitSkipRoster.Native.Length.ShouldBe(85, "c1210-native-identity-count");
+        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(96, "c1210-native-result-count");
         foreach (var entry in WindowsUnitSkipRoster.Native)
         {
             var matches = methods.Where(method => Identity(method) == entry.Identity).ToArray();

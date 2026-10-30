@@ -317,6 +317,133 @@ public sealed class VolumeRetirementReceiptTests
         failures.ShouldBeEmpty("J8 crash/resume safety; " + string.Join(" | ", failures));
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Lock_order_excludes_supported_writers()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var pc = Environment.GetEnvironmentVariable("C1609_J7_SKIP_ROLLOUT_LOCK") == "1";
+        Console.WriteLine("J7 skip-rollout positive control=" + pc);
+        using var holder = new C1008HostFixture(main: false);
+        var held = Path.Combine(holder.Root, "held");
+        var release = Path.Combine(holder.Root, "release");
+        var first = holder.Run("retire-temp-runner", $"""
+            eval "$C1008_CACHE_LOCK_SOURCE_BODY"
+            c1008_status_proof() {
+                touch {{VolumeRetirementFixture.Quote(held)}}
+                while [ ! -f {{VolumeRetirementFixture.Quote(release)}} ]; do sleep 0.02; done
+                write_result true '' 0
+            }
+            """, dryRun: true);
+        var fixtures = new List<C1008HostFixture>();
+        var runs = new List<Task<(int Exit, string Output)>>();
+        try
+        {
+            await WaitForBarrier(held, first);
+            foreach (var entry in new[] { "deploy-temp-runner", "preview", "resume" })
+            {
+                var contender = new C1008HostFixture(main: false);
+                fixtures.Add(contender);
+                var requested = Path.Combine(contender.Root, "requested");
+                var acquired = Path.Combine(contender.Root, "acquired");
+                var extra = $"""
+                    SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(holder.Root, "server"))}}
+                    eval "$C1008_CACHE_LOCK_SOURCE_BODY"
+                    flock() {
+                        printf '%s\n' "$3" >> {{VolumeRetirementFixture.Quote(requested)}}
+                        command flock "$@" || return $?
+                        printf '%s\n' "$3" >> {{VolumeRetirementFixture.Quote(acquired)}}
+                    }
+                    c1008_status_proof() { write_result true '' 0; }
+                    c1609_temp_retirement_clearable() { write_result true '' 0; }
+                    """;
+                if (entry == "resume") extra += "\nC1008_RESUME=1";
+                // Test-only method-scoped PC. Production source and the shared
+                // fixture remain unchanged; only this owned child loses FD 8.
+                if (pc) extra += "\nc1008_rollout_lock() { :; }";
+                var run = contender.Run(entry == "preview" || entry == "resume" ? "retire-temp-runner" : entry,
+                    extra, dryRun: entry == "preview");
+                runs.Add(run);
+                await WaitForBarrier(requested, run);
+                File.ReadAllLines(requested).ShouldBe(new[] { "8" }, "J7 rollout precedes cache: " + entry);
+                File.Exists(acquired).ShouldBeFalse("J7 supported writer waits behind the held rollout: " + entry);
+                contender.Trace.ShouldBeEmpty("J7 no Docker read or effect before admission: " + entry);
+            }
+            using var timed = new C1008HostFixture(main: false);
+            var timeout = await timed.Run("deploy-temp-runner", $"""
+                SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(holder.Root, "server"))}}
+                flock() { command flock -w 0.1 "$3"; }
+                """);
+            timeout.Exit.ShouldBe(2, "J7 real flock timeout; " + timeout.Output);
+            timeout.Output.ShouldContain("RecycleRolloutBusy");
+            timed.Trace.ShouldBeEmpty("J7 timeout has no Docker calls");
+            timed.Removed.ShouldBeEmpty();
+        }
+        finally
+        {
+            File.WriteAllText(release, "release");
+            var settled = await first;
+            // Await all supported writers even when the positive control fails.
+            try { await Task.WhenAll(runs); }
+            finally { foreach (var fixture in fixtures) fixture.Dispose(); }
+            settled.Exit.ShouldBe(0, "J7 holder joined; " + settled.Output);
+        }
+
+        // A cache-only holder never needs rollout. A waiter may own rollout
+        // while waiting on cache; releasing cache must let that waiter finish.
+        using var cache = new C1008HostFixture(main: false);
+        using var waiting = new C1008HostFixture(main: false);
+        var cacheHeld = Path.Combine(cache.Root, "cache-held");
+        var cacheRelease = Path.Combine(cache.Root, "cache-release");
+        var requestedCache = Path.Combine(waiting.Root, "cache-requested");
+        var acquiredCache = Path.Combine(waiting.Root, "cache-acquired");
+        var cacheRun = cache.Run("retire-temp-runner", $"""
+            eval "$C1008_CACHE_LOCK_SOURCE_BODY"
+            LANE=host
+            c849_lock
+            touch {{VolumeRetirementFixture.Quote(cacheHeld)}}
+            while [ ! -f {{VolumeRetirementFixture.Quote(cacheRelease)}} ]; do sleep 0.02; done
+            write_result true '' 0
+            """);
+        Task<(int Exit, string Output)>? waitingRun = null;
+        try
+        {
+            await WaitForBarrier(cacheHeld, cacheRun);
+            waitingRun = waiting.Run("retire-temp-runner", $"""
+                SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(cache.Root, "server"))}}
+                eval "$C1008_CACHE_LOCK_SOURCE_BODY"
+                flock() {
+                    command flock "$@" || return $?
+                    printf '%s\n' "$3" >> {{VolumeRetirementFixture.Quote(acquiredCache)}}
+                }
+                original_cache_lock=$(declare -f c849_lock)
+                eval "$(printf '%s' "$original_cache_lock" | sed 's/^c849_lock/c849_lock_original/')"
+                c849_lock() { touch {{VolumeRetirementFixture.Quote(requestedCache)}}; c849_lock_original; }
+                c1008_status_proof() { write_result true '' 0; }
+                """, dryRun: true);
+            await WaitForBarrier(requestedCache, waitingRun);
+            File.ReadAllLines(acquiredCache).ShouldBe(new[] { "8" }, "J7 waiter owns rollout and waits only for cache");
+            waitingRun.IsCompleted.ShouldBeFalse("J7 cache barrier holds the waiter");
+        }
+        finally
+        {
+            File.WriteAllText(cacheRelease, "release");
+            var settled = await cacheRun;
+            var resumed = waitingRun is null ? (Exit: 0, Output: "not started") : await waitingRun;
+            settled.Exit.ShouldBe(0, "J7 cache-only holder joined; " + settled.Output);
+            resumed.Exit.ShouldBe(0, "J7 no cache-to-rollout inversion; " + resumed.Output);
+        }
+    }
+
+    private static async Task WaitForBarrier(string path, Task<(int Exit, string Output)> run)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!File.Exists(path) && !run.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(15))
+            await Task.Delay(20);
+        File.Exists(path).ShouldBeTrue("J7 real flock barrier: " + Path.GetFileName(path) +
+            (run.IsCompleted ? "; " + (await run).Output : "; child still waiting"));
+    }
+
     private static async Task<(int Exit, string Output)> CheckPreview(C1008HostFixture fixture, string mutation = "")
     {
         return await VolumeRetirementFixture.Bash($$"""

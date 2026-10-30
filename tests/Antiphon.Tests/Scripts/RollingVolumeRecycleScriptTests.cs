@@ -3253,6 +3253,7 @@ internal sealed class C1008HostFixture : IDisposable
             retire_c590_leftovers() { :; }
             broker_sha12() { echo aaaaaaaaaaaa; }
             build_server2_images() { write_result true '' 0; }
+            C1008_CACHE_LOCK_SOURCE_BODY="$(declare -f c849_lock)"
             c849_lock() { :; }
             c849_budget_gate() { :; }
             c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
