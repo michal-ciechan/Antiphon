@@ -1564,6 +1564,8 @@ try {
     $crowdList = [Diagnostics.Stopwatch]::StartNew()
     $crowdListed = @(Get-ChildItem -LiteralPath $crowdTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $crowdList.Stop()
+    $defaultCrowdBudget = New-QualificationReadBudget
+    Assert-Check ($defaultCrowdBudget.DeadlineMilliseconds -eq 200 -and $defaultCrowdBudget.Watch.IsRunning) 'terminal-reader-default-budget-unchanged'
     $savedCrowdBudget = ${function:New-QualificationReadBudget}
     $savedCrowdOpen = ${function:Open-TestPhaseReadStream}
     $script:crowdOpens = [Collections.Generic.List[string]]::new()
@@ -1603,6 +1605,18 @@ try {
     Write-Host ('MEASURED recovered-publication ' + ($crowdRecovery | ConvertTo-Json -Compress -Depth 5))
     Assert-Check ($crowdRecovery.why -eq '' -and $crowdRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdRecovery.fixtureTeardownSeconds -eq 0.5 -and $crowdRecovery.processSpawnSeconds -eq 0.4 -and $crowdRecovery.testCount -eq 1) 'six-hundred-journals-next-publication-recovers'
     Assert-Check ($crowdRecovered.ChunkExitCode -eq 7 -and $crowdRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-recovery-verdict'
+    # Repeat without process memory to exercise recovery from the persisted sidecar.
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    $null = Invoke-QualificationPostRunAggregation @crowdArgs
+    $script:QualificationChunkMemory.Remove($crowdLog + '|antiphon|g-600')
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdDiskRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdDiskRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Check ($crowdDiskRecovery.why -eq '' -and $crowdDiskRecovery.testCount -eq 1 -and $crowdDiskRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdDiskRecovered.ChunkExitCode -eq 7 -and $crowdDiskRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-persisted-gap-recovers'
+    $crowdArgs.Why = 'suite-failed'
+    $null = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdExplicit = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Check ($crowdExplicit.why -eq 'suite-failed') 'six-hundred-journals-explicit-failure-preserved'
 } catch {
     Write-Host ('FAIL six-hundred-journals-stay-inside-budget ' + $_.Exception.Message)
     $script:failed++
