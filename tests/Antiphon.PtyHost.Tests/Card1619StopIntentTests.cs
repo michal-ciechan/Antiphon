@@ -111,7 +111,9 @@ public class Card1619StopIntentTests
         await using var f = await Fixture.StartAsync();
         var result = f.Store.Attempt(f.Request(9), () => null);
         result.Outcome.ShouldBe(ProcessStopOutcome.Requested);
-        f.Store.Snapshot(f.Id, f.Generation)!.Outcome.ShouldBe(ProcessStopOutcome.Requested);
+        var snapshot = f.Store.Snapshot(f.Id, f.Generation);
+        snapshot.ShouldNotBeNull();
+        snapshot.Outcome.ShouldBe(ProcessStopOutcome.Requested);
         f.Child.HasExited.ShouldBeFalse();
         await f.StopAsync();
     }
@@ -124,7 +126,9 @@ public class Card1619StopIntentTests
         var exit = await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5));
         exit.ExitSignal.ShouldBe(9);
         result.Outcome.ShouldBe(ProcessStopOutcome.Requested);
-        f.Store.Snapshot(f.Id, f.Generation, 9)!.Outcome.ShouldBe(ProcessStopOutcome.Requested);
+        var snapshot = f.Store.Snapshot(f.Id, f.Generation, 9);
+        snapshot.ShouldNotBeNull();
+        snapshot.Outcome.ShouldBe(ProcessStopOutcome.Requested);
     }
 
     [Test]
