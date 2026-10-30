@@ -55,6 +55,56 @@ public sealed class OuterRowBuildStampTests
             .Message.ShouldContain("c1050-child-source: outer row build stamp required");
     }
 
+    [Test]
+    public void C1210_Shared_checkpoint_layout_is_verified_without_rewriting_the_stamp()
+    {
+        foreach (var explicitAppHost in new[] { false, true })
+        {
+            using var world = QualificationOutput.CreateWithoutAssemblyDirectory();
+            var properties = new List<string>();
+            if (explicitAppHost) properties.Add("--property:UseAppHost=true");
+            var output = Path.GetRelativePath(Path.Combine(world.Root, "tests", "Antiphon.Tests"), world.AssemblyDirectory);
+            BuildStep.AppendSharedLayout(properties, world.Root, "tests/Antiphon.Tests", output);
+            var producer = CheckpointBuildBinding.Expected(world.Root, "tests/Antiphon.Tests", output,
+                properties, QualificationOutput.CleanSource);
+            SafeWrite.CreateFreshDirectory(producer.OutputPath, SafeWrite.Under(producer.OutputPath)).ShouldBeNull();
+            producer.Write().ShouldBeNull();
+            var before = File.ReadAllBytes(producer.PathName);
+
+            var audit = OuterRowBuildStamp.EnsureForBuildOutput(world.AssemblyDirectory, world.Root, QualificationOutput.CleanSource);
+
+            audit.Check().ShouldBe("verified", "c1210-shared-layout-source-stamp");
+            audit.Properties.ShouldBe(producer.Properties);
+            File.ReadAllBytes(producer.PathName).ShouldBe(before, "producer stamp must not be rewritten");
+        }
+    }
+
+    [Test]
+    public void C1210_Shared_layout_rejects_unexpected_properties_without_rewriting()
+    {
+        foreach (var replacement in new[] { "ArtifactsPath=elsewhere", "UseArtifactsOutput=false", "UseAppHost=false", "Optimize=true" })
+        {
+            using var world = QualificationOutput.CreateWithoutAssemblyDirectory();
+            var properties = new List<string> { "--property:UseAppHost=true" };
+            var output = Path.GetRelativePath(Path.Combine(world.Root, "tests", "Antiphon.Tests"), world.AssemblyDirectory);
+            BuildStep.AppendSharedLayout(properties, world.Root, "tests/Antiphon.Tests", output);
+            var producer = CheckpointBuildBinding.Expected(world.Root, "tests/Antiphon.Tests", output,
+                properties, QualificationOutput.CleanSource);
+            SafeWrite.CreateFreshDirectory(producer.OutputPath, SafeWrite.Under(producer.OutputPath)).ShouldBeNull();
+            producer.Write().ShouldBeNull();
+            var key = replacement[..replacement.IndexOf('=')] + "=";
+            producer.Properties.RemoveAll(property => property.StartsWith(key, StringComparison.Ordinal));
+            producer.Properties.Add(replacement);
+            var altered = JsonSerializer.Serialize(producer, CheckpointApp.Json);
+            File.WriteAllText(producer.PathName, altered);
+
+            var audit = OuterRowBuildStamp.EnsureForBuildOutput(world.AssemblyDirectory, world.Root, QualificationOutput.CleanSource);
+
+            audit.Check().ShouldBe("mismatch", "c1210-unexpected-property: " + replacement);
+            File.ReadAllText(producer.PathName).ShouldBe(altered, "invalid stamp must not be replaced");
+        }
+    }
+
     private sealed class QualificationOutput : IDisposable
     {
         internal string Root { get; }
