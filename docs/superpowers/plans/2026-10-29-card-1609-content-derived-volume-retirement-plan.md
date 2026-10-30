@@ -169,7 +169,8 @@ resolution on every helper, a digest supplied by untrusted inventory, or an
 arbitrary old script/image selected because its receipt happened to exist.
 
 **D-5 — One offline helper and a complete role inventory.** Use current audit code
-in both preview and apply with read-only volume mounts, `--network none`,
+in both preview and apply with read-only volume mounts, `volume-nocopy` on
+every named-volume mount (including work and /tmp), `--network none`,
 `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user 1654:1654`, `--init`,
 a read-only root filesystem and owned bounded scratch. Retain `/work` exactly.
 Mount runner-tmp at `/tmp` when present so absolute linked-worktree pointers keep
@@ -774,6 +775,20 @@ individually bounded calls; no new shorter wrapper deadline silently kills a val
 scan. Reassess production p95 after first representative deployments, not using
 small fixture timing. No test timeout is justified by the 3-hour production cap.
 
+The scripted auto-preview/apply deliberately pays for two full content observations.
+Using the old measured 1404 s and 5225 s samples only as scenario estimates, content
+alone costs 2808-10450 s (about 47-174 minutes) per retirement, before new role
+classification, list-all output, host fetch and census. The combined content cap
+is 21600 s (6 hours), with at most 600 s host network budget per phase and D-19's
+180 s per census gate (six base volume gates = at most 18 minutes, extra container
+gates itemized separately). These are finite ceilings, not expected durations or
+measured p95. Record preview inventory/publication/live-guards separately from
+apply inventory/publication/per-delete guards and teardown, plus unique repos,
+objects and findings. The former five 13-60 minute refusal runs are motivation for
+one complete preview, not a measured v2 benchmark. No host object cache is added
+now; measure fetch cost first. Any future shared cache may contain only origin
+objects and must use fresh advertised tips each phase, never local volume objects.
+
 ## Verification design
 
 All named new methods are one TUnit execution each; vectors inside them are
@@ -830,7 +845,7 @@ path; H1-H6 remain portable host logic. Exact methods and obligations:
 | W4 | `Retire_temp_ignores_missing_stack_and_historical_compose` | Entry-level no old stack/source/image requirement, including absent/exited containers and old callers with -Sha. |
 | W5 | `Main_recycle_and_existing_deploy_contracts_are_preserved` | Non-retirement -Sha requirement, main generation/resume behavior and existing authority gates stay enforced. |
 | W6 | `Retained_volumes_block_deploy_and_completion` | Refused/partial/unjournaled retained sets block deploy before Compose/seed/clear, name exact recovery; all absent with pending intent still blocks; completed absence admits. Retire-temp refusal returns nonzero, no C849 Retired invocation/success; completed retirement retains the zero-private-volume cache contract. PC: check only containers or ignore refusal exit. |
-| N1 | `Read_only_namespace_and_host_proof_are_real` | Real helper kernel write-denial at each mounted alias, UID/offline/no secrets, linked pointers and hooks, before/after bytes; timeout kills only owned helper. |
+| N1 | `Read_only_namespace_and_host_proof_are_real` | Real helper kernel write-denial at each mounted alias, UID/offline/no secrets, linked pointers and hooks, before/after bytes including an initially empty /tmp volume that stays empty (volume-nocopy on every named mount); timeout kills only owned helper. |
 | N2 | `Replacement_and_concurrent_reference_block_delete` | Real same-name replacement between phases, new named/bind reference, supported writer blocked by lock; no wrong volume deleted. |
 | N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/all three named caches/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
 
@@ -890,6 +905,16 @@ this plan. Code must recheck after adding them; TUnit TRX must match all intende
 names/arguments and no suffix sibling. No full-path OR. Every OR operand has
 parentheses and a trailing star. Table pipes are escaped. No zero-test credit.
 
+If Code adds or changes an OS-selected production branch, record its portable
+branch witness and native execution obligation under CARD-1526 and run
+`pwsh -NoProfile -File scripts/check-os-witnesses.ps1 -BaseRef <full-base-sha>
+-HeadRef <full-code-sha> -EvidencePath <ignored-os-witnesses.json> -Plan <this-file>`.
+This is a declared static author-time validation, not another test/build row;
+retain the result and fulfill native Windows/Linux obligations through the named
+rows above. A no-branch-change declaration must name the inspected paths rather
+than silently omit the check. Code/Review also run `scripts/check-evidence-diff.ps1`
+over base..HEAD and preserve source/build attribution.
+
 Use the checkpoint tool's `run --plan <this-file> --rows <row-list>` once per
 committed group: S1 CP-1/2/14; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12/13. Run bootstrap
 through `scripts/build-slot.ps1` if needed; the checkpoint runner takes build slots
@@ -902,7 +927,12 @@ Import the manifest to ignored YAML to set per-row deadlines explicitly rather
 than inherit the importer's 15-minute/3x floor: provisional execution caps CP-1=10m,
 CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=2m,
 CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m, CP-14=2m. These are roughly 2x the stated estimates, not measured-p95
-claims. Red-group charged cap 14m, final Linux 36m, Windows 14m; each hard wall
+claims. The 14-row manifest has 294 planned executions: S1 4 intended assertion
+reds, final Linux 273 green and final Windows 17 green. Estimated charged duration
+is S1 7m, final Linux 18m, final Windows 7m (32m total across three separate runs,
+including one build per run); do not launch the entire manifest as one >30m run.
+Row estimates include the first build in CP-1/3/11; record its duration separately.
+Red-group charged cap 14m, final Linux 36m, Windows 14m; each hard wall
 adds one finite 45m admission allowance. Reconcile with measured p95 under the
 collection obligation before final qualification. If a group reaches 30m, stop
 repeating it and hand timing evidence to Debug. No full assembly run is authorized.
