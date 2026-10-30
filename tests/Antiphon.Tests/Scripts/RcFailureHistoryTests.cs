@@ -18,12 +18,14 @@ public sealed class RcFailureHistoryTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     [Test, Timeout(180_000)]
     public Task RefusesIncompleteEvidence(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 43,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 47,
             ["FF RefusesIncompleteEvidence.ordinary-bound-full", "FF RefusesIncompleteEvidence.ordinary-bound-partial",
              "FF RefusesIncompleteEvidence.ordinary-unbound-full", "FF RefusesIncompleteEvidence.ordinary-unbound-partial",
              "FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.chunk-exit",
              "FF RefusesIncompleteEvidence.chunk-result", "FF RefusesIncompleteEvidence.chunk-detail",
-             "FF RefusesIncompleteEvidence.chunk-short", "FF RefusesIncompleteEvidence.standaloneMissingTrx",
+             "FF RefusesIncompleteEvidence.chunk-short", "FF RefusesIncompleteEvidence.chunk-crash",
+             "FF RefusesIncompleteEvidence.chunk-crash-unbound", "FF RefusesIncompleteEvidence.chunk-missing-bound",
+             "FF RefusesIncompleteEvidence.missingContextWarning", "FF RefusesIncompleteEvidence.standaloneMissingTrx",
              "FF RefusesIncompleteEvidence.wrongSuiteFull",
              "FF RefusesIncompleteEvidence.wrongSuitePartial", "FF RefusesIncompleteEvidence.missingFull",
              "FF RefusesIncompleteEvidence.missingPartial", "FF RefusesIncompleteEvidence.renamed",

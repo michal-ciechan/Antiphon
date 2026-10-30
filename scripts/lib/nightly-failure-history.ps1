@@ -259,8 +259,6 @@ function Export-NightlyPriorFailures {
         }
         $discovery=$discoveries[$suite]
         $incomplete=$false; $accountingIncomplete=$false; $why=[Collections.Generic.List[string]]::new(); $observed=@(); $trxRows=@()
-        if ($null -ne $chunk.exitCode -and $chunk.exitCode -ne 0) { $accountingIncomplete=$true; $why.Add('summary-nonzero-exit') }
-        if (-not [string]::IsNullOrEmpty([string]$chunk.result) -and $chunk.result -ine 'pass') { $accountingIncomplete=$true; $why.Add('summary-failed-result') }
         if (-not [string]::IsNullOrEmpty([string]$chunk.detail)) { $accountingIncomplete=$true; $why.Add('summary-detail') }
         if ($accountingIncomplete) { $incomplete=$true }
         $trxName=[string]$chunk.trx
@@ -309,6 +307,18 @@ function Export-NightlyPriorFailures {
                     $observed += [pscustomobject]@{ClassName=$r.ClassName;Uid=$r.Uid;State=$r.State;Artifact=$execution.RelativePath;Kind='diagnostic'}
                 }
             }
+        }
+        # A failed process is expected when a test fails. Reconcile the summary
+        # only after TRX and diagnostic identities have been read. An all-Passed
+        # prefix cannot account for a crash; retained incompleteness still falls
+        # through the independent TRX, detail, coverage and timeout checks.
+        $failureIdentityObserved=@($observed | Where-Object {
+            $_.State -cin @('Failed','Error','NotExecuted','InProgress','Timeout','Cancelled','Aborted')
+        }).Count -gt 0
+        if (-not $failureIdentityObserved) {
+            if ($null -ne $chunk.exitCode -and $chunk.exitCode -ne 0) { $accountingIncomplete=$true; $why.Add('summary-nonzero-exit') }
+            if (-not [string]::IsNullOrEmpty([string]$chunk.result) -and $chunk.result -ine 'pass') { $accountingIncomplete=$true; $why.Add('summary-failed-result') }
+            if ($accountingIncomplete) { $incomplete=$true }
         }
         foreach ($o in $observed) {
             if ($o.State -cin @('InProgress','Discovered') -and -not $incomplete) { continue }
@@ -467,6 +477,7 @@ function Resolve-NightlyPriorFailures {
     $policy=$null; $exclusionProfile=''; $policyFileDigest=''; $platform='windows'
     if ([IO.Path]::DirectorySeparatorChar -eq '/') { $platform='linux' }
     if ($QualificationMode -ceq 'PriorFailureSweep') {
+        if ($null -eq $ExclusionContext) { Write-Warning 'PARTIAL MISSING EXCLUSION CONTEXT: derived from validated history; S4a/S5 must supply bound context at every receiving hop.' }
         $exclusionProfile=[string]$History.profile
         $contextMap=ConvertTo-NightlyPolicyMap -Object $ExclusionContext
         if ($exclusionProfile -cnotin @('rc','nightly') -or ($null -ne $ExclusionContext -and $contextMap['profile'] -cne $exclusionProfile)) { throw 'partial-exclusion-profile-mismatch' }
