@@ -111,24 +111,8 @@ public sealed class RemoteControlRecoveryService
 
     public async Task<RemoteControlScreenObservation> ObserveAsync(Guid sessionId, DateTime expectedGeneration, CancellationToken ct)
     {
-        SessionRunnerSnapshotDto snapshot;
-        try
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var seconds = Math.Max(1, _settings.RcModalWatch.SnapshotTimeoutSeconds);
-            timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
-            snapshot = await _runner.GetSnapshotAsync(sessionId, timeout.Token);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return new RemoteControlScreenObservation(
-                RemoteControlMenuScreen.Classify(null),
-                null,
-                false,
-                0,
-                "read-failure");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        var snapshot = await TryReadSnapshotAsync(sessionId, ct);
+        if (snapshot is null)
         {
             return new RemoteControlScreenObservation(
                 RemoteControlMenuScreen.Classify(null),
@@ -150,6 +134,25 @@ public sealed class RemoteControlRecoveryService
             proven,
             snapshot.LastSequence,
             reason);
+    }
+
+    private async Task<SessionRunnerSnapshotDto?> TryReadSnapshotAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var seconds = Math.Max(1, _settings.RcModalWatch.SnapshotTimeoutSeconds);
+            timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
+            return await _runner.GetSnapshotAsync(sessionId, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     public async Task<bool> HasOpenModalBarrierAsync(Guid sessionId, DateTime generation, CancellationToken ct)
@@ -630,18 +633,20 @@ public sealed class RemoteControlRecoveryService
             if (dialog.State == ProviderDialogState.Blocked)
                 return new(sessionId, ConditionalInputOutcomes.ModalBlocked);
 
-            var snap = await _runtime.TryGetLiveSnapshotAsync(sessionId, ct);
-            if (snap is not null && ClaudeScreen.TryReadComposer(snap.RenderedScreen, out var composer)
+            // Composer proof and the Enter fence must describe the same runner frame.
+            // A later redraw is then a zero-byte stale refusal, never an unreadable frame
+            // accidentally accepted as the composer evidence's output sequence.
+            var snap = await TryReadSnapshotAsync(sessionId, ct);
+            if (snap is null || !SessionGeneration.Equal(snap.AcceptedStartedAt, generation))
+                return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
+            if (ClaudeScreen.TryReadComposer(snap.RenderedScreen, out var composer)
                 && composer == "/remote-control")
             {
-                var beforeEnter = await ObserveAsync(sessionId, generation, ct);
-                if (!beforeEnter.GenerationProven)
-                    return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
                 await _runtime.CatchUpTranscriptAsync(sessionId, ct);
                 if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
                     return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
 
-                last = await SendGuardedAsync(sessionId, generation, beforeEnter.LastSequence, "\r", ct, custody);
+                last = await SendGuardedAsync(sessionId, generation, snap.LastSequence, "\r", ct, custody);
                 // StaleObservation guarantees ZERO backend bytes. Refresh only the output fence,
                 // within the original composer-evidence budget. Written/Unknown and every other
                 // result are terminal: never replay a possibly submitted RC command.
