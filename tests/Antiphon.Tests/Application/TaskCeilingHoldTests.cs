@@ -227,7 +227,7 @@ public sealed class TaskCeilingHoldTests
                 new DelegationOpenGate(db, opts).EnsureCanCreateAsync(null, AgentTaskRole.Code, false, CancellationToken.None));
             refused.StatusCode.ShouldBe(409);
             var rows = await db.AgentTasks.Select(t => new TaskPopulationRow(t.Id, t.ProjectId, t.Role, t.Status,
-                t.CreatedAt, t.CapacityWaitRetained, t.Title)).ToListAsync();
+                t.CreatedAt, t.CapacityWaitRetained, t.Title, null)).ToListAsync();
             var population = DispatchConcurrencyPolicy.Count(rows, null);
             population.Parallel.ShouldBe(4);
             population.Roles[AgentTaskRole.Code].Parallel.ShouldBe(4);

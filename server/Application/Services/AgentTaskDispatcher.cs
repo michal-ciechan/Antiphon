@@ -3932,15 +3932,14 @@ public sealed partial class AgentTaskDispatcher
             var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
             if (session is null || evaluatedGeneration is not { } generation || generation == default
                 || session.StartedAt != generation || session.Status != SessionStatus.Running
-                || _runtime?.RemoteInventoryPending(session.RunnerId) == true)
+                || _runtime?.RemoteInventoryPending(session.RunnerId) == true
+                || !await ObserveCeilingSessionAsync(session, ct))
                 return false;
             if (verdict.Working)
             {
                 await TryHoldCeilingAsync(task, generation, ct);
                 return false;
             }
-            // No transcript is uncertainty, never proof of an idle session.
-            if (!await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct)) return false;
         }
 
         // Gate 3 — CARD-0085, and ONLY for the population CARD-0085 was written for: a session that
@@ -3962,6 +3961,9 @@ public sealed partial class AgentTaskDispatcher
             bindRefusal = await TryRecoverBindRefusalAsync(task, sessionId, ct);
         if (bindRefusal.Outcome == BindRefusalOutcome.Recovered)
             return false;
+
+        // Recovery can prove a result in a retained file, but absent activity cannot prove idle.
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling && !hasTranscript) return false;
 
         // The Summary already names the clock, the phase and the last entry's age — the failure
         // reason and the attention row are deliberately the same sentence, so a human who saw the

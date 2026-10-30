@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -40,6 +41,17 @@ public static class OverdueSweepHarness
         string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
+        runner ??= new FakeSessionRunnerClient
+        {
+            GetOverride = async (id, ct) =>
+            {
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+                var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id, ct);
+                return new SessionRunnerSessionDto(id, null, session.StartedAt, session.Status.ToString(),
+                    session.ExitCode, Antiphon.SessionRunner.Contracts.AgentExitReason.Unknown, 0,
+                    AcceptedStartedAt: session.StartedAt);
+            },
+        };
         var settings = new DelegationSettings
         {
             DefaultTimeoutMinutes = Ceiling,

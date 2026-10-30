@@ -7,6 +7,25 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed partial class AgentTaskDispatcher
 {
+    private async Task<bool> ObserveCeilingSessionAsync(AgentSession session, CancellationToken ct)
+    {
+        var runner = _runners?.Resolve(session.RunnerId) ?? _runnerClient;
+        if (runner is null) return false;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            var observed = await runner.GetAsync(session.Id, budget.Token);
+            return observed.SessionId == session.Id && observed.Status == "Running"
+                && observed.AcceptedStartedAt is { } accepted && SessionGeneration.Equal(accepted, session.StartedAt);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Ceiling observation of session {SessionId} is unknown; retaining its task", session.Id);
+            return false;
+        }
+    }
+
     private Task<bool> TryHoldCeilingAsync(AgentTask task, DateTime generation, CancellationToken ct) =>
         _replies is null ? HoldCeilingLockedAsync(task, generation, ct)
             : _replies.WithSessionSettlementAsync(task.AgentSessionId!.Value,
