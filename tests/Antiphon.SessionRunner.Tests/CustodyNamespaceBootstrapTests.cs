@@ -29,13 +29,13 @@ public sealed class CustodyNamespaceBootstrapTests
         var run = NewDir();
         try
         {
-            var first = await BootAsync(script, state, run, null);
+            var first = await BootAsync(script, state, run);
             Guid.TryParse(NamespaceOf(first.Stdout), out var guid).ShouldBeTrue(
                 "namespace boot must record a guid, actual '" + first.Stdout + "'");
-            var restart = await BootAsync(script, state, run, null);
+            var restart = await BootAsync(script, state, run);
             NamespaceOf(restart.Stdout).ShouldBe(guid.ToString("D"));
 
-            var recreated = await BootAsync(script, NewDir(), NewDir(), null);
+            var recreated = await BootAsync(script, NewDir(), NewDir());
             var fresh = NamespaceOf(recreated.Stdout);
             Guid.TryParse(fresh, out var other).ShouldBeTrue(recreated.Stdout);
             other.ShouldNotBe(guid);
@@ -45,17 +45,32 @@ public sealed class CustodyNamespaceBootstrapTests
             Directory.CreateDirectory(target);
             File.WriteAllText(Path.Combine(target, "namespace"), guid.ToString("D"));
             File.CreateSymbolicLink(Path.Combine(linked, "namespace"), Path.Combine(target, "namespace"));
-            var invalid = await BootAsync(script, linked, NewDir(), null);
+            var invalid = await BootAsync(script, linked, NewDir());
             NamespaceOf(invalid.Stdout).ShouldBeNull();
             File.Exists(Path.Combine(linked, "capability")).ShouldBeFalse();
 
-            var failedState = NewDir();
-            var failed = await BootAsync(script, failedState, NewDir(), "mkdir");
-            failed.ExitCode.ShouldBe(0);
-            NamespaceOf(failed.Stdout).ShouldBeNull();
-            failed.Stdout.ShouldContain("continued=yes");
-            File.Exists(Path.Combine(failedState, "namespace")).ShouldBeFalse();
-            File.Exists(Path.Combine(failedState, "capability")).ShouldBeFalse();
+            // Real entrypoint step: the state directory's parent is mode 555, so the
+            // missing directory cannot be created. The step must return and the shell
+            // must still print the sentinel. No fail_step argument exists.
+            var blocked = await StepScriptAsync(script, """
+                set -euo pipefail
+                base=$(mktemp -d)
+                trap 'chmod 755 "$base/blocked" 2>/dev/null || true; rm -rf "$base"' EXIT
+                mkdir -p "$base/blocked" "$base/run"
+                chmod 555 "$base/blocked"
+                source "$1"
+                custody_namespace_entrypoint_step "$base/blocked/missing" "$base/run" "$1"
+                echo "continued=yes"
+                echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+                if [ -e "$base/blocked/missing/namespace" ]; then echo "missing_namespace=present"; else echo "missing_namespace=absent"; fi
+                if [ -e "$base/blocked/missing/capability" ]; then echo "missing_capability=present"; else echo "missing_capability=absent"; fi
+                """);
+            blocked.ExitCode.ShouldBe(0, blocked.Stdout);
+            blocked.Stdout.ShouldContain("continued=yes");
+            blocked.Stdout.ShouldContain("qualified=false");
+            blocked.Stdout.ShouldContain("CustodyNamespaceUnready");
+            blocked.Stdout.ShouldContain("missing_namespace=absent");
+            blocked.Stdout.ShouldContain("missing_capability=absent");
         }
         finally
         {
@@ -302,8 +317,8 @@ public sealed class CustodyNamespaceBootstrapTests
         try { Directory.Delete(path, recursive: true); } catch { }
     }
 
-    private static Task<ShellResult> BootAsync(string script, string state, string run, string? fail) =>
-        BashAsync(script, "custody_namespace_boot", fail is null ? [state, run] : [state, run, fail]);
+    private static Task<ShellResult> BootAsync(string script, string state, string run) =>
+        BashAsync(script, "custody_namespace_boot", state, run);
 
     private static Task<ShellResult> StepAsync(string script)
     {
