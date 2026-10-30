@@ -20,7 +20,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Done: D-16..18, C12..14, operator choices |
 | D-5 | Bounded census retries, durable partial/resume behavior | Done: D-19, J6/J8 |
 | D-6 | Retained-volume deploy refusal, C849 contract, external caches | Done: D-20, W6 |
-| D-7 | Master/rc port order after top-up 38, definition scope | Pending |
+| D-7 | Master/rc port order after top-up 38, definition scope | Done: port and ordering section |
 | D-8 | Windows skip roster and closure checkpoint | Pending |
 | D-9 | Documentation pins and checkpoint | Pending |
 | D-10 | Real private-origin path baseline-red witness | Pending |
@@ -889,6 +889,53 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
    version and repeat preview. After any delete, rollback means reporting the
    irreversible partial outcome and preserving the rest; never recreate empty
    volumes or silently fall back to the old broad Compose deletion path.
+
+## Master/rc port and ordering
+
+The caller's round-2 brief defines top-up 38 as the combined CARD-1613 / audit
+repairs / CARD-1614 slice A / speed-ups S1 bundle, with ONE land-graph approval
+regeneration. CARD-1609 belongs in a **later top-up after 38**; do not splice it
+into that bundle or make top-up 38's retire-temp depend on unimplemented v2.
+Until the later tooling is reviewed, ported and activated, use the then-reviewed
+existing retirement path and preserve any refusal. CARD-1607 is already on both
+lines at the full SHAs recorded above; do not cherry-pick it a second time.
+
+S1-S5 add/change script bodies, test .cs files/fixture scripts, the Windows skip
+roster and owner documentation. Under this plan they do **not** change .csproj,
+.sln, Directory.Build.props/targets, package/SDK definitions, project references,
+land-verification policy or its approval manifest. Existing default Compile and
+fixture source-root access suffice. The current audit descriptor is host runtime
+configuration installed by the deployment scripts, not an MSBuild definition.
+No definition-driven approval regeneration is planned for CARD-1609. Code must
+report any required scope expansion before changing a definition; integrate such
+an expansion only in the later top-up and obtain its own normal graph approval,
+never reuse or silently regenerate top-up 38's approval to cover new definitions.
+
+1. Review this revised plan, then Code from the then-current master baseline with
+   landed CARD-1607. Keep S1 assertion-red before S2-S5 fixes. Complete named Linux
+   and native Windows checkpoints, independent Review, and authorized landing to
+   master. This Plan performs none of those implementation/landing operations.
+2. After top-up 38 completes its own reviewed integration, the caller commissions
+   rc porting of the reviewed S1-S5 commits onto the then-current rc/2026-10-27
+   tip (or its explicitly chosen successor). Plan-only commits/docs are not rc
+   picks; retain this plan as the source artifact on master. Operational owner docs
+   travel with their product change where rc's documentation policy allows them.
+3. Before each rc pick, simulate its patch against the current accumulated candidate
+   (three-way patch/merge-tree with that commit's parent as base), record conflicts
+   and exact source/target SHA. Resolve only in the commissioned port branch under
+   normal Review; never merge/rebase rc or silently drop tests. The four existing
+   production scripts are identical at the two inspected tips, but that is not a
+   promise about the future candidate. Reconcile later retirement/census edits.
+4. Run the affected native checkpoints on the ported candidate, preserve source
+   attribution, and pass normal rc gates. A master green receipt is not rc execution
+   evidence. Inspect definition drift and use the standard graph check; no new
+   approval regeneration is expected under the scope above. No tag/publish here.
+5. Activate through the reviewed maintenance-tool deployment path. Before the first
+   live v2 preview directly compare installed script hashes and audit-current.json
+   protocol/policy plus resolved image digest with the reviewed rc artifact; verify
+   the live server/runner version endpoints and intended rc SHA where applicable.
+   A commit land alone is not activation. Record the observation in the operation.
+   Only then commission a read-only preview of an eligible retired target set.
 
 ## Operator questions and independent review gates
 
