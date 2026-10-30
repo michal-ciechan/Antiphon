@@ -5,7 +5,29 @@ Date: 2026-10-30. Plan task `42241722`; source base
 The [native investigation](../../investigations/2026-10-30-card-1199-windows-runnable-feasibility.md)
 is measurement evidence, not clean-source qualification.
 
-## Round-2 amendment status
+## Round-3 amendment status
+
+Plan task `f8a94733`, assigned base
+`95d190a389fccd3b1e61f1d7f88bfb3af1e88af1`. Read the complete final review
+`.antiphon/task-4d98fbcb.md`. This is the last, narrow plan amendment; no product
+source changes or product tests. Round-2 findings and costs remain historical.
+
+Amendment work in progress:
+
+- D-1: replace CP-46's quoted PowerShell wrapper with a bare shell command and
+  require the audit's own success line, using the supported checkpoint contract.
+  Inspect every other command row for the same Windows quoting hazard.
+- D-2: require the CARD-1613 master port before this plan's master port and S3
+  publication on each target before S-F-cost. Keep one post-1613 roster/count.
+- Advisories: remove the cross-host CP-37 authoring wait, refresh rc/top-up refs,
+  correct the 0.5s/node fallback and S3 costBasis description, then re-import.
+
+R-2 stays pending/required. The first remote observation in this round is
+`rc/2026-10-27` = `ade54222543381e2e1b31ad79d8ae33a4035f70b`;
+top-up 38 publication is not yet confirmed. Publish only the plan-file delta.
+This skeleton does not supersede unresolved row details until validation below.
+
+## Round-2 amendment status (historical)
 
 Plan task `dd46f01b`, base `421c3de68a81b32ded14f40af85a4e9ff50a1938`.
 The complete review `.antiphon/task-3b1ff9b6.md` is the amendment input.
