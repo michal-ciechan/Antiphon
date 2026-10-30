@@ -141,7 +141,7 @@ public sealed class PosixHarnessToolTests
             var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(),
                 "posix-hide-" + Guid.NewGuid().ToString("N")));
             var blocked = new HashSet<string>(banned, StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<string>(windows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             foreach (var directory in directories)
             {
                 if (!Directory.Exists(directory)) continue;
