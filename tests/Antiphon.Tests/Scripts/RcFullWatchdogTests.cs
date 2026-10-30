@@ -112,6 +112,8 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("boundAboveAdmitted").GetBoolean().ShouldBeFalse("W(C) above Wmax was admitted");
         observed.GetProperty("plannedAboveBoundAdmitted").GetBoolean().ShouldBeFalse("a plan above the calibrated bound was admitted");
         observed.GetProperty("clampedE95").GetDouble().ShouldBeGreaterThanOrEqualTo(1, "p95 below 1 was stored as the error factor");
+        observed.GetProperty("ptyPlanRefused").GetBoolean().ShouldBeTrue(text);
+        observed.GetProperty("ptyPlanWatchdog").GetDouble().ShouldBe(1200, "a pty-host plan between 1200 and 2400 s was stamped with another suite watchdog");
     }
 
     [Test]
@@ -131,6 +133,8 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("launchTimeoutMs").GetInt32().ShouldBe(1_200_000, "the native launch did not receive the pty-host watchdog");
         observed.GetProperty("launchCoverageComplete").GetBoolean().ShouldBeFalse("the launched timeout marked coverage complete");
         observed.GetProperty("launchTestsPassed").GetBoolean().ShouldBeFalse("the launched timeout marked tests passed");
+        observed.GetProperty("refusedLaunchStarted").GetBoolean().ShouldBeFalse("a refused admission started a test process");
+        observed.GetProperty("refusedLaunchReasonOk").GetBoolean().ShouldBeTrue(text);
     }
 
     private static async Task<JsonElement> Run(string mode, CancellationToken cancellationToken)
