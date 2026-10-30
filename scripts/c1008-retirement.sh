@@ -210,6 +210,58 @@ c1609_target_snapshot() {
     printf '%s' "$result" | jq -cS .
 }
 
+# The credential-capable manual entry commissions a short-lived, owner-protected
+# host grant after operator authentication. Neither a task token, an actor string
+# nor an inventory-authored document is a grant. The operator credential itself
+# never crosses to this host record or to an audit helper. Same-account host
+# custody is the authority boundary, as it is for the protected Ready record.
+c1609_manual_attestation() {
+    local phase="$1" fingerprints="$2" digest="$3" mode="${C1008_MODE:-scripted}"
+    local file="${C1008_ATTESTATION_FILE:-}" grant canonical now issued expires stamp mount
+    case "$mode" in scripted) printf '{}'; return 0 ;; manual) ;; *) return 1 ;; esac
+    grant="${C1008_MANUAL_AUTHORITY_FILE:-}"
+    [ "$grant" = "$SERVER2_ROOT/manual-authority/$C1008_OPERATION.json" ] || return 1
+    for canonical in "$grant" "$file"; do
+        c1609_custody "$canonical" file || return 1
+        [ "$(stat -c %s -- "$canonical")" -le 1048576 ] || return 1
+        # Canonical JSON also rejects duplicate keys, including nested ones.
+        [ "$(cat -- "$canonical")" = "$(jq -cS -s 'if length==1 then .[0] else error("attestation") end' "$canonical")" ] || return 1
+        [ "$(readlink -e -- "$canonical")" = "$canonical" ] || return 1
+        while IFS= read -r mount; do
+            [ -n "$mount" ] || return 1
+            [[ "$canonical/" != "$mount/"* ]] || return 1
+        done < <(printf '%s' "$fingerprints" | jq -r '.[]|select(.!=null)|.Mountpoint')
+    done
+    jq -e --arg op "$C1008_OPERATION" --arg phase "$phase" --arg digest "$digest" \
+      --argjson fingerprints "$fingerprints" --slurpfile grant "$grant" '
+      $grant[0] as $g |
+      ($g|keys)==["actor","authorityRef","expiresAt","issuedAt","operationId","schema","targets"] and
+      $g.schema==1 and $g.operationId==$op and
+      ($g.actor|type)=="string" and ($g.actor|test("^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$")) and
+      ($g.authorityRef|type)=="string" and ($g.authorityRef|test("^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$")) and
+      all([$g.issuedAt,$g.expiresAt][]; type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+      keys==["actor","authorityRef","fingerprints","mode","operationId","phase","previewDigest","reason","schema","targets","utc"] and
+      .schema==1 and .mode=="manual" and .phase==$phase and .operationId==$op and
+      .actor==$g.actor and .authorityRef==$g.authorityRef and
+      (.reason|type)=="string" and (.reason|length)<=4096 and (.reason|test("\\S")) and
+      (.utc|type)=="string" and (.utc|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+      (.targets|type)=="array" and (.targets|length)==4 and (.targets|unique|length)==4 and
+      (.targets|sort)==($fingerprints|keys) and (.targets|sort)==($g.targets|sort) and
+      .fingerprints==$fingerprints and
+      (if $phase=="Preview" then .previewDigest==null
+       else .previewDigest==$digest and ($digest|test("^[0-9a-f]{64}$")) end)
+      ' "$file" >/dev/null || return 1
+    now="$(date -u +%s)" || return 1
+    issued="$(date -u -d "$(jq -r .issuedAt "$grant")" +%s)" || return 1
+    expires="$(date -u -d "$(jq -r .expiresAt "$grant")" +%s)" || return 1
+    stamp="$(date -u -d "$(jq -r .utc "$file")" +%s)" || return 1
+    [ "$issued" -le "$((now + 60))" ] && [ "$expires" -ge "$now" ] &&
+      [ "$expires" -gt "$issued" ] && [ "$((expires - issued))" -le 900 ] &&
+      [ "$((now - stamp))" -ge -60 ] && [ "$((now - stamp))" -le 900 ] || return 1
+    jq -cnS --slurpfile attestation "$file" --slurpfile grant "$grant" \
+      '{attestation:$attestation[0],authority:$grant[0]}'
+}
+
 c1609_recheck_target() {
     local name="$1" file current expected daemon
     file="$(c1609_retirement_root)/receipt.json"
@@ -222,7 +274,7 @@ c1609_recheck_target() {
 }
 
 c1609_write_ready_receipt() {
-    local root targets digest now daemon nonce snapshot
+    local root targets digest now daemon nonce snapshot manual
     root="$(c1609_retirement_root)"
     c1609_custody "$SERVER2_ROOT" dir || return 1
     [ ! -L "$SERVER2_ROOT/retirement" ] && [ ! -L "$root" ] || return 1
@@ -231,6 +283,7 @@ c1609_write_ready_receipt() {
     c1609_custody "$CASE_DIR/preview-audit.out" file || return 1
     targets="$(printf '%s\n' "${C1008_TARGETS[@]}" | jq -R . | jq -sc .)" || return 1
     snapshot="$(c1609_target_snapshot)" || return 1
+    manual="$(c1609_manual_attestation Preview "$snapshot" '')" || return 1
     daemon="$(docker info --format '{{.ID}}')" || return 1
     [ -n "$daemon" ] && [[ "$daemon" != *[$'\n\r\t']* ]] || return 1
     digest="$(c1609_inventory_digest "$CASE_DIR/preview-audit.out")" || return 1
@@ -241,9 +294,10 @@ c1609_write_ready_receipt() {
     jq -cn --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg now "$now" \
         --arg digest "$digest" --arg image "${C994_IMAGE:-}" --arg daemon "$daemon" \
         --arg retiredAt "$C1008_RETIRED_AT" --arg nonce "$nonce" --argjson targets "$targets" --argjson fingerprints "$snapshot" \
-        '{schema:2,policyVersion:1,operationId:$op,project:$project,mode:"scripted",state:"Ready",consumed:false,
+        --arg mode "${C1008_MODE:-scripted}" --argjson manual "$manual" \
+        '({schema:2,policyVersion:1,operationId:$op,project:$project,mode:$mode,state:"Ready",consumed:false,
           targets:$targets,image:$image,inventoryDigest:$digest,readyAt:$now,daemon:$daemon,
-          retiredAt:$retiredAt,phaseNonce:$nonce,fingerprints:$fingerprints}' | c1609_persist "$root/preview-$nonce.json" || return 1
+          retiredAt:$retiredAt,phaseNonce:$nonce,fingerprints:$fingerprints} + $manual)' | c1609_persist "$root/preview-$nonce.json" || return 1
     # Each nonce artifact is immutable. preview.json is only a current rendering.
     cat -- "$root/preview-$nonce.json" | c1609_persist "$root/preview.json" || return 1
     c1609_copy_preview_rows "$root" Ready || return 1
@@ -262,7 +316,7 @@ c1609_write_refused_preview() {
 }
 
 c1609_require_ready_preview() {
-    local root file tmp canonical now ready age daemon current digest nonce
+    local root file tmp canonical now ready age daemon current digest nonce manual
     root="$(c1609_retirement_root)"
     file="$root/receipt.json"
     c1609_custody "$file" file || { printf 'reason=preview-required\n'; return 1; }
@@ -275,11 +329,13 @@ c1609_require_ready_preview() {
     # including nested duplicates, cannot equal their reserialized JSON object.
     canonical="$(jq -cS -s 'if length==1 then .[0] else error("envelope") end' "$file")" || return 1
     [ "$(cat -- "$file")" = "$canonical" ] && cmp -s -- "$file" "$root/preview-$nonce.json" || return 1
-    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" '
+    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg mode "${C1008_MODE:-scripted}" '
       type=="object" and
       (keys==(["schema","policyVersion","operationId","project","mode","state","consumed","targets","image",
-                "inventoryDigest","readyAt","daemon","retiredAt","phaseNonce","fingerprints"]|sort)) and
-      .schema==2 and .policyVersion==1 and .state=="Ready" and .consumed==false and .mode=="scripted" and
+                "inventoryDigest","readyAt","daemon","retiredAt","phaseNonce","fingerprints"] +
+                (if $mode=="manual" then ["attestation","authority"] else [] end)|sort)) and
+      .schema==2 and .policyVersion==1 and .state=="Ready" and .consumed==false and .mode==$mode and
+      ($mode=="scripted" or $mode=="manual") and
       .operationId==$op and .project==$project and (.targets|type)=="array" and
       (.targets|length)==4 and (.targets|unique|length)==4 and
       (.fingerprints|type)=="object" and ((.fingerprints|keys)==(.targets|sort)) and
@@ -302,11 +358,15 @@ c1609_require_ready_preview() {
     [ "$daemon" = "$(jq -r .daemon "$file")" ] || return 1
     current="$(c1609_target_snapshot)" || return 1
     [ "$current" = "$(jq -cS .fingerprints "$file")" ] || return 1
+    digest="$(sha256sum "$file" | cut -d' ' -f1)" || return 1
+    manual="$(c1609_manual_attestation Apply "$current" "$digest")" || return 1
     if [ -n "${C1609_APPLY_INVENTORY_FILE:-}" ]; then
         digest="$(c1609_inventory_digest "$C1609_APPLY_INVENTORY_FILE")" || return 1
         [ "$digest" = "$(jq -r .inventoryDigest "$file")" ] || return 1
     fi
-    jq '.consumed=true | .state="Applying"' "$file" | c1609_persist "$file" || return 1
+    jq --argjson manual "$manual" '.consumed=true | .state="Applying" |
+      if .mode=="manual" then .applyAttestation=$manual.attestation | .applyAuthority=$manual.authority else . end' \
+      "$file" | c1609_persist "$file" || return 1
     printf 'C1609_RETIREMENT state=Applying operation=%s\n' "$C1008_OPERATION"
 }
 
