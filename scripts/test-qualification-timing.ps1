@@ -889,11 +889,14 @@ try {
     $aggSavedReaders = @{}
     $script:aggReadBytes = 0L
     $script:aggOpenPaths = New-Object System.Collections.Generic.List[string]
+    $script:aggSuccessfulPaths = New-Object System.Collections.Generic.List[string]
     $aggSavedOpen = ${function:Open-TestPhaseReadStream}
     function Open-TestPhaseReadStream {
         param([string]$Path)
         $script:aggOpenPaths.Add($Path)
-        & $aggSavedOpen @PSBoundParameters
+        $opened = & $aggSavedOpen @PSBoundParameters
+        if (-not $opened.Refused -and $null -ne $opened.Stream) { $script:aggSuccessfulPaths.Add($Path) }
+        return $opened
     }
     foreach ($readerName in @('Read-TestPhaseBoundedBytes', 'Read-QualificationShardHeader', 'Read-QualificationTimingJsonl', 'Get-QualificationTrxStats')) {
         $reader = Get-Item -LiteralPath ('Function:' + $readerName)
@@ -911,9 +914,13 @@ try {
     Write-Host ('MEASURED hostile-aggregation=' + $aggWatch.Elapsed.TotalSeconds + ' exit=' + $agg.ChunkExitCode + ' result=' + $agg.ChunkResult + ' why=' + $aggDoc.why)
     $aggPhases = ($null -eq $aggDoc.p50Seconds -and $null -eq $aggDoc.p95Seconds -and $null -eq $aggDoc.maxSeconds -and $null -eq $aggDoc.fixtureSetupSeconds -and $null -eq $aggDoc.fixtureTeardownSeconds -and $null -eq $aggDoc.processSpawnSeconds -and $null -eq $aggDoc.processWaitSeconds)
     $aggAllowedPaths = @((Join-Path $aggLog 'antiphon-g9.timing.json'), $aggHuge)
-    $aggUnexpectedOpens = @($script:aggOpenPaths | Where-Object { $_ -notin $aggAllowedPaths })
-    Write-Host ('MEASURED hostile-read-bytes=' + $script:aggReadBytes + ' opens=' + $script:aggOpenPaths.Count)
-    Assert-Check ($script:aggReadBytes -le 524288 -and $script:aggOpenPaths.Count -le 2 -and $aggUnexpectedOpens.Count -eq 0) 'post-run-hostile-files-bounded-reads'
+    $aggUnexpectedOpens = @($script:aggOpenPaths | Where-Object { $_ -notin ($aggAllowedPaths + @($aggDenied)) })
+    $aggUnexpectedStreams = @($script:aggSuccessfulPaths | Where-Object { $_ -notin $aggAllowedPaths })
+    # The header scanner can consume one extra 8 KiB refill to detect an
+    # overlong line. A regular mode-000 file may reach a refused native open.
+    $aggMaxReadBytes = [Text.Encoding]::UTF8.GetByteCount($aggDense.ToString()) + 262144 + 8192
+    Write-Host ('MEASURED hostile-read-bytes=' + $script:aggReadBytes + ' max=' + $aggMaxReadBytes + ' opens=' + $script:aggOpenPaths.Count + ' streams=' + $script:aggSuccessfulPaths.Count)
+    Assert-Check ($script:aggReadBytes -le $aggMaxReadBytes -and $script:aggOpenPaths.Count -le 3 -and $script:aggSuccessfulPaths.Count -le 2 -and $aggUnexpectedOpens.Count -eq 0 -and $aggUnexpectedStreams.Count -eq 0) 'post-run-hostile-files-bounded-reads'
     # Base witness: 200 samples, p95=144 ms, max=672 ms, 7 old wall failures.
     # Bound actual reads; allow 2x the observed wall maximum for scheduling/IO.
     Assert-Check ($aggWatch.Elapsed.TotalSeconds -lt 1.5) 'post-run-hostile-files-wall-budget'
