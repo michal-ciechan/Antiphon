@@ -290,6 +290,18 @@ public sealed partial class AttentionService
             items.AddRange(BuildOccupancyDivergenceItems(occupancy, now));
             items.AddRange(BuildSlotOrphanItems(occupancy, now));
         }
+        var supervision = await BuildSupervisionVisibilityItemsAsync(now, ct);
+        items.AddRange(supervision);
+        var heldSessions = supervision
+            .Where(item => item.Kind == AttentionKind.FailedTaskSessionHeld && item.SessionId is not null)
+            .Select(item => item.SessionId!.Value)
+            .ToHashSet();
+        if (heldSessions.Count > 0)
+        {
+            items.RemoveAll(item => item.SessionId is Guid sid
+                && heldSessions.Contains(sid)
+                && item.Kind is AttentionKind.SeatIdle or AttentionKind.SlotOrphan);
+        }
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
         items.AddRange(await BuildCompactionContinuationItemsAsync(ct));
