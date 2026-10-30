@@ -41,6 +41,7 @@ public static class OverdueSweepHarness
         string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
+        var seededObservation = runner is null;
         runner ??= new FakeSessionRunnerClient
         {
             GetOverride = async (id, ct) =>
@@ -116,6 +117,8 @@ public static class OverdueSweepHarness
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
-        return new(provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper, provider);
+        var dispatcher = provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        if (seededObservation) dispatcher.CatchUpOverride = (_, _) => Task.CompletedTask;
+        return new(dispatcher, stopper, provider);
     }
 }

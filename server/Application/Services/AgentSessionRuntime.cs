@@ -946,6 +946,38 @@ public sealed partial class AgentSessionRuntime
     public async Task<bool> CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct) =>
         (await PullAndPersistAsync(sessionId, ct)).Persisted.LastStoredSeq is not null;
 
+    /// <summary>A current complete read, including duplicate replay, for a ceiling decision.</summary>
+    internal async Task<bool> CatchUpForCeilingAsync(Guid sessionId, DateTime generation, CancellationToken ct)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, budget.Token);
+            if (snapshot.SessionId != sessionId || snapshot.AcceptedStartedAt is not { } accepted
+                || !SessionGeneration.Equal(accepted, generation)
+                || snapshot.Entries.Any(e => e.SessionId != sessionId)
+                || snapshot.LastSequence != (snapshot.Entries.LastOrDefault()?.Sequence ?? 0)
+                || snapshot.Readiness is not { Status: "Ready", BindingId.Length: > 0 } readiness
+                || readiness.ParsedThrough != readiness.ObservedLength) return false;
+            if (snapshot.Entries.Count == 0)
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                if (await scope.ServiceProvider.GetRequiredService<AppDbContext>().TranscriptEntries
+                    .AnyAsync(t => t.AgentSessionId == sessionId, budget.Token)) return false;
+            }
+            await StampCodexTokenCountAsync(sessionId, snapshot.CodexTokenCountAt, budget.Token);
+            var persisted = await PersistTranscriptAsync(sessionId, snapshot.Entries, budget.Token);
+            return !persisted.NeedsReload && persisted.RecoveryFenceRejection is null
+                && !TryGetTranscriptPersistFailure(sessionId, out _);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Ceiling transcript observation is unknown for session {SessionId}", sessionId);
+            return false;
+        }
+    }
+
     /// <summary>
     /// Stores the newest Codex <c>token_count</c> time on the session. A null observation does
     /// not clear a previous value: a missed pull is unknown, not silence. A stamp failure is

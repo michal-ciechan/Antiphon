@@ -213,6 +213,13 @@ public sealed partial class AgentTaskReplyService
         Func<CancellationToken, Task>? onStillUncorrelated,
         CancellationToken ct, long? boundaryCeiling = null)
     {
+        if (task.CeilingHeldAt is not null && task.AgentSessionId is { } heldSession
+            && task.CeilingHoldSessionStartedAt is { } heldGeneration)
+        {
+            if (!await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == heldSession && s.StartedAt == heldGeneration, ct))
+                return TurnOutcome.Nothing;
+            db.RuntimeActionTaskFence ??= new(task.Id, task.Attempt, heldSession, heldGeneration);
+        }
         var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct, boundaryCeiling);
 
         if (turn.Interrupted is { } interrupted)

@@ -13,6 +13,13 @@ count only Queued, Dispatched and Working, and it still occupies a runner seat
 operator-visible rows are SeatIdle for a live Blocked seat (orphan=false, with its park field), SlotOrphan for a seat with no live session or owner task, and attention key runner-seat-release:.
 Parking is dormant: BlockedTaskParking:Enabled defaults to false and does not by itself
 free the seat.
+
+A ceiling hold (CARD-1610 S2) stays Working and consumes every existing open/in-flight
+slot. It has a separate ceilingHold projection and exclusive typed Reply; it is not a
+Blocked question. Continue/Extend record a finite bound without sending a delegate prompt
+or moving the report watermark. At 720 elapsed minutes an ordinary decision refuses;
+authenticated operator Extend or existing Cancel remains available. An unanswered hold
+never grants automatic release. S2 requires S3's notices and successor fencing before land.
 An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
 
 An attributable provider usage-limit API error blocks its delegated task with

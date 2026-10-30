@@ -1368,16 +1368,18 @@ public sealed partial class AttentionService
                     task.AgentId,
                     null,
                     task.Title,
-                    deadline.Breached
+                    deadline.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
+                        ? $"Role ceiling decision approaching or due. Working remains counted; unknown observations defer action. {deadline.Summary}"
+                        : deadline.Breached
                         ? $"Past its deadline — the next sweep will fail it. {deadline.Summary}"
                         : $"Closing on the deadline that will fail it. {deadline.Summary}",
                     Evidence(
                         deadline.Kind switch
                         {
                             TaskDeadlinePolicy.DeadlineKind.Ceiling =>
-                                "The hard wall-clock ceiling for this role. Crossing it fails the task "
-                                + "with the phase named; nothing is killed and nothing is retried, so "
-                                + "a reply, a check or a cancel are all still open to you.",
+                                "A confirmed Working session receives a ceiling hold and remains Working and counted. "
+                                + "A confirmed idle session retains the overdue failure path. Unknown observations remain for a decision. "
+                                + "No ceiling observation kills or retries a session.",
                             _ =>
                                 "The session is mid-turn and the phase it is in has run past its own "
                                 + "deadline. Crossing it fails the task; the session is not killed.",

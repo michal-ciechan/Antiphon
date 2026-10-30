@@ -90,11 +90,15 @@ public sealed class TaskCeilingControlTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Replies.DelayAfterOpenTaskLoadedAsync = async (_, ct) => { loaded.TrySetResult(); await release.Task.WaitAsync(ct); };
         var finish = h.FinishAsync();
-        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var answer = h.DecideAsync(episode: episode);
-        release.TrySetResult();
-        await finish;
-        (await Should.ThrowAsync<ConflictException>(() => answer)).Code.ShouldBe("ceiling_episode_stale");
+        try
+        {
+            await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var answer = h.DecideAsync(episode: episode);
+            release.TrySetResult();
+            await finish;
+            (await Should.ThrowAsync<ConflictException>(() => answer)).Code.ShouldBe("ceiling_episode_stale");
+        }
+        finally { release.TrySetResult(); await finish; }
         var settled = await h.TaskAsync();
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         settled.RepliedAtSequence.ShouldBeNull();
