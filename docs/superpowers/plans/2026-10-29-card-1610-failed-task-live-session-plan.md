@@ -71,6 +71,9 @@ changing global phase deadlines to hide long test or drain commands.
 | Blocked keeps occupancy | DispatchConcurrencyPolicy, dispatcher local cap, pipeline in-flight and CARD-0079 select Dispatched/Working | Keep Status=Working; do not widen these selectors |
 | Reply only accepts Blocked | AnswerAsync also handles a Working open-question tool; it validates nonblank message before routing | Add an exclusive typed ceiling path before ordinary answer logic |
 | Continue always has phase supervision | ClassifyPhase returns no phase clock for compaction/title/queue tails | Re-arm through 720; expose absence of phase deadline; final operator decision |
+| Failed late report reaches caller automatically | Open-task report selectors ignore Failed; completion recovery reads stored Result | Independent transcript scan forwards one parent triage note; outcome remains Failed |
+| Delegated drain expiry revokes stop policy | Docker-stack step 5 explicitly authorizes exact remaining old-runner seats at four hours | Preserve that authority; short slices grant none |
+| A C547 filename is a test class | AgentTaskReplyC547HoldTests.cs declares AgentTaskReplyIntegrationTests | Run the full real partial class |
 | Deploy fits its ceiling | Default drain wait 480 exceeds ceiling 240 | All-role hold plus declared budget and bounded command waits |
 
 ## Slices
@@ -208,15 +211,31 @@ let a hold notice discharge the later final report's caller obligation.
 | Delegate's own marked Failed report or other terminal writer leaving a live generation | Same central post-settlement notice obligation, even if the delegate authored the report; no silent exemption |
 | Historical Failed row with a still-confirmed same-generation session | Bounded scan creates one legacy notice keyed to original failure/attempt; unknown identity stays visible and unresolved |
 
-Implementation census must include `FailAsync`, `FailAndNotifyAsync`, direct
-Failed writes in AgentTaskDispatcher, AgentTaskReplyService settlement,
-ApiErrorRecoveryService, SpecialistTaskRunner and task-related landing recovery.
-Do not classify reads as writers. Any writer that cannot prove exit or no
-session owes the notice; a test guards each actual writer reached by this change.
+The round-3 writer census distinguishes actual saves from status reads:
+
+| Actual save boundary | Obligation seam and witness |
+|---|---|
+| AgentTaskDispatcher.FailAsync / FailAndNotifyAsync | Ordinary phase/dead-session/dispatch failure: add notice with Failed event before SaveChanges |
+| AgentTaskDispatcher.TryFailArm2ConditionalAsync (:7837) | Conditional ExecuteUpdate plus failure event/outbox transaction: insert obligation only when the compare succeeds, before transaction commit |
+| AgentTaskReplyService.FailUnreportedTurnAsync (:1864) | Insert before PersistDeliverThenReleaseAsync's failure save; no-report does not excuse a live recipient |
+| AgentTaskReplyService API-error terminal save (:2071) | Same persisted notice before release; preserve API-error outcome and existing exit checks |
+| AgentTaskReplyService normal marked-failed settlement | Add through the common persisted settlement boundary, including a delegate-authored Failed report |
+| CheckCompactionContinuationService.FailOccupantAsync (:664) | Same obligation or proved-exit NotApplicable; preserve CARD-0079 selector and stop authority |
+
+C1610_Failure_writer_records_notice has these six Arguments. Drive each real
+save with a fault after commit/before enqueue; assert exactly one durable identity
+or proved-exit NotApplicable and recovery, never a false Told receipt. The
+three delegate UserPrompt arms remain the end-to-end delivery oracle.
+ApiErrorRecoveryService and SpecialistTaskRunner inspect Failed in this source;
+they are not direct task-Failed writers. Inspect their call paths but do not edit
+those reads or mislabel them as writes. Task-related landing recovery routes to
+existing settlement; only its common save gains the obligation, not new release
+authority. Recheck new direct writers at Code's actual base. Any writer that cannot
+prove exit or no session owes the notice.
 No existing automatic kill gains authority from this contract; CARD-0079 stays
 its narrowly qualified exception.
 
-Wire text states task ID, attempt, why Failed, and: "Your task is Failed. Stop
+Wire text includes the canonical task marker, task ID, attempt, why Failed, and: "Your task is Failed. Stop
 starting further work, preserve/push your authorized work, and return a complete
 report. That report is evidence for triage; it will not automatically change this
 Failed outcome or launch a next stage." Delivery is WhenIdle after a confirmed
@@ -486,7 +505,7 @@ Land S1 (visibility/janitor) first after ordinary Review, then request its own
 reviewed rc port for prompt safety relief. S2/S3 (hold, controls and delivery)
 ship together to master after their shared checkpoint group; port together only
 after this folded verification design, ordinary Code/Review and migration
-qualification. S4 (Deploy CLI/docs) follows the CARD-1615 admission resolution
+qualification. S4 (Deploy CLI/docs) follows the CARD-1615 admission resolution and CARD-1609 retirement gate
 and integration review; do not concurrently edit its rollout/admission area or
 use this plan as authority to bypass source-writer holds. Until the coordinated
 rc port is active, use existing bounded named-phase waits and explicit operator
@@ -541,10 +560,10 @@ file per named class. These replace all seven round-1 proposed classes.
 | TaskCeilingPolicyTests | Unit | No; no allowlist entry | None: pure policy/control validation | 12 |
 | TaskCeilingHoldTests | Integration | No; no allowlist entry | None: isolated schema and injected runner | 25 |
 | TaskCeilingControlTests | Integration | No; no allowlist entry | None: service/transaction barriers, no children | 19 |
-| TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 15 |
+| TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 21 |
 | TaskCeilingScriptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 11 |
 
-Total new cases **90**, not 90 assertions. Category guards are explicit checkpoint
+Total new cases **96**, not 90 assertions. Category guards are explicit checkpoint
 rows at each green source group: TestLaneCategoryGuardTests (1), shared
 TestClassificationGuardTests (1), ProcessSpawnLimitTests (21 expanded cases:
 seven singleton methods, six CPU arguments, eight override arguments) = **23**.
@@ -589,7 +608,7 @@ retains Failed and its notice obligation across restart; accepted delivery says
 that later output is triage only. Capture actual full UserPrompt text in the
 recipient transcript, not the queue row. `C1610_Stale_notice_is_not_delivered`
 has three arguments: retry, generation-replacement, settled-hold. It proves no
-old instruction reaches the replacement/finished turn. All fifteen cases assert
+old instruction reaches the replacement/finished turn. All twenty-one cases assert
 zero automatic stopper/release calls and preserve foreign sessions. Own and
 join harness children; do not use any production runner or provider profile.
 
@@ -602,7 +621,7 @@ the triage obligation save but before queue insert, restart and recover twice.
 Add C1610_Late_report_identity_is_fenced with retry, generation-reuse and
 pre-failure-report Arguments; no triage forward may be attributed to those.
 The first three arms also replay the transcript and prove one forward, independent
-of the already delivered original Failed caller note. There are 15 receipt cases.
+of the already delivered original Failed caller note. The delivery/identity methods have 15 cases; six writer-save cases bring the class to 21.
 There is no correction producer; these witnesses prove forwarding only. Retain the existing C1161 Failed
 **parent** receipt method (three cases) and C1259 accepted-attempt replacement
 fence (two cases) as independent regression checkpoints.
@@ -628,7 +647,7 @@ current turn age exceeds the configured pool TTL. If the turn start is unknown,
 start a first-observed-Working episode and age that observation; never backdate
 from a stale pool label. Record first/last observation, last useful activity,
 identity, age and custody guidance. Repeated ticks/restarts do not create another
-incident for the same episode. No fresh runner sample means Unknown, not cleared.
+incident for the same episode. No fresh runner sample means uncertain observation, not a cleared incident.
 Use the existing bounded pool sweep and seat sampler; no per-request runner fanout.
 A task-bound Failed session uses FailedTaskSessionHeld, suppressing the duplicate
 pool warning. A positively idle warm session retains existing TTL/cap retirement. If every
@@ -642,9 +661,9 @@ Replace, do not delete, the contradictory existing test
 `AgentTaskPoolTests.the_janitor_retires_a_working_reading_session_silent_for_a_full_ttl`
 with `C1610_Janitor_retains_working_after_full_ttl`, which fails on the old kill.
 The new visibility tests cover TTL and cap pressure, taskless incident creation,
-restart dedup, Unknown retention, failed-session dedup, idle recovery and normal
+restart dedup, uncertain-observation retention, failed-session dedup, idle recovery and normal
 idle retirement. Assert no stopper call, no row/worktree deletion and retained
-capacity for Working/Unknown. A stall is reported for a decision, never killed.
+capacity for Working or unproved-idle sessions. A stall is reported for a decision, never killed.
 
 ## Revised slices and concrete file ownership
 
@@ -661,7 +680,7 @@ landed SHAs at commissioning; a plan observation is not current landing evidence
 | S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (8), changed AgentTaskPoolTests janitor case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
 | S2 hold/control | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue; AgentTaskReplyService.cs typed AnswerCeilingAsync; AgentTaskService.cs retry; new CeilingHoldFacts.cs; AttentionService hold projection; AgentTask.cs; DTOs; server/Api/Endpoints/AgentTaskEndpoints.cs; EF mapping/migration | TaskCeilingPolicyTests (12), TaskCeilingHoldTests (25), TaskCeilingControlTests (19); full policy/overdue/boot/reply/runtime classes and occupancy witnesses |
 | S2 inspected unchanged | DispatchConcurrencyPolicy.cs; AgentTaskPipelineStatusService.cs; CheckCompactionContinuationService.cs; TaskProgressPolicy.cs; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; AppDbContext runtime fence; tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs | No broadening of Blocked; Working naturally remains selected. Full relevant regression classes below; CARD-0079 witness is narrowly qualified |
-| S3 notices/triage/fencing | Failure writers in D-2 (AgentTaskDispatcher.cs, AgentTaskReplyService.cs, ApiErrorRecoveryService.cs, SpecialistTaskRunner.cs and task-related landing recovery); new TaskSupervisionNotice domain entity/Purpose/State with EF mapping; SessionQueuedMessage purpose identity; SessionMessageQueueService.cs; CompletionNoteWork.cs; Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; new LateFailedReportForwarder.cs; DelegationReportFormatter.cs; TaskCompletionNotification.cs; PipelineHandoffActionService.cs; AgentTaskService child admission; lifecycle/runtime docs | TaskSupervisionReceiptTests (15); full DelegationDispatchRecoveryBoundaryTests including C1161, full reply/runtime and completion-recovery classes, successor/control witnesses |
+| S3 notices/triage/fencing | Actual failure saves in D-2 (AgentTaskDispatcher.cs, AgentTaskReplyService.cs and CheckCompactionContinuationService.cs; recovery/landing callers inspected); new TaskSupervisionNotice domain entity/Purpose/State with EF mapping; SessionQueuedMessage purpose identity; SessionMessageQueueService.cs; CompletionNoteWork.cs; Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; new LateFailedReportForwarder.cs; DelegationReportFormatter.cs; TaskCompletionNotification.cs; PipelineHandoffActionService.cs; AgentTaskService child admission; lifecycle/runtime docs | TaskSupervisionReceiptTests (21); full DelegationDispatchRecoveryBoundaryTests including C1161, full reply/runtime and completion-recovery classes, successor/control witnesses |
 | S4 budgets/Deploy/client | scripts/delegate.ps1 typed Reply/create/Status and explicit operator-Extend option using existing token helper; scripts/deploy-server2.ps1; dispatch/clone/formatter/DTO budget bindings; client/src/api/agentTasks.ts; new features/delegations/CeilingHoldCard.tsx, TaskDetailBody.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests (11); client/src/features/delegations/CeilingHold.test.tsx (3); existing script contracts in Full Unit shards; allowlist/ProcessSpawnLimit roster guards |
 
 TaskSupervisionNotice has a typed purpose (CeilingParent, FailureDelegate,
@@ -685,7 +704,7 @@ an executable ordinary roster, not a claim that tests exist or ran. At Code's
 actual base reconcile the committed roster with source discovery and fresh TRX;
 unknown/missing/extra cases refuse Full credit until explained and the manifest
 is amended. Do not silently omit a class or run a broader suite. The following
-new class counts are exact design commitments (90 TUnit + 3 client cases).
+new class counts are exact design commitments (96 TUnit + 3 client cases).
 
 | ID | New class/method | Expanded cases and essential oracle |
 |---|---|---|
@@ -700,7 +719,7 @@ new class counts are exact design commitments (90 TUnit + 3 client cases).
 | V-9 | TaskCeilingControlTests.C1610_Successor_fence_uses_card_and_role; C1610_Replacement_racing_handoff_is_held; C1610_Retry_resets_hold_but_preserves_requested_ceiling | same-role/different-role/no-card/pre-hold-successor (4) + 1 + 1; 6 |
 | V-10 | TaskCeilingControlTests.C1610_No_phase_tail_rearms; C1610_Final_cap_requires_operator_extend | compaction/title/queue (3), ordinary-refusal/unauthorized-operator/authenticated-rearm (3); Control total 19 |
 | V-11 | TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt; C1610_Failed_delegate_has_complete_UserPrompt; C1610_Failed_late_report_parent_has_complete_UserPrompt | eligible/busy/crash each; 9; D-9 real producer to full recipient UserPrompt plus decoy, durable retry, zero automatic stops |
-| V-12 | TaskSupervisionReceiptTests.C1610_Stale_notice_is_not_delivered; C1610_Late_report_identity_is_fenced | retry/generation-replacement/settled-hold (3); retry/generation-reuse/pre-failure-report (3); Receipt total 15 |
+| V-12 | TaskSupervisionReceiptTests.C1610_Stale_notice_is_not_delivered; C1610_Late_report_identity_is_fenced; C1610_Failure_writer_records_notice | stale notice (3), late identity (3), six actual writer-save boundaries from D-2 (6); Receipt total 21 |
 | V-13 | TaskCeilingScriptTests.C1610_Status; C1610_Declared_budget; C1610_Ceiling_reply; C1610_Drain_wait | fresh/unknown (2), valid/invalid input sets (2), typed-action shape and explicit operator-mode auth (1), drain default/eight/oversize-or-all/inherited-token/standalone/resume (6); 11 |
 | V-14 | CeilingHold.test.tsx | Continue, Extend, Cancel; 3. Render a Working held task through TaskDetailBody, assert typed payload, no ordinary reply/Retry/auto-continue, cap guidance and stale answer feedback |
 
@@ -826,12 +845,12 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-9 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-integration-safety | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | runner safety | 2 passed; no failed/skipped | 2 | 3 |
 | CP-10 | S2-S4-red | `tests/Antiphon.Tests -> bin-c1610-hold-red/` | server-unit-policy-red | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 executed; intended behavioral reds plus guards | 12 | 5 |
 | CP-11 | S2-S4-red | CP-10 | server-integration-hold-control-red | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 executed; intended behavioral reds plus guards | 44 | 3 |
-| CP-12 | S2-S4-red | CP-10 | server-integration-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 15 executed; missing receipt/recovery assertions red | 15 | 4 |
+| CP-12 | S2-S4-red | CP-10 | server-integration-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 executed; intended receipt/writer assertions red | 21 | 5 |
 | CP-13 | S2-S4-red | CP-10 | script-integration-budget-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 executed; intended script assertions red | 11 | 3 |
 | CP-14 | S2-S4-red | n/a | client-Vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-14 | JSON total=3; all names; intended behavioral red, no setup error | n/a | 2 |
 | CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
 | CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 passed; no failed/skipped | 44 | 3 |
-| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 15 passed; no failed/skipped | 15 | 4 |
+| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 passed; no failed/skipped | 21 | 5 |
 | CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
 | CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 8 passed; no failed/skipped | 8 | 2 |
 | CP-20 | S2-S4 | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-14 | fresh JSON total=3 passed=3 failed/pending/todo=0; all names; exit 0 | n/a | 2 |
@@ -912,9 +931,9 @@ exit and total/passed/failed/pending/todo counts.
 
 ### Cost and performance execution contract
 
-**84 rows, 5 producer builds, 317 provisional build/execution minutes**, excluding
-admission. TUnit floors sum to **8,093 executions** (91 red-phase, 8,002 green/
-regression); client adds 3 red and 3 green = **8,099 total**. New cases are 90
+**84 rows, 5 producer builds, 319 provisional build/execution minutes**, excluding
+admission. TUnit floors sum to **8,105 executions** (97 red-phase, 8,008 green/
+regression); client adds 3 red and 3 green = **8,111 total**. New cases are 96
 TUnit plus 3 client; the renamed janitor case is existing. Final Unit covers
 6,265 identities, while guards and S1 classes intentionally repeat on different
 source groups. No full assembly run beyond the specified Unit lane is added.
@@ -923,8 +942,8 @@ source groups. No full assembly run beyond the specified Unit lane is added.
 |---|---:|---:|---:|---:|---:|
 | S1-red | 2 | 7 | 9 | 14 minutes | 44 minutes |
 | S1 | 7 | 32 | 294 | 64 minutes | 94 minutes |
-| S2-S4-red | 5 | 17 | 82 | 34 minutes | 64 minutes |
-| S2-S4 | 70 | 261 | 7708 | 522 minutes | 552 minutes |
+| S2-S4-red | 5 | 18 | 88 | 36 minutes | 66 minutes |
+| S2-S4 | 70 | 262 | 7714 | 524 minutes | 554 minutes |
 
 These are missing-sample scheduling bounds, not measured p95. The hard wall
 allows at most 30 total extra wall minutes for admission/other excluded time;
@@ -940,8 +959,8 @@ runs. This is scheduling/measurement work, not another Plan/TestDesign round.
 No new delegation is launched by this Plan delegate. Debug may recommend shared
 setup repairs or disjoint method partitions covering the same full classes;
 record the change and counts in this plan before running them. No dropped tests.
-The 317-minute estimate is materially higher than round 2's 51 because Final
-coverage was missing. Authoring provision is 180 minutes, making 497 minutes
+The 319-minute estimate is materially higher than round 2's 51 because Final
+coverage was missing. Authoring provision is 180 minutes, making 499 minutes
 before queue waits; the caller must commission within available supervision and
 ordering limits, not assume this feature is already active in the host.
 
