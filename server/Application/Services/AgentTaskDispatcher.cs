@@ -9556,7 +9556,7 @@ public sealed partial class AgentTaskDispatcher
     /// Sessions that have transcript rows and no turn boundary. Empty transcripts are absent
     /// from the result and stay eligible for TTL and cap retirement.
     /// </summary>
-    private async Task<HashSet<Guid>> SessionsWithoutTurnBoundaryAsync(
+    internal async Task<HashSet<Guid>> SessionsWithoutTurnBoundaryAsync(
         IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
     {
         var missing = new HashSet<Guid>();

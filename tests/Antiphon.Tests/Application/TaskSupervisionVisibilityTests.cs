@@ -51,6 +51,9 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("retain-no-generation")]
     [Arguments("retain-remote-pending")]
     [Arguments("absent-transcript")]
+    [Arguments("zero-row-ttl")]
+    [Arguments("zero-row-cap")]
+    [Arguments("zero-row-recheck")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -96,6 +99,15 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "absent-transcript":
                 await AbsentTranscriptAsync();
+                break;
+            case "zero-row-ttl":
+                await ZeroRowTtlAsync();
+                break;
+            case "zero-row-cap":
+                await ZeroRowCapAsync();
+                break;
+            case "zero-row-recheck":
+                await ZeroRowRecheckAsync();
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -276,6 +288,80 @@ public sealed class TaskSupervisionVisibilityTests
         await using var db = Open(schema.ConnectionString);
         (await db.AgentSessions.SingleAsync(s => s.Id == session)).Status.ShouldBe(SessionStatus.Running);
         (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// No transcript rows is absent evidence. Past the TTL the session stays.
+    /// </summary>
+    private static async Task ZeroRowTtlAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldNotContain(session);
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeTrue();
+        (await db.AgentSessions.SingleAsync(s => s.Id == session)).Status.ShouldBe(SessionStatus.Running);
+    }
+
+    /// <summary>
+    /// Cap surplus with no minimum age. Four warm agents, pooled 0, 1, 2 and 3 minutes
+    /// ago, TTL 5, cap 3, and no transcript rows. The 3-minute agent stays.
+    /// </summary>
+    private static async Task ZeroRowCapAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var seeded = new List<(Guid Agent, Guid Session)>();
+        for (var idle = 0; idle <= 3; idle++)
+            seeded.Add(await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: idle, clock));
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        var oldest = seeded[3];
+        stopper.Killed.ShouldNotContain(oldest.Session);
+        await using var db = Open(schema.ConnectionString);
+        foreach (var row in seeded)
+        {
+            stopper.Killed.ShouldNotContain(row.Session);
+            (await db.Agents.AnyAsync(a => a.Id == row.Agent)).ShouldBeTrue();
+            (await db.AgentSessions.SingleAsync(s => s.Id == row.Session)).Status.ShouldBe(SessionStatus.Running);
+        }
+    }
+
+    /// <summary>
+    /// The pre-kill query retains a session id that has no rows, keeps a title-only
+    /// session, and does not retain a stored turn end.
+    /// </summary>
+    private static async Task ZeroRowRecheckAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, _, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var zero = Guid.NewGuid();
+        var (_, title) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var endedDir = Path.Combine(workspace.Path, "ended");
+        Directory.CreateDirectory(endedDir);
+        var (_, ended) = await SeedWarmAsync(schema.ConnectionString, endedDir, idleMinutes: 1, clock);
+        await SeedTitleOnlyAsync(schema.ConnectionString, title, clock);
+        await SeedTranscriptAsync(schema.ConnectionString, ended, clock, working: false);
+
+        var missing = await dispatcher.SessionsWithoutTurnBoundaryAsync([zero, title, ended], CancellationToken.None);
+
+        missing.ShouldContain(zero);
+        missing.ShouldContain(title);
+        missing.ShouldNotContain(ended);
     }
 
     private static async Task RestartResolutionAsync()
