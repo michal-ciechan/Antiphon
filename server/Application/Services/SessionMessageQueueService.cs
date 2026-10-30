@@ -1551,6 +1551,9 @@ public sealed partial class SessionMessageQueueService
                 return confirmed;
             }
 
+            if (!await SupervisionInputCurrentAsync(db, message, ct))
+                return await GetQueueAsync(sessionId, ct);
+
             if (await RecoverPointerAsync(db, sessionId, [message],
                 await CeilingsForSessionAsync(db, sessionId, ct), ct) is not null)
                 return await GetQueueAsync(sessionId, ct);
@@ -2437,22 +2440,6 @@ public sealed partial class SessionMessageQueueService
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
-        // Last look under the queue lock. Retry, settlement and reused generations cannot
-        // send an old hold/failure instruction into the recipient's next turn.
-        foreach (var message in pending.Where(m => m.SourceTaskSupervisionNoticeId != null).ToList())
-        {
-            var notice = await db.TaskSupervisionNotices.SingleOrDefaultAsync(n => n.Id == message.SourceTaskSupervisionNoticeId, ct);
-            if (notice is not null && await TaskSupervisionNoticeService.CanSendAsync(db, notice, ct)) continue;
-            pending.Remove(message);
-            if (notice is null || notice.State is TaskSupervisionNoticeState.Superseded or TaskSupervisionNoticeState.NotApplicable)
-            {
-                message.Status = QueuedMessageStatus.Canceled;
-                message.CanceledAt = UtcNow();
-            }
-            await db.SaveChangesAsync(ct);
-        }
-        if (pending.Count == 0) return FlushResult.Nothing;
-
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
         var nowUtc = UtcNow();
@@ -2470,6 +2457,12 @@ public sealed partial class SessionMessageQueueService
         lateConfirmed?.Record(late);
         if (late.Handled > 0)
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+
+        // Receipts first, then the same last-look gate used by interrupted recovery and
+        // SendNow. A notice retains WhenIdle semantics on every queue input path.
+        foreach (var message in pending.Where(m => m.SourceTaskSupervisionNoticeId != null).ToList())
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) pending.Remove(message);
+        if (pending.Count == 0) return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         // Parked messages (at the attempts cap) stay Pending and visible, but no automatic path
         // types them again — that is what "parks for a human" means. They are still late-confirmed
@@ -3378,6 +3371,9 @@ public sealed partial class SessionMessageQueueService
             return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
         }
 
+        foreach (var message in remaining)
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) return FlushResult.Nothing;
+
         // CARD-0501 re-review F3: the attempts cap is DURABLE, but it is filtered in
         // DeliverNextLockedAsync over the PENDING set only — and interrupted-Sent recovery runs
         // before that filter, selecting purely on Status/verdict/age. A crash between the Enter-only
@@ -3445,6 +3441,8 @@ public sealed partial class SessionMessageQueueService
         CancellationToken ct,
         PtyDeliveryCeilings ceilings)
     {
+        foreach (var message in run)
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) return FlushResult.Nothing;
         if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return FlushResult.Nothing;
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
