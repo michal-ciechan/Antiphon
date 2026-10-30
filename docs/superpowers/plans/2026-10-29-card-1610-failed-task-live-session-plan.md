@@ -252,3 +252,57 @@ not because Failed was already written. No new client test rows are required:
 use the existing attention rendering contract and add optional DTO facts; the
 CLI text is covered by its offline script tests. A bespoke client control is
 out of scope for this reduced design.
+
+## D-4 detail: Deploy and declared long work
+
+Use `-CeilingMinutes` (nullable positive integer, maximum **720**) and
+`-CeilingReason` at dispatch for **every role**, not just Code/Review. Null uses
+the configured role ceiling; ExpectedMinutes/-ExpectAbout remains an estimate,
+not authority to change supervision. Require a nonblank bounded reason for an
+override, snapshot resolved minutes/provenance at dispatch, include them in task
+DTOs/brief/status, and reset elapsed/hold acknowledgements on a genuine retry.
+Reject zero, negative, overflow and over-cap values before admission; existing
+configured zero/off semantics are not silently redefined for old settings.
+A retry retains an explicitly requested budget but resolves a default afresh.
+Extend replies use the same 720-minute absolute cap. At cap, Continue is still an
+explicit decision to proceed under unchanged phase/loop supervision; it is not
+a hidden failure timer.
+
+Concrete incident: Deploy **2e4f7375** hit the 240-minute role ceiling while a
+sanctioned drain was still running. `DelegationSettings.RolePolicy[Deploy]`
+inherits TimeoutMinutes=240; `deploy-server2.ps1` defaults WaitIdleMinutes=480.
+D-1 removes its false terminal failure. A declared eight-hour rollout can request
+CeilingMinutes=600 with a reason allocating 480 minutes drain plus 120 minutes
+for other phases. A total 240-minute drain can request 360 on the same basis.
+These are explicit estimates, not global role-default increases or guarantees.
+
+A ceiling override does **not** exempt a 240/480-minute single ToolCall from the
+90-minute local-tool deadline. Avoid that second defect by changing the script's
+**default WaitIdleMinutes to 30**, retaining its existing named safe timeout
+and drain state when time expires. Delegate rollout instructions require named
+phases with each command bounded to at most 60 minutes (30 by default), returning
+to the agent between calls. While running in a delegated context, reject an
+explicit WaitIdleMinutes above 60 before mutating anything and explain how to
+split it. Standalone human invocations retain their explicit long-wait range.
+No wait expiry authorizes stopping a seat, undeploying a container, clearing a
+drain, skipping census, recycling a volume or advancing to the next phase.
+
+The delegate brief records an **absolute overall drain deadline** (e.g. 240 or
+480 minutes from the first drain request) and finite 30-minute command slices.
+After each named still-busy outcome, inspect status/census and continue only the
+same idempotent drain phase within that original deadline; never restart the
+overall budget on each call. At the overall deadline report Blocked with actual
+state. This is a documented rollout procedure, not a broker wait ledger or a
+background process; the delegate owns and awaits every command. The sanctioned
+240-minute drain remains available as eight bounded waits. If a transport or
+other failure occurs, do not treat it as the named safe still-busy result.
+
+Files: `scripts/delegate.ps1`, `server/Application/Dtos/AgentTaskDtos.cs`,
+`server/Domain/Entities/AgentTask.cs`, dispatch/clone/retry/formatter bindings,
+API reply/create binding, EF mapping/migration, `scripts/deploy-server2.ps1`,
+`docs/docker-stack.md` and `docs/ops-http.md`. Offline tests exercise actual
+script entry validation and existing HTTP stubs: default 30, delegated >60
+refusal before mutation, explicit standalone 240, still-busy preservation, and
+finite overall-deadline guidance. No live Docker rollout is a Plan checkpoint.
+CARD-1615 owns the source-writer/landing circular wait; no amount of extra time
+fixes it. Do not bypass that hold in this card.
