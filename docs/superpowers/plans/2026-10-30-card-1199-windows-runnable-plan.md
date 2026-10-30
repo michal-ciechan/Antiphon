@@ -129,9 +129,14 @@ Tests: CP-1..CP-12 and CP-36. Include the exact skip-census updates in
 `scripts/lib/checkpoint-usage.ps1` described below. Implementation/review preparation 40 minutes;
 ordinary two-lane execution/build allowance 60 minutes; reporting 10 minutes.
 The native existing-output-symlink setup remains Directory.CreateSymbolicLink.
-Collision fixtures' unreachable POSIX sentinel commands are replaced in S-C;
-S-A must assert exact refusal and no build-start evidence, not infer it merely
-from an Exec command failing later.
+In S-A, add a portable MSBuild WriteLinesToFile marker under the fixture's
+ignored .antiphon directory immediately before the mutation Exec. Require that
+marker absent for all four collision cases, alongside the exact named refusal.
+This small anti-vacuity arrangement addition makes bypassing preflight fail even
+if the later POSIX Exec is unavailable on Windows. Keep Linux's mutation commands
+unchanged. S-C replaces the unreachable collision commands too; require marker
+presence for the ten mutation cases once ported. Do not infer no-build solely
+from the absence of Build succeeded.
 
 ### S-B1: isolated Git helper and eight baseline results (150-minute ceiling)
 
@@ -144,8 +149,9 @@ The helper owns an empty scratch home outside the fixture's Git worktree, plus
 empty regular global/system config files. Set GIT_CONFIG_GLOBAL and
 GIT_CONFIG_SYSTEM to those files and GIT_CONFIG_NOSYSTEM=1. Set child HOME,
 USERPROFILE and XDG_CONFIG_HOME to owned empty directories; preserve SDK/NuGet
-cache locations explicitly for dotnet children so isolation does not force a
-package download per test. Remove inherited GIT_CONFIG, GIT_CONFIG_PARAMETERS,
+cache locations explicitly (NUGET_PACKAGES and a run-owned, once-initialized
+DOTNET_CLI_HOME) for dotnet children so isolation does not force a package
+download/first-use setup per test. Do not copy host credentials or profiles. Remove inherited GIT_CONFIG, GIT_CONFIG_PARAMETERS,
 GIT_CONFIG_COUNT and matching KEY_n/VALUE_n entries, as well as repository/index
 redirectors. Pin local core.autocrlf=false before writing/staging fixtures. Keep
 explicit fixture commit identity and signing=false; never rewrite input bytes
@@ -173,7 +179,10 @@ The corrected path isolates before init/add/commit and passes that assertion.
 Keep a separate diagnostic legacy control proving the hostile config was read
 and produces the differential. Verify global and system config sources, local
 config still effective, parent environment unchanged, two parallel child roots
-independent, and no eager process launch outside the strict ProcessSpawnLimit.
+independent, and no eager process launch outside the strict ProcessSpawnLimit. The environment
+control must independently query a harmless sentinel setting present only in the
+owned global/system config and assert it absent after isolation: local
+autocrlf=false alone must not mask a broken config isolation helper.
 
 Tests: CP-37 red first (one deliberate failing regression, no fixture/build
 error); then CP-13..CP-20, CP-38/CP-48/CP-50 green and CP-39 on Linux.
@@ -218,7 +227,8 @@ require actual LinkTarget and preserved target bytes. Explicitly check link
 creation capability on the native lane and report missing privilege/Developer
 Mode as a prerequisite failure, without changing host policy. The investigation
 proves directory symlinks on one host, not universal file-link privilege.
-Tests: CP-33..CP-35. Authoring 45m + evidence 65m + reporting 15m.
+Tests: CP-33..CP-35. Each mutation row requires its ignored build-target marker
+and exact state transition before its result can qualify. Authoring 45m + evidence 65m + reporting 15m.
 
 ### S-F: final acceptance and one graph approval (150-minute ceiling)
 
@@ -290,51 +300,61 @@ pin this exact remaining-skip set per slice as well as the unchanged RC policy.
 
 ### Per-row contract and native arrangement
 
-`CP-n` below is the exact checkpoint command key defined under Checkpoints;
-its one-case selector and command expansion are executable, not pseudofilters.
+Each literal command below selects its matching CP-n and exact method in the
+Checkpoints table. A one-row rerun may rebuild; its shared-build allowance stays
+separate from that method's execution estimate.
 A/B/C correspond to the slices above. Time is whole execution minutes, excluding
 the shared outer test-assembly build; native seconds are historical first-run
 observations. B timings were early failures; use the successful control aggregate
 for batch budgeting. All controls below must observe both tool and script unless
 explicitly labeled script-only or local helper. All 35 stay required in policy.
 
-| Command key / slice | Exact test (class alias S/T/O) | Production seam and required red witness | Windows fixture decision | Minutes / original seconds |
+The literal per-row commands below use these two task-local variables after
+bootstrap/import and the deadline overlay; they are diagnostic one-row commands.
+For ordinary execution use the grouped row sets to share the build.
+
+```powershell
+$c1199Tool = Join-Path (Get-Location).Path 'tools/Antiphon.Checkpoints/bin-c1199-plan-tool/Antiphon.Checkpoints.dll
+$c1199Manifest = Join-Path (Get-Location).Path '.antiphon/c1199-checkpoints.yaml'
+```
+
+| Exact checkpoint command / slice | Exact test (class alias S/T/O) | Production seam and required red witness | Windows fixture decision | Minutes / original seconds |
 |---|---|---|---|---|
-| CP-1 / S-A | `S.shape_staged_untracked` | P1 Settle/index; P3 invalid receipt. Require USER-KEEP plus index entry, tampered path and invalid bound receipt; omitting build git-add must fail. | No fixture port | 1 / 56.57 |
-| CP-2 / S-A | `S.shape_clean_build` | P1 Prepare/Settle; P2 real build; P3 evidence. Require executed=1 and side/keep bytes; bypassing build/test cannot pass. | No fixture port | 2 / 70.94 |
-| CP-3 / S-A | `S.missing_receipt_is_not_negative_success` | S Receipt(null), test-local negative oracle only. Null receipt must not return ok; accepting absence fails. This row alone proves no native production seam. | No fixture port | 1 / 0 |
-| CP-4 / S-A | `S.shape_existing_stamp` | P3 exclusive stamp/output preflight. Require USER-OUTPUT and exact pre-existing-build-source refusal before build; bypass preflight must fail sentinel/receipt checks. | No fixture port | 1 / 25.08 |
-| CP-5 / S-A | `S.shape_compiler_collision` | P3 output refusal before compiler. Require original App.dll, exact pre-existing-output refusal and no successful build; accepting output fails. | No fixture port | 1 / 26.18 |
-| CP-6 / S-A | `S.shape_existing_output_directory` | P3 exclusive owned directory creation. Require pre-existing-output refusal and unchanged tracked sentinel; accepting empty foreign directory fails. | No fixture port | 1 / 31.65 |
-| CP-7 / S-A | `S.shape_existing_output_symlink` | P3 reparse/link-component refusal; P4 native inspection. Require real directory LinkTarget plus original outside/App.dll and refusal; replacing link by directory/copy fails. | No fixture port | 1 / 25.01 |
-| CP-8 / S-A | `T.intermediate_output_path_tampering_is_reported` | P1 Settle; P2 IntermediateOutputPath. Require generated AssemblyVersion bytes retained, named tamper and invalid receipt; bypass generation/detection fails. | No fixture port | 3 / 176.28 |
-| CP-9 / S-A | `T.generated_target_file_tampering_is_reported` | P1 Settle; P2 GenerateVersion target. Require generated version 1 bytes retained and named tamper; an unexecuted target or hidden tamper fails. | No fixture port | 2 / 116.62 |
-| CP-10 / S-A | `T.dirty_tracked_tree_is_refused_and_unmodified` | P1 Prepare dirty preflight. Require dirty-tracked exit 2, unchanged dirty/marker bytes, no build success; bypass refusal fails. | No fixture port | 1 / 42.07 |
-| CP-11 / S-A | `T.tracked_snapshot_contains_committed_files` | Script Get-CheckpointTrackedSnapshot/Git membership. Require all five names including outside.txt and notes/readme.txt; restricting to project directory fails. | No fixture port | 1 / 10.72 |
-| CP-12 / S-A | `T.index_added_file_is_kept_and_indexed` | P1 Settle index delta; P3 script receipt. Require INDEX-KEEP, fresh-user.txt in index and invalid receipt; skipping update-index or restoration fails. | No fixture port | 3 / 130.81 |
-| CP-13 / S-B1 | `T.local_output_property_tampering_is_reported` | P1 Settle; P2 TreatAsLocalProperty OutputPath. Require actual MZ replacement DLL retained, tampered legacy path and invalid receipt; early dirty refusal fails. | No fixture port | 2 / 12.62 |
-| CP-14 / S-B1 | `T.imported_props_reference_tampering_is_reported` | P1 Settle; P2 imported ProjectReference. Require Lib/legacy/Lib.dll MZ replacement and named tamper; not building imported dependency fails. | No fixture port | 2 / 19.6 |
-| CP-15 / S-B1 | `T.transitive_reference_tampering_is_reported` | P1 Settle; P2 App-to-Mid-to-Lib traversal. Require transitive Lib replacement and invalid receipt; omitting transitive evaluation fails. | No fixture port | 2 / 21.43 |
-| CP-16 / S-B1 | `T.clean_untracked_output_build_exits_zero` | P1 clean baseline; P2 real build. Require preserved source, owned output, no TRX and script build exit 0; skipping build or dirty refusal fails. | No fixture port | 2 / 14.47 |
-| CP-17 / S-B1 | `T.fresh_checkout_run_executes_a_test` | P1 clean fresh baseline; P2 build/run; P3 source binding. Require no obj before tool, executed=1, exit 0 and buildSource=verified from each entry; mock success without execution fails. | No fixture port | 3 / 66.89 |
-| CP-18 / S-B1 | `T.staged_untracked_file_is_kept_and_indexed` | P1 index/worktree delta; P3 negative receipt. Require USER-KEEP, index entry, named tamper and source_ineligible; omitting git-add or deleting newly staged file fails. | No fixture port | 2 / 23.91 |
-| CP-19 / S-B1 | `T.staged_ignored_file_is_kept_and_indexed` | P1 ignored-path/index delta; P3 negative receipt. Require IGNORED-KEEP and forced-add entry; removing force or undoing the index fails. | No fixture port | 2 / 49.07 |
-| CP-20 / S-B1 | `T.passing_script_requires_writable_source_receipt` | Script passing build/test to required source.json write. Require collision directory and source.json exit 2 after executed=1; add executed=1/collision proof so unrelated early refusal cannot pass. Logging receipt failure with exit 0 must fail. | No fixture port | 2 / 16.43 |
-| CP-21 / S-B2 | `O.imported_props_build_preserves_the_tracked_dependency` | P2 imported References.props; P1/P3 owned outputs. Require original tracked Lib DLL/assets AND new owned Lib.dll/artifacts assets; skipping graph/build or writing normal Lib output fails. | No fixture port | 2 / 164.99 |
-| CP-22 / S-B2 | `O.directory_build_props_build_preserves_the_tracked_dependency` | P2 Directory.Build.props import; P1/P3 outputs. Require original DLL/assets plus both new owned files; bypass implicit import or confinement fails. | No fixture port | 2 / 111.92 |
-| CP-23 / S-B2 | `O.conditional_import_build_preserves_the_tracked_dependency` | P2 real condition/property graph evaluation; P1/P3 outputs. Require condition-selected Lib in owned output plus unchanged tracked bytes; static-only graph or no build fails. | No fixture port | 2 / 147.07 |
-| CP-24 / S-B2 | `O.transitive_import_build_preserves_the_tracked_dependency` | P2 transitive imported graph; P1/P3 outputs. Require deepest Lib outputs in App owned root and tracked bytes unchanged; dropping transitive edge fails. | No fixture port | 2 / 166.16 |
-| CP-25 / S-B2 | `O.unevaluable_import_is_refused_before_the_build` | P2 graph evaluation refusal before build. Require graph-unevaluated and KEEP-SENTINEL, no build success; generic dirty refusal or treating missing import as empty graph fails. | No fixture port | 1 / 18.35 |
-| CP-26 / S-C1 | `S.shape_untracked_descendant` | P1 CaptureUntracked/Stamp/Settle. Require moved USER-UNTRACKED descendant, tracked.txt tamper, manual command and invalid receipt; unchanged arrangement fails. | Port: remove tracked regular file; Directory.Move user-dir to tracked.txt; do not stage descendant. | 1 / 56.57 |
-| CP-27 / S-C1 | `S.shape_ignored_descendant` | P1 ignored manifest/Stamp/Settle. Require USER-IGNORED and exact invalid receipt; overlooking ignored child or leaving original tracked file fails. | Port: same directory move, preserve user.dat ignore entry and unstaged state. | 1 / 54.28 |
-| CP-28 / S-C1 | `S.shape_modified_tracked` | P1 content Stamp/Settle. Require MUTATED bytes retained and named tamper; a no-op or automatic restore fails. | Port: WriteAllBytes ASCII MUTATED to tracked.txt inside Exec, no newline. | 1 / 51.54 |
-| CP-29 / S-C1 | `S.shape_deleted_tracked` | P1 absence Stamp/Settle. Require tracked.txt absent, named tamper and invalid receipt; no-op or recreation fails. | Port: File.Delete tracked.txt inside Exec; assert prior existence in fixture. | 2 / 60.38 |
-| CP-30 / S-C1 | `S.shape_regular_user_move` | P1 tracked/untracked transition/Settle. Require USER-MOVED at tracked.txt and conflict; add source-absence assertion so a copy cannot masquerade as move. | Port: File.Move user-move.txt to tracked.txt with overwrite=true, preserving bytes. | 1 / 55.83 |
-| CP-31 / S-C1 | `S.shape_deleted_untracked` | P1 pre-existing untracked manifest/Settle. Require user-move.txt absent and named tamper; add MUTATED tracked.txt witness; recreating user path fails. | Port: File.Delete user-move.txt then exact ASCII MUTATED write to tracked.txt. | 1 / 52.83 |
-| CP-32 / S-C1 | `S.shape_changed_untracked` | P1 pre-existing untracked hash/Settle. Require CHANGED-USER and named tamper; add MUTATED tracked.txt witness; preserving original bytes or no-op fails. | Port: ASCII CHANGED-USER to user-move.txt and MUTATED to tracked.txt. | 1 / 50.22 |
-| CP-33 / S-C2 | `S.shape_directory_on_file` | P1 shape stamp/index/unstaged descendants. Require USER-SECRET staged and USER-UNSTAGED unstaged, both exact bytes, named tamper and invalid receipt; missing target execution fails. | Port: File.Delete tracked.txt; Directory.Move user-dir; git add -A tracked.txt then git restore --staged tracked.txt/unstaged.txt. | 2 / 20.61 |
-| CP-34 / S-C2 | `S.shape_file_on_directory` | P1 directory-to-file shape/index/Settle. Require USER-FILE at dir and dir/a.txt tamper; add staged replacement/old-entry absence assertions; no-op/copy arrangement fails. | Port: remove only owned fixture dir recursively, File.Move payload.dat to dir, git add -A dir. | 2 / 65.48 |
-| CP-35 / S-C2 | `S.shape_symlink_on_file` | P1 StampLink/Settle; P4 native file link. Require real file LinkTarget ending link-target.txt, LINK-BYTES target unchanged, tamper and invalid receipt; copy/hardlink/no-op fails. | Port: delete tracked regular file, File.CreateSymbolicLink tracked.txt -> link-target.txt, git add tracked.txt. Verify link/index without assuming Git symlink mode on unqualified hosts. | 2 / 65.83 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-1 --serial` / S-A | `S.shape_staged_untracked` | P1 Settle/index; P3 invalid receipt. Require USER-KEEP plus index entry, tampered path and invalid bound receipt; omitting build git-add must fail. | No fixture port | 1 / 56.57 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-2 --serial` / S-A | `S.shape_clean_build` | P1 Prepare/Settle; P2 real build; P3 evidence. Require executed=1 and side/keep bytes; bypassing build/test cannot pass. | No fixture port | 2 / 70.94 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-3 --serial` / S-A | `S.missing_receipt_is_not_negative_success` | S Receipt(null), test-local negative oracle only. Null receipt must not return ok; accepting absence fails. This row alone proves no native production seam. | No fixture port | 1 / 0 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-4 --serial` / S-A | `S.shape_existing_stamp` | P3 exclusive stamp/output preflight. Require USER-OUTPUT and exact pre-existing-build-source refusal before build; bypass preflight must fail sentinel/receipt checks. | Gate lift plus portable target marker; mutation command port stays in S-C1 | 1 / 25.08 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-5 --serial` / S-A | `S.shape_compiler_collision` | P3 output refusal before compiler. Require original App.dll, exact pre-existing-output refusal and no successful build; accepting output fails. | Gate lift plus portable target marker; mutation command port stays in S-C1 | 1 / 26.18 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-6 --serial` / S-A | `S.shape_existing_output_directory` | P3 exclusive owned directory creation. Require pre-existing-output refusal and unchanged tracked sentinel; accepting empty foreign directory fails. | Gate lift plus portable target marker; mutation command port stays in S-C1 | 1 / 31.65 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-7 --serial` / S-A | `S.shape_existing_output_symlink` | P3 reparse/link-component refusal; P4 native inspection. Require real directory LinkTarget plus original outside/App.dll and refusal; replacing link by directory/copy fails. | Gate lift plus portable target marker; mutation command port stays in S-C1 | 1 / 25.01 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-8 --serial` / S-A | `T.intermediate_output_path_tampering_is_reported` | P1 Settle; P2 IntermediateOutputPath. Require generated AssemblyVersion bytes retained, named tamper and invalid receipt; bypass generation/detection fails. | No fixture port | 3 / 176.28 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-9 --serial` / S-A | `T.generated_target_file_tampering_is_reported` | P1 Settle; P2 GenerateVersion target. Require generated version 1 bytes retained and named tamper; an unexecuted target or hidden tamper fails. | No fixture port | 2 / 116.62 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-10 --serial` / S-A | `T.dirty_tracked_tree_is_refused_and_unmodified` | P1 Prepare dirty preflight. Require dirty-tracked exit 2, unchanged dirty/marker bytes, no build success; bypass refusal fails. | No fixture port | 1 / 42.07 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-11 --serial` / S-A | `T.tracked_snapshot_contains_committed_files` | Script Get-CheckpointTrackedSnapshot/Git membership. Require all five names including outside.txt and notes/readme.txt; restricting to project directory fails. | No fixture port | 1 / 10.72 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-12 --serial` / S-A | `T.index_added_file_is_kept_and_indexed` | P1 Settle index delta; P3 script receipt. Require INDEX-KEEP, fresh-user.txt in index and invalid receipt; skipping update-index or restoration fails. | No fixture port | 3 / 130.81 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-13 --serial` / S-B1 | `T.local_output_property_tampering_is_reported` | P1 Settle; P2 TreatAsLocalProperty OutputPath. Require actual MZ replacement DLL retained, tampered legacy path and invalid receipt; early dirty refusal fails. | No fixture port | 2 / 12.62 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-14 --serial` / S-B1 | `T.imported_props_reference_tampering_is_reported` | P1 Settle; P2 imported ProjectReference. Require Lib/legacy/Lib.dll MZ replacement and named tamper; not building imported dependency fails. | No fixture port | 2 / 19.6 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-15 --serial` / S-B1 | `T.transitive_reference_tampering_is_reported` | P1 Settle; P2 App-to-Mid-to-Lib traversal. Require transitive Lib replacement and invalid receipt; omitting transitive evaluation fails. | No fixture port | 2 / 21.43 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-16 --serial` / S-B1 | `T.clean_untracked_output_build_exits_zero` | P1 clean baseline; P2 real build. Require preserved source, owned output, no TRX and script build exit 0; skipping build or dirty refusal fails. | No fixture port | 2 / 14.47 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-17 --serial` / S-B1 | `T.fresh_checkout_run_executes_a_test` | P1 clean fresh baseline; P2 build/run; P3 source binding. Require no obj before tool, executed=1, exit 0 and buildSource=verified from each entry; mock success without execution fails. | No fixture port | 3 / 66.89 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-18 --serial` / S-B1 | `T.staged_untracked_file_is_kept_and_indexed` | P1 index/worktree delta; P3 negative receipt. Require USER-KEEP, index entry, named tamper and source_ineligible; omitting git-add or deleting newly staged file fails. | No fixture port | 2 / 23.91 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-19 --serial` / S-B1 | `T.staged_ignored_file_is_kept_and_indexed` | P1 ignored-path/index delta; P3 negative receipt. Require IGNORED-KEEP and forced-add entry; removing force or undoing the index fails. | No fixture port | 2 / 49.07 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-20 --serial` / S-B1 | `T.passing_script_requires_writable_source_receipt` | Script passing build/test to required source.json write. Require collision directory and source.json exit 2 after executed=1; add executed=1/collision proof so unrelated early refusal cannot pass. Logging receipt failure with exit 0 must fail. | No fixture port | 2 / 16.43 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-21 --serial` / S-B2 | `O.imported_props_build_preserves_the_tracked_dependency` | P2 imported References.props; P1/P3 owned outputs. Require original tracked Lib DLL/assets AND new owned Lib.dll/artifacts assets; skipping graph/build or writing normal Lib output fails. | No fixture port | 2 / 164.99 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-22 --serial` / S-B2 | `O.directory_build_props_build_preserves_the_tracked_dependency` | P2 Directory.Build.props import; P1/P3 outputs. Require original DLL/assets plus both new owned files; bypass implicit import or confinement fails. | No fixture port | 2 / 111.92 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-23 --serial` / S-B2 | `O.conditional_import_build_preserves_the_tracked_dependency` | P2 real condition/property graph evaluation; P1/P3 outputs. Require condition-selected Lib in owned output plus unchanged tracked bytes; static-only graph or no build fails. | No fixture port | 2 / 147.07 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-24 --serial` / S-B2 | `O.transitive_import_build_preserves_the_tracked_dependency` | P2 transitive imported graph; P1/P3 outputs. Require deepest Lib outputs in App owned root and tracked bytes unchanged; dropping transitive edge fails. | No fixture port | 2 / 166.16 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-25 --serial` / S-B2 | `O.unevaluable_import_is_refused_before_the_build` | P2 graph evaluation refusal before build. Require graph-unevaluated and KEEP-SENTINEL, no build success; generic dirty refusal or treating missing import as empty graph fails. | No fixture port | 1 / 18.35 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-26 --serial` / S-C1 | `S.shape_untracked_descendant` | P1 CaptureUntracked/Stamp/Settle. Require moved USER-UNTRACKED descendant, tracked.txt tamper, manual command and invalid receipt; unchanged arrangement fails. | Port: remove tracked regular file; Directory.Move user-dir to tracked.txt; do not stage descendant. | 1 / 56.57 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-27 --serial` / S-C1 | `S.shape_ignored_descendant` | P1 ignored manifest/Stamp/Settle. Require USER-IGNORED and exact invalid receipt; overlooking ignored child or leaving original tracked file fails. | Port: same directory move, preserve user.dat ignore entry and unstaged state. | 1 / 54.28 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-28 --serial` / S-C1 | `S.shape_modified_tracked` | P1 content Stamp/Settle. Require MUTATED bytes retained and named tamper; a no-op or automatic restore fails. | Port: WriteAllBytes ASCII MUTATED to tracked.txt inside Exec, no newline. | 1 / 51.54 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-29 --serial` / S-C1 | `S.shape_deleted_tracked` | P1 absence Stamp/Settle. Require tracked.txt absent, named tamper and invalid receipt; no-op or recreation fails. | Port: File.Delete tracked.txt inside Exec; assert prior existence in fixture. | 2 / 60.38 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-30 --serial` / S-C1 | `S.shape_regular_user_move` | P1 tracked/untracked transition/Settle. Require USER-MOVED at tracked.txt and conflict; add source-absence assertion so a copy cannot masquerade as move. | Port: File.Move user-move.txt to tracked.txt with overwrite=true, preserving bytes. | 1 / 55.83 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-31 --serial` / S-C1 | `S.shape_deleted_untracked` | P1 pre-existing untracked manifest/Settle. Require user-move.txt absent and named tamper; add MUTATED tracked.txt witness; recreating user path fails. | Port: File.Delete user-move.txt then exact ASCII MUTATED write to tracked.txt. | 1 / 52.83 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-32 --serial` / S-C1 | `S.shape_changed_untracked` | P1 pre-existing untracked hash/Settle. Require CHANGED-USER and named tamper; add MUTATED tracked.txt witness; preserving original bytes or no-op fails. | Port: ASCII CHANGED-USER to user-move.txt and MUTATED to tracked.txt. | 1 / 50.22 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-33 --serial` / S-C2 | `S.shape_directory_on_file` | P1 shape stamp/index/unstaged descendants. Require USER-SECRET staged and USER-UNSTAGED unstaged, both exact bytes, named tamper and invalid receipt; missing target execution fails. | Port: File.Delete tracked.txt; Directory.Move user-dir; git add -A tracked.txt then git restore --staged tracked.txt/unstaged.txt. | 2 / 20.61 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-34 --serial` / S-C2 | `S.shape_file_on_directory` | P1 directory-to-file shape/index/Settle. Require USER-FILE at dir and dir/a.txt tamper; add staged replacement/old-entry absence assertions; no-op/copy arrangement fails. | Port: remove only owned fixture dir recursively, File.Move payload.dat to dir, git add -A dir. | 2 / 65.48 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-35 --serial` / S-C2 | `S.shape_symlink_on_file` | P1 StampLink/Settle; P4 native file link. Require real file LinkTarget ending link-target.txt, LINK-BYTES target unchanged, tamper and invalid receipt; copy/hardlink/no-op fails. | Port: delete tracked regular file, File.CreateSymbolicLink tracked.txt -> link-target.txt, git add tracked.txt. Verify link/index without assuming Git symlink mode on unqualified hosts. | 2 / 65.83 |
 
 ### Checkpoint commands and lanes
 
@@ -367,8 +387,8 @@ For each committed slice, replace the one ID with the comma-separated row set
 below and run once. The runner shares its build within that invocation. Do not
 run each row as a separate build. Use `wait --run <printed-id> --max-wait 50s`
 until terminal when the foreground observer returns 75; never leave a child
-running at task settlement. This prebuilt DLL invocation is orchestration only and cannot implicitly
-build. The executor acquires its own build/driver slots; do not hold an outer
+running at task settlement. This prebuilt DLL invocation is orchestration only
+and cannot implicitly build. The executor acquires its own build/driver slots; do not hold an outer
 slot around `run` while it waits for an inner slot. Bootstrap/import itself goes
 through `scripts/build-slot.ps1`, and is not the test-assembly build. Running the
 exported manifest is necessary here because the plan-table schema cannot carry
@@ -597,9 +617,13 @@ retry an admission expiry unleased. The current scheduler couples each build's
 deadline to its largest dependent row: S-B1 can become 22m and S-F becomes 48m.
 That is a disclosed **CARD-1199/CARD-1404 provisional build-deadline exception**,
 not a measured 48m build need or permission to let an owned idle build drift.
-Debug measures it; removing that scheduler coupling is separate work. Set the
-execution allowance per invocation to twice its selected EstimatedMinutes sum,
-and hard-wall allowance to that plus 10 minutes. Report exit 4 as not run,
+Debug measures it; removing that scheduler coupling is separate work. The
+execution allowance uses the existing finite derivation
+`max(30, 2 * sum(selected EstimatedMinutes) + 10)`; the extra ten minutes and
+30-minute minimum are a disclosed provisional orchestration allowance, not a
+per-test timeout. The default hard-wall allowance adds the one 10-minute admission
+allowance. Do not set a blanket --row-timeout (it would overwrite every tight
+per-row deadline). Report exit 4 as not run,
 execution expiry as failure, and joined cancellation if the 150-minute task
 ceiling is reached. Admission time remains visible and consumes task wall time.
 
@@ -645,3 +669,38 @@ from S's existing directory-symbolic-link case. No R-2 decision is required to
 implement the authorized 35-row portability work; default is pending/required.
 
 No session-waits-for-input behavior is added or changed by this plan.
+
+## Plan validation and acceptance handoff
+
+The actual checkpoint importer accepted **50 rows** on this branch, exit 0,
+using the required command shape through the host build-slot gate:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-plan-import -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199-plan-tool/ -- import --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --out .antiphon/plan-42241722/imported.yaml
+```
+
+Initial bootstrap/import held lease `19e2a65a-beef-4843-ae13-de02c35e4264`
+for 25s after 0s admission; compilation had five warnings and no errors. The
+importer's two CP-41/CP-42 72-minute-default advisories are retained and explicitly
+addressed by the deadline overlay above, not suppressed. This validates table
+syntax/build reuse/OR safety; it does not claim any proposed test already exists
+or has run. No product tests or native Windows actions were run by Plan.
+
+Static source/plan audit: 35 unique target identities, 50 checkpoint rows, 57
+method suffix comparisons with no current/planned suffix collision, and zero
+covering RC policy exclusions. The concrete new methods are named in the plan;
+Code must repeat the identity audit against its fresh TRX after implementation.
+Both platform discovery routes were read successfully. The only assigned source
+deliverable is this plan; generated import/audit evidence stays ignored.
+
+Opus review should check the corrected policy premise, the portable collision
+marker, the real-driver environment forwarding, exact residual skip census,
+file-link capability failure behavior, and the bounded slice/timeout exceptions.
+Once accepted, commission S-A followed by S-B1/S-B2 and S-C1/S-C2, then S-F,
+with native Windows evidence for every enabled case. Preserve pending R-2 and
+commission the aggregate Debug work; no new go-ahead is needed for the 35 rows.
+
+--- next stage ---
+next: review
+handoff: Opus reviews this source-checked plan, especially the zero-policy-exclusion correction, per-row native witnesses, Git isolation, and performance exceptions; then commission its <=150-minute Code slices with Windows and Linux evidence. Keep R-2 and aggregate Debug separate.
+artifact: docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md
