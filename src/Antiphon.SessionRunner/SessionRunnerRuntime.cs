@@ -38,6 +38,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
     private readonly TranscriptClaimRegistry _transcriptClaims = new();
+    public ProcessStopIntentStore? StopIntents { get; set; }
+    internal void StopOwnedProcess(int pid, DateTime start, Guid sessionId, DateTime generation, ProcessStopTarget target)
+    {
+        if (new SystemProcessLivenessProbe().IsAlive(pid, start)) KillPidBestEffort(pid);
+    }
+
     private readonly SessionRunnerSettings _settings;
     private readonly RunnerWorkspaceParkService? _workspacePark;
     public bool SupportsWorkspacePark => _workspacePark is not null;

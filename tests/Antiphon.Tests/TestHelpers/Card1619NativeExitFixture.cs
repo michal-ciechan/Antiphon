@@ -23,14 +23,14 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
     public RunnerSessionDto Snapshot => _runtime.Get(Id);
     public PtyHostManifest LaunchManifest { get; private set; } = null!;
 
-    public static async Task<(Card1619NativeExitFixture Fixture, string ExitJson)> CaptureAsync(int signal, int code = 0)
+    public static async Task<(Card1619NativeExitFixture Fixture, string ExitJson)> CaptureAsync(int signal, int code = 0, bool requested = false, bool planted = false)
     {
         var fixture = new Card1619NativeExitFixture();
-        try { return (fixture, await fixture.RunAsync(signal, code)); }
+        try { return (fixture, await fixture.RunAsync(signal, code, requested, planted)); }
         catch { await fixture.DisposeAsync(); throw; }
     }
 
-    private async Task<string> RunAsync(int signal, int code)
+    private async Task<string> RunAsync(int signal, int code, bool requested, bool planted)
     {
         using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Directory.CreateDirectory(Root);
@@ -41,7 +41,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
         using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-native-host-readiness"))
         {
             var dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
-                ["-c", $"printf 'card1619-ready\\n'; read line; exit {code}"],
+                ["-c", $"printf 'card1619-ready\\n'; read line; if [ \"$line\" = self ]; then kill -9 $$; fi; exit {code}"],
                 new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
             _child = Process.GetProcessById(dto.Pid!.Value);
             _host = Process.GetProcessById(dto.HostPid!.Value);
@@ -55,7 +55,21 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
         {
             _child.HasExited.ShouldBeFalse();
             StartTicks(_child.Id).ShouldBe(_startTicks);
-            if (signal > 0) Kill(_child.Id, signal).ShouldBe(0);
+            if (planted)
+            {
+                var intent = new ProcessStopIntentDto { SessionId = Id, AcceptedStartedAt = Generation,
+                    RequestId = Guid.NewGuid(), IssuerBootId = Guid.NewGuid(), HostInstanceId = Guid.NewGuid(),
+                    TargetPid = _child.Id, TargetStartedAtUtc = _child.StartTime.ToUniversalTime(), AttemptedSignal = signal,
+                    Target = ProcessStopTarget.Child, Path = ProcessStopPath.ProcessTree,
+                    Outcome = ProcessStopOutcome.Issued, Provenance = ProcessStopProvenance.LiveIssuer, Durable = true };
+                var dir = Path.Combine(Root, "pty-hosts", "stop-intents");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, ProcessStopIntentStore.FileNameFor(intent)),
+                    JsonSerializer.Serialize(intent, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                await _runtime.SendInputAsync(Id, "self\n", ct.Token);
+            }
+            else if (requested) await _runtime.KillAsync(Id, TimeSpan.FromMilliseconds(5000), ct.Token);
+            else if (signal > 0) Kill(_child.Id, signal).ShouldBe(0);
             else await _runtime.SendInputAsync(Id, "finish\n", ct.Token);
             while (await events.WaitToReadAsync(ct.Token))
                 while (events.TryRead(out var value))
