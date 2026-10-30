@@ -513,7 +513,7 @@ capacity for Working/Unknown. A stall is reported for a decision, never killed.
 
 | Slice | Product and documentation files | Test files / ordinary checkpoints |
 |---|---|---|
-| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind; scripts/delegate.ps1 Status branch; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards |
+| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind and client/src/api/attention.ts kind mirror; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards. CLI status waits for S4's script tests |
 | S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; BlockedContextBuilder.cs; AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
 | S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs and hosted recovery; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
 | S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/BlockedQuestionCard.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/BlockedCeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
@@ -752,8 +752,8 @@ adds two rows/four estimated minutes; final re-import evidence follows below.
 The six new C# class names have no pre-existing declarations/suffix collisions;
 the three guard names each map to one test class in Antiphon.Tests plus its
 shared linked guard source. The existing two token-count methods and two runner
-methods are distinct; the private TerminalSeatReleaseTests helper in a different
-file has no Test methods. TestDesign must recheck against its actual base and
+methods are distinct; this checkout has one TerminalSeatReleaseTests declaration
+in the runner test project. TestDesign must recheck against its actual base and
 Code must verify fresh TRX rosters, not infer discovery from this source census.
 
 For typed ceiling Reply, `ceilingAction`, `episodeId` and optional `extendMinutes`
@@ -770,3 +770,23 @@ Cancel/Retry, normal process exit, or an independently authorized existing relea
 is what can free the session; a note, 15-minute admission cap or 720-minute
 ceiling cap never becomes stop authority. With parking enabled, a Working hold
 is still excluded; only a separately qualified actual idle question may park.
+
+Final importer validation at `ab23f3967bdcf2564df625be7299bee14eec1627`:
+**21 rows imported, exit 0**, using the already-built tool under a granted host
+slot (0-second wait, 2-second lease). Generated ignored manifest:
+`.antiphon/c1610-plan-round2-final.yaml`. Independent totals read from that YAML:
+5 builds, EstimatedMinutes sum 51, MinExecuted sum 196; six additional Vitest
+executions have their explicit JSON floors. Actual imported defaults are still
+45/15/90, with CP-1/3 individual timeouts 18 minutes and remaining TUnit rows 15;
+these are validation output, not the refined execution budget promised above.
+Both imports were foreground and joined. No product tests ran; product behavior
+and all ordinary/PC acceptance remain unverified until subsequent stages.
+
+The evidence-history guard over base `93a21a1fac2ab3965cce5a48503d54fb71132c07`
+to `ab23f3967bdcf2564df625be7299bee14eec1627` found 13 commits, zero evidence
+entries and zero violations. `git fetch origin master` followed by
+`git merge-tree --write-tree origin/master HEAD` was conflict-free against
+`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca` (tree
+`82d5b79541273d8f86755e60aa12dc8666dadb7a`). Later commits only clarify plan
+prose/validation; final branch publication and merge check are reported to the
+caller. No plan test count is a claim of executed tests.
