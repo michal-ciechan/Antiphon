@@ -913,15 +913,18 @@ public class AgentTaskPoolTests
     }
 
     [Test]
-    public async Task the_janitor_retires_a_working_reading_session_silent_for_a_full_ttl()
+    public async Task C1610_Janitor_retains_working_after_full_ttl()
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness();
         await using var ownedProvider = provider;
-        var (_, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
+        var (agent, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
         await SeedMidTurnTranscriptAsync(session, DateTime.UtcNow.AddMinutes(-10));
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
-        stopper.Killed.ShouldContain(session);
+        stopper.Killed.ShouldNotContain(session);
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == agent)).ShouldBeTrue();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == session)).Status.ShouldBe(SessionStatus.Running);
     }
 
     [Test]

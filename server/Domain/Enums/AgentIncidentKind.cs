@@ -670,4 +670,12 @@ public enum AgentIncidentKind
     /// queue ids, never the queued body.
     /// </summary>
     StandingAutomaticFreshRefused = 84,
+
+    /// <summary>
+    /// CARD-1610: a pooled, same-generation Working session has no open task and its current
+    /// turn is older than the pool idle TTL. Warning. Detection only — the janitor does not
+    /// kill, release, or delete the row. One incident per session generation; later sweeps
+    /// update the observation and a restart does not write another.
+    /// </summary>
+    PooledSessionWorkingPastTtl = 85,
 }
