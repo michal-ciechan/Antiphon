@@ -2982,7 +2982,6 @@ public sealed class AgentTaskService
         try
         {
             canceled = await CancelCoreAsync(id, observed.Attempt, observed.AgentSessionId, reason, ct);
-            if (Environment.GetEnvironmentVariable("C1610_MUTANT") == "M7") return await AfterCancelCommitAsync(canceled, ct);
         }
         finally { gate?.Release(); }
         return await AfterCancelCommitAsync(canceled, ct);

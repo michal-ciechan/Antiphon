@@ -984,7 +984,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-92 | S2-S4 | CP-15 | server-integration-supervision-retention | `/*/*/DataRetentionServiceTests/C1610_Unresolved_supervision_retains_evidence_until_told` | S3 retention safeguards | 6 passed; no failed/skipped | 6 | 2 |
 | CP-93 | S2-S3-fix | CP-15 | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 41 | 4 |
 | CP-94 | S2-S3-fix | CP-15 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
-| CP-95 | S2-S3-fix | CP-15 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/C664_RequeueThenCanceled_RetirementClaimAccepted` | Cancel post-commit workspace release sibling | 1 passed; no failed/skipped | 1 | 2 |
+| CP-95 | S2-S3-fix | CP-15 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/*` | full Cancel post-commit workspace release sibling class | 54 passed; no failed/skipped | 54 | 5 |
 | CP-97 | S2-S3-fix | CP-15 | server-integration-closed-watch-retention | `/*/*/DataRetentionServiceTests/C1610_Closed_report_watch_releases_evidence` | closed watch permits real retention pruning | 6 passed; no failed/skipped | 6 | 2 |
 | CP-98 | S2-S3-fix | CP-15 | server-integration-M1-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M1 restored exact method | all passed; no failed/skipped | 5 | 2 |
 | CP-99 | S2-S3-fix | CP-15 | server-integration-M2-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M2 restored exact method | all passed; no failed/skipped | 5 | 2 |
