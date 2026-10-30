@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "4bf17609dbf771a840e6af9f64b343ecd86c0439f8f4ca6dc3f40351c5cec148",
+  "policyHash": "1f68aa2002aee99fe38115ff620bdaa2830497009ed6b15b4a3c2b353dbdbee6",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1331,6 +1331,12 @@
       "path": "scripts/test-rc-roster-repairs.ps1",
       "disposition": "argument-consumer",
       "wildcard": false
+    },
+    {
+      "id": "test-nightly-failed-first",
+      "path": "scripts/test-nightly-failed-first.ps1",
+      "disposition": "argument-consumer",
+      "wildcard": false
     }
   ],
   "watchdogs": {
@@ -1464,7 +1470,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "622274b4d95a49bb26d277fcee23085ab61339cc1372ab83799f79835a100c24",
+    "hash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
     "path": "tests/test-selection-policy.json"
   }
 }
