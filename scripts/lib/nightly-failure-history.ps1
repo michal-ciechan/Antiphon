@@ -468,13 +468,14 @@ function Resolve-NightlyPriorFailures {
     if ([IO.Path]::DirectorySeparatorChar -eq '/') { $platform='linux' }
     if ($QualificationMode -ceq 'PriorFailureSweep') {
         $exclusionProfile=[string]$History.profile
-        if ($exclusionProfile -cnotin @('rc','nightly') -or ($null -ne $ExclusionContext -and $ExclusionContext.profile -cne $exclusionProfile)) { throw 'partial-exclusion-profile-mismatch' }
+        $contextMap=ConvertTo-NightlyPolicyMap -Object $ExclusionContext
+        if ($exclusionProfile -cnotin @('rc','nightly') -or ($null -ne $ExclusionContext -and $contextMap['profile'] -cne $exclusionProfile)) { throw 'partial-exclusion-profile-mismatch' }
         $policy=Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
         [void](Get-NightlyPolicyProfile -PolicyObject $policy.Object -Profile $exclusionProfile)
         $policyFileDigest=Get-NightlyHistoryDigest $policy.Path
         if ($null -ne $ExclusionContext) {
             foreach ($binding in @(@('policyDigest',$policy.Hash),@('exclusionPolicyFileDigest',$policyFileDigest),@('exclusionPlatform',$platform))) {
-                if ($ExclusionContext.PSObject.Properties.Name -ccontains $binding[0] -and $ExclusionContext.($binding[0]) -cne $binding[1]) { throw 'partial-exclusion-profile-mismatch' }
+                if ($contextMap.Contains($binding[0]) -and $contextMap[$binding[0]] -cne $binding[1]) { throw 'partial-exclusion-profile-mismatch' }
             }
         }
     }
