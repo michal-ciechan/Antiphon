@@ -16,7 +16,7 @@ The round-2 findings and validation below remain historical evidence.
 |---|---|---|
 | D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Done: D-20, S3/S4, J8/W6 |
 | D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Dispositions/16-row roster complete; final import recorded below |
-| D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Pending |
+| D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Done: D-21 and master/rc order; current 1615 D-11 checked |
 | D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Pending |
 | A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Pending |
 
@@ -118,7 +118,7 @@ classified manually as a process marker. Do not generalize that exception by nam
 
 ## Decisions
 
-D-1 through D-20 are the stated defaults for review. They make the design concrete;
+D-1 through D-21 are the stated defaults for Code and subsequent Review. They make the design concrete;
 they do not authorize relaxing a refusal. Operator questions are collected below.
 
 **D-1 — Separate retirement from deployment, starting with retired temp.** Add a
@@ -618,6 +618,16 @@ Reject main volumes and the three CARD-0849 external caches by exact name:
 N3 proves all three survive. Rejected: automatic remount of retained work/state,
 Compose down -v, declaring success with retained private volumes, or changing C849
 to accept them as a successful Retired state.
+
+**D-21 — Land CARD-1609 before CARD-1615 on both target lines.** CARD-1609 owns
+content retirement, the pre-clear retained-volume gate, v2 census retries and
+journal closure. CARD-1615 owns controller workspace/admission and its canonical
+activation/evidence-root rules. Preserve bound pending-land refusal and the
+existing separate bounded wait here; add no self-held-land exemption or controller
+admission changes. Implement this card on then-current origin/master, port it to
+rc only after top-up 38, and let CARD-1615 Code start from the recorded landed
+CARD-1609 SHAs on both lines. Reject parallel overlapping implementation; no
+unlanded plan is a dependency satisfied by assumption.
 
 ## Locks, concurrency and deletion failure modes
 
@@ -1160,6 +1170,28 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ## Master/rc port and ordering
 
+**Reciprocal dependency: CARD-1609 first, CARD-1615 second, on master and rc.**
+Read CARD-1615's round-3 plan
+`docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md` at
+`ef75a59413125a3ba92424ade043104abc7e1700` (task `7dd90600` snapshot), D-11:
+it requires both landed CARD-1609 SHAs before its Code dispatch. This is a
+coordination contract, not a claim either Code change has landed. Its current
+D-3 explicitly preserves bound Held/Queued/Running/NeedsResolution land refusal
+and adds no census exemption; do not resurrect the earlier self-held-land idea.
+
+| Overlap | CARD-1609 ownership and handoff to CARD-1615 |
+|---|---|
+| `scripts/deploy-server2.ps1` phase admission, census call sites, retire-temp and deploy-temp | Land current-proof retirement/pre-clear gate first. CARD-1615 adds its controller identity/workspace/version admission around the landed layout, preserving these guards and the bounded census contract. |
+| `scripts/c590-remote.sh` bound-land/census and retirement admission | CARD-1609 changes only v2 transient read retry and effect-boundary proof. CARD-1615 consumes/probes the resulting census; neither card exempts a pending bound land. |
+| `docs/docker-stack.md` manual-retire evidence and census/rollout guidance (review's old :473/:513 region) | CARD-1609 documents v2 proof, Close, and the existing `.antiphon/rolling-server2/manual-retire-<UTC>` path under the current control checkout. CARD-1615 owns the subsequent `<controller-root>` relocation and Worktree-controller instructions; it must retain v2 custody/digests/close rules. |
+| `docs/orchestration-loop.md`, `DockerStackDocumentationTests.cs`, wrapper/host fixture consumers | CARD-1609 lands its narrowly changed retirement authority and complete affected pins first. CARD-1615 reconciles controller wording/pins against that landed source and executes its own affected checks. |
+
+Do not include CARD-1615's self-held-land/controller admission, controller-root
+relocation, active-rollout marker or canonical activation changes in S1-S5.
+The caller records both CARD-1609 publication SHAs, confirms the rc port follows
+top-up 38, then dispatches CARD-1615 Code against those landed bases. A later rc
+pick must not restore older wrapper ordering or overwrite either safety gate.
+
 The caller's round-2 brief defines top-up 38 as the combined CARD-1613 / audit
 repairs / CARD-1614 slice A / speed-ups S1 bundle, with ONE land-graph approval
 regeneration. CARD-1609 belongs in a **later top-up after 38**; do not splice it
@@ -1179,7 +1211,7 @@ report any required scope expansion before changing a definition; integrate such
 an expansion only in the later top-up and obtain its own normal graph approval,
 never reuse or silently regenerate top-up 38's approval to cover new definitions.
 
-1. Review this revised plan, then Code from the then-current master baseline with
+1. Code from the then-current `origin/master` baseline with
    landed CARD-1607. Keep S1 assertion-red before S2-S5 fixes. Complete named Linux
    and native Windows checkpoints, independent Review, and authorized landing to
    master. This Plan performs none of those implementation/landing operations.
@@ -1207,7 +1239,7 @@ never reuse or silently regenerate top-up 38's approval to cover new definitions
 
 ## Operator questions and independent review gates
 
-The plan is written under D-1..D-20 rather than waiting for answers. These are
+The plan is written under D-1..D-21 rather than waiting for answers. These are
 explicit review choices, not permission questions during this Plan:
 
 - Confirm D-2 retains reflog and original tag-object protection despite the manual
