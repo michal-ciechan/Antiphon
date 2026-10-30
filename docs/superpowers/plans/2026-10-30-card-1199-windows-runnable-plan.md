@@ -107,7 +107,8 @@ and then removing them would weaken the existing gate and misstate the change.
   Enabling these 35 is authorized already and does not require another go-ahead.
 - D-9: all six slices are test/qualification fixes for code already on rc, not
   features. Land rc first after top-up 38, then separately review and port each
-  slice to master. Reject racing the policy rewrite or merging this inherited
+  slice to master only after the CARD-1613 master port is confirmed published.
+  Reject racing the policy rewrite or merging this inherited
   investigation/review history wholesale; use the plan-only publication below.
 - D-10: one Linux Code commission and one native Windows Verify commission per
   slice, on the identical pushed source SHA; neither host supplies the other
@@ -122,13 +123,27 @@ and then removing them would weaken the existing gate and misstate the change.
   requirement in ExpectText; the mandatory post-run assertion below enforces it.
   Reject an invented YAML log-assertion field or a new runner feature in this
   narrow amendment: command rows currently enforce exit/source status only.
+- D-13: use one post-CARD-1613 roster on both targets. Its confirmed master port
+  is a hard prerequisite of every CARD-1199 implementation port to master;
+  S3's confirmed publication on each target is a hard prerequisite of that
+  target's S-F-cost. Neither is waivable by an authoring-order default. Reject
+  master-specific old-wrapper rows/counts: they duplicate the qualification
+  contract and would conflict with the later CARD-1613 rewrite.
+- D-14: retain a pushed immutable S-B1 red commit, then let Linux author the fix
+  after its own CP-37 assertion failure. Windows runs the red commit separately
+  before verifying the green commit; it need not finish before fix authoring.
+  Both lanes' red and green evidence remain mandatory before S-B1 acceptance.
 
 ## Landing target and prerequisite order
 
 Implementation target is the active `rc/YYYY-MM-DD` line (observed ref
-`rc/2026-10-18`), followed by a **separate reviewed master port** of each accepted
+`rc/2026-10-27`), followed by a **separate reviewed master port** of each accepted
 test fix under standing operating rule 9. The caller resolves the active rc ref
 at commissioning; this plan neither rebases rc nor publishes a target itself.
+Round-3 `git ls-remote` observed that rc ref at
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`, master at
+`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`, and top-up 38 at the exact tip below.
+These observations do not confirm top-up 38 publication to rc.
 S-A -> S-B1 -> S-B2 -> S-C1 -> S-C2 -> S-F is a strict sequence, and **every
 slice starts after rc top-up 38 has confirmed publication**. A pushed merge-task
 branch is not proof of landing. Rebase the design onto the target's actual
@@ -138,7 +153,8 @@ Source audit: CARD-1613 branch `origin/feat/card-task-06fc8af7` at
 `0f6058ac9` renames the wrapper and harness case to
 `LinuxOnlyWindowsExclusionPolicy`, retaining six internal harness assertions
 (previously eight). The pushed top-up branch `origin/feat/card-task-fcfa49ab`
-at `952c22e93d9caa7441c995296c7590f045c621ce` contains that name and rewrite.
+at `130ea525aa1f25230123ee3584ea58dbf0604b95` contains that name and rewrite;
+this is the exact top-up tree verified in round 3, not a claimed rc landing.
 CP-36 and CP-45 select the new name; it is still ONE TUnit result, so their
 totals remain 3 and 7. A suffix audit must include the actual landing base.
 CARD-1613's `[NativeLinuxOnly]` reflection witness applies to policy-excluded
@@ -146,6 +162,26 @@ rows (25 whole classes plus 20 method-scoped entries), **not these 35**: S/T/O
 have no such policy row and remain in the harness's required decision set.
 Do not add the marker to these portable tests or restore the removed assertion
 count/source-regex witness while editing the rewritten harness.
+
+**Hard master prerequisite:** master at the observed SHA still has
+`LinuxOnlyWindowsExclusions` and eight harness assertions, without CARD-1613's
+reflection witness. CP-36/45 would select only 2/6 results there, not 3/7.
+Before any implementation port to master, confirm a separately reviewed
+CARD-1613 master port is published and inspect its renamed wrapper, six
+assertions and reflection witness at the actual master SHA. Do not lower counts,
+restore the old wrapper, or apply S-A's gap-identity edit to the old harness.
+This prerequisite also applies before S-F-cost on master.
+
+**Hard S-F-cost prerequisite on each target:** S3 admission must be published on
+that same target before authoring/running/landing its S-F-cost. The source is
+`feat/card-task-6738f5e6` at `192f15240f757e04fb5fdb032e447f926e563757`, carried
+by rc top-up 39; require confirmed top-up 39 publication on rc and a separately
+confirmed S3 master port. `scripts/lib/nightly-watchdog-admission.ps1` is absent
+from observed master, rc and top-up 38. CP-53's real admission assertion cannot
+run there. Check the file, `Resolve-NightlyLaunchWatchdog` and its planner call
+site at each confirmed target SHA; a pushed S3/top-up branch is insufficient.
+Never stub or skip that assertion. These are hard dependencies, independent of
+the optional early-authoring scheduling choice in the next paragraph.
 
 Serialize against the other rc top-ups: speed-ups S3 (`6738f5e6` at
 `192f15240f757e04fb5fdb032e447f926e563757`), slice B, manifest publication,
@@ -183,7 +219,8 @@ reviewed plan document to the other target as needed, without replaying reports.
 | Table order makes CP-46 wait for CP-41 | Scheduler prioritizes a ready serial command; importer ignores command Build cells | CP-46 builds its own evaluator before its check, in a distinct owned output |
 | Exit 0 proves a quoted command ran its audit | Windows command rows use cmd /d /s /c through ArgumentList; nested quotes can turn the PowerShell command into an echoed string | Bare quote-free chain plus exact `approved` line and fresh evaluator digest required |
 | Command-row Expect text is an automatic log assertion | Importer stores ExpectText; RowRunner returns from its command branch before test-roster Expect checks | Mandatory post-run assertion implements CP-46's Expect contract; runner green alone is insufficient |
-| The policy wrapper keeps its round-1 name/count | CARD-1613/top-up 38 uses LinuxOnlyWindowsExclusionPolicy with six internal assertions | Select the new method, keeping CP-36=3 and CP-45=7 TUnit results |
+| The policy wrapper keeps its round-1 name/count on both targets | Top-up 38 uses LinuxOnlyWindowsExclusionPolicy/six assertions; observed master still uses LinuxOnlyWindowsExclusions/eight | Hard CARD-1613 master-port prerequisite; then CP-36=3 and CP-45=7 on both targets |
+| S3 admission is already on both targets | Admission script absent from observed rc, master and top-up 38; present on S3 branch 192f15240 | Hard S3 publication prerequisite for S-F-cost on EACH target: rc top-up 39 and separate master port |
 | Execution policy contains class prices | Separate nightly-class-costs.json has O=25s/6 with five failures; S/T absent | Require native S/T/O cost refresh and separate cost digest before Full |
 | One Code delegate can supply both native lanes | Assigned worktrees execute on one OS | Separate Linux Code and native Windows Verify for every slice |
 
@@ -348,8 +385,13 @@ CP-47 requalifies the five S-A T methods and S staged-untracked once because
 their shared setup changed.
 The O sites can be wired now while their five gates remain until S-B2.
 Linux authoring 40m; red/green and Windows evidence have separate task budgets.
-Push the compiling red source, obtain both lanes' CP-37 assertion failures,
-then author the fix. Windows Verify cannot repair or mutate the source branch.
+Push the compiling red source and record its full immutable SHA. After Linux
+obtains its named CP-37 assertion failure, author and push the fix without
+waiting for Windows. Windows Verify runs CP-37 at the retained red SHA in its
+own assigned checkout, then the green rows at the pushed green SHA; it never
+rewinds the task branch or repairs/mutates source. Both red assertions and both
+green selections must be complete before S-B1 is accepted. Only the cross-host
+authoring wait is dropped; red-before-fix commit order and evidence stay required.
 If measured runs exceed that bound, hand off committed remaining CP IDs;
 do not silently replace real-build checks with mocks.
 
@@ -627,7 +669,7 @@ the explicit per-row deadlines; its selection must be byte-equivalent to import.
 | Slice | Windows rows | Linux rows | Expected target results (support results separate) |
 |---|---|---|---|
 | S-A | CP-1..CP-12,CP-36 | same | 12 per lane |
-| S-B1 red | CP-37 | CP-37 | 1 expected configuration assertion failure per lane, separately committed before fix |
+| S-B1 red | CP-37 | CP-37 | 1 expected configuration assertion failure per lane at immutable red SHA committed before fix; Windows execution may follow fix authoring |
 | S-B1 green | CP-13..CP-20,CP-38,CP-47,CP-48,CP-50,CP-51 | same plus CP-39 | 8 new plus 6 explicitly requalified per lane |
 | S-B2 | CP-21..CP-25,CP-40 | CP-21..CP-25 | 5 plus 1 existing Windows sibling |
 | S-C1 | CP-26..CP-32,CP-49,CP-52 | same | 7 new plus 4 collision and 1 staged-untracked requalifications |
@@ -756,7 +798,10 @@ cost entries below and their provenance, plus the named offline cost witness;
 a native Windows Verify task runs CP-53 at that pushed SHA. This sequencing
 avoids pretending a pre-cost source receipt verified the later cost commit.
 No rerun of the expensive 35 is required merely to edit prices: their original
-SHA and measured outcomes remain explicit. S-F-cost must land after S-F and
+SHA and measured outcomes remain explicit. S-F-cost cannot start until S3 is
+confirmed published on its target (rc top-up 39; separate S3 master port), and
+master additionally requires the CARD-1613 port. These are hard prerequisites,
+not defaults the caller can waive. S-F-cost must land after S-F and
 before the next Windows Full qualification can earn credit. If native costs
 are missing, keep this obligation incomplete and retain the old rows as stale;
 do not claim the 40-50 minute forecast or correct packing has been qualified.
@@ -794,7 +839,7 @@ UID sets, group membership, cost digest and admission decision beside CP-53.
 `Get-NightlyClassCostTable` divides seconds by nodes; the packing target is
 900s, not a hard watchdog. A roughly 1270s T class stays alone (under the 2400s
 lone-class ceiling); S and O cannot fit together at roughly 770+505s. The old
-model priced S/T at roughly 1s/node and O at 25s/6, causing severe underpacking
+model priced S/T at the 0.5s/node fallback and O at 25s/6, causing severe underpacking
 estimates. Validate actual grouping after the refresh; do not force a 900s split
 or increase watchdogs just to fit a forecast.
 
@@ -805,7 +850,7 @@ manifest). Use the policy hash actually on the post-top-up base, preserving it
 through this work; the round-1 hash above is historical, not a pin to restore.
 S3 at `192f15240f757e04fb5fdb032e447f926e563757` consumes the revised planned
 seconds for admission (antiphon estimate ceiling 2400s, suite watchdog 3600s).
-Its live planner passes basis `default` and no calibration; changing a class
+Its live planner passes each chunk's `costBasis` and no calibration; changing a class
 row's basis to `trx`/`measured` does not activate calibrated watchdog reduction.
 Eligible calibration requires at least 20 uncensored matching samples, policy
 binding and exact stratum including `costDigest`; a changed cost digest makes
@@ -968,10 +1013,12 @@ native verification; any repair gets a new committed SHA and affected rows.
 | S-F-cost | 60 | 40 | Linux 20 authoring + 20 build/body + 10 admission + 10 report; Windows 20 checks + 10 admission + 10 report |
 | Total commissioned ceilings | 650 | 445 | 1095m aggregate task allocation, not elapsed critical path or a test run |
 
-S-B1's Windows Verify task joins its red run before the Linux author writes the
-fix, then continues against the pushed green SHA. If scheduling cannot preserve
-that bounded task, commission distinct red and green native tasks sharing the
-110m allowance; do not hold a live session waiting indefinitely. These are
+S-B1's Windows Verify task runs the retained red SHA and then the pushed green
+SHA after Linux authoring; Linux does not wait for Windows before writing the
+fix. Start native Verify when both immutable SHAs are available, using separate
+assigned checkouts as needed, with no branch rewind. If scheduling requires
+distinct red and green native tasks, they share the 110m allowance; do not hold
+a live session waiting indefinitely. These are
 execution handoffs, not changes to product input-wait/session release behavior.
 A task that actually waits keeps its seat with parking disabled; only explicit
 owner settlement/release ends that wait, with no automatic deadline (CARD-1083).
