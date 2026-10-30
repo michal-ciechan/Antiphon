@@ -17,7 +17,7 @@ internal static class AbsentLaunchPolicy
     internal const string MessageColumns =
         "Id AgentSessionId Body RemoteSpillBody RemoteSpillRelativePath Status Sequence Origin " +
         "ExecutionTaskId SourceTaskId ExecutionDeadlineAt SpecialistInputPolicyJson " +
-        "ConversationKey SourceLandNotificationId SourceScheduleId ContentDigest NoteHeader HoldUntil " +
+        "ConversationKey SourceLandNotificationId SourceTaskSupervisionNoticeId SourceScheduleId ContentDigest NoteHeader HoldUntil " +
         "CreatedAt SentAt CanceledAt DeliveryAttempts LastDeliveryStartedAt LastDeliveryGeneration " +
         "DeliveryVerdict DeliveryVerdictAt LastDeliveryBaselineSequence " +
         "PinRefreshKey PinRequestedRevision PinRequestedHash PinRequestedLocationGeneration " +
@@ -56,7 +56,7 @@ internal static class AbsentLaunchPolicy
             SentAt: null, CanceledAt: null, DeliveryAttempts: 0, LastDeliveryStartedAt: null,
             LastDeliveryGeneration: null, LastDeliveryBaselineSequence: null,
             DeliveryVerdict: null, DeliveryVerdictAt: null,
-            ConversationKey: null, SourceLandNotificationId: null, SourceScheduleId: null,
+            ConversationKey: null, SourceLandNotificationId: null, SourceTaskSupervisionNoticeId: null, SourceScheduleId: null,
             ContentDigest: null, NoteHeader: null, HoldUntil: null,
             PinRefreshKey: null, PinRequestedRevision: null, PinRequestedHash: null,
             PinRequestedLocationGeneration: null, RulesRefreshKey: null, RulesReceiptJson: null,
