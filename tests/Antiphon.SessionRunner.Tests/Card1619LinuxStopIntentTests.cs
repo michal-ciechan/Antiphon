@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
@@ -81,6 +83,42 @@ public class Card1619LinuxStopIntentTests
         f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child);
         await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         AssertIssued(f.Store.Snapshot(f.Id, f.Generation, 9), f.Id, f.Generation);
+    }
+
+    [Test]
+    public async Task Cross_process_recorded_identity_kills_pending_child()
+    {
+        await using var f = await Fixture.StartAsync();
+        var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add("$p = Get-Process -Id " + f.Child.Id + "; $s = [IO.File]::ReadAllText('/proc/" + f.Child.Id + "/stat'); " +
+            "$fields = $s.Substring($s.LastIndexOf(')') + 2).Split(' ', [StringSplitOptions]::RemoveEmptyEntries); " +
+            "@{ start = $p.StartTime.ToUniversalTime().ToString('O'); identity = @{ startTicks = [long]$fields[19]; bootId = [IO.File]::ReadAllText('/proc/sys/kernel/random/boot_id').Trim() } } | ConvertTo-Json -Compress");
+        using var helper = Process.Start(psi)!;
+        var output = await helper.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await helper.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        helper.ExitCode.ShouldBe(0);
+        var recorded = JsonNode.Parse(output)!;
+        var recordedStart = DateTime.Parse(recorded["start"]!.GetValue<string>()).ToUniversalTime();
+        Console.WriteLine($"cross-process start delta us={(recordedStart - f.Child.StartTime.ToUniversalTime()).TotalMicroseconds}");
+        var sidecar = new HerdrPaneSidecar { SessionId = f.Id, WorkspaceKey = "owned", WorkspaceId = "owned",
+            TabId = "owned", PaneId = "owned", ChildPid = f.Child.Id, ChildStartedAtUtc = recordedStart,
+            LaunchedAtUtc = recordedStart, Origin = HerdrPaneOrigins.Launched, AcceptedStartedAt = f.Generation, Cwd = f.Root };
+        var json = JsonSerializer.SerializeToNode(sidecar, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        json["childLinuxIdentity"] = recorded["identity"]!.DeepClone();
+        var path = HerdrPaneSidecar.PathFor(f.Root, f.Id);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, json.ToJsonString());
+        var persisted = HerdrPaneSidecar.TryLoad(path)!;
+        await using var pending = f.NewRuntime();
+        pending.AdoptSessionForTests(SessionRunnerRuntime.RunnerSession.CreatePendingHerdr(persisted,
+            new SessionRunnerSettings { SessionLogPath = f.Root, CpuWatchdogEnabled = false },
+            new SessionRunnerEventHub(), NullLogger.Instance, new SystemProcessLivenessProbe()));
+        var result = await pending.KillAsync(f.Id, TimeSpan.FromSeconds(5), default);
+        result.Status.ShouldBe("Exited", "cross-process identity must send the signal and observe child death");
+        f.Child.HasExited.ShouldBeTrue("no signal sent / child alive");
+        AssertIssued(pending.StopIntents.Snapshot(f.Id, f.Generation, 9), f.Id, f.Generation);
     }
 
     [Test]
