@@ -52,7 +52,8 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         row.State.ShouldBe("slot-timeout");
         row.Executed.ShouldBe(0);
         row.ExitCode.ShouldBe(4);
-        row.SlotReason.ShouldBe("slot-admission-deadline-exceeded");
+        row.SlotReason.ShouldBe("build_slot_busy");
+        row.TerminalReason.ShouldBe("slot-admission-deadline-exceeded");
         Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]), "unexecuted evidence cannot qualify");
         broker.Broker.List().Occupied.ShouldBe(1, "the held control must still own its slot");
     }
