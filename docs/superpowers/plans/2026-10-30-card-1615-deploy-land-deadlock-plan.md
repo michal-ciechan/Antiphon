@@ -154,11 +154,68 @@ and end in `*`; escape table pipes as `\|`. Import validates syntax, not existen
 
 ## Performance budget
 
-No product tests run for this Plan task. Checkpoint importer validation only, through the host build-slot gate.
-Final proposed costs will distinguish build, admission, shared database setup, script/process work,
-test body and cleanup. No measured p95 is available yet; provisional costs must be refined by
-TestDesign under CARD-1615 and `docs/test-performance-standards.md`, with approximately 2x measured
-p95 timeouts and Debug escalation for any selection or complete run over 30 minutes.
+Apply `docs/testing-and-build.md#performance-standards` and its owner
+`docs/test-performance-standards.md`. This Plan executes no product tests; only
+an isolated, slot-gated checkpoint-tool bootstrap/import validates the document.
+The proposed acceptance total is **18 executed results**: 7 script, 5 integration,
+6 census regression. Windows CP-1 adds 7 native results, reported separately.
+
+| Lane / selection | Expected elapsed, including build | Phase allocation | Provisional execution deadline |
+|---|---:|---|---:|
+| Linux CP-1 | 6 min | build/restore 3; script/Git/HTTP fixtures 2.5; receipt/cleanup 0.5 | build 6 min; row 6 min |
+| Linux CP-2 | 4 min, reused build | shared DB readiness/template 1; clones/seed 0.5; Git/land/census 2; cleanup 0.5 | row 8 min |
+| Linux CP-3 | 2 min, reused build | process startup/body 1.5; receipts/cleanup 0.5 | row 4 min |
+| Linux ordinary batch | 12 min | one build, serial rows | charged execution 24 min; admission 5 min; hard wall 29 min |
+| Native Windows CP-1 | 9 min | build/restore 5; native script/path fixtures 3.5; cleanup 0.5 | build 10 min; row 8 min; charged 18 min; admission 5 min; hard wall 23 min |
+
+**Measured p95: unknown, sample n=0 for these proposed selections.** These are
+planning estimates, not measured costs or a compliance claim. CARD-1615 carries the
+bounded calibration obligation: TestDesign first looks for comparable retained
+receipts; Code collects per-method/phase samples from required red/green runs and,
+where needed, at most five targeted calibration executions of the slow new methods.
+Do not repeat the full table solely for timing. Record sample count/source/host/load,
+then set per-test/row/build bounds to about 2x measured p95, rounded to practical
+units. Until calibrated, new script methods have a provisional 90-second cap and
+new land methods 120 seconds; a matrix that cannot fit must split. Any retained
+exception needs measured evidence and its tracking card. Existing long class
+attributes are not permission to copy generous bounds.
+
+TestDesign imports YAML, pins the provisional build/row/admission/hard-wall budgets
+above using supported manifest/CLI settings, then replaces them with measurements.
+The importer defaults (`max(15, 3 * EstimatedMinutes)`) do **not** satisfy R5; its
+successful import is not approval of those default timeouts. Keep build time and
+slot wait separate from test-body time. Slot timeout is not run, never bypass.
+
+Share Postgres/template migrations once per test assembly invocation and clone
+per test through the existing `TestDbFixture.CreateIsolatedSchemaAsync` contract
+(the historical name now clones a database). Never migrate or start containers per
+vector. Reuse immutable Git seed data, with independent owned worktrees for mutation
+isolation. Process-spawning tests take the assembly-local `ParallelLimiter<ProcessSpawnLimit>`;
+run checkpoint rows serially and do not co-schedule Pty/FakeClaude. No real web host
+is required: use production services with isolated database and fake external effects.
+
+Retain ignored TRX, checkpoint source/build receipts and phase JSONL under a unique
+`.antiphon/checkpoints/card-1615/<run>/` root. Join by run/test/group, SHA, OS, host
+and category; record Docker/readiness (not applicable here unless shared DB startup
+requires it), template/migration, clone/seed, Git/filesystem, HTTP, process startup,
+body, teardown and wall remainder. Unknown is null, never zero. Time each owner GET,
+Git probe, census read and process cleanup separately. Provisional admission probes:
+one owner GET capped at 5 seconds, each Git probe at 5 seconds, whole admission
+15 seconds; owned child cleanup has a separate bounded join. TestDesign refines these
+from measurements without widening existing recycle waits. Any selection/batch/run
+expected or observed over 30 minutes triggers Debug with source/load/phase evidence;
+no full-suite or rc qualification is added to this card.
+
+## Plan validation and remaining evidence
+
+The existing census roster was inspected: six declared methods, no argument expansion.
+The two proposed classes do not yet exist and have no source-name collision. Import
+validation and final branch publication will be recorded below. Required product red,
+green, timing and native Windows execution remain for TestDesign/Code; none is claimed.
+No new input-waiting session is introduced. If an operational task waits for input,
+parking remains disabled and there is no automatic release deadline; caller resolution
+or separately authorized explicit stop/release must establish actual process exit.
+The role ceiling and a terminal task status are not that proof.
 
 ## Placement and publication
 
