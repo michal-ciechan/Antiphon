@@ -250,11 +250,13 @@ async function n1(f) {
   assert.notEqual(hook.code,0,'N1 repository hook refuses');
   assert(hook.stdout.includes('reason=hook'));assert(!hook.stdout.includes('N1_HOOK_EXECUTED'));
   assert.equal(targetBytes(f),hookBytes,'hook refusal leaves every byte intact');
-  const foreign=d('run','-d','--network','none','--label',label+'='+scope.prefix,'--name',f.stem+'-foreign-helper',scope.image,'sleep','infinity');f.ids.push(foreign);
+  const foreignNonce=crypto.randomBytes(8).toString('hex');
+  const foreign=d('run','-d','--network','none','--label',label+'='+scope.prefix,'--label','io.antiphon.preview-audit='+f.op+':'+foreignNonce,'--name','c1008-preview-'+f.op+'-'+foreignNonce,scope.image,'sleep','infinity');f.ids.push(foreign);
   const timed=await shell(f,'c1008_git_program() { printf "exec sleep 30\\n"; }\nC1008_AUDIT_TIMEOUT_SECONDS=1\nif c1008_audit_readonly; then exit 71; fi','cancel');
   assert.equal(timed.code,0,'owned helper timeout refuses and joins: '+timed.stdout+timed.stderr);
   assert.equal(json('inspect',foreign)[0].State.Running,true,'foreign helper not killed');
-  assert.equal(d('ps','-aq','--filter','label=io.antiphon.preview-audit','--filter','name=c1008-preview-'+f.op),'','owned helper absent after timeout');
+  const attached=d('ps','-aq','--no-trunc','--filter','label=io.antiphon.preview-audit','--filter','name=c1008-preview-'+f.op).split('\n').filter(Boolean).filter(id=>id!==foreign);
+  assert.deepEqual(attached,[],'N1 owned helper absent after timeout; same-prefix foreign helper survives');
   preserve(f);
 }
 async function n2(f) {
@@ -370,6 +372,8 @@ async function shim() {
     process.exit(r.code ?? 2);
   }
   const child=cp.spawn(cli,args,{stdio:['inherit','inherit','inherit']});
+  // Keep the owned CLI joined when GNU timeout signals this shim's process group.
+  for (const signal of ['SIGTERM','SIGINT','SIGHUP']) process.on(signal,()=>{if(child.exitCode===null)child.kill(signal);});
   let captured=false;
   const cidAt=args.indexOf('--cidfile');
   const timer=setInterval(()=>{
@@ -406,7 +410,11 @@ else {
     // Update the shim's operation binding for every exact real source invocation.
     try {await ({N1:n1,N2:n2,N3:n3}[id])(f);}
     catch(e){failure=e;console.error(e.stack);}
-    finally {cleanupObjects(f.names,f.ids);}
+    finally {
+      const leftovers=d('ps','-aq','--no-trunc','--filter','label='+label+'='+scope.prefix,'--filter','name=c1008-preview-'+f.op).split('\n').filter(Boolean);
+      for(const id of leftovers){const c=json('inspect',id)[0];assert(c.Config.Labels['io.antiphon.preview-audit']?.startsWith(f.op+':'));removeContainer(id);}
+      cleanupObjects(f.names,f.ids);
+    }
     fs.writeFileSync(scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json',JSON.stringify({source:scope.source,imageSource:scope.imageSource,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
     if(failure)process.exitCode=1;else console.log('C1609_NATIVE '+id+' passed cleanup=absent evidence='+scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json');
   }
