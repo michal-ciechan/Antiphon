@@ -14,6 +14,41 @@ namespace Antiphon.Tests.Scripts;
 public sealed class PosixHarnessToolTests
 {
     [Test]
+    [Arguments("Microsoft.Management.Infrastructure.Native.Unmanaged.dll")]
+    [Arguments("microsoft.management.infrastructure.native.unmanaged.DLL")]
+    public void Hidden_path_keeps_first_windows_name_and_still_excludes_banned_tools(string secondName)
+    {
+        var scratch = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(),
+            "posix-path-witness-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var first = Directory.CreateDirectory(Path.Combine(scratch, "first")).FullName;
+            var second = Directory.CreateDirectory(Path.Combine(scratch, "second")).FullName;
+            const string name = "Microsoft.Management.Infrastructure.Native.Unmanaged.dll";
+            File.WriteAllText(Path.Combine(first, name), "first PATH entry");
+            File.WriteAllText(Path.Combine(second, secondName), "second PATH entry");
+            string[] banned = ["chmod", "stat", "mkfifo", "ln", "cat", "grep", "tr"];
+            foreach (var tool in banned)
+            {
+                File.WriteAllText(Path.Combine(first, tool), "blocked first");
+                File.WriteAllText(Path.Combine(second, tool), "blocked second");
+            }
+
+            using var hidden = HiddenPath.FromDirectories([first, second], windows: true, banned);
+            var links = Directory.GetFiles(hidden.DirectoryPath);
+            links.Length.ShouldBe(1, "Windows PATH names collide regardless of case");
+            new FileInfo(links[0]).ResolveLinkTarget(true)!.FullName.ShouldBe(Path.Combine(first, name));
+            File.ReadAllText(links[0]).ShouldBe("first PATH entry");
+            foreach (var tool in banned)
+                File.Exists(Path.Combine(hidden.DirectoryPath, tool)).ShouldBeFalse("banned tool: " + tool);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public void Snapshot_cases_complete_without_chmod_or_stat_on_path()
     {
         using var hidden = HiddenPath.Without("chmod", "stat");
@@ -98,13 +133,16 @@ public sealed class PosixHarnessToolTests
         public string DirectoryPath { get; }
 
         public static HiddenPath Without(params string[] banned)
+            => FromDirectories((Environment.GetEnvironmentVariable("PATH") ?? "")
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries), OperatingSystem.IsWindows(), banned);
+
+        internal static HiddenPath FromDirectories(IEnumerable<string> directories, bool windows, params string[] banned)
         {
             var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(),
                 "posix-hide-" + Guid.NewGuid().ToString("N")));
             var blocked = new HashSet<string>(banned, StringComparer.Ordinal);
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
-                         .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            foreach (var directory in directories)
             {
                 if (!Directory.Exists(directory)) continue;
                 IEnumerable<string> files;
