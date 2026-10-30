@@ -7024,6 +7024,25 @@ consider_dirty() {
     if [ -e "$index_path" ]; then index_existed=1; fi
     audit_check="$kind"
     clean="$("${g[@]}" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
+    # A nested repository is classified on its own pass. Leaving it as the
+    # parent's untracked content exits here and omits no-remote-unclassified.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ] && [ -n "$clean" ]; then
+        local kept='' nested_path
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                '?? '*)
+                    nested_path="${line#?? }"
+                    nested_path="${nested_path%/}"
+                    if [ -d "$where/$nested_path/.git" ] || [ -f "$where/$nested_path/.git" ]; then
+                        continue
+                    fi
+                    ;;
+            esac
+            kept="${kept}${line}"$'\n'
+        done <<< "$clean"
+        clean="${kept%$'\n'}"
+    fi
     seed=0
     if [ "$index_existed" = 0 ]; then
         seed=1
