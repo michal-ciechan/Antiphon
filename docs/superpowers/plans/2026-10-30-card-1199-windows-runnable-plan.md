@@ -86,6 +86,10 @@ and then removing them would weaken the existing gate and misstate the change.
 - D-10: one Linux Code commission and one native Windows Verify commission per
   slice, on the identical pushed source SHA; neither host supplies the other
   lane's evidence. Keep the slice frozen until both have settled.
+- D-11: refresh class prices from successful native evidence after S-F in a
+  bounded cost-only follow-up, before Windows Full credit. Do not seed measured
+  rows from failed or mixed historical runs. This follow-up is a required test
+  infrastructure fix on rc and master, not an optional performance feature.
 
 ## Landing target and prerequisite order
 
@@ -621,9 +625,79 @@ Use `new Full wall = latest comparable Full wall - old 35-skip wall + measured
 There is no current comparable complete Full baseline in this evidence; do not
 assert a new fleet-wide total or reuse CARD-0856's historical 270 minutes as one.
 The existing Full assembly build is already paid; fixture builds inside the
-35 bodies are incremental. Record successful distributions before changing
-`test-execution-policy.json` cost rows; updating those is measured-cost work,
-not an exclusion change or authority to rewrite historical results.
+35 bodies are incremental. Costs live in **`scripts/lib/nightly-class-costs.json`**;
+`tests/test-execution-policy.json` has no class-cost rows. Cost changes do not
+authorize exclusions or rewriting historical outcomes.
+
+### Required measured-cost follow-up (S-F-cost)
+
+S-F's native Windows Verify task retains the complete successful CP-41/42/43/44
+TRX and timing evidence. Then a separate Linux Code task changes only the three
+cost entries below and their provenance, plus the named offline cost witness;
+a native Windows Verify task runs CP-53 at that pushed SHA. This sequencing
+avoids pretending a pre-cost source receipt verified the later cost commit.
+No rerun of the expensive 35 is required merely to edit prices: their original
+SHA and measured outcomes remain explicit. S-F-cost must land after S-F and
+before the next Windows Full qualification can earn credit. If native costs
+are missing, keep this obligation incomplete and retain the old rows as stale;
+do not claim the 40-50 minute forecast or correct packing has been qualified.
+
+| Exact key under `classes` | Required edit / native sample | Historical evidence retained, not replacement data |
+|---|---|---|
+| `Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests` | Add; nodes=17, sum of 17 Passed durations from S-F Windows CP-41, one complete class sample | `shape-native` at investigation SHA `ade54222543381e2e1b31ad79d8ae33a4035f70b`: 771.72s interval, 7 pass / 10 fail; about 770s is provisional, not passing class cost |
+| `Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests` | Add; nodes=13, sum of 13 Passed durations from S-F Windows CP-42, one complete class sample | `baseline-config-selected`: 8 pass, 797.40s, plus five initial passing methods around 476s; about 1270s is a cross-run forecast |
+| `Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests` | Correct; nodes=6, sum of five CP-43 Passed durations plus the one CP-44 sibling, one complete class sample | Existing 25s/6 measured row: run `8f055f87`, `all-group-62`, 5 early failures. `confinement-config-selected` is 448.44s for FIVE cases; the 56.273s existing Windows sibling must also be priced, roughly 505s total |
+
+Record each entry's source SHA, Windows platform, run ID, CP IDs, all TRX digests,
+expanded sample counts, duration sum and `n=1 complete class sample; not p95` in
+its `source`. Use `basis: trx`, rounded to one decimal as the refresh utility
+does. Do not count setup/build/admission as case duration or mix Linux samples.
+Retain `platform: windows` and every unrelated row and source field byte-for-byte
+where possible. `scripts/refresh-nightly-class-costs.ps1` sums all supplied TRX
+outcomes without filtering failures, merges duplicate selections, sets platform
+from the invoking host, and drops existing per-row `source` fields. Therefore
+run it only against a scratch copy using the vetted complete Windows TRX set;
+review and transfer exactly these three candidate entries, adding provenance.
+Never run its default in-place refresh on Linux over the committed whole file.
+
+Extend `scripts/test-rc-roster-repairs.ps1` with case `C1199_Costs` and add the
+same-named TUnit wrapper in `tests/Antiphon.Tests/Scripts/RcRosterRepairTests.cs`.
+Require five `C1199` harness assertions: `complete-class-denominators` (17/13/6),
+`successful-trx-provenance` (all three named evidence sources; no stale 25s O),
+`planner-uses-committed-costs` (real planner prices full compiled S/T/O rosters
+at their recorded seconds, and prices required subsets proportionally),
+`policy-hash-unchanged`, and `admission-keeps-suite-watchdog` (real S3 admission
+with no calibration, plus an over-ceiling refusal). CP-53 selects exactly this
+one test; its fixture supplies a deterministic hostile underprice to show the
+cost observation differs, without invoking a Full run. Record the real planned
+UID sets, group membership, cost digest and admission decision beside CP-53.
+
+`Get-NightlyClassCostTable` divides seconds by nodes; the packing target is
+900s, not a hard watchdog. A roughly 1270s T class stays alone (under the 2400s
+lone-class ceiling); S and O cannot fit together at roughly 770+505s. The old
+model priced S/T at roughly 1s/node and O at 25s/6, causing severe underpacking
+estimates. Validate actual grouping after the refresh; do not force a 900s split
+or increase watchdogs just to fit a forecast.
+
+`Get-NightlyPolicyHash` hashes only canonical execution-policy JSON, excluding
+its own hash field. The separate cost file does **not** change that policy hash;
+record the new cost-file SHA-256 separately (`CostFileDigest` in the planned
+manifest). Use the policy hash actually on the post-top-up base, preserving it
+through this work; the round-1 hash above is historical, not a pin to restore.
+S3 at `192f15240f757e04fb5fdb032e447f926e563757` consumes the revised planned
+seconds for admission (antiphon estimate ceiling 2400s, suite watchdog 3600s).
+Its live planner passes basis `default` and no calibration; changing a class
+row's basis to `trx`/`measured` does not activate calibrated watchdog reduction.
+Eligible calibration requires at least 20 uncensored matching samples, policy
+binding and exact stratum including `costDigest`; a changed cost digest makes
+old calibration ineligible even though policyHash is unchanged. Preserve the
+unmeasured suite-watchdog fallback and fail-closed refusal above the ceiling.
+Do not fabricate calibration from these n=1 class samples or alter S3 admission.
+
+S-F-cost budget: Linux Code 60m (20 authoring + 20 build/check + 10 slot allowance
++ 10 reporting); Windows Verify 40m (20 build/check + 10 slot + 10 reporting).
+One shared test build per lane; CP-53 body estimate 2m, deadline 4m. This is a
+required follow-up, separate from the aggregate-run Debug investigation.
 
 ### Aggregate-run Debug and parallel work
 
