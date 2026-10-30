@@ -3852,6 +3852,13 @@ public sealed partial class AgentTaskDispatcher
     /// </summary>
     private async Task<bool> TryFailOverdueAsync(AgentTask task, CancellationToken ct)
     {
+        // Typed decisions are saved in another scope. A long-lived sweep context must
+        // observe acknowledgement/rearm before using its outstanding-hold shortcut.
+        if (task.CeilingHoldEpisodeId is not null)
+            await _db.Entry(task).ReloadAsync(ct);
+        if (task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+            || task.AgentSessionId is null || task.DispatchedAt is null)
+            return false;
         var sessionId = task.AgentSessionId!.Value;
 
         // First pass on the stored rows alone. TaskDeadlinePolicy returns null in one
