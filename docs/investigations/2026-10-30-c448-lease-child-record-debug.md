@@ -205,3 +205,35 @@ then `C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion` 20 times
 alone and 10 under build load. Retain exact counts, first failure lines,
 per-test timings, build identity, load and slot waits. Those native results,
 not portable success, must resolve the original Windows failure.
+
+## Refinement: qualification group 111
+
+The caller added the second Windows failure: group 111 at 20:47Z,
+`LandingGitTests.C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal`,
+line 590, 11 s; stdout `C1076_BUDGET elapsed=4.12 s`, TimeoutException
+`git_timeout`, followed by one retained child journal record. This arrived
+after the initial report and extends this investigation, not a separate cause.
+
+Both callers enter LandingGit.ExecuteProcessAsync. C448 cancels the caller
+token; C1076 expires LandingGitRunOptions.Budget after two seconds. Both take
+ReleaseChildAsync, with the same root/pipe grace and StreamsClosed callback;
+only the outward exception differs (OperationCanceledException versus
+TimeoutException("git_timeout")). The shared retry/diagnosed-fence fix at
+`cfaed0245e21ed7b0e13b71ec8b63a673ec36ffe` therefore applies to both. No second
+production fix is added and no assertion or timeout is weakened.
+
+C1076 already kills its recorded holder and polls JournalFiles for five seconds
+before the empty assertion. Consequently the second failure is not explained
+solely by C448's former immediate enumeration. It is consistent with either a
+failed asynchronous delete or a pipe holder that is still alive. Its existing
+Linux ordinary check passed in 2.813730 s; additional repetitions follow.
+
+A fixture hypothesis remains: its hook writes shell $$, whereas KillHolder
+passes that integer to Process.GetProcessById without native start identity.
+MSYS PIDs may differ from Windows PIDs. Git itself translates /proc/<pid>/winpid
+in [its gc test](https://github.com/git/git/blob/master/t/t6500-gc.sh), and the
+[Cygwin proc documentation](https://cygwin.com/cygwin-ug-net/proc.html) describes
+that native ID. This supports a Windows-only inspection target, not proof that
+PID mismatch caused either observed failure. Do not clear a journal merely
+because its Git root exited: a live inherited pipe remains a legitimate fence.
+Both native rows remain owed; no native execution is authorized here.
