@@ -1355,18 +1355,19 @@ try {
     $listedForeign = @(Get-ChildItem -LiteralPath $foreignTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $listSw.Stop()
     # Count actual bytes through the real reader, including accidental foreign reads.
-    $savedForeignReader = ${function:Read-TestPhaseStreamBytes}
+    $savedForeignReaders = @{}
     $script:foreignReadBytes = 0L
-    function Read-TestPhaseStreamBytes {
-        param($Stream, [int]$MaxBytes, [int]$DeadlineMilliseconds, $Watch)
-        $beforeRead = $Stream.Position
-        try { & $savedForeignReader @PSBoundParameters }
-        finally { $script:foreignReadBytes += $Stream.Position - $beforeRead }
+    foreach ($readerName in @('Read-QualificationTimingJsonl', 'Read-QualificationShardHeader')) {
+        $reader = Get-Item -LiteralPath ('Function:' + $readerName)
+        $savedForeignReaders[$readerName] = $reader.ScriptBlock
+        $dispose = 'try { $opened.Stream.Dispose() } catch { }'
+        $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:foreignReadBytes += $opened.Stream.Position; ' + $dispose))
+        Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
     }
     $foreignSw = [Diagnostics.Stopwatch]::StartNew()
     $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
     $foreignSw.Stop()
-    ${function:Read-TestPhaseStreamBytes} = $savedForeignReader
+    foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
     $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
     $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
@@ -1382,7 +1383,9 @@ try {
     Write-Host ('FAIL own-chunk-ignores-foreign-journals ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if ($null -ne $savedForeignReader) { ${function:Read-TestPhaseStreamBytes} = $savedForeignReader }
+    if ($null -ne $savedForeignReaders) {
+        foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
+    }
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
