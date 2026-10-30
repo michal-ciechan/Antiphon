@@ -14,6 +14,7 @@ Plan task: `9a468e98`; product code is outside this dispatch.
 - **D-6 — Own a small, pinned Porta managed patch.** Porta 1.0.7 has no public signal accessor: the signal is private on the Unix connection, not on `PtyExitedEventArgs`. Vendor its managed sources at the package's exact source revision, retain its license/provenance, and expose the already-decoded signal in the event and a completed-exit snapshot. Continue using the pinned package's native runtime assets. Do not use reflection, race a second `waitpid`, infer from `Process.ExitCode`, or write a new PTY implementation. A future upstream replacement requires the same real-path witnesses.
 - **D-7 — Keep the existing integer exit-code contract; add `int? ExitSignal`.** Zero explicitly means an observed exit without a POSIX signal; positive values are an observed signal; null means unavailable/legacy/observer failure. Windows producers emit zero (no signal) and retain their exact existing exit codes. A signaled Unix process retains Porta's existing integer zero in legacy fields; every new consumer must inspect the signal first. Do not invent `128+signal` as the actual process exit code. Integer-only adapter APIs may use a documented nonzero compatibility result for a known signal, but must also expose the structured evidence.
 - **D-8 — Attribute intent separately from observed death.** Persist a generation-bound stop intent before sending a signal. A request is not proof of its success or of who delivered the fatal signal. Record the signal actually attempted, path, request time and result; combine it with the wait observation conservatively. No new automatic stop, escalation, release deadline or custody authority is added.
+- **D-9 — Make provenance failure visible.** A new instrumented Linux stop whose intent cannot be durably written refuses before signaling and retains existing stop debt/ownership. Reject silently performing an unattributable kill. This deliberate stop-path availability tradeoff must be checked in plan Review; Windows is not gated by this Linux journal.
 
 ## Ground-truth table
 
@@ -367,9 +368,11 @@ and valid `ANTIPHON_TEST_PHASE_*` run/group/attempt/suite metadata in actual tes
 children. Store ignored TRX, timings, rosters and receipts under
 `.antiphon/card1619/<run-id>/`. Missing spans are unknown, never zero. Slot admission
 is separately bounded to 10 minutes; exit 4 never permits an unleased retry.
-`--row-timeout` also bounds builds: the initial commands use 8 minutes for S1/S2/S4
-host/runner and 12 for S3/S4 server, with smaller per-row YAML pins after shared
-builds. These build allowances carry the same CARD-1619 provisional exception.
+The commands below pin per-row timeouts in imported YAML. The current tool still
+gives builds a 15-minute minimum (`RunScheduler.BuildDeadlineMinutes`); this is
+an explicit provisional CARD-1619 build-only exception, not a measured p95 or a
+test-row allowance. Measured build p95 and a separate tooling change are needed
+to remove that floor. No CLI row override is used, since it would erase the pins.
 
 Dependency/category map: shared PTY -> PtyHost -> SessionRunner -> server runtime;
 Claude/Codex/Grok adapters are downstream shared-transport consumers. CP-1/2 cover
@@ -474,6 +477,91 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | portable-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 6 listed, 0 failed/skipped | 6 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+
+## Exact execution commands
+
+Run commands from the checkout root. Bootstrap the checkpoint tool once through
+the build-slot gate; use its built DLL afterward (the checkpoint executor takes
+its own slots). The table is the closed test roster; preparatory graph/EF commands
+are explicitly accounted above. No product test was run by this Plan.
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-checkpoint-tool -SlotWaitMinutes 10 -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-card1619-tools/
+$tool = 'tools/Antiphon.Checkpoints/bin-card1619-tools/Antiphon.Checkpoints.dll'
+$plan = 'docs/superpowers/plans/2026-10-30-card-1619-linux-pty-exit-signal-plan.md'
+$source = (git rev-parse HEAD).Trim()
+$runKey = 'card1619-' + [guid]::NewGuid().ToString('N')
+$manifest = '.antiphon/' + $runKey + '.yaml'
+dotnet $tool import --plan $plan --out $manifest
+if ($LASTEXITCODE -ne 0) { throw 'Plan import failed' }
+$yaml = Get-Content -LiteralPath $manifest -Raw
+$yaml = $yaml -replace '(?m)^  slotWaitMinutes: 45\r?$', '  slotWaitMinutes: 10'
+$pins = @{ 'CP-1'=4; 'CP-2'=8; 'CP-3'=8; 'CP-4'=8; 'CP-5'=12; 'CP-6'=2; 'CP-7'=4; 'CP-8'=4; 'CP-9'=8; 'CP-10'=8; 'CP-11'=10; 'CP-12'=4 }
+$yaml = [regex]::Replace($yaml, '(?ms)^- id: (CP-\d+)\r?\n.*?(?=^- id: CP-|\z)', {
+    param($match)
+    $id = $match.Groups[1].Value
+    [regex]::Replace($match.Value, '(?m)^  timeoutMinutes: \d+\r?$', ('  timeoutMinutes: ' + $pins[$id]))
+})
+Set-Content -LiteralPath $manifest -Value $yaml -NoNewline
+```
+
+Before execution, add valid per-row timing metadata to the generated YAML:
+absolute `ANTIPHON_TEST_PHASE_ROOT` under this run's ignored timing directory,
+`ANTIPHON_TEST_PHASE_RUN_ID=$runKey`, group equal to the table Group,
+`ANTIPHON_TEST_PHASE_ATTEMPT=1`, and suite equal to the test project assembly.
+This changes only environment/timeout metadata, never filters, Min or roster.
+Retain the imported and pinned manifest alongside receipts. The following are
+separate runs, each executed only after its source group is committed:
+
+```powershell
+# S1, Linux. Red witness commit uses the same selection; retain its intended red.
+dotnet $tool run $manifest --rows CP-1 --expected-source-sha $source --serial --total-timeout 12 --hard-wall-timeout 22 --max-wait 45s --heartbeat 15s
+# S2, Linux.
+dotnet $tool run $manifest --rows CP-3,CP-4 --expected-source-sha $source --serial --total-timeout 24 --hard-wall-timeout 34 --max-wait 45s --heartbeat 15s
+# S3, Linux (native end-to-end cases plus portable server/client cases).
+dotnet $tool run $manifest --rows CP-5,CP-6,CP-7,CP-8 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
+# S4, Linux; CP-12 additionally requires the owned cgroup-v1 fixture.
+dotnet $tool run $manifest --rows CP-9,CP-10,CP-11,CP-12 --expected-source-sha $source --serial --total-timeout 29 --hard-wall-timeout 39 --max-wait 45s --heartbeat 15s
+# Final source, native Windows. Refresh source/tool/manifest on that checkout.
+dotnet $tool run $manifest --rows CP-2 --expected-source-sha $source --serial --total-timeout 16 --hard-wall-timeout 26 --max-wait 45s --heartbeat 15s
+```
+
+After **each** run invocation returning 75, use its printed exact run directory:
+
+```powershell
+dotnet $tool wait --run <printed-run-directory> --expected-source-sha $source --max-wait 45s --heartbeat 15s
+```
+
+Continue waiting until exit is not 75 before starting the next group or ending
+the task. Do not leave an executor orphaned. Exit 4 means not run/blocked by slot
+admission, never retry unleased. Preserve every unedited CHECKPOINT line, actual
+count, TRX and verified source/build receipt; run the standard evidence-diff guard
+for Code/Review. Delete only producer-owned alternate outputs after joining all
+work. Refresh `$source` and manifest for every newly committed slice; never reuse
+a previous source's receipt. Unknown native/cgroup prerequisites stay owed.
+
+## Plan validation and publication
+
+The Plan-only import at `df2178a7a` accepted **12 rows**, exit 0, through a granted
+build slot. The bootstrap held its slot for 30 seconds. Five compiler warnings
+were emitted in existing checkpoint/HostCleanup sources; no product tests ran.
+The output was isolated under `/tmp/card1619-plan-build/`; generated YAML stays
+ignored. Final import after the documentation refinements is recorded at handoff.
+
+Placement reads on 2026-10-30 succeeded for both required API routes. The current
+default selected an eligible Linux runner; an eligible Windows lane was available
+and another Linux lane was drained/unavailable. These are observations, not a
+fleet pin. Re-read before dispatch, omit `-Runner`, and set `-Platform Linux` or
+`-Platform Windows` only for their native rows; portable work omits Platform.
+
+`git fetch origin master` observed
+`698bf1b73e8abf449d5569ea74ac8c82e80f92a1`. The required master merge-tree check
+has 12 inherited conflict paths from the RC-derived base, confirmed by repeating
+it at `4e67121ef7b85a563c5563cf5fc6aa769cb45743`; the new plan path is not among
+them. Do not merge this branch wholesale into master. The RC merge-tree check
+against `e4c9547e10e3da59fd20684b49c029cdc6063fa8` was clean. Recheck the actual
+landing tip; the separate master port is intentional, not a hidden landability
+claim. CARD-1610 reference read at `76c583946d5c594052305da87a8b99e85f8639bd`.
 
 ## Review and handoff
 
