@@ -7909,6 +7909,11 @@ c1008_rel_safe() {
 # Git stderr never reaches the receipt.
 c1008_ls_remote_status() {
     local status=0
+    # Temp's helper is offline. Every origin is proved by the current host phase,
+    # independent of whether Git would classify a network failure as auth. An
+    # absent proof must refuse in c1008_apply_host_proof, never consult local refs
+    # or a helper-visible file origin as a substitute. Main retains v1 below.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then return 3; fi
     timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads --tags origin > "$scratch/origin" 2>"$scratch/ls-remote.err" || status=$?
     if [ "$status" = 0 ]; then
         rm -f -- "$scratch/ls-remote.err"
