@@ -19,7 +19,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 | D-3 | Complete read-only offender preview, human and machine forms | Done: D-15, C11 |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Done: D-16..18, C12..14, operator choices |
 | D-5 | Bounded census retries, durable partial/resume behavior | Done: D-19, J6/J8 |
-| D-6 | Retained-volume deploy refusal, C849 contract, external caches | Pending |
+| D-6 | Retained-volume deploy refusal, C849 contract, external caches | Done: D-20, W6 |
 | D-7 | Master/rc port order after top-up 38, definition scope | Pending |
 | D-8 | Windows skip roster and closure checkpoint | Pending |
 | D-9 | Documentation pins and checkpoint | Pending |
@@ -96,13 +96,14 @@ classified manually as a process marker. Do not generalize that exception by nam
 | Container absence proves no access | `c1008_references` additionally detects bind sources overlapping a volume mount; named-volume queries alone miss them. | Preserve all-container census and canonical alias checks. |
 | Existing receipts bind an immutable Docker ID | `c1008_volume` has Name/CreatedAt/Mountpoint/selected labels/driver/options; named local volumes have no container-style immutable Id in this implementation. | Bind daemon identity and the whole incarnation tuple; never substitute name alone. |
 | Final removal is already exact-name-only | Temp uses `compose_temp down -v`, then verifies target absence; main uses exact volume rm. | Temp retirement switches to an exact recorded allowlist, no Compose deletion. |
+| No temp containers means deploy-temp starts clean | Landed `case_deploy_temp_runner` checks only `c849_no_temp_containers`; Compose can reuse retained named volumes. C849 Retired requires zero private volumes. | D-20 blocks deploy until retirement completes; C849 zero stays mandatory. |
 | Historical Compose is necessary when temp is absent | Both C994 cleanup and recycle materialize models before absence is fully handled; generation binding can inspect old source. | An absent generation needs no old model. Exited-container ownership comes from fresh actual topology. |
 | A checksum proves a receipt came from the operator | Current JSON/hashes are files under trusted host custody; a copied self-authored hash is not authentication. | Apply accepts only its protected host journal, not arbitrary supplied PASS JSON. |
 | Manual proof is already a reusable receipt schema | Prototype lacks schema, operation/volume incarnation, expiry and durable intents; publication rows omit reflog objects and original tag objects. | Preserve as historical evidence; no automatic conversion to Ready. |
 
 ## Decisions
 
-D-1 through D-19 are the stated defaults for review. They make the design concrete;
+D-1 through D-20 are the stated defaults for review. They make the design concrete;
 they do not authorize relaxing a refusal. Operator questions are collected below.
 
 **D-1 — Separate retirement from deployment, starting with retired temp.** Add a
@@ -531,6 +532,37 @@ partial retirement; it does not promise rollback of an earlier successful delete
 Rejected: unlimited retries, reusing the first census, or accepting unstable final
 rows merely because containers have already been removed.
 
+**D-20 — Retained volumes stop the rollout and block a new temp deployment.**
+Under the existing rollout lock, `case_deploy_temp_runner` must census all four
+exact temp-private names before seed/build/Compose or retirement-clear effects.
+Any present volume, incomplete census, or pending/refused/partial retirement record
+refuses `TempVolumesRetained` and names the operation (or unjournaled), exact
+retained names and Preview/Resume recovery. Even all-absent with unresolved intents
+requires journal reconciliation first. Do not adopt retained state automatically.
+Only confirmed absence and no unresolved operation permits fresh temp deployment.
+Read-only preview reservations do not persist after release; durable operation
+states still prevent deployment from silently invalidating a pending retirement.
+
+A content/census refusal in retire-temp keeps the standing main accepting work but
+returns nonzero and leaves rollout gate 9 incomplete. It cannot report the rollout
+complete or run C849 CP-5 as if retirement succeeded. Resume/recover the retained
+set, then require completed retirement and the normal Retired cache verification.
+`verify-card0849-caches.ps1 -Case Retired` keeps its success expectation
+`externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true`; document its
+precondition explicitly instead of weakening zero to allow retained volumes.
+The verification script needs no success-format change. Refused retirement is an
+incomplete gate, not a failing cache policy to waive. A later rollout's deploy-temp
+also refuses until that pending operation is resolved; no `-Adopt` bypass is added.
+
+The v2 allowlist contains only the four explicitly bound temp-private volumes.
+Reject main volumes and the three CARD-0849 external caches by exact name:
+`antiphon-runner-cache-nuget-packages`,
+`antiphon-runner-cache-nuget-scratch`,
+`antiphon-runner-cache-npm-content`. Manual input cannot broaden that allowlist.
+N3 proves all three survive. Rejected: automatic remount of retained work/state,
+Compose down -v, declaring success with retained private volumes, or changing C849
+to accept them as a successful Retired state.
+
 ## Locks, concurrency and deletion failure modes
 
 Canonical order: host rollout lock (existing FD 8) -> cache-maintenance lock
@@ -627,9 +659,9 @@ made by this Plan task.
 |---|---|---|
 | S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. | C1/C2/J1 fail on intended readiness/no-deletion assertions against unchanged production at the task base; CP-1/2. |
 | S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H6 and R3-R6; D-15 full-roster output. |
-| S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch of `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations. | J1-J10, R1/R2 and N2/N3. |
-| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W5. ASCII transport scripts; LF shell files. |
-| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..11; update runbook command examples and refusal recovery. |
+| S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and deploy-temp retained-volume preflight in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations. | J1-J10, R1/R2 and N2/N3. |
+| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. ASCII transport scripts; LF shell files. |
+| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..11; update runbook command examples and refusal recovery. |
 
 Relocate the four old historical-image-specific methods in
 `RollingVolumeRecycleScriptTests` (dry-run binding and three C1594 receipt-image
@@ -768,9 +800,10 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | W3 | `Bridge_validates_and_preserves_receipt_fields` | Strict JSON/quoting, multiline/path characters, large proof by file, per-operation staging, ignored evidence and ASCII/LF scripts. |
 | W4 | `Retire_temp_ignores_missing_stack_and_historical_compose` | Entry-level no old stack/source/image requirement, including absent/exited containers and old callers with -Sha. |
 | W5 | `Main_recycle_and_existing_deploy_contracts_are_preserved` | Non-retirement -Sha requirement, main generation/resume behavior and existing authority gates stay enforced. |
+| W6 | `Retained_volumes_block_deploy_and_completion` | Refused/partial/unjournaled retained sets block deploy before Compose/seed/clear, name exact recovery; all absent with pending intent still blocks; completed absence admits. Retire-temp refusal returns nonzero, no C849 Retired invocation/success; completed retirement retains the zero-private-volume cache contract. PC: check only containers or ignore refusal exit. |
 | N1 | `Read_only_namespace_and_host_proof_are_real` | Real helper kernel write-denial at each mounted alias, UID/offline/no secrets, linked pointers and hooks, before/after bytes; timeout kills only owned helper. |
 | N2 | `Replacement_and_concurrent_reference_block_delete` | Real same-name replacement between phases, new named/bind reference, supported writer blocked by lock; no wrong volume deleted. |
-| N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/cache/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
+| N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/all three named caches/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
 
 Preservation rows: R1 = seven original named RollingVolumeRecycleScriptTests methods in
 CP-8; R6 = the two CARD-1607 methods in CP-8; R2 = nine named retired-container methods in CP-9; R3 = 30 argument results
@@ -824,14 +857,14 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
 | CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 1 | true |
 | CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C14,J1-J10 | all 24 listed methods, 0 failed/skipped | 24 | 5 | true |
-| CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 | all 11 listed methods, 0 failed/skipped | 11 | 1 | true |
+| CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 | all 12 listed methods, 0 failed/skipped | 12 | 1 | true |
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
 | CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
 | CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)` | R1,R6 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
-| CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 native Windows | all 11 methods, 0 failed/skipped | 11 | 5 | true |
+| CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |
 
 ## Rollout and compatibility
 
@@ -859,7 +892,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ## Operator questions and independent review gates
 
-The plan is written under D-1..D-19 rather than waiting for answers. These are
+The plan is written under D-1..D-20 rather than waiting for answers. These are
 explicit review choices, not permission questions during this Plan:
 
 - Confirm D-2 retains reflog and original tag-object protection despite the manual
