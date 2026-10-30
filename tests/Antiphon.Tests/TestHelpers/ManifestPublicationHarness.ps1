@@ -844,9 +844,560 @@ function Invoke-V8 {
     Write-MpResult -Ok $true -Reason 'v8'
 }
 
+function New-MpDiagRecord {
+    param([string]$Uid, [string]$TypeName, [string]$Method, [string]$StateName)
+    $state = $StateName + 'TestNodeStateProperty { Explanation = ok }'
+    return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ' + $state + ' ] } }')
+}
+
+function Write-MpDiagFile {
+    param([string]$Directory, [string[]]$Records)
+    if (-not (Test-Path -LiteralPath $Directory)) {
+        New-Item -ItemType Directory -Path $Directory -Force | Out-Null
+    }
+    $text = "Version: '1.44.0.0'`nVersion: 2.2.2`n" + (@($Records) -join "`n") + "`n"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $Directory 'fixture.diag'), $text, $utf8)
+}
+
+function Write-MpDefinedTrx {
+    param([string]$Path, [string]$ClassName, [string]$Outcome)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $xml = '<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="t1" name="Plain"><TestMethod className="' + $ClassName + '" name="Plain" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="t1" testName="Plain" outcome="' + $Outcome + '" /></Results></TestRun>'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $xml, $utf8)
+}
+
+function Get-MpArgValue {
+    param([string[]]$ArgumentList, [string]$Name)
+    $items = @($ArgumentList)
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        if ([string]$items[$i] -eq $Name -and ($i + 1) -lt $items.Count) { return [string]$items[$i + 1] }
+    }
+    return ''
+}
+
+function Get-MpFilterClass {
+    param([string]$Filter)
+    if ($Filter -match '^/\*/([^/]+)/([^/]+)/\*$') { return ($Matches[1] + '.' + $Matches[2]) }
+    return ''
+}
+
+function New-MpScopedPolicy {
+    param([string]$Path, [string[]]$Suites, [hashtable]$ChunkClasses)
+    $obj = Get-Content -Raw (Join-Path $Repo 'tests/test-execution-policy.json') | ConvertFrom-Json
+    $obj.profiles.nightly.requiredSuites = @($Suites)
+    $existingSuites = @($obj.suites.PSObject.Properties.Name)
+    foreach ($name in @($Suites)) {
+        if ($existingSuites -contains $name) { continue }
+        $obj.suites | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{
+            processGroup = 'native-dotnet'
+            name = $name
+            mode = 'unattended'
+            assembly = 'Antiphon.MarkdownPdf.Tests'
+            project = 'tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj'
+        }) -Force
+    }
+    $chunks = [pscustomobject]@{}
+    foreach ($name in @($ChunkClasses.Keys)) {
+        $classes = @($ChunkClasses[$name])
+        $row = [pscustomobject]@{ id = 'same'; classes = @($classes) }
+        $chunks | Add-Member -NotePropertyName $name -NotePropertyValue @($row) -Force
+    }
+    $obj | Add-Member -NotePropertyName chunks -NotePropertyValue $chunks -Force
+    $obj.policyHash = Get-NightlyPolicyHash -Object $obj
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, ($obj | ConvertTo-Json -Depth 30), $utf8)
+}
+
+function Write-MpSeam {
+    param([string]$Path)
+    $text = @'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $state = [string]$env:MP_STATE
+        $items = @($ArgumentList)
+        $argsText = $items -join " "
+        Add-Content -LiteralPath (Join-Path $state "launches.txt") -Value $argsText -Encoding ascii
+        $classes = @([System.IO.File]::ReadAllLines((Join-Path $state "classes.txt")))
+        if ($argsText -match "--list-tests") {
+            $diag = Get-MpArgValue -ArgumentList $items -Name "--diagnostic-output-directory"
+            $records = @()
+            foreach ($className in $classes) {
+                if ([string]::IsNullOrWhiteSpace($className)) { continue }
+                $records += (New-MpDiagRecord -Uid ("uid-" + $className) -TypeName $className -Method "Plain" -StateName "Discovered")
+            }
+            Write-MpDiagFile -Directory $diag -Records $records
+            return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+        }
+        if ($argsText -notmatch "--report-trx") {
+            return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+        }
+        $n = 0
+        $countPath = Join-Path $state "report-count.txt"
+        if (Test-Path -LiteralPath $countPath) { $n = [int][System.IO.File]::ReadAllText($countPath) }
+        $n++
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($countPath, ([string]$n), $utf8)
+        $timing = [string]$env:MP_TIMING
+        $flat = Join-Path $timing "groups-executed.json"
+        if ($n -ge 2) {
+            $flag = "absent"
+            if (Test-Path -LiteralPath $flat) { $flag = "present" }
+            [System.IO.File]::WriteAllText((Join-Path $state "flat-at-barrier.txt"), $flag, $utf8)
+            $logRoot = [string]$env:MP_LOG
+            $stamp = ""
+            if (Test-Path -LiteralPath $logRoot) {
+                $logs = @(Get-ChildItem -LiteralPath $logRoot -Filter "*-tests.log" -File -ErrorAction SilentlyContinue)
+                foreach ($log in $logs) {
+                    $raw = [System.IO.File]::ReadAllText($log.FullName)
+                    if ($raw -match "C487_INVOCATION=") { $stamp = "stamped" }
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($stamp)) { $stamp = "unstamped" }
+            [System.IO.File]::WriteAllText((Join-Path $state "stamp-at-barrier.txt"), $stamp, $utf8)
+        }
+        $mode = [string]$env:MP_MODE
+        if ($mode -eq "throw" -and $n -eq 1) { throw "mp-orchestration" }
+        if ($mode -eq "no-planned") {
+            $planned = Join-Path $timing "groups-planned.json"
+            if (Test-Path -LiteralPath $planned) { Remove-Item -LiteralPath $planned -Force }
+            $index = Join-Path $timing "groups-planned-index.json"
+            if (Test-Path -LiteralPath $index) { Remove-Item -LiteralPath $index -Force }
+        }
+        $faultAt = 0
+        $faultPath = Join-Path $state "fault-at.txt"
+        if (Test-Path -LiteralPath $faultPath) { $faultAt = [int][System.IO.File]::ReadAllText($faultPath) }
+        $faultUntil = 0
+        $untilPath = Join-Path $state "fault-until.txt"
+        if (Test-Path -LiteralPath $untilPath) { $faultUntil = [int][System.IO.File]::ReadAllText($untilPath) }
+        $stage = "Rename"
+        $stagePath = Join-Path $state "fault-stage.txt"
+        if (Test-Path -LiteralPath $stagePath) {
+            $stageText = [System.IO.File]::ReadAllText($stagePath).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($stageText)) { $stage = $stageText }
+        }
+        $inWindow = $false
+        if ($faultAt -gt 0 -and $n -ge $faultAt) {
+            if ($faultUntil -le 0 -or $n -le $faultUntil) { $inWindow = $true }
+        }
+        if ($inWindow) {
+            $remaining = 2
+            $remainPath = Join-Path $state "fault-remaining.txt"
+            if (Test-Path -LiteralPath $remainPath) { $remaining = [int][System.IO.File]::ReadAllText($remainPath) }
+            $script:TestPhaseCommitFault = [pscustomobject]@{ Stage = $stage; Remaining = $remaining }
+        } elseif ($faultAt -gt 0) {
+            $script:TestPhaseCommitFault = $null
+        }
+        $filter = Get-MpArgValue -ArgumentList $items -Name "--treenode-filter"
+        $className = Get-MpFilterClass -Filter $filter
+        if ([string]::IsNullOrWhiteSpace($className)) { $className = [string]$classes[0] }
+        $outcome = "Passed"
+        $exitCode = 0
+        $timedOut = $false
+        if ($mode -eq "failed") { $outcome = "Failed"; $exitCode = 1 }
+        if ($mode -eq "timeout") { $timedOut = $true }
+        if ($mode -ne "missing-trx") {
+            $trxName = Get-MpArgValue -ArgumentList $items -Name "--report-trx-filename"
+            $results = Get-MpArgValue -ArgumentList $items -Name "--results-directory"
+            if ($trxName -and $results) { Write-MpDefinedTrx -Path (Join-Path $results $trxName) -ClassName $className -Outcome $outcome }
+            $exec = Get-MpArgValue -ArgumentList $items -Name "--diagnostic-output-directory"
+            $stateName = "Passed"
+            if ($outcome -eq "Failed") { $stateName = "Failed" }
+            Write-MpDiagFile -Directory $exec -Records @((New-MpDiagRecord -Uid ("uid-" + $className) -TypeName $className -Method "Plain" -StateName $stateName))
+        }
+        $drain = 10 + $n
+        return [pscustomobject]@{ ExitCode = $exitCode; TimedOut = $timedOut; ChildrenExited = $true; CleanupComplete = $true; Pid = (40 + $n); LogText = ""; RootStartedAtUtc = "2026-10-30T03:02:00Z"; RootExitedAtUtc = "2026-10-30T03:03:00Z"; JobEmptyObserved = $true; DrainMilliseconds = $drain }
+    }
+}
+'@
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $text, $utf8)
+}
+
+function Invoke-MpQualification {
+    param(
+        [string]$Name,
+        [string]$Mode,
+        [string[]]$Suites,
+        [hashtable]$ChunkClasses,
+        [int]$FaultAt = 0,
+        [int]$FaultUntil = 0,
+        [string]$FaultStage = 'Rename',
+        [int]$FaultRemaining = 2
+    )
+    $root = Join-Path $Work $Name
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $state = Join-Path $root 'state'
+    New-Item -ItemType Directory -Path $state -Force | Out-Null
+    $classes = New-Object System.Collections.Generic.List[string]
+    foreach ($nameKey in @($ChunkClasses.Keys)) {
+        foreach ($className in @($ChunkClasses[$nameKey])) { $classes.Add([string]$className) }
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines((Join-Path $state 'classes.txt'), $classes.ToArray(), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $state 'fault-at.txt'), ([string]$FaultAt), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $state 'fault-until.txt'), ([string]$FaultUntil), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $state 'fault-stage.txt'), ([string]$FaultStage), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $state 'fault-remaining.txt'), ([string]$FaultRemaining), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $state 'report-count.txt'), '0', $utf8)
+    $policy = Join-Path $root 'policy.json'
+    New-MpScopedPolicy -Path $policy -Suites $Suites -ChunkClasses $ChunkClasses
+    $seam = Join-Path $root 'seams.ps1'
+    Write-MpSeam -Path $seam
+    $log = Join-Path $root 'log'
+    $timing = Join-Path $root 'timing'
+    $env:MP_STATE = $state
+    $env:MP_TIMING = $timing
+    $env:MP_LOG = $log
+    $env:MP_MODE = $Mode
+    $script:TestPhaseCommitFault = $null
+    $script:TestPhaseExecutedContext = $null
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $log -TimingRoot $timing -Suites $Suites -Profile 'nightly' -Sha ('a' * 40) -GitRef 'origin/master' -RunId ('mp-' + $Name) -Attempt 1 -Trigger 'manual' -SeamsPath $seam -PolicyPath $policy -AllowSharedTree
+    } finally {
+        $ErrorActionPreference = $previous
+        Remove-Item Env:MP_STATE -ErrorAction SilentlyContinue
+        Remove-Item Env:MP_TIMING -ErrorAction SilentlyContinue
+        Remove-Item Env:MP_LOG -ErrorAction SilentlyContinue
+        Remove-Item Env:MP_MODE -ErrorAction SilentlyContinue
+        $script:TestPhaseCommitFault = $null
+        $script:TestPhaseExecutedContext = $null
+    }
+    $summaryPath = Join-Path $log 'summary.json'
+    $summary = $null
+    if (Test-Path -LiteralPath $summaryPath) { $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json }
+    $seal = $null
+    $currentPath = Join-Path (Join-Path $timing 'groups-executed.journal') 'current.json'
+    if (Test-Path -LiteralPath $currentPath) {
+        $current = Get-Content -Raw -LiteralPath $currentPath | ConvertFrom-Json
+        $sealPath = Join-Path (Join-Path (Join-Path $timing 'groups-executed.journal') ([string]$current.generation)) 'seal.json'
+        if (Test-Path -LiteralPath $sealPath) { $seal = Get-Content -Raw -LiteralPath $sealPath | ConvertFrom-Json }
+    }
+    $flatFlag = ''
+    $flatPath = Join-Path $state 'flat-at-barrier.txt'
+    if (Test-Path -LiteralPath $flatPath) { $flatFlag = [System.IO.File]::ReadAllText($flatPath).Trim() }
+    $stampFlag = ''
+    $stampPath = Join-Path $state 'stamp-at-barrier.txt'
+    if (Test-Path -LiteralPath $stampPath) { $stampFlag = [System.IO.File]::ReadAllText($stampPath).Trim() }
+    return [pscustomobject]@{
+        Name = $Name
+        Result = $result
+        Summary = $summary
+        Seal = $seal
+        FlatAtBarrier = $flatFlag
+        StampAtBarrier = $stampFlag
+        Timing = $timing
+        Log = $log
+        State = $state
+    }
+}
+
+function Assert-MpTerminalPublication {
+    param($Run, [string]$Terminal, [switch]$RequireBarrier)
+    if ($null -eq $Run.Summary) { Fail-Mp ($Run.Name + ' receipt-absent') }
+    if ($RequireBarrier -and $Run.FlatAtBarrier -eq 'present') { Fail-Mp ($Run.Name + ' flat-present-before-terminal') }
+    if ($RequireBarrier -and $Run.FlatAtBarrier -ne 'absent') { Fail-Mp ($Run.Name + ' barrier-not-reached ' + $Run.FlatAtBarrier) }
+    if ($null -eq $Run.Seal) { Fail-Mp ($Run.Name + ' terminal-seal-absent') }
+    if ([string]$Run.Seal.terminal -ne $Terminal) {
+        $reasons = ''
+        if ($null -ne $Run.Summary -and $Run.Summary.PSObject.Properties.Name -contains 'reasons') { $reasons = @($Run.Summary.reasons) -join ';' }
+        Fail-Mp ($Run.Name + ' terminal=' + [string]$Run.Seal.terminal + ' expected=' + $Terminal + ' reasons=' + $reasons)
+    }
+    $records = @(Get-ChildItem -LiteralPath (Join-Path (Join-Path $Run.Timing 'groups-executed.journal') ([string]$Run.Seal.generation)) -Filter '????????.json' -File -ErrorAction SilentlyContinue)
+    if ($records.Count -lt 1 -and $Terminal -ne 'orchestration-error') { Fail-Mp ($Run.Name + ' no-committed-chunk') }
+    $flat = Join-Path $Run.Timing 'groups-executed.json'
+    if (-not (Test-Path -LiteralPath $flat) -and $Terminal -ne 'orchestration-error') { Fail-Mp ($Run.Name + ' final-projection-absent') }
+}
+
+function Invoke-V9 {
+    $one = @{ 'markdown-pdf' = @('Fixture.One', 'Fixture.Two') }
+    $suites = @('markdown-pdf')
+    $ok = Invoke-MpQualification -Name 'success' -Mode 'success' -Suites $suites -ChunkClasses $one
+    Assert-MpTerminalPublication -Run $ok -Terminal 'success' -RequireBarrier
+    $failed = Invoke-MpQualification -Name 'failed' -Mode 'failed' -Suites $suites -ChunkClasses $one
+    Assert-MpTerminalPublication -Run $failed -Terminal 'failed-run' -RequireBarrier
+    if ([int]$failed.Result.ExitCode -eq 0) { Fail-Mp 'failed-child-became-success' }
+    $timeout = Invoke-MpQualification -Name 'timeout' -Mode 'timeout' -Suites $suites -ChunkClasses $one
+    Assert-MpTerminalPublication -Run $timeout -Terminal 'timeout' -RequireBarrier
+    $missing = Invoke-MpQualification -Name 'missing' -Mode 'missing-trx' -Suites $suites -ChunkClasses $one
+    Assert-MpTerminalPublication -Run $missing -Terminal 'failed-run' -RequireBarrier
+    $thrown = Invoke-MpQualification -Name 'thrown' -Mode 'throw' -Suites $suites -ChunkClasses @{ 'markdown-pdf' = @('Fixture.One') }
+    Assert-MpTerminalPublication -Run $thrown -Terminal 'orchestration-error'
+    if ([string]$thrown.Summary.outcome -eq '') { Fail-Mp 'orchestration-receipt-empty' }
+    $bare = Invoke-MpQualification -Name 'bare' -Mode 'no-planned' -Suites $suites -ChunkClasses $one
+    Assert-MpTerminalPublication -Run $bare -Terminal 'success' -RequireBarrier
+    if (Test-Path -LiteralPath (Join-Path $bare.Timing 'groups-planned.json')) { Fail-Mp 'planned-document-returned' }
+    Write-MpResult -Ok $true -Reason 'v9'
+}
+
+function Invoke-V10 {
+    $legacy = Join-Path $Work 'legacy'
+    New-Item -ItemType Directory -Path (Join-Path $legacy 'timing') -Force | Out-Null
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $legacy 'timing/groups-planned.json'), '{"version":1,"runId":"run-v10","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}', $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $legacy 'timing/groups-executed.json'), '{"version":1,"runId":"run-v10","attempt":"1","suite":"antiphon","manufacturedPassed":false,"chunks":[{"chunk":"c1","runId":"run-v10","attempt":"1","suite":"antiphon","hostWallSeconds":1,"trxMissing":true,"manufacturedPassed":false,"passedCount":0,"outcomes":[],"trx":"one.trx","trxDigest":"","exitCode":0,"coverageComplete":false,"testsPassed":false}]}', $utf8)
+    Write-MpDefinedTrx -Path (Join-Path $legacy 'one.trx') -ClassName 'Fixture.One' -Outcome 'Passed'
+    & (Join-Path $Repo 'scripts/summarize-test-phases.ps1') -RunDirectory $legacy -Top 5
+    $legacySummary = Get-Content -Raw (Join-Path $legacy 'timing/summary.json') | ConvertFrom-Json
+    $legacyQuality = @($legacySummary.quality)
+    if ([bool]$legacySummary.complete) { Fail-Mp 'legacy-complete-without-state' }
+    if ($legacyQuality -notcontains 'publication-state-missing') { Fail-Mp 'legacy-missing-state-not-recorded' }
+    $launch = Join-Path $Work 'launch'
+    New-Item -ItemType Directory -Path (Join-Path $launch 'timing') -Force | Out-Null
+    $launchTrx = Join-Path $launch 'launch.trx'
+    Write-MpDefinedTrx -Path $launchTrx -ClassName 'Fixture.Launch' -Outcome 'Passed'
+    [System.IO.File]::WriteAllText((Join-Path $launch 'timing/groups-planned.json'), '{"version":1,"runId":"run-v10","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}', $utf8)
+    $script:TestPhaseExecutedContext = $null
+    $launchVerdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
+    Complete-TestPhaseLaunch -Verdict $launchVerdict -LogRoot $launch -TrxPath $launchTrx -Suite 'antiphon' -Chunk 'c-launch' -RunId 'run-v10' -Attempt '1' -HostWallSeconds 1
+    if (-not (Test-Path -LiteralPath (Join-Path $launch 'timing/groups-executed.json'))) { Fail-Mp 'launch-snapshot-absent' }
+    $journal = Join-Path $Work 'journal'
+    New-Item -ItemType Directory -Path $journal -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $journal 'timing-hold'), 'x', $utf8)
+    $ctx = Open-TestPhaseExecutedContext -LogRoot $journal -RunId 'run-v10' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+    if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp 'journal-context-refused' }
+    $trx = Join-Path $journal 'alpha.trx'
+    Write-MpDefinedTrx -Path $trx -ClassName 'Fixture.Alpha' -Outcome 'Passed'
+    $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
+    $script:TestPhaseExecutedContext = $ctx
+    Write-TestPhaseExecutedManifest -Verdict $verdict -LogRoot $journal -TrxPath $trx -Suite 'antiphon' -Chunk 'c-alpha' -RunId 'run-v10' -Attempt '1' -HostWallSeconds 1
+    $trxB = Join-Path $journal 'beta.trx'
+    Write-MpDefinedTrx -Path $trxB -ClassName 'Fixture.Beta' -Outcome 'Failed'
+    Write-TestPhaseExecutedManifest -Verdict $verdict -LogRoot $journal -TrxPath $trxB -Suite 'other' -Chunk 'c-alpha' -RunId 'run-v10' -Attempt '1' -HostWallSeconds 1
+    Close-TestPhaseExecutedContext -Context $ctx
+    $flat = Join-Path (Join-Path $journal 'timing') 'groups-executed.json'
+    if (Test-Path -LiteralPath $flat) { Remove-Item -LiteralPath $flat -Force }
+    [System.IO.File]::WriteAllText((Join-Path (Join-Path $journal 'timing') 'groups-planned.json'), '{"version":1,"runId":"run-v10","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests","groups":[]}', $utf8)
+    & (Join-Path $Repo 'scripts/summarize-test-phases.ps1') -RunDirectory $journal -Top 5
+    $joined = Get-Content -Raw (Join-Path (Join-Path $journal 'timing') 'summary.json') | ConvertFrom-Json
+    $alpha = @($joined.tests | Where-Object { [string]$_.groupId -eq 'c-alpha' -and [string]$_.suite -eq 'antiphon' })
+    $beta = @($joined.tests | Where-Object { [string]$_.groupId -eq 'c-alpha' -and [string]$_.suite -eq 'other' })
+    if ($alpha.Count -ne 1 -or $beta.Count -ne 1) { Fail-Mp 'journal-only-lost-cross-suite-join' }
+    if (Test-Path -LiteralPath $flat) { Fail-Mp 'summary-rewrote-projection' }
+    $recover = Join-Path $Repo 'scripts/summarize-test-phases.ps1'
+    $help = Get-Help $recover -Parameter RecoverExecutedManifest -ErrorAction SilentlyContinue
+    if ($null -eq $help) { Fail-Mp 'recovery-switch-absent' }
+    & $recover -RunDirectory $journal -Top 5 -RecoverExecutedManifest
+    if (-not (Test-Path -LiteralPath $flat)) { Fail-Mp 'recovery-did-not-project' }
+    $sealPath = Join-Path (Join-Path (Join-Path (Join-Path $journal 'timing') 'groups-executed.journal') '*') 'seal.json'
+    if (@(Get-Item -Path $sealPath -ErrorAction SilentlyContinue).Count -gt 0) { Fail-Mp 'recovery-invented-seal' }
+    Write-MpResult -Ok $true -Reason 'v10'
+}
+
+function Get-MpJournalRows {
+    param([string]$Timing)
+    $rows = @()
+    $curPath = Join-Path (Join-Path $Timing 'groups-executed.journal') 'current.json'
+    if (-not (Test-Path -LiteralPath $curPath)) { return $rows }
+    $cur = Get-Content -Raw -LiteralPath $curPath | ConvertFrom-Json
+    $gen = Join-Path (Join-Path $Timing 'groups-executed.journal') ([string]$cur.generation)
+    foreach ($rec in @(Get-ChildItem -LiteralPath $gen -Filter '????????.json' -File -ErrorAction SilentlyContinue)) {
+        if ($rec.Name -notmatch '^[0-9]{8}\.json$') { continue }
+        $obj = Get-Content -Raw -LiteralPath $rec.FullName | ConvertFrom-Json
+        $suite = ''
+        $chunk = ''
+        if (-not [string]::IsNullOrWhiteSpace([string]$obj.freshSuiteKey)) {
+            $suite = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$obj.freshSuiteKey))
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$obj.freshChunkKey)) {
+            $chunk = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$obj.freshChunkKey))
+        }
+        $rows += [pscustomobject]@{ Kind = [string]$obj.kind; Suite = $suite; Chunk = $chunk }
+    }
+    return $rows
+}
+
+function Invoke-MpMatrixArm {
+    param([string]$Name, [string]$Stage, [int]$Remaining)
+    $root = Join-Path $Work ('matrix-' + $Name)
+    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $script:TestPhaseExecutedContext = $null
+    $script:TestPhaseCommitFault = $null
+    $ctx = Open-TestPhaseExecutedContext -LogRoot $root -RunId 'run-m' -Attempt '1' -Suite 'markdown-pdf' -Source 'unknown'
+    if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp ($Name + ' context-refused') }
+    $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
+    for ($i = 1; $i -le 5; $i++) {
+        $trx = Join-Path $root ('c' + $i + '.trx')
+        Write-MpDefinedTrx -Path $trx -ClassName 'Fixture.One' -Outcome 'Passed'
+        if ($i -eq 2) {
+            $script:TestPhaseCommitFault = [pscustomobject]@{ Stage = $Stage; Remaining = $Remaining }
+        } else {
+            $script:TestPhaseCommitFault = $null
+        }
+        Write-TestPhaseExecutedManifest -Verdict $verdict -LogRoot $root -TrxPath $trx -Suite 'markdown-pdf' -Chunk ('c' + $i) -RunId 'run-m' -Attempt '1' -HostWallSeconds 1
+    }
+    Close-TestPhaseExecutedContext -Context $ctx
+    $script:TestPhaseCommitFault = $null
+    return (Get-MpJournalRows -Timing (Join-Path $root 'timing'))
+}
+
+function Assert-MpMatrix {
+    $held = @(Invoke-MpMatrixArm -Name 'held' -Stage 'Rename' -Remaining 4)
+    $heldGaps = @($held | Where-Object { $_.Kind -eq 'gap' })
+    if ($heldGaps.Count -ne 1) { Fail-Mp ('matrix-c-gap-dropped ' + $heldGaps.Count) }
+    if ($heldGaps[0].Suite -ne 'markdown-pdf' -or $heldGaps[0].Chunk -ne 'c2') { Fail-Mp 'matrix-c-gap-identity' }
+    foreach ($id in @('c1', 'c3', 'c4', 'c5')) {
+        if (@($held | Where-Object { $_.Kind -eq 'chunk' -and $_.Chunk -eq $id }).Count -ne 1) { Fail-Mp ('matrix-c-missing-' + $id) }
+    }
+    $retry = @(Invoke-MpMatrixArm -Name 'retry' -Stage 'Rename' -Remaining 1)
+    if (@($retry | Where-Object { $_.Kind -eq 'gap' }).Count -ne 0) { Fail-Mp 'matrix-a-spurious-gap' }
+    if (@($retry | Where-Object { $_.Kind -eq 'chunk' }).Count -ne 5) { Fail-Mp 'matrix-a-lost-chunk' }
+    $gap = @(Invoke-MpMatrixArm -Name 'gap' -Stage 'Rename' -Remaining 2)
+    $gapRows = @($gap | Where-Object { $_.Kind -eq 'gap' })
+    if ($gapRows.Count -ne 1) { Fail-Mp ('matrix-b-gap-count ' + $gapRows.Count) }
+    if ($gapRows[0].Suite -ne 'markdown-pdf' -or $gapRows[0].Chunk -ne 'c2') { Fail-Mp ('matrix-b-gap-identity ' + $gapRows[0].Suite + '/' + $gapRows[0].Chunk) }
+    foreach ($id in @('c1', 'c3', 'c4', 'c5')) {
+        if (@($gap | Where-Object { $_.Kind -eq 'chunk' -and $_.Chunk -eq $id }).Count -ne 1) { Fail-Mp ('matrix-b-missing-' + $id) }
+    }
+    if (@($gap | Where-Object { $_.Kind -eq 'chunk' -and $_.Chunk -eq 'c2' }).Count -ne 0) { Fail-Mp 'matrix-b-duplicate-chunk' }
+    $ack = @(Invoke-MpMatrixArm -Name 'ack' -Stage 'Acknowledge' -Remaining 1)
+    if (@($ack | Where-Object { $_.Kind -eq 'gap' }).Count -ne 0) { Fail-Mp 'matrix-d-spurious-gap' }
+    if (@($ack | Where-Object { $_.Chunk -eq 'c2' }).Count -ne 1) { Fail-Mp 'matrix-d-duplicate-or-missing' }
+    $freshWork = Join-Path $Work 'matrix-gap'
+    $reader = Join-Path $freshWork 'read-gap.ps1'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $readerText = @'
+param([string]$Repo, [string]$Timing)
+$ErrorActionPreference = "Stop"
+. (Join-Path $Repo "scripts/lib/nightly-common.ps1")
+. (Join-Path $Repo "scripts/lib/test-phase-evidence.ps1")
+$cur = Get-Content -Raw (Join-Path $Timing "groups-executed.journal/current.json") | ConvertFrom-Json
+$gen = Join-Path (Join-Path $Timing "groups-executed.journal") ([string]$cur.generation)
+$gaps = 0
+$chunk = ""
+Get-ChildItem -LiteralPath $gen -Filter "????????.json" -File | ForEach-Object {
+    if ($_.Name -notmatch "^[0-9]{8}\.json$") { return }
+    $obj = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
+    if ([string]$obj.kind -ne "gap") { return }
+    $gaps++
+    if ($obj.freshChunkKey) { $chunk = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$obj.freshChunkKey)) }
+}
+Write-Output ("gaps=" + $gaps + " chunk=" + $chunk)
+'@
+    [System.IO.File]::WriteAllText($reader, $readerText, $utf8)
+    $fresh = & pwsh -NoProfile -NonInteractive -File $reader -Repo $Repo -Timing (Join-Path $freshWork 'timing')
+    if ([string]$fresh -ne 'gaps=1 chunk=c2') { Fail-Mp ('matrix-b-fresh-process ' + [string]$fresh) }
+}
+
+function Invoke-V11 {
+    $orig = ${function:Read-TestPhaseGenerationPrefix}
+    $script:MpPrefixReads = 0
+    Set-Item -Path 'function:Read-TestPhaseGenerationPrefix' -Value {
+        param([string]$GenerationDir)
+        if ($script:MpPrefixReads -ge 0 -and $env:MP_COUNT_PREFIX -eq '1') { $script:MpPrefixReads++ }
+        & $orig -GenerationDir $GenerationDir
+    }
+    try {
+        $classes = @()
+        for ($i = 1; $i -le 34; $i++) { $classes += ('Fixture.C' + $i.ToString('00')) }
+        $env:MP_COUNT_PREFIX = '1'
+        $script:MpPrefixReads = 0
+        $run = Invoke-MpQualification -Name 'outage' -Mode 'success' -Suites @('markdown-pdf') -ChunkClasses @{ 'markdown-pdf' = $classes } -FaultAt 2 -FaultUntil 33 -FaultRemaining 2
+        if ($run.FlatAtBarrier -eq 'present') { Fail-Mp 'outage-flat-present-before-terminal' }
+        if ($script:MpPrefixReads -gt 2) { Fail-Mp ('outage-rescanned-per-chunk reads=' + $script:MpPrefixReads) }
+        if ($null -eq $run.Seal) { Fail-Mp 'outage-terminal-seal-absent' }
+        $rows = @(Get-MpJournalRows -Timing $run.Timing)
+        $restored = @($rows | Where-Object { $_.Kind -eq 'chunk' -and $_.Chunk -eq 'same-class-34' })
+        if ($restored.Count -ne 1) { Fail-Mp 'outage-later-chunk-not-committed' }
+        $gaps = @($rows | Where-Object { $_.Kind -eq 'gap' })
+        if ($gaps.Count -lt 32) { Fail-Mp ('outage-gaps ' + $gaps.Count) }
+        $statePath = Join-Path $run.Timing 'groups-executed.state.json'
+        if (-not (Test-Path -LiteralPath $statePath)) { Fail-Mp 'outage-state-absent' }
+        $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+        if ([bool]$state.publicationComplete) { Fail-Mp 'outage-marked-publication-complete' }
+        $summaryPath = Join-Path $run.Timing 'summary.json'
+        if (-not (Test-Path -LiteralPath $summaryPath)) { Fail-Mp 'outage-summary-absent' }
+        $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        if ([bool]$summary.complete) { Fail-Mp 'outage-summary-complete' }
+        if (@($summary.quality) -notcontains 'publication-gap') { Fail-Mp 'outage-summary-missing-gap' }
+        if ([int]$run.Result.testsPassed -and [bool]$run.Result.coverageComplete) { } else { Fail-Mp 'publication-fault-changed-verdict' }
+    } finally {
+        Set-Item -Path 'function:Read-TestPhaseGenerationPrefix' -Value $orig
+        Remove-Item Env:MP_COUNT_PREFIX -ErrorAction SilentlyContinue
+    }
+    Assert-MpMatrix
+    Write-MpResult -Ok $true -Reason 'v11'
+}
+
+function Invoke-V12 {
+    $candidate = Join-Path $Work 'candidate'
+    $auth = Join-Path $candidate 'authority'
+    New-Item -ItemType Directory -Path $auth -Force | Out-Null
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $auth 'authority.json'), '{"schemaVersion":1,"kind":"authority"}', $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $auth 'ledger.json'), '{"schemaVersion":1,"kind":"ledger"}', $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $auth 'receipt.json'), '{"schemaVersion":1,"kind":"receipt"}', $utf8)
+    $before = (Get-MpSha (Join-Path $auth 'authority.json')) + (Get-MpSha (Join-Path $auth 'ledger.json')) + (Get-MpSha (Join-Path $auth 'receipt.json'))
+    . (Join-Path $Repo 'scripts/lib/release-authority.ps1')
+    $first = Test-ReleaseGateExecutionLedger -CandidateRoot $candidate -Pinned $null -Green $null
+    $run = Invoke-MpQualification -Name 'ledger' -Mode 'success' -Suites @('markdown-pdf') -ChunkClasses @{ 'markdown-pdf' = @('Fixture.One', 'Fixture.Two') }
+    $after = (Get-MpSha (Join-Path $auth 'authority.json')) + (Get-MpSha (Join-Path $auth 'ledger.json')) + (Get-MpSha (Join-Path $auth 'receipt.json'))
+    if ($before -ne $after) { Fail-Mp 'publication-changed-authority-bytes' }
+    $second = Test-ReleaseGateExecutionLedger -CandidateRoot $candidate -Pinned $null -Green $null
+    if ((@($first.Reasons) -join ',') -ne (@($second.Reasons) -join ',')) { Fail-Mp 'publication-changed-validator-reasons' }
+    if ($run.FlatAtBarrier -ne 'absent') { Fail-Mp ('ledger-flat-present-before-terminal ' + $run.FlatAtBarrier) }
+    Write-MpResult -Ok $true -Reason 'v12'
+}
+
+function Invoke-V13 {
+    $run = Invoke-MpQualification -Name 'progress' -Mode 'success' -Suites @('markdown-pdf') -ChunkClasses @{ 'markdown-pdf' = @('Fixture.One', 'Fixture.Two') }
+    if ($run.FlatAtBarrier -ne 'absent') { Fail-Mp ('progress-flat-present-before-terminal ' + $run.FlatAtBarrier) }
+    if ($run.StampAtBarrier -ne 'stamped') { Fail-Mp ('progress-stamp-' + $run.StampAtBarrier) }
+    $log = @(Get-ChildItem -LiteralPath $run.Log -Filter '*-tests.log' -File | Select-Object -First 1)
+    if ($log.Count -lt 1) { Fail-Mp 'progress-log-absent' }
+    $fresh = Test-NightlyFreshEvidence -Path $log[0].FullName -RunDirectory $run.Log -NotBeforeUtc ([datetime]'2020-01-01Z') -InvocationId 'mp-progress'
+    if (-not $fresh.Ok) { Fail-Mp ('progress-freshness ' + $fresh.Reason) }
+    $prefix = Read-TestPhaseExecutedPrefix -TimingRoot $run.Timing
+    if ([int]$prefix.LastSequence -lt 2) { Fail-Mp ('progress-sequence ' + $prefix.LastSequence) }
+    if ($null -eq $run.Seal) { Fail-Mp 'progress-seal-absent' }
+    Write-MpResult -Ok $true -Reason 'v13'
+}
+
+function Invoke-V14 {
+    $removed = Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot '' -RunId ''
+    if (-not [string]::IsNullOrWhiteSpace($removed)) { Fail-Mp 'timing-root-removed-key-invented' }
+    $empty = Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot (Join-Path $Work 'v14-log') -RunId ''
+    if ($empty -ne (Join-Path (Join-Path $Work 'v14-log') 'timing')) { Fail-Mp 'timing-root-present-empty-mismatch' }
+    $set = Resolve-QualificationTimingRoot -TimingRoot (Join-Path $Work 'v14-set') -LogRoot (Join-Path $Work 'v14-log') -RunId 'mp-v14'
+    if ($set -ne (Join-Path $Work 'v14-set')) { Fail-Mp 'timing-root-set-mismatch' }
+    $run = Invoke-MpQualification -Name 'identity' -Mode 'success' -Suites @('markdown-pdf', 'observability') -ChunkClasses @{ 'markdown-pdf' = @('Fixture.One'); 'observability' = @('Fixture.Two') }
+    if ($run.FlatAtBarrier -ne 'absent') { Fail-Mp ('identity-flat-present-before-terminal ' + $run.FlatAtBarrier) }
+    $owners = @(Get-ChildItem -LiteralPath $run.Timing -Filter 'owner-*.json' -File -ErrorAction SilentlyContinue)
+    if ($owners.Count -lt 2) { Fail-Mp ('identity-owner-sidecars ' + $owners.Count) }
+    $drains = @()
+    foreach ($owner in $owners) {
+        $doc = Get-Content -Raw -LiteralPath $owner.FullName | ConvertFrom-Json
+        $drains += [double]$doc.drainMilliseconds
+    }
+    if (@($drains | Sort-Object -Unique).Count -lt 2) { Fail-Mp 'identity-owner-stamps-collapsed' }
+    if (-not (Test-Path -LiteralPath (Join-Path $run.Timing 'groups-planned-index.json'))) { Fail-Mp 'identity-planned-index-absent' }
+    $flat = Get-Content -Raw (Join-Path $run.Timing 'groups-executed.json') | ConvertFrom-Json
+    $same = @($flat.chunks | Where-Object { [string]$_.chunk -eq 'same' })
+    if ($same.Count -ne 2) { Fail-Mp ('identity-homonym-count ' + $same.Count) }
+    $suites = @($same | ForEach-Object { [string]$_.suite } | Sort-Object -Unique)
+    if ($suites.Count -ne 2) { Fail-Mp 'identity-suites-collapsed' }
+    Write-MpResult -Ok $true -Reason 'v14'
+}
+
 try {
-    # Script scope, not a function: a dot-source inside a function does not keep its commands.
-    . (Join-Path $Repo 'scripts/lib/nightly-tests-impl.ps1')
+    # Same load order as scripts/nightly-tests.ps1. The impl file does not import policy or coverage.
+    $lib = Join-Path $Repo 'scripts/lib'
+    . (Join-Path $lib 'nightly-common.ps1')
+    . (Join-Path $lib 'nightly-policy.ps1')
+    . (Join-Path $lib 'nightly-coverage.ps1')
+    . (Join-Path $lib 'release-gate.ps1')
+    . (Join-Path $lib 'release-selection.ps1')
+    . (Join-Path $lib 'nightly-tests-impl.ps1')
     Initialize-MpCulture
     switch ($Case) {
         'v1' { Invoke-V1 }
@@ -861,6 +1412,12 @@ try {
         'v7' { Invoke-V7 }
         'v7-holder' { Invoke-V7Holder }
         'v8' { Invoke-V8 }
+        'v9' { Invoke-V9 }
+        'v10' { Invoke-V10 }
+        'v11' { Invoke-V11 }
+        'v12' { Invoke-V12 }
+        'v13' { Invoke-V13 }
+        'v14' { Invoke-V14 }
         default { Fail-Mp ("unknown-case " + $Case) }
     }
 } catch {
