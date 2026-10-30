@@ -140,6 +140,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         }
         finally
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "shape-links");
             // ContainedCleanup refuses a linked root. The assertion already observed the link.
             if (shape == "existing-output-symlink" && root is not null)
                 new DirectoryInfo(Path.Combine(root, "App/bin-probe")).Delete();
@@ -154,6 +155,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private string Judge(string shape, RunResult result, string root, RunResult? receipt)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "shape-judge");
         var output = result.Output;
         switch (shape)
         {
@@ -162,7 +164,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 if (Directory.Exists(Path.Combine(root, "user-dir"))) return "directory-move-source-still-present";
                 if (File.ReadAllText(Path.Combine(root, "tracked.txt/unstaged.txt")) != "USER-UNSTAGED") return "unstaged-bytes-lost";
                 if (GitOut(root, "ls-files", "--", "tracked.txt/secret.txt").Trim().Length == 0) return "staged-index-changed";
-                if (GitOut(root, "show", ":tracked.txt/secret.txt").TrimEnd('\r', '\n') != "USER-SECRET") return "staged-secret-bytes-changed";
+                if (GitOut(root, "show", ":tracked.txt/secret.txt") != "USER-SECRET") return "staged-secret-bytes-changed";
                 if (GitOut(root, "ls-files", "--", "tracked.txt").Split('\n').Any(x => x.TrimEnd('\r') == "tracked.txt")) return "old-file-index-entry-retained";
                 if (GitOut(root, "ls-files", "--", "tracked.txt/unstaged.txt").Trim().Length != 0) return "unstaged-index-changed";
                 return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "secret.txt"), "USER-SECRET", "tracked.txt", output), receipt));
@@ -170,7 +172,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 if (!File.Exists(Path.Combine(root, "dir"))) return "replacement-file-missing";
                 if (File.Exists(Path.Combine(root, "payload.dat"))) return "file-move-source-still-present";
                 if (GitOut(root, "ls-files", "--", "dir").Trim() != "dir") return "replacement-index-entry-missing-or-old-entry-retained";
-                if (GitOut(root, "show", ":dir").TrimEnd('\r', '\n') != "USER-FILE") return "staged-replacement-bytes-changed";
+                if (GitOut(root, "show", ":dir") != "USER-FILE") return "staged-replacement-bytes-changed";
                 return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "dir"), "USER-FILE", "dir/a.txt", output), receipt));
             case "symlink-on-file":
             {
@@ -331,6 +333,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private static RunResult ReadReceipt(string directory, string name, int expectedExit, string head)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "shape-receipt");
         var path = name.EndsWith("-tool", StringComparison.Ordinal)
             ? Directory.GetFiles(directory, "report.json", SearchOption.AllDirectories).SingleOrDefault()
             : Path.Combine(directory, "source.json");
@@ -363,6 +366,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private string BeginRepo(string shape)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "shape-repository");
         var scope = TempDir();
         var root = Path.Combine(scope, "repo");
         Directory.CreateDirectory(root);
@@ -429,6 +433,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private static void PlaceUser(string root, string shape)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "shape-user-inputs");
         switch (shape)
         {
             case "directory-on-file":
@@ -517,6 +522,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private async Task<RunResult> RunToolAsync(string root, string name, string shape, CancellationToken cancellationToken)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "shape-tool-checkpoint");
         var filter = shape == "clean-build" ? "/*/*/ShapeCleanProbe/*" : "/*/*/Unused/*";
         var min = shape == "clean-build" ? "1" : "1";
         var output = new StringWriter();
@@ -578,6 +584,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "shape-pwsh");
         var result = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         return new RunResult(result.Exit, result.Stdout + result.Stderr);
     }
@@ -589,7 +596,11 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         File.WriteAllBytes(path, Encoding.ASCII.GetBytes(content));
     }
 
-    private string GitOut(string root, params string[] args) => _git.Git(root, args);
+    private string GitOut(string root, params string[] args)
+    {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "shape-git");
+        return _git.Git(root, args);
+    }
 
     private void Git(string root, params string[] args) => _ = GitOut(root, args);
 
