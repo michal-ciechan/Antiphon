@@ -65,6 +65,16 @@ public sealed class CustodyNamespaceBootstrapTests
     }
 
     [Test]
+    public async Task C1614_Read_only_namespace_marker_does_not_stop_boot()
+    {
+        RequireLinux();
+        var failed = await StepAsync(CommonScript());
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+    }
+
+    [Test]
     public async Task C1614_Verifiers_count_execution_trees_in_current_namespace()
     {
         RequireLinux();
@@ -185,6 +195,50 @@ public sealed class CustodyNamespaceBootstrapTests
 
     private static Task<ShellResult> BootAsync(string script, string state, string run, string? fail) =>
         BashAsync(script, "custody_namespace_boot", fail is null ? [state, run] : [state, run, fail]);
+
+    private static Task<ShellResult> StepAsync(string script)
+    {
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rm");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("""
+            set -euo pipefail
+            base=$(mktemp -d)
+            trap 'umount "$base/run" 2>/dev/null || true; rm -rf "$base"' EXIT
+            mkdir -p "$base/state" "$base/run"
+            printf 'not-a-guid\n' > "$base/state/namespace"
+            chmod 444 "$base/state/namespace"
+            printf 'stale\n' > "$base/run/namespace"
+            mount --bind -o ro "$base/run" "$base/run"
+            source "$1"
+            custody_namespace_entrypoint_step "$base/state" "$base/run" "$1"
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            """);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(script);
+        return StartAsync(psi, "custody_namespace_entrypoint_step");
+    }
+
+    private static async Task<ShellResult> StartAsync(ProcessStartInfo psi, string name)
+    {
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("bash");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException(name);
+        }
+
+        return new ShellResult(process.ExitCode, (await stdout) + (await stderr), "");
+    }
 
     private static Task<ShellResult> CountAsync(string script, string root, Guid namespaceId) =>
         BashAsync(script, "custody_count_execution_trees", root, namespaceId.ToString("D"));
