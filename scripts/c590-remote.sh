@@ -8622,7 +8622,7 @@ c1008_audit() {
 # or a label that is not this run's is left untouched. docker kill runs only while
 # that id is still running, so a helper --rm already removed is not killed.
 c1008_preview_release() {
-    local id="" label="" cid="" inspected="" got="" running="" watch=""
+    local id="" label="" cid="" inspected="" got="" running="" watch="" candidate=""
     id="${c1008_preview_owned_id:-}"
     label="${c1008_preview_owned_label:-}"
     cid="${c1008_preview_cidfile:-}"
@@ -8637,6 +8637,18 @@ c1008_preview_release() {
     fi
     if [ -z "$id" ] && [ -n "$cid" ] && [ -f "$cid" ]; then
         id="$(tr -d '[:space:]' < "$cid" 2>/dev/null || true)"
+    fi
+    # A cancelled Docker create may commit before its client writes --cidfile.
+    # Temp can recover only its exact operation+nonce name AND matching label;
+    # a same-prefix helper or a foreign label never establishes ownership.
+    if [[ ! "$id" =~ ^[0-9a-f]{64}$ ]] && [ -n "${TEMP_PROJECT:-}" ] &&
+        [ "${C1008_PROJECT:-}" = "$TEMP_PROJECT" ] && [[ "$label" =~ ^c1008[0-9a-f]{32}:[0-9a-f]{16}$ ]]; then
+        candidate="c1008-preview-${label/:/-}"
+        inspected="$(docker inspect "$candidate" 2>/dev/null)" || return 1
+        id="$(printf '%s' "$inspected" | jq -er --arg name "/$candidate" --arg label "$label" '
+            select(type=="array" and length==1) | .[0] |
+            select(.Name==$name and .Config.Labels["io.antiphon.preview-audit"]==$label) |
+            .Id | select(type=="string" and test("^[0-9a-f]{64}$"))')" || return 1
     fi
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 0
     [ -n "$label" ] || return 0
@@ -8667,6 +8679,8 @@ c1008_preview_on_signal() {
     trap '' INT TERM HUP
     if [ -n "${c1008_preview_run_pid:-}" ]; then
         kill -TERM "${c1008_preview_run_pid}" 2>/dev/null || true
+        wait "${c1008_preview_run_pid}" 2>/dev/null || true
+        c1008_preview_run_pid=''
     fi
     c1008_preview_release || true
     c1008_preview_restore_traps

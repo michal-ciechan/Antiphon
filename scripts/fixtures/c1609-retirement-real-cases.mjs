@@ -39,8 +39,10 @@ function load(root) {
   assert.match(value.source, /^[0-9a-f]{40}$/);
   assert.equal(value.hostRoot, '/tmp/' + value.prefix + '-host');
   scope = value;
-  ownedDaemon(d('info','--format','{{.Name}}'), os.hostname(), fs.existsSync('/.dockerenv'));
-  assert.equal(d('info','--format','{{.ID}}'), value.daemon);
+  const identity=d('info','--format','{{.Name}}\t{{.ID}}').split('\t');
+  assert.equal(identity.length,2);
+  ownedDaemon(identity[0], os.hostname(), fs.existsSync('/.dockerenv'));
+  assert.equal(identity[1], value.daemon);
 }
 function known(name) {
   assert(name.startsWith(scope.prefix) && !name.includes('antiphon-runner') && /^[a-zA-Z0-9_.:-]+$/.test(name), 'ProductionNameRefused');
@@ -175,6 +177,7 @@ function shell(f, body, suffix='run') {
     'export PATH='+q(scope.root+'/bin')+':"$PATH"',
     'export C1609_CUT_PID=$$',
     f.proof?'C1008_HOST_PROOF='+q(f.proof)+'; C1008_OPERATION_STARTED='+f.started:'',
+    'export C1609_NATIVE_HIDE_CID='+(suffix==='cancel'?'1':'0'),
     body,'exit 0'
   ].join('\n');
   src=src.replace(marker,()=>'\n'+lines+'\n'+marker);
@@ -263,8 +266,12 @@ async function n1(f) {
   assert.equal(targetBytes(f),hookBytes,'hook refusal leaves every byte intact');
   const foreignNonce=crypto.randomBytes(8).toString('hex');
   const foreign=d('run','-d','--network','none','--label',label+'='+scope.prefix,'--label','io.antiphon.preview-audit='+f.op+':'+foreignNonce,'--name','c1008-preview-'+f.op+'-'+foreignNonce,scope.image,'sleep','infinity');f.ids.push(foreign);
+  const cancelOffset=fs.statSync(scope.root+'/docker-calls.jsonl').size;
   const timed=await shell(f,'c1008_git_program() { printf "exec sleep 30\\n"; }\nC1008_AUDIT_TIMEOUT_SECONDS=1\nif c1008_audit_readonly; then exit 71; fi','cancel');
   assert.equal(timed.code,0,'owned helper timeout refuses and joins: '+timed.stdout+timed.stderr);
+  const cancelCalls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').slice(cancelOffset).trim().split('\n').filter(Boolean).map(JSON.parse);
+  assert(cancelCalls.some(c=>c.withheldCid),'N1 timeout deliberately withholds the production CID');
+  assert(cancelCalls.some(c=>c.args[0]==='kill' && /^[0-9a-f]{64}$/.test(c.args[1]) && c.args[1]!==foreign),'N1 real owned helper was killed despite missing CID');
   assert.equal(json('inspect',foreign)[0].State.Running,true,'foreign helper not killed');
   const attached=d('ps','-aq','--no-trunc','--filter','label=io.antiphon.preview-audit','--filter','name=c1008-preview-'+f.op).split('\n').filter(Boolean).filter(id=>id!==foreign);
   assert.deepEqual(attached,[],'N1 owned helper absent after timeout; same-prefix foreign helper survives');
@@ -393,6 +400,11 @@ async function shim() {
     if(r.code===0&&fault.cut==='kill-after-rm'&&fault.operation===operation.op&&fault.name===args[3])process.kill(Number(process.env.C1609_CUT_PID),'SIGKILL');
     process.exit(r.code ?? 2);
   }
+  if(args[0]==='run' && process.env.C1609_NATIVE_HIDE_CID==='1'){
+    const at=args.indexOf('--cidfile');assert(at>0);args[at+1]+='.native-withheld';
+    fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:['native-cid-cut'],withheldCid:true})+'\n');
+  }
+  if(['kill','rm'].includes(args[0]))fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:original})+'\n');
   const child=cp.spawn(cli,args,{stdio:['inherit','inherit','inherit']});
   // Keep the owned CLI joined when GNU timeout signals this shim's process group.
   for (const signal of ['SIGTERM','SIGINT','SIGHUP']) process.on(signal,()=>{if(child.exitCode===null)child.kill(signal);});
@@ -434,7 +446,7 @@ else {
     catch(e){failure=e;console.error(e.stack);}
     finally {
       const leftovers=d('ps','-aq','--no-trunc','--filter','label='+label+'='+scope.prefix,'--filter','name=c1008-preview-'+f.op).split('\n').filter(Boolean);
-      for(const id of leftovers){const c=json('inspect',id)[0];assert(c.Config.Labels['io.antiphon.preview-audit']?.startsWith(f.op+':'));removeContainer(id);}
+      for(const id of leftovers){const c=json('inspect',id)[0];assert(c.Config.Labels['io.antiphon.preview-audit']?.startsWith(f.op+':'));fs.writeFileSync(scope.root+'/leftover-'+id+'.json',JSON.stringify(c));removeContainer(id);}
       cleanupObjects(f.names,f.ids);
     }
     fs.writeFileSync(scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json',JSON.stringify({source:scope.source,imageSource:scope.imageSource,pc:process.env.C1609_NATIVE_PC||null,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
