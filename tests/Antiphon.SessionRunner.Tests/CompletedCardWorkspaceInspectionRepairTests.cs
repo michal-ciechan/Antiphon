@@ -142,6 +142,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                     Encoding.UTF8.GetBytes("gitdir: " + Path.Combine(f.Origin, ".git") + "\n")); break;
             case "case-twin":
                 Directory.CreateDirectory(bin);
+                if (OperatingSystem.IsWindows()) await RequireWindowsCaseSensitiveDirectoryAsync(bin);
                 File.WriteAllText(Path.Combine(bin, "Twin"), "first");
                 try
                 {
@@ -150,6 +151,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                 }
                 catch (IOException) when (File.Exists(Path.Combine(bin, "twin")))
                 {
+                    // Once fsutil admitted the Windows fixture, a failed arrangement is a failure.
+                    if (OperatingSystem.IsWindows()) throw;
                     throw new SkipTestException("Case-twin inspection requires a case-sensitive scratch filesystem");
                 }
                 Directory.GetFiles(bin).Length.ShouldBe(2, "requires case-sensitive scratch filesystem"); break;
@@ -173,6 +176,39 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         }
         calls.Count.ShouldBeGreaterThan(0);
         Directory.Exists(f.State).ShouldBeFalse("inspection must not persist a retirement intent");
+    }
+
+    private static async Task RequireWindowsCaseSensitiveDirectoryAsync(string directory)
+    {
+        // Only this fixture's empty scratch directory changes; no elevation or host setting is used.
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "fsutil.exe"))
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { "file", "setCaseSensitiveInfo", directory, "enable" })
+            start.ArgumentList.Add(arg);
+        using var process = new Process { StartInfo = start };
+        try { process.Start().ShouldBeTrue(); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
+        {
+            throw new SkipTestException("CARD-1032 Windows case-twin capability unavailable: fsutil.exe is missing; per-directory case sensitivity is required.");
+        }
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try { await process.WaitForExitAsync(deadline.Token); }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stdout, stderr);
+            throw new TimeoutException("fsutil case-sensitivity capability probe exceeded ten seconds");
+        }
+        var diagnostic = ((await stdout) + (await stderr)).Trim();
+        if (process.ExitCode != 0)
+            throw new SkipTestException("CARD-1032 Windows case-twin capability unavailable: fsutil file setCaseSensitiveInfo <scratch> enable exited "
+                + process.ExitCode + ": " + diagnostic
+                + "; this account/filesystem must support per-directory case sensitivity. The Windows coverage obligation remains required.");
     }
 
     [Test]
