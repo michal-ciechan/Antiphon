@@ -168,3 +168,52 @@ later crosses each real phase limit; normal report before any answer; continue
 and extend without a prompt/watermark change; stale answers; report-versus-hold,
 report-versus-answer, cancel and retry races; restart dedup; ordinary Blocked
 exclusion; unchanged reservations/seat/parking and zero stopper calls.
+
+## D-2 detail: every remaining Failed-with-live path tells its session
+
+Choose **note, not automatic stop** for non-destructive failures. Persist an
+immutable bounded system notice and identity in the same transaction as the
+failure event; use the existing SessionQueuedMessage queue and completion-work
+pump, not a new scheduler. Add a typed source-event/purpose key with a uniqueness
+constraint if existing SourceTaskId/content digest cannot distinguish hold,
+terminal caller note and delegate notice. A task-wide completion stamp must not
+let a hold notice discharge the later final report's caller obligation.
+
+| Remaining path | Session disposition |
+|---|---|
+| ModelWait, LocalExecution, or existing provider-input deadline failure | Persist Failed and one delegate notice; retain live seat and custody |
+| Positively idle role-ceiling failure | Same notice; idle permits ordinary queue delivery, not a forced kill |
+| Unsafe-cleanup watchdog refusal | The existing No denies the unsafe command; additionally queue Failed notice; No is not proof that the session knows the task failed |
+| Boot-wedge/credential/rules/delivery/dispatch failure with an accepted live generation | Central failure writer records the same notice, whether or not a caller exists |
+| Dead-session/launch failure with authoritative exit or no accepted process | No live recipient; persist NotApplicable with the identity/exit evidence, not Sent |
+| Delegate's own marked Failed report or other terminal writer leaving a live generation | Same central post-settlement notice obligation, even if the delegate authored the report; no silent exemption |
+| Historical Failed row with a still-confirmed same-generation session | Bounded scan creates one legacy notice keyed to original failure/attempt; unknown identity stays visible and unresolved |
+
+Implementation census must include `FailAsync`, `FailAndNotifyAsync`, direct
+Failed writes in AgentTaskDispatcher, AgentTaskReplyService settlement,
+ApiErrorRecoveryService, SpecialistTaskRunner and task-related landing recovery.
+Do not classify reads as writers. Any writer that cannot prove exit or no
+session owes the notice; a test guards each actual writer reached by this change.
+No existing automatic kill gains authority from this contract; CARD-0079 stays
+its narrowly qualified exception.
+
+Wire text states task ID, attempt, why Failed, and: "Your task is Failed. Stop
+starting further work, preserve/push your authorized work, and return a complete
+report. That report is evidence for triage; it will not automatically change this
+Failed outcome or launch a next stage." Delivery is WhenIdle after a confirmed
+TurnEnd, respecting LF/bracketed paste/separate Enter and existing modal guards.
+Never send mid-turn, interrupt a tool, stop an arbitrary process, or call Retry
+from the sweep. Before enqueue and send, recheck generation, task attempt and
+replacement ownership; superseded messages cannot reach a newly reused session.
+A busy session owes the note until a safe boundary. The contract distinguishes
+Pending from **Told**: only a complete correlated UserPrompt beyond its floor
+establishes Told. No safe boundary means unresolved notice debt and attention,
+not a claimed delivery or a new timer-based kill. This limitation is deliberate.
+
+A single bounded recovery pass (at most 32 obligations per sweep, persisted
+identity and existing pump/backoff) resumes post-commit enqueue failures. It
+reuses the same message/source event and dedup key across restart. The hold
+parent note uses the same transactional queue pattern, `next=decide`, its own
+identity, and the D-9 receipt tests. If the task settles before that note sends,
+retain the audit but suppress stale hold guidance under the recipient gate;
+normal completion is then the only actionable note.
