@@ -1,26 +1,31 @@
 # CARD-1615: isolate rollout control from canonical activation
 
-Plan only. Round-2 base `f9bf72bd500b30d7dc7fae32971a2c8c83923c69` (rc source
-plus round-1 plan and design review), branch `feat/card-task-28be9547`, inspected
-2026-10-30. No product edits or rollout. Round-1 source base was
-`ade54222543381e2e1b31ad79d8ae33a4035f70b`.
+Plan only. Round-3 assigned base `30b76fbf22dc90161acbcf5622e5d4f6ba4fc57c`,
+branch `feat/card-task-7dd90600`, inspected 2026-10-30. No product edits or rollout.
+Round-2 base was `f9bf72bd500b30d7dc7fae32971a2c8c83923c69`; round-1 source
+base was `ade54222543381e2e1b31ad79d8ae33a4035f70b`.
 
-## Round-2 revision ledger
+## Round-3 revision ledger
 
-The three corrections below are complete in separate pushed slices, ready for
-another design review:
+This first pushed skeleton records the caller's five decisions. The sections below
+are being revised in place; until all five entries are complete, the round-2 details
+are historical and this document is not executable Code authority.
 
-1. Review D-1: classify task, standing-agent and interactive callers independently;
-   preserve the standing orchestrator's authorized rollout path and test each class.
-2. Review D-2: name rollout SHA X and canonical activation SHA, prohibit canonical
-   restarts during an active controller, and refuse version skew at phase admission.
-3. Review D-3: replace the conflicting queued-land wait, canonical rollout source,
-   broad worktree refusal and stale Shared-default instructions by exact location.
+1. Review D-1 — pending: classify from server-resolved token ownership; environment
+   IDs are cross-checks, never authentication. Add the bounded read-only route.
+2. Review D-2 — pending: a canonical active-rollout marker mechanically guards
+   AppHost restart; qualify all conflicting activation/autonomy instructions.
+3. Review D-3 — pending: phase-scoped tasks, at most 30-minute drain slices, durable
+   journal and explicit successor handover; CARD-1610 is not a dependency.
+4. Review D-4 — pending: detached standing/interactive controller and canonical
+   activation HEAD; reject any controller checkout of a landing target.
+5. Review D-5 — pending: update existing documentation pins deliberately and add
+   their complete affected class roster to the closed checkpoints.
 
-CARD-1609 landing order, CARD-1610 phase-boundary behavior, receipt retention and
-Windows operational prerequisites are specified below. Verification design is
-folded into this revision under the requested Review-then-Code handoff. Import
-results below distinguish historical round-1 evidence from this revision.
+CARD-1609 must land first on the intended target lines. Verification design is
+folded into this final Plan round; the completed handoff is Code after CARD-1609,
+without another Plan or separate TestDesign. Preserve historical evidence without
+crediting it to this revision. No build-definition files are commissioned.
 
 Choose **option (d), an owned Worktree controller**, with an early script admission
 check against accidental Shared execution. Keep canonical pull/restart/provisioning
