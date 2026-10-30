@@ -964,7 +964,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
             }
-            else if (origin == QueuedMessageOrigin.Supervision && working)
+            else if (origin == QueuedMessageOrigin.Supervision && sourceTaskSupervisionNoticeId is null && working)
             {
                 // Cancel-not-strand (CARD-0082): a Pending /compact flushed at the *next turn end*
                 // would compact a session that just became active. Drop it; a later sweep re-derives.

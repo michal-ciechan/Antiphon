@@ -27,7 +27,7 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         if (rows.Count < 32)
         {
             var missing = db.AgentTasks.AsNoTracking().Where(t => t.Status == AgentTaskStatus.Failed
-                && !db.TaskSupervisionNotices.Any(n => n.TaskId == t.Id && n.Attempt == t.Attempt
+                && !db.TaskSupervisionNotices.Any(n => n.TaskId == t.Id
                     && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate)
                 && db.AgentTaskEvents.Any(e => e.AgentTaskId == t.Id && e.Type == AgentTaskEventType.Failed));
             if (taskId is { } one) missing = missing.Where(t => t.Id == one);

@@ -57,7 +57,22 @@ public sealed class TaskSupervisionReceiptTests
         {
             var floor = await recipient.CurrentTranscriptMaxSequenceAsync();
             await h.SweepAsync();
-            if (purpose == "late") await h.FinishAsync();
+            if (purpose == "late")
+            {
+                // The ordinary Failed caller receipt already exists. It must neither
+                // discharge the triage purpose nor occupy its first eligible queue turn.
+                await recipient.MarkIdleAsync();
+                await recipient.Queue.OnTurnEndAsync(recipientId, CancellationToken.None);
+                await using (var db = h.Context())
+                {
+                    var original = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == h.TaskId
+                        && m.Origin == QueuedMessageOrigin.Delegation);
+                    (await PromptsAsync(h, recipientId, floor)).Where(p => p.Text?.Contains(original.Body, StringComparison.Ordinal) == true)
+                        .ShouldHaveSingleItem("the original Failed note is independently received first");
+                }
+                floor = await recipient.CurrentTranscriptMaxSequenceAsync();
+                await h.FinishAsync();
+            }
             var before = await h.TaskAsync();
             before.Status.ShouldBe(purpose == "hold" ? AgentTaskStatus.Working : AgentTaskStatus.Failed);
             if (mode == "busy") await recipient.MarkWorkingAsync();
