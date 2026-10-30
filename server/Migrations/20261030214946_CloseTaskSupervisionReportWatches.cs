@@ -12,6 +12,12 @@ namespace Antiphon.Server.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<DateTime>(
+                name: "ReportTranscriptStableSince",
+                table: "TaskSupervisionNotices",
+                type: "timestamp with time zone",
+                nullable: true);
+
+            migrationBuilder.AddColumn<DateTime>(
                 name: "NextReportScanAt",
                 table: "TaskSupervisionNotices",
                 type: "timestamp with time zone",
@@ -56,6 +62,10 @@ namespace Antiphon.Server.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropColumn(
+                name: "ReportTranscriptStableSince",
+                table: "TaskSupervisionNotices");
+
             migrationBuilder.DropIndex(
                 name: "IX_TaskSupervisionNotices_NextReportScanAt_Id",
                 table: "TaskSupervisionNotices");

@@ -26,6 +26,27 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskSupervisionReceiptTests
 {
     [Test]
+    public async Task C1610_Working_read_measurement_keeps_the_verdict_fresh()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        await using var db = h.Context();
+        (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None)).ShouldBeTrue();
+        var samples = new List<double>();
+        for (var i = 0; i < 100; i++)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var working = await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None);
+            samples.Add(watch.Elapsed.TotalMilliseconds);
+            working.ShouldBeTrue();
+        }
+        samples.Sort();
+        Console.WriteLine($"C1610 working-read samples=100 transcriptRows=3 p50Ms={samples[49]:F3} p95Ms={samples[94]:F3} maxMs={samples[^1]:F3}");
+        await h.AppendAsync(TranscriptKinds.TurnEnd);
+        (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None)).ShouldBeFalse(
+            "the deadline verdict must immediately see a new persisted turn end");
+    }
+
+    [Test]
     public async Task C1610_Supervision_fault_does_not_skip_completion_recovery()
     {
         await using var h = await TaskCeilingHarness.CreateAsync();

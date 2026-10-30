@@ -9184,6 +9184,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<long?>("ReportThroughSequence")
                         .HasColumnType("bigint");
 
+                    b.Property<DateTime?>("ReportTranscriptStableSince")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("ReportWatchCloseReason")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
