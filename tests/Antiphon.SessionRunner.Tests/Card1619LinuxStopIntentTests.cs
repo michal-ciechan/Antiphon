@@ -215,7 +215,8 @@ public class Card1619LinuxStopIntentTests
     {
         await using var f = await Fixture.StartAsync();
         f.Runtime.StopIntents = new("/proc/card1619-unwritable-" + f.Id.ToString("N"));
-        f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child);
+        f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child,
+            LinuxProcessIdentity.TryRead(f.Child.Id));
         await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         (await f.Runtime.StopIntents.LastRecord).ShouldBeFalse();
         AssertIssued(f.Runtime.StopIntents.Snapshot(f.Id, f.Generation, 9), f.Id, f.Generation);
@@ -232,7 +233,8 @@ public class Card1619LinuxStopIntentTests
         try
         {
             var timer = Stopwatch.StartNew();
-            f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child);
+            f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child,
+                LinuxProcessIdentity.TryRead(f.Child.Id));
             timer.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(250));
             await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
