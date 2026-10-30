@@ -48,6 +48,14 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Notes withheld', color: 'warning', icon: TbMailExclamation,
     hint: 'Pending notes are older than the configured age and still withheld. Detection only - open the queue. Nothing is flushed or sent.',
   },
+  PooledSessionWorkingPastTtl: {
+    label: 'Pool working', color: 'warning', icon: TbClockExclamation,
+    hint: 'A pooled session is Working past the pool TTL with no open task. Detection only. The session is never killed.',
+  },
+  FailedTaskSessionHeld: {
+    label: 'Failed seat held', color: 'warning', icon: TbClockPause,
+    hint: 'A Failed task still has a live or unconfirmed session. Detection only. Open the task; nothing is killed.',
+  },
   TaskInputUnreadable: {
     label: 'Input unreadable', color: 'warning', icon: TbEyeOff,
     hint: 'The delegate says it cannot read a caller refinement or reply. Open the task and session evidence.',

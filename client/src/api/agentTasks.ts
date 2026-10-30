@@ -423,6 +423,16 @@ export interface AgentTaskDetailDto {
   } | null
   /** CARD-0544. Null for historical and non-Code/Review tasks; never shown as Full. */
   verification?: VerificationProfileDto | null
+  /** CARD-1610. Present when a Failed task still has an unreleased session. */
+  failedSession?: {
+    summary: string
+    activity: string
+    taskId: string | null
+    cardId: string | null
+    sessionId: string | null
+    failureSource: string | null
+    noticeState: string | null
+  } | null
 }
 
 /** CARD-0544. Commissioned ordinary-verification round. */

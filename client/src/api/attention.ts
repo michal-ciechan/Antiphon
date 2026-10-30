@@ -207,6 +207,16 @@ export type AttentionKind =
    * for another reason can still raise this row.
    */
   | 'PendingNotesAged'
+  /**
+   * CARD-1610: a pooled Working session has no open task and its current turn is older
+   * than the pool idle TTL. Warning. Detection only. The janitor does not kill the session.
+   */
+  | 'PooledSessionWorkingPastTtl'
+  /**
+   * CARD-1610: a Failed task still has a live or unconfirmed session. Warning.
+   * Detection only. The seat stays until authoritative exit or a new owner.
+   */
+  | 'FailedTaskSessionHeld'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

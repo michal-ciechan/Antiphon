@@ -1,6 +1,9 @@
 using System.Globalization;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -166,5 +169,195 @@ public sealed partial class AttentionService
         if (host.Seats.Count > 10)
             lines.Add($"moreSeats={host.Seats.Count - 10}");
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// CARD-1610 S1. Detection only: a Failed task with an unreleased session, and a pooled
+    /// Working session past the pool TTL. This projection never writes the incident.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildSupervisionVisibilityItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        items.AddRange(await BuildFailedTaskSessionHeldItemsAsync(now, ct));
+        items.AddRange(await BuildPooledWorkingPastTtlItemsAsync(now, ct));
+        return items;
+    }
+
+    private async Task<List<AttentionItemDto>> BuildFailedTaskSessionHeldItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var held = new[]
+        {
+            SessionStatus.Created, SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping,
+        };
+        var rows = await (
+            from task in _db.AgentTasks.AsNoTracking()
+            join session in _db.AgentSessions.AsNoTracking() on task.AgentSessionId equals session.Id
+            where task.Status == AgentTaskStatus.Failed
+                && task.AgentSessionId != null
+                && held.Contains(session.Status)
+            select new { Task = task, Session = session }).ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var working = await SessionMessageQueueService.IsWorkingBatchAsync(
+            _db, rows.Select(row => row.Session.Id).Distinct().ToList(), ct);
+        var snapshot = _seats?.Current;
+        var items = new List<AttentionItemDto>(rows.Count);
+        foreach (var row in rows)
+        {
+            var facts = FailedTaskSessionFacts.Describe(
+                row.Task, row.Session, working.GetValueOrDefault(row.Session.Id), snapshot, now);
+            var actions = new List<AttentionAction> { AttentionAction.OpenDrawer };
+            if (row.Task.AgentId is not null)
+                actions.Add(AttentionAction.OpenAgent);
+            items.Add(new AttentionItemDto(
+                AttentionKind.FailedTaskSessionHeld,
+                AlertSeverity.Warning,
+                row.Task.Id,
+                row.Session.Id,
+                row.Task.AgentId,
+                null,
+                facts.Summary,
+                facts.Activity,
+                "notice=none; failure=" + (row.Task.FailureReason ?? "unknown")
+                    + $"; activity={facts.Activity}; session={row.Session.Id:D}; "
+                    + $"agent={row.Task.AgentId?.ToString("D") ?? "none"}; "
+                    + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed.",
+                row.Task.CompletedAt ?? row.Session.StartedAt,
+                null,
+                actions,
+                CardId: row.Task.CardId));
+        }
+
+        return items;
+    }
+
+    private async Task<List<AttentionItemDto>> BuildPooledWorkingPastTtlItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var incidents = await _db.AgentIncidents.AsNoTracking()
+            .Where(incident => incident.Kind == AgentIncidentKind.PooledSessionWorkingPastTtl
+                && incident.SessionId != null)
+            .ToListAsync(ct);
+        if (incidents.Count == 0)
+            return [];
+
+        var sessionIds = incidents.Select(incident => incident.SessionId!.Value).Distinct().ToList();
+        var sessions = await _db.AgentSessions.AsNoTracking()
+            .Where(session => sessionIds.Contains(session.Id))
+            .ToDictionaryAsync(session => session.Id, ct);
+        var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, sessionIds, ct);
+        var open = (await _db.AgentTasks.AsNoTracking()
+            .Where(task => task.AgentSessionId != null
+                && sessionIds.Contains(task.AgentSessionId.Value)
+                && (task.Status == AgentTaskStatus.Queued
+                    || task.Status == AgentTaskStatus.Dispatched
+                    || task.Status == AgentTaskStatus.Working
+                    || task.Status == AgentTaskStatus.Blocked))
+            .Select(task => task.AgentSessionId!.Value)
+            .ToListAsync(ct)).ToHashSet();
+        var failed = (await _db.AgentTasks.AsNoTracking()
+            .Where(task => task.Status == AgentTaskStatus.Failed
+                && task.AgentSessionId != null
+                && sessionIds.Contains(task.AgentSessionId.Value))
+            .Select(task => task.AgentSessionId!.Value)
+            .ToListAsync(ct)).ToHashSet();
+        var ttl = TimeSpan.FromMinutes(Math.Max(1, _delegation.PoolIdleRetireMinutes));
+        var items = new List<AttentionItemDto>();
+        foreach (var incident in incidents)
+        {
+            var sessionId = incident.SessionId!.Value;
+            if (!sessions.TryGetValue(sessionId, out var session))
+                continue;
+            if (session.Status is not (SessionStatus.Created or SessionStatus.Starting
+                or SessionStatus.Running or SessionStatus.Stopping))
+                continue;
+            if (!PooledGenerationStillMatches(incident.FailureReason, session))
+                continue;
+            if (open.Contains(sessionId) || failed.Contains(sessionId))
+                continue;
+            if (!working.GetValueOrDefault(sessionId))
+                continue;
+            if (PooledWorkingAge(incident, now) < ttl)
+                continue;
+
+            var actions = new List<AttentionAction> { AttentionAction.OpenDrawer };
+            if (incident.AgentId is not null)
+                actions.Add(AttentionAction.OpenAgent);
+            items.Add(new AttentionItemDto(
+                AttentionKind.PooledSessionWorkingPastTtl,
+                AlertSeverity.Warning,
+                null,
+                sessionId,
+                incident.AgentId,
+                null,
+                "Pooled session working past TTL",
+                "Working",
+                incident.Message,
+                incident.CreatedAt,
+                null,
+                actions));
+        }
+
+        return items;
+    }
+
+    private static bool PooledGenerationStillMatches(string? failureReason, AgentSession session)
+    {
+        if (!TryReadPooledGeneration(failureReason, out var generation))
+            return true;
+        if (generation is null)
+            return session.StartedAt == default;
+        return SessionGeneration.Equal(generation, session.StartedAt);
+    }
+
+    private static bool TryReadPooledGeneration(string? failureReason, out DateTime? generation)
+    {
+        generation = null;
+        if (string.IsNullOrEmpty(failureReason)
+            || !failureReason.StartsWith("pooled-working:", StringComparison.Ordinal))
+            return false;
+        var head = failureReason;
+        var turnAt = head.IndexOf("|turn=", StringComparison.Ordinal);
+        if (turnAt >= 0)
+            head = head[..turnAt];
+        var rest = head["pooled-working:".Length..];
+        var split = rest.IndexOf(':');
+        if (split != 32)
+            return false;
+        var token = rest[(split + 1)..];
+        if (token == "unproved")
+            return true;
+        if (!DateTime.TryParse(token, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            return false;
+        generation = FailedTaskSessionFacts.AsUtc(parsed);
+        return true;
+    }
+
+    private static TimeSpan PooledWorkingAge(AgentIncident incident, DateTime now)
+    {
+        if (TryReadPooledTurn(incident.FailureReason, out var turn) && turn is DateTime known)
+            return FailedTaskSessionFacts.AsUtc(now) - FailedTaskSessionFacts.AsUtc(known);
+        return FailedTaskSessionFacts.AsUtc(now) - FailedTaskSessionFacts.AsUtc(incident.CreatedAt);
+    }
+
+    private static bool TryReadPooledTurn(string? failureReason, out DateTime? turn)
+    {
+        turn = null;
+        if (string.IsNullOrEmpty(failureReason))
+            return false;
+        const string marker = "|turn=";
+        var at = failureReason.LastIndexOf(marker, StringComparison.Ordinal);
+        if (at < 0)
+            return false;
+        var value = failureReason[(at + marker.Length)..];
+        if (value == "unknown")
+            return true;
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            return false;
+        turn = FailedTaskSessionFacts.AsUtc(parsed);
+        return true;
     }
 }
