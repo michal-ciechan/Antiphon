@@ -9,12 +9,12 @@ Next: independent design Review before Code.
 
 ## Round-2 revision ledger
 
-Skeleton published first; each review defect below receives its own pushed amendment.
+Skeleton published first; every review defect below has its own pushed amendment.
 Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 
 | Review defect | Revision obligation | Status |
 |---|---|---|
-| D-1 | Whole-minute checkpoint estimates; import verification recorded below | Done: original 11 rows import successfully after correction |
+| D-1 | Whole-minute checkpoint estimates; import verification recorded below | Done: original 11 and final 14 rows import successfully |
 | D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Done: baseline and preservation R6 |
 | D-3 | Complete read-only offender preview, human and machine forms | Done: D-15, C11 |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Done: D-16..18, C12..14, operator choices |
@@ -708,13 +708,14 @@ method names so their vectors remain traceable. Rewrite
 retain authenticated success, unpublished-child refusal, missing/wrong/old/malformed
 proof, non-auth errors and no-credential/helper-custody assertions; replace the
 "only after classified auth failure" expectation with proof for every origin.
-Keep a v1-main adapter vector for the existing fallback. H2/H3/H4 extend those
+Keep a v1 scanner adapter vector for the existing fallback; do not add host-proof
+transport to main. H2/H3/H4 extend those
 vectors, not substitute for them. Rewrite
 `C1008_Host_proof_file_omits_credentials` to retain artifact/log/argv sentinel
 assertions: v2 rejects credential-bearing URLs before invocation rather than
 silently sanitizing one into authority; a trusted clean origin with ambient fixture
 credentials proves success without exporting secrets. Keep v1 scrubbing coverage
-in its main adapter; H5/H6 add v2 protocol/deadline cases. Neither test is deleted.
+in its v1 scanner adapter; H5/H6 add v2 protocol/deadline cases. Neither test is deleted.
 
 ## Performance budget
 
@@ -741,7 +742,7 @@ over 30 minutes requires a Debug task with the timing evidence before repetition
 |---|---|---|
 | Build | About 4 minutes per isolated build; provisional 10-minute cap | Three builds total: red Linux, final Linux, native Windows. Tool bootstrap if absent is separately declared and leased, never hidden. |
 | Portable fixtures | Usually 1-5 s/test, matrices 10-30 s; provisional per-test 60 s | Immutable tiny public/private-origin Git seeds once per run; clone/copy per-test mutable state. No real network/login. |
-| Existing Git closure rows | CP-5 about 1 min, CP-6 about 3 min, CP-7 about 1.5 min | Reuse existing tiny-Git fixtures, share seeds where isolated copies preserve semantics. Measure actual per-argument execution, not internal assertions. |
+| Existing Git closure rows | CP-5 about 1 min, CP-6 about 3 min, CP-7 about 1.5 min (rounded to 2 in the manifest) | Reuse existing tiny-Git fixtures, share seeds where isolated copies preserve semantics. Measure actual per-argument execution, not internal assertions. |
 | Native Docker start/readiness | About 30-60 s per native run; provisional 120 s | One private daemon and current fixture image per run, never production Docker/runner. |
 | Native data preparation/clone | About 15-30 s/run; provisional 60 s | Separate exact volumes per test, small shared origin seed, no provider/AppHost/database setup. |
 | Native body | About 30-90 s/test; provisional 180 s/test | N1-N3 share daemon/image; fresh lifecycle objects are the subject under test. |
@@ -1058,3 +1059,39 @@ Review should distinguish missing historical evidence (never a blocker by itself
 from missing current safety proof (always a blocker). If it changes any default,
 update this plan and the witness roster together before Code. Performance p95 is
 explicitly pending measurement; no fabricated timing or test success is claimed.
+
+## Round-2 validation record
+
+Only this plan was edited. All ten defects and mount/performance/OS-witness
+advisories are incorporated; no implementation, native test execution, live audit
+or volume operation was performed. The original corrected 11-row table imported
+at `94498d73cecbda04a6eddb7439e0fc07c3c84e0f`; the expanded table imported at
+`e5434c38e9bf73f12cfbb3b50d26208617ad1e4a` with exit 0, 14 rows.
+Checkpoint-section SHA-256: `2fb5abbe7ed80a3eec55044831d3288843faa17ac09965ea31cb59af8d6f5c57`.
+This final prose-only validation amendment leaves that section unchanged.
+
+The leased command was:
+
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1609-plan-final-import-new-output -- dotnet run --project tools/Antiphon.Checkpoints --no-build --property:OutputPath=bin-c1609plan/ -- import --plan docs/superpowers/plans/2026-10-29-card-1609-content-derived-volume-retirement-plan.md --out /work/worktrees/task-02c3c411/.antiphon/card-1609-plan-r2-final.yaml`
+
+For a rerun choose a fresh owned ignored output path. The first import bootstrapped
+the tool under the same host slot gate (7 s held, compile warnings, no errors).
+One later import refused `unrecorded-existing` while trying to reuse the original
+output; it did not invalidate table parsing. Repeating with the fresh path above
+succeeded (3 s held). Both successful imports emitted only the expected CP-11
+duplicate-build manifest warning; Windows must build locally, so cross-host reuse
+of CP-3 is intentionally rejected. Generated YAML and tool outputs are not commits.
+
+Static roster verification against the pinned master found 29 distinct selected
+existing method operands with no suffix collisions; the five proposed new classes
+and two replacement C1609 container methods are absent as expected. All existing
+selected class declarations are unique (quoted class names in test strings are
+not declarations). Recounted recovery/seed/index/object results = 10/11/5/4,
+hidden-location fixture rows = 132, evidence-name arguments = 40, mirror-owner
+arguments = 12. Planned totals are 294 executions across the three lanes/groups
+above; these are expectations, not executed test counts.
+
+`git diff --check` passed. After `git fetch origin master`,
+`git merge-tree --write-tree origin/master HEAD` was conflict-free against
+`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca` at the validated tip. Final task-branch
+publication and merge simulation are reported with the final full commit SHA.
