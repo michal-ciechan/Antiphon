@@ -111,6 +111,16 @@ public static class NativeLinuxPolicyWitness
         "session-runner\nHostStatsProbeLiveTests\nLinux_probe_reads_live_proc",
     ];
 
+    // Suites whose assemblies compile NativeLinuxPolicyWitnessTests. A prefixed or frozen
+    // row for any other suite is unwitnessed-suite on every host.
+    public static readonly string[] CompiledSuiteIds =
+    [
+        "antiphon",
+        "session-runner",
+        "pty-host",
+        "agents-pty",
+    ];
+
     public static string? KnownSuite(Assembly assembly) => assembly.GetName().Name switch
     {
         "Antiphon.Tests" => "antiphon",
@@ -240,6 +250,8 @@ public static class NativeLinuxPolicyWitness
             {
                 var row = ReadRow(element);
                 rows.Add(row);
+                foreach (var duplicate in DuplicatePropertyNames(element))
+                    diagnostics.Add(Diag("duplicate-key", row.Suite, row.Class, "", "", "", duplicate));
                 if (!suiteNames.Contains(row.Suite))
                     diagnostics.Add(Diag("unknown-exclusion", row.Suite, row.Class, "", "", "", "unknown suite"));
                 if (!seenKeys.Add(row.Key))
@@ -303,6 +315,13 @@ public static class NativeLinuxPolicyWitness
 
             if (request.CompareBaseline && request.BaselineJson.Length > 0)
                 CompareBaseline(request, byIdentity, diagnostics);
+
+            var compiledSuites = new HashSet<string>(CompiledSuiteIds, StringComparer.Ordinal);
+            foreach (var row in rows)
+            {
+                if (row.Witnessed && !compiledSuites.Contains(row.Suite))
+                    diagnostics.Add(Diag("unwitnessed-suite", row.Suite, row.Class, "", "", "", row.Key.Replace('\n', '|')));
+            }
 
             var covered = new HashSet<TestNode>();
             var matchedTypes = new HashSet<Type>();
@@ -622,6 +641,20 @@ public static class NativeLinuxPolicyWitness
         var key = suite + "\n" + klass + "\n" + string.Join("\n", methods);
         var shaped = platform == "windows" && reason.StartsWith(LinuxReasonPrefix, StringComparison.Ordinal);
         return new PolicyRow(suite, klass, methods, platform, reason, key, shaped || IsFrozenKey(key));
+    }
+
+    static IEnumerable<string> DuplicatePropertyNames(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            yield break;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (seen.Add(property.Name) || !reported.Add(property.Name))
+                continue;
+            yield return property.Name;
+        }
     }
 
     static bool IsFrozenKey(string key)
