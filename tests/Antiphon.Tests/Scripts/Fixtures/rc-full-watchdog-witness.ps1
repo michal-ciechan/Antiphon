@@ -77,6 +77,12 @@ $out = [ordered]@{
     lowFactorAdmitted = $false
     tinyFactorWatchdog = 0
     emaxOrderWatchdog = 0
+    badWallCensored = $false
+    badWallWatchdog = 0
+    badWallKilled = $true
+    zeroWallN = 0
+    zeroWallCensored = $false
+    cultureDoubleKept = $false
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -376,6 +382,47 @@ try {
             }
             if ([double]$emaxOrder.WatchdogSeconds -ne 3600 -or [string]$emaxOrder.Reason -ne 'unmeasured-cost') {
                 Add-Problem ('emax-below-e95 W=' + $emaxOrder.WatchdogSeconds + ' reason=' + $emaxOrder.Reason)
+            }
+
+            $badWallOk = $true
+            $badWatch = 0.0
+            $badKilled = $false
+            foreach ($badWall in @('1936,5', $null, 'n/a', '0', '-4')) {
+                $badSamples = @(New-Walls 20 900 'Passed') + @([pscustomobject]@{ Wall = $badWall; Outcome = 'Failed'; Censored = $false })
+                $badFactors = Get-NightlyWatchdogErrorFactors -Samples $badSamples -PlannedSeconds 900
+                $badRow = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                    N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$badFactors.E95; Emax = [double]$badFactors.Emax
+                    M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$badFactors.Censored
+                })
+                $killedBad = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$badRow.WatchdogSeconds) -Terminal $true)
+                $badWatch = [double]$badRow.WatchdogSeconds
+                $badKilled = $killedBad
+                $label = 'null'
+                if ($null -ne $badWall) { $label = [string]$badWall }
+                if (-not $badFactors.Censored -or [int]$badFactors.N -ne 20 -or [double]$badRow.WatchdogSeconds -ne 3600 -or [string]$badRow.Reason -ne 'unmeasured-cost' -or $killedBad) {
+                    Add-Problem ('uncensored-wall ' + $label + ' N=' + $badFactors.N + ' censored=' + $badFactors.Censored + ' W=' + $badRow.WatchdogSeconds + ' killed=' + $killedBad)
+                    $badWallOk = $false
+                }
+            }
+            $out.badWallCensored = $badWallOk
+            $out.badWallWatchdog = $badWatch
+            $out.badWallKilled = $badKilled
+            $zeroSamples = @(New-Walls 19 900 'Passed') + @([pscustomobject]@{ Wall = [double]0; Outcome = 'Passed'; Censored = $false })
+            $zeroFactors = Get-NightlyWatchdogErrorFactors -Samples $zeroSamples -PlannedSeconds 900
+            $out.zeroWallN = [int]$zeroFactors.N
+            $out.zeroWallCensored = [bool]$zeroFactors.Censored
+            if ([int]$zeroFactors.N -ne 19 -or -not $zeroFactors.Censored) {
+                Add-Problem ('nonpositive-wall-counted N=' + $zeroFactors.N + ' censored=' + $zeroFactors.Censored)
+            }
+            $savedCulture = [Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('de-DE')
+                $cultureSamples = @(New-Walls 19 900 'Passed') + @([pscustomobject]@{ Wall = [double]1936.5; Outcome = 'Failed'; Censored = $false })
+                $cultureFactors = Get-NightlyWatchdogErrorFactors -Samples $cultureSamples -PlannedSeconds 900
+                $out.cultureDoubleKept = ((-not $cultureFactors.Censored) -and [int]$cultureFactors.FailedKept -eq 1 -and [int]$cultureFactors.N -eq 20)
+                if (-not $out.cultureDoubleKept) { Add-Problem ('culture-double-dropped N=' + $cultureFactors.N + ' failed=' + $cultureFactors.FailedKept + ' censored=' + $cultureFactors.Censored) }
+            } finally {
+                [Threading.Thread]::CurrentThread.CurrentCulture = $savedCulture
             }
 
             $rounded = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 900 -MarginSeconds 60
