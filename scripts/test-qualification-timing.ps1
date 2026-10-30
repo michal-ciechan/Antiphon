@@ -1250,16 +1250,33 @@ try {
     } finally {
         $hugeTagWriter.Dispose()
     }
+    $savedHugeBudget = ${function:New-QualificationReadBudget}
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $savedHugeStats = (Get-Item -LiteralPath 'Function:Get-QualificationTrxStats').ScriptBlock
+    $script:hugeTagReadBytes = 0L
+    $hugeDispose = 'try { $opened.Stream.Dispose() } catch { }'
+    $hugeInstrumented = $savedHugeStats.ToString().Replace($hugeDispose, ('$script:hugeTagReadBytes += $opened.Stream.Position; ' + $hugeDispose))
+    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value ([scriptblock]::Create($hugeInstrumented))
     $hugeSw = [Diagnostics.Stopwatch]::StartNew()
     $hugeAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 4 -ChunkResult 'KEEP-4' -LogRoot $hugeLog -TimingRoot $hugeTiming -Suite 'antiphon' -Chunk 'g6' -TrxPath $hugeTag -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'run-huge' -Attempt '1'
     $hugeSw.Stop()
+    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats
+    ${function:New-QualificationReadBudget} = $savedHugeBudget
     $hugeDoc = Get-Content -LiteralPath (Join-Path $hugeLog 'antiphon-g6.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $hugePhases = ($null -eq $hugeDoc.p50Seconds -and $null -eq $hugeDoc.fixtureSetupSeconds -and @($hugeDoc.slowest).Count -eq 0)
-    Assert-Check ($hugeSw.Elapsed.TotalSeconds -lt 0.2 -and [int]$hugeAgg.ChunkExitCode -eq 4 -and [string]$hugeAgg.ChunkResult -eq 'KEEP-4' -and [string]$hugeDoc.why -eq 'timing-read-refused' -and $hugePhases) 'unterminated-trx-tag-stays-inside-budget'
+    Write-Host ('MEASURED unterminated-trx-tag ' + (@{ seconds = $hugeSw.Elapsed.TotalSeconds; bytes = $script:hugeTagReadBytes; verdict = $hugeAgg; document = $hugeDoc } | ConvertTo-Json -Depth 5 -Compress))
+    # The real scanner stops at its 256 KiB tag cap plus one 8 KiB refill.
+    # A stopped reader clock tests that cap rather than host scheduling.
+    Assert-Check ($script:hugeTagReadBytes -gt 0 -and $script:hugeTagReadBytes -le (262144 + 8192)) 'unterminated-trx-tag-bounded-read-bytes'
+    Assert-Check ($hugeAgg.ChunkExitCode -eq 4 -and $hugeAgg.ChunkResult -eq 'KEEP-4') 'unterminated-trx-tag-verdict-preserved'
+    Assert-Check ($hugeDoc.why -eq 'timing-read-refused') 'unterminated-trx-tag-refused'
+    Assert-Check $hugePhases 'unterminated-trx-tag-null-metrics'
 } catch {
     Write-Host ('FAIL five-thousand-result-trx ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedHugeStats) { Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats }
+    if ($null -ne $savedHugeBudget) { ${function:New-QualificationReadBudget} = $savedHugeBudget }
     Remove-Item -LiteralPath $wideRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
