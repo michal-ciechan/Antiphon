@@ -1189,6 +1189,18 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ### Checkpoints
 
+2026-10-30 commissioned Debug `a2935adb` supersedes the initial Linux collection
+caps above for **CP-3/4/8/9 only**: 20/6/10/20 minutes. See
+[`2026-10-30-card-1609-s5-checkpoint-debug.md`](../../investigations/2026-10-30-card-1609-s5-checkpoint-debug.md)
+for the censored 600/120/120/360-second rows, the measured 153-second private-origin
+and 82-second wrapper matrices, and the shared immutable Compose setup repair.
+These remain provisional bounded collection caps, not measured row p95. The
+six-row Debug aggregate retains every filter/count, including CP-3's 25-method
+floor despite the three intentionally out-of-scope missing methods. Export the
+caps explicitly to the imported manifest; retain the original outcomes and costs.
+Completed row observations supply rounded 2x recommendations; collect up to five
+normal S5/Review samples under CARD-1609 rather than repeating green groups.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |

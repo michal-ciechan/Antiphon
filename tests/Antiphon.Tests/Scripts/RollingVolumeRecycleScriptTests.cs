@@ -2817,6 +2817,11 @@ public sealed class RollingVolumeRecycleScriptTests
             inventory.Output.ShouldNotContain("could not read Username");
             fixture.Removed.ShouldBeEmpty("private-origin: inventory removes nothing");
 
+            // Refusal vectors replace the operation's Ready artifact with Refused,
+            // and the public-origin control changes the inventory. Apply needs a
+            // fresh real preview after restoring the private origin and proof.
+            await VolumeRetirementFixture.ReadyPreview(fixture,
+                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
             ResetPreviewTrace(fixture);
             var applied = await fixture.Run("retire-temp-runner",
                 "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);

@@ -182,8 +182,8 @@ internal static class VolumeRetirementFixture
 
     internal static async Task ReadyPreview(C1008HostFixture fixture, string extra = "")
     {
-        // GNU timeout execs docker by name and skips the fixture function. The shell
-        // timeout keeps the preview on the fake daemon, the same way content proofs do.
+        // The fixture's child PATH carries executable fake Docker, including when
+        // the real GNU timeout launches it directly.
         var probe = string.IsNullOrEmpty(extra) ? ShellProbe : extra + "\n" + ShellProbe;
         var preview = await fixture.Run("retire-temp-runner", probe, dryRun: true);
         preview.Exit.ShouldBe(0, "c1609: a Ready preview precedes apply; " + preview.Output);

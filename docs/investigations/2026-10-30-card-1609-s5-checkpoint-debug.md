@@ -89,3 +89,49 @@ Added opt-in setup, teardown and CLI phase spans at the shared fixture boundarie
 Deleted the legacy timeout-function body so the receipt/content probes also
 retain real GNU timeout through the already-installed executable fake Docker.
 No product assertion or test was removed or weakened.
+
+## Six-method measurement probe
+
+Source `a9ed39fa09e306cf538c5244ac70d9c168daeea7`; leased isolated build
+246.04 s (zero errors), slot wait 45 s. Leased six-method probe: 5 pass, 1 fail,
+0 skip, test wall 318.774 s, slot held 322 s, no admission wait. This extra
+selection is justified to measure the slow matrices and qualify the shared setup
+before the single six-row checkpoint aggregate. It is not whole-row acceptance.
+TRX: `.antiphon/c1609-debug-probe/run.trx`; opt-in phase journals:
+`.antiphon/c1609-debug-probe-phases/`. Every phase/test association is joined by
+the native timing identity in TRX stdout; nested spans are unioned, not added.
+
+| Method | Result | TRX s | Setup union s | Teardown union s | CLI lifecycle union s | Unattributed remainder s |
+|---|---|---:|---:|---:|---:|---:|
+| C994_Fixture_custody_is_bounded | pass | 0.908 | 0.717 | 0.005 | 0.825 | 0.052 |
+| Current_tooling_and_missing_history_do_not_block | pass | 37.826 | 0.022 | 0.027 | 37.674 | 0.110 |
+| C994_Container_service_and_state_are_restricted | pass | 43.031 | 0.164 | 0.223 | 42.286 | 0.359 |
+| C1008_Host_proof_admits_only_an_authenticated_private_origin | fail | 152.957 | 0.003 | 0.011 | 152.623 | 0.320 |
+| Retained_volumes_block_deploy_and_completion | pass | 81.901 | 0.007 | 0.003 | 81.686 | 0.206 |
+| C1008_Host_proof_file_omits_credentials | pass | 1.107 | 0 | 0 | 0.039 | 1.068 |
+
+These are single-method samples (p50=p95=max within each one-element sample),
+not population p95 estimates. Setup and CLI columns overlap when Compose starts
+inside setup. The first method includes all four real renderings; later fixtures
+perform none. Per-command HTTP/IO/Git work *inside* Bash remains unattributed
+within its measured CLI lifetime; no DB/AppHost/container startup is applicable.
+The redaction method's uninstrumented direct PowerShell child stays in remainder.
+
+The probe revealed another CP-8 fixture-ordering defect at
+`RollingVolumeRecycleScriptTests.cs:2823`: after its negative vectors write
+Refused and its positive public-origin control changes the inventory, the test
+attempts apply without a fresh Ready preview. Product correctly refuses
+`RecycleGitAuditUnknown reason=preview-required`, with zero removals. Repair:
+restore the private origin/proof, execute the real Ready preview, then apply.
+No receipt is manufactured, no assertion weakened, and no product gate changed.
+
+The 120 s CP-8 cap cannot contain its 152.957 s method alone. CP-4's 81.901 s W6
+matrix also leaves only 38 s for eleven other methods. CP-3's old 600 s and
+CP-9's old 360 s are censored lower bounds; sharing setup removes repeated work,
+but cannot prove an unknown full-row p95. The next aggregate uses bounded
+**provisional collection** caps CP-3=20m, CP-4=6m, CP-8=10m, CP-9=20m under this
+commissioned CARD-1609 Debug. These correct impossible collection bounds using
+the retained censored rows and measured slow methods; they are explicitly not
+measured 2x-p95 claims. The completed-row measurements will determine the final
+rounded 2x recommendations. Collect at most five samples through ordinary later
+S5/Review work; do not repeat green rows merely to fill the sample.
