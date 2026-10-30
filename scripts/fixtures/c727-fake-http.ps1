@@ -104,8 +104,28 @@ if ($Path) {
 
 if ($state.scenario -eq 'c1008') {
     if ($Method -eq 'POST' -and $state.allowClear -and $Suffix -eq '/drain/clear') {
-        $state.statuses.$RunnerId.draining = $false
-        $state.statuses.$RunnerId.acceptingNewWork = $true
+        $slot = $state.statuses.$RunnerId
+        # A retired temp placeholder is reactivated, not opened for dispatch.
+        # The rollout then posts /drain to hold it. A later clear, after the
+        # new container is verified, is the one that starts accepting work.
+        if ($RunnerId -eq 'server2-temp' -and $slot.retiredAt) {
+            $slot.retiredAt = $null
+            if ($null -eq $slot.runnerSessions) { $slot.runnerSessions = 0 }
+        } else {
+            $slot.draining = $false
+            $slot.acceptingNewWork = $true
+        }
+        $state | ConvertTo-Json -Compress -Depth 20 | Set-Content -LiteralPath $env:C727_TEST_STATE
+        Write-Output '{}'
+        exit 0
+    }
+    if ($Method -eq 'POST' -and $state.allowClear -and $Suffix -eq '/drain' -and $RunnerId -eq 'server2-temp') {
+        $slot = $state.statuses.$RunnerId
+        $slot.draining = $true
+        $slot.redirectTo = if ($body -and $body.redirectTo) { [string]$body.redirectTo } else { 'server2' }
+        $slot.retireWhenIdle = if ($body) { [bool]$body.retireWhenIdle } else { $false }
+        $slot.acceptingNewWork = $false
+        if ($null -eq $slot.runnerSessions) { $slot.runnerSessions = 0 }
         $state | ConvertTo-Json -Compress -Depth 20 | Set-Content -LiteralPath $env:C727_TEST_STATE
         Write-Output '{}'
         exit 0

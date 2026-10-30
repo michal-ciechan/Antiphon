@@ -163,6 +163,13 @@ if ($Case -eq 'deploy-temp-runner') {
     $state.tempDeployed = $true
     $state.tempOffline = $false
     $state.tempContainer = $true
+    if ($state.scenario -eq 'c1008' -and $state.statuses.'server2-temp') {
+        $temp = $state.statuses.'server2-temp'
+        $temp.buildVersion = $state.sha
+        $temp.available = $true
+        $temp.dispatchEligible = $true
+        if ($null -eq $temp.runnerSessions) { $temp.runnerSessions = 0 }
+    }
 }
 elseif ($Case -eq 'deploy-parent') {
     $state.oldDeployed = $true

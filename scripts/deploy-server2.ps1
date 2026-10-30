@@ -1435,6 +1435,8 @@ function Invoke-Phase {
             $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
             $context = [pscustomobject]@{ version=1; project='antiphon-runner-temp'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
             if ($null -ne $cleanup) { $context | Add-Member -NotePropertyName cleanupOperationId -NotePropertyValue $cleanup.operationId }
+            # Preview stops here. retire-temp-runner is the volume-delete case.
+            if ($DryRun) { return }
             Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $context
         }
     }

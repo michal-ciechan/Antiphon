@@ -277,7 +277,11 @@ public sealed class VolumeRetirementWrapperTests
                 return 1
             }
             set +e
-            c1008_previous_generation "$PROJECT" "$owned" > "$root/out" 2> "$root/err"
+            # c1008_refuse exits the shell. Observe that exit from a subshell so the
+            # refusal text survives; the mismatch and image_count=0 checks are unchanged.
+            (
+                c1008_previous_generation "$PROJECT" "$owned" > "$root/out" 2> "$root/err"
+            )
             code=$?
             printf 'exit=%s\n' "$code"
             cat "$root/out" "$root/err"
