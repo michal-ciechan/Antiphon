@@ -52,8 +52,8 @@ committed and pushed separately; no product files changed.
 - **D-5 — Land as a fix.** RC first, separately reviewed master port; no deployment, tag or publish is authorized by this Plan task.
 - **D-6 — Read the pinned private field, fail closed on drift.** Cache a Linux-only reflection accessor for `Porta.Pty.Unix.PtyConnection.exitSignal` (`private int`) in the real Porta.Pty 1.0.7 assembly (assembly version `1.0.7.0`, informational version `1.0.7+54684ba55148ed6bcd0c827ad7e8841a3289a466`). Read only inside `ProcessExited` or after public `WaitForExit(0)` succeeds. Missing/wrong field, type, version or access failure yields null and a bounded diagnostic, never zero. Reject a managed fork because it adds cross-platform ownership and native-asset coupling for one accessor, contrary to ADR 0002 section 1. Reject a second `waitpid` and inferred `Process.ExitCode`; keep the sole upstream reaper. The loaded-assembly witness fails loudly on any contract/version drift.
 - **D-7 — Keep the existing integer exit-code contract; add `int? ExitSignal`.** Zero explicitly means an observed exit without a POSIX signal; positive values are an observed signal; null means unavailable/legacy/observer failure. Windows producers emit zero (no signal) and retain their exact existing exit codes. A signaled Unix process retains Porta's existing integer zero in legacy fields; every new consumer must inspect the signal first. Do not invent `128+signal` as the actual process exit code. Keep `PtyAgentRunner.Exited` equal to the actual observed integer (including zero for a Linux signal) throughout; its structured completion is authoritative. Only protocol/terminal adapters change in S3b: compatibility is -1 when signal > 0 or code is missing, otherwise the actual code. S1..S3a preserve all existing adapter values. No persistence writer may store this synthetic compatibility value.
-- **D-8 — Attribute intent separately from observed death.** Hold a generation-bound stop intent in issuer memory and attempt a diagnostic record before sending a signal. A request is not proof of its success or of who delivered the fatal signal. Record the signal actually attempted, path, request time and result; combine it with the wait observation conservatively. No new automatic stop, escalation, release deadline or custody authority is added.
-- **D-9 — Recording is best-effort; authorized stops still run.** Catch record create/write/flush/rename failures, retain issuer memory with `durable=false`, log one bounded warning per request, and always attempt the already-authorized signal. This applies to operator/watchdog/compaction/pool/shutdown/disposal/custody routes. A write failure cannot become a stop refusal or a successful-stop receipt. Use `stop sender unknown` on this degraded path. Reject the previous full-disk tradeoff because it would leave runaway processes alive; existing identity/authorization checks still refuse unsafe targets.
+- **D-8 — Attribute intent separately from observed death.** Hold a generation-bound stop intent in issuer memory, send the authorized signal first, then attempt a diagnostic record outside the publication gate. A request is not proof of its success or of who delivered the fatal signal. Record the signal actually attempted, path, request time and result; combine it with the wait observation conservatively. No new automatic stop, escalation, release deadline or custody authority is added.
+- **D-9 — Signal first; bound diagnostic work.** No journal call precedes signaling. After the syscall and issuer-memory update, release the gate and offer a write to `ProcessStopIntentStore.TryRecordAsync`, which enforces a 100 ms deadline from offer, including queueing, and never invokes disk IO inline. Failure, saturation or timeout retains `durable=false` and logs once; it never downgrades matching live issuer attribution. Stop completion and observer publication do not await the writer. This applies to operator/watchdog/compaction/pool/shutdown/disposal/custody routes. Reject a bounded pre-signal write because diagnostic persistence has no authority and buys no reason to delay an authorized stop. Existing target/authorization checks remain.
 - **D-10 — Disk is diagnostic, never attribution authority.** The same-user agent can write the session log root. Qualify `stopped by Antiphon` only from the actual issuer's in-memory successful attempt, bound to the accepted generation, process/host identity and observed signal, transported from that live owner. A recovered/manifest record is unverified even if it says issued or trusted. The server's already-persisted request can prove that Antiphon requested a stop, but cannot alone prove a matching signal was sent; choose request-only wording when issuer evidence is gone. Reject permission-only hardening and trusting a serialized boolean as substitutes for this boundary.
 - **D-11 — Split S3 at the data/policy boundary.** S3a delivers nullable storage and transport (including the inert intent shape), without changing any integer compatibility result; S3b changes protocol/terminal adapter results together with all ownership, persistence and classification consumers. Each is commissioned and verified separately before S4. Reject a single 150-minute S3 because migration, adapter plumbing and native consumer tests cannot credibly fit together.
 - **D-12 — Preserve diagnostic tokens and regression intent.** Keep `ProcessExit` in the outer failure description when that is the recorded source; remove only the claim `exited on its own`. Keep R-3's source/code assertions. Preserve the diagnostic `Process exited (KilledByRequest, code 1)` prefix in the selected generation regression, append unknown-signal evidence, and never treat its untrusted reason as proof of a sender.
@@ -73,6 +73,7 @@ committed and pushed separately; no product files changed.
 | An old host disappears at a runner upgrade | Detached hosts survive and are adopted from their manifest | Null must stay unknown across status, replay and adoption |
 | A local issued record identifies the sender | `SessionRunnerSettings.cs:6` defaults logs under the agent-writable workspace; host/agent share a user | Disk-recovered intent remains unverified; planted records cannot create attribution |
 | Adapter compatibility changes are harmless storage work | `RunnerTerminalSession.cs:365` feeds `AgentSessionService.cs:872-873,904-906,3793` and `AgentSessionRuntime.cs:2323`; actual zero versus compatibility -1 loses ready-gate ownership | Keep the value change in S3b with structured writers and R-6; S3a remains storage-only |
+| KillAsync bounds all pre-signal work | `PtyAgentRunner.cs:521-528` starts its delay only after synchronous `_conn.Kill()`; watchdog timeout is 5 seconds and server `KillGraceMs` is 5000 | No new diagnostic IO before signal or inside the gate; 100 ms post-signal record deadline independent of stop completion |
 | The server has no durable stop request | `AgentSessionService.cs:1866-1871,2027-2032` saves `TerminationSource` and `Stopping` before calling the runtime | Reuse this server-owned request evidence, scoped to `StartedAt`; it proves a request, not successful delivery |
 
 ## Native source and evidence contract
@@ -206,13 +207,19 @@ was observed, not that the process voluntarily stopped.
 | Signal 9/15, no matching intent | `killed by signal 9 (SIGKILL); sender unknown` / `killed by signal 15 (SIGTERM); sender unknown` |
 | Known signal plus matching issuer-memory issued intent, durable record succeeded | `stopped by Antiphon (SIGKILL; matching stop request recorded); killed by signal 9 (SIGKILL)`; this is qualified request attribution, not kernel sender proof |
 | Planted or recovered record with no live issuer corroboration | `killed by signal N (NAME); sender unconfirmed (untrusted stop record)`; never `stopped by Antiphon` |
-| Any stop-record write/flush failure | `killed by signal N (NAME); stop sender unknown (intent not durably recorded)`; the authorized signal still runs |
+| Matching live issuer evidence, but record pending/failed/timed out | `stopped by Antiphon (SIGKILL; stop record not durable); killed by signal 9 (SIGKILL)` (substitute observed signal/name); issuer memory wins, disk failure never downgrades attribution |
+| Known signal plus server-stored stop request, no live issuer evidence | `Antiphon stop requested; killed by signal 9 (SIGKILL); sender unconfirmed` (substitute observed signal/name); a disk record cannot upgrade this |
+| Runner-issued host-target kill, child exit never observed | `Antiphon host stop issued; child exit unobserved (exit code unknown; signal unknown)`; never claim child death or release custody |
 | Request only, missing observed signal | `Antiphon stop requested; signal unknown` (never assert that the request killed it) |
 | Known normal zero/nonzero | `process exited with exit code 0` / `process exited with exit code 23` |
 | Legacy zero/null signal | `process ended (exit code 0; signal unknown)` |
 | Observer failed / vanished process | `process ended (exit code unknown; signal unknown)` plus the observed failure reason; do not turn a synthetic -1 into a real native code |
 | Unknown positive signal number | `killed by signal N (UNKNOWN); sender unknown` |
 | Intent followed by normal exit, failed signal call, mismatched generation or signal | Describe the observed exit; separately say a request was recorded, never attribute its death to that request |
+
+Text precedence is matching live issuer evidence first, then a server-owned request,
+then untrusted diagnostic records, then no intent. Disk durability changes only
+the record qualifier; a pending write and a timeout use the same nondurable text.
 
 Even WIFEXITED/no-signal does not prove user intent (the child can catch a signal
 then exit), so remove `exited on its own` altogether. Keep
@@ -310,32 +317,53 @@ record plus self-exit by signal must remain `signal N; sender unconfirmed` throu
 recovery, mapping, database, task failure and attention. Do not add a signing key,
 permission redesign or new server stop ledger for this card.
 
-Set `requested` in memory and attempt its record before the syscall; set `issued`
-in memory only when the syscall/helper returns successfully, then attempt that
-record. Every failed journal operation is contained independently: always reach
-the authorized syscall even on ENOSPC, unwritable directory, flush or rename
-failure, retain `durable=false`, and log once. The degraded description is
-`killed by signal N (NAME); stop sender unknown (intent not durably recorded)`.
-Only an observed exit discharges stop debt; if the syscall fails or exit remains
-unobserved retain existing ownership/retry behavior. Windows stops are unchanged.
-The exit observer and stop writer serialize their memory publication so a fast
-exit can include the issued update. A crash between signal and update remains
-unknown. No file write is a kill receipt; no disk retry loop blocks a stop.
-Use `FileOptions.WriteThrough` and `FileStream.Flush(flushToDisk: true)` before
-rename and a Linux directory fsync after rename before setting `durable=true`.
-`PtyHostManifest.cs:55-62` is the existing file-flush pattern, but does not itself
-fsync the directory; do not credit it with that guarantee. Any unsupported or
-failed directory fsync degrades the diagnostic record and never gates signaling.
-Use an injected journal seam at the actual kill boundary so the SIGKILL attempt
-and SIGHUP fallback each get their real requested signal. Normal exit preceding
-the attempt is not attributed. Concurrent same-signal external delivery cannot be
-distinguished by waitpid: the wording explicitly says a matching request was
-recorded, not that a kernel sender PID was observed.
-The serialization gate covers journal write, syscall and issued update only;
-release it before waiting on the exit task, or the observer and KillAsync would
-deadlock. Do not latch `KilledByRequest` on a failed signal attempt or turn a
-normal-exit race into a request kill. Preserve reason overrides only when the
-observed stop and matching issued attempt support them.
+Under the publication gate, set `requested` in memory, attempt the authorized
+signal immediately, and set `issued` only on an observable successful syscall/helper
+return. Release the gate before any journal call or exit wait. The observer takes
+that gate only to snapshot memory, so a fast exit sees the completed issued update.
+No disk IO, flush, rename or directory fsync executes while this gate is held.
+A normal exit before the attempt, a failed call, or a crash between signal and
+issued update cannot be promoted to matching issued evidence. Start the stop's
+existing timeout accounting at entry; diagnostic work never restarts or extends
+it. Only observed exit discharges stop debt; keep existing ownership/retry behavior
+when exit is unobserved. Windows stopping semantics remain unchanged.
+
+After releasing the gate, offer an immutable attempt snapshot to
+`ProcessStopIntentStore.TryRecordAsync` (the injected production IO seam). This
+method enforces a **100 ms deadline from offer**, including queue wait, with an
+injected TimeProvider and cancellation token. It queues disk work on a dedicated
+bounded worker and returns asynchronously; even a writer that blocks before
+returning its Task cannot block the signal/observer thread. Stop completion does
+not await this task: start exit observation independently and complete on observed
+exit within the existing grace. Successful record completion may enrich durability
+later under the same generation fence; no receipt waits for this diagnostic update.
+
+Keep at most one writer operation in flight and one bounded pending snapshot per
+host/runner process. Full queue, cancellation, fault or deadline marks that attempt
+nondurable, observes eventual exceptions, and emits at most one bounded warning.
+There is no retry loop or per-request thread creation. Cancellation cannot abort a
+kernel fsync: after expiry the owner tracks that one outstanding worker, rejects
+additional record work while it is stuck, and neither stop, observer nor shutdown
+joins it indefinitely. Late completion cannot change attribution or a newer
+generation. Test fakes release their stalled writer in fixture teardown so the
+witness itself leaves no pending work. Reject claiming that timeout canceled IO.
+
+Use create-new, `FileOptions.WriteThrough`, `Flush(flushToDisk: true)`, atomic
+rename, then Linux directory fsync before reporting `durable=true`. These crash
+safety operations protect **diagnostic records only**, all after signaling.
+`PtyHostManifest.cs:55-62` supplies file flush but not directory fsync. Unsupported
+fsync, ENOSPC, unwritable directory and all other faults keep `durable=false`.
+Matching issuer memory still supports `stopped by Antiphon`; disk loss cannot
+revoke it. A crash before post-signal recording can leave no file at all; recovery
+therefore stays request-only or unknown. Do not invent a pre-signal durable record.
+
+Inject the journal seam at the real kill boundary; the SIGKILL attempt and SIGHUP
+fallback each retain their actual attempted signal in memory before their syscall,
+then record after it. Normal exit preceding the attempt is not attributed.
+Concurrent same-signal external delivery cannot be distinguished by waitpid; the
+wording qualifies Antiphon's matching request, never a kernel-observed sender PID.
+Do not latch `KilledByRequest` on a failed attempt or turn a normal-exit race into
+a request kill. Preserve reason overrides only with matching observed/issued evidence.
 
 Instrument existing authorized Linux entry points only: host KillMessage and
 owner/shutdown stop; runner `KillPidBestEffort`, `KillHostIfStillOurs`, pending/
@@ -343,12 +371,12 @@ orphan Herdr kills (their existing pid/start validation stays); and explicit
 Linux custody termination/recovery (`IPtyCustodyContainment`,
 `ILinuxCustodyRecovery`, runner custody ledger). Ordinary observation, sealing
 and root exit must not begin a new stop. The cgroup helper sends SIGKILL (v2
-`cgroup.kill`; v1 freeze/read/kill/thaw). Record intent before invoking it, but
-helper exit zero is only an issued operation: retain CARD-1614's post-drain
+`cgroup.kill`; v1 freeze/read/kill/thaw). Set intent in memory before invoking it and offer diagnostic writes only after
+the helper call, outside the gate; helper exit zero is only an issued operation: retain CARD-1614's post-drain
 accounting, placement proof, Unknown outcomes and retained cgroups.
 Also cover `PortaPtySession.Dispose`: upstream Unix disposal closes the master
-streams then sends SIGHUP. If the root is still live, record the disposal/hangup
-intent before either operation. A disposal after observed exit emits no new
+streams then sends SIGHUP. If the root is still live, set the disposal/hangup
+intent in memory before either operation and offer diagnostic writes afterward. A disposal after observed exit emits no new
 death attribution. Unexpected host death/master closure may cause kernel SIGHUP
 without a durable request; preserve sender unknown in that case. The custody
 helper's own timeout tree-kill at `IPtyCustodyContainment.cs:195` targets the helper,
@@ -498,6 +526,17 @@ upgrade is its subject. These are phase targets, not sleeps. Initial individuall
 cancellable IO/pipe/process bounds are 10 seconds and DB readiness/migration 60;
 refine near 2x measured phase p95. Cancellation joins owned processes; residue is
 a failure. Production stop deadlines and CARD-1614's 30-second drain do not change.
+The diagnostic offer has a fixed 100 ms budget enforced by
+`ProcessStopIntentStore.TryRecordAsync`; it is not added to the stop grace.
+V-13 and V-14 inject a never-completing writer at that production seam, then call
+the real host/runner stop on an owned ready child: assert the signal syscall
+precedes writer entry, is reached within 250 ms of authorized kill-boundary entry,
+and observed exit plus stop completion occur within the existing 5-second grace.
+Assert the diagnostic task times out at 100 ms using the injected clock while
+its underlying writer stays pending; observer publication must already proceed.
+Native wall timings are recorded separately; 250 ms is a provisional CARD-1619
+small-sample signal-latency bound, not a measured p95. An isolated writer that
+never completes proves timeout containment, not just a quick thrown exception.
 
 Record admission, build, discovery, process startup, schema/seed/migration, clone,
 body, drain/teardown and remainder separately. Use `tests/Shared/TestTiming.cs`
@@ -566,7 +605,7 @@ zero tests or NotImplemented exception is not red. Retain intended assertions
 and source SHA. Normal-exit/backward-parse controls may already be green: label
 them and prove their discriminating assertions with method-scoped positive
 controls after implementation (drop/swap signal, erase unknown, bypass the signal
-check, write intent after kill, let a stale generation overwrite). Restore and
+check, move journal work ahead of signal or await it under the gate, let a stale generation overwrite). Restore and
 rerun the exact method green. Mutation execution remains a separately commissioned
 stage under its custody rules; no ad hoc whole-suite mutation loop in Code.
 
@@ -578,16 +617,16 @@ These files do not exist in this Plan commit.
 
 | IDs / class / lane | Methods or separately reported cases | Discriminating result |
 |---|---|---|
-| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_preserves_actual_zero_and_separate_signal`; `Porta_exitSignal_private_contract_holds`; `Unsupported_contract_keeps_signal_unknown` with 3 separately reported cases (missing field, wrong field type, wrong version) (10) | Real loaded DLL pins version/type/private field; invalid access never yields zero. Native cases distinguish signal 9/15, normal 0/23 and null. Fast exit covers completion before wrapper subscription and before runner subscription, plus callback/replay overlap; assert one completion and reason callback |
+| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_preserves_actual_zero_and_separate_signal`; `Porta_exitSignal_private_contract_holds`; `Unsupported_contract_keeps_signal_unknown` with 3 separately reported cases (missing field, wrong field type, wrong version) (10) | The real loaded DLL contract is resolved through production `PortaExitSignalReader`, never a test-local reflection literal. Changing its field constant to `exitSignalX` or version constant to `1.0.8.0` makes this witness and V-1 RED; invalid runtime access stays unknown. Native cases distinguish signal 9/15, normal 0/23 and null. Fast exit covers completion before wrapper subscription and before runner subscription, plus callback/replay overlap; assert one completion and reason callback |
 | R-1 `Card1619WindowsExitTests`, Agents.Pty.Tests, Windows | `Modern_exit_and_stop_preserve_windows_behavior`, `Inbox_exit_and_stop_preserve_windows_behavior` (2) | Production factory selects actual modern/inbox backend; normal 0/23 and kill result unchanged, signal zero |
 | V-7 `Card1619ExitWireTests`, PtyHost.Tests, portable | `Old_exit_frame_is_unknown`, `New_exit_frame_is_accepted_by_frozen_v1_reader`, `Status_and_attach_preserve_signal`, `Manifest_both_versions_round_trip`, `Unknown_signal_number_is_preserved`, `Null_signal_is_not_normalized_to_zero`, `Old_manifest_writer_drops_signal_and_new_reader_keeps_unknown` (7) | Frozen v1 framing/DTO and read-modify-write fixture from base with provenance, not today's reader twice; length prefix/discriminator and optional null/absence survive |
 | V-8 `Card1619LinuxHostExitTests`, PtyHost.Tests, Linux | `Live_SIGKILL_matches_manifest`, `Live_SIGTERM_matches_manifest`, `Exited_attach_and_status_replay_identical_evidence`, `Normal_exit_code_survives_detached_host` (4) | Actual host wait reaches wire/status/manifest/log; one meaning across all surfaces |
 | V-9 `Card1619RunnerExitTests`, SessionRunner.Tests, Linux | `Exit_while_detached_survives_adoption`, `Dead_host_manifest_preserves_signal`, `Old_host_adoption_keeps_signal_unknown`, `Http_exit_and_list_keep_signal`, `Phone_home_exit_and_recovery_keep_signal`, `Stale_generation_does_not_replace_exit_evidence` (6) | Restart plus HTTP/phone-home event/list paths retain evidence; wrong/missing generation cannot overwrite it |
-| V-10 `Card1619ExitPolicyTests`, Antiphon.Tests, Unit | `Describe_exit_evidence` with 10 `[Arguments]` cases: external 9, external 15, unknown positive, normal 0, normal 23, legacy 0, unknown code, requested-only, normal-exit race, CPU-spin policy stop (10) | Exact truthful text/classification; no self-exit or guessed sender; control asserts normal code 137 stays code 137 |
+| V-10 `Card1619ExitPolicyTests`, Antiphon.Tests, Unit | `Describe_exit_evidence` with 12 `[Arguments]` cases: external 9, external 15, unknown positive, normal 0, normal 23, legacy 0, unknown code, requested-only, normal-exit race, CPU-spin policy stop, known signal with server request/no live issuer, host-target stop with unobserved child (12) | Exact truthful text/classification; no self-exit or guessed sender; control asserts normal code 137 stays code 137 |
 | V-11 `Card1619ExitPersistenceTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_database_and_api` with four cases (9/15/exit0/exit23), `Live_event_and_reconciliation_agree`, `Terminal_row_is_enriched_without_changing_request_source`, `Resume_and_stale_events_keep_generation_boundary`, `Migration_preserves_old_rows_and_nullable_contract` (8) | Fresh DbContext after commit, live/reconciliation parity, restart/reset, additive schema upgrade; assertion fails on lost signal |
 | V-12 `Card1619ExitConsumerTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_failure_and_attention_text` with four cases (9/15/exit0/exit23), `Report_before_signal_death_still_settles`, `Signal_death_without_report_never_succeeds`, `Check_and_supervisor_keep_signal_evidence`, `Stop_stuck_remains_pending_without_observed_exit`, `Pool_and_terminal_seat_do_not_release_from_code_zero`, `Launch_cleanup_does_not_steal_a_normal_exit`, `Api_attempt_and_diagnostics_preserve_optional_signal` (11) | Four real native observations reach identical dispatcher/attention clauses; actual consumer methods/projections preserve hold/absence/custody/report authority |
-| V-13 `Card1619StopIntentTests`, PtyHost.Tests, portable ordering plus Linux host | `Intent_is_durable_before_signal_when_storage_works`, `Write_failure_still_stops_and_never_claims_attribution` with 2 cases (ENOSPC seam, real unwritable directory), `Issued_update_follows_syscall`, `Crash_before_send_is_only_requested`, `Crash_after_send_before_update_is_unknown`, `Fallback_records_SIGHUP_separately`, `Natural_exit_race_is_not_our_kill`, `Host_kill_is_not_child_wait_evidence`, `Planted_issued_record_and_self_signal_remain_unconfirmed` (10) | Successful store proves file flush/rename/directory fsync ordering; both storage-failure cases still terminate an owned real child, preserve observed signal and render stop sender unknown |
-| V-14 `Card1619LinuxStopIntentTests`, SessionRunner.Tests, Linux | `Own_stop_preserves_SIGKILL_and_intent`, `Restart_recovers_requested_intent`, `Kill_all_records_each_owned_generation`, `Orphan_and_pending_kills_keep_identity`, `Custody_invocation_records_intent_before_helper`, `Unobserved_or_failed_kill_retains_stop_debt`, `Unwritable_record_directory_does_not_block_stop` (7) | Real runtime routes with deterministic boundary hooks; wrong PID/start/generation sends nothing; record failure still kills with unknown sender; intent/helper exit is not success |
+| V-13 `Card1619StopIntentTests`, PtyHost.Tests, portable ordering plus Linux host | `Signal_precedes_durable_record_when_storage_works`, `Blocked_record_write_still_signals_within_bound`, `Write_failure_still_stops_and_preserves_live_issuer_attribution` with 2 cases (ENOSPC seam, real unwritable directory), `Issued_update_follows_syscall`, `Crash_before_send_is_only_requested`, `Crash_after_send_before_update_is_unknown`, `Fallback_records_SIGHUP_separately`, `Natural_exit_race_is_not_our_kill`, `Host_kill_is_not_child_wait_evidence`, `Planted_issued_record_and_self_signal_remain_unconfirmed` (11) | Signal occurs before any write; successful store proves post-signal file flush/rename/directory fsync ordering. Never-completing and both failed writes still terminate the owned child, publish exit within grace, retain issuer attribution and mark the record nondurable |
+| V-14 `Card1619LinuxStopIntentTests`, SessionRunner.Tests, Linux | `Own_stop_preserves_SIGKILL_and_intent`, `Restart_recovers_requested_intent`, `Kill_all_records_each_owned_generation`, `Orphan_and_pending_kills_keep_identity`, `Custody_invocation_publishes_memory_before_helper_and_records_after`, `Unobserved_or_failed_kill_retains_stop_debt`, `Unwritable_record_directory_does_not_block_stop`, `Blocked_record_write_still_signals_within_bound` (8) | Real runtime routes with deterministic boundary hooks; wrong PID/start/generation sends nothing; record failure/timeout still kills without losing live issuer evidence; intent/helper exit is not success |
 | V-15 `Card1619StopAttributionTests`, Antiphon.Tests, Integration/Linux | `Matching_live_issuer_intent_is_qualified_Antiphon_stop`, `No_intent_means_sender_unknown`, `Mismatched_generation_or_signal_is_not_attributed`, `Requested_only_and_failed_intents_remain_uncertain`, `Late_intent_enrichment_preserves_known_exit`, `Operator_and_policy_sources_are_not_overwritten`, `Planted_record_self_signal_stays_unconfirmed_in_task_and_attention`, `Server_request_without_issuer_is_request_only` (8) | DTO/storage round trip and final task/attention text, including request-only and normal-exit races |
 | V-16 `Card1619LinuxCustodyStopIntentTests`, SessionRunner.Tests, native cgroup-v1 | `Explicit_release_records_signal_without_fabricating_custody`, `Dead_host_recovery_records_intent_and_remains_unknown` (2) | Demonstrated live descendant in owned bound tree before release, observed exit afterward; intent cannot turn Unknown into a receipt |
 
@@ -640,12 +679,12 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-3 | S2 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host/` | linux-host-wire-and-skew | `/*/*/(Card1619ExitWireTests*)\|(Card1619LinuxHostExitTests*)/*` | V-7,V-8 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-4 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner/` | linux-runner-exit-adoption | `/*/*/Card1619RunnerExitTests/*` | V-9 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-5 | S3a | `tests/Antiphon.Tests -> bin-card1619-storage/` | linux-server-exit-storage | `/*/*/Card1619ExitPersistenceTests/*` | V-11 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-13 | S3b | `tests/Antiphon.Tests -> bin-card1619-consumers/` | linux-server-exit-classification | `/*/*/(Card1619ExitPolicyTests*)\|(Card1619ExitConsumerTests*)/*` | V-10,V-12 | all 21 listed, 0 failed/skipped | 21 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-13 | S3b | `tests/Antiphon.Tests -> bin-card1619-consumers/` | linux-server-exit-classification | `/*/*/(Card1619ExitPolicyTests*)\|(Card1619ExitConsumerTests*)/*` | V-10,V-12 | all 23 listed, 0 failed/skipped | 23 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-6 | S3b | CP-13 | portable-liveness-regression | `/*/*/AgentTaskLivenessTests/*` | R-3 | all 6 listed, 0 failed/skipped | 6 | 1 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-7 | S3b | CP-13 | portable-report-first-regression | `/*/*/AgentTaskDeadSessionReconciliationTests/(a_stopped_session_with_a_marked_done_report_succeeds_instead_of_failing*)\|(a_stopped_session_with_transcript_but_no_report_still_fails*)\|(the_predicate_and_the_attention_projection_agree_on_every_case*)` | R-4 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-8 | S3a | n/a | portable-client-contract | `pwsh -NoProfile -File scripts/typecheck-client.ps1` | V-11 API contract | exit 0, both client projects typecheck | n/a | 2 | true | n/a |
-| CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 10 listed, 0 failed/skipped | 10 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 7 listed, 0 failed/skipped | 7 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 8 listed, 0 failed/skipped | 8 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | linux-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-14 | S3b | CP-13 | linux-generation-exit-regression | `/*/*/SessionGenerationExitTests/(C502_V1_queued_A_exit_released_after_B_resumed_changes_nothing*)\|(C502_V3_matching_B_exit_closes_B_after_the_stale_A_exit_was_ignored*)\|(C502_V9_severed_stream_then_a_snapshot_Exited_A_does_not_close_B*)` | R-5 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
@@ -736,8 +775,8 @@ dotnet run's implicit build uses its default node count (the host lease was held
 Use the documented build-first/DLL recipe for subsequent checkpoint execution.
 There were no product tests or native process-stop experiments in this Plan task.
 
-Current roster totals: **109 required test results plus one typecheck command**.
-In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./10/7/8/2/21/3/7; estimates
+Current roster totals: **113 required test results plus one typecheck command**.
+In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./11/8/8/2/23/3/7; estimates
 are 4/7/6/6/9/1/2/2/6/6/9/2/10/2/2 whole minutes. Group sums are S1=4, S2=12,
 S3a=11, S3b=17, S4=23, final Windows=7. CP-13 precedes its reuse rows in the
 table because import resolves earlier build references. Final re-import after
