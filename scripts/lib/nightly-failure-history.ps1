@@ -1,7 +1,8 @@
 #requires -Version 5.1
 # CARD-1514 S1. History is a scheduling hint, never a receipt or execution credit.
-# ASCII-only. No process, network, live-run or candidate-policy operations.
+# ASCII-only. No network or live-run operations; current policy is read-only.
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
 
 function Assert-NightlyHistoryNoLink {
     param([string]$Path)
@@ -436,9 +437,24 @@ function Read-NightlyPriorFailures {
 }
 
 function Resolve-NightlyPriorFailures {
-    param($History, [object[]]$Suites, [ValidateSet('Full','PriorFailureSweep')][string]$QualificationMode = 'Full')
+    param($History, [object[]]$Suites, [ValidateSet('Full','PriorFailureSweep')][string]$QualificationMode = 'Full', $ExclusionContext = $null)
     if ($QualificationMode -cnotin @('Full','PriorFailureSweep')) { throw 'history-qualification-mode' }
+    $policy=$null; $exclusionProfile=''; $policyFileDigest=''; $platform='windows'
+    if ([IO.Path]::DirectorySeparatorChar -eq '/') { $platform='linux' }
+    if ($QualificationMode -ceq 'PriorFailureSweep') {
+        $exclusionProfile=[string]$History.profile
+        if ($exclusionProfile -cnotin @('rc','nightly') -or ($null -ne $ExclusionContext -and $ExclusionContext.profile -cne $exclusionProfile)) { throw 'partial-exclusion-profile-mismatch' }
+        $policy=Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+        [void](Get-NightlyPolicyProfile -PolicyObject $policy.Object -Profile $exclusionProfile)
+        $policyFileDigest=Get-NightlyHistoryDigest $policy.Path
+        if ($null -ne $ExclusionContext) {
+            foreach ($binding in @(@('policyDigest',$policy.Hash),@('exclusionPolicyFileDigest',$policyFileDigest),@('exclusionPlatform',$platform))) {
+                if ($ExclusionContext.PSObject.Properties.Name -ccontains $binding[0] -and $ExclusionContext.($binding[0]) -cne $binding[1]) { throw 'partial-exclusion-profile-mismatch' }
+            }
+        }
+    }
     Assert-NightlyHistorySchema $History
+    $excludedUids=[Collections.Generic.List[object]]::new()
     $unresolved=[Collections.Generic.List[object]]::new()
     foreach ($u in @($History.unresolved)) { $unresolved.Add($u) }
     $matches=[Collections.Generic.List[object]]::new()
@@ -460,7 +476,9 @@ function Resolve-NightlyPriorFailures {
                 $chunkIndex[[string]$class].Add($chunk)
             }
         }
-        $bySuite.Add([string]$suite.id,[pscustomobject]@{Suite=$suite;Nodes=$index;Chunks=$chunkIndex;AllChunks=$allChunks})
+        $exclusions=@($suite.exclusions)
+        if ($QualificationMode -ceq 'PriorFailureSweep') { $exclusions=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $exclusionProfile -SuiteId $suite.id -Platform $platform) }
+        $bySuite.Add([string]$suite.id,[pscustomobject]@{Suite=$suite;Nodes=$index;Chunks=$chunkIndex;AllChunks=$allChunks;Exclusions=$exclusions})
     }
     foreach ($member in @($History.members)) {
         $reason=''; $required=@(); $chunks=@()
@@ -470,9 +488,19 @@ function Resolve-NightlyPriorFailures {
             $suite=$entry.Suite
             $nodes=@()
             if ($entry.Nodes.ContainsKey([string]$member.className)) { $nodes=@($entry.Nodes[[string]$member.className].ToArray()) }
-            $required=@($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions @($suite.exclusions) -ProfileAware) })
+            $required=@($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions @($entry.Exclusions) -ProfileAware) })
+            if ($QualificationMode -ceq 'PriorFailureSweep') {
+                foreach ($n in $nodes) {
+                    foreach ($row in @($entry.Exclusions)) {
+                        if (Test-NightlyProfileNodeExcluded -Node $n -Exclusions @($row)) {
+                            $excludedUids.Add([pscustomobject]@{suite=[string]$member.suite;uid=[string]$n.Uid;className=[string]$member.className;method=[string]$n.Method;reason=[string]$row.Reason;owner=[string]$row.Owner})
+                            break
+                        }
+                    }
+                }
+            }
             if ($nodes.Count -eq 0) { $reason='current-class-missing' }
-            elseif ($required.Count -eq 0) { $reason='current-class-excluded' }
+            elseif ($required.Count -eq 0) { $reason='entirely-excluded-class' }
             else {
                 $needed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                 foreach ($n in $required) { [void]$needed.Add([string]$n.Uid) }
@@ -496,7 +524,7 @@ function Resolve-NightlyPriorFailures {
         }
         if ($reason) {
             $oldChunks=@($member.observations | ForEach-Object { $_.chunk } | Select-Object -Unique)
-            $unresolved.Add([ordered]@{suite=[string]$member.suite;className=[string]$member.className;chunk=($oldChunks -join ',');reason=$reason;evidence=@()})
+            $unresolved.Add([ordered]@{suite=[string]$member.suite;className=[string]$member.className;chunk=($oldChunks -join ',');reason=$reason;exclusionProfile=$exclusionProfile;evidence=@()})
         } else {
             $matches.Add([pscustomobject]@{suite=[string]$member.suite;className=[string]$member.className;chunks=@($chunks);requiredUids=@(Get-NightlyHistoryOrdinalStrings @($required.Uid))})
         }
@@ -508,5 +536,10 @@ function Resolve-NightlyPriorFailures {
     } else {
         foreach ($u in $unresolved) { Write-Warning -WarningAction Continue ('UNRESOLVED PRIOR FAILURE '+($u | ConvertTo-Json -Depth 10 -Compress)) }
     }
-    return [pscustomobject]@{members=@($matches.ToArray());unresolved=@($unresolved.ToArray())}
+    $policyDigest=''
+    if ($null -ne $policy) {
+        $policyDigest=$policy.Hash
+        if ((Get-NightlyHistoryDigest $policy.Path) -cne $policyFileDigest) { throw 'partial-exclusion-profile-mismatch: policy changed' }
+    }
+    return [pscustomobject]@{members=@($matches.ToArray());unresolved=@($unresolved.ToArray());exclusionProfile=$exclusionProfile;policyDigest=$policyDigest;exclusionPolicyFileDigest=$policyFileDigest;exclusionPlatform=$platform;excludedUids=@($excludedUids.ToArray() | Sort-Object -Property suite,uid -CaseSensitive)}
 }
