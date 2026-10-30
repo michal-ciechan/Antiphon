@@ -135,7 +135,7 @@ const originURL='https://fixture.invalid/card-1609/native.git';
 function proof(f) {
   const dir=scope.root+'/'+f.stem+'-proof'; fs.mkdirSync(dir);
   const bin=dir+'/bin';fs.mkdirSync(bin);
-  fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/bin/git "$'+'{args[@]}"\n',{mode:0o755});
+  fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git "$'+'{args[@]}"\n',{mode:0o755});
   f.proof=dir+'/proof';fs.mkdirSync(f.proof);
   const psi=call('pwsh',['-NoProfile','-NonInteractive','-Command',
     '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+
@@ -373,12 +373,14 @@ else {
     scope.cleaned=true;save();console.log('C1609_NATIVE session cleanup=absent root='+scope.root);
   } else {
     assert.equal(argv[0],'--case');const id=argv[1];assert(['N1','N2','N3'].includes(id));
+    scope.imageSource=scope.imageSource || scope.source;
+    scope.source=call('git',['rev-parse','HEAD']).stdout.trim();scope.phase='case';save();
     const f=fixture(id);let failure;
     // Update the shim's operation binding for every exact real source invocation.
     try {await ({N1:n1,N2:n2,N3:n3}[id])(f);}
     catch(e){failure=e;console.error(e.stack);}
     finally {cleanupObjects(f.names,f.ids);}
-    fs.writeFileSync(scope.root+'/'+id+'.json',JSON.stringify({source:scope.source,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
-    if(failure)process.exitCode=1;else console.log('C1609_NATIVE '+id+' passed cleanup=absent evidence='+scope.root+'/'+id+'.json');
+    fs.writeFileSync(scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json',JSON.stringify({source:scope.source,imageSource:scope.imageSource,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
+    if(failure)process.exitCode=1;else console.log('C1609_NATIVE '+id+' passed cleanup=absent evidence='+scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json');
   }
 }
