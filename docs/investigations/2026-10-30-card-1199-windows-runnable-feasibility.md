@@ -30,6 +30,27 @@ No AppHost/runner restart or source change is authorized or needed.
 
 ## Remaining evidence
 
+Initial 35-row census complete: **12 passed, 23 failed, zero skipped** after
+lifting only the local gates. ShapeConflict: 7/10; TrackedBaseline: 5/8;
+OutputConfinement's five requested rows: 0/5. Its existing Windows sibling
+passed separately (whole class: 1/5). No product change has been made.
+
+The failures split into ten POSIX-shell arrangements and thirteen Git/CRLF
+fixture cases. Fixture Git inherits host `core.autocrlf=true`; product Git
+disables global/system config. A scratch text-file comparison confirms that
+index LF/worktree CRLF can report dirty under the latter configuration after
+stat-cache invalidation. OutputConfinement's four graph cases reached the
+tool-side preservation assertions, then the script refused restored
+`Lib/obj/project.assets.json` as dirty. Exact failed-method controls with
+process-local isolated Git configuration are pending; they reuse the existing
+binary, retain all original failures and do not modify host settings.
+
+TrackedBaseline took 11m43.720s (lease
+`2171bb6a-366d-4c98-a5f7-4b4f0f059e0b`); OutputConfinement including the sibling
+took 11m08.098s (lease `eab8fc9f-6ef2-4e44-a9ec-27c747ebdb51`). Fresh TRX and
+logs are under `baseline-native` and `confinement-native` in the same evidence
+root. Final row table, controls, restoration and publication remain pending.
+
 First native class completed: **ShapeConflict 17 total, 7 passed, 10 failed,
 0 skipped**, 12m51.773s. Build: 0 errors, 1,380 warnings, 9m56.13s. The failures
 are the ten shell-driven arrangements; Windows cannot resolve their POSIX
