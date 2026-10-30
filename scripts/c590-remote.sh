@@ -7813,6 +7813,13 @@ fetch_origin() {
     git --git-dir="$proof" config core.alternateRefsCommand true >/dev/null 2>&1 || return 1
     for oid in "${present[@]}"; do n=$((n + 1)); printf 'create refs/c1008/present/%s %s\n' "$n" "$oid"; done > "$proof.present" || return 1
     git --git-dir="$proof" update-ref --stdin < "$proof.present" >/dev/null 2>&1 || return 1
+    # Temp has no network. Its host bundle is the only publication graph;
+    # attempting fetch first both violates that boundary and hides missing proof
+    # behind an unrelated network/auth error. Main retains its v1 fetch below.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        c1609_unbundle_host_proof
+        return $?
+    fi
     started="$(date +%s%N)" && [[ "$started" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
     timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch -q --filter=blob:none --no-tags --no-write-fetch-head \
         --no-auto-gc --no-auto-maintenance --no-recurse-submodules origin '+refs/heads/*:refs/c1008/origin/*' \

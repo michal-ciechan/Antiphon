@@ -221,6 +221,10 @@ public sealed class VolumeRetirementContentTests
             "host ancestry of A from advertised B must admit a Ready preview with zero removes; " +
             "base refused origin-present. exit=" + preview.Exit + " out=" +
             VolumeRetirementFixture.Truncate(preview.Output));
+        var unchanged = await VolumeRetirementFixture.Bash(
+            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " cat-file -e " +
+            VolumeRetirementFixture.Quote(seeded.B + "^{commit}") + " 2>/dev/null");
+        unchanged.Exit.ShouldNotBe(0, "H7 host bundle must not populate the target volume with B");
     }
 
     [Test]
