@@ -92,3 +92,12 @@ behind lower-priority regressions, then every remaining S2/S3 row. Ordering is a
 recorded scheduling deviation; exact original filters and floors remain intact.
 The two historical broad classes form the aggregate CP-27 + CP-28 (723 cases).
 Do not run another duplicate aggregate: those same complete rows satisfy it.
+
+First combined producer 20261030-161544-a4d6 at d5bda599b1edc88e52fa5d43e4c6114747417422
+failed compilation: three CS0246 errors from the fixture's missing
+Antiphon.Server.Application.Dtos import. This is introduced by this Debug task,
+not inherited. No tests executed and no red/pass witness credit is claimed.
+Compiler wall 168.15s; producer recorded 216.070s, execution 216.378s,
+wall 227.773s, admission 0s; source clean/build unknown. All 76 rows were
+build-failed. Correct only the import and rerun the same roster, with a fresh
+isolated output; retain this failed receipt and cost.
