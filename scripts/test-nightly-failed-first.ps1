@@ -142,8 +142,105 @@ function Test-EvidenceUnion {
     Assert-FF ($refused -and [Convert]::ToBase64String($before) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) 'immutable'
     $phases.exportResolveSeconds=$phase.Elapsed.TotalSeconds
 }
+function Copy-FFObject($Value) { return ($Value | ConvertTo-Json -Depth 40 | ConvertFrom-Json) }
+function Test-FFRefusal([scriptblock]$Action, [string]$Reason) {
+    try { & $Action | Out-Null; return $false } catch { return ($_.Exception.Message -clike ('*'+$Reason+'*')) }
+}
+function Test-RefusesIncompleteEvidence {
+    $replay=New-FFReplay
+    $fx=New-FFHistoricalFixture
+    $path=Join-Path $root 'valid-history.json'
+    $exp=Export-NightlyPriorFailures $fx.Run $path -PassThru
+    $h=Read-NightlyPriorFailures $path $exp.Digest
+    $current=@()
+    foreach ($suite in @('antiphon','session-runner','agents-pty','e2e')) {
+        $nodes=@($fx.Nodes[$suite])
+        $plan=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $suite)
+        $current += [pscustomobject]@{id=$suite; nodes=$nodes; chunks=$plan; exclusions=@()}
+    }
+    $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep
+    Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne ('c'*40) -and $h.policyHash -cne ('d'*64)) 'validControl'
+    Remove-Item -LiteralPath (Join-Path $fx.Run 'timing/groups-planned-antiphon.json')
+    $wrong=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'wrong-suite.json') -PassThru
+    $full=Resolve-NightlyPriorFailures $wrong.History $current Full
+    $un=@($full.unresolved | Where-Object { $_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-105' -and $_.reason -ceq 'historical-membership-unavailable' })
+    Assert-FF (-not $wrong.History.membershipComplete -and $un.Count -eq 1 -and @($wrong.History.members | Where-Object { $_.className -ceq 'Foreign.WrongSuiteTests' }).Count -eq 0 -and @($wrong.History.members).Count -eq 34) 'wrongSuiteFull'
+    Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $wrong.History $current PriorFailureSweep } 'historical-membership-unavailable') 'wrongSuitePartial'
+    $name='Antiphon.Tests.Application.TerminalRunnerSeatReleaseTests'
+    $missing=Copy-FFObject $current
+    $missing[0].nodes=@($missing[0].nodes | Where-Object { $_.ClassName -cne $name })
+    $r=Resolve-NightlyPriorFailures $h $missing Full
+    Assert-FF (@($r.unresolved | Where-Object { $_.className -ceq $name -and $_.reason -ceq 'current-class-missing' }).Count -eq 1) 'missingFull'
+    Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $h $missing PriorFailureSweep } 'current-class-missing') 'missingPartial'
+    $renamed=Copy-FFObject $missing; $renamed[0].nodes += New-FFNode ($name+'Renamed')
+    Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $h $renamed PriorFailureSweep } 'current-class-missing') 'renamed'
+    $excluded=Copy-FFObject $current
+    foreach ($n in $excluded[0].nodes) { if ($n.ClassName -ceq $name) { $n.Excluded=$true } }
+    $r=Resolve-NightlyPriorFailures $h $excluded Full
+    Assert-FF (@($r.unresolved | Where-Object { $_.className -ceq $name -and $_.reason -ceq 'current-class-excluded' }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $h $excluded PriorFailureSweep } 'current-class-excluded')) 'excluded'
+    $noChunk=Copy-FFObject $h
+    foreach ($m in $noChunk.members) { foreach ($o in $m.observations) { $o.chunk='' } }
+    $r=Resolve-NightlyPriorFailures $noChunk $current PriorFailureSweep
+    Assert-FF (@($r.members | Where-Object { $_.className -ceq $name }).Count -eq 1) 'noOldChunk'
+    $empty=Copy-FFObject $h; $empty.members=@(); $empty.unresolved=@(); $empty.fallbackChunks=@()
+    Assert-FF (@((Resolve-NightlyPriorFailures $empty $current Full).members).Count -eq 0 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $empty $current PriorFailureSweep } 'empty-history')) 'empty'
+    Assert-FF ((Test-FFRefusal { Read-NightlyPriorFailures $path ('0'*64) } 'history-digest-mismatch') -and (Test-FFRefusal { Read-NightlyPriorFailures -Path '' } 'empty-history-path')) 'digest'
+    $bad=Copy-FFObject $h; $bad.format='unsupported'; $badPath=Join-Path $root 'bad.json'; Write-FFJson $badPath $bad
+    Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $badPath } 'history-schema') 'schema'
+    $bad=Copy-FFObject $h; $bad.sourceSha='c'*40; Write-FFJson $badPath $bad
+    Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $badPath } 'history-provenance') 'provenance'
+    $diagPath=Join-Path $fx.Run 'antiphon-all-group-105-execution/invocation.diag'
+    $old=[IO.File]::ReadAllText($diagPath); [IO.File]::AppendAllText($diagPath,"`nchanged")
+    Assert-FF (Test-FFRefusal { Read-NightlyPriorFailures $path $exp.Digest } 'evidence-digest-mismatch') 'evidenceTamper'
+    [IO.File]::WriteAllText($diagPath,$old)
+    $oldTrx=$fx.Summary.suites[0].trx; $fx.Summary.suites[0].trx='../escape.trx'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'escape.json') } 'evidence-path-escape') 'escape'
+    $fx.Summary.suites[0].trx=$oldTrx; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    $link=Join-Path $fx.Run 'linked.trx'
+    New-Item -ItemType SymbolicLink -Path $link -Target (Join-Path $fx.Run $oldTrx) | Out-Null
+    $fx.Summary.suites[0].trx='linked.trx'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'link.json') } 'evidence-link') 'link'
+    $fx.Summary.suites[0].trx=$oldTrx; $fx.Summary.completedAt=''; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'working.json') } 'run-not-closed') 'working'
+    $fx.Summary.completedAt='2026-10-29T00:00:00Z'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $fx.Run 'inside.json') } 'history-output-inside-run') 'outputInside'
+    [IO.File]::WriteAllText($diagPath,($old+$old.Substring($old.IndexOf('TestNodeUpdateMessage'))))
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'duplicate.json') } 'history-identity-conflict') 'duplicateUid'
+    [IO.File]::WriteAllText($diagPath,$old)
+    $discPath=Join-Path $fx.Run 'antiphon-profile.discovery.json'; $disc=[IO.File]::ReadAllText($discPath); $d=$disc | ConvertFrom-Json
+    @($d.nodes | Where-Object { $_.uid -ceq 'diag-0' })[0].type='AnotherTests'; Write-FFJson $discPath $d
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'mapping.json') } 'history-identity-conflict') 'invalidMapping'
+    [IO.File]::WriteAllText($discPath,$disc)
+    $fx.Summary.suites[-1].Remove('execution'); Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    [IO.File]::WriteAllText((Join-Path $fx.Run 'antiphon-all-group-105-execution/other.diag'),$old)
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'ambiguous.json') } 'ambiguous-invocation') 'ambiguous'
+    $fx.Summary.suites[-1].execution='antiphon-all-group-105-execution/invocation.diag'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    [IO.File]::WriteAllText($diagPath,'truncated diagnostic')
+    $mal=$null
+    try { $mal=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'malformed.json') -PassThru } catch { }
+    Assert-FF ($null -ne $mal -and -not $mal.History.membershipComplete -and @($mal.History.unresolved).Count -gt 0 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $mal.History $current PriorFailureSweep } 'historical-membership-unavailable')) 'malformedFallback'
+    [IO.File]::WriteAllText($diagPath,$old)
+    $planPath=Join-Path $fx.Run 'timing/groups-planned-antiphon.json'
+    Write-FFJson $planPath ([ordered]@{version=1;suite='antiphon';runId='different-run';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);groups=@()})
+    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'binding.json') } 'history-provenance') 'boundPlan'
+    Remove-Item -LiteralPath $planPath
+    $caseHistory=Copy-FFObject $h; $caseHistory.members[0].className=$caseHistory.members[0].className.ToLowerInvariant()
+    $r=Resolve-NightlyPriorFailures $caseHistory $current Full
+    Assert-FF (@($r.unresolved).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $caseHistory $current PriorFailureSweep } 'current-class-missing')) 'caseSensitive'
+    $selector=Copy-FFObject $h; $selector.members[0].className='Antiphon.Tests.*'
+    Assert-FF ((Test-FFRefusal { Resolve-NightlyPriorFailures $selector $current Full } 'history-class-identity') -and (Test-FFRefusal { Resolve-NightlyPriorFailures $selector $current PriorFailureSweep } 'history-class-identity')) 'invalidSelector'
+    $execPath=Join-Path $fx.Run 'execution.json'
+    Write-FFJson $execPath ([ordered]@{format='antiphon-tunit-execution-v1';tunitVersion='1.44.0';mtpVersion='2.2.2';nodes=@([ordered]@{uid='diag-7';state='InProgress'})})
+    $fx.Summary.suites[-1].execution='execution.json'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    $j=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'execution-history.json') -PassThru
+    Assert-FF (@($j.History.members | Where-Object { $_.className -ceq 'Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests' }).Count -eq 1) 'executionJson'
+    $fx.Summary.suites[0].trx='C:\retired\logs\retained-run\'+$oldTrx; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    $rel=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'relocated-history.json') -PassThru
+    Assert-FF (@($rel.History.evidence | Where-Object { $_.relativePath -ceq $oldTrx }).Count -eq 1 -and @($rel.History.rebindings).Count -ge 1) 'relocation'
+}
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=26 }
     default { throw ('unknown case: '+$Case) }
 }
 $phases.wallSeconds=$clock.Elapsed.TotalSeconds
