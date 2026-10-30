@@ -1058,7 +1058,7 @@ public class AgentSessionLaunchFailureTests
     {
         var adapter = new FakeAgentProtocolAdapter { ReadyResult = false, ExitCode = 1 };
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
-        const string crash = "Process exited (ProcessExited, code 1).";
+        const string crash = "Process exited (ProcessExited, code 1). process ended (exit code 1; signal unknown)";
         adapter.OnKillGeneration = async () =>
         {
             adapter.ExitReason = AgentExitReason.ProcessExited;

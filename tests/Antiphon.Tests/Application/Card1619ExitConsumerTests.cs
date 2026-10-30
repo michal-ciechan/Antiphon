@@ -11,6 +11,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -33,6 +34,10 @@ public class Card1619ExitConsumerTests
     {
         var (native, json) = await Card1619NativeExitFixture.CaptureAsync(signal, code);
         await using var lifetime = native;
+        // Replay the real native snapshot through the production terminal adapter. Its legacy
+        // value may differ, but the runtime persistence seam must still read actual evidence.
+        var snapshot = new RunnerContractMapper().Map(native.Snapshot);
+        await AssertAdapterAsync(snapshot);
         await using var s = await Card1619ConsumerFixture.Scenario.CreateAsync();
         var task = await s.AddTaskAsync(AgentTaskStatus.Working, SessionStatus.Running,
             nativeId: native.Id, nativeGeneration: native.Generation);
@@ -70,6 +75,17 @@ public class Card1619ExitConsumerTests
         var text = AgentTaskLiveness.ClassifyFailure(native.Id, new(recovered.Status, recovered.EndedAt,
             recovered.FailureReason, recovered.TerminationSource, recovered.ExitCode, ExitSignal: recovered.ExitSignal), true);
         text.Reason.ShouldContain(clause);
+        if (signal == 9)
+        {
+            await using var policy = await Card1619ConsumerFixture.Scenario.CreateAsync();
+            await policy.AddTaskAsync(AgentTaskStatus.Working, SessionStatus.Running,
+                nativeId: native.Id, nativeGeneration: native.Generation);
+            policy.Harness(native.Id);
+            await policy.Runtime.ObserveExitAsync(evt with { ExitReason = AgentExitReason.CpuSpinKilled }, default);
+            await using var db = policy.CreateContext();
+            (await db.AgentSessions.SingleAsync(x => x.Id == native.Id)).Status.ShouldBe(SessionStatus.Stopped,
+                "CPU-spin reclaim is a resumable policy stop, never a successful task execution");
+        }
     }
 
     [Test]
@@ -159,6 +175,7 @@ public class Card1619ExitConsumerTests
     public async Task Pool_and_terminal_seat_do_not_release_from_code_zero()
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        f.Harness.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value.PoolEnabled = false;
         await f.EditAsync((task, _) => task.Workspace = WorkspaceMode.Shared);
         f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working, Token = null };
         await using (var db = f.Db())
@@ -176,11 +193,63 @@ public class Card1619ExitConsumerTests
         await using var verify = f.Db();
         (await verify.Agents.AnyAsync(x => x.Id == f.AgentId)).ShouldBeTrue();
         (await verify.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe("Working");
+        await using var warm = await RunnerSeatReleaseFixture.CreateAsync();
+        await warm.EditAsync((task, _) => task.Workspace = WorkspaceMode.Shared);
+        await using (var db = warm.Db())
+        {
+            var session = await db.AgentSessions.SingleAsync(x => x.Id == warm.SessionId);
+            session.ExitCode = 0;
+            session.ExitSignal = 9;
+            await db.SaveChangesAsync();
+        }
+        await warm.ReleaseFromSettlementAsync();
+        warm.Wire.ConditionalCommands.ShouldBe(0);
+        warm.RecordedStops.Killed.ShouldBeEmpty();
+        await using var warmed = warm.Db();
+        (await warmed.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe("WarmPool");
+        (await warmed.Agents.SingleAsync(x => x.Id == warm.AgentId)).PoolIdleSince.ShouldNotBeNull();
     }
 
     [Test]
-    public void Launch_cleanup_does_not_steal_a_normal_exit()
+    public async Task Launch_cleanup_does_not_steal_a_normal_exit()
     {
+        // A structured ready-gate kill returns compatibility -1 while the event stores actual
+        // zero/signal 9. Exercise the real launch catch, not only the pure ownership predicate.
+        await using var store = await Card1619ConsumerFixture.Scenario.CreateAsync();
+        var seed = await store.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Starting);
+        var inner = new Antiphon.Tests.Agents.FakeAgentProtocolAdapter { ReadyResult = false };
+        var structured = new StructuredAdapter(inner, new AgentExitObservation(0, 9));
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions {
+            AlwaysOn = false, ConnectionString = store.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<IAgentProtocolAdapterFactory>(new SingleAdapterFactory(structured))
+        });
+        inner.OnKillGeneration = async () =>
+        {
+            await using var db = store.CreateContext();
+            var target = await db.AgentSessions.SingleAsync(x => x.Id == seed.SessionId);
+            await harness.Runtime.ObserveExitAsync(new SessionRunnerExitedEvent(seed.SessionId, 0,
+                AgentExitReason.KilledByRequest, 0, target.StartedAt, ExitSignal: 9), default);
+        };
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+            var spec = new AgentLaunchSpec("raw", AgentKind.Raw, "/bin/sh", [], new Dictionary<string, string>(),
+                Path.GetTempPath(), 80, 24);
+            var thrown = await Should.ThrowAsync<Exception>(() => service.LaunchInteractiveAsync(seed.SessionId,
+                seed.AgentId, spec, null, false, null, default));
+            thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+        }
+        (await structured.Exited).ShouldBe(-1);
+        await using (var db = store.CreateContext())
+        {
+            var row = await db.AgentSessions.SingleAsync(x => x.Id == seed.SessionId);
+            row.FailureReason.ShouldBe(AgentSessionService.NotReadyBase);
+            row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            row.ExitCode.ShouldBe(0);
+            row.ExitSignal.ShouldBe(9);
+        }
+
+
         // Exercise the actual ownership predicate, keeping its generation/time/cause checks.
         var generation = DateTime.UtcNow.AddMinutes(-1);
         var type = typeof(AgentSessionService).GetNestedType("LaunchCleanupKill", BindingFlags.NonPublic)!;
@@ -200,6 +269,12 @@ public class Card1619ExitConsumerTests
     [Test]
     public async Task Api_attempt_and_diagnostics_preserve_optional_signal()
     {
+        await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
+            "Exited", null, AgentExitReason.Unknown, 0));
+        // Windows producers report signal zero with the original signed code. This portable
+        // consumer witness complements the still-owed native modern/inbox CP-2.
+        await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
+            "Exited", -1, AgentExitReason.KilledByRequest, 0, ExitSignal: 0));
         await using var s = await Card1619ConsumerFixture.Scenario.CreateAsync();
         var task = await s.AddTaskAsync(AgentTaskStatus.Working, SessionStatus.Failed);
         await SetExitAsync(s, task.SessionId, 0, 9);
@@ -219,6 +294,59 @@ public class Card1619ExitConsumerTests
         using var json = JsonDocument.Parse(await reader.ReadToEndAsync());
         json.RootElement.GetProperty("exitSignal").GetInt32().ShouldBe(9);
         json.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(0);
+    }
+
+    private sealed class SingleAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
+    }
+
+    private sealed class StructuredAdapter(Antiphon.Tests.Agents.FakeAgentProtocolAdapter inner,
+        AgentExitObservation observation) : IAgentProtocolAdapter
+    {
+        public Task<int> Exited => CompatibilityAsync();
+        private async Task<int> CompatibilityAsync() { await inner.Exited; return observation.ExitSignal is > 0 ? -1 : observation.ExitCode ?? -1; }
+        public Task<AgentExitObservation> Completion => ObserveAsync();
+        private async Task<AgentExitObservation> ObserveAsync() { await inner.Exited; return observation; }
+        public int? Pid => inner.Pid;
+        public AgentExitReason ExitReason => inner.ExitReason;
+        public string? AuditDirectory => null;
+        public event Action<string>? OnTextDelta { add { inner.OnTextDelta += value; } remove { inner.OnTextDelta -= value; } }
+        public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct) => inner.StartAsync(spec, ct);
+        public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => inner.KillAsync(timeout, ct);
+        public Task<AdapterGenerationKill> KillGenerationAsync(DateTime generation, TimeSpan timeout, CancellationToken ct) => inner.KillGenerationAsync(generation, timeout, ct);
+        public Task SendPromptAsync(string prompt, CancellationToken ct) => inner.SendPromptAsync(prompt, ct);
+        public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) => inner.WaitForFirstPromptOutputAsync(timeout, ct);
+        public Task SendInputAsync(string input, CancellationToken ct) => inner.SendInputAsync(input, ct);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => inner.ResizeAsync(cols, rows, ct);
+        public Task<bool> WaitForReadyAsync(CancellationToken ct) => inner.WaitForReadyAsync(ct);
+        public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => inner.WaitForTurnCompleteAsync(ct);
+        public string SnapshotRawOutput() => inner.SnapshotRawOutput();
+        public Task<string> SnapshotRawOutputAsync(CancellationToken ct) => inner.SnapshotRawOutputAsync(ct);
+        public string SnapshotRenderedScreen() => inner.SnapshotRenderedScreen();
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    private static async Task AssertAdapterAsync(SessionRunnerSessionDto observed)
+    {
+        var runner = new SessionReconciliationServiceTests.FakeRunnerClient {
+            Sessions = [observed with { Status = "Running", ExitCode = null, ExitSignal = null }] };
+        await using var adapter = new RunnerRawAdapter(runner);
+        await adapter.AttachAsync(observed.SessionId, default);
+        runner.Sessions = [observed];
+        var actual = await adapter.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        actual.ExitCode.ShouldBe(observed.ExitCode);
+        actual.ExitSignal.ShouldBe(observed.ExitSignal);
+        var compatibility = await adapter.Exited;
+        await using var store = await Card1619ConsumerFixture.Scenario.CreateAsync();
+        store.Harness();
+        store.Runtime.Register(observed.SessionId, adapter);
+        var persisted = await store.Runtime.GetSessionAsync(observed.SessionId, default);
+        persisted.Status.ShouldBe("Exited");
+        Should.SatisfyAllConditions(
+            () => compatibility.ShouldBe(observed.ExitSignal is > 0 ? -1 : observed.ExitCode ?? -1),
+            () => persisted.ExitCode.ShouldBe(observed.ExitCode, "compatibility -1 is never a native code"),
+            () => persisted.ExitSignal.ShouldBe(observed.ExitSignal));
     }
 
     private static async Task SetExitAsync(Card1619ConsumerFixture.Scenario s, Guid id, int code, int signal)
