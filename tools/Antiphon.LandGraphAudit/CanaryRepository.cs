@@ -32,15 +32,18 @@ internal sealed class CanaryRepository : IDisposable
         try
         {
             Directory.CreateDirectory(copy.Root);
-            var files = BuildInputPolicy.TrackedFiles(repo, includeUntracked: true).ToHashSet(StringComparer.Ordinal);
+            var tracked = BuildInputPolicy.TrackedFiles(repo, includeUntracked: true);
             // Ignored Markdown is still skippable input. Do not follow directory links while
             // enumerating; their tracked link entries are copied separately and rebased below.
+            var documentation = new List<string>();
             var docs = Path.Combine(repo, "docs");
             if (Directory.Exists(docs))
                 foreach (var file in Directory.EnumerateFiles(docs, "*", new EnumerationOptions
                          { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
                     if (file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-                        files.Add(Path.GetRelativePath(repo, file).Replace(Path.DirectorySeparatorChar, '/'));
+                        documentation.Add(Path.GetRelativePath(repo, file));
+            var files = CanaryEntries.Build(tracked, documentation, Path.DirectorySeparatorChar);
+            var rewriteOrdinarySource = CopyRaceRewrite(repo);
 
             var ordinary = new List<(string Source, string Destination, bool Skippable)>();
             void CopyOrdinary()
@@ -56,6 +59,7 @@ internal sealed class CanaryRepository : IDisposable
                     copy.CheckDestination(entry.Destination);
                     Directory.CreateDirectory(Path.GetDirectoryName(entry.Destination)!);
                     if (entry.Skippable) { File.WriteAllText(entry.Destination, Canary); return; }
+                    rewriteOrdinarySource?.Invoke(entry.Source);
                     if ((File.GetAttributes(entry.Source) & FileAttributes.ReparsePoint) != 0
                         && new FileInfo(entry.Source).LinkTarget is not null)
                         throw new IOException("canary source became a link: " + entry.Source);
@@ -96,6 +100,30 @@ internal sealed class CanaryRepository : IDisposable
     }
 
     internal static void CancelCopy() => Cancelled = true;
+
+    // Witness seam for the worker re-check. A temp fixture names one ordinary source to
+    // replace with a link after classification and before that re-check. Repositories
+    // outside the temp path are never read, and a missing marker does nothing.
+    private const string CopyRaceMarkerName = ".antiphon-landgraph-copy-race";
+
+    private static Action<string>? CopyRaceRewrite(string repo)
+    {
+        if (!repo.StartsWith(Path.GetTempPath(), StringComparison.Ordinal)) return null;
+        var marker = Path.Combine(repo, CopyRaceMarkerName);
+        if (!File.Exists(marker)) return null;
+        var spec = File.ReadAllText(marker).Trim();
+        var bar = spec.IndexOf('|');
+        if (bar <= 0 || bar == spec.Length - 1) return null;
+        var relative = spec[..bar].Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        var linkTarget = spec[(bar + 1)..].Trim();
+        var expected = Path.GetFullPath(Path.Combine(repo, relative));
+        return source =>
+        {
+            if (!string.Equals(Path.GetFullPath(source), expected, StringComparison.Ordinal)) return;
+            File.Delete(source);
+            File.CreateSymbolicLink(source, linkTarget);
+        };
+    }
 
     /// <summary>Removes the live canary. A second call is a no-op once the directory is gone.</summary>
     internal static void DeleteActive()
