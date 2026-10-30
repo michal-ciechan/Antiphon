@@ -14,7 +14,7 @@ The round-2 findings and validation below remain historical evidence.
 
 | Review defect | Required revision | Status |
 |---|---|---|
-| D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Pending |
+| D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Done: D-20, S3/S4, J8/W6 |
 | D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Pending |
 | D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Pending |
 | D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Pending |
@@ -110,6 +110,8 @@ classified manually as a process marker. Do not generalize that exception by nam
 | Existing receipts bind an immutable Docker ID | `c1008_volume` has Name/CreatedAt/Mountpoint/selected labels/driver/options; named local volumes have no container-style immutable Id in this implementation. | Bind daemon identity and the whole incarnation tuple; never substitute name alone. |
 | Final removal is already exact-name-only | Temp uses `compose_temp down -v`, then verifies target absence; main uses exact volume rm. | Temp retirement switches to an exact recorded allowlist, no Compose deletion. |
 | No temp containers means deploy-temp starts clean | Landed `case_deploy_temp_runner` checks only `c849_no_temp_containers`; Compose can reuse retained named volumes. C849 Retired requires zero private volumes. | D-20 blocks deploy until retirement completes; C849 zero stays mandatory. |
+| A host deploy check can protect the retirement epoch | `deploy-server2.ps1:1196` POSTs `/drain/clear` before the host cases at 1214-1215; `Assert-TempProjectAbsent` checks containers only. `c1008_status_proof` binds both retiredAt and retireWhenIdle. | Wrapper read-only preflight must refuse before either drain POST or any mutating host case, preserving resumability. |
+| Every Refused journal must block deployment forever | v2 is new; a preview writes Pending/Refused even when no target effect occurs. There is no existing v2 closure command. | D-20 distinguishes inert preview records from effects and defines audited, observation-only closure. |
 | Historical Compose is necessary when temp is absent | Both C994 cleanup and recycle materialize models before absence is fully handled; generation binding can inspect old source. | An absent generation needs no old model. Exited-container ownership comes from fresh actual topology. |
 | A checksum proves a receipt came from the operator | Current JSON/hashes are files under trusted host custody; a copied self-authored hash is not authentication. | Apply accepts only its protected host journal, not arbitrary supplied PASS JSON. |
 | Manual proof is already a reusable receipt schema | Prototype lacks schema, operation/volume incarnation, expiry and durable intents; publication rows omit reflog objects and original tag objects. | Preserve as historical evidence; no automatic conversion to Ready. |
@@ -547,15 +549,55 @@ Rejected: unlimited retries, reusing the first census, or accepting unstable fin
 rows merely because containers have already been removed.
 
 **D-20 — Retained volumes stop the rollout and block a new temp deployment.**
-Under the existing rollout lock, `case_deploy_temp_runner` must census all four
-exact temp-private names before seed/build/Compose or retirement-clear effects.
-Any present volume, incomplete census, or pending/refused/partial retirement record
-refuses `TempVolumesRetained` and names the operation (or unjournaled), exact
-retained names and Preview/Resume recovery. Even all-absent with unresolved intents
-requires journal reconciliation first. Do not adopt retained state automatically.
-Only confirmed absence and no unresolved operation permits fresh temp deployment.
-Read-only preview reservations do not persist after release; durable operation
-states still prevent deployment from silently invalidating a pending retirement.
+Add `Assert-TempRetirementClearable` to the **wrapper's deploy-temp recreation
+branch**, immediately after the existing container-absence check and BEFORE
+`/drain/clear`, `/drain`, `runner-cache-seed` or any mutating host case. This is a
+read-only census of the four exact names and the protected operation journal;
+it creates no retirement record, changes no runner state, and performs no cleanup.
+Failure returns nonzero with no drain POST or host deployment/seed invocation.
+In particular a refused/partial retirement keeps its original retiredAt and
+retireWhenIdle, so its Preview/Resume recovery remains reachable.
+
+Use the D-8 host coordinator to own FD 8 across this check and the wrapper's
+reactivation handshake; do not release the lock between admission and clear,
+nor acquire it again through a nested SSH child. EOF/timeout releases the owned
+coordinator without deployment. Existing already-current, available temp reuse
+does not clear retirement or recreate volumes and keeps its existing path.
+`case_deploy_temp_runner` also rechecks the same predicate under FD 8 immediately
+before checkout/build/Compose, covering direct host callers. The host recheck is
+defense in depth; it cannot replace the wrapper check. Do not adopt retained state.
+
+The predicate is over **all** protected journal entries for this daemon and these
+four names, not just the most recent operation or matching retirement epoch.
+Phase, target effects/intents and helper ownership are recorded independently of
+the status label. An incomplete/unreadable/unknown-schema journal census refuses.
+
+| Current observation / journal state | Deploy-temp disposition |
+|---|---|
+| Any of the four volumes is present, even with no journal or a Completed/Closed record | Block `TempVolumesRetained`; list exact retained names, incarnation and operation or unjournaled. |
+| Active operation/owned helper or unresolved child ownership, even with no target intent | Block; stop/join through the owning operation before reconciliation. |
+| Preview-only Pending/Ready/Refused, no container/volume effect or durable intent, no active owner/helper, all four absent | Inert; does not block. Preserve the record, including expired Ready. A refused no-effect preview never needs a close merely to deploy. |
+| Apply Pending/Ready/Refused before any target intent/effect, inactive and all four absent | Inert by the same no-effect rule; never infer this from a status string alone. |
+| Any nonterminal record with a durable container/volume intent or observed effect; Applying, Partial, PartialRefused or interrupted cleanup/apply | Block, including all-absent. Resume/reconcile or explicitly Close; an absent target cannot silently resolve an intent. |
+| Completed with all intents/results resolved and owned children joined, or an audited Closed record | Nonblocking only when current census independently proves all four absent. |
+| Inconsistent terminal state, unknown outcome, lost custody or failed enumeration | Block unknown; no timestamp, newer operation or operator reason bypasses missing proof. |
+
+Add a mutually exclusive, operator-authorized parameter set to the D-10 entry:
+`pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <id>
+-ExpectedJournalDigest <sha256> -ReasonFile <file>`. This is an audited **journal
+transition**, never a delete or retirement-clear command. Under the same lock,
+verify authority/custody/digest, inactive operation and joined children, exact
+daemon/target identity, complete container/reference census and all four volumes
+absent. Reconcile prior intents as `removed-observed` only where the absence was
+actually observed; record un-attributed absence separately when no intent exists.
+Append actor/authority, UTC, reason, prior digest, observations and final `Closed`
+digest without rewriting history. Failed persistence leaves the blocker intact.
+A stale retiredAt does not prevent this observation-only closure; it never grants
+apply authority. Present/replaced volumes, unknown journal/children or any unsafe
+census refuse Close and require content recovery plus Preview/Resume. A later
+Completed operation does not silently erase an older unresolved effect record.
+Document this command and these refusals in the retirement runbook. No force-close,
+automatic supersede, manual file deletion or adopt switch is provided.
 
 A content/census refusal in retire-temp keeps the standing main accepting work but
 returns nonzero and leaves rollout gate 9 incomplete. It cannot report the rollout
@@ -673,8 +715,8 @@ made by this Plan task.
 |---|---|---|
 | S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. Add native guards and their `WindowsUnitSkipRoster.cs` entries in this same test slice. | C1/C2/J1/H7 fail on intended readiness/no-deletion assertions against unchanged production at the landed Code baseline; CP-1/2/14. |
 | S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H7 and R3-R6; D-15 full-roster output. |
-| S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and deploy-temp retained-volume preflight in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations and their skip-roster identities in the same commit. | J1-J10, R1/R2 and N2/N3. |
-| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. ASCII transport scripts; LF shell files. |
+| S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and FD-8 deploy-temp retained-volume/journal recheck in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes, partial resume and D-20 blocking/Close state transitions. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations and their skip-roster identities in the same commit. | J1-J10, R1/R2 and N2/N3; J8 covers Close. |
+| S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1` including the audited Close parameter set; update `scripts/deploy-server2.ps1` with read-only `Assert-TempRetirementClearable` BEFORE clear/drain/host effects and the single-owner FD-8 handshake. Update `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. W6 observes the actual wrapper HTTP and host-call trace. ASCII transport scripts; LF shell files. |
 | S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..13; update runbook command examples and refusal recovery. |
 
 Relocate the four old historical-image-specific methods in
@@ -843,7 +885,7 @@ path; H1-H6 remain portable host logic. Exact methods and obligations:
 | J5 | `Changed_content_and_remote_proof_refuse` | New private/public ref, dirty bytes after preview and remote snapshot loss; reprove permissible remote advancement. PC: reuse preview publication. |
 | J6 | `Every_delete_rechecks_full_live_guards` | New running/exited refs, bind aliases, busy/routed/bound land or changed retirement between deletes; exact-name-only effects. Inject Unstable x3 then stable, x4 exhaustion before first delete, between state/dind deletes, and resume; assert 2/5/10 backoff with fake clock, no next delete and complete attempt journal. Malformed/bound-work is never retried as Unstable. PC: reuse initial census or accept last unstable rows. |
 | J7 | `Lock_order_excludes_supported_writers` | Real flock barriers: concurrent create/recycle/resume serializes; cache-only path cannot invert; timeout no mutation. PC: skip rollout lock. |
-| J8 | `Journal_intents_and_partial_resume_are_exact` | Every persistence/delete cut, no-intent absence, partial success, replacement, remaining-role dependencies and copy failure. PC: infer deleted from missing file/error. |
+| J8 | `Journal_intents_and_partial_resume_are_exact` | Every persistence/delete cut, no-intent absence, partial success, replacement, remaining-role dependencies and copy failure. D-20 Close: stale effect record/all absent closes with append-only audit; present/replaced volume, active/unknown child, wrong digest/authority, incomplete census and failed journal write refuse; no delete/clear and no invented attribution. PC: infer deleted from missing file/error or close without the full census. |
 | J9 | `Legacy_receipts_are_history_only` | All v1/missing/conflicting/foreign receipts preserve history but require fresh v2 proof; no schema-upgrade-to-PASS. PC: import old success as Ready. |
 | J10 | `Manual_attestation_is_exact_and_cannot_waive_findings` | Correct human/delegate authority plus exact receipt permits same proof; wrong/missing attestation or any unsafe finding refuses. PC: manual flag bypasses audit. |
 | H1 | `Host_proves_complete_origin_ancestry` | Same-ref equality, advanced-origin ancestry, tags/tree/blob semantics and origin graph absence; use real isolated Git. PC: accept OID presence without reachability. |
@@ -858,7 +900,7 @@ path; H1-H6 remain portable host logic. Exact methods and obligations:
 | W3 | `Bridge_validates_and_preserves_receipt_fields` | Strict JSON/quoting, multiline/path characters, large proof by file, per-operation staging, ignored evidence and ASCII/LF scripts. |
 | W4 | `Retire_temp_ignores_missing_stack_and_historical_compose` | Entry-level no old stack/source/image requirement, including absent/exited containers and old callers with -Sha. |
 | W5 | `Main_recycle_and_existing_deploy_contracts_are_preserved` | Non-retirement -Sha requirement, main generation/resume behavior and existing authority gates stay enforced. |
-| W6 | `Retained_volumes_block_deploy_and_completion` | Refused/partial/unjournaled retained sets block deploy before Compose/seed/clear, name exact recovery; all absent with pending intent still blocks; completed absence admits. Retire-temp refusal returns nonzero, no C849 Retired invocation/success; completed retirement retains the zero-private-volume cache contract. PC: check only containers or ignore refusal exit. |
+| W6 | `Retained_volumes_block_deploy_and_completion` | Actual wrapper refuses retained/partial/unjournaled sets with zero `/drain/clear` or `/drain` POSTs and zero seed/deploy host-case calls; retiredAt/retireWhenIdle unchanged and same-operation Resume succeeds after recovery. Exercise every D-20 state-table row: all-absent unresolved intent blocks, inactive no-effect refused preview admits, completed/closed absence admits, present volume still blocks with a terminal journal. Direct host path rechecks under FD 8; barrier proves supported retirement cannot enter between preflight and clear. Retire-temp refusal returns nonzero, no C849 Retired invocation/success; completed retirement keeps zero-private-volume contract. PC: move guard after clear, check only containers, block every Refused label, or ignore refusal exit. |
 | N1 | `Read_only_namespace_and_host_proof_are_real` | Real helper kernel write-denial at each mounted alias, UID/offline/no secrets, linked pointers and hooks, before/after bytes including an initially empty /tmp volume that stays empty (volume-nocopy on every named mount); timeout kills only owned helper. |
 | N2 | `Replacement_and_concurrent_reference_block_delete` | Real same-name replacement between phases, new named/bind reference, supported writer blocked by lock; no wrong volume deleted. |
 | N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/all three named caches/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
