@@ -23,7 +23,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 | D-7 | Master/rc port order after top-up 38, definition scope | Done: port and ordering section |
 | D-8 | Windows skip roster and closure checkpoint | Done: slice edits and CP-12 |
 | D-9 | Documentation pins and checkpoint | Done: S5 pin rewrites, CP-13 and CP-8 |
-| D-10 | Real private-origin path baseline-red witness | Pending |
+| D-10 | Real private-origin path baseline-red witness | Done: H7 real-path baseline, CP-14 red / CP-3 green |
 
 ## Problem and evidence
 
@@ -638,7 +638,7 @@ controls so a test cannot pass merely because every attempt was refused.
 | F-21 | Crash/retry guesses results or removes replacement after partial delete | Intent/result state machine and reproof of remaining set; J8, N3. |
 | F-22 | Helper survives cancellation and retains access, or cleanup kills another helper | Owned ID+nonce+label, bounded termination/join, no prefix cleanup; H6, R1, N1. |
 | F-23 | Current tool/schema mismatch accidentally accepts old semantics | Protocol/policy negotiation and current-tool integrity, no unknown-schema success; C1/J4/W3. |
-| F-24 | Tests manufacture a receipt or fake success without running the real gate | Red at base for observable behavior, real Git witnesses and separate real Docker cases; CP-1/2 and N1-N3. |
+| F-24 | Tests manufacture a receipt or fake success without running the real gate | Red at base for observable behavior, real Git witnesses and separate real Docker cases; CP-1/2/14 and N1-N3. |
 
 Other risks: a fresh full re-audit costs time; use shared per-origin graph and
 measure phases, never weaken content checks for speed. Host-origin credentials
@@ -657,8 +657,8 @@ made by this Plan task.
 
 | Slice | Files and concrete change | Tests / closure |
 |---|---|---|
-| S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. Add native guards and their `WindowsUnitSkipRoster.cs` entries in this same test slice. | C1/C2/J1 fail on intended readiness/no-deletion assertions against unchanged production at the task base; CP-1/2. |
-| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H6 and R3-R6; D-15 full-roster output. |
+| S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. Add native guards and their `WindowsUnitSkipRoster.cs` entries in this same test slice. | C1/C2/J1/H7 fail on intended readiness/no-deletion assertions against unchanged production at the landed Code baseline; CP-1/2/14. |
+| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H7 and R3-R6; D-15 full-roster output. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and deploy-temp retained-volume preflight in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations and their skip-roster identities in the same commit. | J1-J10, R1/R2 and N2/N3. |
 | S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. ASCII transport scripts; LF shell files. |
 | S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..13; update runbook command examples and refusal recovery. |
@@ -787,7 +787,9 @@ Inherited failures are rerun only at that base with the exact failing selection.
 
 C = `VolumeRetirementContentTests`, J = `VolumeRetirementReceiptTests`,
 H = `VolumeRetirementHostProofTests`, W = `VolumeRetirementWrapperTests`,
-N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
+N = `VolumeRetirementDockerTests`. H7 is intentionally in the Linux-only
+`VolumeRetirementContentTests` class because it executes the real remote shell
+path; H1-H6 remain portable host logic. Exact methods and obligations:
 
 | ID | Method | Design property and red/control |
 |---|---|---|
@@ -821,6 +823,7 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | H4 | `Proof_coverage_binding_and_freshness_are_exact` | Missing/duplicate/extra/wrong-origin/object/nonce/digest/timestamp row refuses, including multi-repo origin reuse. PC: subset proof treated complete. |
 | H5 | `Origins_and_git_configuration_cannot_redirect_credentials` | Unapproved origin/protocol, userinfo, local config/redirect/helper injection refuse before credential invocation. PC: use inventory URL directly. |
 | H6 | `Child_deadline_and_output_redaction_are_bounded` | Timeout, pipe holder, process-tree death, large stream and sentinel errors; no leaked auth/URLs/raw stderr. PC: child survives deadline or output copied verbatim. |
+| H7 | `Private_origin_advanced_head_uses_real_host_proof` | Real bridge/host writer/audit with fake Docker/SSH and isolated real Git A->B: credential-free ls-remote/fetch fail 128, host can read B, volume contains only A. Red at landed baseline: origin-present refusal despite A published; green v2: host ancestry proves A, complete Ready preview, zero removes. See baseline recipe below. |
 | W1 | `Retire_temp_uses_current_proof_protocol` | Auto-preview/apply, explicit receipt, DryRun, all phase and absent no-op entry behavior. |
 | W2 | `Manual_parameters_require_operator_attestation` | Parameter sets, exact names/authority/digest, no force bypass; generated template is not accepted as signed. |
 | W3 | `Bridge_validates_and_preserves_receipt_fields` | Strict JSON/quoting, multiline/path characters, large proof by file, per-operation staging, ignored evidence and ASCII/LF scripts. |
@@ -830,6 +833,34 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | N1 | `Read_only_namespace_and_host_proof_are_real` | Real helper kernel write-denial at each mounted alias, UID/offline/no secrets, linked pointers and hooks, before/after bytes; timeout kills only owned helper. |
 | N2 | `Replacement_and_concurrent_reference_block_delete` | Real same-name replacement between phases, new named/bind reference, supported writer blocked by lock; no wrong volume deleted. |
 | N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/all three named caches/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
+
+H7 baseline recipe (S1): construct a tiny bare origin with commit A and then B;
+clone the volume snapshot before B, remove any retained advertisement of A at the
+origin, and prove with real Git that A is B's ancestor while B is absent in the
+volume. A fake Docker driver executes the extracted production audit, not a canned
+PASS. A fake SSH/file transport runs the real `c590-real.ps1`
+`Get-C1008RetireProofExports` / `Write-C1008HostOriginProof` path and real shell
+consumer against owned local scratch. Boundary-specific Git shims map an approved
+fixture HTTPS origin to the bare fixture only on the credential-capable host;
+inside the helper, ls-remote and fetch return auth-classified 128 with a fake
+sentinel diagnostic. All local Git graph/content operations use real Git. The
+fixture adapter is test-only and cannot enable file/ext origins in production.
+Retain the legacy image/cleanup context needed to reach the base audit, so missing
+history, missing commands or new arguments cannot cause this red.
+
+At the landed CARD-1607 baseline the real host writer advertises B, but the shell's
+fetch cannot authenticate and B is not present locally: it refuses at
+`origin-present`. Assert successful publication/preview admission as the intended
+failing assertion, and separately retain trace evidence that the helper saw 128,
+the real host writer ran, its advertisement named B, and the base refusal was the
+expected publication check. Do not prewrite a proof receipt or mock its parser.
+With v2, the real host writer fetches B's graph in origin-only scratch and proves
+A; the same entry reaches Ready with no removals, no helper credentials and the
+A->B witness in the receipt. Include a host-read-128 control and an actually
+unpublished child control: each must refuse and list its cause. Commit the S1
+red fixture before any production fix; CP-14 records one intended assertion red,
+CP-3 selects the identical H7 method green with the whole content class. H7's
+Native roster entry is added in S1 and checked in CP-12.
 
 Preservation rows: R1 = seven original named RollingVolumeRecycleScriptTests methods in
 CP-8; R6 = the two CARD-1607 methods in CP-8; R2 = nine named retired-container methods in CP-9; R3 = 30 argument results
@@ -845,7 +876,7 @@ Mutation stage, scoped to exact methods on a bound pack, never a whole class.
 Read `GET /api/runner-defaults` and `GET /api/session-runners` again at dispatch.
 They were read again on 2026-10-30: revision 2; an eligible Linux default
 and an eligible Windows peer were advertised (8/10 and 2/2 occupied respectively). These are
-observations, not permanent placement instructions. CP-1..10 require the native
+observations, not permanent placement instructions. CP-1..10 and CP-14 require the native
 Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11/12/13
 use the native Windows PowerShell/Git lane (CP-12/13 are portable checks reusing its build). No host is pinned. Omit `-Runner`;
 use `-Platform Linux`/`Windows` only for the rows needing that OS. Plan/Review is
@@ -860,7 +891,7 @@ names/arguments and no suffix sibling. No full-path OR. Every OR operand has
 parentheses and a trailing star. Table pipes are escaped. No zero-test credit.
 
 Use the checkpoint tool's `run --plan <this-file> --rows <row-list>` once per
-committed group: S1 CP-1/2; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12/13. Run bootstrap
+committed group: S1 CP-1/2/14; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12/13. Run bootstrap
 through `scripts/build-slot.ps1` if needed; the checkpoint runner takes build slots
 for its rows. Continue `wait` until terminal exit (75 is running), in foreground
 wait windows no longer than 60 seconds. Preserve exact CHECKPOINT lines with source
@@ -870,8 +901,8 @@ Remove only task-owned alternate outputs after all runs have joined. CP-11 inten
 Import the manifest to ignored YAML to set per-row deadlines explicitly rather
 than inherit the importer's 15-minute/3x floor: provisional execution caps CP-1=10m,
 CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=2m,
-CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m. These are roughly 2x the stated estimates, not measured-p95
-claims. Red-group charged cap 12m, final Linux 29m, Windows 14m; each hard wall
+CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m, CP-14=2m. These are roughly 2x the stated estimates, not measured-p95
+claims. Red-group charged cap 14m, final Linux 36m, Windows 14m; each hard wall
 adds one finite 45m admission allowance. Reconcile with measured p95 under the
 collection obligation before final qualification. If a group reaches 30m, stop
 repeating it and hand timing evidence to Debug. No full assembly run is authorized.
@@ -882,7 +913,8 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
 | CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 1 | true |
-| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C14,J1-J10 | all 24 listed methods, 0 failed/skipped | 24 | 5 | true |
+| CP-14 | S1 | CP-1 | linux-private-origin-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof` | H7 baseline | 1 executed, intended publication-admission assertion failure; real base path reached | 1 | 1 | true |
+| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C14,J1-J10,H7 | all 25 listed methods, 0 failed/skipped | 25 | 5 | true |
 | CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 | all 12 listed methods, 0 failed/skipped | 12 | 1 | true |
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
@@ -890,7 +922,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Documentation_and_transport_pins_match*)` | R1,R6,doc transport | all 10 methods, 0 failed/skipped | 10 | 1 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
-| CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |
+| CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |
 | CP-12 | S2-S5 | CP-11 | windows-unit-roster | `/*/Antiphon.Tests.Scripts/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | Windows roster closure | all 3 methods, 0 failed/skipped | 3 | 1 | true |
 | CP-13 | S2-S5 | CP-11 | windows-doc-pins | `/*/Antiphon.Tests.Infrastructure/DockerStackDocumentationTests/(Retired_temp_cleanup_and_retirement_gates_match*)\|(Main_volume_recycling_is_scripted_only*)` | S5 doc pins | both methods, 0 failed/skipped | 2 | 1 | true |
 
