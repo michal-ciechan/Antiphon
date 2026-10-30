@@ -192,4 +192,86 @@ public sealed class TaskCeilingControlTests
         retried.CeilingOperatorExtended.ShouldBeFalse();
         h.Stopper.Killed.ShouldContain(h.SessionId, "Retry retains its explicit stop semantics");
     }
+
+    [Test]
+    [Arguments("same-role")]
+    [Arguments("different-role")]
+    [Arguments("no-card")]
+    [Arguments("pre-hold-successor")]
+    public async Task C1610_Successor_fence_uses_card_and_role(string arm)
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        if (arm != "no-card") await SeedCardAsync(h);
+        Guid successor = arm == "pre-hold-successor" ? await SeedSuccessorAsync(h) : Guid.Empty;
+        await h.SweepAsync();
+        (await h.TaskAsync()).CeilingHoldEpisodeId.ShouldNotBeNull();
+        if (arm != "pre-hold-successor")
+            successor = await SeedSuccessorAsync(h, arm == "different-role" ? AgentTaskRole.Debug : AgentTaskRole.Code);
+        await h.FinishAsync();
+        var settled = await h.TaskAsync();
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldContain("Completed the authorized work");
+        settled.NextStage.ShouldBe(arm == "different-role" ? PipelineHandoffKind.Review : PipelineHandoffKind.Decide,
+            "a held result must not launch a second same-card/role chain; missing lineage needs a decision");
+        if (arm != "different-role" && arm != "no-card") settled.NextHandoff.ShouldContain(successor.ToString("D"));
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Replacement_racing_handoff_is_held()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        await SeedCardAsync(h);
+        await h.SweepAsync();
+        await h.FinishAsync();
+        var settled = await h.TaskAsync();
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Review);
+        Guid settlement;
+        await using (var db = h.Context())
+            settlement = await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.TaskId && e.Type == AgentTaskEventType.Completed)
+                .Select(e => e.Id).SingleAsync();
+        await SeedSuccessorAsync(h);
+        await using (var db = h.Context())
+        {
+            var service = new PipelineHandoffActionService(db, h.Clock);
+            var error = await Should.ThrowAsync<ConflictException>(() => service.RecordAsync(h.TaskId,
+                new PipelineHandoffActionRequest(settled.Attempt, settlement, AgentTaskRole.Review, 0,
+                    "eligible", "Attempt automatic successor reservation"), "operator", CancellationToken.None));
+            error.Code.ShouldBe("handoff_successor_held");
+        }
+        await using (var db = h.Context())
+        {
+            (await db.PipelineHandoffActions.CountAsync()).ShouldBe(0);
+            (await db.AgentTasks.CountAsync()).ShouldBe(2);
+        }
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    private static async Task SeedCardAsync(TaskCeilingHarness h)
+    {
+        await using var db = h.Context();
+        var now = h.Clock.GetUtcNow().UtcDateTime;
+        var project = new Project { Id = Guid.NewGuid(), Name = "Ceiling successor", CreatedAt = now, UpdatedAt = now };
+        var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "Ceiling successor" };
+        var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "Doing", StateKey = "doing" };
+        var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+            Identifier = "C1610-" + Guid.NewGuid().ToString("N")[..8], Title = "Ceiling successor" };
+        db.AddRange(project, board, column, card);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == h.TaskId);
+        task.CardId = card.Id;
+        task.ProjectId = project.Id;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedSuccessorAsync(TaskCeilingHarness h, AgentTaskRole role = AgentTaskRole.Code)
+    {
+        await using var db = h.Context();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.TaskId);
+        var id = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CardId = task.CardId, ProjectId = task.ProjectId,
+            Role = role, Title = "Separate replacement", Goal = "Replacement work", WorkingDirectory = task.WorkingDirectory,
+            CreatedAt = h.Clock.GetUtcNow().UtcDateTime, Status = AgentTaskStatus.Succeeded });
+        await db.SaveChangesAsync();
+        return id;
+    }
 }
