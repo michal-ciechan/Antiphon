@@ -96,6 +96,11 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("agentsPtyAboveAdmitted").GetBoolean().ShouldBeFalse("agents-pty planned at 1800 s was admitted under a 1200 s watchdog");
         observed.GetProperty("markdownPdfAboveAdmitted").GetBoolean().ShouldBeFalse("markdown-pdf planned at 1800 s was admitted under a 1200 s watchdog");
         observed.GetProperty("messagingAboveAdmitted").GetBoolean().ShouldBeFalse("messaging planned at 1800 s was admitted under a 1200 s watchdog");
+        observed.GetProperty("lowFactorWatchdog").GetDouble().ShouldBe(3600, "E95=0.2 was admitted under the planner ceiling");
+        observed.GetProperty("lowFactorReason").GetString().ShouldBe("unmeasured-cost");
+        observed.GetProperty("lowFactorAdmitted").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("tinyFactorWatchdog").GetDouble().ShouldBe(3600, "E95=0.01 produced a cap below the suite watchdog");
+        observed.GetProperty("emaxOrderWatchdog").GetDouble().ShouldBe(3600, "Emax below E95 was treated as measured");
     }
 
     [Test]
