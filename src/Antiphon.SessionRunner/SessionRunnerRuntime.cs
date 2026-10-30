@@ -75,6 +75,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // The DI singleton owns samples. Reads never launch a child.
     internal CodexCliVersionProbe? CodexCliProbe { get; set; }
 
+    private readonly ILinuxCustodyRecovery? _linuxRecovery;
+
     private string? DetectCustodyBackend() => BackendPlatformIsWindows
         ? BackendDecision.Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
@@ -184,16 +186,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         TimeProvider? timeProvider = null,
         CodexCliVersionProbe? codexCliProbe = null,
         IOptions<PhoneHomeSettings>? phoneHomeSettings = null,
-        RunnerWorkspaceParkService? workspaceParkService = null)
+        RunnerWorkspaceParkService? workspaceParkService = null,
+        ILinuxCustodyRecovery? linuxRecovery = null)
     {
         _settings = settings.Value;
+        _linuxRecovery = linuxRecovery;
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
             _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
         if (_workspacePark is null) LocalWorkspaceVerifier = new();
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
-        _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
+        _custody = new(() => new RunnerCustodyLedger(
+            Path.Combine(_settings.SessionLogPath, "verification-custody"), recovery: _linuxRecovery));
         _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
@@ -500,6 +505,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public VerificationExecutionBinding ResolveCustodyBinding(Guid sessionId, Guid executionId, DateTime acceptedStartedAt) =>
         _custody.Value.Resolve(sessionId, executionId, acceptedStartedAt);
+
+    internal RunnerCustodyLedger CustodyForTests => _custody.Value;
+
+    internal void AdoptSessionForTests(RunnerSession session)
+    {
+        if (!_sessions.TryAdd(session.SessionId, session))
+            throw new InvalidOperationException("session already adopted");
+    }
+
+    internal RunnerSession SessionForTests(Guid sessionId) => _sessions[sessionId];
 
     private async Task<RunnerSessionDto> StartCoreAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
@@ -2455,6 +2470,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             VerificationBinding = binding;
             _custodyLedger = ledger;
         }
+
+        /// <summary>Production leaves this null. Tests return a non-final status without a live host pipe.</summary>
+        internal Func<VerificationExecutionBinding, CancellationToken, Task<VerificationCustodyStatus>>? CustodyObserveOverride { get; set; }
+
+        internal void MarkLaunchFinishedForTests() => _launchFinished.TrySetResult();
+
+        internal Task StartCustodyObserverForTests()
+        {
+            lock (_gate)
+                _custodyShutdown ??= Task.Run(ObserveCustodyThenShutdownAsync);
+            return _custodyShutdown;
+        }
+
+        internal Task ShutdownForTests() => ShutdownHostAsync();
         private readonly Guid _sessionId;
         internal Guid SessionId => _sessionId;
         private readonly SessionRunnerSettings _settings;
@@ -4474,9 +4503,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 var observed = _custodyLedger.ReadProducer(binding);
                 if (observed is null)
                 {
-                    if (_client is not { } client) return _custodyLedger.ReadUnavailable(binding);
-                    var seal = HasExited || _custodyLedger.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
-                    observed = await client.GetCustodyAsync(binding, seal, ct);
+                    if (CustodyObserveOverride is { } observe)
+                        observed = await observe(binding, ct);
+                    else if (_client is not { } client) return _custodyLedger.ReadUnavailable(binding);
+                    else
+                    {
+                        var seal = HasExited || _custodyLedger.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
+                        observed = await client.GetCustodyAsync(binding, seal, ct);
+                    }
                 }
                 if (observed.Receipt is not null && _tailer is { } tailer)
                 {

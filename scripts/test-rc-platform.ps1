@@ -131,7 +131,7 @@ function Test-C1323_PlatformPolicy {
     $life = @($c1614 | Where-Object { [string]$_.class -ceq 'LinuxRunnerCustodyLifecycleTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
     $boot = @($c1614 | Where-Object { [string]$_.class -ceq 'CustodyNamespaceBootstrapTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
     $inboxMethods = @($inbox | ForEach-Object { $_.methods })
-    Assert-C1323 ($c1614.Count -eq 3 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
+    Assert-C1323 ($c1614.Count -eq 3 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and @($inboxMethods) -contains 'C1614_Windows_tracked_linger_releases_job' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
     $shippedCensus = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $shipped.Object
     Assert-C1323 ($shippedCensus.Ok -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved' $shippedCensus.Message
 

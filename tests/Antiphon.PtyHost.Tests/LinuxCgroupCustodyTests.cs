@@ -122,17 +122,116 @@ public class LinuxCgroupCustodyTests
         (await world.ReadTreeAsync()).ShouldContain(daemonPid,
             "the root exited and its orphan is still contained");
 
-        // Nothing was sealed and nothing was certified by the exit alone.
         File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
         File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
 
-        var observed = await world.CustodyAsync(seal: true);
-        observed.State.ShouldBe(VerificationCustodyState.Exited);
-        observed.Receipt.ShouldNotBeNull();
-        var receipt = world.Validate(observed);
+        var ordinary = await world.CustodyAsync(seal: false);
+        ordinary.State.ShouldBe(VerificationCustodyState.Draining);
+        ordinary.Receipt.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+
+        var again = await world.CustodyAsync(seal: false);
+        again.State.ShouldBe(VerificationCustodyState.Draining);
+        again.Receipt.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+
+        var released = await world.CustodyAsync(seal: true);
+        released.State.ShouldBe(VerificationCustodyState.Exited);
+        released.Receipt.ShouldNotBeNull();
+        var receipt = world.Validate(released);
         receipt.ActiveProcesses.ShouldBe(0u);
-        receipt.ObservationMethod.ShouldBe(VerificationCustodyBackends.CgroupProcsEmpty);
+        receipt.TerminationSucceeded.ShouldBe(true);
+        Directory.Exists("/proc/" + daemonPid).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Natural_descendant_exit_finalizes_without_release()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync();
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
+        await world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            "exit 0");
+        var daemonPid = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
+
+        var whileAlive = await world.CustodyAsync(seal: false);
+        whileAlive.Receipt.ShouldBeNull();
+        whileAlive.State.ShouldNotBe(VerificationCustodyState.Exited);
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+
+        await File.WriteAllTextAsync(world.ReleasePath, "release");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        VerificationCustodyStatus final;
+        do
+        {
+            final = await world.CustodyAsync(seal: false);
+            if (final.Receipt is null)
+                await Task.Delay(100, timeout.Token);
+        } while (final.Receipt is null);
+        var receipt = world.Validate(final);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.TerminationSucceeded.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Root_exit_retains_observer_past_linger()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync(TimeSpan.FromMilliseconds(400));
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
+        await world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            "exit 0");
+        var daemonPid = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(1200));
+        world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+        File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Missing_tree_never_finalizes_naturally()
+    {
+        RequireLinuxCustody();
+        if (!File.Exists("/run/antiphon-custody/namespace"))
+            throw new SkipTestException("Requires the entrypoint namespace marker.");
+        await using var world = await CustodyWorld.StartAsync();
+        await world.LaunchAsync("echo missing-tree-payload");
+        await world.WaitForRootExitAsync();
+        var status = await world.CustodyAsync(seal: false);
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Receipt.ShouldBeNull();
+        File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
+        world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Failed_tracking_explicit_release_terminates_without_receipt()
+    {
+        RequireLinuxCustody();
+        if (!File.Exists("/run/antiphon-custody/namespace"))
+            throw new SkipTestException("Requires the entrypoint namespace marker.");
+        await using var world = await CustodyWorld.StartAsync(TimeSpan.FromMilliseconds(400));
+        await world.LaunchAsync("echo failed-tracking", world.HoldLine());
+        await world.WaitForTreeAsync(atLeast: 1);
+        var status = await world.CustodyAsync(seal: true);
+        status.Receipt.ShouldBeNull();
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
         (await world.ReadTreeAsync()).ShouldBeEmpty();
+        await Task.Delay(TimeSpan.FromMilliseconds(1200));
+        world.Host.Session.ExitRequested.IsCompleted.ShouldBeTrue();
+        File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
     }
 
     // V-30 (d): the seal is what terminates on Linux, and the zero it reports is read back out of
@@ -201,6 +300,8 @@ public class LinuxCgroupCustodyTests
             await world.Host.DisposeAsync();
             File.Exists(world.StorePath("producer-receipt.json"))
                 .ShouldBeFalse("a lost host never leaves terminal evidence");
+            File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
 
             // A second host over the same store cannot answer for an execution it never launched.
             await using var successor = HostHarness.Start(o => o with
@@ -429,7 +530,7 @@ public class LinuxCgroupCustodyTests
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
 
-        public static Task<CustodyWorld> StartAsync()
+        public static Task<CustodyWorld> StartAsync(TimeSpan? linger = null)
         {
             // The Linux lane spawns through Porta, so the pty backend name here is only the
             // pseudoconsole; the containment is the cgroup, stated separately and independently.
@@ -438,6 +539,7 @@ public class LinuxCgroupCustodyTests
                 PtyBackend = "inbox",
                 CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
                 CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+                LingerTtl = linger ?? o.LingerTtl,
             });
             var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!);
             var snapshot = Path.Combine(host.TempDir, "snapshot");

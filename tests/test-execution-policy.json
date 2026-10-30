@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "4bf8e2d990a29851a0c116be9cbbbfd7350ec02a94c49636b213f682d1275305",
+  "policyHash": "1e041535712c8189c0ebe3975a862aa22e59c80fd8d8c5a17c8b38f91cabada7",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -493,7 +493,8 @@
           "suite": "pty-host",
           "class": "HostCustodyTests",
           "methods": [
-            "Inbox_is_unsupported_and_never_becomes_no_start_proof"
+            "Inbox_is_unsupported_and_never_becomes_no_start_proof",
+            "C1614_Windows_tracked_linger_releases_job"
           ],
           "platform": "linux",
           "reason": "Windows job-object inbox fixture. The method remains required on Windows.",
