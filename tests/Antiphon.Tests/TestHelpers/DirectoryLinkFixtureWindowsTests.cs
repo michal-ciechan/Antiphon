@@ -9,7 +9,17 @@ namespace Antiphon.Tests.TestHelpers;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DirectoryLinkFixtureWindowsTests
 {
-    internal static ScriptHarnessOptions PipeHolderOptions => ScriptHarnessProcessFixture.Options();
+    internal static ScriptHarnessOptions PipeHolderOptions
+    {
+        get
+        {
+            var options = ScriptHarnessProcessFixture.Options();
+            // These cases assert the overall execution timeout. A root that exits early
+            // must not hit the shorter default drain first. Execution stays bounded at
+            // five seconds; cleanup keeps its independent two-second allowance.
+            return options with { PostExitDrainBudget = options.ExecutionBudget };
+        }
+    }
 
     [Test]
     public async Task C1061_Junction_fixture_creates_moves_and_disposes_owned_link()
