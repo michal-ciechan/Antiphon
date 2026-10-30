@@ -326,7 +326,7 @@ NP-15/17 are owed qualification targets, not executable v2 admission while the v
 | CP-24 | A4 | CP-18 | linux-host-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
 | CP-25 | A4 | CP-21 | linux-runner-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
 | CP-26 | A4 | CP-20 | linux-pty-classification | `/*/*/TestClassificationGuardTests/*` | V-16 | 1 passed, 0 failed/skipped | 1 | 1 | true |
-| CP-27 | A4 | n/a | portable-platform-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusions` | V-16 | exit 0; all named C1323 assertions passed; retain harness count | n/a | 1 | true |
+| CP-27 | A4 | n/a | portable-platform-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` | V-16 | exit 0; CARD-1613 retired LinuxOnlyWindowsExclusions, so this row runs the successor policy case; all named C1323 assertions passed | n/a | 1 | true |
 | CP-28 | A4 | `tests/Antiphon.PtyHost.Tests -> bin-c1614-cold-host/` | linux-cold-payload | `/*/*/LinuxPtyHostLauncherTests/Shadow_host_exchanges_bytes_and_exits` | V-14,V-15 | 1 passed with newly empty owned NuGet cache | 1 | 4 | true |
 | CP-31 | A4 | n/a | portable-policy-hash-census | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case C1323_PlatformPolicy` | V-16 | exit 0; all named C1323 assertions passed; retain harness count | n/a | 1 | true |
 | CP-37 | A4 | CP-18 | linux-host-custody-os-guards | `/*/*/HostCustodyTests/*` | V-13,V-16,R-2 | 3 passed, 14 justified Windows-only skips; 0 failed; exact OS roster required | 3 | 1 | true |
