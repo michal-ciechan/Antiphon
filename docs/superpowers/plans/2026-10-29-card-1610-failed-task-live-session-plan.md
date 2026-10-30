@@ -872,6 +872,9 @@ not add executions. All listed new C1610 methods are distinct within their class
 
 ### Checkpoints
 
+S2+S3 fix adds Cancel post-commit release coverage. CP-93 initially fails at
+Cancellation_reconciles_without_second_stop (PendingDelivery vs SettlementTooYoung).
+
 Each Group names its logical lane: server-unit, server-integration, script-
 integration, runner-integration or client-Vitest. Portable work uses live defaults,
 no host pin or OS flag. Native platform evidence, if a selected existing test
@@ -881,6 +884,9 @@ One build per distinct output per committed After group; no reuse across SHAs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
+| CP-93 | S2-S3-fix | `tests/Antiphon.Tests -> bin-c1610-fix/` | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 1 | 4 |
+| CP-94 | S2-S3-fix | CP-93 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
+| CP-95 | S2-S3-fix | CP-93 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/C664_RequeueThenCanceled_RetirementClaimAccepted` | Cancel post-commit workspace release sibling | 1 passed; no failed/skipped | 1 | 2 |
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 executed; pre-fix red: zero-row-ttl, zero-row-cap, zero-row-recheck; mixed-cap and zero-row-terminal red only with the first-pass clause removed; no skipped | 22 | 6 |
 | CP-2 | S1-red | CP-1 | server-integration-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | S1 | 1 intended assertion red | 1 | 1 |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 passed; no failed/skipped | 22 | 6 |
