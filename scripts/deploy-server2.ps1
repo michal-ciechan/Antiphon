@@ -1134,6 +1134,106 @@ function Invoke-HostCase {
     }
 }
 
+# Read-only census of the four temp private volumes and every retirement journal.
+# It creates no receipt and removes nothing. Failure is before any drain POST.
+function Get-TempRetirementCensusRaw {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    if ($env:C727_TEST_VERIFY_STUB) {
+        $manifestPath = Join-Path $evidenceRoot 'temp-retirement-clearable.manifest.json'
+        @{ sourceSha = $Sha; runId = $runId } | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $manifestPath -Encoding ascii
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'temp-retirement-clearable', '-Manifest', $manifestPath)
+    } else {
+        $psi.FileName = 'ssh'
+        $remote = @'
+set -eu
+names="antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state"
+vols=""
+for name in $names; do
+  if docker volume inspect "$name" >/dev/null 2>&1; then
+    vols="$vols\"$name\","
+  fi
+done
+root=/home/mc/antiphon-server2/retirement
+journals=""
+if [ -L "$root" ]; then
+  printf '%s\n' '{"volumes":[],"journals":[{"schema":0,"state":"unreadable","owner":null,"effects":0,"intents":0,"closed":false}]}'
+  exit 0
+fi
+if [ -d "$root" ]; then
+  for dir in "$root"/*; do
+    [ -e "$dir" ] || continue
+    closed=false
+    if [ -f "$dir/closure.json" ] && [ ! -L "$dir/closure.json" ] && jq -e ".schema==2 and .state==\"Closed\"" "$dir/closure.json" >/dev/null 2>&1; then
+      closed=true
+    fi
+    file="$dir/receipt.json"
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    row="$(jq -c --argjson closed "$closed" "{schema:(.schema // 0),state:(.state // \"\"),owner:(if .owner==null then null else (.owner|tostring) end),effects:(if (.effects|type)==\"array\" then (.effects|length) else 0 end),intents:(if (.intents|type)==\"array\" then (.intents|length) else 0 end),closed:$closed}" "$file" 2>/dev/null || printf "%s" "{\"schema\":0,\"state\":\"unreadable\",\"owner\":null,\"effects\":0,\"intents\":0,\"closed\":false}")"
+    journals="$journals$row,"
+  done
+fi
+printf '{"volumes":[%s],"journals":[%s]}\n' "${vols%,}" "${journals%,}"
+'@
+        $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', 'bash', '-s')
+        $psi.RedirectStandardInput = $true
+    }
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add($token) }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    try {
+        if (-not $env:C727_TEST_VERIFY_STUB) {
+            $proc.StandardInput.Write($remote)
+            $proc.StandardInput.Close()
+        }
+        $stdout = $proc.StandardOutput.ReadToEndAsync()
+        $stderr = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(30000)) { $proc.Kill($true); $proc.WaitForExit(); throw 'TempRetirementJournalUnknown' }
+        $text = $stdout.GetAwaiter().GetResult()
+        [void]$stderr.GetAwaiter().GetResult()
+        if ($proc.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($text)) { throw 'TempRetirementJournalUnknown' }
+        return $text
+    } finally { $proc.Dispose() }
+}
+
+function Assert-TempRetirementClearable {
+    $raw = Get-TempRetirementCensusRaw
+    try { $census = $raw | ConvertFrom-Json } catch { throw 'TempRetirementJournalUnknown' }
+    $allowed = @('antiphon-runner-temp_work', 'antiphon-runner-temp_runner-tmp', 'antiphon-runner-temp_dind-data', 'antiphon-runner-temp_runner-state')
+    foreach ($name in @($census.volumes)) {
+        if ($null -eq $name) { continue }
+        if ($allowed -contains [string]$name) { throw "TempVolumesRetained $name" }
+    }
+    foreach ($journal in @($census.journals)) {
+        if ($null -eq $journal) { continue }
+        $schema = 0
+        try { $schema = [int]$journal.schema } catch { throw 'TempRetirementJournalUnknown' }
+        if ($schema -ne 2) { throw 'TempRetirementJournalUnknown' }
+        $owner = [string]$journal.owner
+        if (-not [string]::IsNullOrWhiteSpace($owner)) { throw 'TempRetirementOwnerActive' }
+        $effects = 0
+        $intents = 0
+        if ($null -ne $journal.effects) { $effects = [int]$journal.effects }
+        if ($null -ne $journal.intents) { $intents = [int]$journal.intents }
+        $state = [string]$journal.state
+        $closed = $false
+        if ($null -ne $journal.closed) { $closed = [bool]$journal.closed }
+        switch ($state) {
+            { $_ -in @('Ready', 'Refused', 'Pending') } {
+                if ($effects -ne 0 -or $intents -ne 0) { throw "TempRetirementUnresolved $state" }
+            }
+            { $_ -in @('Completed', 'Closed') } { }
+            { $_ -in @('Applying', 'Partial', 'PartialRefused') } {
+                if (-not $closed) { throw "TempRetirementUnresolved $state" }
+            }
+            default { throw 'TempRetirementJournalUnknown' }
+        }
+    }
+}
+
 # Read-only host census before a retired slot can be cleared. Keep stopped containers
 # in the census: any leftover may reconnect after the clear.
 function Assert-TempProjectAbsent {
@@ -1189,6 +1289,10 @@ function Invoke-Phase {
                 if ($null -eq $old -or $old.dispatchEligible -ne $true -or $old.acceptingNewWork -ne $true -or
                     $old.draining -ne $false -or $old.retiredAt) { throw 'OldRunnerRedirectNotEligible' }
                 Assert-TempProjectAbsent
+                # Read-only. The host recheck runs under c1008_rollout_lock (FD 8).
+                # This wrapper does not hold that lock across the host case: a nested
+                # flock on the same file deadlocks.
+                Assert-TempRetirementClearable
                 if ($s.retiredAt) {
                     if ($s.available -ne $false -or $s.dispatchEligible -ne $false -or
                         $s.acceptingNewWork -ne $false) { throw 'TempRunnerDrainConflict' }

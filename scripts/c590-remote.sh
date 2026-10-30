@@ -9266,6 +9266,9 @@ c1008_recycle() {
             '.volumes[$name].outcome=(if .volumes[$name].original==null then "alreadyAbsent" else "removed" end)')"
         c1008_save || c1008_refuse RecycleReceiptUnavailable
     done
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        c1609_mark_completed || c1008_refuse RecycleReceiptUnavailable
+    fi
     after="$(c1008_disk)" || { after=null; code=2; }
     if [ "$after" != null ] && [ "$(printf '%s' "$after" | jq -Sc '{dataRoot,filesystem}')" != \
         "$(printf '%s' "$C1008_RECORD" | jq -Sc '.diskBefore|{dataRoot,filesystem}')" ]; then after=null; code=2; fi
@@ -9468,11 +9471,107 @@ EOF
     write_result true '' 0
 }
 
+# Read-only. Present temp private volumes always block. Journals block when an
+# effect, owner, or nonterminal apply is unresolved. A refused preview with no
+# effect does not. Closure is an appendix; it does not delete a volume.
+c1609_temp_retirement_clearable() {
+    local name present=0 root dir file state owner effects intents closed
+    c1609_clear_reason=
+    for name in antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state; do
+        if docker volume inspect "$name" >/dev/null 2>&1; then
+            printf 'retained=%s\n' "$name"
+            present=1
+        fi
+    done
+    if [ "$present" = 1 ]; then
+        c1609_clear_reason=TempVolumesRetained
+        printf 'reason=TempVolumesRetained\n'
+        return 1
+    fi
+    root="${SERVER2_ROOT:-}/retirement"
+    if [ -L "$root" ]; then
+        c1609_clear_reason=TempRetirementJournalUnknown
+        printf 'reason=TempRetirementJournalUnknown\n'
+        return 1
+    fi
+    [ -d "$root" ] || return 0
+    for dir in "$root"/*; do
+        [ -e "$dir" ] || continue
+        if [ ! -d "$dir" ] || [ -L "$dir" ]; then
+            c1609_clear_reason=TempRetirementJournalUnknown
+            printf 'reason=TempRetirementJournalUnknown\n'
+            return 1
+        fi
+        closed=0
+        if [ -e "$dir/closure.json" ]; then
+            if [ -L "$dir/closure.json" ] || [ ! -f "$dir/closure.json" ]; then
+                c1609_clear_reason=TempRetirementJournalUnknown
+                printf 'reason=TempRetirementJournalUnknown\n'
+                return 1
+            fi
+            if ! jq -e '.schema==2 and .state=="Closed"' "$dir/closure.json" >/dev/null 2>&1; then
+                c1609_clear_reason=TempRetirementJournalUnknown
+                printf 'reason=TempRetirementJournalUnknown\n'
+                return 1
+            fi
+            closed=1
+        fi
+        file="$dir/receipt.json"
+        [ -e "$file" ] || continue
+        if [ -L "$file" ] || [ ! -f "$file" ]; then
+            c1609_clear_reason=TempRetirementJournalUnknown
+            printf 'reason=TempRetirementJournalUnknown\n'
+            return 1
+        fi
+        if ! jq -e '.schema==2 and (.state|type)=="string"' "$file" >/dev/null 2>&1; then
+            c1609_clear_reason=TempRetirementJournalUnknown
+            printf 'reason=TempRetirementJournalUnknown\n'
+            return 1
+        fi
+        state="$(jq -r '.state' "$file")"
+        owner="$(jq -r 'if .owner == null then "" else (.owner | tostring) end' "$file")"
+        effects="$(jq -r 'if (.effects | type) == "array" then (.effects | length) else 0 end' "$file")"
+        intents="$(jq -r 'if (.intents | type) == "array" then (.intents | length) else 0 end' "$file")"
+        if [ -n "$owner" ]; then
+            c1609_clear_reason=TempRetirementOwnerActive
+            printf 'reason=TempRetirementOwnerActive\n'
+            return 1
+        fi
+        case "$state" in
+            Ready|Refused|Pending)
+                if [ "$effects" != 0 ] || [ "$intents" != 0 ]; then
+                    c1609_clear_reason=TempRetirementUnresolved
+                    printf 'reason=TempRetirementUnresolved\n'
+                    return 1
+                fi
+                ;;
+            Completed|Closed) ;;
+            Applying|Partial|PartialRefused)
+                if [ "$closed" != 1 ]; then
+                    c1609_clear_reason=TempRetirementUnresolved
+                    printf 'reason=TempRetirementUnresolved\n'
+                    return 1
+                fi
+                ;;
+            *)
+                c1609_clear_reason=TempRetirementJournalUnknown
+                printf 'reason=TempRetirementJournalUnknown\n'
+                return 1
+                ;;
+        esac
+    done
+    return 0
+}
+
 case_deploy_temp_runner() {
     require_lane host
     c1008_rollout_lock
     # Never replace an unverified leftover, including a stopped project container.
     c849_no_temp_containers
+    # FD 8 is already held by c1008_rollout_lock. Recheck before checkout or Compose.
+    if ! c1609_temp_retirement_clearable; then
+        write_result false "${c1609_clear_reason:-TempVolumesRetained}" 2
+    fi
     ensure_checkout
     ensure_runner_boot_files
     if [ ! -s "$SERVER2_ENV" ]; then write_result false ParentStackMissing 2; fi
@@ -9846,7 +9945,11 @@ case_retire_temp_containers() {
     image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
     if [ -n "$image" ]; then
         [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || c994_refuse TempContainerStateUnknown
-        [ -z "${C994_IMAGE:-}" ] || [ "$C994_IMAGE" = "$image" ] || c994_refuse TempContainerReceiptUnavailable
+        # Historical cleanup image is provenance. The live container image is the
+        # candidate. A disagreement does not refuse container removal.
+        if [ -n "${C994_IMAGE:-}" ] && [ "$C994_IMAGE" != "$image" ]; then
+            printf 'C994_IMAGE_HISTORICAL reason=observed-container-image\n'
+        fi
     else image="${C994_IMAGE:-}"; fi
     C994_RECORD="$(jq -cn --arg sha "$SHA" --arg run "$RUN" --arg op "$C994_OPERATION" --arg project "$TEMP_PROJECT" \
       --arg id "$C994_PROJECT_ID" --arg stamp "$C994_STAMP" --arg image "$image" --arg original "${C994_ORIGINAL:-}" \

@@ -375,7 +375,7 @@ public sealed class RetiredTempContainerHostTests
         NoMutation(drift,"c994-host-preview: no inherited preview authority");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C994_Image_receipt_lookup_is_bound() {
+    public async Task C1609_Cleanup_does_not_require_historical_image() {
         using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0,"c994-image-binding");var image=Receipt(f)["image"]!.GetValue<string>();
         f.ReloadDocker();var retry=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000002");retry.Exit.ShouldBe(0,"c994-image-retention: "+retry.Output);
         Receipt(f)["image"]!.GetValue<string>().ShouldBe(image,"c994-image-retention");Receipt(f)["originalCleanupOperationId"]!.GetValue<string>().ShouldBe("c99400000000000000000000000000000001");
@@ -425,6 +425,26 @@ public sealed class RetiredTempContainerHostTests
         foreign.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
         f.Removed.ShouldBe(new[]{"antiphon-runner-temp_work","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state"});
         f.Trace.Where(a=>a.Length>0&&a[0]=="create").Any(a=>a.Contains("sha256:"+new string('a',64))).ShouldBeTrue("c994-image-binding: apply uses the retired image");
+
+        using var historical = Fixture("session-runner");
+        (await Cleanup(historical)).Exit.ShouldBe(0, "c1609-historical-image: seed");
+        var planted = Receipt(historical);
+        planted["operationId"] = "c99400000000000000000000000000000009";
+        planted["sourceSha"] = new string('b', 40);
+        planted["image"] = "sha256:" + new string('b', 64);
+        planted["outcome"] = "completed";
+        planted.AsObject().Remove("originalCleanupOperationId");
+        var plantedDir = Path.Combine(historical.Root, "server/temp-container-retirement");
+        File.Delete(Path.Combine(plantedDir, "c99400000000000000000000000000000001.json"));
+        File.WriteAllText(Path.Combine(plantedDir, "c99400000000000000000000000000000009.json"), planted.ToJsonString());
+        historical.ReloadDocker();
+        historical.Docker["containers"]!.AsArray().Add(historical.Container('7', Project, "session-runner", false));
+        AlignSameGeneration(historical);
+        var cross = await Cleanup(historical, "C994_OPERATION=c99400000000000000000000000000000002");
+        cross.Exit.ShouldBe(0, "c1609-historical-image: " + cross.Output);
+        cross.Output.ShouldContain("C994_IMAGE_HISTORICAL");
+        cross.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        historical.Removed.ShouldBeEmpty("c1609-historical-image: container cleanup does not remove volumes");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Audit_image_is_pinned_and_required() {

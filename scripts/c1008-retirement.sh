@@ -136,3 +136,19 @@ c1609_mark_partial_refused() {
     jq -c '.state="PartialRefused"' "$file" > "$tmp" || { rm -f -- "$tmp"; return 1; }
     mv -f -- "$tmp" "$file" || return 1
 }
+
+# Successful temp deletion is Completed. Applying with no closure still blocks deploy.
+c1609_mark_completed() {
+    local root file tmp
+    root="$(c1609_retirement_root)"
+    file="$root/receipt.json"
+    if [ ! -f "$file" ] || [ -L "$file" ] || [ -L "$root" ]; then
+        return 0
+    fi
+    tmp="$(mktemp "$root/receipt.XXXXXX")" || return 1
+    jq -c '.state="Completed" | .consumed=true | .owner=null |
+        .effects=((.targets // []) | map({name:.,result:"removed"})) |
+        .intents=((.targets // []) | map({name:.,intent:"remove",result:"removed"}))' \
+        "$file" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$file" || return 1
+}

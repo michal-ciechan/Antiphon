@@ -64,6 +64,16 @@ if ($Case -eq 'temp-project-absent') {
     if ($state.tempContainer) { Write-Output 'fixture-temp-container' }
     exit 0
 }
+if ($Case -eq 'temp-retirement-clearable') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"census","name":"temp-retirement-clearable"}'
+    if ($state.tempRetirementCensusError) { exit 2 }
+    if ($state.PSObject.Properties.Name -contains 'tempRetirementCensus' -and $null -ne $state.tempRetirementCensus) {
+        ConvertTo-Json -InputObject $state.tempRetirementCensus -Compress -Depth 8
+    } else {
+        Write-Output '{"volumes":[],"journals":[]}'
+    }
+    exit 0
+}
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
 if ($state.scenario -eq 'c1008') { $entry['recycle'] = $request.recycle; $entry['tempRetiredAt'] = $request.tempRetiredAt }
 if ($Case -eq 'retire-temp-containers') {

@@ -6347,9 +6347,20 @@ public sealed class RemoteScriptContractTests
                 pwsh -NoProfile -File "$repo/scripts/deploy-server2.ps1" -Rolling -Sha "$sha" -Phase deploy-temp > "$root/out" 2>&1
                 code=$?
                 printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$code" "$(sed -n 's/.*"kind":"case","name":"\([^"]*\)".*/\1/p' "$C727_TEST_TRACE" | paste -sd, -)"
+                if [ "$container" = false ]; then
+                    awk '
+                        /"name":"temp-retirement-clearable"/ { seen = NR }
+                        /"name":"runner-cache-seed"/ && !printed {
+                            if (seen && seen < NR) print "preflight-before-seed=yes"
+                            else print "preflight-before-seed=no"
+                            printed = 1
+                        }
+                    ' "$C727_TEST_TRACE"
+                fi
             done
             """, "repo");
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
+        wrapper.ShouldContain("preflight-before-seed=yes");
         wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
         wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
         var noContainer = C849ExtractedShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
@@ -6490,6 +6501,7 @@ public sealed class RemoteScriptContractTests
             string.Join("\n", new[] { "c849_manifest_write", "c849_manifest_validate", "c849_manifest_compare", "c849_compare_import", "c849_contract_receipt" }.Select(name => Block(remote, name))) + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" +
+            Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
             mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/volumes/packages" "$root/volumes/npm"
@@ -6523,7 +6535,9 @@ public sealed class RemoteScriptContractTests
                 fi
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0; return 0 ;;
-                    volume:inspect) echo "$root/state"; return 0 ;;
+                    volume:inspect)
+                        case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                        echo "$root/state"; return 0 ;;
                     ps:*) return 0 ;;
                     run:*)
                         if [[ "$*" == *'--entrypoint pwsh'* ]]; then
@@ -6800,24 +6814,31 @@ public sealed class RemoteScriptContractTests
         var remote = Remote();
         var deploy = Commands(Block(remote, "case_deploy_temp_runner"));
         var guard = deploy.FindIndex(line => line == "c849_no_temp_containers");
+        var retained = deploy.FindIndex(line => line.Contains("c1609_temp_retirement_clearable", StringComparison.Ordinal));
         var checkout = deploy.FindIndex(line => line == "ensure_checkout");
         var compose = deploy.FindIndex(line => line.Contains("compose_temp up -d --no-build", StringComparison.Ordinal));
         guard.ShouldBeGreaterThanOrEqualTo(0, "deploy-temp absence call missing");
         deploy.Count(line => line == "c849_no_temp_containers").ShouldBe(1, "deploy-temp absence call");
-        checkout.ShouldBeGreaterThan(guard, "absence before ensure_checkout");
+        retained.ShouldBeGreaterThan(guard, "retained volumes rechecked after the container guard");
+        checkout.ShouldBeGreaterThan(retained, "retained volumes rechecked before checkout");
         compose.ShouldBeGreaterThan(guard, "absence before compose_temp up");
 
         var output = LinuxShell(Block(remote, "c849_no_temp_containers") + "\n" +
+            Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
-            TEMP_PROJECT=antiphon-runner-temp; LANE=host
+            SERVER2_ROOT="$root"; TEMP_PROJECT=antiphon-runner-temp; LANE=host
             write_result() { printf 'accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
             require_lane() { :; }
             c1008_rollout_lock() { :; }
             ensure_checkout() { printf 'reached=ensure_checkout\n' >> "$root/trace"; write_result true GuardPassed 0; }
             compose_temp() { printf 'reached=compose_temp\n' >> "$root/trace"; write_result true ComposeReached 0; }
             docker() {
+                if [ "$1" = volume ] && [ "$2" = inspect ]; then
+                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    printf 'unexpected-docker\n' >> "$root/trace"; return 1
+                fi
                 [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
                 case "$MODE" in
                     absent) return 0 ;;
@@ -7038,7 +7059,8 @@ public sealed class RemoteScriptContractTests
     {
         var remote = Remote();
         var output = LinuxShell(Block(remote, "c849_require_ready") + "\n" +
-            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
+            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/locks"; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
@@ -7047,7 +7069,13 @@ public sealed class RemoteScriptContractTests
             require_lane() { :; }; ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
             c849_no_temp_containers() { :; }; build_server2_images() { :; }; c849_prepare() { :; }
             write_result() { printf 'deploy=%s\n' "$2"; exit "$3"; }
-            docker() { [ "$1:$2" = volume:inspect ] && echo "$root/state"; }
+            docker() {
+                if [ "$1" = volume ] && [ "$2" = inspect ]; then
+                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    echo "$root/state"; return 0
+                fi
+                return 1
+            }
             sudo() {
                 [ "$1" = -n ] && shift
                 if [ "$1" = test ]; then shift; test "$@"
@@ -7072,6 +7100,8 @@ public sealed class RemoteScriptContractTests
             Order(body, "c849_require_ready", "seed_runner_checkout").ShouldBeTrue(name);
             Order(body, "c849_assert_mounts", "c849_smoke").ShouldBeTrue(name);
         }
+        Order(Block(remote, "case_deploy_temp_runner"), "c849_no_temp_containers", "c1609_temp_retirement_clearable").ShouldBeTrue("retained volumes after the container guard");
+        Order(Block(remote, "case_deploy_temp_runner"), "c1609_temp_retirement_clearable", "ensure_checkout").ShouldBeTrue("retained volumes before checkout");
         Order(Block(remote, "case_deploy_parent"), "c849_smoke", "retire_superseded_server2_images").ShouldBeTrue();
         var retire = Block(remote, "case_retire_temp_runner");
         retire.ShouldContain("c1008_recycle \"$TEMP_PROJECT\"");
@@ -7122,7 +7152,8 @@ public sealed class RemoteScriptContractTests
             }
         }
         var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
-            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
+            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/locks"
@@ -7148,7 +7179,10 @@ public sealed class RemoteScriptContractTests
             compose_host() { echo unsafe-compose >> "$root/trace"; }
             compose_temp() { echo unsafe-compose >> "$root/trace"; }
             docker() {
-                if [ "$1" = volume ] && [ "$2" = inspect ]; then echo "$root/state"; return 0; fi
+                if [ "$1" = volume ] && [ "$2" = inspect ]; then
+                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    echo "$root/state"; return 0
+                fi
                 echo unsafe-docker >> "$root/trace"; return 1
             }
             sudo() {
@@ -7232,6 +7266,7 @@ public sealed class RemoteScriptContractTests
                     info:*) printf '%s\n' "$root/docker" ;;
                     volume:inspect)
                         if [ "${3:-}" = -f ]; then format="$4"; fi
+                        case "$name" in *antiphon-runner-temp_*) return 1 ;; esac
                         if [ "$name" = antiphon-runner_runner-state ]; then
                             printf '%s\n' "$root/state"; return 0
                         fi
@@ -7256,6 +7291,7 @@ public sealed class RemoteScriptContractTests
             ensure_build_slots_broker() { echo DEPLOY_REACHED_BROKER; exit 0; }
             """ + "\n" + Block(remote, "c849_observe_volume") + "\n" +
             Block(remote, "c849_budget_gate") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" +
+            Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             ( c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 ) > "$root/observe" 2>&1
             printf 'OBSERVE_EXIT=%s\n' "$?"
@@ -7306,7 +7342,7 @@ public sealed class RemoteScriptContractTests
         var violations = new List<string>();
         foreach (var name in new[] { "c849_observe_volume", "c849_cold_volume_facts", "c849_cold_proof",
                      "c849_cold_probe", "c849_prune_validate_tree", "c849_preview", "c849_budget_gate",
-                     "case_deploy_temp_runner" })
+                     "c1609_temp_retirement_clearable", "case_deploy_temp_runner" })
         {
             foreach (var line in Block(source, name).Split('\n').Select(x => x.Trim()))
             {
