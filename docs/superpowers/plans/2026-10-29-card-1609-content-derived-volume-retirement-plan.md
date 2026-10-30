@@ -1,11 +1,29 @@
 # CARD-1609: content-derived volume retirement
 
-Plan task `dcbf1d18`, branch `feat/card-task-dcbf1d18`, source base
-`f8bddb6efda7b0e8f50f3b45744087e52188bc66`. This is a design for independent
-review, not authority to retire any live volume. Only this plan changes in this
-stage. Verification design is included because the brief requests executable
-checkpoints and red-first witnesses. The next requested stage is a design Review
-by a different company's model; it must resolve the review gates below before Code.
+Round-2 Plan task `02c3c411`, branch `feat/card-task-02c3c411`, fast-forward
+from `42d094a8c8cebb49c3277e20d7839a8cbe1a82c3` (round-1 plan and independent
+review). Re-ground the document on landed CARD-1607; do not rebase this branch or
+merge a target. This is a design for independent Review, not authority to retire
+live volumes. Only this plan changes. Verification design is folded into this plan.
+Next: independent design Review before Code.
+
+## Round-2 revision ledger
+
+Skeleton published first; each review defect below receives its own pushed amendment.
+Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
+
+| Review defect | Revision obligation | Status |
+|---|---|---|
+| D-1 | Whole-minute checkpoint estimates and successful import | Pending |
+| D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Pending |
+| D-3 | Complete read-only offender preview, human and machine forms | Pending |
+| D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Pending |
+| D-5 | Bounded census retries, durable partial/resume behavior | Pending |
+| D-6 | Retained-volume deploy refusal, C849 contract, external caches | Pending |
+| D-7 | Master/rc port order after top-up 38, definition scope | Pending |
+| D-8 | Windows skip roster and closure checkpoint | Pending |
+| D-9 | Documentation pins and checkpoint | Pending |
+| D-10 | Real private-origin path baseline-red witness | Pending |
 
 ## Problem and evidence
 
