@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "d364b26b4715553f70e4da620257188fe923de1a255b6a1aa13a6bcfb8c8d538",
+  "policyHash": "c65a202aa95b6623255f5dca94715843c70261b5fbb9c7add736e80fe3c799cc",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -845,6 +845,27 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",
           "owner": "CARD-1614"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619ExitConsumerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive the server consumers. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619ExitPersistenceTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive committed server storage. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619StopAttributionTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: stop attribution requires actual Linux PTY signals and child identity. The case remains required on Linux.",
+          "owner": "CARD-1619"
         },
         {
           "suite": "antiphon",
