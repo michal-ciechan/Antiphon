@@ -258,7 +258,11 @@ function Export-NightlyPriorFailures {
             $discoveries.Add($suite,$parsed)
         }
         $discovery=$discoveries[$suite]
-        $incomplete=$false; $why=[Collections.Generic.List[string]]::new(); $observed=@()
+        $incomplete=$false; $accountingIncomplete=$false; $why=[Collections.Generic.List[string]]::new(); $observed=@(); $trxRows=@()
+        if ($null -ne $chunk.exitCode -and $chunk.exitCode -ne 0) { $accountingIncomplete=$true; $why.Add('summary-nonzero-exit') }
+        if (-not [string]::IsNullOrEmpty([string]$chunk.result) -and $chunk.result -ine 'pass') { $accountingIncomplete=$true; $why.Add('summary-failed-result') }
+        if (-not [string]::IsNullOrEmpty([string]$chunk.detail)) { $accountingIncomplete=$true; $why.Add('summary-detail') }
+        if ($accountingIncomplete) { $incomplete=$true }
         $trxName=[string]$chunk.trx
         if (-not $trxName) { $trxName=$suite+'-'+$chunkId+'.trx' }
         $trx=Read-HistoryInput $trxName 'trx' $summary
@@ -313,7 +317,6 @@ function Export-NightlyPriorFailures {
             if ($o.State -ceq 'InProgress') { $reason='final-in-progress' }
             Add-HistoryMember $suite $o.ClassName $reason ([ordered]@{artifact=$o.Artifact;chunk=$chunkId;uid=$o.Uid;state=$o.State;reason=$reason;kind=$o.Kind})
         }
-        if (-not $incomplete) { continue }
         # A retained suite-qualified plan is usable only when its old provenance
         # and UID/class/assembly membership all bind. The last singleton may
         # belong to a completely different suite and supplies no fallback.
@@ -345,6 +348,25 @@ function Export-NightlyPriorFailures {
                 if ($rows.Count -ne 1 -or $rows[0].runId -cne $summary.runId -or ($rows[0].sourceDigest -and $rows[0].sourceDigest -cne $summary.sha) -or ($rows[0].policyDigest -and $rows[0].policyDigest -cne $summary.policyHash)) { throw 'history-provenance: planned index suite' }
             }
         }
+        # Read the planned roster even for a green TRX: a crash can leave only
+        # a passing prefix. Suite-wide discovery is not a chunk's planned count.
+        $groups=@()
+        if ($null -ne $plan) { $groups=@($plan.groups | Where-Object { $_.chunk -ceq $chunkId }) }
+        if ($groups.Count -gt 1) { throw 'history-identity-conflict: planned chunk' }
+        $plannedCount=0
+        if ($groups.Count -eq 1) { $plannedCount=@($groups[0].plannedTestIds).Count }
+        foreach ($discName in @(($suite+'-'+$chunkId+'-selection.discovery.json'),($suite+'-'+$chunkId+'.discovery.json'))) {
+            $chunkDiscovery=Read-HistoryInput $discName 'discovery' $summary
+            if ($null -eq $chunkDiscovery) { continue }
+            try {
+                $doc=[IO.File]::ReadAllText($chunkDiscovery.FullPath) | ConvertFrom-Json
+                $parsed=ConvertFrom-NightlyDiscoveryDocument $doc 'antiphon-tunit-discovery-v1'
+                $plannedCount=[Math]::Max($plannedCount,@($parsed.Nodes).Count)
+            } catch { throw 'history-identity-conflict: chunk discovery' }
+            break
+        }
+        if ($null -ne $trx -and $trxRows.Count -lt $plannedCount) { $incomplete=$true; $accountingIncomplete=$true; $why.Add('short-trx') }
+        if (-not $incomplete) { continue }
         $classes=@(); $resolved=$false
         if ($null -ne $plan -and $null -ne $discovery -and $plan.sourceDigest -ceq $summary.sha -and $plan.policyDigest -ceq $summary.policyHash -and $plan.assemblyDigest -ceq $discovery.AssemblyHash) {
             $groups=@($plan.groups | Where-Object { $_.chunk -ceq $chunkId })
@@ -370,6 +392,9 @@ function Export-NightlyPriorFailures {
         }
         if ($resolved) {
             foreach ($class in $classes) { Add-HistoryMember $suite $class 'incomplete-chunk-fallback' }
+            if ($accountingIncomplete) {
+                foreach ($class in $classes) { $unresolved.Add([ordered]@{suite=$suite;className=$class;chunk=$chunkId;reason='incomplete-chunk';evidence=@($summaryArtifact.RelativePath);missingInputs=@($why.ToArray())}) }
+            }
         } else {
             $classes=$null
             $unresolved.Add([ordered]@{suite=$suite;chunk=$chunkId;reason='historical-membership-unavailable';evidence=@($summaryArtifact.RelativePath);missingInputs=@($why.ToArray())})
