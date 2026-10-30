@@ -166,6 +166,13 @@ c1609_prepare_common() {
     local rep="${common_repo[$top]}"
     c1609_skip_publication=0
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 0
+    # Hash names as well as OIDs: adding a published ref still changes the local
+    # inventory. Remote advertisements are deliberately outside this digest.
+    local ref_digest
+    git --git-dir="$top" for-each-ref --format='%(refname)%00%(objectname)%00%(objecttype)' \
+        > "$scratch/c1609-local-refs" 2>/dev/null || return 2
+    ref_digest="$(sha256sum "$scratch/c1609-local-refs" | cut -d' ' -f1)" || return 2
+    printf 'inventory-local-refs=%s common=%s\n' "$ref_digest" "$(digest "$top")"
     if c1609_origin_configured; then
         return 0
     fi

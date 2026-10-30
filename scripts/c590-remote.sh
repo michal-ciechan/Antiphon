@@ -6009,6 +6009,9 @@ c1008_summary() {
 
 c1008_refuse() {
     local reason="$1" count
+    if [ "${C1609_APPLY_ACTIVE:-0}" = 1 ]; then
+        c1609_mark_partial_refused || reason=RecycleReceiptUnavailable
+    fi
     if [ "${C994_READY:-0}" = 1 ]; then c994_refuse "$reason"; fi
     if [ "${C1008_ACTIVE:-0}" = 1 ]; then
         count="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "removed")] | length')"
@@ -6036,7 +6039,9 @@ c1008_volume() {
            ((.[0].Options | type)=="object" and (.[0].Options | length)==0)) and
          (.[0].Labels | type)=="object" and (.[0].CreatedAt | type)=="string" and
          (.[0].Mountpoint | type)=="string" then .[0] |
-           {Name,Driver,Options,CreatedAt,Mountpoint,Labels,Scope}
+           {Name,Driver,Options,CreatedAt,Mountpoint,Labels:(.Labels|with_entries(select(
+             .key=="com.docker.compose.project" or .key=="com.docker.compose.volume" or
+             .key=="io.antiphon.owner" or .key=="io.antiphon.cache-schema" or .key=="io.antiphon.cache-role")))}
          else error("identity") end' || return 2
 }
 
@@ -6360,12 +6365,20 @@ c1008_zero() {
 
 c1008_http() {
     # Only task GETs use this reader. Retry that GET, never the census or a phase.
-    local path="$1" attempt response code curl_code started elapsed outcome status items excluded retryable
+    local path="$1" attempt response code curl_code started elapsed outcome status items excluded retryable http_cap remaining
     for attempt in 1 2 3; do
+        http_cap=60
+        if [ "${C1609_CENSUS_V2:-0}" = 1 ] && [ -n "${C1609_CENSUS_DEADLINE_MS:-}" ]; then
+            remaining=$((C1609_CENSUS_DEADLINE_MS - $(c1609_monotonic_ms)))
+            if [ "$remaining" -le 0 ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Deadline'; return 2; fi
+            if [ "$remaining" -lt 60000 ]; then
+                http_cap="$(awk -v ms="$remaining" 'BEGIN { printf "%.3f", ms/1000 }')"
+            fi
+        fi
         response=''; code=''; curl_code=0; outcome=ok; status=null; items=null; excluded=null; retryable=0
         C1008_HTTP_BODY=''; C1008_TASK_ERROR=''
         started="$(date +%s%3N)"
-        response="$(curl -sS --max-time 60 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
+        response="$(curl -sS --max-time "$http_cap" -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
         elapsed=$(( $(date +%s%3N) - started ))
         if [ "$curl_code" != 0 ]; then
             if [ "$curl_code" = 28 ]; then outcome=Timeout; else outcome=Transport; fi
@@ -6393,7 +6406,13 @@ c1008_http() {
             '. + [{path:$path,attempt:$attempt,elapsedMs:$elapsed,outcome:$outcome,items:$items,excludedTotal:$excluded} + (if $status==null then {} else {status:$status} end)]')" || return 2
         [ "$outcome" != ok ] || return 0
         C1008_HTTP_BODY=''
-        if [ "$retryable" = 1 ] && [ "$attempt" -lt 3 ]; then sleep 1; continue; fi
+        if [ "$retryable" = 1 ] && [ "$attempt" -lt 3 ]; then
+            if [ "${C1609_CENSUS_V2:-0}" = 1 ] && [ -n "${C1609_CENSUS_DEADLINE_MS:-}" ] &&
+                [ "$((C1609_CENSUS_DEADLINE_MS - $(c1609_monotonic_ms)))" -le 1000 ]; then
+                C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Deadline'; return 2
+            fi
+            sleep 1; continue
+        fi
         if [ "$retryable" = 1 ]; then
             C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Http attempts=$attempt failure=$outcome"
         else C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=$outcome"; fi
@@ -8465,6 +8484,25 @@ c1008_forward_host_proof() {
 c1008_audit() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image helper output code=0 program
     local -a mounts=()
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        # Temp apply and preview execute the same read-only namespace scan. The
+        # v1 create/start adapter below remains the main-recycle path.
+        image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
+        if [ -z "$image" ]; then
+            image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" || return 2
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$image" '.image=$image')" || return 2
+        fi
+        c1609_load_volume_metadata
+        c1609_role_metadata > "$CASE_DIR/apply-audit.out" || code=$?
+        if [ "$code" != 0 ]; then
+            printf 'audit check=metadata status=2 repo=. reason=%s\n' "${c1609_meta_reason:-metadata}" >> "$CASE_DIR/apply-audit.out"
+            cat -- "$CASE_DIR/apply-audit.out"
+            return 2
+        fi
+        c1008_audit_readonly >> "$CASE_DIR/apply-audit.out" || code=$?
+        cat -- "$CASE_DIR/apply-audit.out"
+        return "$code"
+    fi
     facts="$(c1008_volume "$work")" || return 2
     if [ "$facts" = null ]; then
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
@@ -8984,6 +9022,9 @@ c1008_recycle() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
     require_lane host
     c1609_load_retirement
+    C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0
+    unset C1609_APPLY_INVENTORY_FILE
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     # Inventory is a docker --env only. A shell export must not reach the helper.
     if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
     [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
@@ -8992,7 +9033,10 @@ c1008_recycle() {
     case "${C1008_DRY_RUN:-0}:${C1008_RESUME:-0}" in 0:0|0:1|1:0) ;; *) write_result false RecycleContextInvalid 2 ;; esac
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        C1008_TARGETS=("${C1008_PROJECT}_runner-state" "${C1008_PROJECT}_dind-data" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_work")
+        C1609_APPLY_INVENTORY_FILE="$CASE_DIR/apply-audit.out"
+    fi
     local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha="" detail pending=true
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
     # case_deploy_parent has rewritten SOURCE_SHA12, so pin that compare to previousSha.
@@ -9228,11 +9272,8 @@ c1008_recycle() {
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     c1008_audit_checked; after="$C1008_AUDIT"
     [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
-    # Temp volume deletion uses the v2 census: Drift and Unstable retry here, then stop
-    # before compose down. Main keeps the v1 collector.
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
+    # Temp keeps the bounded v2 census through every exact-volume effect.
     c1008_status_proof
-    C1609_CENSUS_V2=0
     c1008_references "$C1008_CENSUS" '[]'
     after="$(c1008_disk)" || c1008_refuse RecycleDiskUnknown
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskBefore=$disk|.phase="removing"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
@@ -9245,10 +9286,7 @@ c1008_recycle() {
         if [ "${C1008_RESUME:-0}" != 1 ]; then
             c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         fi
-        if ! compose_temp down -v >> "$CASE_DIR/command.log" 2>&1; then
-            c1609_mark_partial_refused || true
-            c1008_refuse RecycleRemoveFailed
-        fi
+        C1609_APPLY_ACTIVE=1
     fi
     for name in "${C1008_TARGETS[@]}"; do
         c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
@@ -9256,9 +9294,16 @@ c1008_recycle() {
         if [ "$facts" != null ]; then
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
                 || c1008_refuse RecycleResumeMismatch
-            [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || c1008_refuse RecycleRemoveFailed
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
+            fi
             docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse
             [ "$(c1008_volume "$name")" = null ] || c1008_refuse RecycleRemoveFailed
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_target_result "$name" removed || c1008_refuse RecycleReceiptUnavailable
+            fi
+        elif [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            c1609_target_result "$name" alreadyAbsent || c1008_refuse RecycleReceiptUnavailable
         fi
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "$name" \
             '.volumes[$name].outcome=(if .volumes[$name].original==null then "alreadyAbsent" else "removed" end)')"
