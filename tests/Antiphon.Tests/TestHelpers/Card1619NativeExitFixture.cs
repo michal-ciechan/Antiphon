@@ -1,3 +1,4 @@
+using Antiphon.PtyHost.Protocol;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -20,6 +21,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
     private Process? _child, _host;
     private string? _startTicks;
     public RunnerSessionDto Snapshot => _runtime.Get(Id);
+    public PtyHostManifest LaunchManifest { get; private set; } = null!;
 
     public static async Task<(Card1619NativeExitFixture Fixture, string ExitJson)> CaptureAsync(int signal, int code = 0)
     {
@@ -46,6 +48,8 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
             _startTicks = StartTicks(_child.Id);
             while (!_runtime.GetBuffer(Id).Buffer.Contains("card1619-ready")) await Task.Delay(10, ct.Token);
             dto.Status.ShouldBe("Running");
+            LaunchManifest = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(Path.Combine(Root, "pty-hosts", "manifests"), Id))!;
+            LaunchManifest.ShouldNotBeNull("capture the real manifest before the runner acknowledges exit");
         }
         using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "card1619-native-signal-and-exit-envelope"))
         {
