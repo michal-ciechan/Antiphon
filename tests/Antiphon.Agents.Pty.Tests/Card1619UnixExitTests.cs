@@ -72,6 +72,22 @@ public sealed class Card1619UnixExitTests
         runner.ExitReason.ShouldBe(PtyExitReason.ProcessExited);
         handled.ShouldBe(1, "callback/replay handles reason and cleanup once");
         delivered.ShouldBe(1, "wrapper publishes once");
+
+        // Completion between wrapper subscription and its WaitForExit(0) replay:
+        // the upstream event is set before its callback, so either publisher may win.
+        using var overlapping = await PtyProvider.SpawnAsync(Options("read release; exit 23"), default);
+        var overlapCount = 0;
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using IPtySession overlappedSession = new PortaPtySession(overlapping, subscribed =>
+        {
+            subscribed.Exited += _ => { Interlocked.Increment(ref overlapCount); published.TrySetResult(); };
+            overlapping.WriterStream.Write("release\n"u8);
+            overlapping.WriterStream.Flush();
+            overlapping.WaitForExit(5000).ShouldBeTrue();
+        });
+        await published.Task.WaitAsync(Budget);
+        overlappedSession.ReadExitObservation().ShouldBe(new PtyExitObservation(23, 0));
+        overlapCount.ShouldBe(1, "wrapper callback and replay deduplicate");
     }
 
     [Test]
