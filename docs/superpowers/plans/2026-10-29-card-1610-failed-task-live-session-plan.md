@@ -405,3 +405,34 @@ No current runner setting was inferred from a historical report. No desktop
 qualification files were read, no completed qualification was resumed, and no
 session was stopped. Runtime reads establish observations only, not a same-build
 execution test of the proposed code.
+
+## D-8 detail: test lanes and class inventory
+
+All six new classes live in `tests/Antiphon.Tests`. Application tests use namespace
+Antiphon.Tests.Application; the script class uses Antiphon.Tests.Scripts. One
+file per named class. These replace all seven round-1 proposed classes.
+
+| New class | Category | Slow / allowlist | Spawn limiter | Planned executed cases |
+|---|---|---|---|---:|
+| TaskSupervisionVisibilityTests | Integration | No; no allowlist entry | None: fake runtime/stopper, no child processes | 8 |
+| TaskCeilingPolicyTests | Unit | No; no allowlist entry | None: pure policy/control validation | 12 |
+| TaskCeilingHoldTests | Integration | No; no allowlist entry | None: isolated schema and injected runner | 20 |
+| TaskCeilingControlTests | Integration | No; no allowlist entry | None: service/transaction barriers, no children | 12 |
+| TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 9 |
+| TaskCeilingScriptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 8 |
+
+Total new cases **69**, not 69 assertions. Category guards are explicit checkpoint
+rows at each green source group: TestLaneCategoryGuardTests (1), shared
+TestClassificationGuardTests (1), ProcessSpawnLimitTests (21 expanded cases:
+seven singleton methods, six CPU arguments, eight override arguments) = **23**.
+No runner source or new runner test class remains; its unchanged two-method safety
+selection has a separate project row, not another new-class census obligation.
+Changing the classification during TestDesign requires revising this table,
+allowlist and count floor together. Any fixture that begins spawning must gain
+the assembly-local limiter and strict-roster membership before running.
+
+Client command rows from round 1 are removed with the bespoke client feature.
+There is therefore no uncounted Vitest obligation. If TestDesign establishes a
+necessary client behavior change, add a named command checkpoint with exact
+Vitest JSON `numTotalTests`/passed/failed floors and source binding before Code;
+a success string alone is not a test-count floor.
