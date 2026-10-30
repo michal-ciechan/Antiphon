@@ -16,36 +16,118 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     private const string OutputPath = "bin-probe/";
     private const string TrackedBytes = "TRACKED-ORIGINAL";
 
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Test]
-    [Arguments("directory-on-file")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("file-on-directory")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("symlink-on-file")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("untracked-descendant")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("ignored-descendant")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("staged-untracked")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("modified-tracked")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("deleted-tracked")]
-    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
-    [Arguments("clean-build")]
-    [Arguments("regular-user-move")]
-    [Arguments("deleted-untracked")]
-    [Arguments("changed-untracked")]
-    [Arguments("existing-stamp")]
-    [Arguments("compiler-collision")]
-    [Arguments("existing-output-directory")]
-    [Arguments("existing-output-symlink")]
-    [Timeout(600_000)]
-    public async Task shape_conflict_rule(string shape, CancellationToken cancellationToken)
+    [Timeout(240_000)]
+    public Task shape_directory_on_file(CancellationToken cancellationToken)
     {
         RequireLinux();
+        return AssertShapeAsync("directory-on-file", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public Task shape_file_on_directory(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("file-on-directory", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public Task shape_symlink_on_file(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("symlink-on-file", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_untracked_descendant(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("untracked-descendant", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_ignored_descendant(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("ignored-descendant", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_staged_untracked(CancellationToken cancellationToken) =>
+        AssertShapeAsync("staged-untracked", cancellationToken);
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_modified_tracked(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("modified-tracked", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public Task shape_deleted_tracked(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("deleted-tracked", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public Task shape_clean_build(CancellationToken cancellationToken) =>
+        AssertShapeAsync("clean-build", cancellationToken);
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_regular_user_move(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("regular-user-move", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_deleted_untracked(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("deleted-untracked", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_changed_untracked(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        return AssertShapeAsync("changed-untracked", cancellationToken);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_existing_stamp(CancellationToken cancellationToken) =>
+        AssertShapeAsync("existing-stamp", cancellationToken);
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_compiler_collision(CancellationToken cancellationToken) =>
+        AssertShapeAsync("compiler-collision", cancellationToken);
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_existing_output_directory(CancellationToken cancellationToken) =>
+        AssertShapeAsync("existing-output-directory", cancellationToken);
+
+    [Test]
+    [Timeout(120_000)]
+    public Task shape_existing_output_symlink(CancellationToken cancellationToken) =>
+        AssertShapeAsync("existing-output-symlink", cancellationToken);
+
+    private async Task AssertShapeAsync(string shape, CancellationToken cancellationToken)
+    {
         string? root = null;
         try
         {
@@ -178,6 +260,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 var namedRefusal = output.Contains("refused: " + reason, StringComparison.Ordinal)
                     || shape == "existing-output-symlink" && output.Contains("refused: link-component", StringComparison.Ordinal);
                 if (result.Exit != 2 || !namedRefusal) return "collision-not-refused-with-reason " + reason;
+                if (File.Exists(Path.Combine(root, ".antiphon", "c1199-mutation-reached.txt"))) return "mutation-marker-present";
                 if (shape == "existing-output-symlink" && new DirectoryInfo(Path.Combine(root, "App/bin-probe")).LinkTarget is null) return "output-link-changed";
                 if (output.Contains("Build succeeded", StringComparison.Ordinal)) return "build-ran-on-collision";
                 if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal)) return "false-preservation-claim";
@@ -237,7 +320,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     // F3 control: removing the emitted receipt must not qualify a negative validation.
     [Test]
-    public void missing_receipt_is_not_negative_success() { RequireLinux(); Receipt(null).ShouldNotBe("ok"); }
+    public void missing_receipt_is_not_negative_success() { Receipt(null).ShouldNotBe("ok"); }
 
     private static string Receipt(RunResult? receipt)
     {
@@ -402,6 +485,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 <Compile Include="Marker.cs" />
               </ItemGroup>
               <Target Name="MutateShape" BeforeTargets="Build">
+                <MakeDir Directories="__ROOT__/.antiphon" />
+                <WriteLinesToFile File="__ROOT__/.antiphon/c1199-mutation-reached.txt" Lines="reached" Overwrite="true" />
                 <Exec WorkingDirectory="__ROOT__" Command="__CMD__" />
               </Target>
             </Project>
