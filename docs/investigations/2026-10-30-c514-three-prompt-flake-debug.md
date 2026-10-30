@@ -253,3 +253,28 @@ an ambiguous Enter; unknown/observation-unknown remain terminal. Earlier mutatio
 results are retained in the round-2 report; fresh final-fixture controls and five
 portable repetitions remain pending at this repair commit. Native Windows remains
 OWED; this Linux fixture diagnosis does not qualify the original native arm failure.
+## Subsequent portable result: separate health-fixture writer race
+
+The first five-repeat portable selection at `1c0eb2f13b58dae675c38ba7732b2d107e38ff0c`
+executed 285, passed 284, failed 1, skipped 0. All five original three-prompt cases,
+five held-TurnEnd witnesses and five RV514 cases passed. The one failure was
+`C514_Health_request_reaches_busy_and_idle_recipients`, repetition ordinal 3,
+at `RemoteControlPtyLane.InsertAsync`, called by `MarkWorkingAsync` on line 42,
+before any automatic arm. Its verbatim first line:
+
+```text
+DbUpdateException: An error occurred while saving the entity changes. See the inner exception for details.
+```
+
+Console inner exception: PostgreSQL `23505`, duplicate key on
+`IX_TranscriptEntries_AgentSessionId_Sequence`. The pump and synthetic marker each
+allocate MAX(Sequence)+1 independently. Waiting for UserPrompt alone permits their
+allocations/saves to race while the real assistant record is still arriving; a
+late real TurnEnd can also overwrite the intended synthetic Working state.
+The repair adds an assertion-backed wait for the real persisted TurnEnd and the
+production idle query before inserting the marker. It changes no input operation,
+assertion, existing deadline or production source, and adds no retry. The original
+base's exact health method is being rerun in its separate frozen scratch worktree
+for inherited attribution; this subsequent repair/build only changes the main
+worktree. The 284/285 outcome is retained, never relabelled green. A fresh complete
+five-repeat selection remains required after this repair.
