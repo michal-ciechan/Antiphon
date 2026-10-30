@@ -45,7 +45,7 @@ public sealed class Card1619UnixExitTests
         using (var connection = await PtyProvider.SpawnAsync(Options("exit 23"), default))
         {
             connection.WaitForExit(5000).ShouldBeTrue("real fast child reaped before wrapper construction");
-            using var session = new PortaPtySession(connection);
+            using IPtySession session = new PortaPtySession(connection);
             session.ReadExitObservation().ShouldBe(new PtyExitObservation(23, 0), "wrapper replay retained");
         }
 
