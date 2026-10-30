@@ -1,11 +1,24 @@
 # CARD-1609: content-derived volume retirement
 
-Round-2 Plan task `02c3c411`, branch `feat/card-task-02c3c411`, fast-forward
-from `42d094a8c8cebb49c3277e20d7839a8cbe1a82c3` (round-1 plan and independent
-review). Re-ground the document on landed CARD-1607; do not rebase this branch or
-merge a target. This is a design for independent Review, not authority to retire
-live volumes. Only this plan changes. Verification design is folded into this plan.
-Next: independent design Review before Code.
+Round-3 Plan task `ccd2fcdc`, branch `feat/card-task-ccd2fcdc`, fast-forward
+from `286fe7196c717d2c5eb1f5bf2c4e8267bd7c36a2` (round-2 plan and re-review).
+This task revises only the plan; it grants no authority to retire live volumes.
+Verification design is folded into this plan. Final plan-cap round; next: Code
+from then-current `origin/master`, with the rc port after top-up 38.
+
+## Round-3 revision ledger
+
+Review source: `.antiphon/task-1f7eb8e4.md`, read in full on 2026-10-30.
+The skeleton records the remaining work before its individually pushed fixes.
+The round-2 findings and validation below remain historical evidence.
+
+| Review defect | Required revision | Status |
+|---|---|---|
+| D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Pending |
+| D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Pending |
+| D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Pending |
+| D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Pending |
+| A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Pending |
 
 ## Round-2 revision ledger
 
