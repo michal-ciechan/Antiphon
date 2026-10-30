@@ -16,7 +16,9 @@ public sealed class DockerStackDocumentationTests
         preflight.ShouldBeGreaterThanOrEqualTo(0);
         preflight.ShouldBeLessThan(text.IndexOf("-Phase check-host-jq", StringComparison.Ordinal));
         foreach (var pin in new[] { "RECYCLE_PROJECT", "RECYCLE_CENSUS", "RecycleProjectUnresolved",
-                     "landPending", "Queued/Dispatched/Working/Blocked", "cause=NoMatch", "-ProjectId", "cause=Http status=400" })
+                     "landPending", "Queued/Dispatched/Working/Blocked", "cause=NoMatch", "-ProjectId", "cause=Http status=400",
+                     "four attempts", "backoffs of 2s, 5s and 10s", "Drift and Unstable", "PartialRefused",
+                     "Main keeps the v1 collector: three attempts" })
             text.ShouldContain(pin);
     }
 
@@ -45,6 +47,9 @@ public sealed class DockerStackDocumentationTests
         var loop = Read("docs/orchestration-loop.md");
         loop.ShouldContain("need no land freeze", Case.Sensitive, "c1353-docs: the rolling phases need no land freeze");
         loop.ShouldContain("never pull while a land runs", Case.Sensitive, "c1353-docs: the AppHost pull wait stays");
+        loop.ShouldContain("retained temp volume blocks deploy-temp", Case.Sensitive, "c1609-docs: retained volumes block deploy-temp");
+        loop.ShouldContain("retire-runner-volumes.ps1 -Close", Case.Sensitive, "c1609-docs: Close is the audited journal command");
+        loop.ShouldContain("tempPrivateVolumes=0", Case.Sensitive, "c1609-docs: Retired still requires zero temp-private volumes");
 
         var plan = Read("docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md");
         System.Text.RegularExpressions.Regex.Matches(plan, "Superseded 2026-10-19 by CARD-1353 D-1").Count
@@ -57,7 +62,9 @@ public sealed class DockerStackDocumentationTests
         var text = Read("docs/docker-stack.md");
         foreach (var expected in new[] { "temp container absence", "including already-absent cleanup", "one deadline",
             "TempContainerExitTimeout", "exited retired temp", "normal shutdown", "pending confirmed absence",
-            "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated" })
+            "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated",
+            "Assert-TempRetirementClearable", "before `/drain/clear`", "TempVolumesRetained", "tempPrivateVolumes=0",
+            "-Close -OperationId", "journal transition, not a delete" })
             text.ShouldContain(expected, Case.Sensitive, "c994-runbook: " + expected);
         text.ShouldNotContain("Current retire-temp guard caveat", Case.Sensitive, "c994-runbook: obsolete null guard caveat");
         text.ShouldNotContain("Until CARD-0994/CARD-1008", Case.Sensitive, "c994-runbook: obsolete implementation caveat");
@@ -167,6 +174,13 @@ public sealed class DockerStackDocumentationTests
         foreach (var volume in new[] { "work", "runner-tmp", "dind-data" })
             section.ShouldNotContain($"docker volume rm antiphon-runner_{volume}", Case.Sensitive,
                 "manual main-volume removal cannot precede redeploy-old");
+        // CARD-1609: temp deletion uses the v2 census. Main stays on the v1 collector.
+        section.ShouldContain("four attempts", Case.Sensitive, "c1609-docs: temp census attempts");
+        section.ShouldContain("backoffs of 2s, 5s and 10s", Case.Sensitive, "c1609-docs: temp census backoff");
+        section.ShouldContain("Drift and Unstable", Case.Sensitive, "c1609-docs: only those causes retry");
+        section.ShouldContain("PartialRefused", Case.Sensitive, "c1609-docs: a failed down -v stays partial");
+        section.ShouldContain("Main keeps the v1 collector: three attempts", Case.Sensitive, "c1609-docs: main census is unchanged");
+        section.ShouldContain("tempPrivateVolumes=0", Case.Sensitive, "c1609-docs: Retired zero is still required");
     }
 
     [Test]
