@@ -42,7 +42,7 @@ public sealed record InspectionReport(IReadOnlyList<WitnessDiagnostic> Diagnosti
 public static class NativeLinuxPolicyWitness
 {
     public const string AttributeSha256 = "31ca5740f4127fe7b3b0fc18639e75262cdb3ae49c3bc545e62a130b99d68ac4";
-    public const string LegacyExclusionDigest = "80ef0af6be7fe58b2664634345c1c05d789f0278a1337127032889a19efbfa3f";
+    public const string LegacyExclusionDigest = "1cb55254e3b430df51de4990129af68f145e38c0711eddc3dc7fc6307c6ac685";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -9,6 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// CARD-1614: namespace boot and residue counting over a private filesystem.
 /// The extracted shell is what runs; these methods do not touch a live cgroup.
 /// </summary>
+[NativeLinuxOnly("Linux custody namespace shell executes on Linux only.")]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CustodyNamespaceBootstrapTests

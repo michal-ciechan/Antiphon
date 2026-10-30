@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -9,6 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// CARD-1614 native Linux custody lifecycle. Slice A owns the installed-probe and
 /// namespace methods. Root-exit, natural completion and lost-host release stay out.
 /// </summary>
+[NativeLinuxOnly("Linux custody lifecycle executes on Linux only.")]
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("LinuxCustody")]
