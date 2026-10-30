@@ -680,7 +680,7 @@ landed SHAs at commissioning; a plan observation is not current landing evidence
 
 | Slice | Files and concrete behavior | Tests |
 |---|---|---|
-| S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (8), changed AgentTaskPoolTests janitor case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
+| S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; FailedTaskSessionOwnership.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (14), changed AgentTaskPoolTests janitor case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
 | S2 hold/control | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue; AgentTaskReplyService.cs typed AnswerCeilingAsync; AgentTaskService.cs retry; new CeilingHoldFacts.cs; AttentionService hold projection; AgentTask.cs; DTOs; server/Api/Endpoints/AgentTaskEndpoints.cs; EF mapping/migration | TaskCeilingPolicyTests (12), TaskCeilingHoldTests (25), TaskCeilingControlTests (19); full policy/overdue/boot/reply/runtime classes and occupancy witnesses |
 | S2 inspected unchanged | DispatchConcurrencyPolicy.cs; AgentTaskPipelineStatusService.cs; CheckCompactionContinuationService.cs; TaskProgressPolicy.cs; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; AppDbContext runtime fence; tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs | No broadening of Blocked; Working naturally remains selected. Full relevant regression classes below; CARD-0079 witness is narrowly qualified |
 | S3 notices/triage/fencing | Actual failure saves in D-2 (AgentTaskDispatcher.cs, AgentTaskReplyService.cs and CheckCompactionContinuationService.cs; recovery/landing callers inspected); new TaskSupervisionNotice domain entity/Purpose/State with EF mapping; SessionQueuedMessage purpose identity; SessionMessageQueueService.cs; CompletionNoteWork.cs; Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; new LateFailedReportForwarder.cs; DelegationReportFormatter.cs; TaskCompletionNotification.cs; PipelineHandoffActionService.cs; AgentTaskService child admission; lifecycle/runtime docs | TaskSupervisionReceiptTests (21); full DelegationDispatchRecoveryBoundaryTests including C1161, full reply/runtime and completion-recovery classes, successor/control witnesses |
@@ -711,7 +711,7 @@ new class counts are exact design commitments (96 TUnit + 3 client cases).
 
 | ID | New class/method | Expanded cases and essential oracle |
 |---|---|---|
-| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody. Actual attention plus custody/no-stop assertions |
+| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 14 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody, reuse, retain-created, retain-stopping, retain-no-generation, retain-remote-pending, absent-transcript. Actual attention plus custody/no-stop assertions |
 | V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless), 4 guards (phase-wins, boot, heartbeat, uncertain); 12 |
 | V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review/Code/Deploy/Plan/Check; 5; Working status and active episode, no terminal save/release |
 | V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | Each ModelWait/LocalExecution; 4; real phase failure wins despite larger ceiling fraction |
@@ -729,7 +729,11 @@ new class counts are exact design commitments (96 TUnit + 3 client cases).
 S1-red expected outcomes are explicit: failed-fresh, failed-unknown, taskless-ttl,
 taskless-cap, restart-resolution and failed-dedup fail their missing feature
 assertion (6 red); real-idle and source-custody are existing safety guards (2
-green). The changed janitor test is one more red (old kill). Never count a guard
+green). Round 2 adds reuse, retain-created, retain-stopping, retain-no-generation,
+retain-remote-pending and absent-transcript, so V-1 is 14. reuse and
+absent-transcript are red on the pre-fix tip. The four retain arms pass until
+Created, Stopping, a missing generation, or a pending remote inventory is treated
+as idle. The changed janitor test is one more red (old kill). Never count a guard
 that already passes as a new red. New negative cases in later red groups may
 already pass; retain per-case expected outcomes in the red receipt rather than
 requiring every argument to fail. New behavior must have a genuine assertion red.
@@ -844,9 +848,9 @@ One build per distinct output per committed After group; no reuse across SHAs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 executed: 6 intended reds and 2 safety guards green | 8 | 6 |
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 14 passed; no failed/skipped | 14 | 6 |
 | CP-2 | S1-red | CP-1 | server-integration-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | S1 | 1 intended assertion red | 1 | 1 |
-| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 passed; no failed/skipped | 8 | 6 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 14 passed; no failed/skipped | 14 | 6 |
 | CP-4 | S1 | CP-3 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | S1 full class | 48 passed; no failed/skipped | 48 | 4 |
 | CP-5 | S1 | CP-3 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | S1 full class | 36 passed; no failed/skipped | 36 | 4 |
 | CP-6 | S1 | CP-3 | server-integration-AttentionServiceTests | `/*/*/AttentionServiceTests/*` | S1 full class | 167 passed; no failed/skipped | 167 | 12 |
@@ -862,7 +866,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 passed; no failed/skipped | 44 | 3 |
 | CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 passed; no failed/skipped | 21 | 5 |
 | CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
-| CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 8 passed; no failed/skipped | 8 | 2 |
+| CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 14 passed; no failed/skipped | 14 | 2 |
 | CP-20 | S2-S4 | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-14 | fresh JSON total=3 passed=3 failed/pending/todo=0; all names; exit 0 | n/a | 2 |
 | CP-21 | S2-S4 | CP-15 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | full affected class | 48 passed; no failed/skipped | 48 | 4 |
 | CP-22 | S2-S4 | CP-15 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | full affected class | 36 passed; no failed/skipped | 36 | 4 |

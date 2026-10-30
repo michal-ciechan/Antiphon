@@ -191,44 +191,64 @@ public sealed partial class AttentionService
         {
             SessionStatus.Created, SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping,
         };
-        var rows = await (
+        // Bound by unfinished sessions that still have a Failed task. A global Take could hide
+        // the current owner. Later tasks on those sessions and their agents are loaded so a
+        // historical Failed row is not the owner.
+        var sessionIds = await (
             from task in _db.AgentTasks.AsNoTracking()
             join session in _db.AgentSessions.AsNoTracking() on task.AgentSessionId equals session.Id
             where task.Status == AgentTaskStatus.Failed
                 && task.AgentSessionId != null
                 && held.Contains(session.Status)
-            select new { Task = task, Session = session }).ToListAsync(ct);
-        if (rows.Count == 0)
+                && session.StartedAt != default
+            select session.Id).Distinct().ToListAsync(ct);
+        if (sessionIds.Count == 0)
             return [];
 
+        var sessions = await _db.AgentSessions.AsNoTracking()
+            .Where(session => sessionIds.Contains(session.Id))
+            .ToDictionaryAsync(session => session.Id, ct);
+        var candidates = sessions.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value.Status, pair.Value.StartedAt));
+        var owners = await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, candidates, ct);
+        if (owners.Count == 0)
+            return [];
+
+        var ownerIds = owners.Values.Select(owner => owner.Id).ToList();
+        var tasks = await _db.AgentTasks.AsNoTracking()
+            .Where(task => ownerIds.Contains(task.Id))
+            .ToDictionaryAsync(task => task.Id, ct);
         var working = await SessionMessageQueueService.IsWorkingBatchAsync(
-            _db, rows.Select(row => row.Session.Id).Distinct().ToList(), ct);
+            _db, owners.Keys.ToList(), ct);
         var snapshot = _seats?.Current;
-        var items = new List<AttentionItemDto>(rows.Count);
-        foreach (var row in rows)
+        var items = new List<AttentionItemDto>(owners.Count);
+        foreach (var (sessionId, owner) in owners)
         {
+            if (!sessions.TryGetValue(sessionId, out var session) || !tasks.TryGetValue(owner.Id, out var task))
+                continue;
             var facts = FailedTaskSessionFacts.Describe(
-                row.Task, row.Session, working.GetValueOrDefault(row.Session.Id), snapshot, now);
+                task, session, working.GetValueOrDefault(sessionId), snapshot, now);
             var actions = new List<AttentionAction> { AttentionAction.OpenDrawer };
-            if (row.Task.AgentId is not null)
+            if (task.AgentId is not null)
                 actions.Add(AttentionAction.OpenAgent);
             items.Add(new AttentionItemDto(
                 AttentionKind.FailedTaskSessionHeld,
                 AlertSeverity.Warning,
-                row.Task.Id,
-                row.Session.Id,
-                row.Task.AgentId,
+                task.Id,
+                session.Id,
+                task.AgentId,
                 null,
                 facts.Summary,
                 facts.Activity,
-                "notice=none; failure=" + (row.Task.FailureReason ?? "unknown")
-                    + $"; activity={facts.Activity}; session={row.Session.Id:D}; "
-                    + $"agent={row.Task.AgentId?.ToString("D") ?? "none"}; "
+                "notice=none; failure=" + (task.FailureReason ?? "unknown")
+                    + $"; activity={facts.Activity}; session={session.Id:D}; "
+                    + $"agent={task.AgentId?.ToString("D") ?? "none"}; "
                     + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed.",
-                row.Task.CompletedAt ?? row.Session.StartedAt,
+                task.CompletedAt ?? session.StartedAt,
                 null,
                 actions,
-                CardId: row.Task.CardId));
+                CardId: task.CardId));
         }
 
         return items;
@@ -258,12 +278,12 @@ public sealed partial class AttentionService
                     || task.Status == AgentTaskStatus.Blocked))
             .Select(task => task.AgentSessionId!.Value)
             .ToListAsync(ct)).ToHashSet();
-        var failed = (await _db.AgentTasks.AsNoTracking()
-            .Where(task => task.Status == AgentTaskStatus.Failed
-                && task.AgentSessionId != null
-                && sessionIds.Contains(task.AgentSessionId.Value))
-            .Select(task => task.AgentSessionId!.Value)
-            .ToListAsync(ct)).ToHashSet();
+        var failedCandidates = sessions
+            .Where(pair => pair.Value.Status is SessionStatus.Created or SessionStatus.Starting
+                or SessionStatus.Running or SessionStatus.Stopping)
+            .ToDictionary(pair => pair.Key, pair => (pair.Value.Status, pair.Value.StartedAt));
+        var failed = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, failedCandidates, ct))
+            .Keys.ToHashSet();
         var ttl = TimeSpan.FromMinutes(Math.Max(1, _delegation.PoolIdleRetireMinutes));
         var items = new List<AttentionItemDto>();
         foreach (var incident in incidents)
