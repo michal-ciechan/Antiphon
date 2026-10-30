@@ -396,13 +396,14 @@ refusal. This path reads no checkout commit SHA. The encoding fixture script has
 no `.Substring()` call. The shared runner's configuration-key slice
 `CheckpointProcessRunner.cs:87` uses a newline index from the same string and
 checks it before slicing. No additional unguarded source-identity prefix was found
-on this path. The Windows `.cmd` shim branch remains a native obligation.
+on this path. The then-unexecuted Windows `.cmd` shim has since been retired
+by the repair above; actual native validation remains owed.
 
-The same exception text reported by the caller is a reason to investigate the
-cases together; it does not establish a shared call site. No Substring exception
-was reproduced by the added selection, so a cause-specific red witness and repair
-remain unfulfilled. An original native message **and stack**, especially for this
-PowerShell-backed case, are still required to establish the cause.
+At that historical stage no Substring exception was reproduced. The caller later
+confirmed that its extraction script produced the exception and supplied the real
+assertion messages. Those corrected inputs, the executable-binding witness and
+repair above supersede the original request for a Substring stack. Native
+validation of the repaired fixture remains owed.
 
 At clean commit `27293e7b8d857edac438d19fe4a602cf87b20e79`, the exact filter
 `/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused`
