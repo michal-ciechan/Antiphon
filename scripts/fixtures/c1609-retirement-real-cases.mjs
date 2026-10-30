@@ -47,7 +47,7 @@ function known(name) {
   return name;
 }
 function rootRun(text, allowFailure = false) {
-  return call(cli, ['exec',scope.helper,'nsenter','-t','1','-m','-r','-w','--','bash','-ceu',text],allowFailure);
+  return call(cli, ['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--','bash','-ceu',text],allowFailure);
 }
 function rootRead(file) {
   assert(file.startsWith(scope.hostRoot + '/'));
@@ -169,7 +169,7 @@ function shell(f, body, suffix='run') {
   src=src.replace(marker,'\n'+lines+'\n'+marker);
   const filename=scope.root+'/'+f.stem+'-'+suffix+'.sh';
   fs.writeFileSync(filename,'export C590_CASE=retire-temp-runner C590_SHA='+q(scope.source)+' C590_RUN=native C590_REEXEC=1\n'+src,{mode:0o600});
-  return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-r','-w','--','bash',filename],{},180000);
+  return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--','bash',filename],{},180000);
 }
 function receipt(f) {return JSON.parse(rootRead(f.host+'/server/retirement/'+f.op+'/receipt.json'));}
 const auditReady=[
