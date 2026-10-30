@@ -25,8 +25,10 @@ namespace Antiphon.Tests.Application;
 /// A Failed task holds a seat only while it is the current proved-generation owner.
 /// Created, Stopping, a missing generation, and a pending remote inventory stay.
 /// A transcript with rows but no turn boundary stays. A transcript with no rows
-/// is absent evidence and stays too, on the TTL pass, the cap pass, and the
-/// pre-kill recheck, until a turn boundary or an operator acts.
+/// is absent evidence and stays too, on the TTL pass and the cap pass, until a
+/// turn boundary or an operator acts. A zero-row member under the cap is kept
+/// and the next proved-idle member is retired in its place. A Stopped zero-row
+/// row is already terminal and is swept without a process kill.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -55,6 +57,8 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("zero-row-ttl")]
     [Arguments("zero-row-cap")]
     [Arguments("zero-row-recheck")]
+    [Arguments("mixed-cap")]
+    [Arguments("zero-row-terminal")]
     [Arguments("reuse-other-agent")]
     [Arguments("later-agent-task")]
     [Arguments("id-only-query")]
@@ -112,6 +116,12 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "zero-row-recheck":
                 await ZeroRowRecheckAsync();
+                break;
+            case "mixed-cap":
+                await MixedCapAsync();
+                break;
+            case "zero-row-terminal":
+                await ZeroRowTerminalAsync();
                 break;
             case "reuse-other-agent":
                 await ReuseOtherAgentAsync();
@@ -352,8 +362,9 @@ public sealed class TaskSupervisionVisibilityTests
     }
 
     /// <summary>
-    /// The pre-kill query retains a session id that has no rows, keeps a title-only
-    /// session, and does not retain a stored turn end.
+    /// Helper witness for SessionsWithoutTurnBoundaryAsync, not the janitor
+    /// recheck. A session id with no rows is missing, a title-only session is
+    /// missing, and a stored turn end is not.
     /// </summary>
     private static async Task ZeroRowRecheckAsync()
     {
@@ -375,6 +386,67 @@ public sealed class TaskSupervisionVisibilityTests
         missing.ShouldContain(zero);
         missing.ShouldContain(title);
         missing.ShouldNotContain(ended);
+    }
+
+    /// <summary>
+    /// Cap 3, four warm agents pooled 0, 1, 2 and 3 minutes ago, TTL 5. The oldest
+    /// has no rows and stays. The 2-minute agent has a TurnEnd and is killed, and
+    /// its row is removed, so the cap is met by the members that can be retired.
+    /// </summary>
+    private static async Task MixedCapAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var seeded = new List<(Guid Agent, Guid Session)>();
+        for (var idle = 0; idle <= 3; idle++)
+        {
+            var row = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: idle, clock);
+            if (idle != 3)
+                await SeedTranscriptAsync(schema.ConnectionString, row.Session, clock, working: false);
+            seeded.Add(row);
+        }
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        var oldest = seeded[3];
+        var nextOldest = seeded[2];
+        stopper.Killed.ShouldNotContain(oldest.Session);
+        stopper.Killed.ShouldContain(nextOldest.Session);
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == oldest.Agent)).ShouldBeTrue();
+        (await db.AgentSessions.SingleAsync(s => s.Id == oldest.Session)).Status.ShouldBe(SessionStatus.Running);
+        (await db.Agents.AnyAsync(a => a.Id == nextOldest.Agent)).ShouldBeFalse();
+        foreach (var row in seeded.Take(2))
+        {
+            stopper.Killed.ShouldNotContain(row.Session);
+            (await db.Agents.AnyAsync(a => a.Id == row.Agent)).ShouldBeTrue();
+            (await db.AgentSessions.SingleAsync(s => s.Id == row.Session)).Status.ShouldBe(SessionStatus.Running);
+        }
+    }
+
+    /// <summary>
+    /// A Stopped session with no rows is already terminal. The stale-row sweep
+    /// removes the agent row and does not kill the process.
+    /// </summary>
+    private static async Task ZeroRowTerminalAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, stopper, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var (agent, session) = await SeedWarmAsync(
+            schema.ConnectionString, workspace.Path, idleMinutes: 10, clock, status: SessionStatus.Stopped);
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldNotContain(session);
+        await using var db = Open(schema.ConnectionString);
+        (await db.Agents.AnyAsync(a => a.Id == agent)).ShouldBeFalse();
+        (await db.AgentSessions.SingleAsync(s => s.Id == session)).Status.ShouldBe(SessionStatus.Stopped);
     }
 
     /// <summary>
