@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
