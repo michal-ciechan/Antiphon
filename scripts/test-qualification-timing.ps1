@@ -517,8 +517,23 @@ param([string]$Path, [string]$Result, [string]$Timing, [string]$Lib)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
+$script:fifoOpenCalls = 0
+$script:fifoListCalls = 0
+$script:fifoListedEntries = 0
+$script:fifoListedFolder = ''
+$fifoOpen = ${function:Open-TestPhaseReadStream}
+function Open-TestPhaseReadStream {
+    param([string]$Path)
+    $script:fifoOpenCalls++
+    & $fifoOpen @PSBoundParameters
+}
+$fifoSums = ${function:Get-QualificationPhaseSums}.ToString()
+$list = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
+$countedList = $list + '; $script:fifoListCalls++; $script:fifoListedEntries += $entries.Count; $script:fifoListedFolder = $folder'
+Set-Item -LiteralPath Function:Get-QualificationPhaseSums -Value ([scriptblock]::Create($fifoSums.Replace($list, $countedList)))
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$readSeconds = $sw.Elapsed.TotalSeconds
 $sums = Get-QualificationPhaseSums -TimingRoot $Timing -Chunk 'g1' -RunId 'run-fifo' -Suite 'antiphon' -Attempt '1'
 $sw.Stop()
 $waitNull = ($null -ne $sums -and $null -eq $sums.processWaitSeconds)
@@ -527,6 +542,11 @@ $payload = [ordered]@{
     complete = [bool]$read.Complete
     count = @($read.Records).Count
     waitNull = [bool]$waitNull
+    readSeconds = $readSeconds
+    openCalls = $script:fifoOpenCalls
+    listCalls = $script:fifoListCalls
+    listedEntries = $script:fifoListedEntries
+    listedFolder = $script:fifoListedFolder
 }
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
@@ -537,6 +557,9 @@ $payload = [ordered]@{
         $fifoOk = $false
         if ($fifoOkCreated -and $fifoRun.Exited -and $fifoRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $fifoResult)) {
             $fifoDoc = Get-Content -LiteralPath $fifoResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            Write-Host ('MEASURED fifo-child=' + $fifoRun.Seconds + ' body=' + $fifoDoc.seconds + ' read=' + $fifoDoc.readSeconds + ' opens=' + $fifoDoc.openCalls + ' lists=' + $fifoDoc.listCalls + ' entries=' + $fifoDoc.listedEntries)
+            Assert-Check ([int]$fifoDoc.openCalls -eq 0) 'fifo-cases-file-never-opens-stream'
+            Assert-Check ([int]$fifoDoc.listCalls -eq 1 -and [int]$fifoDoc.listedEntries -eq 1 -and [string]$fifoDoc.listedFolder -eq $fifoChunk) 'fifo-cases-file-lists-only-own-chunk'
             Assert-Check ([double]$fifoDoc.seconds -lt 0.2) 'fifo-cases-file-in-process-budget'
             $fifoOk = (-not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
         }
@@ -593,7 +616,14 @@ $NightlySeams = @{
         param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
         $argsText = @($ArgumentList) -join ' '
         if ($argsText -match '--report-trx' -and $argsText -notmatch '--list-tests') {
-            [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, 'launched')
+            $script:launchWitnessCount++
+            $script:launchWitnessReached = $true
+            $marker = [ordered]@{
+                seconds = $script:launchWitnessWatch.Elapsed.TotalSeconds
+                sidecarReads = $script:launchWitnessSidecarReads
+                fifoOpens = $script:launchWitnessFifoOpens
+            }
+            [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, ($marker | ConvertTo-Json -Compress))
         }
         return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
     }
@@ -602,7 +632,7 @@ $NightlySeams = @{
         [IO.File]::WriteAllText($launchSeam, $launchSeamBody.Replace("`r", ''))
         $launchScript = Join-Path $launchRoot 'launch.ps1'
         $launchBody = @'
-param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker)
+param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker, [string]$ResultPath)
 $ErrorActionPreference = 'Stop'
 $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
@@ -611,15 +641,51 @@ $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/release-gate.ps1')
 . (Join-Path $Repo 'scripts/lib/release-selection.ps1')
 . (Join-Path $Repo 'scripts/lib/nightly-tests-impl.ps1')
+$script:launchWitnessCount = 0
+$script:launchWitnessReached = $false
+$script:launchWitnessSidecarReads = 0
+$script:launchWitnessFifoOpens = 0
+$launchSidecar = ${function:Read-QualificationSidecar}
+function Read-QualificationSidecar {
+    param([string]$Path, $Watch = $null, [int]$DeadlineMilliseconds = 200)
+    if (-not $script:launchWitnessReached) { $script:launchWitnessSidecarReads++ }
+    & $launchSidecar @PSBoundParameters
+}
+$launchOpen = ${function:Open-TestPhaseReadStream}
+function Open-TestPhaseReadStream {
+    param([string]$Path)
+    if (-not $script:launchWitnessReached -and $Path -eq (Join-Path $LogRoot 'antiphon-all.timing.json')) { $script:launchWitnessFifoOpens++ }
+    & $launchOpen @PSBoundParameters
+}
 $sw = [Diagnostics.Stopwatch]::StartNew()
+$script:launchWitnessWatch = $sw
 $result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $LogRoot -TimingRoot (Join-Path $LogRoot 'timing') -Suites @('antiphon') -Profile 'nightly' -Sha 'd3fd72f941abda0fd6026f5e564d66ac410bdf47' -RunId 'fifo-launch' -Trigger 'manual' -SeamsPath $Seam -AllowSharedTree
 $sw.Stop()
 $launched = Test-Path -LiteralPath $Marker
+$payload = [ordered]@{
+    seconds = $sw.Elapsed.TotalSeconds
+    launched = $launched
+    resultPresent = ($null -ne $result)
+    launchCount = $script:launchWitnessCount
+}
+[IO.File]::WriteAllText($ResultPath, ($payload | ConvertTo-Json -Compress))
 if ($launched -and $null -ne $result -and $sw.Elapsed.TotalSeconds -lt 12) { exit 0 }
 exit 1
 '@
         [IO.File]::WriteAllText($launchScript, $launchBody.Replace("`r", ''))
-        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker) -TimeoutMilliseconds 12000
+        $launchResult = Join-Path $launchRoot 'result.json'
+        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker, $launchResult) -TimeoutMilliseconds 12000
+        Write-Host ('MEASURED launch-child=' + $launchRun.Seconds + ' exited=' + $launchRun.Exited + ' exit=' + $launchRun.ExitCode + ' marker=' + (Test-Path -LiteralPath $launchMarker))
+        if (Test-Path -LiteralPath $launchResult) {
+            $launchDoc = Get-Content -LiteralPath $launchResult -Raw | ConvertFrom-Json
+            Write-Host ('MEASURED launch-body=' + $launchDoc.seconds + ' count=' + $launchDoc.launchCount)
+            Assert-Check ([bool]$launchDoc.resultPresent -and [int]$launchDoc.launchCount -eq 1) 'fifo-sidecar-launch-result-and-count'
+        } else { Assert-Check $false 'fifo-sidecar-launch-result-and-count' }
+        if (Test-Path -LiteralPath $launchMarker) {
+            $launchMark = Get-Content -LiteralPath $launchMarker -Raw | ConvertFrom-Json
+            Write-Host ('MEASURED launch-marker=' + $launchMark.seconds + ' reads-before-launch=' + $launchMark.sidecarReads + ' fifo-opens=' + $launchMark.fifoOpens)
+            Assert-Check ([int]$launchMark.sidecarReads -eq 0 -and [int]$launchMark.fifoOpens -eq 0) 'fifo-sidecar-no-reads-before-launch'
+        } else { Assert-Check $false 'fifo-sidecar-no-reads-before-launch' }
         $launchOk = ($launchCreated -and $launchRun.Exited -and $launchRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $launchMarker))
         Assert-Check $launchOk 'fifo-sidecar-does-not-delay-launch'
     }
