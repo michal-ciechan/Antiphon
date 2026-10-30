@@ -92,6 +92,8 @@ public sealed class CompletionNoteWorkHostedService(
     /// </summary>
     private async Task RecoverMissingAsync(IServiceProvider services, AppDbContext db, Guid? taskId, CancellationToken ct)
     {
+        await new TaskSupervisionNoticeService(db, services.GetRequiredService<SessionMessageQueueService>(), clock)
+            .RecoverAsync(taskId, ct);
         Guid? cursor = null;
         Exception? failed = null;
         while (true)
