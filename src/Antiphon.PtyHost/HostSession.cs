@@ -25,6 +25,7 @@ public sealed class HostSession : IAsyncDisposable
     private long _lastSeq;
     private string _status = PtyHostStatus.WaitingForLaunch;
     private int? _exitCode;
+    private int? _exitSignal;
     private string? _exitReason;
     private int _cols;
     private int _rows;
@@ -253,7 +254,7 @@ public sealed class HostSession : IAsyncDisposable
             _sink = sink;
 
             if (_status == PtyHostStatus.Exited)
-                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq));
+                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq, _exitSignal));
         }
 
         return null;
@@ -304,7 +305,8 @@ public sealed class HostSession : IAsyncDisposable
                 _rows,
                 _lastSeq,
                 _exitCode,
-                _exitReason);
+                _exitReason,
+                _exitSignal);
         }
     }
 
@@ -393,16 +395,20 @@ public sealed class HostSession : IAsyncDisposable
     private async Task ObserveExitAsync()
     {
         int? exitCode;
+        int? exitSignal;
         string exitReason;
         try
         {
-            exitCode = (await _runner.Completion).ExitCode;
+            var observation = await _runner.Completion;
+            exitCode = observation.ExitCode;
+            exitSignal = observation.ExitSignal;
             exitReason = _runner.ExitReason.ToString();
         }
         catch (Exception ex)
         {
             _log.Error("exit observer failed", ex);
             exitCode = null;
+            exitSignal = null;
             exitReason = "ObserverFailed";
         }
 
@@ -411,6 +417,7 @@ public sealed class HostSession : IAsyncDisposable
         {
             _status = PtyHostStatus.Exited;
             _exitCode = exitCode;
+            _exitSignal = exitSignal;
             _exitReason = exitReason;
             lastSeq = _lastSeq;
         }
@@ -427,6 +434,7 @@ public sealed class HostSession : IAsyncDisposable
             _manifest = _manifest with
             {
                 ExitCode = exitCode,
+                ExitSignal = exitSignal,
                 ExitReason = exitReason,
                 ExitedAtUtc = DateTime.UtcNow,
             };
@@ -434,10 +442,10 @@ public sealed class HostSession : IAsyncDisposable
             catch (Exception ex) { _log.Error("exit manifest save failed; lingering anyway", ex); }
         }
 
-        _log.Info($"Child exited (code {exitCode}, reason {exitReason}); lingering for runner ack");
+        _log.Info($"Child exited (code {exitCode}, signal {exitSignal?.ToString() ?? "unknown"}, reason {exitReason}); lingering for runner ack");
         lock (_gate)
         {
-            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq));
+            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq, exitSignal));
         }
 
     }
