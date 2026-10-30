@@ -1,3 +1,5 @@
+D-1/D-3 witnesses and D-2 summary repair are complete and pushed. Latest portable rows passed 38/38; six controls and portable scale/replay passed. Initial CP-8 timing failure remains unresolved: verification/release gate is incomplete.
+
 # CARD-1514 fix round and portable M3 - d99e4f23
 
 Assigned base: a43e8ed04cc7f2d17d508ed5dd570b319e9b5f1d.
@@ -36,14 +38,14 @@ All required checkpoint executions use the real checkpoint tool and host build s
 5. Fresh CP-1 run 20261030-121129-e236 at f4d99876b6e25d876f6eace1fdee39d7b9c11506: build passed (12m07.41s compiler wall; zero errors), then selected-group execution budget expired. Exit 5. Budget wall=1081.261s, execution=961.271s, admissionOnly=119.990s. It remains red.
 6. Exact CP-1 row recovery CP-1-20261030-123016-6074: 8/8 passed, zero failed/skipped, source clean and buildSource verified. V-1 was 97.868s; timezone differential 57.276s; successor corruption witness 14.240s; byte recovery 20.146s. This uses the same source/OS/M1 build; no extra build or timeout increase.
 7. Attempted overlapping CP-2 preflight 20261030-122530-09eb was refused before compilation or tests: CP-1 was still changing its output inventory outside CP-2's write root. Exit 2, all eight rows executed=0. This was my scheduling error; no source recovery was attempted or needed. The refusal is retained, and CP-2 was restarted only after CP-1 settled.
-8. Final CP-2..CP-9 run 20261030-123509-2f13: pending final receipt below. Its isolated build passed in 14m26.35s compiler wall, zero errors.
+8. Final CP-2..CP-9 run 20261030-123509-2f13: completed with the retained CP-8 failure and exact diagnostic rerun described below. Its isolated build passed in 14m26.35s compiler wall, zero errors.
 
 The inherited coupled build/group budget is demonstrably tight on this host. No timeout was widened, no assertion relaxed, and no red run relabeled green. Exact row recovery retained verified same-source builds. Future performance/packing work should use this timing record under CARD-1514/CARD-1404 rather than blindly repeating the aggregate. The test assembly and its large staged-probe build dominate admission/execution cost; no full-suite run was authorized or performed.
 
 ## Required portable rows
 
 CP-1: final 8/8, source f4d99876b6e25d876f6eace1fdee39d7b9c11506, verified build.
-CP-2..CP-9: final values and unedited CHECKPOINT lines are appended after completion.
+CP-2..CP-9: final values and unedited CHECKPOINT lines are appended below.
 
 ## Definition and land check
 
@@ -75,3 +77,76 @@ CHECKPOINT CP-7 commit=f4d99876b6e25d876f6eace1fdee39d7b9c11506 build=reused fil
 CHECKPOINT CP-9 commit=f4d99876b6e25d876f6eace1fdee39d7b9c11506 build=reused filter=/*/Antiphon.Tests.Scripts/RcFullWatchdogHarnessTests/HeartbeatExistingContract executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-d99e4f23/.antiphon/checkpoints/20261030-123509-2f13/rows/CP-9/run.trx slot=granted waited=15s dirty=0 source=f4d99876b6e25d876f6eace1fdee39d7b9c11506 sourceState=clean buildSource=verified
 CHECKPOINT CP-8 commit=f4d99876b6e25d876f6eace1fdee39d7b9c11506 build=reused filter=/*/Antiphon.Tests.Scripts/PosixHarnessToolTests/Qualification_timing_completes_without_mkfifo_chmod_or_ln_on_path executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-d99e4f23/.antiphon/checkpoints/CP-8-20261030-132053-74b2/run.trx slot=granted waited=15s dirty=0 source=f4d99876b6e25d876f6eace1fdee39d7b9c11506 sourceState=clean buildSource=verified
 ```
+
+## Portable M3 results
+
+Measured source bc9d6b1ca3bd9f29fcfd3ab29a0821fd3ad44e3b, pwsh 7.5.4 Core / .NET 9.0.10, invariant culture, Etc/UTC, host 4551c5a7852f. Twenty candidate samples per prefix; nearest-rank empirical p95 (small sample, not a reliability claim). First publication and initialization are separate. Two legacy reference calls alternate around the first two candidate samples. Current TRX has one synthetic outcome. No native owner launch or qualification credit.
+
+| prior chunks / outcomes | candidate median / p95 / max ms | legacy references seconds | initialization seconds | projection seconds | numeric record bytes (21 records) |
+|---|---|---|---|---|---|
+| 0 / 0 | 96.567 / 124.995 / 129.983 | 0.191, 0.043 | 0.852 | 0.148 | 30,504 |
+| 240 / 21,512 | 33.004 / 90.949 / 129.986 | 31.305, 31.553 | 40.053 | 0.495 | 30,546 |
+| 480 / 43,024 | 30.438 / 222.102 / 373.404 | 35.737, 36.452 | 38.419 | 0.842 | 30,546 |
+
+Every final projection matched the pinned old writer byte-for-byte and retained exactly prior chunks + one current chunk and all expected outcomes. Flat seed hashes stayed unchanged throughout steady-state publication. Raw metrics: .antiphon/d99e4f23/full-m3-samples/metrics.json.
+
+The initial inventory filter also matched metadata.json and seed.json. Original metrics are preserved. A deterministic numeric-filename audit (inventory-audit.json, bound to original metrics SHA256) corrects only count/byte bookkeeping; timings and projection hashes are unchanged. The executable filter is fixed. Its first edit had a quoting/parser error (1c6883ea3); the follow-up 01587587bae45ac24f30d7ca35f797c1b8ec6c11 fixes it. Both inventory smoke cases then passed; the corrected sample smoke reports exactly 21 records. No red setup failure is counted as a killed control.
+
+**Full synthetic sequence:** 385 ordered publications, 385 distinct UIDs/outcomes, two suites, passed/failed/skipped rows, alternating old/new call order. Every candidate chunk was journaled without a flat projection; exactly one terminal projection matched the complete old-writer replay bytes. Final bytes=140,027; SHA256=df48e2a20ed88ff9a0afbc84e1027431511144b9738e248dd5a6800f2b7de1f9. Candidate publication sum=17.189s plus projection=8.644s; legacy publication sum=578.910s. Candidate median=22.705ms, p95=151.942ms. Input order, fixed synthetic host-wall values and every TRX digest are retained in ordered-inputs.json; actual publication timings were measured separately. This is event-count scale with one outcome per chunk; payload scale is the 21,512/43,024-outcome prefix corpus above. It does not recreate historical measurements or the historical manifest SHA. Metrics: .antiphon/d99e4f23/full-m3-replay/metrics.json.
+
+Both full cases returned ok=true. Gated scale driver held 842s, including both phases. The two source helpers are test-only cases m3-samples and m3-replay in the existing harness; no public script/census, native class, allowlist or policy change. Initial smoke and post-inventory smoke each passed both cases.
+
+## Named positive controls
+
+Bound pack: f4d99876b6e25d876f6eace1fdee39d7b9c11506 build tests/Antiphon.Tests/bin-manifest-integration-final, with the committed live PowerShell harness. One leased sequential driver, one exact /*/*/Class/Method selection per red and green. Each red executed exactly one test, failed exactly one with the named assertion; each restoration ran that same method and passed one, skipped zero. No fixture/build/zero-test failure was counted.
+
+| mutation | exact method | expected assertion | result |
+|---|---|---|---|
+| seed empty | RcManifestRecoveryTests.CommittedCorruptionCannotFallBack | successor-seed-lost-valid-prefix torn | killed; restored green |
+| projection feeds coverage authority | RcManifestIntegrationTests.LedgerAndReceiptBytesAreUnchanged | publication-changed-real-verdict | killed; restored green |
+| project every chunk | RcManifestIntegrationTests.ProductionLoopPublishesObservableProgress | progress-flat-present-before-terminal | killed; restored green |
+| drop gap records | RcManifestIntegrationTests.PublicationFailurePreservesVerdict | outage-gaps | killed; restored green |
+| force summary complete | RcManifestIntegrationTests.PublicationFailurePreservesVerdict | outage-summary-complete | killed; restored green |
+| expose final record before atomic commit | RcManifestRecoveryTests.KilledWriterRecoversCommittedPrefix | recovered-prefix stage=BeforeTempComplete | killed; restored green |
+
+All 6 controls killed; all 6 restored executions green. Source restoration hashes verified for test-phase-evidence.ps1 (0b384a9e866476c400002cc55e7d94b4adb922b8f1e50fe26f226057d754ef02) and nightly-tests-impl.ps1 (45895b47b338761a93bf30530a2ed54ad5888a111e52a7cd5d1be3f936e08e31). Driver held 283s. Evidence: .antiphon/d99e4f23/controls/{results,restoration}.json and per-control TRX/logs. Native Windows non-atomic/share/PS5.1 controls remain owed.
+
+## Final provenance and cleanup
+
+OS inventory at bc9d6b1ca3bd9f29fcfd3ab29a0821fd3ad44e3b passed syntax/inventory; native obligation remains pending. Evidence-policy guard over the first 9 commits passed with entries=1, violations=0. Final inventory edit changes only numeric record accounting after measurement and is covered by successful smoke cases. No changed definition file; the earlier real land -Check still covers the unchanged 66 definition inputs.
+
+Fetched origin/master=bce716158d9a3fcca5bf548a07fdb257de637f1f. merge-tree at final code 01587587bae45ac24f30d7ca35f797c1b8ec6c11 exited 1 (conflicts, including inherited integration areas). No merge or rebase performed; this is not a landable master merge. RC port is a separate Merge task.
+
+Owned alternate outputs were removed by a guarded, literal-path cleanup after all processes joined: tests/Antiphon.Tests/bin-manifest-core, bin-manifest-core-f4, bin-manifest-integration-f4, bin-manifest-integration-final; tools/Antiphon.Checkpoints/bin-d99e4f23-cp; src/Antiphon.HostCleanup/bin-d99e4f23-cp; tools/Antiphon.LandGraphAudit/bin-d99e4f23-land; tools/Antiphon.LandGraphAudit.Core/bin-d99e4f23-land. The detached baseline worktree was removed normally. Generated JSON/TRX/logs remain ignored; no evidence directory was force-added.
+
+## Exact follow-up commands and limits
+
+Portable measurement rerun on a fresh scratch directory (first set MP_SOURCE_SHA to git rev-parse HEAD; Linux TEMP=/tmp):
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-samples -- pwsh -NoProfile -File tests/Antiphon.Tests/TestHelpers/ManifestPublicationHarness.ps1 -Case m3-samples -Work /absolute/fresh/scratch/samples -Repo /absolute/checkout
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-replay -- pwsh -NoProfile -File tests/Antiphon.Tests/TestHelpers/ManifestPublicationHarness.ps1 -Case m3-replay -Work /absolute/fresh/scratch/replay -Repo /absolute/checkout
+```
+
+Windows owner must implement V-15/V-16 and its Slow registration first (RcManifestNativeTests is still absent), then bootstrap/import the checkpoint tool and execute the exact native rows on that reviewed native implementation tip:
+
+```text
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-native-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-manifest-native-tool/ --property:UseAppHost=false
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label manifest-native-import -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-manifest-native-tool/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1514-incremental-manifest-publication-plan.md --out .antiphon/manifest-native-fresh.yaml
+dotnet tools/Antiphon.Checkpoints/bin-manifest-native-tool/Antiphon.Checkpoints.dll run .antiphon/manifest-native-fresh.yaml --rows CP-10,CP-11 --expected-source-sha <native-implementation-full-sha> --total-timeout 34m --hard-wall-timeout 44m
+```
+
+Before native execution pin UseAppHost=false, slotWaitMinutes=10, CP-10 timeoutMinutes=28 and CP-11=6 in that ignored manifest. Wait until exit is not 75. A zero-test/off-OS skip is not a receipt. Original historical replay still requires the retained 28bbb58e ordered inputs/TRX, original IDs/wall values/runtime and original manifest SHA256 9db1b29578a3dadfef614b5a1cb6b5ffc5e315a126cf39cfcd1d11fb4271e932; current synthetic data cannot supply it. Private/deployed watcher inventory needs the Windows/operator lane and source digests/invocations/input patterns/reset decisions. Initial CP-8 timing failure also needs Debug follow-up.
+
+Later pushed commits (including the retained failed inventory edit and its fix):
+
+- 14fb68067167a4ec433d98511de69bb61eaa903d - docs(card-1514): preserve fix-round receipts and timing failures
+- ed37b3696cb32ad2880940bbe422aaedafb85297 - test(card-1514): add portable publication samples and ordered replay
+- bc9d6b1ca3bd9f29fcfd3ab29a0821fd3ad44e3b - test(card-1514): avoid automatic input variable in replay
+- 1c6883ea30ee50388d71cb6131005063ee3c0ba6 - test(card-1514): count numeric journal records in scale inventory
+- 01587587bae45ac24f30d7ca35f797c1b8ec6c11 - fix(card-1514): preserve literal PowerShell regex in inventory filter
+
+--- next stage ---
+next: review
+handoff: Review the fixes and portable M3 evidence, including red history and unresolved initial CP-8 timing failure. Keep the gate incomplete for native, original-history and deployed-watcher obligations. A separate Merge task ports reviewed changes to rc; no activation is authorized here.
+artifact: .antiphon/task-d99e4f23.md
