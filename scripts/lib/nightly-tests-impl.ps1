@@ -428,7 +428,13 @@ function ConvertTo-NightlyProfileLaunchGroups {
 }
 
 function Get-NightlyProfileLaunchPlan {
-    param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
+    param(
+        [object[]]$DiscoveryNodes,
+        [object[]]$Chunks,
+        [object[]]$Exclusions,
+        [string]$SuiteId = 'antiphon',
+        $PolicyObject = $null
+    )
     $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
     $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
     # CARD-1567: the 60-minute native watchdog detects hangs, not ordinary
@@ -444,12 +450,14 @@ function Get-NightlyProfileLaunchPlan {
             throw ('launch-estimate-ceiling id={0} seconds={1} ceiling={2}' -f $launch.id, $seconds, $ceiling)
         }
         $suiteForWatchdog = 'antiphon'
+        if (-not [string]::IsNullOrWhiteSpace([string]$SuiteId)) { $suiteForWatchdog = [string]$SuiteId }
         foreach ($class in @($launch.classes)) {
             if ([string]$class -clike 'Antiphon.E2E.*') { $suiteForWatchdog = 'e2e' }
         }
-        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteForWatchdog -PlannedSeconds $seconds -Basis 'default'
+        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteForWatchdog -PlannedSeconds $seconds -Basis 'default' -PolicyObject $PolicyObject
         if (-not $admission.Admitted) {
-            throw ('watchdog-admission-refused id={0} reason={1}' -f $launch.id, $admission.Reason)
+            $watchdogText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', [double]$admission.WatchdogSeconds)
+            throw ('watchdog-admission-refused id={0} reason={1} watchdogSeconds={2}' -f $launch.id, $admission.Reason, $watchdogText)
         }
         Add-Member -InputObject $launch -NotePropertyName watchdogSeconds -NotePropertyValue ([double]$admission.WatchdogSeconds) -Force | Out-Null
         Add-Member -InputObject $launch -NotePropertyName watchdogReason -NotePropertyValue ([string]$admission.Reason) -Force | Out-Null
@@ -466,10 +474,12 @@ function Resolve-NightlySuiteChunks {
         [object[]]$Chunks,
         [object[]]$Exclusions,
         [bool]$ProfileAware,
-        [bool]$Native
+        [bool]$Native,
+        [string]$SuiteId = 'antiphon',
+        $PolicyObject = $null
     )
     if ($Native -and $ProfileAware -and @($Exclusions).Count -gt 0) {
-        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions -SuiteId $SuiteId -PolicyObject $PolicyObject)
     }
     return @($Chunks)
 }
@@ -1265,7 +1275,7 @@ function Invoke-AntiphonNightlyTests {
                         $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
                         $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
                         if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
-                        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative)
+                        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
                         if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
                     } catch {
                         if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }

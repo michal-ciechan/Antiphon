@@ -127,6 +127,14 @@ The healthy 30-minute quiet test is not killed. It is flagged hangSuspected afte
 
 Owed: supervise-rc.ps1 is outside this checkout. It is the supervisor that would pass diagnostic progress to the detector. Until that call is wired, the new progress fields stay empty on a live qualification. Wire DiagnosticProgress from that supervisor before treating the fields as populated.
 
+**S3 round-3 admission note.** The planner receives the suite id and the policy object from the suite loop and resolves admission with that pair. A plan above that suite's watchdog is refused before any execution chunk of the suite starts, and the refusal names that suite's watchdog. A pty-host plan priced between 1200 s and 2400 s is refused at planning time. A refused admission does not start the test process.
+
+An unmeasured launch planned at exactly the suite watchdog is admitted with no extra headroom. pty-host P=1200 gets W=1200. Whether an unmeasured suite needs a margin above that watchdog is an owed operator choice. This slice does not add one.
+
+A calibration with no Censored field is treated as uncensored. Missing means not censored.
+
+An unknown or invalid PlannedSeconds (null, non-positive, NaN, or not an invariant number) censors the error-factor result. That calibration is unusable, and the launch keeps the suite watchdog. The measured formula still floors at 600 s: P=60 with E95=Emax=1 and M=0 is W=600.
+
 **Savings ledger.** Record a new measured baseline after each admitted slice. B1 and B3 both remove per-launch overhead; B3 and B4 both avoid setup. Never sum the historical ranges. A combined 150-250 min from the investigation is an opportunity estimate, not this plan's guaranteed result. The 854.5 s test, 45 tests near 30 s, 36 failed tests and E2E's 220.9 min need separate test-specific Debug/repair; a round duration is not proof of a removable sleep. No assertions, required cases or crash-matrix states are reduced here.
 
 **S4 dependency and derivation (A-2/A-3).** The current policy has 13 partially excluded classes across these four suites: antiphon 6, pty-host 2, markdown-pdf 2, agents-pty 3. Even perfect within-class packing needs at least 13 resulting launches, so at most 138-13=125 boundaries disappear; 125 x roughly 20 s / 60 = 41.7 min supports the historical 35-45 min estimate. Actual safe packing may remove fewer, and S2 reduces the residual cost; it is not an additive promise. Likewise 13.9 s is the historical **median**, not a mean: 190 x 13.9 = 44.0 min, so use the recorded 47.1 min total as a separate observation, not a product of that median.
