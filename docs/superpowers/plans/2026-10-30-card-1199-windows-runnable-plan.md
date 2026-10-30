@@ -79,12 +79,64 @@ and then removing them would weaken the existing gate and misstate the change.
   hand-edit pins or use approval regeneration to conceal a pin refusal.
 - D-8: retain R-2 as a distinct unresolved native junction/custody obligation.
   Enabling these 35 is authorized already and does not require another go-ahead.
+- D-9: all six slices are test/qualification fixes for code already on rc, not
+  features. Land rc first after top-up 38, then separately review and port each
+  slice to master. Reject racing the policy rewrite or merging this inherited
+  investigation/review history wholesale; use the plan-only publication below.
+- D-10: one Linux Code commission and one native Windows Verify commission per
+  slice, on the identical pushed source SHA; neither host supplies the other
+  lane's evidence. Keep the slice frozen until both have settled.
+
+## Landing target and prerequisite order
+
+Implementation target is the active `rc/YYYY-MM-DD` line (observed ref
+`rc/2026-10-18`), followed by a **separate reviewed master port** of each accepted
+test fix under standing operating rule 9. The caller resolves the active rc ref
+at commissioning; this plan neither rebases rc nor publishes a target itself.
+S-A -> S-B1 -> S-B2 -> S-C1 -> S-C2 -> S-F is a strict sequence, and **every
+slice starts after rc top-up 38 has confirmed publication**. A pushed merge-task
+branch is not proof of landing. Rebase the design onto the target's actual
+contents by reading them; do not rebase this assigned task branch.
+
+Source audit: CARD-1613 branch `origin/feat/card-task-06fc8af7` at
+`0f6058ac9` renames the wrapper and harness case to
+`LinuxOnlyWindowsExclusionPolicy`, retaining six internal harness assertions
+(previously eight). The pushed top-up branch `origin/feat/card-task-fcfa49ab`
+at `952c22e93d9caa7441c995296c7590f045c621ce` contains that name and rewrite.
+CP-36 and CP-45 select the new name; it is still ONE TUnit result, so their
+totals remain 3 and 7. A suffix audit must include the actual landing base.
+CARD-1613's `[NativeLinuxOnly]` reflection witness applies to policy-excluded
+rows (25 whole classes plus 20 method-scoped entries), **not these 35**: S/T/O
+have no such policy row and remain in the harness's required decision set.
+Do not add the marker to these portable tests or restore the removed assertion
+count/source-regex witness while editing the rewritten harness.
+
+Serialize against the other rc top-ups: speed-ups S3 (`6738f5e6` at
+`192f15240f757e04fb5fdb032e447f926e563757`), slice B, manifest publication,
+and CARD-1609/1610/1615. Their exact confirmed target SHAs are commissioning
+inputs, not inferred from task completion. Simpler fail-closed default: finish
+those already-open top-ups before starting S-A; if the caller deliberately
+allows independent authoring, no overlapping landing is allowed and S-F still
+waits for the complete prerequisite chain. Read the merged harness, cost reader,
+launch planner and publication contract at that base; preserve their changes.
+The cost/pricing handoff below specifies S3's interaction. No slice grants Full
+credit before its required evidence or the separate R-2 obligation is resolved.
+
+Publish **only the plan**: a separate Docs landing commission starts at the
+target and applies the exact final delta for this plan path, including round 1
+(`fca55bdda..c31d947b5`) and this amendment (`421c3de68..HEAD`). It excludes the
+inherited investigation and `.antiphon/task-*.md` reports. Inspect the resulting
+single-path diff and commit it for review/land. Do not request a whole-branch
+merge of this task: the inherited `.antiphon/task-af2b78c8.md` add/add conflict
+is unrelated to the plan. The investigation remains cited historical evidence;
+its separate publication is not smuggled into the plan land. Port this same
+reviewed plan document to the other target as needed, without replaying reports.
 
 ## Ground truth
 
 | Brief assumption | Source / measurement | Consequence |
 |---|---|---|
-| 35 policy exclusion removals | Policy has zero covering entries; `LinuxOnlyWindowsExclusions` asserts they remain required | Zero policy removals; remove 35 runtime gates only |
+| 35 policy exclusion removals | Policy has zero covering entries; `LinuxOnlyWindowsExclusionPolicy` asserts they remain required | Zero policy removals; remove 35 runtime gates only |
 | Shape rows independently selectable | One method has 16 Arguments, plus one receipt helper test | Preserve bodies/count; give each shape an exact method identity |
 | Gate-only means independent of host settings | S pins local autocrlf=false; T's BeginRepo does not; passed cases are one sample | S-A evidence is provisional; S-B also requalifies the five T passes |
 | Fixture and production Git use the same config | `CheckpointFixtureProcess.Run` uses git:false; production `HardenGit` disables global/system configuration | Isolate fixture children before init/add/commit and during MSBuild Exec |
@@ -128,8 +180,8 @@ Preserve the investigation's original failures and counts.
 ### S-A: twelve gate-only results (110-minute Code ceiling)
 
 Files: S, T; `scripts/test-rc-platform.ps1`;
-`tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs` only if a named wrapper
-is needed; `docs/release-gates.md`. Extract the 16 thin shape methods without
+`tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs` (mandatory named wrapper);
+`docs/release-gates.md`. Extract the 16 thin shape methods without
 changing their bodies. Lift the gates only for the six S shapes and receipt
 method listed A below, and the five T methods. Keep temporary native gates on
 the remaining named methods, removing each in its owning slice. Existing
@@ -137,14 +189,27 @@ WindowsUnitSkipRoster contains none of these classes: do not fabricate edits to
 it. The namespace census must still count the original 35 plus the existing O
 Windows sibling; historical listing fixtures remain historical.
 
-Change the synthetic S gap identity in `LinuxOnlyWindowsExclusions` from
+Change the synthetic S gap identity in `LinuxOnlyWindowsExclusionPolicy` from
 `shape_conflict_rule` to `shape_directory_on_file`. Keep all three classes in
 its no-exclusion decision set. Add `C1199_WindowsRequiredRoster` to that script
-(and a thin TUnit wrapper if required by local convention): enumerate all 35
+and the mandatory same-named TUnit wrapper: enumerate all 35
 post-extraction identities, ensure zero exclusions on both platforms, ensure a
 synthetic NotExecuted in any of the 35 prevents completeness, and ensure 35
 Passed contributes complete coverage for that isolated roster. This is a census
 contract, not native execution evidence. Do not mark unrelated R-2 rows passed.
+
+The wrapper compares the exact class/method set with
+`CheckpointRoster.CompiledCases(typeof(CheckpointShapeConflictTests).Assembly,
+"Antiphon.Tests.Checkpoints")`, selecting S/T/O and subtracting only the named
+Windows O sibling. Require set equality, no duplicates, and count 35; a renamed,
+deleted or extra compiled case must fail. Pass that same compiled roster to the
+script through an owned scratch JSON input (never a source scan). The script
+emits exactly six `C1323` assertions named `c1199-roster-35`,
+`c1199-windows-required`, `c1199-linux-required`, `c1199-each-gap-incomplete`,
+`c1199-all-passed-complete`, and `c1199-residual-skips-exact`. The wrapper requires
+all six literal `C1323 <name>` strings with harness count 6, plus its compiled
+set assertion. This remains one TUnit test. The gap check iterates each of the
+35 identities through the real verdict function; one representative is insufficient.
 
 Tests: CP-1..CP-12 and CP-36. Include the exact skip-census updates in
 `scripts/lib/checkpoint-usage.ps1` described below. Implementation/review preparation 40 minutes;
@@ -496,7 +561,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-33 | S-C2 | `tests/Antiphon.Tests -> bin-c1199c2/` | both-s-c2-33 | `/*/*/CheckpointShapeConflictTests/shape_directory_on_file` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
 | CP-34 | S-C2 | `CP-33` | both-s-c2-34 | `/*/*/CheckpointShapeConflictTests/shape_file_on_directory` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
 | CP-35 | S-C2 | `CP-33` | both-s-c2-35 | `/*/*/CheckpointShapeConflictTests/shape_symlink_on_file` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
-| CP-36 | S-A | `CP-1` | both-required-roster | `/*/*/(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)/(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusions*)\|(namespace_census_matches_compiled_checkpoint_cases*)` | V-3 R-1 | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-36 | S-A | `CP-1` | both-required-roster | `/*/*/(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)/(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusionPolicy*)\|(namespace_census_matches_compiled_checkpoint_cases*)` | V-3 R-1 | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-37 | S-B1-red | `tests/Antiphon.Tests -> bin-c1199bred/` | both-git-red | `/*/*/CheckpointFixtureGitEnvironmentTests/fixture_commit_matches_hardened_status_under_hostile_config` | V-2 red | exactly 1 executed; expected named dirty-baseline assertion failure | 1 | 11 | true |
 | CP-38 | S-B1 | `CP-13` | both-git-child-boundary | `/*/*/CheckpointFixtureGitEnvironmentTests/(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)` | V-2 R-1 | exactly 2 passed; 0 failed/skipped | 2 | 2 | true |
 | CP-39 | S-B1 | `CP-13` | linux-routing-cancellation | `/*/*/CheckpointFixtureRoutingTests/C1233_TokenCallers` | V-2 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 1 | true |
@@ -505,7 +570,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-42 | S-F | `CP-41` | both-final-baseline | `/*/*/CheckpointTrackedBaselineTests/*` | V-1 V-2 R-1 R-4 | exactly 13 passed; 0 failed/skipped | 13 | 24 | true |
 | CP-43 | S-F | `CP-41` | both-final-confinement | `/*/*/CheckpointOutputConfinementTests/(imported_props_build_preserves_the_tracked_dependency*)\|(directory_build_props_build_preserves_the_tracked_dependency*)\|(conditional_import_build_preserves_the_tracked_dependency*)\|(transitive_import_build_preserves_the_tracked_dependency*)\|(unevaluable_import_is_refused_before_the_build*)` | V-1 V-2 R-1 R-4 | exactly 5 passed; 0 failed/skipped | 5 | 10 | true |
 | CP-44 | S-F | `CP-41` | windows-final-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
-| CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusions*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
+| CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusionPolicy*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
 | CP-46 | S-F | n/a | both-final-audit | `pwsh -NoProfile -Command "dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll"` | R-3 | build and audit exit 0; exact committed graph and unchanged pins | n/a | 5 | true |
 | CP-47 | S-B1 | `CP-13` | both-shared-git-regressions | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/(shape_staged_untracked*)\|(intermediate_output_path_tampering_is_reported*)\|(generated_target_file_tampering_is_reported*)\|(dirty_tracked_tree_is_refused_and_unmodified*)\|(tracked_snapshot_contains_committed_files*)\|(index_added_file_is_kept_and_indexed*)` | V-1 V-2 R-1 | exactly 6 passed; 0 failed/skipped | 6 | 11 | true |
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
