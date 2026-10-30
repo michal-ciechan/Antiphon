@@ -381,7 +381,99 @@ for CARD-1545 downstream release gates.
 
 ## Verification design
 
-Required witnesses: real Linux PTY external SIGKILL/SIGTERM, normal zero/nonzero exit, Antiphon's own stop, both protocol skew directions, durable manifest/session propagation, honest failure text, and native Windows regression. Exact roster and importable checkpoints follow.
+### Fixtures and red-first protocol
+
+Use the production `PtyAgentRunner` backend factory and real packaged Linux shim.
+Launch an owned `/bin/cat` or a controlled shell fixture that execs it, wait for
+a nonce/readiness handshake and retain PID/start identity. The test process is
+the external actor and sends exactly SIGKILL or SIGTERM to that owned PID. Do not
+substitute Antiphon's stop API, a mocked EXIT, shell exit 137, or terminal Ctrl-C.
+For normal cases a controlled child reads a release instruction then exits 0 or
+23; omit that barrier deliberately for the fast-exit race. No AI CLI, sign-in,
+provider call or production runner port is involved.
+
+Detached-host witnesses use staged launcher/pipe helpers and fresh scratch roots.
+Keep the host connected without Shutdown ack until reading its manifest, then ack
+and join it. Adoption detaches runtime A, observes child death while detached, and
+creates runtime B on the same owned state root. Test live-host status/replay and
+dead-host manifest paths separately. Fixture cleanup runs after assertions and
+cannot supply the observed kill.
+
+DB integration uses real mapper/runtime/reconciler and dead-session classifier
+against isolated schemas. The four real Linux cases traverse host -> runner ->
+mapped event -> durable AgentSession -> dead-session/attention text, not merely
+an injected DTO. S3 reports those as four separate TUnit results. The report-first
+test stores a marked report and asserts its outcome wins before dead-session
+failure. An exit by itself never supplies a task result.
+
+Red commits may introduce compile-compatible nullable scaffolding with default
+unknown evidence, then exercise the real current path and assert dropped signal,
+wrong branch or wrong text. A compile error, missing executable, fixture error,
+zero tests or NotImplemented exception is not red. Retain intended assertions
+and source SHA. Normal-exit/backward-parse controls may already be green: label
+them and prove their discriminating assertions with method-scoped positive
+controls after implementation (drop/swap signal, erase unknown, bypass the signal
+check, write intent after kill, let a stale generation overwrite). Restore and
+rerun the exact method green. Mutation execution remains a separately commissioned
+stage under its custody rules; no ad hoc whole-suite mutation loop in Code.
+
+### Witness roster
+
+Names below are concrete proposed tests; new files are named after their class.
+Minimums count reported executions, not assertions or internal matrix loops.
+These files do not exist in this Plan commit.
+
+| IDs / class / lane | Methods or separately reported cases | Discriminating result |
+|---|---|---|
+| V-1..6 `Card1619UnixExitTests`, Agents.Pty.Tests, Linux | `External_SIGKILL_preserves_signal`, `External_SIGTERM_preserves_signal`, `Normal_zero_has_known_no_signal`, `Normal_nonzero_preserves_code`, `Fast_exit_is_replayed_once`, `Signal_exit_never_completes_legacy_adapter_as_zero` (6) | Signal 9/15 separate from raw code; zero/no-signal distinct from null; code 23 intact; exactly-once completion; compatibility task never false zero |
+| R-1 `Card1619WindowsExitTests`, Agents.Pty.Tests, Windows | `Modern_exit_and_stop_preserve_windows_behavior`, `Inbox_exit_and_stop_preserve_windows_behavior` (2) | Production factory selects actual modern/inbox backend; normal 0/23 and kill result unchanged, signal zero |
+| V-7 `Card1619ExitWireTests`, PtyHost.Tests, portable | `Old_exit_frame_is_unknown`, `New_exit_frame_is_accepted_by_frozen_v1_reader`, `Status_and_attach_preserve_signal`, `Manifest_both_versions_round_trip`, `Unknown_signal_number_is_preserved`, `Null_signal_is_not_normalized_to_zero` (6) | Frozen v1 framing/DTO fixture from base with provenance, not today's reader twice; length prefix/discriminator and optional null/absence survive |
+| V-8 `Card1619LinuxHostExitTests`, PtyHost.Tests, Linux | `Live_SIGKILL_matches_manifest`, `Live_SIGTERM_matches_manifest`, `Exited_attach_and_status_replay_identical_evidence`, `Normal_exit_code_survives_detached_host` (4) | Actual host wait reaches wire/status/manifest/log; one meaning across all surfaces |
+| V-9 `Card1619RunnerExitTests`, SessionRunner.Tests, Linux | `Exit_while_detached_survives_adoption`, `Dead_host_manifest_preserves_signal`, `Old_host_adoption_keeps_signal_unknown`, `Http_exit_and_list_keep_signal`, `Phone_home_exit_and_recovery_keep_signal`, `Stale_generation_does_not_replace_exit_evidence` (6) | Restart plus HTTP/phone-home event/list paths retain evidence; wrong/missing generation cannot overwrite it |
+| V-10 `Card1619ExitPolicyTests`, Antiphon.Tests, Unit | `Describe_exit_evidence` with 10 `[Arguments]` cases: external 9, external 15, unknown positive, normal 0, normal 23, legacy 0, unknown code, requested-only, normal-exit race, CPU-spin policy stop (10) | Exact truthful text/classification; no self-exit or guessed sender; control asserts normal code 137 stays code 137 |
+| V-11 `Card1619ExitPersistenceTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_database_and_failure_text` with four cases (9/15/exit0/exit23), `Live_event_and_reconciliation_agree`, `Terminal_row_is_enriched_without_changing_request_source`, `Resume_and_stale_events_keep_generation_boundary`, `Migration_preserves_old_rows_and_nullable_contract` (8) | Fresh DbContext after commit, live/reconciliation parity, restart/reset, additive schema upgrade; assertion fails on lost signal |
+| V-12 `Card1619ExitConsumerTests`, Antiphon.Tests, Integration | `Attention_and_dispatcher_describe_same_signal`, `Report_before_signal_death_still_settles`, `Signal_death_without_report_never_succeeds`, `Check_and_supervisor_keep_signal_evidence`, `Stop_stuck_remains_pending_without_observed_exit`, `Pool_and_terminal_seat_do_not_release_from_code_zero`, `Launch_cleanup_does_not_steal_a_normal_exit`, `Api_attempt_and_diagnostics_preserve_optional_signal` (8) | Actual consumer methods/projections, not source-string tests; hold/absence/custody/report authority unchanged |
+| V-13 `Card1619StopIntentTests`, PtyHost.Tests, portable ordering plus Linux host | `Intent_is_durable_before_signal`, `Write_failure_sends_no_signal`, `Issued_update_follows_syscall`, `Crash_before_send_is_only_requested`, `Crash_after_send_before_update_is_unknown`, `Fallback_records_SIGHUP_separately`, `Natural_exit_race_is_not_our_kill`, `Host_kill_is_not_child_wait_evidence` (8) | Inspect durable journal at syscall barrier; real host case proves signal/intent; no false attribution |
+| V-14 `Card1619LinuxStopIntentTests`, SessionRunner.Tests, Linux | `Own_stop_preserves_SIGKILL_and_intent`, `Restart_recovers_requested_intent`, `Kill_all_records_each_owned_generation`, `Orphan_and_pending_kills_keep_identity`, `Custody_invocation_records_intent_before_helper`, `Unobserved_or_failed_kill_retains_stop_debt` (6) | Real runtime routes with deterministic boundary hooks; wrong PID/start/generation sends nothing; intent/helper exit is not success |
+| V-15 `Card1619StopAttributionTests`, Antiphon.Tests, Integration | `Matching_issued_intent_is_qualified_Antiphon_stop`, `No_intent_means_sender_unknown`, `Mismatched_generation_or_signal_is_not_attributed`, `Requested_only_and_failed_intents_remain_uncertain`, `Late_intent_enrichment_preserves_known_exit`, `Operator_and_policy_sources_are_not_overwritten` (6) | DTO/storage round trip and final task/attention text, including request-only and normal-exit races |
+| V-16 `Card1619LinuxCustodyStopIntentTests`, SessionRunner.Tests, native cgroup-v1 | `Explicit_release_records_signal_without_fabricating_custody`, `Dead_host_recovery_records_intent_and_remains_unknown` (2) | Demonstrated live descendant in owned bound tree before release, observed exit afterward; intent cannot turn Unknown into a receipt |
+
+R-2 keeps all 5 existing `PtyKillProcessTreeTests` on native Windows. R-3 keeps all
+6 `AgentTaskLivenessTests`. R-4 selects existing
+`AgentTaskDeadSessionReconciliationTests.a_stopped_session_with_a_marked_done_report_succeeds_instead_of_failing`,
+`a_stopped_session_with_transcript_but_no_report_still_fails`, and
+`the_predicate_and_the_attention_projection_agree_on_every_case` (3 results).
+CP-8 typechecks optional client fields; it has no invented Vitest assertion count.
+
+Suffix audit at plan base: R-4 methods are unique; `PtyKillProcessTreeTests` and
+`AgentTaskLivenessTests` have no distinct longer-prefix class collision. Proposed
+`Card1619*Tests` names are unused. Repeat the declaration census after adding them
+and after porting. OR operands below are parenthesized, each ending in `*`; table
+pipes are escaped. Fresh TRX must contain each named class/method with zero skips
+on its required lane. A skipped native witness remains owed.
+
+Linux-native CP-1/3/4/5/9/10 and cgroup-v1 CP-12 are required Linux evidence.
+Portable subcases do not replace native rows. CP-2 runs on Windows at the **final
+S1-S4 source**, covering modern and explicit inbox paths. macOS and cgroup-v2 are
+outside this card's activation claim; CARD-1614's v2 obligation stays open. No
+new fleet host provisioning or Linux custody advertisement is implied.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---|---|---|---|
+| CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-pty/` | linux-native-pty-exit | `/*/*/Card1619UnixExitTests/*` | V-1..6 | all 6 listed, 0 failed/skipped | 6 | 4 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-2 | S1-S4 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-windows/` | windows-native-exit-regression | `/*/*/(Card1619WindowsExitTests*)\|(PtyKillProcessTreeTests*)/*` | R-1,R-2 | all 7 listed, 0 failed/skipped | 7 | 7 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-3 | S2 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host/` | linux-host-wire-and-skew | `/*/*/(Card1619ExitWireTests*)\|(Card1619LinuxHostExitTests*)/*` | V-7,V-8 | all 10 listed, 0 failed/skipped | 10 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-4 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner/` | linux-runner-exit-adoption | `/*/*/Card1619RunnerExitTests/*` | V-9 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-card1619-server/` | linux-server-exit-evidence | `/*/*/(Card1619ExitPolicyTests*)\|(Card1619ExitPersistenceTests*)\|(Card1619ExitConsumerTests*)/*` | V-10,V-11,V-12 | all 26 listed, 0 failed/skipped | 26 | 11 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-6 | S3 | CP-5 | portable-liveness-regression | `/*/*/AgentTaskLivenessTests/*` | R-3 | all 6 listed, 0 failed/skipped | 6 | 1 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-7 | S3 | CP-5 | portable-report-first-regression | `/*/*/AgentTaskDeadSessionReconciliationTests/(a_stopped_session_with_a_marked_done_report_succeeds_instead_of_failing*)\|(a_stopped_session_with_transcript_but_no_report_still_fails*)\|(the_predicate_and_the_attention_projection_agree_on_every_case*)` | R-4 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-8 | S3 | n/a | portable-client-contract | `pwsh -NoProfile -File scripts/typecheck-client.ps1` | V-12 API contract | exit 0, both client projects typecheck | n/a | 2 | true | n/a |
+| CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 8 listed, 0 failed/skipped | 8 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | portable-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 6 listed, 0 failed/skipped | 6 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 
 ## Review and handoff
 
