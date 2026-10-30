@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -14,6 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 // Losing the `--`, or letting the class reach for a relative `antiphon-custody-enter` a session
 // could shadow on PATH, would each quietly undo that.
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LinuxCgroupContainmentTests
 {
     [Test]
@@ -131,6 +134,12 @@ public sealed class LinuxCgroupContainmentTests
 
             var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
             operations.ReadTreePids(execution).ShouldBe([41, 42]);
+            // test.PENDING slice B (CP-34): a missing tree directory, a missing
+            // custody root, or a marker that names a different namespace still
+            // returns an empty list. No Linux custody caller reaches ReadTreePids
+            // while qualification is false: Detect returns null before a tracked
+            // launch, and the entrypoint never sets LinuxCustodyQualified. Slice B
+            // owns the strict-read Unknown. This empty result is not that witness.
             operations.ReadTreePids(Guid.NewGuid()).ShouldBeEmpty();
 
             var malformed = Guid.NewGuid();
@@ -193,6 +202,115 @@ public sealed class LinuxCgroupContainmentTests
         {
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    // The installed enter helper writes the namespaced tree. The production
+    // reader must return that pid, not a decoy left at the pre-namespace path.
+    [Test]
+    public async Task C1614_Helper_written_tree_is_read_by_production_reader()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The custody helper tree is created with unshare on Linux only.");
+
+        var root = Path.Combine(Path.GetTempPath(), "c1614-joint-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var execution = Guid.NewGuid();
+        var cgroup = Path.Combine(root, "cgroup");
+        var marker = Path.Combine(root, "run", "antiphon-custody", "namespace");
+        var tree = Path.Combine(cgroup, "pids", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree");
+        var procs = Path.Combine(tree, "cgroup.procs");
+        try
+        {
+            Directory.CreateDirectory(tree);
+            Directory.CreateDirectory(Path.Combine(
+                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree"));
+            File.WriteAllText(procs, "");
+            File.WriteAllText(Path.Combine(
+                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree", "cgroup.procs"), "");
+            var decoyDir = Path.Combine(cgroup, "pids", "antiphon-custody", execution.ToString("D"), "tree");
+            Directory.CreateDirectory(decoyDir);
+            File.WriteAllText(Path.Combine(decoyDir, "cgroup.procs"), "99\n");
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            var usr = Path.Combine(root, "usr", "lib");
+            Directory.CreateDirectory(usr);
+            File.Copy(CustodyLibrary(), Path.Combine(usr, "antiphon-custody-common.sh"));
+
+            var placed = await PlaceTreeAsync(root, execution);
+            placed.ExitCode.ShouldBe(0, placed.Text);
+            placed.Text.ShouldContain("enter_rc=");
+            File.ReadAllText(procs).Trim().ShouldNotBe("");
+
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(cgroup, marker, null));
+            var pids = operations.ReadTreePids(execution);
+            pids.Count.ShouldBe(1);
+            pids[0].ShouldBeGreaterThan(0);
+            pids.ShouldNotContain(99);
+            int.Parse(File.ReadAllText(procs).Trim(), System.Globalization.CultureInfo.InvariantCulture)
+                .ShouldBe(pids[0]);
+            LinuxCustodyOperations.ResolveProcsPath(ns, execution).ShouldContain(ns.ToString("D"));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static string CustodyLibrary()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(dir.FullName, "docker", "session-runner-grok", "antiphon-custody-common.sh");
+            if (File.Exists(path))
+                return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("antiphon-custody-common.sh");
+    }
+
+    private static async Task<(int ExitCode, string Text)> PlaceTreeAsync(string root, Guid execution)
+    {
+        var libraryDir = Path.GetDirectoryName(CustodyLibrary())!;
+        var enter = Path.Combine(libraryDir, "antiphon-custody-enter.sh");
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rm");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("""
+            set -euo pipefail
+            host=$1
+            enter=$2
+            id=$3
+            mount --bind "$host/cgroup" /sys/fs/cgroup
+            mount --bind "$host/run" /run
+            mount --bind "$host/usr" /usr/local
+            set +e
+            bash "$enter" "$id" -- /bin/true
+            echo "enter_rc=$?"
+            exit 0
+            """);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(root);
+        psi.ArgumentList.Add(enter);
+        psi.ArgumentList.Add(execution.ToString("D"));
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("unshare");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException("antiphon-custody-enter");
+        }
+
+        var text = (await stdout) + (await stderr);
+        return (process.ExitCode, text);
     }
 
     private static void WriteProcs(string root, string relative, string body)
