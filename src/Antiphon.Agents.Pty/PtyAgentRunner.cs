@@ -18,6 +18,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private readonly object _bufferLock = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly TaskCompletionSource<int> _exitTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<PtyExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _exitHandled;
     private PtySessionAudit? _audit;
     private DateTime _startedAt;
     private TerminalScreen? _screen;
@@ -39,8 +41,6 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     internal Action? ReadProcessedForTest { get; set; }
     internal Func<IPtySession, Task>? BeforeExitSubscriptionForTest { get; init; }
     internal Action? ExitHandledForTest { get; init; }
-    private readonly TaskCompletionSource<PtyExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<PtyExitObservation> Completion => _completion.Task;
 
     /// <summary>
     /// CARD-0604 D-17 test seam: the Linux containment this runner should use for a tracked
@@ -68,6 +68,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     public event Action<string>? OnData;
 
     public Task<int> Exited => _exitTcs.Task;
+
+    /// <summary>Actual code and separate signal; a legacy integer zero alone is not success.</summary>
+    public Task<PtyExitObservation> Completion => _completion.Task;
 
     public int? Pid => _conn?.Pid;
 
@@ -241,23 +244,26 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
         if (BeforeExitSubscriptionForTest is { } beforeSubscribe)
             await beforeSubscribe(_conn);
-        void HandleExit(int exitCode)
+        void HandleExit(PtyExitObservation observation)
         {
+            if (Interlocked.Exchange(ref _exitHandled, 1) != 0) return;
             if (_custody is not null) _custodyInputClosed = true;
             if (_jobObject?.HasReachedMemoryLimit() == true)
                 SetExitReason(PtyExitReason.MemoryKilled);
             else
                 SetExitReason(PtyExitReason.ProcessExited);
-            _exitTcs.TrySetResult(exitCode);
-            _completion.TrySetResult(new PtyExitObservation(exitCode, null));
             ExitHandledForTest?.Invoke();
+            _completion.TrySetResult(observation);
+            if (observation.ExitCode is { } exitCode)
+                _exitTcs.TrySetResult(exitCode);
+            else
+                _exitTcs.TrySetException(new InvalidOperationException("Native exit code is unknown."));
         }
         _conn.Exited += HandleExit;
-        // The suspended tracked launch retains its process handle before resume. Replay an
-        // already observed root exit after subscribing, without using it as custody proof.
-        if (custody is not null && _conn is ModernConPtyConnection tracked
-            && tracked.ReadExitedCode() is { } exitedCode)
-            HandleExit(exitedCode);
+        // A second subscription window exists between session creation and runner subscription.
+        // Replay on every backend, without treating a root exit as descendant/custody proof.
+        if (_conn.ReadExitObservation() is { } observation)
+            HandleExit(observation);
 
         if (memoryLimitMb > 0)
         {

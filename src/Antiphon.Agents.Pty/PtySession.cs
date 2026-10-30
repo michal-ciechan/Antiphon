@@ -22,10 +22,11 @@ internal interface IPtySession : IDisposable
 
     int Pid { get; }
 
-    /// <summary>Raised once with the child's exit code.</summary>
-    event Action<int>? Exited;
+    /// <summary>Raised at most once with actual native evidence.</summary>
+    event Action<PtyExitObservation>? Exited;
 
-    PtyExitObservation? ReadExitObservation() => null;
+    /// <summary>Read after subscribing to replay an exit that preceded that subscription.</summary>
+    PtyExitObservation? ReadExitObservation();
 
     void Resize(int cols, int rows);
 
@@ -36,15 +37,29 @@ internal interface IPtySession : IDisposable
 internal sealed class PortaPtySession : IPtySession
 {
     private readonly IPtyConnection _connection;
+    private readonly PortaExitSignalReader _signalReader = new();
+    private PtyExitObservation? _exitObservation;
 
     public PortaPtySession(IPtyConnection connection, Action<PortaPtySession>? beforeReplayForTest = null)
     {
         _connection = connection;
-        _connection.ProcessExited += (_, e) => Exited?.Invoke(e.ExitCode);
+        _connection.ProcessExited += (_, e) => PublishExit(e.ExitCode);
         beforeReplayForTest?.Invoke(this);
+        // Porta sets code/signal, then this event, then calls ProcessExited. An early exit can
+        // precede subscription, and callback/replay can overlap. Both share the same one-shot cache.
+        if (_connection.WaitForExit(0)) PublishExit(_connection.ExitCode);
     }
 
-    public event Action<int>? Exited;
+    public event Action<PtyExitObservation>? Exited;
+
+    public PtyExitObservation? ReadExitObservation() => Volatile.Read(ref _exitObservation);
+
+    private void PublishExit(int exitCode)
+    {
+        var observation = new PtyExitObservation(exitCode, _signalReader.ReadCompleted(_connection));
+        if (Interlocked.CompareExchange(ref _exitObservation, observation, null) is null)
+            Exited?.Invoke(observation);
+    }
 
     public Stream ReaderStream => _connection.ReaderStream;
 

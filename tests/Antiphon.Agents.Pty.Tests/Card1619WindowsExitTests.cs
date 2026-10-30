@@ -35,9 +35,10 @@ public sealed class Card1619WindowsExitTests
             stopped.Backend!.Backend.ShouldBe(expected);
             (await stopped.WaitForOutputAsync(text => text.Contains(nonce, StringComparison.Ordinal), budget)).ShouldBeTrue();
             (await stopped.KillAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
-            // TerminateJobObject and Process.Kill retain their existing Windows kill code 1.
-            (await stopped.Exited.WaitAsync(budget)).ShouldBe(1);
-            (await stopped.Completion.WaitAsync(budget)).ShouldBe(new PtyExitObservation(1, 0));
+            // Modern terminates its job with 1; inbox uses .NET TerminateProcess(..., -1).
+            var killCode = expected == PtyBackend.ModernConPty ? 1 : -1;
+            (await stopped.Exited.WaitAsync(budget)).ShouldBe(killCode);
+            (await stopped.Completion.WaitAsync(budget)).ShouldBe(new PtyExitObservation(killCode, 0));
             stopped.ExitReason.ShouldBe(PtyExitReason.KilledByRequest);
         }
         finally
