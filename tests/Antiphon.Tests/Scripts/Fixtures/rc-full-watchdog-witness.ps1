@@ -90,6 +90,13 @@ $out = [ordered]@{
     clampedE95 = 0
     ptyPlanRefused = $false
     ptyPlanWatchdog = 0
+    smallPlanWatchdog = 0
+    smallPlanReason = ''
+    emptyCalibrationWatchdog = 0
+    emptyCalibrationReason = ''
+    missingFieldWatchdog = 0
+    missingFieldReason = ''
+    missingCensoredFieldAdmitted = $false
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -536,6 +543,36 @@ try {
                 } else {
                     Add-Problem ('pty-host-plan-not-refused ' + $ptyMessage)
                 }
+            }
+
+            $smallPlan = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 60 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $out.smallPlanWatchdog = [double]$smallPlan.WatchdogSeconds
+            $out.smallPlanReason = [string]$smallPlan.Reason
+            if (-not $smallPlan.Admitted -or [double]$smallPlan.WatchdogSeconds -ne 600 -or [string]$smallPlan.Reason -ne 'measured') {
+                Add-Problem ('small-plan-floor W=' + $smallPlan.WatchdogSeconds + ' reason=' + $smallPlan.Reason + ' adm=' + $smallPlan.Admitted)
+            }
+            $emptyCal = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{})
+            $out.emptyCalibrationWatchdog = [double]$emptyCal.WatchdogSeconds
+            $out.emptyCalibrationReason = [string]$emptyCal.Reason
+            if (-not $emptyCal.Admitted -or [double]$emptyCal.WatchdogSeconds -ne 3600 -or [string]$emptyCal.Reason -ne 'unmeasured-cost') {
+                Add-Problem ('empty-calibration W=' + $emptyCal.WatchdogSeconds + ' reason=' + $emptyCal.Reason + ' adm=' + $emptyCal.Admitted)
+            }
+            $missingField = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $out.missingFieldWatchdog = [double]$missingField.WatchdogSeconds
+            $out.missingFieldReason = [string]$missingField.Reason
+            if (-not $missingField.Admitted -or [double]$missingField.WatchdogSeconds -ne 3600 -or [string]$missingField.Reason -ne 'unmeasured-cost') {
+                Add-Problem ('missing-field-calibration W=' + $missingField.WatchdogSeconds + ' reason=' + $missingField.Reason + ' adm=' + $missingField.Admitted)
+            }
+            $noCensoredField = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0
+            })
+            $out.missingCensoredFieldAdmitted = ([bool]$noCensoredField.Admitted -and [string]$noCensoredField.Reason -eq 'measured' -and [double]$noCensoredField.WatchdogSeconds -eq 4800)
+            if (-not $out.missingCensoredFieldAdmitted) {
+                Add-Problem ('missing-censored-field W=' + $noCensoredField.WatchdogSeconds + ' reason=' + $noCensoredField.Reason + ' adm=' + $noCensoredField.Admitted)
             }
         } elseif ($mode -eq 'timeout') {
             $partial = Join-Path $work 'partial.diag'
