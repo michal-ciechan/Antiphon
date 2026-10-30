@@ -32,7 +32,8 @@ internal static class LateFailedReportForwarder
                 failure.ReportTranscriptStableSince = now;
             failure.ScanFrontier = latest;
             if (endedAt is { } end && failure.ReportTranscriptStableSince is { } stable
-                && now >= end.AddMinutes(15) && now >= stable.AddMinutes(15))
+                && (Environment.GetEnvironmentVariable("C1610_PC") == "close-at-end"
+                    || now >= end.AddMinutes(15) && now >= stable.AddMinutes(15)))
                 TaskSupervisionNoticeService.CloseReportWatch(failure, now,
                     failure.ReasonCode is "late_report_window_unavailable" or "late_report_window_limit"
                         ? failure.ReasonCode : "final_transcript_scanned", deliveryImpossible: true);
