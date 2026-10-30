@@ -89,6 +89,13 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("plannerAdmitted").GetBoolean().ShouldBeTrue();
         observed.GetProperty("policyUntouched").GetBoolean().ShouldBeTrue();
         observed.GetProperty("wired").GetBoolean().ShouldBeTrue("launch timeout is not the admission result");
+        observed.GetProperty("suitePairingOk").GetBoolean().ShouldBeTrue(text);
+        observed.GetProperty("sessionRunnerAtAdmitted").GetBoolean().ShouldBeTrue("session-runner at its 1800 s watchdog was refused");
+        observed.GetProperty("sessionRunnerAboveAdmitted").GetBoolean().ShouldBeFalse("session-runner planned at 2400 s was admitted under an 1800 s watchdog");
+        observed.GetProperty("ptyHostAboveAdmitted").GetBoolean().ShouldBeFalse("pty-host planned at 1800 s was admitted under a 1200 s watchdog");
+        observed.GetProperty("agentsPtyAboveAdmitted").GetBoolean().ShouldBeFalse("agents-pty planned at 1800 s was admitted under a 1200 s watchdog");
+        observed.GetProperty("markdownPdfAboveAdmitted").GetBoolean().ShouldBeFalse("markdown-pdf planned at 1800 s was admitted under a 1200 s watchdog");
+        observed.GetProperty("messagingAboveAdmitted").GetBoolean().ShouldBeFalse("messaging planned at 1800 s was admitted under a 1200 s watchdog");
     }
 
     [Test]

@@ -65,6 +65,13 @@ $out = [ordered]@{
     policyUntouched = $false
     wired = $false
     nanRefused = $false
+    suitePairingOk = $false
+    sessionRunnerAtAdmitted = $false
+    sessionRunnerAboveAdmitted = $true
+    ptyHostAboveAdmitted = $true
+    agentsPtyAboveAdmitted = $true
+    markdownPdfAboveAdmitted = $true
+    messagingAboveAdmitted = $true
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -304,6 +311,43 @@ try {
             if ($e2eAbove.Admitted) { Add-Problem 'e2e-above-admitted' }
             if (-not $legacy.Admitted -or [double]$legacy.WatchdogSeconds -ne 3600) { Add-Problem 'legacy-estimate-refused' }
             if ($nan.Admitted) { Add-Problem 'nan-admitted' }
+
+            $suiteIds = @($policy.Object.watchdogs.PSObject.Properties.Name | Sort-Object)
+            $suitePairingOk = $true
+            foreach ($suiteName in $suiteIds) {
+                $capSeconds = Get-NightlySuiteWatchdogSeconds -PolicyObject $policy.Object -SuiteId $suiteName
+                $ceiling = Get-NightlyLaunchEstimateCeilingSeconds -SuiteId $suiteName
+                $atPlan = $capSeconds
+                if ($ceiling -lt $atPlan) { $atPlan = $ceiling }
+                $rowAt = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds $atPlan -Basis 'default' -PolicyObject $policy.Object
+                if (-not $rowAt.Admitted -or [double]$rowAt.WatchdogSeconds -ne $capSeconds) {
+                    Add-Problem ('suite-watchdog-pairing ' + $suiteName + ' at=' + $atPlan + ' W=' + $rowAt.WatchdogSeconds + ' adm=' + $rowAt.Admitted)
+                    $suitePairingOk = $false
+                }
+                $rowOver = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds ($capSeconds + 1) -Basis 'default' -PolicyObject $policy.Object
+                if ($rowOver.Admitted) {
+                    Add-Problem ('suite-above-watchdog-admitted ' + $suiteName + ' P=' + ($capSeconds + 1) + ' W=' + $rowOver.WatchdogSeconds)
+                    $suitePairingOk = $false
+                }
+            }
+            $out.suitePairingOk = $suitePairingOk
+            $sessionAt = Resolve-NightlyLaunchWatchdog -SuiteId 'session-runner' -PlannedSeconds 1800 -Basis 'default' -PolicyObject $policy.Object
+            $sessionOver = Resolve-NightlyLaunchWatchdog -SuiteId 'session-runner' -PlannedSeconds 2400 -Basis 'default' -PolicyObject $policy.Object
+            $out.sessionRunnerAtAdmitted = [bool]$sessionAt.Admitted
+            $out.sessionRunnerAboveAdmitted = [bool]$sessionOver.Admitted
+            if (-not $sessionAt.Admitted -or [double]$sessionAt.WatchdogSeconds -ne 1800) { Add-Problem ('session-runner-at-cap W=' + $sessionAt.WatchdogSeconds) }
+            if ($sessionOver.Admitted) { Add-Problem ('session-runner-2400-admitted W=' + $sessionOver.WatchdogSeconds) }
+            $namedOver = @{
+                'pty-host' = 'ptyHostAboveAdmitted'
+                'agents-pty' = 'agentsPtyAboveAdmitted'
+                'markdown-pdf' = 'markdownPdfAboveAdmitted'
+                'messaging' = 'messagingAboveAdmitted'
+            }
+            foreach ($suiteName in @($namedOver.Keys)) {
+                $row = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds 1800 -Basis 'default' -PolicyObject $policy.Object
+                $out[$namedOver[$suiteName]] = [bool]$row.Admitted
+                if ($row.Admitted) { Add-Problem ($suiteName + '-1800-admitted W=' + $row.WatchdogSeconds) }
+            }
 
             $rounded = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 900 -MarginSeconds 60
             $low = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 100 -MarginSeconds 60
