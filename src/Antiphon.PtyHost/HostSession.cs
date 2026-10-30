@@ -37,6 +37,7 @@ public sealed class HostSession : IAsyncDisposable
     private readonly CancellationTokenSource _custodyLifetime = new();
     private HostCustodyJournal? _custody;
     private Task? _custodyObserver;
+    private int _lingerArmed;
     private Task? _exitObserver;
     private bool _hostOutputFailed;
     private readonly IVerificationCustodyFiles? _custodyFiles;
@@ -335,8 +336,9 @@ public sealed class HostSession : IAsyncDisposable
                 throw new VerificationCustodyException("verification_custody_identity_mismatch");
             using var observation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             observation.CancelAfter(TimeSpan.FromSeconds(5));
+            var linux = _custody.Binding.Backend == VerificationCustodyBackends.LinuxCgroup;
             return await _custody.ObserveAsync(_runner, () => Volatile.Read(ref _hostOutputFailed),
-                seal || Status == PtyHostStatus.Exited, observation.Token);
+                linux ? seal : seal || Status == PtyHostStatus.Exited, observation.Token);
         }
         finally { _admission.Release(); }
     }
@@ -437,7 +439,17 @@ public sealed class HostSession : IAsyncDisposable
         {
             try
             {
-                var status = await GetCustodyAsync(_custody!.Binding, ct);
+                if (_custody!.HasReleaseDisposition())
+                {
+                    ArmLinger();
+                    return;
+                }
+                var status = await GetCustodyAsync(_custody.Binding, ct);
+                if (_custody.HasReleaseDisposition())
+                {
+                    ArmLinger();
+                    return;
+                }
                 if (status.Receipt is not null) return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
@@ -449,11 +461,25 @@ public sealed class HostSession : IAsyncDisposable
 
     private void RequestExit(string reason) => _exitRequested.TrySetResult(reason);
 
-    private void StartLingerExpiry() => _ = Task.Run(async () =>
+    private void StartLingerExpiry()
     {
-        await Task.Delay(_options.LingerTtl);
-        RequestExit("linger TTL expired without runner ack");
-    });
+        // Possibly-started Linux stays until an accepted receipt, Shutdown, or a released-zero
+        // disposition. Windows, untracked, and pre-native hosts keep the existing linger.
+        if (_custody?.ShouldWithholdLinger() == true)
+            return;
+        ArmLinger();
+    }
+
+    private void ArmLinger()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _lingerArmed, 1) != 0)
+            return;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(_options.LingerTtl);
+            RequestExit("linger TTL expired without runner ack");
+        });
+    }
 
     private void TryDeleteManifest()
     {

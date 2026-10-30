@@ -902,7 +902,13 @@ the transcript mutation gate. Activation requires both server and runner support
 - **Linux containment termination is not Windows job release (CARD-1614).** Terminal-task
   CleanupVerification can terminate a Linux cgroup tree. A Windows seal does not terminate
   the job; the existing 24-hour tracked linger and kill-on-close close remain that fallback.
-  Linux custody stays unadvertised until native qualification. A successful kill is not a
+  The task orchestrator invokes that cleanup after Succeeded, Failed, or Canceled settlement
+  and retries unresolved residue. It is not periodic and it has no age deadline. Dead-host
+  recovery kills only the recorded container and stays Unknown. A live host that adoption
+  could not take stays alive for the operator to stop through an owned handle, after checking
+  the exact binding, namespace, container, and host pid plus start identity. Missing or
+  unreadable accounting is never zero. Prolonged Draining and unresolved Unknown are warnings
+  only. Linux custody stays unadvertised until native qualification. A successful kill is not a
   receipt and is not a source-clean verdict.
 
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds

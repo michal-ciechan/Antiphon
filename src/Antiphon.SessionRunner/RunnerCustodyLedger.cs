@@ -225,6 +225,88 @@ public sealed class RunnerCustodyLedger
         return new(binding, VerificationCustodyState.Unknown, "custody_observer_unavailable");
     }
 
+    /// <summary>
+    /// Explicit dead-host Linux release. Always Unknown. Never a receipt. A kill happens only
+    /// for the recorded container after the seal, namespace, and host identity all match and
+    /// that host pid is gone.
+    /// </summary>
+    public VerificationCustodyStatus ReleaseDeadHost(VerificationExecutionBinding binding)
+    {
+        if (_recovery is null || binding.Backend != VerificationCustodyBackends.LinuxCgroup
+            || ReadStamp(binding, "runner-seal.json") is null)
+            return Unavailable(binding);
+
+        VerificationHostIdentity host;
+        try
+        {
+            host = Store.ReadRecord<VerificationHostIdentity>(binding, "host-identity.json")
+                ?? throw new VerificationCustodyException("verification_custody_identity_mismatch");
+            RequireHost(binding, host);
+        }
+        catch (VerificationCustodyException)
+        {
+            return Unavailable(binding);
+        }
+
+        var ns = Store.ReadRecord<LinuxNamespaceRecord>(binding, "linux-namespace.json");
+        if (ns is not { Revision: 1 } || ns.NamespaceId == Guid.Empty || ns.ContainerId != host.ContainerId)
+            return Unavailable(binding);
+        Guid liveNamespace;
+        try { liveNamespace = _recovery.ReadNamespace(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Unavailable(binding);
+        }
+        if (liveNamespace != ns.NamespaceId)
+            return Unavailable(binding);
+        if (!_recovery.HostGone(host.HostPid, host.HostStartTimeUtc))
+            return new(binding, VerificationCustodyState.Unknown, "custody_host_still_present", host);
+
+        var kill = _recovery.Kill(host.ContainerId);
+        string reason;
+        try
+        {
+            var pids = _recovery.ReadTreePids(host.ContainerId);
+            reason = pids.Count == 0 ? "released_unknown" : "descendants_remain";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            reason = "accounting_unreadable";
+        }
+
+        if (Store.ReadRecord<LinuxRecoveryRecord>(binding, "linux-recovery.json") is null)
+        {
+            Store.WriteRecord(binding, "linux-recovery.json", new LinuxRecoveryRecord(
+                1, host.ContainerId, kill.Succeeded, kill.ErrorCode, DateTime.UtcNow));
+        }
+
+        return new(binding, VerificationCustodyState.Unknown, reason, host);
+    }
+
+    public bool MatchesReleaseDisposition(VerificationExecutionBinding binding)
+    {
+        var disposition = Store.ReadRecord<LinuxReleaseDisposition>(binding, "linux-release-disposition.json");
+        if (disposition is not { Revision: 1 }
+            || disposition.StoreId != Store.StoreId
+            || disposition.ExecutionId != binding.ExecutionId
+            || disposition.NamespaceId == Guid.Empty
+            || disposition.HostInstanceId == Guid.Empty
+            || disposition.ContainerId == Guid.Empty)
+            return false;
+        var ns = Store.ReadRecord<LinuxNamespaceRecord>(binding, "linux-namespace.json");
+        if (ns is null || ns.NamespaceId == Guid.Empty || disposition.NamespaceId != ns.NamespaceId)
+            return false;
+        var host = Store.ReadRecord<VerificationHostIdentity>(binding, "host-identity.json");
+        if (host is null || host.HostInstanceId == Guid.Empty || host.ContainerId == Guid.Empty
+            || disposition.HostInstanceId != host.HostInstanceId
+            || disposition.ContainerId != host.ContainerId)
+            return false;
+        return ReadStamp(binding, "runner-seal.json") is not null;
+    }
+
+    private static VerificationCustodyStatus Unavailable(VerificationExecutionBinding binding) =>
+        new(binding, VerificationCustodyState.Unknown, "custody_observer_unavailable");
+
     public VerificationCustodyStatus Accept(VerificationCustodyStatus status)
     {
         Store.RequireBinding(status.Binding);

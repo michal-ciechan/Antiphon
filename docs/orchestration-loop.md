@@ -2675,8 +2675,16 @@ restoration and hashed task-owned outputs must match. Unknown files, dirty/repla
 missing/unsupported custody remain actionable residue. No force or recursive deletion.
 Terminal-task CleanupVerification can terminate Linux containment. A Windows seal does not
 terminate, and that host's existing linger and kill-on-close job remain. A successful kill
-is not a receipt and is not a source-clean verdict. A restored Failed/Canceled battery may
-clean without changing its verdict.
+is not a receipt and is not a source-clean verdict. The task orchestrator invokes
+CleanupVerification after Succeeded, Failed, or Canceled settlement and retries unresolved
+residue. That call is the explicit Linux release. It is not periodic and it has no age
+deadline. Dead-host recovery kills only the recorded container and stays Unknown: it does
+not manufacture a receipt, and snapshot removal stays refused. A live host that adoption
+could not take stays alive. The orchestrator asks the operator to verify the terminal task,
+the exact binding, namespace, container, and host pid plus start identity, stop that host
+through an owned handle, and reissue CleanupVerification. Missing or unreadable accounting
+is never zero. Prolonged Draining and unresolved Unknown are warnings only.
+A restored Failed/Canceled battery may clean without changing its verdict.
 See docs/testing-and-build.md for the restoration schema and docs/ops-http.md for inspection.
 
 Ship source admission, launch custody, no-autosave/no-land fences, cleanup and these contracts

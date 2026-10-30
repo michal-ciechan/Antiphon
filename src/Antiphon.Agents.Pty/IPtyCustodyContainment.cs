@@ -148,18 +148,11 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
     public IReadOnlyList<int> ReadTreePids(Guid containerId)
     {
         var path = TreeProcsPath(containerId);
-        // A tree directory that is gone after a successful kill is an empty tree. A missing
-        // namespace, a link, or a tree that cannot be read is unknown, and unknown must never
-        // look like zero. There is no fallback to the global custody root.
+        // A missing tree, a missing procs file, a link, or a read that fails is unknown.
+        // Unknown must never look like zero. An empty procs file is observed zero.
+        // There is no fallback to the global custody root.
         if (IsReparse(path))
             throw Unreadable();
-        if (!File.Exists(path))
-        {
-            var dir = Path.GetDirectoryName(path);
-            if (dir is not null && Directory.Exists(dir))
-                throw Unreadable();
-            return [];
-        }
 
         try
         {
