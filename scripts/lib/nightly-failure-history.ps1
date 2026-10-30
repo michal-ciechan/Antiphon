@@ -67,8 +67,16 @@ function Resolve-NightlyPriorFailures {
     param($History, [object[]]$Suites, [ValidateSet('Full','PriorFailureSweep')][string]$QualificationMode = 'Full')
     $matches = @()
     foreach ($suite in $Suites) {
+        $index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach ($n in @($suite.nodes)) {
+            $bare=Get-NightlyBareClassIdentity ([string]$n.ClassName)
+            if (-not $index.ContainsKey($bare)) { $index.Add($bare,[Collections.Generic.List[object]]::new()) }
+            $index[$bare].Add($n)
+        }
         foreach ($member in @($History.members | Where-Object { $_.suite -ceq $suite.id })) {
-            $required = @($suite.nodes | Where-Object { (Get-NightlyBareClassIdentity $_.ClassName) -ceq $member.className -and -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions @($suite.exclusions) -ProfileAware) })
+            $nodes=@()
+            if ($index.ContainsKey([string]$member.className)) { $nodes=@($index[[string]$member.className].ToArray()) }
+            $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions @($suite.exclusions) -ProfileAware) })
             if ($required.Count -eq 0) { continue }
             $chunks = @($suite.chunks | Where-Object { @($_.classes) -ccontains $member.className })
             $matches += [pscustomobject]@{ suite = $suite.id; className = $member.className; chunks = @($chunks.id); requiredUids = @($required.Uid) }

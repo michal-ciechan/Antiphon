@@ -84,7 +84,7 @@ function New-FFHistoricalFixture {
         $method = if ($i -eq 7) { 'concurrent_callbacks_append_each_line_once_without_overlap' } else { 'Case'+$i }
         if ($i -eq 9) { $method='Case8' }
         $diag += 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = '+$uid+' }, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Fixture, Namespace = Antiphon.Tests.Checkpoints, TypeName = '+$type+', MethodName = '+$method+', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, '+$state+'TestNodeStateProperty { Explanation =  } ] } }' + "`n"
-        if ($i -lt 8) { $nodesBySuite.antiphon += New-FFNode ('Antiphon.Tests.Checkpoints.'+$type) $method $uid }
+        if ($i -lt 9) { $nodesBySuite.antiphon += New-FFNode ('Antiphon.Tests.Checkpoints.'+$type) $method $uid }
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'antiphon-all-group-105-execution'))
     [IO.File]::WriteAllText((Join-Path $run 'antiphon-all-group-105-execution/invocation.diag'),$diag)
@@ -175,7 +175,7 @@ function Test-RefusesIncompleteEvidence {
     $renamed=Copy-FFObject $missing; $renamed[0].nodes += New-FFNode ($name+'Renamed')
     Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $h $renamed PriorFailureSweep } 'current-class-missing') 'renamed'
     $excluded=Copy-FFObject $current
-    foreach ($n in $excluded[0].nodes) { if ($n.ClassName -ceq $name) { $n.Excluded=$true } }
+    $excluded[0].exclusions=@([pscustomobject]@{Class=$name;Methods=@()})
     $r=Resolve-NightlyPriorFailures $h $excluded Full
     Assert-FF (@($r.unresolved | Where-Object { $_.className -ceq $name -and $_.reason -ceq 'current-class-excluded' }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $h $excluded PriorFailureSweep } 'current-class-excluded')) 'excluded'
     $noChunk=Copy-FFObject $h
