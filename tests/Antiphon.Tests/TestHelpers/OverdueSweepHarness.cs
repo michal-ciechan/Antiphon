@@ -36,7 +36,8 @@ public static class OverdueSweepHarness
         string? claudeProjectsRoot = null,
         SaveChangesInterceptor? saveInterceptor = null,
         TimeProvider? clock = null,
-        ISessionRunnerClient? runner = null)
+        ISessionRunnerClient? runner = null,
+        string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
         var settings = new DelegationSettings
@@ -57,7 +58,7 @@ public static class OverdueSweepHarness
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(TestDbFixture.ConnectionString);
+            o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString);
             if (saveInterceptor is not null)
                 o.AddInterceptors(saveInterceptor);
         });
