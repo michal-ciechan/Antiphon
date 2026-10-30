@@ -43,7 +43,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// launch. Production leaves it null and builds a <see cref="LinuxCgroupContainment"/> over
     /// the journal's container id.
     /// </summary>
-    internal IPtyCustodyContainment? CustodyContainment { get; init; }
+    internal IPtyCustodyContainment? CustodyContainment { get; set; }
 
     public PtyTerminationObservation? CustodyTermination =>
         _linuxTermination ?? (_conn as ModernConPtyConnection)?.LastTermination;

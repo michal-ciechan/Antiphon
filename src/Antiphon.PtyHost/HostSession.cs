@@ -42,6 +42,10 @@ public sealed class HostSession : IAsyncDisposable
     private bool _hostOutputFailed;
     private readonly IVerificationCustodyFiles? _custodyFiles;
 
+    /// <summary>Test seam. Production leaves containment null and builds the real Linux cgroup.</summary>
+    internal void UseContainmentForTests(IPtyCustodyContainment containment) =>
+        _runner.CustodyContainment = containment;
+
     public HostSession(PtyHostOptions options, HostLog log, IVerificationCustodyFiles? custodyFiles = null)
     {
         _custodyFiles = custodyFiles;
