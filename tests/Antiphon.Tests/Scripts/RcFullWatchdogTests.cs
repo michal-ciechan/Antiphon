@@ -121,6 +121,9 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("missingFieldWatchdog").GetDouble().ShouldBe(3600, "a calibration missing E95 reduced the cap");
         observed.GetProperty("missingFieldReason").GetString().ShouldBe("unmeasured-cost");
         observed.GetProperty("missingCensoredFieldAdmitted").GetBoolean().ShouldBeTrue("a calibration with no Censored field was treated as censored");
+        observed.GetProperty("invalidPlanCensored").GetBoolean().ShouldBeTrue(text);
+        observed.GetProperty("invalidPlanWatchdog").GetDouble().ShouldBe(3600, "an invalid planned cost produced a cap that kills the 1936 s wall");
+        observed.GetProperty("invalidPlanKilled").GetBoolean().ShouldBeFalse("the g103 wall was killed after an invalid planned cost");
     }
 
     [Test]
