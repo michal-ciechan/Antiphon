@@ -30,6 +30,16 @@ No AppHost/runner restart or source change is authorized or needed.
 
 ## Remaining evidence
 
+TrackedBaseline diagnostic control completed: **8 selected, 8 passed, 0 failed,
+0 skipped**, 13m17.518s. Only the eight previously failed methods ran, using
+the same binary with process-local `GIT_CONFIG_GLOBAL=NUL` and
+`GIT_CONFIG_NOSYSTEM=1`; no test/product edit or host configuration write.
+Lease `af437231-7c23-438c-8474-a8e0e0cb98a9`, 803s held. The initial eight red
+results remain in their original receipt. A preceding selector without the
+documented method wildcards selected zero tests and is retained as invalid
+execution evidence (`baseline-config-control`); the valid control is
+`baseline-config-selected`. OutputConfinement controls remain pending.
+
 Initial 35-row census complete: **12 passed, 23 failed, zero skipped** after
 lifting only the local gates. ShapeConflict: 7/10; TrackedBaseline: 5/8;
 OutputConfinement's five requested rows: 0/5. Its existing Windows sibling
