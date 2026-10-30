@@ -35,7 +35,36 @@ The three classes call that fixture to exercise consumers, persistence and stop
 attribution respectively. This inspection confirms their existing class exclusion
 is intentional; native test bodies were not executed under this brief.
 
+## Policy fix and fixture red
+
+Commit `078494b3a235a88ee68834f06314d7183ec493f0` preserves the untouched-base red.
+Commit `f516c6fc11ab8545b6dde4e5168dafd4cdb9afec` adds exactly three Windows-only
+rc exclusion rows, owned by CARD-1619, leaving the classes required on Linux.
+All existing pinned attributes and migration baselines remain unchanged.
+
+Owner tooling (`Get-NightlyPolicyHash` from `scripts/lib/nightly-common.ps1` and
+`scripts/lib/nightly-policy.ps1`) recomputed policyHash:
+
+- Old: `1f68aa2002aee99fe38115ff620bdaa2830497009ed6b15b4a3c2b353dbdbee6`
+- New: `7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387`
+
+The pinned legacy digest stays
+`8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d`.
+
+After a successful candidate rebuild (189.05 seconds; 0 errors), the five-class
+selection executed 32 cases: 28 passed, 4 failed, 0 skipped (88.510 seconds).
+The shared witness is now 3/3 green. DinD 9/9, roster 3/3 and all five census cases
+passed. The four failures are mutation fixture setup: `Policy()` retained the new
+shipped rows in synthetic assemblies which contain only explicit fixture types,
+producing `unresolved-row` for all three new classes. Failed methods:
+`Marker_pin_and_origin_are_enforced`, `Lookalike_attribute_identity_is_rejected`,
+and both LF/CRLF `Shipped_legacy_digest_is_pinned_across_checkout_line_endings` cases.
+
+The fixture helper now excludes newer prefixed witnessed rows as well as frozen
+rows, matching the existing shipped-legacy digest helper and inspector. Explicit
+fixture extras are still appended and all assertions remain intact. The committed
+policy-only slice is the red for this helper repair; no run was in flight during edits.
+
 ## Pending
 
-Add the three Windows policy rows, recompute policyHash with owner tooling, then
-run the requested narrow checks and the real land-graph `-Check`.
+Rebuild and rerun the two witness classes, then run the real land-graph `-Check`.
