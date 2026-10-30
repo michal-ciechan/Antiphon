@@ -85,6 +85,77 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task C1616_admitted_build_deadline_preserves_terminal_receipt()
+    {
+        await AssertAdmittedBuildTimeoutAsync(cancelBudget: false);
+    }
+
+    [Test]
+    public async Task C1616_admitted_build_budget_cancellation_is_not_slot_refusal()
+    {
+        await AssertAdmittedBuildTimeoutAsync(cancelBudget: true);
+    }
+
+    private async Task AssertAdmittedBuildTimeoutAsync(bool cancelBudget)
+    {
+        var root = TempDir();
+        Directory.CreateDirectory(Path.Combine(root, "tests", "Proof"));
+        File.WriteAllText(Path.Combine(root, "tests", "Proof", "p.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1616-deadline", Project = "tests/Proof", OutputPath = "bin-c1616-deadline/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-c1616-deadline", Filter = "/*/*/Proof/*", After = ["S1"] }],
+        };
+        var clock = new ControlledTimeProvider();
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, async (_, token) =>
+        {
+            if (cancelBudget)
+            {
+                // Expire the run budget after admission, reaching BuildOneAsync's OCE catch.
+                clock.Advance(TimeSpan.FromMinutes(1));
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            return new DriverResult(ExitCodes.Timeout, "", "", Killed: true, TimedOut: true);
+        });
+        var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), TimeProvider = clock,
+            Slots = new FixedSlotClient("off"), Driver = driver, Output = TextWriter.Null };
+        var run = CheckpointApp.CreateRun(manifest,
+            new RunRequest { Commit = new string('a', 40), Slots = "off", TotalTimeoutMinutes = 1 }, root, runtime);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(5);
+        driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+        driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
+        driver.InFlight.ShouldBe(0);
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        var reason = cancelBudget ? "execution-budget-exceeded" : "build-deadline-exceeded";
+        state.Builds.Single().TerminalReason.ShouldBe(reason);
+        ReportWriter.RequiredReceiptRefusal(run, state).ShouldBeNull();
+        var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+        report.ExitCode.ShouldBe(5);
+        report.Verdict.ShouldBe("RED");
+        var row = report.Rows.Single();
+        row.State.ShouldBe(cancelBudget ? "skipped" : reason);
+        row.Executed.ShouldBeNull("an admitted build timeout has no test execution counts");
+        row.Passed.ShouldBeNull();
+        row.Failed.ShouldBeNull();
+        row.Skipped.ShouldBeNull();
+        if (!cancelBudget)
+        {
+            row.ExitCode.ShouldBe(5);
+            row.TerminalReason.ShouldBe(reason);
+        }
+        using var validation = new StringWriter();
+        (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", Path.Combine(run, "report.json"),
+            "--expected-source-sha", new string('a', 40), "--repo-root", root],
+            new CheckpointApp.Runtime { Output = validation })).ShouldBe(2);
+        validation.ToString().ShouldContain("report_failed");
+        var log = File.ReadAllText(Path.Combine(run, "executor.log"));
+        foreach (var phase in new[] { "evidence", "output-discovery", "cleanup", "report-publication" })
+            log.ShouldContain($"FINALIZATION phase={phase} seconds=");
+    }
+
+    [Test]
     public async Task C1616_admission_timeout_publishes_readable_nonexecuted_receipt()
     {
         await using var broker = await BuildSlotBrokerFixture.StartAsync(budget: 1);
