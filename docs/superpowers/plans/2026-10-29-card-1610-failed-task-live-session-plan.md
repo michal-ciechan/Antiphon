@@ -973,6 +973,15 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-89 | S2-S4 | CP-15 | server-integration-CheckCompactionReceiptTests | `/*/*/CheckCompactionReceiptTests/*` | CARD-0079 full regression | 27 passed; no failed/skipped | 27 | 5 |
 | CP-90 | S2-S4 | CP-15 | server-integration-CheckCompactionAutomaticRestartTests | `/*/*/CheckCompactionAutomaticRestartTests/*` | CARD-0079 full regression | 11 passed; no failed/skipped | 11 | 3 |
 | CP-91 | S2-S4 | CP-15 | server-integration-CheckCompactionRecoveryPersistenceTests | `/*/*/CheckCompactionRecoveryPersistenceTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 1 |
+| CP-92 | S2-S4 | CP-15 | server-integration-supervision-retention | `/*/*/DataRetentionServiceTests/C1610_Unresolved_supervision_retains_evidence_until_told` | S3 retention safeguards | 6 passed; no failed/skipped | 6 | 2 |
+
+Debug task 40e35f61 adds CP-92 to close the preceding S3 report's explicit
+retention coverage gap. Six isolated-schema cases exercise source/recipient
+sessions and transcripts, the purpose-linked queue row and the whole task tree.
+Each proves unrelated eligible data is pruned while unresolved debt survives,
+then proves the same evidence becomes eligible after Told. The existing plan
+counts/costs above remain historical; this amendment adds six executions and
+two provisional minutes. No existing selection, floor or assertion is removed.
 
 Run each committed After group once with the checkpoint tool and wait until its
 exit is not 75; use foreground windows at most 45 seconds and own every child.

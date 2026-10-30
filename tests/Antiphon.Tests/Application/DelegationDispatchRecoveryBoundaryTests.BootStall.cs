@@ -196,6 +196,28 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             var taskId = await BootStallSeedCeilingTaskAsync(
                 schema.ConnectionString, parent.SessionId, sweepClock.GetUtcNow().UtcDateTime);
             var runner = new CountingRunner();
+            // S2 requires a current accepted generation and a complete observation before
+            // acting at any ceiling. Keep this witness idle, with its original two rows.
+            await using (var observed = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var task = await observed.AgentTasks.SingleAsync(t => t.Id == taskId);
+                var session = await observed.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+                runner.Sessions.Add(Listed(session.Id, "Running", session.StartedAt, null, session.StartedAt));
+            }
+            runner.ReadTranscript = async id =>
+            {
+                await using var observed = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var session = await observed.AgentSessions.SingleAsync(s => s.Id == id);
+                var stored = await observed.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == id)
+                    .OrderBy(t => t.Sequence).ToListAsync();
+                var entries = stored.Select(t => new SessionRunnerTranscriptEvent(id, t.Sequence, t.Kind,
+                    t.Uuid, t.ParentUuid, t.Timestamp is { } at ? new DateTimeOffset(at) : null,
+                    t.Role, t.Text, t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason,
+                    ApiCallId: t.ApiCallId)).ToList();
+                return new SessionRunnerTranscriptDto(id, entries, entries.LastOrDefault()?.Sequence ?? 0,
+                    AcceptedStartedAt: session.StartedAt,
+                    Readiness: new SessionRunnerTranscriptReadiness("Ready", "c1151-idle-ceiling", entries.Count, entries.Count));
+            };
             var stopper = new RecordingSessionStopper();
             await using (var host = OpenSweep(
                 schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))

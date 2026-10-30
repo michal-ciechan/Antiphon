@@ -1994,6 +1994,113 @@ public class DataRetentionServiceTests
         (await verify.AgentTasks.AnyAsync(t => t.Id == unrelatedId)).ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments("source-transcript")]
+    [Arguments("recipient-transcript")]
+    [Arguments("source-session")]
+    [Arguments("recipient-session")]
+    [Arguments("queue")]
+    [Arguments("task-tree")]
+    public async Task C1610_Unresolved_supervision_retains_evidence_until_told(string arm)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var source = Guid.NewGuid();
+        var recipient = Guid.NewGuid();
+        var unrelated = Guid.NewGuid();
+        await SeedStoppedSessionAsync(options, source, stale);
+        await SeedStoppedSessionAsync(options, recipient, stale);
+        await SeedStoppedSessionAsync(options, unrelated, stale);
+        var sourceTranscript = await SeedSchemaTranscriptAsync(options, source, stale);
+        var recipientTranscript = await SeedSchemaTranscriptAsync(options, recipient, stale);
+        var unrelatedTranscript = await SeedSchemaTranscriptAsync(options, unrelated, stale);
+        var root = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var unrelatedTask = Guid.NewGuid();
+        var noticeId = Guid.NewGuid();
+        var queueId = Guid.NewGuid();
+        var unrelatedQueue = Guid.NewGuid();
+        await using (var seed = new AppDbContext(options))
+        {
+            var member = TerminalTask(child, "supervision child", stale);
+            member.RootTaskId = root;
+            member.ParentTaskId = root;
+            seed.AgentTasks.AddRange(TerminalTask(root, "supervision root", stale), member,
+                TerminalTask(unrelatedTask, "unrelated supervision control", stale));
+            seed.SessionQueuedMessages.AddRange(new SessionQueuedMessage
+            {
+                Id = queueId, AgentSessionId = recipient, Sequence = 1,
+                Body = "supervision retention witness", Origin = QueuedMessageOrigin.Supervision,
+                Status = QueuedMessageStatus.Sent, CreatedAt = stale, SentAt = stale,
+                SourceTaskSupervisionNoticeId = noticeId,
+            }, new SessionQueuedMessage
+            {
+                Id = unrelatedQueue, AgentSessionId = unrelated, Sequence = 1,
+                Body = "unrelated retention control", Origin = QueuedMessageOrigin.Supervision,
+                Status = QueuedMessageStatus.Sent, CreatedAt = stale, SentAt = stale,
+            });
+            seed.TaskSupervisionNotices.Add(new TaskSupervisionNotice
+            {
+                Id = noticeId, TaskId = child, Attempt = 1, SourceEventId = Guid.NewGuid(),
+                Purpose = TaskSupervisionNoticePurpose.CeilingParent,
+                SessionId = source, RecipientSessionId = recipient, QueueMessageId = queueId,
+                Body = "supervision retention witness", Digest = "retention-witness",
+                State = TaskSupervisionNoticeState.Pending, CreatedAt = stale, NextAttemptAt = stale,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        async Task PruneAsync()
+        {
+            await using var db = new AppDbContext(options);
+            var service = CreateService(db);
+            if (arm.EndsWith("transcript", StringComparison.Ordinal)) await service.PruneTranscriptsAsync(CancellationToken.None);
+            else if (arm.EndsWith("session", StringComparison.Ordinal)) await service.PruneSessionsAsync(CancellationToken.None);
+            else if (arm == "queue") await service.PruneQueuedMessagesAsync(CancellationToken.None);
+            else await service.PruneTasksAsync(CancellationToken.None);
+        }
+        async Task AssertRowsAsync(bool retained)
+        {
+            await using var db = new AppDbContext(options);
+            if (arm.EndsWith("transcript", StringComparison.Ordinal))
+            {
+                var id = arm == "source-transcript" ? sourceTranscript : recipientTranscript;
+                (await db.TranscriptEntries.AnyAsync(t => t.Id == id)).ShouldBe(retained, arm);
+                (await db.TranscriptEntries.AnyAsync(t => t.Id == unrelatedTranscript)).ShouldBeFalse(arm);
+            }
+            else if (arm.EndsWith("session", StringComparison.Ordinal))
+            {
+                var id = arm == "source-session" ? source : recipient;
+                (await db.AgentSessions.AnyAsync(s => s.Id == id)).ShouldBe(retained, arm);
+                (await db.AgentSessions.AnyAsync(s => s.Id == unrelated)).ShouldBeFalse(arm);
+            }
+            else if (arm == "queue")
+            {
+                (await db.SessionQueuedMessages.AnyAsync(m => m.Id == queueId)).ShouldBe(retained, arm);
+                (await db.SessionQueuedMessages.AnyAsync(m => m.Id == unrelatedQueue)).ShouldBeFalse(arm);
+            }
+            else
+            {
+                (await db.AgentTasks.AnyAsync(t => t.Id == root)).ShouldBe(retained, arm);
+                (await db.AgentTasks.AnyAsync(t => t.Id == child)).ShouldBe(retained, arm);
+                (await db.AgentTasks.AnyAsync(t => t.Id == unrelatedTask)).ShouldBeFalse(arm);
+            }
+        }
+
+        await PruneAsync();
+        await AssertRowsAsync(retained: true);
+        await using (var receipt = new AppDbContext(options))
+        {
+            var notice = await receipt.TaskSupervisionNotices.SingleAsync(n => n.Id == noticeId);
+            notice.State = TaskSupervisionNoticeState.Told;
+            notice.ToldAt = DateTime.UtcNow;
+            await receipt.SaveChangesAsync();
+        }
+        await PruneAsync();
+        await AssertRowsAsync(retained: false);
+    }
+
     private readonly record struct PublicationSeed(
         Guid PublicationId, Guid CheckedTaskId, Guid RunId, Guid NotificationId, int Attempt, DateTime DispatchedAt, int CheckNumber);
 

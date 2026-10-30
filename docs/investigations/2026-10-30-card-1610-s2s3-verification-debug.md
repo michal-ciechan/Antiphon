@@ -72,3 +72,23 @@ The initial `--output` spelling was ignored by the importer; its default
 preparation attempt and wrong-root wait refused before any build/test; no credit.
 
 CHECKPOINT CP-28-s2-c1151 commit=b588cb5d058d810c1d56e4c6bca0196435f78349 build=ok filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Ceiling_failure_note_has_one_complete_user_prompt executed=3 passed=0 failed=3 skipped=0 trx=/tmp/c1610-debug-s2-b588cb5d/.antiphon/checkpoints/20261030-160625-cf79/rows/CP-28-s2-c1151/run.trx slot=granted waited=0s dirty=0 source=b588cb5d058d810c1d56e4c6bca0196435f78349 sourceState=clean buildSource=verified
+
+## Verification amendment and protective intent
+
+C1151's fixture now supplies its actual seeded idle transcript and accepted
+Running generation through the real runner-client seams. Every original assertion
+is unchanged. CP-28 still selects the full 382-case class.
+
+CP-92 is an explicit six-case plan amendment closing the prior report's untested
+retention safeguards. Each case asserts pending debt retains its evidence, an
+unrelated eligible control is pruned, and the same evidence becomes prunable after
+Told. Removing the corresponding production exclusion would fail the retained
+assertion; unconditional retention would fail the control/release assertions.
+It adds coverage, not a production change. All shared-setup uses the assembly DB
+fixture and per-case isolated schemas. No new process spawn or Slow exemption.
+
+The selected roster runs CP-17/28/52/16 first so repaired rows cannot be hidden
+behind lower-priority regressions, then every remaining S2/S3 row. Ordering is a
+recorded scheduling deviation; exact original filters and floors remain intact.
+The two historical broad classes form the aggregate CP-27 + CP-28 (723 cases).
+Do not run another duplicate aggregate: those same complete rows satisfy it.
