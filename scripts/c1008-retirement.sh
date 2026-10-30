@@ -289,13 +289,84 @@ c1609_mark_partial_refused() {
         c1609_persist "$file"
 }
 
+# Resume observes the complete set before changing the ledger. A missing name
+# is attributable only to a durable intent, never to a Docker read failure.
+# The immutable preview binds every non-ledger field of the mutable receipt.
+c1609_prepare_resume() {
+    local root file preview nonce canonical expected current name original intent
+    local observed=() targets daemon stamp
+    root="$(c1609_retirement_root)"; file="$root/receipt.json"
+    c1609_custody "$file" file || return 1
+    [ "$(stat -c %s -- "$file")" -le 1048576 ] || return 1
+    canonical="$(jq -cS -s 'if length==1 then .[0] else error("envelope") end' "$file")" || return 1
+    [ "$(cat -- "$file")" = "$canonical" ] || return 1
+    nonce="$(jq -er '.phaseNonce|select(type=="string" and test("^[0-9a-f]{32}$"))' "$file")" || return 1
+    preview="$root/preview-$nonce.json"
+    c1609_custody "$preview" file || return 1
+    targets="$(printf '%s\n' "${C1008_TARGETS[@]}" | jq -R . | jq -sc 'sort')" || return 1
+    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --argjson targets "$targets" \
+      --slurpfile preview "$preview" '
+      . as $r | $preview[0] as $p |
+      .schema==2 and .policyVersion==1 and .operationId==$op and .project==$project and
+      .consumed==true and .owner==null and
+      (.state=="Applying" or .state=="PartialRefused" or .state=="Refused" or .state=="Completed") and
+      $p.state=="Ready" and $p.consumed==false and
+      (del(.state,.consumed,.owner,.intents,.effects)==($p|del(.state,.consumed))) and
+      (.targets|sort)==$targets and (.fingerprints|keys)==$targets and
+      ((.intents // [])|type)=="array" and ((.effects // [])|type)=="array" and
+      ((.intents // [])|map(.name)|length)==((.intents // [])|map(.name)|unique|length) and
+      ((.effects // [])|map(.name)|length)==((.effects // [])|map(.name)|unique|length) and
+      all(.intents[]?; . as $i | keys==["intent","name","result"] and
+        ($targets|index($i.name)!=null) and $r.fingerprints[$i.name]!=null and .intent=="remove" and
+        (.result=="pending" or .result=="removed" or .result=="removed-observed")) and
+      all(.effects[]?; . as $e | keys==["name","result"] and ($targets|index($e.name)!=null) and
+        (if .result=="alreadyAbsent" then $r.fingerprints[$e.name]==null
+         else (.result=="removed" or .result=="removed-observed") and
+           any($r.intents[]?; .name==$e.name and .result==$e.result) end)) and
+      all(.intents[]?; . as $i | if .result=="pending" then all($r.effects[]?; .name!=$i.name)
+        else any($r.effects[]?; .name==$i.name and .result==$i.result) end)
+      ' "$file" >/dev/null || return 1
+    if [ -n "${C1008_EXPECTED_PROOF_DIGEST:-}" ]; then
+        [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$C1008_EXPECTED_PROOF_DIGEST" ] || return 1
+    fi
+    daemon="$(docker info --format '{{.ID}}')" || return 1
+    [ "$daemon" = "$(jq -r .daemon "$file")" ] || return 1
+    stamp="$(date -u -d "$(jq -r .retiredAt "$file")" +%s)" || return 1
+    [ "$stamp" = "$(date -u -d "$C1008_RETIRED_AT" +%s)" ] || return 1
+    for name in "${C1008_TARGETS[@]}"; do
+        current="$(c1609_target_snapshot "$name")" || return 1
+        current="$(printf '%s' "$current" | jq -cS --arg name "$name" '.[$name]')" || return 1
+        original="$(jq -cS --arg name "$name" '.fingerprints[$name]' "$file")" || return 1
+        intent="$(jq -r --arg name "$name" '[.intents[]?|select(.name==$name)][0].result // "none"' "$file")" || return 1
+        if [ "$current" = null ]; then
+            if [ "$original" != null ]; then
+                case "$intent" in
+                    pending) observed+=("$name") ;;
+                    removed|removed-observed) ;;
+                    *) return 1 ;;
+                esac
+            fi
+        else
+            [ "$current" = "$original" ] && { [ "$intent" = none ] || [ "$intent" = pending ]; } || return 1
+        fi
+    done
+    jq '.state="Applying"' "$file" | c1609_persist "$file" || return 1
+    for name in "${observed[@]}"; do
+        c1609_target_result "$name" removed-observed || return 1
+    done
+}
+
 c1609_target_intent() {
     local name="$1" file
     file="$(c1609_retirement_root)/receipt.json"
     c1609_custody "$file" file || return 1
     jq -e --arg name "$name" '.state=="Applying" and .consumed==true and
-        (.targets|index($name)!=null) and (.fingerprints[$name]!=null) and
-        all(.intents[]?; .name!=$name)' "$file" >/dev/null || return 1
+        (.targets|index($name)!=null) and (.fingerprints[$name]!=null)' "$file" >/dev/null || return 1
+    if jq -e --arg name "$name" 'any(.intents[]?; .name==$name)' "$file" >/dev/null; then
+        [ "${C1609_RESUME_VALIDATED:-0}" = 1 ] &&
+            jq -e --arg name "$name" 'any(.intents[]?; .name==$name and .result=="pending")' "$file" >/dev/null
+        return $?
+    fi
     jq --arg name "$name" '.intents=((.intents // []) + [{name:$name,intent:"remove",result:"pending"}])' "$file" |
         c1609_persist "$file"
 }
@@ -304,8 +375,12 @@ c1609_target_result() {
     local name="$1" result="$2" file
     file="$(c1609_retirement_root)/receipt.json"
     c1609_custody "$file" file || return 1
-    case "$result" in removed|alreadyAbsent) ;; *) return 1 ;; esac
-    if [ "$result" = removed ]; then
+    case "$result" in removed|removed-observed|alreadyAbsent) ;; *) return 1 ;; esac
+    if jq -e --arg name "$name" 'any(.effects[]?; .name==$name)' "$file" >/dev/null; then
+        jq -e --arg name "$name" --arg result "$result" 'any(.effects[]?; .name==$name and .result==$result)' "$file" >/dev/null
+        return $?
+    fi
+    if [ "$result" != alreadyAbsent ]; then
         jq -e --arg name "$name" 'any(.intents[]?; .name==$name and .result=="pending")' "$file" >/dev/null || return 1
     else
         jq -e --arg name "$name" '.fingerprints[$name]==null' "$file" >/dev/null || return 1
@@ -313,6 +388,15 @@ c1609_target_result() {
     jq --arg name "$name" --arg result "$result" '
         .intents=((.intents // [])|map(if .name==$name then .result=$result else . end)) |
         .effects=((.effects // []) + [{name:$name,result:$result}])' "$file" | c1609_persist "$file"
+}
+
+c1609_target_absent() {
+    local name="$1" file
+    file="$(c1609_retirement_root)/receipt.json"
+    c1609_custody "$file" file || return 1
+    # An earlier result is retained verbatim; absence does not invent a second effect.
+    if jq -e --arg name "$name" 'any(.effects[]?; .name==$name)' "$file" >/dev/null; then return 0; fi
+    c1609_target_result "$name" alreadyAbsent
 }
 
 # Successful temp deletion is Completed. Applying with no closure still blocks deploy.
@@ -323,7 +407,8 @@ c1609_mark_completed() {
     if [ ! -f "$file" ] || [ -L "$file" ] || [ -L "$root" ]; then
         return 0
     fi
-    jq -e '. as $record | all(.targets[]; . as $name |
-        any($record.effects[]?; .name==$name and (.result=="removed" or .result=="alreadyAbsent")))' "$file" >/dev/null || return 1
+    jq -e '. as $record | .state=="Applying" and .consumed==true and
+        all(.intents[]?; .result!="pending") and all(.targets[]; . as $name |
+        any($record.effects[]?; .name==$name and (.result=="removed" or .result=="removed-observed" or .result=="alreadyAbsent")))' "$file" >/dev/null || return 1
     jq '.state="Completed" | .consumed=true | .owner=null' "$file" | c1609_persist "$file"
 }

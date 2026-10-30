@@ -5987,6 +5987,11 @@ c1008_spill_record() {
 }
 
 c1008_save() {
+    if [ "${C1008_PROJECT:-}" = "$TEMP_PROJECT" ] && declare -F c1609_persist >/dev/null; then
+        printf '%s\n' "$C1008_RECORD" | c1609_persist "$C1008_JOURNAL" || return 1
+        cat -- "$C1008_JOURNAL" | c1609_persist "$CASE_DIR/recycle.json"
+        return $?
+    fi
     local tmp="$C1008_JOURNAL.new.$$"
     printf '%s\n' "$C1008_RECORD" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$C1008_JOURNAL" || return 1
     cp -- "$C1008_JOURNAL" "$CASE_DIR/recycle.json" || return 1
@@ -9108,6 +9113,11 @@ c1008_recycle() {
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 1 ]; then
+        c1609_prepare_resume || c1008_refuse RecycleResumeMismatch
+        C1609_RESUME_VALIDATED=1
+        C1609_APPLY_ACTIVE=1
+    fi
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
         if [ -n "${C994_IMAGE:-}" ]; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleGitAuditUnknown
@@ -9246,7 +9256,17 @@ c1008_recycle() {
     fi
     c1008_audit_checked; audit="$C1008_AUDIT"
     if [ "${C1008_RESUME:-0}" = 1 ]; then
-        [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            # Removed metadata-only roles change their present/absent rows. All
+            # remaining roles were freshly scanned; retained Git inventory must
+            # still equal the immutable preview. Main keeps its v1 comparison.
+            if [ "$(c1008_volume "${C1008_PROJECT}_work")" != null ]; then
+                [ "$(c1609_inventory_digest "$CASE_DIR/apply-audit.out")" = \
+                    "$(jq -r .inventoryDigest "$(c1609_retirement_root)/receipt.json")" ] || c1008_refuse RecycleResumeMismatch
+            fi
+        else
+            [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
+        fi
     fi
     # CARD-1105-AUDIT-STORE-BEGIN
     if [ "${C1008_RESUME:-0}" = 0 ]; then
@@ -9316,7 +9336,7 @@ c1008_recycle() {
                 c1609_target_result "$name" removed || c1008_refuse RecycleReceiptUnavailable
             fi
         elif [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
-            c1609_target_result "$name" alreadyAbsent || c1008_refuse RecycleReceiptUnavailable
+            c1609_target_absent "$name" || c1008_refuse RecycleReceiptUnavailable
         fi
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "$name" \
             '.volumes[$name].outcome=(if .volumes[$name].original==null then "alreadyAbsent" else "removed" end)')"
