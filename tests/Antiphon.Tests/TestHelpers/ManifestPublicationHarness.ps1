@@ -816,6 +816,19 @@ function Invoke-MpPrefixSuccessor {
         $ids = @(Read-MpChunkIds -Path $flat)
         if (($ids -join ',') -ne 'kept-1,kept-2,kept-3') { Fail-Mp ('successor-prefix-rows ' + $mode) }
         if ($mode -eq 'torn' -and -not $ctx.Unresolved) { Fail-Mp 'successor-cleared-corruption' }
+        $trx = Join-Path $root 'one.trx'
+        Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk 'successor-4' -RunId 'prefix' -Attempt '1' -HostWallSeconds 4
+        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
+        $savedTiming = $script:QualificationTimingRoot
+        try {
+            $script:QualificationTimingRoot = Join-Path $root 'successor-oracle'
+            $chunks = @('kept-1', 'kept-2', 'kept-3', 'successor-4')
+            for ($i = 0; $i -lt $chunks.Count; $i++) {
+                $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $false; testsPassed = $false }
+                Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $root -TrxPath $trx -Suite 'antiphon' -Chunk $chunks[$i] -RunId 'prefix' -Attempt '1' -HostWallSeconds ($i + 1)
+            }
+            if ((Get-MpSha $flat) -ne (Get-MpSha (Join-Path $script:QualificationTimingRoot 'groups-executed.json'))) { Fail-Mp ('successor-published-chunk-lost-prefix ' + $mode) }
+        } finally { $script:QualificationTimingRoot = $savedTiming }
     } finally { Close-MpContext -Context $ctx }
     Write-MpResult -Ok $true -Reason ('prefix-' + $mode)
 }
