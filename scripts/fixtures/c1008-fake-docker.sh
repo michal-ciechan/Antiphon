@@ -11,6 +11,34 @@ fs.appendFileSync(trace, JSON.stringify(args)+'\n');
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const out = x => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x));
 const fail = () => process.exit(2);
+// The preview child execs bare chroot. Resolve it once and keep that directory
+// on PATH. A missing binary is a harness failure, not an unclassified audit.
+let resolvedChrootDir = '';
+function chrootDirectory() {
+  if (resolvedChrootDir) return resolvedChrootDir;
+  const looked = [];
+  const seen = new Set();
+  for (const dir of [...(process.env.PATH || '').split(':'), '/usr/sbin', '/sbin', '/usr/bin', '/bin']) {
+    if (!dir || seen.has(dir)) continue;
+    seen.add(dir);
+    looked.push(dir);
+    try {
+      fs.accessSync(path.join(dir, 'chroot'), fs.constants.X_OK);
+      resolvedChrootDir = dir;
+      return dir;
+    } catch {}
+  }
+  const msg = 'preview helper: chroot not found; looked in ' + looked.join(':') + '\n';
+  try { fs.appendFileSync(path.join(root, 'preview-helper-stderr'), msg); } catch {}
+  process.stderr.write(msg);
+  process.exit(127);
+}
+function pathWithChroot(base) {
+  const dir = chrootDirectory();
+  const parts = (base || '/usr/bin:/bin').split(':').filter(Boolean);
+  if (!parts.includes(dir)) parts.unshift(dir);
+  return parts.join(':');
+}
 // Optional host-proof bind and inventory mode. With neither present, mounts and
 // forwarded env stay the production set (timeout, optional scratch quota, runner-tmp).
 const classifyAudit = (mounts, envs) => {
@@ -191,7 +219,10 @@ const previewRun = () => {
   // production paths; both volume paths are mounted read-only inside it.
   const stage = fs.mkdtempSync('/dev/shm/c1008-preview-');
   const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program, C1008_SIM_STAGE: stage};
-  if (offline) env.PATH = path.join(root, 'git-shim') + ':' + (process.env.PATH || '/usr/bin:/bin');
+  const inheritedPath = process.env.PATH || '/usr/bin:/bin';
+  env.PATH = offline
+    ? path.join(root, 'git-shim') + ':' + pathWithChroot(inheritedPath)
+    : pathWithChroot(inheritedPath);
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
   if (proofSource) env.C1008_SIM_PROOF = proofSource;
