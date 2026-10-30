@@ -9133,6 +9133,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("NextAttemptAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("NextReportScanAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
@@ -9171,12 +9174,22 @@ namespace Antiphon.Server.Migrations
                     b.Property<long?>("ReportFromSequence")
                         .HasColumnType("bigint");
 
+                    b.Property<int?>("ReportScanAttempts")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ReportText")
                         .HasMaxLength(16000)
                         .HasColumnType("character varying(16000)");
 
                     b.Property<long?>("ReportThroughSequence")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("ReportWatchCloseReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("ReportWatchClosedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<long>("ScanFrontier")
                         .HasColumnType("bigint");
@@ -9201,7 +9214,14 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("RecipientSessionId");
+
+                    b.HasIndex("SessionId");
+
                     b.HasIndex("NextAttemptAt", "Id");
+
+                    b.HasIndex("NextReportScanAt", "Id")
+                        .HasFilter("\"Purpose\" = 1 AND \"ReportWatchClosedAt\" IS NULL AND \"ReportForwardedAt\" IS NULL");
 
                     b.HasIndex("TaskId", "Attempt", "SourceEventId", "Purpose")
                         .IsUnique()
