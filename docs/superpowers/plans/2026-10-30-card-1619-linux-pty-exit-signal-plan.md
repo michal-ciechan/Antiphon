@@ -1,7 +1,7 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: source-audited plan with verification design folded in; checkpoint import pending.
+Status: source-audited plan with folded verification design; 12-row import passed; ready for independent Opus plan Review.
 Plan task: `9a468e98`; product code is outside this dispatch.
 
 ## Decisions
@@ -53,6 +53,12 @@ Prove native assets flow to the detached host output; do not ship two managed Po
 assemblies. The vendored patch is limited to exit evidence/replay; do not modernize
 unrelated upstream code. This is a bounded exception to ADR 0002's rejected broad
 Windows fork: Windows spawning and both native shims remain unchanged.
+Implement the new completion members in the vendored Windows connection as well
+as Unix, returning the observed Windows code and zero signal; do not edit its
+spawn/kill algorithm. If native-only dependency metadata does not propagate the
+shim through project references, explicitly stage the pinned package assets as
+Content using the repository's existing RID layout and copy/publish metadata;
+the detached-host witness must prove the shadow copy resolves that file.
 
 Add an immutable `PtyExitObservation(ExitCode, ExitSignal)` at the PTY seam.
 `IPtySession.Exited` and `PtyAgentRunner` consume it. Cache completed exit before
@@ -216,6 +222,11 @@ and SIGHUP fallback each get their real requested signal. Normal exit preceding
 the attempt is not attributed. Concurrent same-signal external delivery cannot be
 distinguished by waitpid: the wording explicitly says a matching request was
 recorded, not that a kernel sender PID was observed.
+The serialization gate covers journal write, syscall and issued update only;
+release it before waiting on the exit task, or the observer and KillAsync would
+deadlock. Do not latch `KilledByRequest` on a failed/refused attempt or turn a
+normal-exit race into a request kill. Preserve reason overrides only when the
+observed stop and matching issued attempt support them.
 
 Instrument existing authorized Linux entry points only: host KillMessage and
 owner/shutdown stop; runner `KillPidBestEffort`, `KillHostIfStillOurs`, pending/
@@ -226,6 +237,14 @@ and root exit must not begin a new stop. The cgroup helper sends SIGKILL (v2
 `cgroup.kill`; v1 freeze/read/kill/thaw). Record intent before invoking it, but
 helper exit zero is only an issued operation: retain CARD-1614's post-drain
 accounting, placement proof, Unknown outcomes and retained cgroups.
+Also cover `PortaPtySession.Dispose`: upstream Unix disposal closes the master
+streams then sends SIGHUP. If the root is still live, record the disposal/hangup
+intent before either operation. A disposal after observed exit emits no new
+death attribution. Unexpected host death/master closure may cause kernel SIGHUP
+without a durable request; preserve sender unknown in that case. The custody
+helper's own timeout tree-kill at `IPtyCustodyContainment.cs:195` targets the helper,
+not proof of the tracked root's exit; give it target-kind helper evidence and
+retain Unknown accounting. Add these arms to V-13's fallback/host-target tests.
 
 CARD-1614's plan is in this checkout and its current product files match the
 fetched RC ref for the PTY/host/runner paths inspected here. Revalidate at Code
@@ -245,16 +264,23 @@ run on an eligible Windows lane at the same source SHA; Linux cannot credit them
 
 | Slice | Value, files and tests | Budget / closure |
 |---|---|---|
-| **S1 — retain the actual native observation** | Add `src/Antiphon.Porta.Pty/` pinned managed sources/license/provenance and project; update `Antiphon.sln` and `src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj`; patch vendored `Unix/PtyConnection.cs`, `PtyExitedEventArgs.cs`, `IPtyConnection.cs` completion snapshot; add `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, `ModernConPtyConnection.cs`. Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 135 minutes: 25 native dependency/staging, 55 seam/replay, 25 witnesses, 15 checkpoints, 15 graph/review notes. CP-1/CP-2. No broad native fork. |
+| **S1 — retain the actual native observation** | Add `src/Antiphon.Porta.Pty/` pinned managed sources/license/provenance and project; update `Antiphon.sln` and `src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj`; patch vendored `Unix/PtyConnection.cs`, `PtyExitedEventArgs.cs`, `IPtyConnection.cs` completion snapshot; add `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, `ModernConPtyConnection.cs`. Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 135 minutes: 25 native dependency/staging, 55 seam/replay, 25 witnesses, 15 checkpoints, 15 graph/review notes. CP-1; final Windows closure CP-2 after S4. No broad native fork. |
 | **S2 — carry it across process/restart boundaries** | Update `PtyHostMessages.cs`, `PtyHostManifest.cs`, `HostSession.cs`, `PtyHostClient.cs` if mapping needed, `SessionRunnerContracts.cs`, `ISessionChild.cs`, `SessionRunnerRuntime.cs`. Add `tests/Antiphon.PtyHost.Tests/Card1619ExitWireTests.cs`, `Card1619LinuxHostExitTests.cs`, `tests/Antiphon.SessionRunner.Tests/Card1619RunnerExitTests.cs`, frozen old-schema fixtures. | 140 minutes: 55 propagation, 45 real detached-host/restart and skew tests, 25 checkpoints, 15 review notes. CP-3/CP-4. Highest transport risk is exit while detached. |
-| **S3 — persist and describe it without false success** | Update `AgentSession`, `RunAttempt`, `AgentIncident`, generated migration/snapshot; `SessionRunnerDtos`, `AgentDtos`, `BoardDtos`; `RunnerContractMapper`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter`, listed local/runner adapters and `RunnerTerminalSession`; `AgentSessionRuntime`, `AgentSessionService`, `SessionReconciliationService`, `SessionTermination`, `AgentTaskLiveness`, dispatcher/attention projections, supervisor/review/diagnostics projections, reset writers and `CheckCompactionContinuationService`; handwritten client types. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitPersistenceTests.cs`, `Card1619ExitConsumerTests.cs` under `tests/Antiphon.Tests/`. Update owner docs. | 150 minutes: 60 mapping/helper/persistence, 25 migration/reset/API, 35 witnesses, 20 checkpoints, 10 notes. CP-5..CP-7. If the audit reveals further branching consumers, split a follow-on Code slice before widening this budget. |
-| **S4 — record Antiphon's stop intent** | Add `ProcessStopIntent.cs` and `ProcessStopIntentStore.cs` in `src/Antiphon.PtyHost.Protocol/`; use an injected low-level stop callback in `PtySession`/`PtyAgentRunner` without introducing a PTY-to-host dependency; wire `HostSession`, `SessionRunnerRuntime`, `IPtyCustodyContainment`, `ILinuxCustodyRecovery`, `RunnerCustodyLedger`; append optional intent to wire/manifest/DTO and S3 persistence/helper. Add `Card1619StopIntentTests.cs` (PtyHost.Tests), `Card1619LinuxStopIntentTests.cs` (SessionRunner.Tests), `Application/Card1619StopAttributionTests.cs` (Antiphon.Tests). Update session/PTY owner docs. | 145 minutes: 45 durable journal/order, 35 alternate authorized paths, 35 race/crash/native tests, 20 checkpoints, 10 notes. CP-8..CP-10. No helper privilege or custody policy expansion. |
+| **S3 — persist and describe it without false success** | Update `AgentSession`, `RunAttempt`, `AgentIncident`, generated migration/snapshot; `SessionRunnerDtos`, `AgentDtos`, `BoardDtos`; `RunnerContractMapper`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter`, listed local/runner adapters and `RunnerTerminalSession`; `AgentSessionRuntime`, `AgentSessionService`, `SessionReconciliationService`, `SessionTermination`, `AgentTaskLiveness`, dispatcher/attention projections, supervisor/review/diagnostics projections, reset writers and `CheckCompactionContinuationService`; handwritten client types. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitPersistenceTests.cs`, `Card1619ExitConsumerTests.cs` under `tests/Antiphon.Tests/`. Update owner docs. | 150 minutes: 60 mapping/helper/persistence, 25 migration/reset/API, 35 witnesses, 20 checkpoints, 10 notes. CP-5..CP-8. If the audit reveals further branching consumers, split a follow-on Code slice before widening this budget. |
+| **S4 — record Antiphon's stop intent** | Add `ProcessStopIntent.cs` and `ProcessStopIntentStore.cs` in `src/Antiphon.PtyHost.Protocol/`; use an injected low-level stop callback in `PtySession`/`PtyAgentRunner` without introducing a PTY-to-host dependency; wire `HostSession`, `SessionRunnerRuntime`, `IPtyCustodyContainment`, `ILinuxCustodyRecovery`, `RunnerCustodyLedger`; append optional intent to wire/manifest/DTO and S3 persistence/helper. Add `Card1619StopIntentTests.cs` (PtyHost.Tests), `Card1619LinuxStopIntentTests.cs` (SessionRunner.Tests), `Application/Card1619StopAttributionTests.cs` (Antiphon.Tests). Update session/PTY owner docs. | 150 minutes: 45 durable journal/order, 35 alternate authorized paths, 30 race/crash/native tests, 30 checkpoints, 10 notes. CP-9..CP-12; final CP-2 runs in native Review. No helper privilege or custody policy expansion. |
 
 S1 is independently reviewable; S2 depends on S1; S3 depends on S1/S2; S4 depends
-on all three. The signal-only fix may be reviewed/landed before S4, but the card
-and attribution acceptance remain incomplete until S4 is reviewed. Activation of
-new producers waits for S3 reader/migration readiness. New native-asset staging
-must be covered by detached-host tests before activation, even if S1 alone builds.
+on S3 and also adds `tests/Antiphon.SessionRunner.Tests/Card1619LinuxCustodyStopIntentTests.cs`
+for CP-12, with the existing NativeLinuxOnly/Integration/Slow classification and
+assembly-local process limiter. Its fixture requires installed root-owned helper
+paths, the entrypoint namespace marker and delegated v1 pids/freezer roots, as in
+`LinuxRunnerCustodyLifecycleTests`; their absence stays native-pending.
+
+All four slices may be reviewed incrementally, but this plan's complete fix is
+land-ready only after S4 and final native CP-2 pass. S1-S3 implement signal
+retention; S4 closes attribution. Activation of new producers waits for S3
+reader/migration readiness and the final native gates. Native-asset staging must
+pass the detached-host witnesses even if the first slice alone builds.
 
 The S3 footprint is broad but mostly mechanical propagation. Use one helper,
 one DTO projection per boundary, and focused fixtures rather than copying policy
@@ -542,7 +568,7 @@ a previous source's receipt. Unknown native/cgroup prerequisites stay owed.
 
 ## Plan validation and publication
 
-The Plan-only import at `df2178a7a` accepted **12 rows**, exit 0, through a granted
+The Plan-only import at `df2178a7aeb87bc4727c69a94d9cdb543a8b2a53` accepted **12 rows**, exit 0, through a granted
 build slot. The bootstrap held its slot for 30 seconds. Five compiler warnings
 were emitted in existing checkpoint/HostCleanup sources; no product tests ran.
 The output was isolated under `/tmp/card1619-plan-build/`; generated YAML stays
@@ -567,3 +593,12 @@ claim. CARD-1610 reference read at `76c583946d5c594052305da87a8b99e85f8639bd`.
 
 Read the investigation at `docs/investigations/2026-10-30-codex-session-exit-no-report.md`.
 Review the completed plan with Opus before Code. Resolve placement from `GET /api/runner-defaults` and `GET /api/session-runners`; use portable, Linux-native and Windows-native lane names, not a fixed fleet location.
+
+Opus should judge D-6's bounded managed dependency patch, D-7's legacy/raw code
+versus signal contract, D-9's refusal on lost provenance, generation-safe terminal
+enrichment, native-asset propagation, and the 150-minute slices. No unanswered
+operator decision prevents this plan: these are explicit design decisions for
+review, not silently assumed implementation facts. On acceptance, commission
+S1 Code from the current pinned RC with this artifact; follow with S2-S4 and
+independent native Review. Product tests, native gates and measured performance
+remain owed, and the old mixed-version fleet cannot be credited as fixed.
