@@ -45,9 +45,9 @@ internal sealed class TaskCeilingHarness : IAsyncDisposable
         await using var db = h.Context();
         var now = h.Clock.GetUtcNow().UtcDateTime;
         db.AgentSessions.AddRange(new AgentSession { Id = h.SessionId, StartedAt = now.AddMinutes(-ageMinutes),
-            Status = SessionStatus.Running, WorkingDirectory = Path.GetTempPath() },
+            Status = SessionStatus.Running, Cwd = Path.GetTempPath() },
             new AgentSession { Id = h.ParentId, StartedAt = now.AddMinutes(-ageMinutes - 1),
-                Status = SessionStatus.Running, WorkingDirectory = Path.GetTempPath() });
+                Status = SessionStatus.Running, Cwd = Path.GetTempPath() });
         db.AgentTasks.Add(new AgentTask { Id = h.TaskId, RootTaskId = h.TaskId, Role = role, Title = "Ceiling witness",
             Goal = "keep working", Status = AgentTaskStatus.Working, AgentSessionId = h.SessionId,
             ParentSessionId = h.ParentId, ReplyTo = AgentTaskReplyTo.Session,
