@@ -113,8 +113,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
             await lane.Queue.EnqueueAsync(lane.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
         await lane.Queue.FlushSessionAsync(lane.SessionId, CancellationToken.None);
 
-        (await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
-            .ShouldBeTrue("every queued body must reach the child. Screen:\n" + lane.RawOutput());
+        (await lane.DrainQueuedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
+            .ShouldBeTrue("every queued body must reach the child. " + await lane.DeliveryEvidenceAsync());
 
         // The child wrote these; nothing in this test or its harness inserts a UserPrompt row.
         var fromChildFile = lane.ChildFileUserPrompts();

@@ -271,9 +271,25 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
         return false;
     }
 
-    /// <summary>The fixture has no hosted turn-end worker; the caller must drive its queue.</summary>
-    public Task<bool> DrainQueuedPromptsAsync(IReadOnlyCollection<string> bodies, TimeSpan timeout) =>
-        WaitForPersistedPromptsAsync(bodies, timeout);
+    /// <summary>
+    /// This fixture ingests the child's records but has no hosted turn-end queue worker.
+    /// Drive the production idle flush, whose working gate reads those persisted records,
+    /// while waiting for the complete native UserPrompt receipts. A screen marker alone
+    /// cannot admit the next body.
+    /// </summary>
+    public async Task<bool> DrainQueuedPromptsAsync(IReadOnlyCollection<string> bodies, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var seen = await PersistedUserPromptsAsync();
+            if (bodies.All(b => seen.Contains(b)))
+                return true;
+            await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
+            await Task.Delay(150);
+        }
+        return false;
+    }
 
     public async Task<string> DeliveryEvidenceAsync()
     {
