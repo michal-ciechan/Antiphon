@@ -1,4 +1,4 @@
-# Group 104 Substring / source-identity investigation
+# Groups 104/105 Substring / source-identity investigation
 
 Task: `21443bfd`. Date: 2026-10-30. Host: server2 Linux (Debian 12).
 Assigned branch: `feat/card-task-21443bfd`.
@@ -14,7 +14,7 @@ test is claimed.
 The reported PowerShell failure has not been reproduced. One C# scheduler
 assertion failed once on the assigned base; its isolation/control outcomes and
 the diagnostic-only change are recorded below. The caller must provide an
-original group-104 TRX failure entry (message **and stack**) and its corresponding
+original group-104 or group-105 TRX failure entry (message **and stack**) and its corresponding
 chunk stdout/stderr before a causal repair can be selected.
 
 The brief says seven tests but enumerates **eight**: one repeat-host method, six
@@ -215,11 +215,80 @@ All test/build commands completed before cleanup. The 35 task-owned worktree
 individual recorded paths; no wildcard deletion or daemon restart was used.
 
 
+## Refinement: group 105 added to the investigation
+
+The caller's refinement added qualification group 105 (19:47Z), specifically
+`CheckpointGitEncodingScriptTests.C1608_invalid_utf8_git_output_is_refused`
+(`CheckpointGitEncodingScriptTests.cs:48`, assertion in `Run`). This expands the
+reported scope from the original eight tests to **nine tests across groups 104
+and 105**. The original matrix and its failure are preserved above; this section
+records the additional exact selection rather than replacing that history.
+
+The added C# test starts `pwsh -NoProfile -File
+scripts/test-checkpoint-git-encoding.ps1 -Mode encoding`. That script loads the
+embedded file reader and shared process runner, then imports checkpoint functions
+from the production script's AST. Unlike the census and scheduler methods, this
+test does execute PowerShell. Its fixture script and C# test are byte-identical
+between candidate `cde8def41` and this branch before the refinement.
+
+On the encoding path, a fixture-owned Git shim deliberately writes invalid UTF-8
+byte `0xFF`. `Invoke-CheckpointGit` must reject decoding with `git-encoding` and
+empty stdout; `Get-CheckpointUntrackedManifest` must retain the explicit encoding
+refusal. This path reads no checkout commit SHA. The encoding fixture script has
+no `.Substring()` call. The shared runner's configuration-key slice
+`CheckpointProcessRunner.cs:87` uses a newline index from the same string and
+checks it before slicing. No additional unguarded source-identity prefix was found
+on this path. The Windows `.cmd` shim branch remains a native obligation.
+
+The same exception text reported by the caller is a reason to investigate the
+cases together; it does not establish a shared call site. No Substring exception
+was reproduced by the added selection, so a cause-specific red witness and repair
+remain unfulfilled. An original native message **and stack**, especially for this
+PowerShell-backed case, are still required to establish the cause.
+
+At clean commit `27293e7b8d857edac438d19fe4a602cf87b20e79`, the exact filter
+`/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused`
+ran once per context through the build-slot-gated sequential driver:
+
+| Context | Executed / passed / failed / skipped | Launch wall seconds |
+|---|---|---:|
+| Normal assigned worktree | 1 / 1 / 0 / 0 | 6.48 |
+| Depth-1 detached clone | 1 / 1 / 0 / 0 | 6.33 |
+| GIT_DIR points to unborn repository | 1 / 1 / 0 / 0 | 6.95 |
+| Physical unborn checkout, timing enabled | 1 / 1 / 0 / 0 | 7.98 |
+| Unusual attached ref | 1 / 1 / 0 / 0 | 7.80 |
+| Non-git archive export | 1 / 1 / 0 / 0 | 5.07 |
+| GIT_DIR points nowhere | 1 / 1 / 0 / 0 | 7.73 |
+
+Additional selection: **7 executed, 7 passed, 0 failed, 0 skipped**. The earlier
+base matrix remains **55 passed / 1 failed**, followed by its two diagnostic
+isolation/control passes. No result has been relabelled as fixed or clean release
+qualification. No test, assertion, timeout, fixture selection, or skip changed for
+this refinement.
+
+The rebuild passed with 0 errors / 1395 warnings; MSBuild elapsed 224.75 s, lease
+held 226 s, admission wait 0 s. `UseAppHost=false`, `TEMP=/tmp`, and the same
+isolated OutputPath were used. The rebuilt test assembly hash was identical in all
+four runtime trees:
+`17ac9645c1d49600cbfdde371791978f592bbd376209e46021dbbd4189ba78d6`.
+The copied source/helper files for this selection were unchanged from the original
+base; the normal worktree's HEAD was the stated diagnostic/report tip. Launch wall
+for the seven added invocations totalled 48.33 s, separately from the build. The
+matrix plus real land-graph check held one lease for 77 s, with 0 s admission wait.
+
+The real land-graph `-Check` passed again, including both evaluation passes and
+canary, with the same digest `7BDABBA075B620C10A47B50CE1277A932DDD801E9314A932C4EAC03885441A99`
+and count 68. No definition file changed and `-Update` was not run. All commands
+completed before the 38 recorded worktree/scratch-copy output roots were removed
+again. Raw `refinement-*` and `g105-*` logs, driver, hashes, summary, cleanup record,
+TRX and timing shards are retained in `/work/evidence/debug-21443bfd/` alongside
+the original evidence.
+
 ## Native row owed and operator evidence
 
 | Host / selection | Status |
 |---|---|
-| Windows: all methods in `CheckpointRepeatHostTests`, `PlanCoverageCensusTests`, `RunSchedulerTests`, one pass after qualification releases its native lock | **Owed, not run.** Linux results do not discharge this row. |
+| Windows: all methods in `CheckpointRepeatHostTests`, `PlanCoverageCensusTests`, `RunSchedulerTests`, plus exact method `CheckpointGitEncodingScriptTests.C1608_invalid_utf8_git_output_is_refused`, one pass after qualification releases its native lock | **Owed, not run.** Linux results do not discharge this row. |
 
 No operation was performed against `d47848cc`, `C:\Antiphon`, the desktop checkout,
 any native lock, or any native test host. No tag, publish, rebase, or force push was
@@ -256,7 +325,9 @@ identify a script, the string being sliced, or the originating test.
 After native lock release, build once under `scripts/build-slot.ps1` into
 `bin-g104-native/`, then run each of the three exact class filters separately:
 `/*/*/CheckpointRepeatHostTests/*`, `/*/*/PlanCoverageCensusTests/*`, and
-`/*/*/RunSchedulerTests/*`. Use `dotnet run --project tests/Antiphon.Tests --no-build`
+`/*/*/RunSchedulerTests/*`. Add the separate exact filter
+`/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused`
+for the group-105 obligation. Use `dotnet run --project tests/Antiphon.Tests --no-build`
 with the same output properties and fresh TRX directories, all through the gate.
 Record actual executed/passed/failed/skipped counts; stop for investigation on red.
 Do not use the zero-selection compound filter from this investigation.
