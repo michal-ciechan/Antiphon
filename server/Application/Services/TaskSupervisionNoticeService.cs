@@ -23,7 +23,8 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             && (n.State == TaskSupervisionNoticeState.Pending
                 || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null));
         if (taskId is { } id) due = due.Where(n => n.TaskId == id);
-        var rows = await due.OrderBy(n => n.NextAttemptAt).ThenBy(n => n.Id).Take(32).ToListAsync(ct);
+        // Keep room for legacy backfill even when old failure-report watches remain due.
+        var rows = await due.OrderBy(n => n.NextAttemptAt).ThenBy(n => n.Id).Take(24).ToListAsync(ct);
         if (rows.Count < 32)
         {
             var missing = db.AgentTasks.AsNoTracking().Where(t => t.Status == AgentTaskStatus.Failed
@@ -62,6 +63,8 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         {
             if (notice.State != TaskSupervisionNoticeState.Pending) continue;
             if (await ConfirmAsync(notice, ct)) continue;
+            // Unknown/gone recipients must yield the bounded batch to newer delivery debt.
+            notice.NextAttemptAt = now.AddMinutes(1);
             if (!await CanSendAsync(db, notice, ct)) continue;
             try
             {
