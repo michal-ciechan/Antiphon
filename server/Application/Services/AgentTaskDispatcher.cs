@@ -9317,7 +9317,8 @@ public sealed partial class AgentTaskDispatcher
         var warmSessions = parsed.Where(p => warm.Contains(p.Agent) && p.SessionId.HasValue)
             .Select(p => p.SessionId!.Value).Distinct().ToList();
         var workingSessions = await SessionMessageQueueService.IsWorkingBatchAsync(_db, warmSessions, ct);
-        // Rows with no turn boundary do not prove idle. A transcript with no rows stays eligible.
+        // Absent transcript evidence does not prove idle. Zero rows and rows with no turn
+        // boundary are retained on this TTL pass, the cap pass, and the pre-kill recheck.
         var missingTurnBoundary = await SessionsWithoutTurnBoundaryAsync(warmSessions, ct);
         var lastTranscript = warmSessions.Count == 0
             ? new Dictionary<Guid, DateTime>()
@@ -9553,8 +9554,9 @@ public sealed partial class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// Sessions that have transcript rows and no turn boundary. Empty transcripts are absent
-    /// from the result and stay eligible for TTL and cap retirement.
+    /// Sessions whose idle state is unproved: no transcript rows, or rows and no turn boundary.
+    /// Both are retained by the TTL pass, the cap pass, and the pre-kill recheck. The two reads
+    /// return session ids only; row text is filtered in SQL and is not selected.
     /// </summary>
     internal async Task<HashSet<Guid>> SessionsWithoutTurnBoundaryAsync(
         IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
@@ -9562,26 +9564,54 @@ public sealed partial class AgentTaskDispatcher
         var missing = new HashSet<Guid>();
         if (sessionIds.Count == 0)
             return missing;
-        var rows = await _db.TranscriptEntries.AsNoTracking()
-            .Where(entry => sessionIds.Contains(entry.AgentSessionId))
-            .Select(entry => new { entry.AgentSessionId, entry.Kind, entry.Text })
-            .ToListAsync(ct);
-        var seen = new HashSet<Guid>();
-        var bounded = new HashSet<Guid>();
-        foreach (var row in rows)
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        var entries = _db.TranscriptEntries.AsNoTracking();
+        var withAnyRow = (await SessionsWithAnyTranscriptRow(entries, ids).ToListAsync(ct)).ToHashSet();
+        var withBoundary = (await SessionsWithTurnBoundaryRow(entries, ids).ToListAsync(ct)).ToHashSet();
+        foreach (var id in ids)
         {
-            seen.Add(row.AgentSessionId);
-            if (IsTurnBoundary(row.Kind, row.Text))
-                bounded.Add(row.AgentSessionId);
-        }
-
-        foreach (var id in seen)
-        {
-            if (!bounded.Contains(id))
+            // Zero rows (!withAnyRow) and rows without a boundary are both absent evidence.
+            if (!withAnyRow.Contains(id) || !withBoundary.Contains(id))
                 missing.Add(id);
         }
 
         return missing;
+    }
+
+    /// <summary>
+    /// Session ids that have at least one transcript row. The select list is the id only.
+    /// </summary>
+    internal static IQueryable<Guid> SessionsWithAnyTranscriptRow(
+        IQueryable<TranscriptEntry> entries, IReadOnlyCollection<Guid> sessionIds)
+    {
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        return entries
+            .Where(entry => ids.Contains(entry.AgentSessionId))
+            .Select(entry => entry.AgentSessionId)
+            .Distinct();
+    }
+
+    /// <summary>
+    /// Session ids that have a turn boundary. Matches IsTurnBoundary and
+    /// TranscriptWorkingStateQuery.EndPredicate. The predicate is inlined because a
+    /// StringComparison argument does not translate. Text is a filter, not a selected column.
+    /// </summary>
+    internal static IQueryable<Guid> SessionsWithTurnBoundaryRow(
+        IQueryable<TranscriptEntry> entries, IReadOnlyCollection<Guid> sessionIds)
+    {
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        return entries
+            .Where(entry => ids.Contains(entry.AgentSessionId)
+                && (entry.Kind == TranscriptKinds.TurnEnd
+                    || entry.Kind == TranscriptKinds.SessionRestartBoundary
+                    || (entry.Kind == TranscriptKinds.CompactBoundary
+                        && entry.Text != null
+                        && entry.Text.Contains("(manual)"))
+                    || (entry.Kind == TranscriptKinds.UserPrompt
+                        && entry.Text != null
+                        && entry.Text.StartsWith("[Request interrupted"))))
+            .Select(entry => entry.AgentSessionId)
+            .Distinct();
     }
 
     /// <summary>
