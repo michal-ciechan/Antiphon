@@ -143,6 +143,40 @@ public sealed class RunnerCustodyReleaseTests
         match.Recovery.Kills.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// CARD-1614 round 2. An adopted session with no client and a prior runner seal is the
+    /// state after a runner restart. Ordinary reads and the observer must not call the kill
+    /// helper. One explicit seal request does, once.
+    /// </summary>
+    [Test]
+    public async Task C1614_Prior_seal_does_not_recover_on_ordinary_read_or_observer()
+    {
+        await using var world = await ReleaseWorld.Open(adopt: true);
+        world.Store.WriteRecord(world.Binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+        world.Recovery.Pids = [];
+
+        for (var i = 0; i < 3; i++)
+        {
+            var ordinary = await world.Runtime.ReadCustodyAsync(world.Binding, seal: false, CancellationToken.None);
+            ordinary.Receipt.ShouldBeNull();
+            ordinary.State.ShouldBe(VerificationCustodyState.Unknown);
+        }
+
+        world.Recovery.Kills.ShouldBeEmpty();
+        var loop = world.Session!.StartCustodyObserverForTests();
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        world.Recovery.Kills.ShouldBeEmpty();
+        loop.IsCompleted.ShouldBeTrue();
+
+        var released = await world.Runtime.ReadCustodyAsync(world.Binding, seal: true, CancellationToken.None);
+        world.Recovery.Kills.ShouldBe([world.ContainerId]);
+        released.State.ShouldBe(VerificationCustodyState.Unknown);
+        released.Reason.ShouldBe("released_unknown");
+        released.Receipt.ShouldBeNull();
+        File.Exists(world.Store.PathFor(world.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        File.Exists(world.Store.PathFor(world.Binding.ExecutionId, "accepted-receipt.json")).ShouldBeFalse();
+    }
+
     private sealed class RecordingRecovery : ILinuxCustodyRecovery
     {
         public List<Guid> Kills { get; } = [];
