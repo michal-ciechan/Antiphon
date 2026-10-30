@@ -181,17 +181,24 @@ const previewRun = () => {
     process.exit(137);
   }
   if (cidPath) fs.writeFileSync(cidPath, crypto.randomBytes(32).toString('hex') + '\n');
-  if (offline) {
+  // helper-auth-128 is a CARD-1609 observation cut: the helper's ls-remote/fetch
+  // is an auth-classified 128. It does not manufacture a publication verdict.
+  const helperAuth = fs.existsSync(path.join(root, 'helper-auth-128'));
+  if (offline || helperAuth) {
     const shim = path.join(root, 'git-shim');
     fs.mkdirSync(shim, {recursive: true});
     const realGit = cp.execFileSync('which', ['git'], {encoding: 'utf8'}).trim();
-    fs.writeFileSync(path.join(shim, 'git'), '#!/bin/bash\ncase " $* " in\n  *" ls-remote "*|*" fetch "*) printf \'fatal: Could not resolve host: origin\\n\' >&2; exit 128 ;;\nesac\nexec ' + JSON.stringify(realGit) + ' "$@"\n', {mode: 0o755});
+    const message = helperAuth
+      ? "fatal: could not read Username for 'https://fixture.invalid': terminal prompts disabled"
+      : 'fatal: Could not resolve host: origin';
+    const trace = JSON.stringify(path.join(root, 'helper-git-trace'));
+    fs.writeFileSync(path.join(shim, 'git'), '#!/bin/bash\ncase " $* " in\n  *" ls-remote "*|*" fetch "*) printf %s\\\\n "$*" >> ' + trace + '\nprintf %s\\\\n ' + JSON.stringify(message) + ' >&2\nexit 128 ;;\nesac\nexec ' + JSON.stringify(realGit) + ' "$@"\n', {mode: 0o755});
   }
   // uid 1654 cannot create /runner-tmp on the host root. A private root holds the
   // production paths; both volume paths are mounted read-only inside it.
   const stage = fs.mkdtempSync('/dev/shm/c1008-preview-');
   const env = {...process.env, C1008_SIMULATED_HELPER: '1', C1008_SIM_WORK: state.volumes[vol].Mountpoint, C1008_SIM_PROGRAM: program, C1008_SIM_STAGE: stage};
-  if (offline) env.PATH = path.join(root, 'git-shim') + ':' + (process.env.PATH || '/usr/bin:/bin');
+  if (offline || helperAuth) env.PATH = path.join(root, 'git-shim') + ':' + (process.env.PATH || '/usr/bin:/bin');
   for (const e of envs) { const eq = e.indexOf('='); env[e.slice(0, eq)] = e.slice(eq + 1); }
   if (tmpMount) env.C1008_SIM_TMP = tmpMount;
   if (proofSource) env.C1008_SIM_PROOF = proofSource;
@@ -405,6 +412,14 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
   const match=state.gitFault==='count-exit128'?'*" rev-list --count "*':'*" rev-list "*';
   const fault=state.gitFault==='exit128'||state.gitFault==='count-exit128'?'exit 128':state.gitFault==='timeout'?'exit 124':state.gitFault==='empty'?'exit 0':state.gitFault==='nonnumeric'?'echo unknown; exit 0':'echo -1; exit 0';
   fs.writeFileSync(path.join(shim,'git'),'#!/bin/bash\ncase " $* " in '+match+') '+fault+' ;; esac\nexec '+JSON.stringify(realGit)+' "$@"\n',{mode:0o755});
+  gitPath=shim+':'+gitPath;
+ }
+ if (fs.existsSync(path.join(root, 'helper-auth-128'))) {
+  const shim=path.join(root,'git-auth-bin');fs.mkdirSync(shim,{recursive:true});
+  const realGit=cp.execFileSync('which',['git'],{encoding:'utf8'}).trim();
+  const trace=JSON.stringify(path.join(root,'helper-git-trace'));
+  const message=JSON.stringify("fatal: could not read Username for 'https://fixture.invalid': terminal prompts disabled");
+  fs.writeFileSync(path.join(shim,'git'),'#!/bin/bash\ncase " $* " in\n  *" ls-remote "*|*" fetch "*) printf %s\\\\n "$*" >> '+trace+'\nprintf %s\\\\n '+message+' >&2\nexit 128 ;;\nesac\nexec '+JSON.stringify(realGit)+' "$@"\n',{mode:0o755});
   gitPath=shim+':'+gitPath;
  }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');

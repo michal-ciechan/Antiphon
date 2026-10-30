@@ -73,6 +73,10 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Entrypoint_heal_chowns_the_tmp_directory_once", 1, "CARD-1210: Codex heal contracts require native Linux with unshare user+mount namespaces and a bind-mountable /state"),
         new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Entrypoint_heal_never_names_a_path_outside_tmp", 1, "CARD-1210: Codex heal contracts require native Linux with unshare user+mount namespaces and a bind-mountable /state"),
         new("Antiphon.Tests.Infrastructure", "GitMinimumVersionGuardTests", "Guard_refuses_git_below_the_landing_floor", 1, "CARD-1260: the Git floor guard runs under /bin/sh with GNU sort -V, as in the Debian images; Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Current_tooling_and_missing_history_do_not_block", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "State_credentials_refuse_before_removal", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Private_origin_advanced_head_uses_real_host_proof", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Preview_receipt_is_required_and_consumed", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
     ];
     internal static readonly Entry[] Portable =
     [
