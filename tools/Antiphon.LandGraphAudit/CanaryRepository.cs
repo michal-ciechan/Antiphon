@@ -41,6 +41,28 @@ internal sealed class CanaryRepository : IDisposable
                          { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
                     if (file.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) files.Add(Path.GetRelativePath(repo, file));
 
+            var ordinary = new List<(string Source, string Destination, bool Skippable)>();
+            void CopyOrdinary()
+            {
+                // Join each batch before creating a link. No worker can introduce a link
+                // into another worker's destination ancestry, and every write still walks it.
+                Parallel.ForEach(ordinary, new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = OperatingSystem.IsWindows() ? Math.Min(4, Environment.ProcessorCount) : 1
+                }, entry =>
+                {
+                    if (Cancelled) throw new IOException("canary copy cancelled");
+                    copy.CheckDestination(entry.Destination);
+                    Directory.CreateDirectory(Path.GetDirectoryName(entry.Destination)!);
+                    if (entry.Skippable) { File.WriteAllText(entry.Destination, Canary); return; }
+                    if ((File.GetAttributes(entry.Source) & FileAttributes.ReparsePoint) != 0
+                        && new FileInfo(entry.Source).LinkTarget is not null)
+                        throw new IOException("canary source became a link: " + entry.Source);
+                    File.Copy(entry.Source, entry.Destination);
+                });
+                ordinary.Clear();
+            }
+
             foreach (var relative in files.Order(StringComparer.Ordinal))
             {
                 if (Cancelled) throw new IOException("canary copy cancelled");
@@ -49,18 +71,20 @@ internal sealed class CanaryRepository : IDisposable
                 var destination = Path.GetFullPath(Path.Combine(copy.Root, relative));
                 if (!destination.StartsWith(copy.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                     throw new IOException("canary path outside repository: " + relative);
-                copy.CheckDestination(destination);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 var skippable = relative.Replace('\\', '/').StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
                                 && relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
-                if (skippable) { File.WriteAllText(destination, Canary); continue; }
-                var target = new FileInfo(source).LinkTarget;
-                if (target is null) { File.Copy(source, destination); continue; }
+                var target = !skippable && (File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0
+                    ? new FileInfo(source).LinkTarget : null;
+                if (target is null) { ordinary.Add((source, destination, skippable)); continue; }
+                CopyOrdinary();
+                copy.CheckDestination(destination);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 if (Path.IsPathRooted(target) && (target == repo || target.StartsWith(repo + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                     target = copy.Root + target[repo.Length..];
                 if (Directory.Exists(source)) Directory.CreateSymbolicLink(destination, target);
                 else File.CreateSymbolicLink(destination, target);
             }
+            CopyOrdinary();
             var added = Path.Combine(copy.Root, "docs", "c1483-canary", "canary.md");
             copy.CheckDestination(added);
             Directory.CreateDirectory(Path.GetDirectoryName(added)!);
