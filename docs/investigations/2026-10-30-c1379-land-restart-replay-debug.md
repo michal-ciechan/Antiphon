@@ -247,3 +247,31 @@ Caller handoff: quick Opus check, then adopt in both rc and master through the n
 landing path. Preserve the owed NATIVE-1/2/3 obligation after qualification d47848cc
 releases its native lock. Windows load-only flake versus a product stall remains an open
 diagnostic question; this report does not certify the native failure fixed.
+
+## Landing compatibility audit
+
+Final evidence-only outcome commit before this audit:
+`c9596ab4858cc9b79e7bffb2edbdeef10397edee`.
+The history guard passed over the task range (4 commits, 0 evidence-policy violations).
+The working tree was clean and the remote task branch matched that full tip.
+
+After `git fetch origin master`, current master was
+`31f990317038635c2f1e652b6a950905fcf07a31`. The required
+`git merge-tree --write-tree origin/master HEAD` check returned **exit 1**, with five
+conflicted paths. Repeating the comparison against the untouched assigned base
+`335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f` also returned exit 1 with exactly the same
+five paths and the same base/side blob identities. This is inherited rc/master history
+divergence, not an introduced replay-test conflict:
+
+- `.antiphon/task-af2b78c8.md`
+- `docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`
+- `docs/investigations/2026-10-30-card-1618-sf-aggregate-run-debug.md`
+- `server/Application/Services/CapacityRecoveryService.cs`
+- `tests/Antiphon.Tests/Application/CapacityLockOrderTests.cs`
+
+Neither of this task's changed files is conflicted. The whole branch is **not certified
+landable to master**. Caller landing must handle that inherited divergence while carrying
+this task's repair to rc and master; no target merge, rebase or unrelated conflict repair
+was performed in the task branch. This integration finding does not erase the 104/104
+Linux test results or discharge native verification. The final caller report identifies
+its pushed tip and the repeated guard/merge result after this documentation amendment.
