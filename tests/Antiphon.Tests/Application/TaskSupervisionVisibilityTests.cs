@@ -25,7 +25,8 @@ namespace Antiphon.Tests.Application;
 /// A Failed task holds a seat only while it is the current proved-generation owner.
 /// Created, Stopping, a missing generation, and a pending remote inventory stay.
 /// A transcript with rows but no turn boundary stays. A transcript with no rows
-/// remains eligible for TTL and cap retirement.
+/// is absent evidence and stays too, on the TTL pass, the cap pass, and the
+/// pre-kill recheck, until a turn boundary or an operator acts.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -56,6 +57,7 @@ public sealed class TaskSupervisionVisibilityTests
     [Arguments("zero-row-recheck")]
     [Arguments("reuse-other-agent")]
     [Arguments("later-agent-task")]
+    [Arguments("id-only-query")]
     public async Task C1610_Visibility_and_pool_safety(string arm)
     {
         switch (arm)
@@ -116,6 +118,9 @@ public sealed class TaskSupervisionVisibilityTests
                 break;
             case "later-agent-task":
                 await LaterAgentTaskAsync();
+                break;
+            case "id-only-query":
+                await IdOnlyQueryAsync();
                 break;
             default:
                 throw new InvalidOperationException(arm);
@@ -370,6 +375,113 @@ public sealed class TaskSupervisionVisibilityTests
         missing.ShouldContain(zero);
         missing.ShouldContain(title);
         missing.ShouldNotContain(ended);
+    }
+
+    /// <summary>
+    /// The boundary read is two server-side id queries. Neither SELECT list contains
+    /// the text column. The any-row SQL does not mention text. The boundary SQL carries
+    /// the turn-end, manual-compact, and interrupted-prompt predicate, and executing it
+    /// returns only those sessions.
+    /// </summary>
+    private static async Task IdOnlyQueryAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var (dispatcher, _, _, provider) = CreateHarness(clock, schema.ConnectionString);
+        await using var owned = provider;
+        using var workspace = new TempWorkspace();
+        var zero = Guid.NewGuid();
+        var (_, title) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, ended) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, manual) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, autoCompact) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, interrupted) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, prompt) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        var (_, restart) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 1, clock);
+        await SeedTitleOnlyAsync(schema.ConnectionString, title, clock);
+        await SeedTranscriptAsync(schema.ConnectionString, ended, clock, working: false);
+        await SeedKindAsync(schema.ConnectionString, manual, TranscriptKinds.CompactBoundary, "operator compact (manual)", clock);
+        await SeedKindAsync(schema.ConnectionString, autoCompact, TranscriptKinds.CompactBoundary, "automatic compact", clock);
+        await SeedKindAsync(schema.ConnectionString, interrupted, TranscriptKinds.UserPrompt, "[Request interrupted by the user]", clock);
+        await SeedKindAsync(schema.ConnectionString, prompt, TranscriptKinds.UserPrompt, "Keep working", clock);
+        await SeedKindAsync(schema.ConnectionString, restart, TranscriptKinds.SessionRestartBoundary, null, clock);
+
+        var ids = new List<Guid> { zero, title, ended, manual, autoCompact, interrupted, prompt, restart };
+        await using var db = Open(schema.ConnectionString);
+        var anyQuery = AgentTaskDispatcher.SessionsWithAnyTranscriptRow(db.TranscriptEntries.AsNoTracking(), ids);
+        var boundaryQuery = AgentTaskDispatcher.SessionsWithTurnBoundaryRow(db.TranscriptEntries.AsNoTracking(), ids);
+        var anySql = anyQuery.ToQueryString();
+        var boundarySql = boundaryQuery.ToQueryString();
+        AssertSelectsIdsOnly(anySql);
+        AssertSelectsIdsOnly(boundarySql);
+        anySql.ShouldNotContain("Text");
+        boundarySql.ShouldContain("TurnEnd");
+        boundarySql.ShouldContain("SessionRestartBoundary");
+        boundarySql.ShouldContain("(manual)");
+        boundarySql.ShouldContain("[Request interrupted");
+
+        var any = (await anyQuery.ToListAsync()).ToHashSet();
+        var boundary = (await boundaryQuery.ToListAsync()).ToHashSet();
+        any.ShouldNotContain(zero);
+        any.ShouldContain(title);
+        any.ShouldContain(ended);
+        any.ShouldContain(autoCompact);
+        boundary.ShouldNotContain(zero);
+        boundary.ShouldNotContain(title);
+        boundary.ShouldNotContain(autoCompact);
+        boundary.ShouldNotContain(prompt);
+        boundary.ShouldContain(ended);
+        boundary.ShouldContain(manual);
+        boundary.ShouldContain(interrupted);
+        boundary.ShouldContain(restart);
+
+        var missing = await dispatcher.SessionsWithoutTurnBoundaryAsync(ids, CancellationToken.None);
+        missing.ShouldContain(zero);
+        missing.ShouldContain(title);
+        missing.ShouldContain(autoCompact);
+        missing.ShouldContain(prompt);
+        missing.ShouldNotContain(ended);
+        missing.ShouldNotContain(manual);
+        missing.ShouldNotContain(interrupted);
+        missing.ShouldNotContain(restart);
+    }
+
+    private static void AssertSelectsIdsOnly(string sql)
+    {
+        var index = 0;
+        var sawSelect = false;
+        while (index < sql.Length)
+        {
+            var select = sql.IndexOf("SELECT", index, StringComparison.OrdinalIgnoreCase);
+            if (select < 0)
+                break;
+            sawSelect = true;
+            var from = sql.IndexOf("FROM", select + 6, StringComparison.OrdinalIgnoreCase);
+            var clause = from < 0 ? sql[select..] : sql[select..from];
+            clause.ShouldNotContain("Text");
+            clause.ShouldContain("AgentSessionId");
+            if (from < 0)
+                break;
+            index = from + 4;
+        }
+
+        sawSelect.ShouldBeTrue();
+    }
+
+    private static async Task SeedKindAsync(
+        string connectionString, Guid sessionId, string kind, string? text, FakeTimeProvider clock)
+    {
+        await using var db = Open(connectionString);
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = 1,
+            Kind = kind,
+            Text = text,
+            CreatedAt = clock.GetUtcNow().UtcDateTime,
+        });
+        await db.SaveChangesAsync();
     }
 
     private static async Task RestartResolutionAsync()
