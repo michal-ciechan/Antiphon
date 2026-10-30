@@ -27,7 +27,7 @@ internal static class TaskSuccessorFence
     {
         if (await ReasonAsync(db, task, ct) is not { } reason) return;
         task.NextStage = PipelineHandoffKind.Decide;
-        task.NextHandoff = reason;
+        task.NextHandoff = reason.Length <= 400 ? reason : reason[..397] + "...";
         if (!db.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.Entity.AgentTaskId == task.Id
                 && e.Entity.Detail.StartsWith(Prefix, StringComparison.Ordinal)))
             db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = task.Id,

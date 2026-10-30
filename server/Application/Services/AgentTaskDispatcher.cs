@@ -7921,6 +7921,7 @@ public sealed partial class AgentTaskDispatcher
             At = now,
         };
         _db.AgentTaskEvents.Add(failedEvent);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failedEvent, now, ct);
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
         {
             var note = DelegationReportFormatter.BuildCompletionNote(
@@ -7943,6 +7944,7 @@ public sealed partial class AgentTaskDispatcher
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        _queue.SupervisionChanged(task.Id);
         _db.AgentTasks.Attach(task);
         await ReleaseTaskConsumersAsync(task);
         return true;
@@ -7967,6 +7969,7 @@ public sealed partial class AgentTaskDispatcher
             At = now,
         };
         _db.AgentTaskEvents.Add(failedEvent);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failedEvent, now, ct);
         AgentTaskLandNotification? notification = null;
         if ((deliveryFailureNotificationId is not null || task.DispatchedAt is null)
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
@@ -7998,6 +8001,7 @@ public sealed partial class AgentTaskDispatcher
     /// <summary>CARD-0664 D-2/D-3: best-effort release of a failed task's Launch rows after its commit.</summary>
     private Task ReleaseTaskConsumersAsync(AgentTask task)
     {
+        _queue.SupervisionChanged(task.Id);
         _queue.CompletionSettled(task);
         return _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
     }

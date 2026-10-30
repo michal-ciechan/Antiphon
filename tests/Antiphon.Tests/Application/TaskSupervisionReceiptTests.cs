@@ -1,5 +1,7 @@
 using System.Data.Common;
 using System.Reflection;
+using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -59,6 +61,7 @@ public sealed class TaskSupervisionReceiptTests
             var before = await h.TaskAsync();
             before.Status.ShouldBe(purpose == "hold" ? AgentTaskStatus.Working : AgentTaskStatus.Failed);
             if (mode == "busy") await recipient.MarkWorkingAsync();
+            else await recipient.MarkIdleAsync();
             var expectedPurpose = purpose switch { "hold" => TaskSupervisionNoticePurpose.CeilingParent,
                 "failure" => TaskSupervisionNoticePurpose.FailureDelegate, _ => TaskSupervisionNoticePurpose.LateFailedParent };
             fault.Armed = mode == "crash";
@@ -82,6 +85,7 @@ public sealed class TaskSupervisionReceiptTests
                         .State.ShouldBe(TaskSupervisionNoticeState.Pending);
                 await recipient.MarkIdleAsync();
                 await recipient.Queue.OnTurnEndAsync(recipientId, CancellationToken.None);
+                h.Clock.Advance(TimeSpan.FromMinutes(2));
             }
             await RecoverAsync(recipient, h.Clock);
             TaskSupervisionNotice notice;
@@ -109,6 +113,8 @@ public sealed class TaskSupervisionReceiptTests
             (await PromptsAsync(h, recipientId, floor)).Count(p => p.Text?.Contains(notice.Body, StringComparison.Ordinal) == true).ShouldBe(1);
             (await PromptsAsync(h, decoy.SessionId, 0)).ShouldBeEmpty();
             decoy.Adapter.SubmittedBodies.ShouldBeEmpty();
+            recipient.Adapter.Killed.ShouldBeFalse();
+            decoy.Adapter.Killed.ShouldBeFalse();
             await using (var db = h.Context())
             {
                 (await db.StageOutcomes.CountAsync()).ShouldBe(0);
@@ -259,6 +265,7 @@ public sealed class TaskSupervisionReceiptTests
             await recipient.DisposeAsync();
             recipient = await OpenAsync(h, h.SessionId);
             h.Clock.Advance(TimeSpan.FromMinutes(2));
+            await recipient.MarkIdleAsync();
             await RecoverAsync(recipient, h.Clock);
             await RecoverAsync(recipient, h.Clock);
             await using (var db = h.Context())
@@ -277,13 +284,31 @@ public sealed class TaskSupervisionReceiptTests
     private static Task InvokeAsync(object target, string method, params object?[] arguments) =>
         (Task)target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, arguments)!;
 
-    private static Task<BridgeQueueHarness> OpenAsync(TaskCeilingHarness h, Guid? session = null, NoticeInsertFault? fault = null) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+    private static async Task<BridgeQueueHarness> OpenAsync(TaskCeilingHarness h, Guid? session = null, NoticeInsertFault? fault = null)
+    {
+        var bridge = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = h.ConnectionString, PreserveDatabaseOnDispose = true, ClaudeDialogObservation = true,
             AttachSessionId = session, AttachAgentId = session is null ? null : Guid.NewGuid(),
             ConfigureDbContext = fault is null ? null : b => b.AddInterceptors(fault),
         });
+        bridge.Adapter.OnSubmitted = async body =>
+        {
+            var sequence = await bridge.CurrentTranscriptMaxSequenceAsync() + 1;
+            var parts = Antiphon.SessionRunner.TranscriptNormalizer.Normalize(JsonSerializer.Serialize(new
+            {
+                type = "user", uuid = Guid.NewGuid().ToString("D"), timestamp = DateTimeOffset.UtcNow,
+                message = new { role = "user", content = body },
+            }));
+            var entries = parts.Select(p => new SessionRunnerTranscriptEvent(bridge.SessionId, sequence++, p.Kind,
+                p.Uuid, p.ParentUuid, p.Timestamp, p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId,
+                p.ToolIsError, p.StopReason)).ToList();
+            entries.Add(new SessionRunnerTranscriptEvent(bridge.SessionId, sequence, TranscriptKinds.TurnEnd,
+                Guid.NewGuid().ToString("D"), null, null, "assistant", null, null, null, null, null, "end_turn"));
+            await bridge.Runtime.PersistTranscriptAsync(bridge.SessionId, entries, CancellationToken.None);
+        };
+        return bridge;
+    }
 
     private static async Task RecoverAsync(BridgeQueueHarness h, TimeProvider clock)
     {

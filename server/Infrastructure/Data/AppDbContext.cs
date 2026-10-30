@@ -195,6 +195,9 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<SessionQueuedMessage>().HasIndex(m => m.SourceTaskSupervisionNoticeId)
+            .IsUnique().HasFilter("\"SourceTaskSupervisionNoticeId\" IS NOT NULL");
+
         modelBuilder.Entity<TaskSupervisionNotice>(entity =>
         {
             entity.HasKey(n => n.Id);
@@ -214,7 +217,9 @@ public class AppDbContext : DbContext
                          nameof(TaskSupervisionNotice.RecipientSessionId), nameof(TaskSupervisionNotice.RecipientStartedAt),
                          nameof(TaskSupervisionNotice.RecipientFloor), nameof(TaskSupervisionNotice.Body),
                          nameof(TaskSupervisionNotice.Digest), nameof(TaskSupervisionNotice.CreatedAt),
-                         nameof(TaskSupervisionNotice.FailureFrontier), nameof(TaskSupervisionNotice.ReportFloor) })
+                         nameof(TaskSupervisionNotice.FailureFrontier), nameof(TaskSupervisionNotice.ReportFloor),
+                         nameof(TaskSupervisionNotice.ReportText), nameof(TaskSupervisionNotice.ReportDigest),
+                         nameof(TaskSupervisionNotice.ReportFromSequence), nameof(TaskSupervisionNotice.ReportThroughSequence) })
                 entity.Property(name).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
         });
 

@@ -679,6 +679,7 @@ public sealed class CheckCompactionContinuationService
             At = now,
         };
         _db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failed, now, ct);
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
         {
             var note = DelegationReportFormatter.BuildCompletionNote(
@@ -701,6 +702,7 @@ public sealed class CheckCompactionContinuationService
 
         await _db.SaveChangesAsync(ct);
         await _boundary.ReachedAsync("failure-committed", task.Id, ct);
+        _queue?.SupervisionChanged(task.Id);
     }
 
     private async Task CancelRetiredBriefsAsync(CheckCompactionRecovery episode, CancellationToken ct)

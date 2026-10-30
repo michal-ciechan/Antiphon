@@ -128,6 +128,13 @@ public sealed partial class SessionMessageQueueService
 
     internal void SupervisionChanged(Guid taskId) => _completionNotes?.Recovery.Check(taskId);
 
+    internal Task<SessionQueueDto> EnqueueSupervisionNoticeAsync(TaskSupervisionNotice notice,
+        Action<Guid> onCreated, CancellationToken ct) =>
+        EnqueueCoreAsync(notice.RecipientSessionId!.Value, notice.Body, MessageSendMode.WhenIdle,
+            origin: QueuedMessageOrigin.Supervision, conversationKey: $"task-supervision:{notice.Id:N}",
+            sourceTaskId: notice.TaskId, contentDigest: notice.Digest, onCreated: onCreated,
+            sourceTaskSupervisionNoticeId: notice.Id, ct: ct);
+
     internal void CompletionDeliveryFailed() => _completionNotes?.Recovery.RequestSweep();
 
     internal void CompletionHoldReleased(Guid sessionId) =>
@@ -517,6 +524,7 @@ public sealed partial class SessionMessageQueueService
         Guid? mentionOccurrenceId = null, Guid? sourceChannelInboundId = null,
         IReadOnlyList<Guid>? channelMemberInboundIds = null,
         Guid? reviewThreadId = null, string? runtimeActionKey = null,
+        Guid? sourceTaskSupervisionNoticeId = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -680,6 +688,27 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
+            if (sourceTaskSupervisionNoticeId is { } supervisionId)
+            {
+                var notice = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == supervisionId, ct);
+                if (notice.RecipientSessionId != sessionId || notice.Digest != contentDigest || notice.Body != trimmed)
+                    throw new ConflictException("Supervision purpose has a different recipient or payload.");
+                if (!await TaskSupervisionNoticeService.CanSendAsync(db, notice, ct))
+                {
+                    await db.SaveChangesAsync(ct);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+                var previous = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceTaskSupervisionNoticeId == supervisionId, ct);
+                if (previous is not null)
+                {
+                    if (previous.AgentSessionId != sessionId || previous.ContentDigest != contentDigest)
+                        throw new ConflictException("Supervision queue identity changed.");
+                    onCreated?.Invoke(previous.Id);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+            }
+
             // A recovery can be claimed just before the quota refusal is adopted. This check
             // runs under the same per-session lock as insertion and inline delivery.
             if (origin == QueuedMessageOrigin.Supervision
@@ -791,6 +820,7 @@ public sealed partial class SessionMessageQueueService
                 ConversationKey = conversationKey,
                 SourceTaskId = sourceTaskId,
                 SourceLandNotificationId = sourceLandNotificationId,
+                SourceTaskSupervisionNoticeId = sourceTaskSupervisionNoticeId,
                 SourceScheduleId = sourceScheduleId,
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
@@ -850,6 +880,17 @@ public sealed partial class SessionMessageQueueService
                 && scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } beforeCommit)
                 await beforeCommit.ReachedAsync("queue-before-commit", sourceTaskId ?? Guid.Empty, sourceLandNotificationId.Value, ct);
             try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException ex) when (sourceTaskSupervisionNoticeId is not null
+                && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                db.Entry(row).State = EntityState.Detached;
+                var existing = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(
+                    m => m.SourceTaskSupervisionNoticeId == sourceTaskSupervisionNoticeId, ct);
+                if (existing.AgentSessionId != sessionId || existing.ContentDigest != contentDigest)
+                    throw new ConflictException("Supervision queue identity changed.");
+                onCreated?.Invoke(existing.Id);
+                return await GetQueueAsync(sessionId, ct);
+            }
             catch (DbUpdateException ex) when (mentionOccurrenceId is not null
                 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
@@ -901,6 +942,9 @@ public sealed partial class SessionMessageQueueService
                 if (_boundary?.DropWakeup("completion-schedule", row.Id) != true)
                     _completionNotes?.Recovery.ScheduleFlush(sessionId, holdUntil ?? DateTime.MinValue);
             }
+
+            if (sourceTaskSupervisionNoticeId is not null)
+                _completionNotes?.Recovery.ScheduleFlush(sessionId, DateTime.MinValue);
 
             onCreated?.Invoke(row.Id);
             if (sourceLandNotificationId is not null && afterLandQueueInsert is not null)
@@ -2393,6 +2437,20 @@ public sealed partial class SessionMessageQueueService
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+        // Last look under the queue lock. Retry, settlement and reused generations cannot
+        // send an old hold/failure instruction into the recipient's next turn.
+        foreach (var message in pending.Where(m => m.SourceTaskSupervisionNoticeId != null).ToList())
+        {
+            var notice = await db.TaskSupervisionNotices.SingleOrDefaultAsync(n => n.Id == message.SourceTaskSupervisionNoticeId, ct);
+            if (notice is not null && await TaskSupervisionNoticeService.CanSendAsync(db, notice, ct)) continue;
+            pending.Remove(message);
+            if (notice is null || notice.State is TaskSupervisionNoticeState.Superseded or TaskSupervisionNoticeState.NotApplicable)
+            {
+                message.Status = QueuedMessageStatus.Canceled;
+                message.CanceledAt = UtcNow();
+            }
+            await db.SaveChangesAsync(ct);
+        }
         if (pending.Count == 0) return FlushResult.Nothing;
 
         // CARD-0330: a completion note the distiller is still improving is not in the flush's

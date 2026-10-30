@@ -1329,6 +1329,8 @@ public sealed partial class AgentTaskReplyService
         // Completed event, and the completion obligation is keyed to this settlement's event only.
         var settlementEvent = NewEvent(task.Id, eventType, eventDetail, now);
         db.AgentTaskEvents.Add(settlementEvent);
+        if (task.Status == AgentTaskStatus.Failed)
+            await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, settlementEvent, now, ct);
         string? remoteBlockWarning = null;
         if (remoteBlock is not null)
         {
@@ -1886,7 +1888,9 @@ public sealed partial class AgentTaskReplyService
         task.FailureReason = reason;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+        var failed = NewEvent(task.Id, AgentTaskEventType.Failed, reason, now);
+        db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, ct);
 
         await PersistDeliverThenReleaseAsync(
             services, db, task, now, reason, ct,
@@ -2085,7 +2089,9 @@ public sealed partial class AgentTaskReplyService
             task.FailureCode = AgentTaskFailureCode.AuthenticationRequired;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+        var failed = NewEvent(task.Id, AgentTaskEventType.Failed, reason, now);
+        db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, ct);
 
         await PersistDeliverThenReleaseAsync(
             services, db, task, now, reason, ct,
@@ -2707,6 +2713,8 @@ public sealed partial class AgentTaskReplyService
         try
         {
             // CARD-0664 D-2/D-3: the settlement is committed; give back the task's Launch rows.
+            if (task.Status == AgentTaskStatus.Failed)
+                services.GetRequiredService<SessionMessageQueueService>().SupervisionChanged(task.Id);
             // Best-effort, and never on Blocked (the owner is still live).
             if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
                 && services.GetService<WorkspaceUseAdmission>() is { } workspaceUse)
