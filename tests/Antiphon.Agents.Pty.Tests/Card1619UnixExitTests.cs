@@ -121,6 +121,7 @@ public sealed class Card1619UnixExitTests
             assemblyVersion: contract == "wrong-version" ? "1.0.8.0" : "1.0.7.0",
             diagnostic: diagnostics.Add);
         reader.ReadCompleted(connection).ShouldBeNull("unsupported-contract-unknown");
+        reader.ReadCompleted(connection).ShouldBeNull("unknown is retained on repeated access");
         diagnostics.Count.ShouldBe(1);
         diagnostics[0].ShouldContain("signal unknown");
     }

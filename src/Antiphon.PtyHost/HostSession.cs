@@ -392,17 +392,17 @@ public sealed class HostSession : IAsyncDisposable
 
     private async Task ObserveExitAsync()
     {
-        int exitCode;
+        int? exitCode;
         string exitReason;
         try
         {
-            exitCode = await _runner.Exited;
+            exitCode = (await _runner.Completion).ExitCode;
             exitReason = _runner.ExitReason.ToString();
         }
         catch (Exception ex)
         {
             _log.Error("exit observer failed", ex);
-            exitCode = -1;
+            exitCode = null;
             exitReason = "ObserverFailed";
         }
 
