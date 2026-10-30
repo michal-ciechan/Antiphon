@@ -472,6 +472,7 @@ function Read-NightlyPriorFailures {
 }
 
 function Resolve-NightlyPriorFailures {
+    [CmdletBinding()]
     param($History, [object[]]$Suites, [ValidateSet('Full','PriorFailureSweep')][string]$QualificationMode = 'Full', $ExclusionContext = $null)
     if ($QualificationMode -cnotin @('Full','PriorFailureSweep')) { throw 'history-qualification-mode' }
     $policy=$null; $exclusionProfile=''; $policyFileDigest=''; $platform='windows'
