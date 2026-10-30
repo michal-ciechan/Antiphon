@@ -2812,18 +2812,29 @@ function ConvertTo-TestPhaseSummaryRows {
         $current = Read-TestPhaseJsonFile -Path $currentPath
         if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.generation)) {
             $journalPrefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
-            foreach ($rec in $journalPrefix.Records) {
-                if ([string]$rec.Kind -ne 'chunk') { continue }
-                if ([string]::IsNullOrWhiteSpace([string]$rec.FreshJson)) { continue }
+            # Use the validated seed and retained records, including predecessor rows.
+            # This read-only context never acquires writer ownership or projects files.
+            $snapshot = New-TestPhaseRefusedContext -Reason ''
+            $snapshot.Refused = $false
+            $snapshot.TimingRoot = $timing
+            $snapshot.Generation = [string]$current.generation
+            $snapshot.Records = $journalPrefix.Records
+            [void](Read-TestPhaseSeedCache -Context $snapshot -Generation ([string]$current.generation))
+            $reduced = Get-TestPhaseReduction -Context $snapshot
+            for ($entryIndex = 0; $entryIndex -lt $reduced.Entries.Count; $entryIndex++) {
+                $entry = $reduced.Entries[$entryIndex]
+                $rowJson = [string]$entry.Json
+                if ($entryIndex -eq ($reduced.Entries.Count - 1)) { $rowJson = [string]$entry.Fresh }
+                if ([string]::IsNullOrWhiteSpace($rowJson)) { continue }
                 $chunkObj = $null
-                try { $chunkObj = ([string]$rec.FreshJson | ConvertFrom-Json) } catch { $chunkObj = $null }
+                try { $chunkObj = ($rowJson | ConvertFrom-Json) } catch { $chunkObj = $null }
                 if ($null -eq $chunkObj) { continue }
                 $trxRel = ''
                 if ($chunkObj.PSObject.Properties.Name -contains 'trx') { $trxRel = [string]$chunkObj.trx }
                 if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
                 $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory $trxRel))
-                $trxGroups[$fullTrx] = [string]$rec.FreshChunk
-                $suiteText = [string]$rec.FreshSuite
+                $trxGroups[$fullTrx] = [string]$chunkObj.chunk
+                $suiteText = [string]$chunkObj.suite
                 if ([string]::IsNullOrWhiteSpace($suiteText) -and $chunkObj.PSObject.Properties.Name -contains 'suite') { $suiteText = [string]$chunkObj.suite }
                 $trxSuites[$fullTrx] = $suiteText
             }
