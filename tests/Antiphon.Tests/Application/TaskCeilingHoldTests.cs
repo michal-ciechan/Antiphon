@@ -44,7 +44,7 @@ public sealed class TaskCeilingHoldTests
         task.Status.ShouldBe(AgentTaskStatus.Failed);
         task.FailureReason.ShouldNotBeNull();
         task.FailureReason.ShouldContain(kind == TranscriptKinds.ToolCall ? "90-minute deadline" : "20-minute deadline",
-            "a breached real phase wins even when the ceiling fraction is larger");
+            customMessage: "a breached real phase wins even when the ceiling fraction is larger");
         h.Stopper.Killed.ShouldBeEmpty();
     }
 }
