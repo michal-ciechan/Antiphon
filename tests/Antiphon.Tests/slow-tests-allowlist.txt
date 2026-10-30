@@ -377,3 +377,6 @@ Antiphon.Tests.Application.CapacityObsoleteQueueTests
 
 # CARD-1603: real PostgreSQL standing start, supervisor tick and capacity reconcile on an isolated schema.
 Antiphon.Tests.Application.CapacityObsoleteStandingTests
+
+# CARD-1609: shared owned Docker image, kernel namespace and durable real-volume retirement witnesses; provisional phase collection.
+Antiphon.Tests.Scripts.VolumeRetirementDockerTests
