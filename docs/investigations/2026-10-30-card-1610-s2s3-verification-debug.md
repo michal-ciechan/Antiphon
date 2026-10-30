@@ -101,3 +101,50 @@ Compiler wall 168.15s; producer recorded 216.070s, execution 216.378s,
 wall 227.773s, admission 0s; source clean/build unknown. All 76 rows were
 build-failed. Correct only the import and rerun the same roster, with a fresh
 isolated output; retain this failed receipt and cost.
+
+## First verified producer and remaining C1151 root cause
+
+Run 20261030-162011-5604 at bbd0a546ec10e4722a4ee386d673d744a7a274e1:
+producer compiled with zero errors (compiler 370.91s), clean source and verified
+build. Build admission 285s. CP-17 executed/passed 22, failed/skipped 0: the
+starvation repair is verified. Row wall 199.832s/admission 105s; startup
+50.093s/tests wall 40.156s/teardown 3.788s/host 94.036s.
+
+CP-28 executed 382, passed 379, failed 3, skipped 0. Exact historical identity
+comparison proves ALL 42 census failures now pass. The three C1151 modes still
+fail the original count assertion, not a relaxed replacement assertion. Runner
+and snapshot evidence alone did not complete the fixture: OpenSweep lacks
+SessionStateStore, so PersistTranscriptAsync records `Transcript ingestion
+requires SessionStateStore` and CatchUpForCeilingAsync defers. Enable the real
+SessionStateLoader/Store and action coordinator only for this fixture, preserving
+the other statement-budget harnesses and every original C1151 assertion. No
+production change is indicated. CP-28 wall 199.500s/admission 75s; startup
+34.039s/tests wall 78.174s/teardown 11.040s/host 123.253s.
+
+CP-52 executed/passed 247, failed 0, skipped 2; min 249 is UNCHANGED, so this is
+roster-miss, not green. The two platform skips are:
+- AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash:
+  `Canonical pin cwd is a Windows drive-rooted path`.
+- AgentExecutableResolverTests.Resolves_sibling_flavor_when_configured_one_is_gone:
+  `Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows`.
+No native test is authorized in this Linux task. Do not repeat unchanged Linux
+execution or lower the floor: the caller must commission the missing native
+coverage separately. All AbsentLaunchPolicyTests and their strict census guard
+passed in this row. CP-52 wall 112.027s/admission 105s; startup 4.877s/tests
+wall 0.484s/teardown 0.752s/host 6.113s.
+
+Stopped the scheduler before editing source to repair C1151. CP-16 was waiting
+for a slot; it executed zero tests. The supported stop returned 0, subsequent
+wait returned stopped/6, and executor PID 14421 was absent before edits. This
+stopped run has no completed top-level report.json and is not a completed gate;
+its state, TRX and original per-row source-bound CHECKPOINT lines are retained.
+The next run reruns full CP-28 and all unexecuted rows from one fresh producer.
+Unchanged CP-17 is not repeated; CP-52's explicit native gap remains owed.
+
+Real land graph -Check PASSED at bbd0a546ec10e4722a4ee386d673d744a7a274e1,
+using its verified producer's staged Antiphon.LandGraphAudit.dll, both evaluation
+passes and canary approved, exit 0. Digest
+7BDABBA075B620C10A47B50CE1277A932DDD801E9314A932C4EAC03885441A99, count 68;
+canary /work/worktrees/antiphon-landgraph-canary-74a71fbe2eb04c46bb0cca94caf4213f.
+Outer slot waited 90s, held 39s. No -Update or definition-file mutation occurred.
+Evidence-history guard over be2e50a..bbd0a546e: four commits, zero violations.

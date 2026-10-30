@@ -221,7 +221,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             };
             var stopper = new RecordingSessionStopper();
             await using (var host = OpenSweep(
-                schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
+                schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState(),
+                transcriptState: true))
                 (await host.OverdueAsync()).ShouldBe(1, mode);
 
             SessionQueuedMessage note;
