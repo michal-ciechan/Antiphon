@@ -399,6 +399,9 @@ public class NativeLinuxPolicyWitnessMutationTests
         var policy = File.ReadAllText(Path.Combine(RepoRoot(), "tests", "test-execution-policy.json"));
         using var document = JsonDocument.Parse(policy);
         var witnessed = new HashSet<string>(NativeLinuxPolicyWitness.WitnessedRowKeys, StringComparer.Ordinal);
+        // Fixture assemblies contain only their explicit extras, not the shipped native classes.
+        foreach (var row in NativeLinuxWindowsReasonAudit.ReadRows(policy).Where(row => row.Witnessed))
+            witnessed.Add(row.Key);
         var kept = new List<string>();
         foreach (var element in document.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions").EnumerateArray())
         {
