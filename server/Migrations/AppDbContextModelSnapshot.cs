@@ -8258,6 +8258,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("SourceTaskId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("SourceTaskSupervisionNoticeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("SpecialistInputPolicyJson")
                         .HasColumnType("text");
 
@@ -8300,6 +8303,10 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("SourceScheduleId")
                         .HasDatabaseName("IX_SessionQueuedMessages_SourceScheduleId");
+
+                    b.HasIndex("SourceTaskSupervisionNoticeId")
+                        .IsUnique()
+                        .HasFilter("\"SourceTaskSupervisionNoticeId\" IS NOT NULL");
 
                     b.HasIndex("AgentSessionId", "MaintenanceAcceptedStartedAt")
                         .IsUnique()

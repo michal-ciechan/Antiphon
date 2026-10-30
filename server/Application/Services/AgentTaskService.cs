@@ -2858,9 +2858,10 @@ public sealed class AgentTaskService
                     {
                         failedSession = FailedTaskSessionFacts.Describe(
                             task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime,
-                            await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id
+                            (await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id
                                     && n.Attempt == task.Attempt && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate)
-                                .OrderByDescending(n => n.CreatedAt).Select(n => n.State.ToString()).FirstOrDefaultAsync(ct));
+                                .OrderByDescending(n => n.CreatedAt).Select(n => (TaskSupervisionNoticeState?)n.State)
+                                .FirstOrDefaultAsync(ct))?.ToString());
                     }
                 }
             }
