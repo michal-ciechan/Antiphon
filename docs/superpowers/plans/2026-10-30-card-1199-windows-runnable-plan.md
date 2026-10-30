@@ -260,11 +260,13 @@ JSON and its policyHash remain unchanged; adding a .cs fixture does not change
 LandVerificationBuildGraph's definition hash. Do not edit
 LandVerificationBuildGraph.pins.txt or invent a definition-file delta.
 
-Use the existing staged `land-graph-audit/Antiphon.LandGraphAudit.dll` from a
-leased isolated test build. Run exactly once on that final definition tree:
+Build an author-time evaluator independently, under a host slot, to a fresh
+owned `bin-c1199auditupdate/` in the tool and its referenced projects. Run exactly
+one `-Update` on the final definition tree (Linux Code owns this write):
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-final-graph -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath <owned-output>/land-graph-audit/Antiphon.LandGraphAudit.dll
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-audit-update-build -SlotWaitMinutes 10 -- dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditupdate/ -nodeReuse:false
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-final-graph -SlotWaitMinutes 10 -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditupdate/Antiphon.LandGraphAudit.dll
 ```
 
 It writes `server/Application/Services/LandVerificationBuildGraph.manifest.txt`
@@ -281,6 +283,29 @@ report CP-44's pre-existing Windows sibling separately. Audit is a named,
 necessary authoring action outside checkpoints because it writes source.
 Final source receipts bind the post-audit committed tree. No tag, publish,
 restart, deployment, rc rebase or Full rc run is performed by these Code tasks.
+
+CP-46 **builds its own evaluator inside its command row** into a distinct fresh
+`bin-c1199auditcheck/`, then runs `-Check` only if that build succeeds. It does
+not read the test assembly's staged tool or the author-time update output.
+`RunScheduler.RunAsync` gives a ready serial command priority over pending
+builds; `Pick` does not wait for a command row's Build cell, and
+`PlanTableImporter` ignores that cell. Consequently table order, `After`, or a
+nominal `CP-41` Build reference cannot supply this dependency. The shell's `&&`
+provides the actual dependency within CP-46, even when CP-46 is scheduled first.
+Reject merely moving CP-46 to a later invocation: test-build outputs are removed
+after joined execution and are not a cross-run prerequisite.
+
+The scheduler acquires CP-46's host slot before starting its shell. Its explicit
+`-maxcpucount:1` stays within any positive grant; do not acquire a second nested
+slot. Record the command, source SHA, build exit, SDK, tool DLL digest and audit
+exit because a command row has `buildSource=notApplicable`, not a test-build
+receipt. Before invoking the row, require all its output roots absent; retain
+an inventory of roots it creates, including referenced projects. Command outputs
+are outside scheduled-build automatic cleanup. Remove only these owned roots
+after terminal `wait`, preserving logs; a rerun builds afresh. The update output
+may be removed after its audit exits and is never reused for CP-46. Author-time
+build plus update budget is 5 minutes per final tree; CP-46 is 5 minutes per lane
+(2 build + 3 audit), provisional 10-minute row deadline, evaluator clocks unchanged.
 
 ## Verification design
 
@@ -481,7 +506,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-43 | S-F | `CP-41` | both-final-confinement | `/*/*/CheckpointOutputConfinementTests/(imported_props_build_preserves_the_tracked_dependency*)\|(directory_build_props_build_preserves_the_tracked_dependency*)\|(conditional_import_build_preserves_the_tracked_dependency*)\|(transitive_import_build_preserves_the_tracked_dependency*)\|(unevaluable_import_is_refused_before_the_build*)` | V-1 V-2 R-1 R-4 | exactly 5 passed; 0 failed/skipped | 5 | 10 | true |
 | CP-44 | S-F | `CP-41` | windows-final-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusions*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
-| CP-46 | S-F | n/a | both-final-audit | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tests/Antiphon.Tests/bin-c1199final/land-graph-audit/Antiphon.LandGraphAudit.dll` | R-3 | audit exit 0; exact committed graph and unchanged pins | n/a | 3 | true |
+| CP-46 | S-F | n/a | both-final-audit | `pwsh -NoProfile -Command "dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll"` | R-3 | build and audit exit 0; exact committed graph and unchanged pins | n/a | 5 | true |
 | CP-47 | S-B1 | `CP-13` | both-shared-git-regressions | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/(shape_staged_untracked*)\|(intermediate_output_path_tampering_is_reported*)\|(generated_target_file_tampering_is_reported*)\|(dirty_tracked_tree_is_refused_and_unmodified*)\|(tracked_snapshot_contains_committed_files*)\|(index_added_file_is_kept_and_indexed*)` | V-1 V-2 R-1 | exactly 6 passed; 0 failed/skipped | 6 | 11 | true |
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
@@ -627,7 +652,7 @@ not a policy/schema change. Keep the unedited import alongside it.
 | CP-43 | 20 | 2x 10m confinement batch, provisional |
 | CP-44 | 2 | Historical Windows sibling 56.273s, n=1 |
 | CP-45 | 4 | 2m guard batch, provisional |
-| CP-46 | 6 | 3m audit estimate; retain evaluator's own unchanged bounds |
+| CP-46 | 10 | 2x (2m independent tool build + 3m audit), provisional; evaluator clocks unchanged |
 | CP-47 | 22 | 2x 11m six-case regression batch, provisional |
 | CP-48,CP-50 | 2 | One small case each, provisional |
 | CP-49 | 6 | 2x 3m collision batch, provisional |
