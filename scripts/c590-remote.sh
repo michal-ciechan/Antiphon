@@ -8793,7 +8793,7 @@ c1008_audit_checked() {
     fi
     audit="$(c1008_audit)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
         [ -n "$detail" ] || detail='audit check=unclassified status= repo='
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.auditFailure=$audit | .audit //= $audit')" || c1008_refuse RecycleReceiptUnavailable
         c1008_save || c1008_refuse RecycleReceiptUnavailable
@@ -9128,7 +9128,7 @@ c1008_recycle() {
                 fi
             fi
             if [ "$code" != 0 ]; then
-                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
                 if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
                     c1609_write_refused_preview "$detail" || true
@@ -10099,7 +10099,7 @@ case_retire_temp_inventory() {
     C1008_RECORD="$(jq -cn --arg image "$image" '{image:$image}')" || write_result false RecycleGitAuditUnknown 2
     out="$(c1008_audit_readonly inventory)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/{p;q;}')"
+        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/p' | sed -n '1p')"
         [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
         case "$code" in
             3) write_result false "RecycleUnpublishedWork $detail" 2 ;;

@@ -157,3 +157,57 @@ OS-witness inventory lint passed the five changed test/fixture paths, including
 the unchanged Linux selector; no production OS branch or restart requirement
 changed. The first lint call supplied a nonexistent input declaration and exited
 2; the corrected declaration run exited 0. Neither static lint grants native credit.
+
+## Complete six-row aggregate and follow-up repairs
+
+Run `20261030-144342-f5c1` at `a51c4a4bf3114c0588fb5f4c81b5c3f109a419c7`
+joined with exit 1: **221 executed, 218 passed, 3 failed, 0 skipped, 0 timeouts**.
+CP-4/6/16 are green; CP-3/8/9 have one assertion failure each. All original filters
+and floors are unchanged. CP-3 also still lacks J7/J8/J10 (22 methods, floor 25).
+Source at both boundaries is clean, fingerprint
+`6f066b18d3d1b1ac89516c799f547279a9d6b08fbb1ae31e9b8db7c3eca539aa`,
+buildSource=verified. Compiler 385.49 s; driver build 482.837 s; build execution
+490.111 s / wall 509.770 s, no slot wait. The extra 97.347 s over compilation
+includes confinement/provenance/output IO; finer attribution is unknown.
+Run wall 3070.570 s (51m11s); charged 2815.322 s; admission-only 255.156 s.
+This was the single requested aggregate. Its historical RED verdict is retained.
+
+Additional defects found behind the former timeout rows:
+
+* **Product refusal formatter:** H7 expects `deniedPreview.Exit == 2` but receives
+  `UnhandledExit 1` and `printf: write error: Broken pipe` at generated remote
+  line 9248. Three fixture injection blocks map that to production
+  `scripts/c590-remote.sh:9131`. `sed` quits after its first matching diagnostic,
+  closing the pipe while printf can still be writing. With pipefail this escapes
+  before the typed refusal. It fails closed; it cannot issue Ready or authorize a
+  delete. The same early-quitting consumer occurs at :8796 and :10102.
+* **CP-8 transport pin:** apply succeeds, then `created.Length > 0` fails at
+  `RollingVolumeRecycleScriptTests.cs:2833`. Temp now uses the read-only `run`
+  helper; `create/start` is the preserved main adapter. The repaired assertion
+  requires an actual apply `run` plus the unchanged proof bind/operation/time
+  checks, and adds rm/init/cap-drop/UID/v2 assertions.
+* **CP-9 transport and content fixture:**
+  `RetiredTempContainerHostTests.cs:483` expects a `create` call after successful
+  published apply. It also seeds `Root/work/repo` while the read-only helper reads
+  the actual volume mount, and lacks Ready before its dirty/unpublished controls.
+  Repair aliases that fixture work path to the actual target mount, establishes
+  Ready while clean, then mutates real target bytes. Only post-preview apply
+  audits count; exact image/UID/readonly and retained-content assertions remain.
+
+Published witness/fixture commit `e52c3b8894dba8876301e8f0e4e21193a1803d9b`
+adds deterministic 1 MiB failed-audit streams to the existing H7 method (no new
+TUnit method or floor credit). Before the product fix, replay at assigned-base
+production with only that H7 test-file overlay gives **2 executed, 0 passed,
+2 failed, 0 skipped**: H7 fails the intended typed-refusal assertion with broken
+pipe (8.664 s); unchanged baseline C994 image-audit method fails the old create
+pin. Test wall 111.891 s, build 152.19 s / zero errors; all drivers leased.
+The production scripts were byte-identical to assigned base. Test overlay was
+restored after joining. Evidence: `.antiphon/c1609-h7-c994-base-red/run.trx` and
+matching logs. These failures are verified against baseline production, not
+attributed to sharing setup.
+
+Minimal product fix replaces all three early-quitting diagnostic pipelines with
+two fully draining sed stages that still return only the first matching line.
+No authorizing predicate, classifier, journal rule or delete path is weakened.
+The next run selects only H7 and the two repaired transport/content methods;
+ordinary full-row requalification remains part of unfinished S5.
