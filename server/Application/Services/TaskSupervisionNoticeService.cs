@@ -34,7 +34,6 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 db.ChangeTracker.Clear();
-                if (Environment.GetEnvironmentVariable("C1610_PC") == "poison") throw;
                 errors.Add(ex);
             }
         }
@@ -67,62 +66,61 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         // A Told receipt does not close discovery; exit alone is not transcript EOF.
         foreach (var saved in rows.Where(n => n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
             await IsolateAsync(async () =>
-        {
-            var failure = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
-            if (failure.ReportWatchClosedAt is not null || failure.ReportForwardedAt is not null
-                || failure.NextReportScanAt > now) return;
-            if (failure.SessionStartedAt is null || failure.SessionStartedAt == default(DateTime)
-                || failure.SessionId is null)
             {
-                CloseReportWatch(failure, now, "legacy_identity_unknown", deliveryImpossible: true);
-                return;
-            }
-            var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
-            if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
-                || task.DispatchedAt != failure.DispatchedAt || task.ParentSessionId != failure.ParentSessionId
-                || !await SourceCurrentAsync(db, task, failure, ct))
-            {
-                CloseReportWatch(failure, now, "report_attribution_superseded", deliveryImpossible: true);
-                failure.State = TaskSupervisionNoticeState.Superseded;
-                return;
-            }
-            await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
-            discovered.AddRange(db.TaskSupervisionNotices.Local.Where(n =>
-                n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.CreatedAt == now));
-            if (failure.ReportWatchClosedAt is null)
-            {
-                var attempt = Math.Min(failure.ReportScanAttempts ?? 0, 30);
-                failure.ReportScanAttempts = attempt + 1;
-                failure.NextReportScanAt = now.AddMinutes(attempt switch
-                    { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 15, 5 => 30, _ => 60 });
-                if (Environment.GetEnvironmentVariable("C1610_PC") == "no-backoff") failure.NextReportScanAt = now;
-            }
-        });
+                var failure = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
+                if (failure.ReportWatchClosedAt is not null || failure.ReportForwardedAt is not null
+                    || failure.NextReportScanAt > now) return;
+                if (failure.SessionStartedAt is null || failure.SessionStartedAt == default(DateTime)
+                    || failure.SessionId is null)
+                {
+                    CloseReportWatch(failure, now, "legacy_identity_unknown", deliveryImpossible: true);
+                    return;
+                }
+                var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
+                if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
+                    || task.DispatchedAt != failure.DispatchedAt || task.ParentSessionId != failure.ParentSessionId
+                    || !await SourceCurrentAsync(db, task, failure, ct))
+                {
+                    CloseReportWatch(failure, now, "report_attribution_superseded", deliveryImpossible: true);
+                    failure.State = TaskSupervisionNoticeState.Superseded;
+                    return;
+                }
+                await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
+                discovered.AddRange(db.TaskSupervisionNotices.Local.Where(n =>
+                    n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.CreatedAt == now));
+                if (failure.ReportWatchClosedAt is null)
+                {
+                    var attempt = Math.Min(failure.ReportScanAttempts ?? 0, 30);
+                    failure.ReportScanAttempts = attempt + 1;
+                    failure.NextReportScanAt = now.AddMinutes(attempt switch
+                        { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 15, 5 => 30, _ => 60 });
+                }
+            });
         var deliveries = rows.Concat(discovered)
             .DistinctBy(n => n.Id).OrderBy(n => n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent ? 0 : 1).Take(32).ToList();
         foreach (var saved in deliveries.Where(n => n.State == TaskSupervisionNoticeState.Pending))
             await IsolateAsync(async () =>
-        {
-            var notice = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
-            if (notice.State != TaskSupervisionNoticeState.Pending) return;
-            if (await ConfirmAsync(notice, ct)) return;
-            // Unknown/gone recipients must yield the bounded batch to newer delivery debt.
-            notice.NextAttemptAt = now.AddMinutes(1);
-            if (!await CanSendAsync(db, notice, ct)) return;
-            try
             {
-                await queue.EnqueueSupervisionNoticeAsync(notice, message => notice.QueueMessageId = message, ct);
-                await db.SaveChangesAsync(ct);
-                await ConfirmAsync(notice, ct);
+                var notice = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == saved.Id, ct);
+                if (notice.State != TaskSupervisionNoticeState.Pending) return;
+                if (await ConfirmAsync(notice, ct)) return;
+                // Unknown/gone recipients must yield the bounded batch to newer delivery debt.
                 notice.NextAttemptAt = now.AddMinutes(1);
-            }
-            catch (Exception) when (!ct.IsCancellationRequested)
-            {
-                // The same purpose/queue key is retried after backoff, including post-insert faults.
-                notice.ReasonCode = "queue_enqueue_failed";
-                notice.NextAttemptAt = now.AddMinutes(1);
-            }
-        });
+                if (!await CanSendAsync(db, notice, ct)) return;
+                try
+                {
+                    await queue.EnqueueSupervisionNoticeAsync(notice, message => notice.QueueMessageId = message, ct);
+                    await db.SaveChangesAsync(ct);
+                    await ConfirmAsync(notice, ct);
+                    notice.NextAttemptAt = now.AddMinutes(1);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                    // The same purpose/queue key is retried after backoff, including post-insert faults.
+                    notice.ReasonCode = "queue_enqueue_failed";
+                    notice.NextAttemptAt = now.AddMinutes(1);
+                }
+            });
         if (errors.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(errors[0]).Throw();
         if (errors.Count > 1) throw new AggregateException("Supervision items failed after processing the batch", errors);
     }
@@ -130,7 +128,6 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
     internal static void CloseReportWatch(TaskSupervisionNotice notice, DateTime now, string reason,
         bool deliveryImpossible = false)
     {
-        if (Environment.GetEnvironmentVariable("C1610_PC") == "never-close") return;
         notice.ReportWatchClosedAt ??= now;
         notice.ReportWatchCloseReason ??= reason;
         notice.NextReportScanAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
@@ -156,9 +153,6 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             .OrderBy(t => t.Sequence).Take(256).ToListAsync(ct);
         var receipt = prompts.FirstOrDefault(t => PromptSubmissionMatch.IsConfirmedBy(notice.Body, t.Text ?? ""));
         if (receipt is null) return false;
-        if (notice.Purpose == TaskSupervisionNoticePurpose.LateFailedParent
-            && Environment.GetEnvironmentVariable("C1610_PC") == "outcome-flip")
-            (await db.AgentTasks.SingleAsync(t => t.Id == notice.TaskId, ct)).Status = AgentTaskStatus.Succeeded;
         notice.State = TaskSupervisionNoticeState.Told;
         notice.ToldAt = receipt.Timestamp ?? receipt.CreatedAt;
         notice.ConfirmingPromptSequence = receipt.Sequence;

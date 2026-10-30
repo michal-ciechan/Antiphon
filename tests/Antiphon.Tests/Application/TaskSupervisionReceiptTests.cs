@@ -246,6 +246,33 @@ public sealed class TaskSupervisionReceiptTests
     }
 
     [Test]
+    public async Task C1610_Complete_transcript_without_report_closes_after_drain()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await h.AppendAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await EndAsync(h);
+        await RecoverAsync(parent, h.Clock);
+        await using (var db = h.Context())
+            (await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId)).ReportWatchClosedAt.ShouldBeNull();
+        h.Clock.Advance(TimeSpan.FromMinutes(15));
+        await RecoverAsync(parent, h.Clock);
+        DateTime closedAt;
+        await using (var db = h.Context())
+        {
+            var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId);
+            closedAt = watch.ReportWatchClosedAt.ShouldNotBeNull();
+            watch.ReportWatchCloseReason.ShouldBe("final_transcript_scanned");
+        }
+        h.Clock.Advance(TimeSpan.FromDays(1));
+        await RecoverAsync(parent, h.Clock);
+        await using var verify = h.Context();
+        (await verify.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId)).ReportWatchClosedAt.ShouldBe(closedAt);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task C1610_Poisoned_watch_does_not_starve_other_items()
     {
         await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
