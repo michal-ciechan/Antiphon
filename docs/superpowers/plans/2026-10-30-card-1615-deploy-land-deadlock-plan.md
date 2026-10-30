@@ -69,6 +69,7 @@ No desktop files or ended native Windows run were inspected.
 | D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Freeze **activation**, not land publication: prohibit canonical AppHost and desktop-runner restarts while the controller owns an unfinished rollout, including between phases. Each mutating invocation requires `/api/version.sha == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Current role ceilings, parking and session recovery are unchanged. Identity admission is once per phase invocation. A task failed by its ceiling mid-phase leaves the admitted command running to its existing bounded outcome; its Worktree cannot hold unrelated lands. The next invocation refuses its terminal owner. Preserve receipts and join actual children before a replacement owner. | Do not add owner polling inside a phase or mistake Failed for command exit. CARD-1610 owns terminal/live-session recovery. A phase-boundary successor retains X and the restart prohibition until the whole rollout is complete or explicitly handed off from a proven quiescent state. |
 | D-10 | Plan review by a different company's model precedes separate TestDesign. The checkpoint roster below is a concrete proposed selection, not test execution evidence or authority to deploy. | Starting Code without the separate verification design and timing refinement would leave the production-path/race proof incomplete. |
+| D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. CARD-1609 plan round 2 is task `02c3c411` per this dispatch. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
 
 ### Caller admission (review D-1)
 
@@ -179,8 +180,9 @@ failure refuses. Self-read and Git probes have finite deadlines. No new API,
 indefinite retry, modal prompt, land predicate or census exception.
 
 **S3 — operating contract.** Update `docs/docker-stack.md` continuous dispatch and
-phase/source notes, `docs/orchestration-loop.md` Shared activation guidance, and
-`docs/apphost-runbook.md` source notes. Show fresh
+phase/source notes, `docs/orchestration-loop.md` Shared activation guidance,
+`docs/apphost-runbook.md` source notes, `AGENTS.md` and
+`.claude/skills/antiphon-delegate/SKILL.md`. Show fresh
 `-Role Deploy -Worktree -StartRef <reviewed-rc-sha> -Platform Windows`; omit `-Runner`,
 `-OnAgent` and `-Agent`. Keep its assigned branch and source frozen through phases;
 commit narrative evidence after operational SHA checks finish. Pass a proven
@@ -192,6 +194,36 @@ restart when needed, and `provision-host-jq`. The controller tree supports
 `check-census`, `check-host-jq`, deploy-temp, drain-old, redeploy-old, smoke/cache
 qualification, drain-temp and retire-temp. Those steps never pull/restart AppHost.
 Preserve the existing canary, continuous-dispatch and final retire gates.
+
+Replace these existing passages, rather than appending contradictory guidance
+(line numbers refer to the round-2 source base):
+
+| File / existing text | Required replacement |
+|---|---|
+| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Never pull during a Running land. During rollout X, rc lands may advance canonical HEAD, but AppHost and desktop-runner restarts are prohibited until joined rollout completion or an explicitly commissioned quiescent recovery. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
+| `docs/docker-stack.md:473-474`, "From the canonical desktop checkout" for manual running-main cleanup | "From the pinned controller checkout on the Windows operational host, record main's status and exact candidates under that controller's printed rollout receipt path." Keep every existing running-main/ownership/publication/zero-work condition. The manual attested retirement path introduced by CARD-1609 also uses the controller tree; replace its canonical absolute evidence example with `<controller-root>/.antiphon/rolling-server2/manual-retire-<run>/`. This changes location, not cleanup authority. |
+| `docs/docker-stack.md:513-514`, normal `retire-temp` "from the canonical desktop checkout" | "Run normal retire-temp from the pinned controller checkout with the same rollout SHA X and preserved resume context, after the phase identity/version admission checks." Preserve offline publication audit and strict volume proof. |
+| `AGENTS.md:55`, "Restart and deploy scripts refuse ... when run from a linked Git worktree" | "`scripts/restart-apphost.ps1` and `scripts/deploy-local.ps1` refuse linked worktrees by default because they control the shared local stack. Their source is the canonical checkout. `scripts/deploy-server2.ps1` runs its rolling phases from the pinned controller worktree; only `provision-host-jq` requires canonical source. Desktop runner restarts remain canonical operations by policy; do not claim its script implements a linked-worktree guard. Never use `-AllowWorktree` for rollout preparation." |
+| `.claude/skills/antiphon-delegate/SKILL.md:184` and following Shared-default bullets | "Fresh Workers and Orchestrators default to Worktree regardless of role or `-Dir`. An explicit existing-agent selection (`-Agent` / agentId) defaults Shared; explicit workspace and follow-up rules still apply. Use a fresh Worktree task for long rollout control; use an explicitly Shared, bounded task only for canonical preparation, with no pending-land wait inside it. Settlement commits the task's own footprint unless `-NoCommit`." Remove the stale implication that Shared is the normal fresh-task default. |
+
+Also replace the opening docker-stack recipe's moving "current rc tip" with
+"reviewed rc tip X selected and activated at preparation; keep that exact X for
+this entire rollout". In its `cause=Http status=400` recovery at `:51-53`, require
+prerequisite activation before gate 1, or quiescent recovery under D-8 if discovered
+mid-rollout. Link the no-restart window and `-ExpectedServerSha X/Y` contract from
+`docs/apphost-runbook.md`'s normal restart examples, so an unrelated recovery caller
+sees it. Update the direct-orchestrator recipe to D-7's standing-agent environment
+and controller checkout, not a made-up task ID. Manually review these operating
+instructions; do not add tests that merely grep prose.
+
+Keep controller receipts under `.antiphon/rolling-server2/<run>/`. Existing
+`server/Infrastructure/Git/FileSystemEvidenceRetention.cs` copies and hash-verifies
+evidence before managed task-worktree cleanup; the classifier includes
+`**/.antiphon/**` (`docs/orchestration-loop.md:166-171`). The controller's report
+must carry the printed original paths and subsequent retained paths when available,
+since cleanup removes the original copy. A standing/interactive unmanaged controller
+tree has no automatic task-cleanup retention promise: retain its receipts explicitly
+before retiring that owned tree. No raw receipt directory is force-added to Git.
 
 An existing Shared rollout cannot be converted by changing a label. At a proven
 quiescent phase boundary, retain receipts, finish/join its owned command and settle
