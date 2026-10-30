@@ -65,7 +65,7 @@ The loaded driver held one granted six-node slot, used one MSBuild node for each
 sequential `dotnet build server/Antiphon.Server.csproj --no-restore --target:Rebuild`
 commands, and ran the exact test filter concurrently. All five builds exited 0. All 50
 case intervals overlap a recorded build interval. The host reports 24 CPUs; sampled
-one-minute load ranged 25.35–48.00. Admission wait was 31 s; held time 283 s. Every owned
+one-minute load ranged 23.85–52.99. Admission wait was 31 s; held time 283 s. Every owned
 child was awaited before source changes. The test DLL SHA-256 stayed
 `bd6aa1f5567648ec454835806b003f7d647d5e4fbbc8e12fe901204abb8fadc5`, with clean tracked
 source and unchanged HEAD before/after. Retained evidence: `loaded-timeline.jsonl`,
@@ -120,3 +120,60 @@ No production behavior change or deterministic product-race witness is justified
 Exit 0: real MSBuild passes and canary approved, 68 definitions, digest
 `7BDABBA075B620C10A47B50CE1277A932DDD801E9314A932C4EAC03885441A99`.
 Slot wait 256 s, held 51 s. No definition file changed; `-Update` was not run.
+
+## Implemented test-side repair and performance budget
+
+Only the replay test and this investigation change. Production source is untouched:
+ExpectedSourceSha refusals, held episodes, durable reconciliation and ls-remote publication
+confirmation remain the same paths exercised by the test. The repair waits for the existing
+`terminal-committed` production boundary, then independently asserts nonpending state,
+attempt 1 and RemoteConfirmedAt. It checks old-first as soon as selection is observed and
+still checks newer-second. A terminal result for a different request fails immediately.
+There is no polling sleep or replacement sleep. Observation expiry cannot cancel the worker
+via its startup token; the finally block stops and joins that worker. Deadline failures name
+the awaited phase and captured real boundary sequence, rather than only a canceled delay.
+
+The observation deadline is provisionally 60 seconds, doubling the Windows incident's
+exhausted 30-second allowance. **This is a recorded CARD-1379 native-budget exception,
+not a claimed measured 2x Windows p95.** Linux loaded p95 is 8.67 s and does not itself
+justify 60 s. Windows p95 is unavailable while qualification d47848cc holds the native
+lock. The bounded collection below (class once, 20 alone, 10 loaded) is owed before
+claiming a native fix; use it to replace the provisional deadline with about 2x measured
+native loaded p95. A product stall remains an open possibility until that evidence exists.
+The added early ordering/terminal identity assertions prevent a longer observation budget
+from accepting a reordered or missing publication.
+
+Changed-source ordinary verification is the exact class, three serial repetitions in one
+host. Shared database startup/migrations happen once per host; database clones and isolated
+fixture Git roots remain per case because fresh durable/volatile state is the subject.
+Retain opt-in phase recording, fixture Git evidence and native-repeat markers. Measured
+normal-build wall is 268 s plus preflight/seal overhead; startup 66 s; three cases are
+provisionally budgeted 45 s from the measured maximum 14.55 s. Allow 12 minutes execution
+and at most 25 minutes slot admission. This is a narrow Debug verification profile, not a
+full assembly/Unit-lane qualification claim. No native invocation is authorized now.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Repeat |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| CP-2 | test repair | `tests/Antiphon.Tests -> bin-c1379-fixed/` | fixed-replay | `/*/*/LandRestartReplayTests/*` | old-first, committed attempt/publication, newer-second, worker teardown | one case in each of 3 native ordinals; 0 failed/skipped | 1 | 12 | 3 |
+
+The script's repeat minimum is per ordinal: Min=1 here yields three actual executed cases.
+The baseline single build/run and real graph check diagnose the reported failure; five
+additional builds are the explicitly requested controlled load, not acceptance selections.
+No broad unlisted suite or native test was run.
+
+### Owed NATIVE row (deferred by explicit brief)
+
+After qualification d47848cc releases the native lock, on Windows at the reviewed repair:
+
+| Row | Selection | Executions owed | Evidence |
+|---|---|---:|---|
+| NATIVE-1 | `/*/*/LandRestartReplayTests/*` | class once (currently 1 case) | clean-source TRX, per-case/fixture/process phase timing |
+| NATIVE-2 | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest` | 20 alone | native ordinals, loaded-budget comparison, boundary/hold diagnostics on failure |
+| NATIVE-3 | same exact case | 10 under recorded build/ambient load | actual overlap, host load, loaded p95, each failure's first lines |
+
+Use the host build-slot gate, isolated outputs, UseAppHost=false, native lock ownership and
+fresh results; the checkpoint repeat minimum is 1 per ordinal. Set ANTIPHON_C448_EVIDENCE
+and all ANTIPHON_TEST_PHASE_* metadata for the test host only. Do not touch the live
+qualification or anything under C:\\Antiphon from this Linux task. Native result: **not run**.
