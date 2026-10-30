@@ -1,5 +1,10 @@
 # C448 cancellation child-journal Debug
 
+Outcome: Linux baseline 80/80 passed; eight deterministic delete-failure cases
+went red before the repair and green afterward. All 23 targeted repaired-source
+checks and the real land-graph check passed. Exact Windows cause is unconfirmed;
+the native class/20-alone/10-loaded obligation remains owed after qualification.
+
 Task 4b7b1ca4; base `335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f`;
 Linux runner mirror; qualification failure observed on Windows in run d47848cc,
 candidate cde8def41, group 110. Native execution is expressly excluded here.
@@ -37,7 +42,7 @@ and 10 under build load. Do not run these while the qualification owns the lane.
 ## Baseline measurements
 
 Exact filter: `/*/*/RepositoryMutationLeaseTests/C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion`.
-Same isolated build from base, with documentation-only HEAD 753105a4d:
+Same isolated build from base, with documentation-only HEAD `753105a4dddb32994b2f2343cd2c85ea5759f247`:
 
 | Condition | Executed / passed / failed / skipped | Test p50 / p95 / max seconds | Driver wall seconds |
 | --- | --- | --- | --- |
@@ -47,7 +52,7 @@ Same isolated build from base, with documentation-only HEAD 753105a4d:
 No failing first lines. Build load: 47 successful nonincremental builds of
 `tools/Antiphon.LandGraphAudit.Core`, separate `bin-c448-load/`, max CPU 2,
 under a separate genuine build-slot lease. All children were awaited. Loaded
-admission waited 180 s for the test driver and a further approximately 93 s for
+admission waited 180 s for the test driver and a further 90 s for
 the build driver; execution started only after the latter began building.
 TRX per-test durations and driver logs are retained; fixture/individual Git IO
 phases are unknown, not zero. Host/discovery/teardown remainder is unattributed.
@@ -101,3 +106,102 @@ waiting on HasUnfinishedAsync, the same standing evidence used by admission.
 The new cleanup-only deadline is four seconds (2 x loaded p95 1.6088 s rounded
 up); persistent residue still fails the original empty-directory assertion.
 Green execution follows; native root cause remains unconfirmed.
+
+## Final portable verification
+
+Repaired source/build: `cfaed0245e21ed7b0e13b71ec8b63a673ec36ffe`, committed
+and pushed before the isolated build and tests. Build: zero errors, MSBuild
+282.58 s; slot wait 45 s, held 284 s. Baseline and repaired builds both emitted
+existing CS8602/MSB3277 warnings. Tracked source was clean during execution.
+
+| Selection | Passed / failed / skipped | Per-test p95 / max seconds | Driver wall seconds |
+| --- | --- | --- | --- |
+| Lease: eight new cases, original cancellation, two C661 fast-exit cases | 11 / 0 / 0 | 3.1814 / 3.1814 | 37.0905 |
+| Existing C1076 drain/timeout/stream cases | 5 / 0 / 0 | 8.2637 / 8.2637 | 56.6328 |
+| Journal inspector class | 7 / 0 / 0 | 0.3233 / 0.3233 | 27.2748 |
+| Total | 23 / 0 / 0 | small heterogeneous samples, not a qualification p95 | 120.9981 |
+
+Original cancellation: 0.395691 s. New transient-delete cases: 0.120771,
+0.166384, 0.179050, 0.226188 s. New permanent-delete cases: 2.036597,
+2.073554, 2.135423, 3.181398 s including their fresh tiny Git fixtures. All
+asserted cleanup under five seconds, held ownership during retries, and, on
+permanent failure, verified a durable `delete_failed` reason plus refused
+admission after explicit OS-handle disposal. The five-second cleanup assertion
+is provisional for this small sample; it bounds the two-second retry path,
+not fixture creation. There is no database/container/web-host setup in these
+new cases. Individual Git/IO phases remain unknown; the difference between
+host spans and driver walls is unattributed, not zero. Existing per-test
+budgets were not widened.
+
+The five existing cases passed at: bounded detached-pipe kill 7.385517 s;
+normal exit retaining output past budget 8.263742 s; slow-push budget kill
+2.813730 s; update-ref cancellation retaining output 2.776845 s;
+update-ref broken stdin 0.278768 s. These preserve the intentionally deferred
+EOF cleanup contract rather than clearing a live descendant's journal.
+
+Exact filters (argument-bearing and injected-token node suffixes need `*`):
+
+```text
+/*/*/RepositoryMutationLeaseTests/(C448_JournalRemoval*)|(C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion)|(C661_AlreadyExitedChildIsJournalledInsteadOfThrowing)|(C661_FastExitingOwnedChildLeavesTheCallersChildStateUnknown)
+/*/*/LandingGitTests/(C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal*)|(C1076_BudgetKillDoesNotWaitOutADetachedPipeHolder*)|(C1076_NormalExitWaitsForADetachedPipeHolderPastTheBudget*)|(C1076_UpdateRefsStdinBreakClearsTheJournal*)|(C1076_UpdateRefsCancellationKeepsJournalUntilStdoutHolderExits*)
+/*/*/RepositoryChildJournalInspectorTests/*
+```
+
+Each uses `dotnet run --project tests/Antiphon.Tests --no-build
+--property:OutputPath=bin-c448-debug/ --property:UseAppHost=false --
+--treenode-filter <filter> --report-trx`, behind `scripts/build-slot.ps1`,
+after a gated isolated build with the same properties; TEMP=/tmp.
+The lease/inspector run waited 195 s and held its slot 89 s. The first drain
+filter omitted suffix matching and selected zero (exit 8, 23.9643 s), so that
+whole driver correctly returned nonzero. Only the missing drain selection was
+rerun; valid lease/inspector results were retained. No zero-count attempt was
+credited green or red. An earlier Python harness launch also failed before
+any test executed because Python was absent; PowerShell supplied the actual
+80-run driver. These invalid harness attempts remain in the ignored evidence.
+
+The corrected drain/final-graph driver waited 195 s and held 106 s. The real
+land graph `-Check` passed again at the repaired tip: 48.3915 s, both evaluation
+passes plus canary, unchanged digest
+`7BDABBA075B620C10A47B50CE1277A932DDD801E9314A932C4EAC03885441A99`, count 68.
+The printed `not-built` lines describe the evaluator's inventory, not skipped
+checks. No build-definition file changed; no `-Update` was run. The journal
+record has the additive optional `CleanupFailure` field; schema version stays
+1 and existing readers retain their conservative fence rules.
+
+All commands and inherited children finished. All 35 `bin-c448-debug`
+directories and the one `bin-c448-load` directory were removed by an explicit
+literal-path inventory after execution; an inventory check found none left.
+Ignored evidence remains under `/work/worktrees/task-4b7b1ca4/.antiphon/c448-debug/`:
+`alone-summary.json`, `loaded-summary.json`, per-run TRX/logs, `red-arguments/`,
+`green-lease/`, `green-inspector/`, `green-drain-arguments/`, build/slot logs,
+and `land-graph-final.log`. No generated payload is committed.
+
+## Attribution and handoff
+
+Qualification candidate `cde8def4163829aa5b867df6ec625433be2522cb` and assigned
+base `335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f` have identical content in the
+five inspected lease/journal/runner/inspector/test paths. Linux never reproduced
+the qualification failure. The deterministic witness proves the one-shot-delete
+failure class; the original assertion also races the intentional EOF handoff.
+The Windows observation alone cannot distinguish delayed EOF, delete contention
+(including the inspector's former sharing mode), or a drain fault. No claim of
+native qualification recovery is made.
+
+Commits before the final evidence-only record:
+
+- Trace: `753105a4dddb32994b2f2343cd2c85ea5759f247`.
+- Compiling red-first witnesses/seam: `59b4bf077eec7a8f4de31cc23ac63c7a848b10b6`.
+- Repaired implementation and unchanged-assertion structural wait:
+  `cfaed0245e21ed7b0e13b71ec8b63a673ec36ffe`.
+
+Standing fix-and-commit authority was sufficient; no approval was needed.
+The live Windows qualification and C:\Antiphon were not touched. No native
+execution, tag, publish, deployment, rebase or force push occurred.
+
+Required next action: quick Opus check, then merge to rc through the caller's
+normal path. **Owed Windows row**, only after d47848cc releases the native lock:
+`RepositoryMutationLeaseTests` once (`/*/*/RepositoryMutationLeaseTests/*`),
+then `C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion` 20 times
+alone and 10 under build load. Retain exact counts, first failure lines,
+per-test timings, build identity, load and slot waits. Those native results,
+not portable success, must resolve the original Windows failure.
