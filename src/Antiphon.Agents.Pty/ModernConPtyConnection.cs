@@ -70,7 +70,9 @@ internal sealed class ModernConPtyConnection : IPtySession
     private bool _disposed;
     private bool _consoleClosed;
 
-    public event Action<int>? Exited;
+    private PtyExitObservation? _exitObservation;
+
+    public event Action<PtyExitObservation>? Exited;
 
     public Stream ReaderStream { get; }
 
@@ -322,12 +324,15 @@ internal sealed class ModernConPtyConnection : IPtySession
         }
     }
 
-    internal int? ReadExitedCode()
+    public PtyExitObservation? ReadExitObservation()
     {
         lock (_disposeGate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return _process.HasExited ? _process.ExitCode : null;
+            if (Volatile.Read(ref _exitObservation) is { } observed) return observed;
+            if (!_process.HasExited) return null;
+            var observation = new PtyExitObservation(_process.ExitCode, 0);
+            return Interlocked.CompareExchange(ref _exitObservation, observation, null) ?? observation;
         }
     }
 
@@ -425,7 +430,9 @@ internal sealed class ModernConPtyConnection : IPtySession
     private void OnProcessExited(object? sender, EventArgs e)
     {
         if (_disposed) return;
-        Exited?.Invoke(_process.ExitCode);
+        var observation = new PtyExitObservation(_process.ExitCode, 0);
+        if (Interlocked.CompareExchange(ref _exitObservation, observation, null) is null)
+            Exited?.Invoke(observation);
     }
 
     /// <summary>
