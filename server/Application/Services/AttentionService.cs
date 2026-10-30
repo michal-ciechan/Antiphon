@@ -991,6 +991,12 @@ public sealed partial class AttentionService
             if (AgentTaskLiveness.IsDeadSession(task.AgentSessionId, session))
             {
                 var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
+                var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session,
+                    task.AgentSessionId is Guid id && withTranscript.Contains(id));
+                // Keep task-level diagnostics, but never let a missing FailureReason hide an
+                // observed normal/signal exit. Use the same evidence as the acting sweep.
+                var detail = session?.FailureReason is null && task.FailureReason is { Length: > 0 } taskReason
+                    ? taskReason + "; " + classified.Reason : classified.Reason;
 
                 items.Add(new AttentionItemDto(
                     AttentionKind.DeadSession,
@@ -1001,7 +1007,7 @@ public sealed partial class AttentionService
                     null,
                     task.Title,
                     $"Still {task.Status} but {what}.",
-                    Evidence(session?.FailureReason ?? task.FailureReason ?? what, digest),
+                    Evidence(detail, digest),
                     session?.EndedAt ?? task.DispatchedAt,
                     cost,
                     [AttentionAction.Retry, AttentionAction.Cancel, AttentionAction.Escalate]));
