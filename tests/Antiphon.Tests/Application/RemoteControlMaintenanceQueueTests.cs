@@ -25,55 +25,60 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public class RemoteControlMaintenanceQueueTests
 {
+    // The 30s per-test ceiling follows the existing cold-DI/EF bound; pass cancellation
+    // into recovery so a missing composer deadline is attributed without leaving a live loop.
     // The per-test bound covers recovery, not cold shared-store startup in a narrow selection.
     [Before(Class)]
     public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
 
     [Test]
-    public async Task C514_Executor_rechecks_kind()
+    [Timeout(30_000)]
+    public async Task C514_Executor_rechecks_kind(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
         await h.SetKindAsync(AgentKind.Grok);
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.WithheldCapability);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
         await h.SetKindAsync(AgentKind.ClaudeCode);
-        var allowed = await h.ReserveAndExecuteAsync();
+        var allowed = await h.ReserveAndExecuteAsync(ct: ct);
         allowed.ShouldBe(RemoteControlArmResult.ArmedObserved);
         h.Adapter.ConditionalInputs.ShouldContain("/remote-control");
     }
 
     [Test]
-    public async Task C514_Bridge_arms_between_enqueue_and_delivery()
+    [Timeout(30_000)]
+    public async Task C514_Bridge_arms_between_enqueue_and_delivery(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var id = await h.ReserveAsync();
         id.ShouldNotBeNull();
         h.Probe.Armed = true;
         h.Probe.Connections = 0;
-        var result = await h.ExecuteAsync(id!.Value);
+        var result = await h.ExecuteAsync(id!.Value, ct);
         result.ShouldBe(RemoteControlArmResult.SuppressedAlreadyArmed);
         h.Adapter.ConditionalInputs.Count(i => i.Contains("/remote-control", StringComparison.Ordinal))
             .ShouldBe(0);
     }
 
     [Test]
-    public async Task C514_Unknown_never_authorizes_automatic_arm()
+    [Timeout(30_000)]
+    public async Task C514_Unknown_never_authorizes_automatic_arm(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Probe.Throw = true;
-        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.WithheldUnknown);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
 
         h.Probe.Throw = false;
         h.Probe.StateFileFound = false;
-        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.WithheldUnknown);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
 
         h.Probe.StateFileFound = true;
         h.Runner.Pid = null;
-        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.WithheldUnknown);
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.WithheldUnknown);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
 
         await using var noCap = await RemoteControlRecoveryHarness.CreateAsync(advertiseConditional: false);
@@ -83,25 +88,27 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Current_menu_independently_suppresses_arm()
+    [Timeout(30_000)]
+    public async Task C514_Current_menu_independently_suppresses_arm(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Probe.Armed = false;
         h.Probe.StateFileFound = true;
         h.Adapter.RemoteControlMenuOpen = true;
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.WithheldMenuPresent);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task C514_Stale_request_is_superseded_before_transport()
+    [Timeout(30_000)]
+    public async Task C514_Stale_request_is_superseded_before_transport(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var id = await h.ReserveAsync();
         id.ShouldNotBeNull();
         await h.ReplaceGenerationAsync();
-        var result = await h.ExecuteAsync(id!.Value);
+        var result = await h.ExecuteAsync(id!.Value, ct);
         result.ShouldBe(RemoteControlArmResult.SupersededGeneration);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
         h.Runner.ConditionalCalls.ShouldBeEmpty();
@@ -111,13 +118,14 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Busy_at_delivery_holds_until_fresh_TurnEnd()
+    [Timeout(30_000)]
+    public async Task C514_Busy_at_delivery_holds_until_fresh_TurnEnd(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
         await h.MarkWorkingAsync();
         var id = await h.ReserveAsync();
-        var held = await h.ExecuteAsync(id!.Value);
+        var held = await h.ExecuteAsync(id!.Value, ct);
         held.ShouldBe(RemoteControlArmResult.WithheldNotIdle);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
         await using (var db = h.CreateDb())
@@ -127,20 +135,21 @@ public class RemoteControlMaintenanceQueueTests
         }
 
         await h.MarkIdleAsync();
-        var after = await h.ExecuteAsync(id.Value);
+        var after = await h.ExecuteAsync(id.Value, ct);
         after.ShouldBe(RemoteControlArmResult.ArmedObserved);
         h.Adapter.ConditionalInputs.ShouldContain("/remote-control");
     }
 
     [Test]
-    public async Task C514_Running_launch_owner_excludes_health_delivery()
+    [Timeout(30_000)]
+    public async Task C514_Running_launch_owner_excludes_health_delivery(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
         h.LaunchQueue.TryRegister(h.SessionId).ShouldBeTrue();
         try
         {
-            var result = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision);
+            var result = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision, ct);
             result.ShouldBe(RemoteControlArmResult.WithheldLaunchOwner);
             h.Adapter.ConditionalInputs.ShouldBeEmpty();
         }
@@ -149,22 +158,24 @@ public class RemoteControlMaintenanceQueueTests
             h.LaunchQueue.Unregister(h.SessionId);
         }
 
-        var allowed = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision);
+        var allowed = await h.ReserveAndExecuteAsync(QueuedMessageOrigin.Supervision, ct);
         allowed.ShouldBe(RemoteControlArmResult.ArmedObserved);
     }
 
     [Test]
-    public async Task C514_Stopping_without_launch_owner_excludes_health_delivery()
+    [Timeout(30_000)]
+    public async Task C514_Stopping_without_launch_owner_excludes_health_delivery(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.SetStatusAsync(SessionStatus.Stopping);
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.WithheldStopping);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task C514_Producer_identity_survives_reload()
+    [Timeout(30_000)]
+    public async Task C514_Producer_identity_survives_reload(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var boot = await h.ReserveAsync(QueuedMessageOrigin.System);
@@ -188,21 +199,23 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Arm_intent_commit_precedes_first_byte()
+    [Timeout(30_000)]
+    public async Task C514_Arm_intent_commit_precedes_first_byte(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Recovery.BeforePersist = name => Task.FromResult(name == "submission-started");
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.Requested);
         h.Adapter.ConditionalInputs.ShouldBeEmpty();
     }
 
     [Test]
-    public async Task C514_Terminal_ambiguous_arm_veto_survives_restart()
+    [Timeout(30_000)]
+    public async Task C514_Terminal_ambiguous_arm_veto_survives_restart(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
-        var first = await h.ReserveAndExecuteAsync();
+        var first = await h.ReserveAndExecuteAsync(ct: ct);
         first.ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
         h.Adapter.ConditionalInputs.Count.ShouldBe(1);
 
@@ -215,18 +228,20 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_No_composer_evidence_withholds_arm_Enter()
+    [Timeout(30_000)]
+    public async Task C514_No_composer_evidence_withholds_arm_Enter(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Adapter.EchoTypedInputToScreen = false;
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
         h.Adapter.ConditionalInputs.ShouldBe(["/remote-control"]);
         h.Adapter.ConditionalInputs.ShouldNotContain("\r");
     }
 
     [Test]
-    public async Task C514_Composer_redraw_before_Enter_reobserves_without_retyping()
+    [Timeout(30_000)]
+    public async Task C514_Composer_redraw_before_Enter_reobserves_without_retyping(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
@@ -245,7 +260,7 @@ public class RemoteControlMaintenanceQueueTests
             return Task.FromResult(snapshot);
         };
 
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
 
         result.ShouldBe(RemoteControlArmResult.ArmedObserved);
         redraws.ShouldBeGreaterThan(1, "the refused Enter must obtain a new observation");
@@ -258,7 +273,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task RV514_Unreadable_frame_at_fence_sequence_is_refreshed_not_terminal()
+    [Timeout(30_000)]
+    public async Task RV514_Unreadable_frame_at_fence_sequence_is_refreshed_not_terminal(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
@@ -286,7 +302,7 @@ public class RemoteControlMaintenanceQueueTests
                 h.Adapter.SnapshotSequence, generation, generation));
         };
 
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
 
         result.ShouldBe(RemoteControlArmResult.ArmedObserved);
         stage.ShouldBe(1);
@@ -295,6 +311,79 @@ public class RemoteControlMaintenanceQueueTests
         h.Adapter.SubmittedBodies.ShouldBe(["/remote-control"]);
         h.Runner.RawInputs.ShouldBeEmpty();
     }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task R605_Unreadable_redraw_after_composer_snapshot_is_refreshed(CancellationToken ct)
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        var generation = h.Generation;
+        var triggered = 0;
+        var partialRenders = 0;
+        h.Adapter.BeforeRenderedSnapshot = () =>
+        {
+            if (h.Adapter.RenderedScreenOverride is not null && ++partialRenders > 3)
+            {
+                h.Adapter.RenderedScreenOverride = null;
+                h.Adapter.SnapshotSequence++;
+            }
+        };
+        h.Runner.SnapshotOverride = sessionId =>
+        {
+            var dto = new SessionRunnerSnapshotDto(sessionId, h.Adapter.SnapshotRawOutput(),
+                h.Adapter.SnapshotRenderedScreen(), h.Adapter.SnapshotSequence, generation, generation);
+            if (h.Adapter.ConditionalInputs.SequenceEqual(["/remote-control"]) && triggered == 0
+                && Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(dto.RenderedScreen, out var c) && c == "/remote-control")
+            {
+                triggered = 1;                       // the composer frame is superseded by a mid-redraw frame
+                h.Adapter.SnapshotSequence++;
+                h.Adapter.RenderedScreenOverride = "Crunched for 1s\n\n";
+            }
+            return Task.FromResult(dto);
+        };
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
+        result.ShouldBe(RemoteControlArmResult.ArmedObserved);   // (c2): ArmUnconfirmed, evidence observation-unknown
+        triggered.ShouldBe(1);
+        partialRenders.ShouldBeGreaterThan(3);
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control", "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe(["/remote-control"]);
+        h.Runner.RawInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task R605_Permission_dialog_after_composer_snapshot_is_never_entered(CancellationToken ct)
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var generation = h.Generation;
+        var triggered = false;
+        h.Runner.SnapshotOverride = sessionId =>
+        {
+            var snapshot = new SessionRunnerSnapshotDto(sessionId, h.Adapter.SnapshotRawOutput(),
+                h.Adapter.SnapshotRenderedScreen(), h.Adapter.SnapshotSequence, generation, generation);
+            if (!triggered && h.Adapter.ConditionalInputs.SequenceEqual(["/remote-control"])
+                && Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(snapshot.RenderedScreen, out var composer)
+                && composer == "/remote-control")
+            {
+                triggered = true;
+                h.Adapter.SnapshotSequence++;
+                h.Adapter.RenderedScreenOverride = PermissionWaitFixture.CapturedFrame;
+            }
+            return Task.FromResult(snapshot);
+        };
+
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        triggered.ShouldBeTrue();
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control"]);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Runner.RawInputs.ShouldBeEmpty();
+        await using var db = h.CreateDb();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        row.MaintenanceEvidence.ShouldNotBeNull();
+        row.MaintenanceEvidence.ShouldContain("modal-blocked");
+    }
+
 
     [Test]
     // Includes cold DI/EF setup: two narrow-run first cases exhausted 10s before recovery.
@@ -344,7 +433,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Pinned_arm_input_custody_cannot_be_replaced_by_a_fresh_dialog_read()
+    [Timeout(30_000)]
+    public async Task C514_Pinned_arm_input_custody_cannot_be_replaced_by_a_fresh_dialog_read(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var before = (await h.Runtime.ObserveDialogAsync(h.SessionId, CancellationToken.None))!;
@@ -362,11 +452,12 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Arm_without_UserPrompt_submits_one_Enter()
+    [Timeout(30_000)]
+    public async Task C514_Arm_without_UserPrompt_submits_one_Enter(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
-        var result = await h.ReserveAndExecuteAsync();
+        var result = await h.ReserveAndExecuteAsync(ct: ct);
         result.ShouldBe(RemoteControlArmResult.ArmedObserved);
         h.Adapter.ConditionalInputs.ShouldBe(["/remote-control", "\r"]);
         await using var db = h.CreateDb();
@@ -375,7 +466,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_SendNow_and_amend_preserve_maintenance_policy()
+    [Timeout(30_000)]
+    public async Task C514_SendNow_and_amend_preserve_maintenance_policy(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var id = await h.ReserveAsync();
@@ -392,7 +484,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Legacy_attempted_rows_are_never_retyped()
+    [Timeout(30_000)]
+    public async Task C514_Legacy_attempted_rows_are_never_retyped(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await using (var db = h.CreateDb())
@@ -419,7 +512,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Housekeeping_preserves_operator_and_attempted_rows()
+    [Timeout(30_000)]
+    public async Task C514_Housekeeping_preserves_operator_and_attempted_rows(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         Guid operatorId;
@@ -464,7 +558,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Boot_and_health_keep_their_explicit_origins()
+    [Timeout(30_000)]
+    public async Task C514_Boot_and_health_keep_their_explicit_origins(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         var boot = await h.ReserveAsync(QueuedMessageOrigin.System);
@@ -483,7 +578,8 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Arm_receipt_requires_observed_execution()
+    [Timeout(30_000)]
+    public async Task C514_Arm_receipt_requires_observed_execution(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.MarkWorkingAsync();
@@ -498,13 +594,14 @@ public class RemoteControlMaintenanceQueueTests
         (await dbIncidents(h)).ShouldNotContain(AgentIncidentKind.RcReArmed);
 
         h.Probe.Armed = true;
-        var suppressed = await h.ExecuteAsync(id!.Value);
+        var suppressed = await h.ExecuteAsync(id!.Value, ct);
         suppressed.ShouldBe(RemoteControlArmResult.SuppressedAlreadyArmed);
         (await dbIncidents(h)).ShouldNotContain(AgentIncidentKind.RcReArmed);
     }
 
     [Test]
-    public async Task C514_Postflight_window_begins_at_execution()
+    [Timeout(30_000)]
+    public async Task C514_Postflight_window_begins_at_execution(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         await h.ArmProbeAfterWriteAsync();
@@ -517,7 +614,7 @@ public class RemoteControlMaintenanceQueueTests
         }
 
         var before = DateTime.UtcNow;
-        await h.ExecuteAsync(id!.Value);
+        await h.ExecuteAsync(id!.Value, ct);
         await using var verify = h.CreateDb();
         var executed = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
         executed.SubmissionStartedAt.ShouldNotBeNull();
@@ -526,11 +623,12 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
-    public async Task C514_Maintenance_faults_reconcile_without_retyping()
+    [Timeout(30_000)]
+    public async Task C514_Maintenance_faults_reconcile_without_retyping(CancellationToken ct)
     {
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
-        await h.ReserveAndExecuteAsync();
+        await h.ReserveAndExecuteAsync(ct: ct);
         var bodies = h.Adapter.ConditionalInputs.Count(i => i == "/remote-control");
         bodies.ShouldBe(1);
         h.Adapter.ConditionalOutcomeOverride = null;
@@ -557,7 +655,8 @@ public class RemoteControlMaintenanceQueueTests
     /// slot.
     /// </summary>
     [Test]
-    public async Task C514_Lost_write_reply_is_unknown_until_observed()
+    [Timeout(30_000)]
+    public async Task C514_Lost_write_reply_is_unknown_until_observed(CancellationToken ct)
     {
         var sessionId = Guid.NewGuid();
         var generation = SessionGeneration.Normalize(DateTime.UtcNow);
@@ -586,7 +685,7 @@ public class RemoteControlMaintenanceQueueTests
         // What that Unknown means for the request, on the production recovery graph.
         await using var h = await RemoteControlRecoveryHarness.CreateAsync();
         h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.Unknown;
-        (await h.ReserveAndExecuteAsync()).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
         h.Adapter.ConditionalInputs.Count(i => i == "/remote-control").ShouldBe(1);
 
         Guid rowId;
