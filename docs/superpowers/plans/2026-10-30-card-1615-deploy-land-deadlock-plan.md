@@ -547,13 +547,13 @@ attributes at the assigned base; parameterized methods expand as shown:
 |---|---:|---:|
 | Application/StandingPipelinePolicyDocumentationTests.cs | 9 | 12 |
 | Infrastructure/DockerStackDocumentationTests.cs | 16 | 16 |
-| Application/InstructionBundleTests.cs | 56 | 75 |
+| Application/InstructionBundleTests.cs | 58 | 78 |
 | Application/RunnerBranchContractDocumentationTests.cs | 8 | 8 |
 | Application/OrchestratorInstructionsGuidanceTests.cs | 5 | 6 |
 | Application/ReleaseBranchModelDocumentationTests.cs | 2 | 2 |
 | Application/CommitOnSettleDocumentationTests.cs | 2 | 2 |
 | AgentContextContractTests in Application/AreaMapTests.cs | 2 | 2 |
-| Total | 100 | 123 |
+| Total | 102 | 126 |
 
 The instruction/routing/branch/settlement/release pins cover the touched short
 copies even where their exact pinned text is retained. AgentContextContractTests
@@ -715,7 +715,7 @@ S1 red rows and bounded timing calibration are the only additional executions.
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | linux-controller / windows-native | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | 9 named methods, 0 failed, 0 skipped | 9 | 6 | 9 | true |
 | CP-2 | S1-S3 | CP-1 | linux-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 | true |
 | CP-3 | S1-S3 | CP-1 | linux-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
-| CP-4 | S1-S3 | CP-1 | linux-doc-contracts | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(DockerStackDocumentationTests*)\|(InstructionBundleTests*)\|(RunnerBranchContractDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(ReleaseBranchModelDocumentationTests*)\|(CommitOnSettleDocumentationTests*)\|(AgentContextContractTests*)/*` | D-5 and all touched doc pins | 123 results in eight classes, 0 failed, 0 skipped | 123 | 1 | 2 | true |
+| CP-4 | S1-S3 | CP-1 | linux-doc-contracts | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(DockerStackDocumentationTests*)\|(InstructionBundleTests*)\|(RunnerBranchContractDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(ReleaseBranchModelDocumentationTests*)\|(CommitOnSettleDocumentationTests*)\|(AgentContextContractTests*)/*` | D-5 and all touched doc pins | 126 results in eight classes, 0 failed, 0 skipped | 126 | 1 | 2 | true |
 | CP-5 | S1-S3 | CP-1 | linux-caller-identity | `/*/Antiphon.Tests.Application/(RolloutCallerIdentityTests*)\|(AgentTaskCallerResolutionTests*)/*` | D-1 real resolution and existing caller behavior | 5 new + 7 existing results, 0 failed, 0 skipped | 12 | 3 | 4 | true |
 | CP-6 | S1-S3 | CP-1 | linux-marker-handover / windows-native | `/*/Antiphon.Tests.Scripts/ActiveRolloutMarkerTests/*` | D-2, D-3 marker, restart, custody, successor | 6 named methods, 0 failed, 0 skipped | 6 | 3 | 4 | true |
 
@@ -731,8 +731,8 @@ validates syntax, never existence or execution.
 Apply `docs/testing-and-build.md#performance-standards` and its owner
 `docs/test-performance-standards.md`. This Plan executes no product tests; only
 an isolated, slot-gated checkpoint-tool bootstrap/import validates the document.
-The proposed Linux acceptance total is **161 executed results**:
-9 controller + 5 land + 6 census + 123 documentation + 12 caller identity +
+The proposed Linux acceptance total is **164 executed results**:
+9 controller + 5 land + 6 census + 126 documentation + 12 caller identity +
 6 marker/handover. Native Windows CP-1/CP-6 add **15 results** separately.
 The confirmed original 9+5+6 roster is unchanged; these additions cover the new scope.
 
@@ -815,7 +815,7 @@ no full-suite or rc qualification is added to this card.
 The existing census roster was inspected: six declared methods, no argument expansion.
 The four proposed classes do not yet exist and have no source-name/suffix collision;
 the exact CP-3 class has no suffixed sibling. CP-4/CP-5 OR expansion has been
-checked against declared source classes; their proposed floors are 123/12.
+checked against declared source classes; their proposed floors are 126/12.
 
 **Round-3 validation at `ef75a59413125a3ba92424ade043104abc7e1700`:**
 the slot-gated isolated checkpoint-tool build completed in 6.44 seconds, five
@@ -828,7 +828,11 @@ held 2 s. Generated YAML stays ignored at
 18/15/15/15/15/15 are explicitly superseded by the Performance budget before
 execution. This validates the document; **zero product tests** ran.
 Evidence history check at that tip: six commits, zero entries, zero violations.
-The final prose reconciliation is re-imported before publication below.
+The final source roster audit corrected CP-4 from 123 to **126**: the complete
+InstructionBundleTests file has **58** test methods and **25** Arguments rows on
+five methods, giving 78 executed results. The earlier bounded file read had
+under-counted it; that draft import remains historical syntax evidence only.
+Final Linux total is 164; Windows remains 15. Re-import the corrected table.
 
 Round-3 route reads succeeded on 2026-10-30: runner defaults revision 2;
 catalogue one Windows and two Linux runner entries; effective orchestrator
