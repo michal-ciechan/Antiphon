@@ -101,6 +101,12 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("lowFactorAdmitted").GetBoolean().ShouldBeTrue();
         observed.GetProperty("tinyFactorWatchdog").GetDouble().ShouldBe(3600, "E95=0.01 produced a cap below the suite watchdog");
         observed.GetProperty("emaxOrderWatchdog").GetDouble().ShouldBe(3600, "Emax below E95 was treated as measured");
+        observed.GetProperty("badWallCensored").GetBoolean().ShouldBeTrue(text);
+        observed.GetProperty("badWallWatchdog").GetDouble().ShouldBe(3600, "an unparseable failed wall reduced the cap");
+        observed.GetProperty("badWallKilled").GetBoolean().ShouldBeFalse("the g103 replay was killed after a bad wall was dropped");
+        observed.GetProperty("zeroWallN").GetInt32().ShouldBe(19, "a zero wall counted as a complete sample");
+        observed.GetProperty("zeroWallCensored").GetBoolean().ShouldBeTrue("a zero wall left the calibration valid");
+        observed.GetProperty("cultureDoubleKept").GetBoolean().ShouldBeTrue("a de-DE double wall was dropped");
     }
 
     [Test]
