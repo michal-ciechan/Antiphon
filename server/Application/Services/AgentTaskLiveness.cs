@@ -38,7 +38,9 @@ public static class AgentTaskLiveness
         string? FailureReason,
         SessionTerminationSource TerminationSource = SessionTerminationSource.Unknown,
         int? ExitCode = null,
-        SessionLaunchBlock? LaunchBlock = null);
+        SessionLaunchBlock? LaunchBlock = null,
+        int? ExitSignal = null,
+        Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent = null);
 
     /// <summary>
     /// The reason written onto a task the dead-session sweep fails, plus the durable failure
