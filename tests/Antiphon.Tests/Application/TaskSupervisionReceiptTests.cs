@@ -31,16 +31,24 @@ public sealed class TaskSupervisionReceiptTests
         await using var h = await TaskCeilingHarness.CreateAsync();
         var fault = new NoticeInsertFault { Armed = true, FailSupervisionRead = true };
         await using var parent = await OpenAsync(h, h.ParentId, fault);
-        await h.MutateAsync(t =>
+        var sourcedId = Guid.NewGuid();
+        await using (var seed = h.Context())
         {
-            t.Status = AgentTaskStatus.Succeeded;
-            t.Result = "Complete sourced result.\n" + DelegationReportFormatter.ReportToken(h.TaskId, "done");
-            t.SourceLandingOperationId = Guid.NewGuid();
-        });
+            var operationId = Guid.NewGuid();
+            seed.AgentTaskLandings.Add(new AgentTaskLanding { Id = operationId, TaskId = h.TaskId,
+                Active = false, CreatedAt = h.Clock.GetUtcNow().UtcDateTime, UpdatedAt = h.Clock.GetUtcNow().UtcDateTime });
+            seed.AgentTasks.Add(new AgentTask { Id = sourcedId, RootTaskId = sourcedId,
+                Title = "Sourced completion recovery", Goal = "Preserve the independent recovery pass",
+                WorkingDirectory = Path.GetTempPath(), CreatedAt = h.Clock.GetUtcNow().UtcDateTime,
+                Status = AgentTaskStatus.Succeeded, ParentSessionId = h.ParentId, ReplyTo = AgentTaskReplyTo.Session,
+                SourceLandingOperationId = operationId,
+                Result = "Complete sourced result.\n" + DelegationReportFormatter.ReportToken(sourcedId, "done") });
+            await seed.SaveChangesAsync();
+        }
         await Should.ThrowAsync<InvalidOperationException>(() => RecoverAsync(parent, h.Clock));
         fault.Fired.ShouldBeTrue();
         await using var db = h.Context();
-        (await db.SessionQueuedMessages.AnyAsync(m => m.SourceTaskId == h.TaskId
+        (await db.SessionQueuedMessages.AnyAsync(m => m.SourceTaskId == sourcedId
             && m.Origin == QueuedMessageOrigin.Delegation)).ShouldBeTrue(
                 "completion-note recovery runs even when supervision recovery throws");
     }
