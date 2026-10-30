@@ -123,10 +123,16 @@ public class Card1619ExitPersistenceTests
             terminal.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
             SessionExitEvidence.ReadIntent((string?)Property(terminal, "ExitStopIntentJson")).ShouldBe(storedIntent);
         }
-        var manifestPath = Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(Path.Combine(native.Root, "pty-hosts", "manifests"), native.Id);
-        var manifest = Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath)!;
-        (manifest with { ExitStopIntent = Intent(native) with { Provenance = ProcessStopProvenance.LiveIssuer } }).SaveAtomic(manifestPath);
-        Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath)!.ExitStopIntent!.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
+        // Live exit is acknowledged and its original manifest is deleted by the host. Exercise
+        // disk recovery on an owned copy of the real launch manifest with the real exit fields.
+        var manifestPath = Path.Combine(native.Root, "intent-recovery.json");
+        (native.LaunchManifest with { ExitCode = wire.ExitCode, ExitSignal = wire.ExitSignal,
+            ExitStopIntent = Intent(native) with { Provenance = ProcessStopProvenance.LiveIssuer } }).SaveAtomic(manifestPath);
+        var recoveredManifest = Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath);
+        recoveredManifest.ShouldNotBeNull();
+        recoveredManifest!.ExitSignal.ShouldBe(9);
+        recoveredManifest.ExitCode.ShouldBe(0);
+        recoveredManifest.ExitStopIntent!.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
     }
 
     [Test]
