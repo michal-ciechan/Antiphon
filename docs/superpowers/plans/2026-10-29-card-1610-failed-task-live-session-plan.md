@@ -2,8 +2,9 @@
 
 Date: 2026-10-30. Round 2 Plan, replacing the round-1 design in place.
 Source base: `93a21a1fac2ab3965cce5a48503d54fb71132c07`.
-Status: early design skeleton; detailed verification and source census follow in
-this same task. No product changes are authorized by this Plan dispatch.
+Status: revised design for independent Review, then separate TestDesign.
+No product changes are authorized by this Plan dispatch. The initial skeleton
+and each defect response were committed and pushed during this round.
 
 ## Decisions
 
@@ -23,7 +24,7 @@ this same task. No product changes are authorized by this Plan dispatch.
   token rule and task-oriented release protocol from round 1.
 - **D-4 — Cover Deploy explicitly.** Its default ceiling is 240 minutes while the
   rollout defaults to a 480-minute drain wait. All-role hold semantics apply.
-  Evaluate bounded declared ceiling extensions and bounded drain polling without
+  Adopt bounded declared ceiling extensions and bounded drain polling without
   weakening the 90-minute tool deadline or the drain safety gates.
 - **D-5 — Delete automatic late Failed-to-Succeeded correction.** A held task
   settles normally. Historical/remaining Failed reports require explicit triage,
@@ -34,7 +35,7 @@ this same task. No product changes are authorized by this Plan dispatch.
   rc ports after CARD-1604; coordinate Deploy integration with CARD-1615.
 - **D-7 — Related work matters.** Preserve CARD-1604 token-count semantics and
   CARD-1606's exclusion of monitor self-progress; retain CARD-0153 loop detection.
-  CARD-1573 owns sharded Unit speedups, CARD-1151 boot detection, CARD-1615 the
+  CARD-1573 includes the sharded Unit requirement, CARD-1151 boot detection, CARD-1615 the
   Deploy/landing deadlock. Incidents: Review 7ee3b07a, the Astra plans, Deploy
   2e4f7375. Source and live evidence will be distinguished below.
 - **D-8 — Verification classes need a declared lane, Slow status and limiter.**
@@ -60,21 +61,17 @@ changing global phase deadlines to hide long test or drain commands.
 
 ## Slices
 
-1. Deadline hold, typed question, continue/extend, settlement eligibility and durable
-   caller receipt. Files: TaskDeadlinePolicy, AgentTaskDispatcher, AgentTaskService,
-   AgentTaskReplyService and their existing runtime-action consumers; tests to follow.
-2. Failed+live notice and visibility, janitor detection-only handling. Files:
-   failure notification/queue, AttentionService, pool janitor; tests to follow.
-3. Deploy budget/drain integration and operator documentation. Files:
-   delegate.ps1, deploy-server2.ps1, DTO/model/configuration, relevant owner docs.
-4. Exact checkpoint manifest and delivery/custody regressions; guards and counts.
+S1 delivers visibility and janitor safety. S2 implements hold/control semantics;
+S3 delivers durable notices and successor fencing; S4 covers declared budgets,
+Deploy scripts and documentation. The concrete files/tests and shared build
+groups are listed in "Revised slices and concrete file ownership" below.
 
 ## Performance budget
 
 Apply docs/testing-and-build.md#performance-standards and
 `docs/test-performance-standards.md`. No product tests run in this Plan stage;
 checkpoint import is the requested tooling validation. Detailed provisional costs
-and exact filters follow. Reuse one producer build per unchanged committed slice;
+and exact filters are below. Reuse one producer build per unchanged committed group;
 share database/container/migrations once per run and isolate tests with schemas.
 Record admission, build, startup, migration, body, teardown and external-call time
 separately. Missing samples are not measured p95; TestDesign must collect bounded
@@ -92,8 +89,8 @@ release it. Parking must never treat a Working ceiling hold as an idle question.
 ## Handoff
 
 This round returns to independent design Review; TestDesign remains separate
-before Code. The next revisions in this task replace this skeleton with the
-source-backed contract, per-slice tests and imported checkpoint table.
+before Code. The completed artifact includes the source-backed contract,
+per-slice tests and checkpoint table. This round does not authorize implementation.
 
 ## D-1 detail: typed ceiling hold and continuing supervision
 
@@ -268,8 +265,9 @@ Extend replies use the same 720-minute absolute cap. At cap, Continue is still a
 explicit decision to proceed under unchanged phase/loop supervision; it is not
 a hidden failure timer.
 
-Concrete incident: Deploy **2e4f7375** hit the 240-minute role ceiling while a
-sanctioned drain was still running. `DelegationSettings.RolePolicy[Deploy]`
+The brief names Deploy **2e4f7375** as a live ceiling incident involving sanctioned
+rollout waiting; the fresh status/report observation is distinguished in D-7.
+`DelegationSettings.RolePolicy[Deploy]`
 inherits TimeoutMinutes=240; `deploy-server2.ps1` defaults WaitIdleMinutes=480.
 D-1 removes its false terminal failure. A declared eight-hour rollout can request
 CeilingMinutes=600 with a reason allocating 480 minutes drain plus 120 minutes
@@ -282,8 +280,9 @@ A ceiling override does **not** exempt a 240/480-minute single ToolCall from the
 and drain state when time expires. Delegate rollout instructions require named
 phases with each command bounded to at most 60 minutes (30 by default), returning
 to the agent between calls. While running in a delegated context, reject an
-explicit WaitIdleMinutes above 60 before mutating anything and explain how to
-split it. Standalone human invocations retain their explicit long-wait range.
+explicit WaitIdleMinutes above 60 or Phase=all before mutating anything and
+explain how to split it. Standalone human invocations retain their explicit
+long-wait range and all-phase command.
 No wait expiry authorizes stopping a seat, undeploying a container, clearing a
 drain, skipping census, recycling a volume or advancing to the next phase.
 
@@ -526,3 +525,175 @@ must not be activated piecemeal. Share one isolated build for all rows at each
 unchanged committed group, never across red versus green source. No source edits
 while a run is in flight. TestDesign owns the detailed guard/positive-control
 inventory before Code; this Plan's ordinary roster below is not executed evidence.
+
+## Ordinary verification roster (for subsequent TestDesign)
+
+New names below are design commitments, not existing tests or passing results.
+Each Arguments value becomes one executed result. All tests call real production
+policy/services/scripts through existing seams; no test that compares its own
+fixture constants counts. TestDesign must identify the intended failing assertion
+and method-scoped positive control for each behavior before Code.
+
+| IDs | Class and exact planned methods | Cases / required observations |
+|---|---|---|
+| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, notice-debt, source-custody; D-3/D-10 invariants |
+| V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless) + 4 guard inputs (phase wins, boot, heartbeat, unknown); 12 |
+| V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review, Code, Deploy, Plan; 4 |
+| V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | ModelWait and LocalExecution each; 4 |
+| V-5 | TaskCeilingHoldTests.C1610_Normal_report_settles_hold | done, blocked, failed; 3 |
+| V-6 | TaskCeilingHoldTests.C1610_Hold_race_preserves_identity; C1610_Hold_preserves_custody_and_restart_identity; C1610_Non_ceiling_blocks_remain_excluded | report/retry/cancel/generation (4), custody/restart (2), question/quota/routing (3); 9; Hold class total 20 |
+| V-7 | TaskCeilingControlTests.C1610_Continue_keeps_report_floor; C1610_Extend_validates_and_rearms; C1610_Stale_answer_is_refused; C1610_Answer_races_report_without_reprompt | 1 + 3 (valid/cap/invalid) + 2 (episode/attempt) + 1 = 7 |
+| V-8 | TaskCeilingControlTests.C1610_Successor_fence_uses_card_and_role; C1610_Replacement_racing_handoff_is_held; C1610_Retry_resets_hold_but_preserves_requested_ceiling | 3 (same-role/different-role/no-card) + 1 + 1 = 5; Control total 12 |
+| V-9 | TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt; C1610_Failed_delegate_has_complete_UserPrompt; C1610_Stale_notice_is_not_delivered | D-9's three named arguments per method; 9 |
+| V-10 | TaskCeilingScriptTests.C1610_Status; C1610_Declared_budget; C1610_Ceiling_reply; C1610_Drain_wait | 2 (fresh/unknown), 2 (valid/invalid input sets), 1 (both typed actions), 3 (default/delegated refusal/explicit standalone); 8. Default drain arm proves still-busy retains drain state; delegated arm rejects Phase=all and waits >60 before side effects |
+| R-1 | AgentTaskPoolTests.C1610_Janitor_retains_working_after_full_ttl | 1 changed existing witness; old line kills and must go red |
+| R-2 | AgentTaskOverdueDeadlineTests.an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives | 1; retain the genuine phase-failure path, not a ceiling-only fixture |
+| R-3 | TaskDeadlinePolicyTests.a_token_count_does_not_reset_the_role_ceiling; a_token_count_does_not_reset_the_local_tool_clock | 2; unchanged heartbeat clock ownership |
+| R-4 | DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt | 3; eligible/busy/crash, original parent failure note |
+| R-5 | SessionRuntimeActionRecoveryTests.C1259_admitted_task_attempt_cannot_settle_its_replacement | 2; catchup false/true |
+| R-6 | TerminalSeatReleaseTests.Working_remains_protected_after_arbitrary_silence; Explicit_operator_release_keeps_its_contract | 2; unchanged runner safety boundary |
+| R-7 | TestLaneCategoryGuardTests; TestClassificationGuardTests; ProcessSpawnLimitTests | 23 executed results per green group; include new process classes in strict roster |
+
+No new runner capability or live provider test is needed. Existing
+TaskOwnerGuard accepts Blocked with a live bound session, so a hold does not end
+an in-flight checkpoint run; TestDesign retains that source check and the existing
+ownership harness when choosing its detailed controls. Suffix-collision census
+must precede execution: each wildcard class/method token must name only its
+listed roster, partial declarations are one class, nested helpers with no Test
+attribute add no cases. Inspect fresh TRX results; --list-tests is not evidence.
+
+### Checkpoints
+
+Lanes: all `server-*` rows are portable **server Unit/Integration** as identified
+by Group; `scripts-*` are portable **script Integration** (offline pwsh stubs);
+`runner-*` is portable **session-runner Integration**. No host pin and no OS flag
+is needed. Unit and Integration cases are not mixed in one filter invocation.
+Same After group shares a build; each distinct source group owns fresh output.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 executed; intended behavior assertion reds retained | 8 | 6 |
+| CP-2 | S1-red | CP-1 | server-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-1 | 1 executed; old kill causes intended assertion red | 1 | 1 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 passed, 0 failed/skipped | 8 | 6 |
+| CP-4 | S1 | CP-3 | server-janitor | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-1 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-5 | S1 | CP-3 | server-failed-pool | `/*/*/AgentTaskOverdueDeadlineTests/an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-6 | S1 | CP-3 | server-unit-guards-s1 | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
+| CP-7 | S2-S4-red | `tests/Antiphon.Tests -> bin-c1610-hold-red/` | server-unit-policy-red | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 executed; intended budget/disposition reds retained | 12 | 5 |
+| CP-8 | S2-S4-red | CP-7 | server-hold-control-red | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-8 | 32 executed; intended hold/control assertion reds retained | 32 | 2 |
+| CP-9 | S2-S4-red | CP-7 | server-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-9 | 9 executed; intended missing-receipt reds retained | 9 | 3 |
+| CP-10 | S2-S4-red | CP-7 | scripts-hold-deploy-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-10 | 8 executed; intended wire/wait assertion reds retained | 8 | 2 |
+| CP-11 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed, 0 failed/skipped | 12 | 5 |
+| CP-12 | S2-S4 | CP-11 | server-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-8 | 32 passed, 0 failed/skipped | 32 | 2 |
+| CP-13 | S2-S4 | CP-11 | server-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-9 | 9 passed, 0 failed/skipped | 9 | 3 |
+| CP-14 | S2-S4 | CP-11 | scripts-hold-deploy | `/*/*/TaskCeilingScriptTests/C1610_*` | V-10 | 8 passed, 0 failed/skipped | 8 | 2 |
+| CP-15 | S2-S4 | CP-11 | server-heartbeat-regression | `/*/*/TaskDeadlinePolicyTests/(a_token_count_does_not_reset_the_role_ceiling*)\|(a_token_count_does_not_reset_the_local_tool_clock*)` | R-3 | 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-16 | S2-S4 | CP-11 | server-parent-receipt-regression | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1161_Failed_caller_note_has_one_complete_user_prompt` | R-4 | 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-17 | S2-S4 | CP-11 | server-attempt-regression | `/*/*/SessionRuntimeActionRecoveryTests/C1259_admitted_task_attempt_cannot_settle_its_replacement` | R-5 | 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-18 | S2-S4 | CP-11 | server-unit-guards-hold | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
+| CP-19 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-safety-regression | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | R-6 | 2 passed, 0 failed/skipped | 2 | 3 |
+
+Run each committed After group once through the checkpoint tool. CP-19 belongs
+to S1 even though printed last; run server and runner projects sequentially.
+Bootstrap the tool through scripts/build-slot.ps1; the checkpoint executor takes
+its own driver slots. Await run/wait until exit is not 75, using foreground
+windows no longer than 45 seconds. Exit 4 is not run, never permission to bypass
+the gate. Preserve red and green receipts independently; compile/fixture errors
+and zero tests do not demonstrate an intended red. Compatible contract/refactor
+scaffolding may precede the tests-first commit, but must retain old behavior so
+red witnesses target actual missing behavior, not missing types or methods.
+
+### Cost
+
+**19 rows, 5 producer builds, 47 estimated execution/build minutes**, excluding
+admission. Planned floors sum to **196 executions**: 70 red-witness executions
+and 126 green/regression executions, including repeated guard coverage at two
+different source groups. Unique new cases: 69; changed janitor case: 1.
+No product tests have run in Plan. These estimates require TestDesign refinement.
+Code authoring allowance is provisionally 180 minutes plus 47 ordinary minutes;
+post-land mutation cost is not claimed zero and remains for TestDesign's exact
+method/variant inventory. Independent plan Review returns to TestDesign before
+Code. No broad Unit/full-suite rerun is authorized by this targeted plan.
+
+## Performance budget details
+
+Apply [performance standards](../../testing-and-build.md#performance-standards)
+and [R1-R9](../../test-performance-standards.md). No measured p95 exists for the
+proposed tests: sample size **0**, source base named above, Linux Plan, no product
+run or load sample. Do not label estimates as measured. CARD-1610 owns provisional
+collection, with CARD-1404 for cost packing and CARD-1514/1531 for phase/admission
+instrumentation. TestDesign first consults comparable retained receipts; Code's
+first necessary red and green runs collect per-test timings without adding broad
+repetitions solely to manufacture a percentile. Replace provisional limits with
+about **2x comparable measured p95**, identifying SHA, host, platform, load,
+category, sample count and run IDs. Small samples remain provisional.
+
+| Component | Provisional expected duration | Finite provisional execution bound |
+|---|---|---|
+| Pure test body | <1 second | 2 seconds, excluding shared discovery/setup |
+| DB/service/barrier body | 1-10 seconds | 20 seconds, no wall-clock minute sleeps |
+| Script/receipt body | 5-30 seconds | 60 seconds; process cleanup included |
+| One server build | 3-5 minutes | 10 minutes; restore/compile separated |
+| One runner build | 1-2 minutes | 4 minutes |
+| Shared container/readiness/migrations | 10-40 seconds once per assembly/run | 80 seconds provisional; retain existing tighter call limits |
+| Schema clone/data prep | 1-3 seconds per scenario | 6 seconds |
+| Shared queue/web host setup | 1-5 seconds | 10 seconds; restart tests recreate scopes only unless process restart is the subject |
+| Unit/guard row body | <30 seconds | 1 minute |
+| Visibility/hold/control row body | 30-120 seconds | 4 minutes |
+| Receipt row body | 1-3 minutes | 6 minutes |
+| Script row body | 30-90 seconds | 3 minutes |
+| Runner safety row body | 10-60 seconds | 2 minutes |
+| Teardown/output drain | 1-10 seconds | 20 seconds; timeout retains residue/custody evidence |
+| Admission | Unknown; card reports historical 10-25 minute waits | 15 minutes per acquisition as a provisional scheduling cap, not measured p95 |
+
+Expected complete group costs from the table: S1-red 7 minutes; S1 green including
+runner safety 12; S2-S4-red 12; S2-S4-green 16. Total **47**, versus round 1's 80.
+Five builds instead of twelve; four are Antiphon.Tests, one SessionRunner.Tests.
+No source-stamp reuse across different commits, and no repeat setup per case.
+Because the cumulative campaign exceeds 30 minutes, **caller commissions a
+scoped Debug timing assessment before Code** under R1, using this exact roster
+and available build/fixture receipts. This delegate cannot sub-delegate. The
+Debug task must account for aggregate builds and queue waits, not pretend that
+splitting groups removes the obligation. A single group observed above 30
+minutes also requires its own timing investigation before repetition.
+
+Importer facts, not performance policy: generated defaults are
+`build.slotWaitMinutes=45`, `timeouts.rowMinutes=15`, `timeouts.totalMinutes=90`;
+individual `timeoutMinutes` use max(15, 3x EstimatedMinutes). The import validation
+below checks syntax/counts only and **does not claim** the old 15/29 limits are
+active. Before Code, TestDesign must commit a derived manifest with explicit
+per-row execution bounds from this table/measurements, a 10-minute server build
+bound, 15-minute slot cap, separate charged group execution caps (14/24/24/32
+minutes respectively, provisional ~2x group estimates), and a finite hard wall
+that includes each possible admission. Tool global/row/build knobs must be
+checked against their actual consumer; if one knob couples build and row time,
+record the measured justified exception instead of claiming independent limits.
+Keep the imported default manifest as historical provenance; the derived manifest
+is a new artifact with exact selection and all deviations visible to Review.
+A hard wall over 30 minutes is an allowance, not measured execution; record
+admission separately and carry the aggregate Debug decision. No unlisted run or
+silent timeout widening is permitted to resolve a refused/slow row.
+
+Share PostgreSQL container and template/migrations once per assembly/run. New DB
+tests use isolated schemas and transaction/barrier state, not whole-database
+cleanup or parallel global sweeps. Share BridgeQueueHarness startup where
+configuration is identical; distinct recipient/decoy sessions are isolated, not
+a new container per test. A receipt crash is a service/queue failure injection;
+only a test explicitly proving process death may recreate the process and must
+measure that cost. Clock advance simulates 20/90/240-minute thresholds. External
+DB, filesystem, HTTP, CLI, readiness and output-drain calls each carry bounded
+cancellation and duration spans. No production runner/AppHost/browser is used.
+
+Evidence lives in ignored `.antiphon/c1610-checkpoints/` per run/source group:
+TRX, native exit, exact case/category membership, source/build binding, host/load,
+admission/build/discovery/setup/body/teardown timings and external-call spans.
+Unknown phases remain unknown, remainder is explicit, wall time is separate
+from summed parallel spans. Preserve failed receipts and unexpected-red baseline
+checks at their exact methods. Record actual versus expected counts per CP.
+
+App ownership: server supervision/queue/database -> server application batch;
+script CLI -> server API contract plus offline script integration; runner safety
+-> shared session-runner batch. Retain the actual ProjectReference graph and
+transitive dependents at the Code SHA. No broker/pty-backend behavior changes,
+no new project extraction, and no Full rc qualification credit is claimed; scoped
+release qualification remains CARD-1545. Cleanup removes only this run's owned
+alternate outputs after all children finish, never foreign build/evidence roots.
