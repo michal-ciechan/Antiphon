@@ -202,6 +202,10 @@ try {
             Assert-Native ($refused.WaitForExit(1000)) 'assignment refusal exact root handle signalled'
         }
         'C1039_DescendantExit' {
+            $witnessRoot = Join-Path $ResultsDirectory 'owner exit witness'
+            $null = New-Item -ItemType Directory -Path $witnessRoot
+            $script:roots += $witnessRoot
+            $script:owners += Invoke-RcWindowsOwnerExitWitness -FilePath $FixtureExecutable -WorkingDirectory $witnessRoot -TimeoutMilliseconds 30000 -LogPath (Join-Path $witnessRoot 'native.log')
             $r = New-NativeRun 'child held' 'descendant'
             Wait-Native { $r.Owner.Observation.Pid -gt 0 } 'root identity'
             $rootHandle = [Diagnostics.Process]::GetProcessById($r.Owner.Observation.Pid)
