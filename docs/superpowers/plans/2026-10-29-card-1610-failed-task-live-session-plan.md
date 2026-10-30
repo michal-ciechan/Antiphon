@@ -982,17 +982,17 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-90 | S2-S4 | CP-15 | server-integration-CheckCompactionAutomaticRestartTests | `/*/*/CheckCompactionAutomaticRestartTests/*` | CARD-0079 full regression | 11 passed; no failed/skipped | 11 | 3 |
 | CP-91 | S2-S4 | CP-15 | server-integration-CheckCompactionRecoveryPersistenceTests | `/*/*/CheckCompactionRecoveryPersistenceTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 1 |
 | CP-92 | S2-S4 | CP-15 | server-integration-supervision-retention | `/*/*/DataRetentionServiceTests/C1610_Unresolved_supervision_retains_evidence_until_told` | S3 retention safeguards | 6 passed; no failed/skipped | 6 | 2 |
-| CP-93 | S2-S3-fix | CP-15 | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 41 | 4 |
-| CP-94 | S2-S3-fix | CP-15 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
-| CP-95 | S2-S3-fix | CP-15 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/*` | full Cancel post-commit workspace release sibling class | 54 passed; no failed/skipped | 54 | 5 |
-| CP-97 | S2-S3-fix | CP-15 | server-integration-closed-watch-retention | `/*/*/DataRetentionServiceTests/C1610_Closed_report_watch_releases_evidence` | closed watch permits real retention pruning | 6 passed; no failed/skipped | 6 | 2 |
-| CP-98 | S2-S3-fix | CP-15 | server-integration-M1-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M1 restored exact method | all passed; no failed/skipped | 5 | 2 |
-| CP-99 | S2-S3-fix | CP-15 | server-integration-M2-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M2 restored exact method | all passed; no failed/skipped | 5 | 2 |
-| CP-100 | S2-S3-fix | CP-15 | server-integration-M3-restored | `/*/*/TaskSupervisionReceiptTests/C1610_Failed_late_report_parent_has_complete_UserPrompt` | M3 restored exact method | all passed; no failed/skipped | 3 | 2 |
-| CP-101 | S2-S3-fix | CP-15 | server-integration-M4-restored | `/*/*/TaskCeilingControlTests/C1610_Successor_fence_uses_card_and_role` | M4 restored exact method | all passed; no failed/skipped | 6 | 2 |
-| CP-102 | S2-S3-fix | CP-15 | server-integration-M5-restored | `/*/*/TaskCeilingControlTests/C1610_Final_cap_requires_operator_extend` | M5 restored exact method | all passed; no failed/skipped | 3 | 2 |
-| CP-103 | S2-S3-fix | CP-15 | server-integration-M6-restored | `/*/*/TaskCeilingHoldTests/C1610_Phase_beats_ceiling` | M6 restored exact method | all passed; no failed/skipped | 2 | 2 |
-| CP-104 | S2-S3-fix | CP-15 | server-integration-M7-restored | `/*/*/TerminalRunnerSeatReleaseTests/Cancellation_reconciles_without_second_stop` | M7 restored exact method | all passed; no failed/skipped | 1 | 2 |
+| CP-93 | S2-S4 | CP-15 | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 41 | 4 |
+| CP-94 | S2-S4 | CP-15 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
+| CP-95 | S2-S4 | CP-15 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/*` | full Cancel post-commit workspace release sibling class | 54 passed; no failed/skipped | 54 | 5 |
+| CP-97 | S2-S4 | CP-15 | server-integration-closed-watch-retention | `/*/*/DataRetentionServiceTests/C1610_Closed_report_watch_releases_evidence` | closed watch permits real retention pruning | 6 passed; no failed/skipped | 6 | 2 |
+| CP-98 | S2-S4 | CP-15 | server-integration-M1-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M1 restored exact method | all passed; no failed/skipped | 5 | 2 |
+| CP-99 | S2-S4 | CP-15 | server-integration-M2-restored | `/*/*/TaskCeilingHoldTests/C1610_Working_ceiling_holds` | M2 restored exact method | all passed; no failed/skipped | 5 | 2 |
+| CP-100 | S2-S4 | CP-15 | server-integration-M3-restored | `/*/*/TaskSupervisionReceiptTests/C1610_Failed_late_report_parent_has_complete_UserPrompt` | M3 restored exact method | all passed; no failed/skipped | 3 | 2 |
+| CP-101 | S2-S4 | CP-15 | server-integration-M4-restored | `/*/*/TaskCeilingControlTests/C1610_Successor_fence_uses_card_and_role` | M4 restored exact method | all passed; no failed/skipped | 6 | 2 |
+| CP-102 | S2-S4 | CP-15 | server-integration-M5-restored | `/*/*/TaskCeilingControlTests/C1610_Final_cap_requires_operator_extend` | M5 restored exact method | all passed; no failed/skipped | 3 | 2 |
+| CP-103 | S2-S4 | CP-15 | server-integration-M6-restored | `/*/*/TaskCeilingHoldTests/C1610_Phase_beats_ceiling` | M6 restored exact method | all passed; no failed/skipped | 2 | 2 |
+| CP-104 | S2-S4 | CP-15 | server-integration-M7-restored | `/*/*/TerminalRunnerSeatReleaseTests/Cancellation_reconciles_without_second_stop` | M7 restored exact method | all passed; no failed/skipped | 1 | 2 |
 
 Debug task 40e35f61 adds CP-92 to close the preceding S3 report's explicit
 retention coverage gap. Six isolated-schema cases exercise source/recipient
