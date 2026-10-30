@@ -4,6 +4,15 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
+## Round-3 amendment status
+
+Task `4e264f6c`, base `2c727e270ddd81944397e062e1e78ea5b8c751d5`; final review `20f68d70` read in full. This initial checkpoint is a **WIP skeleton**, not yet Code-ready. Preserve every confirmed round-1 closure while resolving the two new defects in place:
+
+- Review D-1: choose the simpler fail-closed option: refuse PriorFailureSweep / -PartialSweep with -Profile rc before forwarding or any release-root write. Commission diagnostic sweeps through the existing nightly profile with explicit selected native suites; never create a release-selection attempt for Partial. Add recursive production ReleaseRoot inventory witnesses, including new paths, and split the full S4 budget.
+- Review D-2: keep the two-argument heartbeat API working by deriving omitted suite/run/attempt from an atomic persisted active identity beside the run's timing plans; name its file/functions and test lazy Full plus duplicate chunk IDs. Commission explicit identity forwarding as well.
+- Take A-1..A-7: per-suite discovery/host state, diagnostic phase summaries, observed-launch conservation precondition, best-effort lazy schedule, historical provenance distinct from candidate, separate Windows placement, and outer-wrapper root-override refusal.
+- Remaining before completion: verify anchors, reconcile dependent contracts/checkpoints/slice budgets, import both identical copies, then report next: code conditional on reviewed M1/M2 on rc. These design changes require only a quick Opus diff check, not a new full planning round.
+
 ## Round-2 amendment status
 
 Task `c93b388f`, base `f75a84a04c8ea1a41699069c1486f57bb76ff062`. Review `1254ac0d` confirms the core design and replay. All six defects are addressed in this amendment, under explicit decisions below. Independent final Opus Review is next; Code waits for that review and M1/M2 integration on rc. Closure map:
