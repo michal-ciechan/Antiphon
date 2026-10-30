@@ -28,8 +28,13 @@ namespace Antiphon.Checkpoints
         }
 
         public static Result Run(ProcessStartInfo start, int timeoutMs, bool git, CancellationToken cancellationToken = default)
+            => RunObserved(start, timeoutMs, git, null, cancellationToken);
+
+        // Invocation-local observation keeps process-count witnesses on the actual launch path.
+        internal static Result RunObserved(ProcessStartInfo start, int timeoutMs, bool git,
+            Action<ProcessStartInfo> beforeStart, CancellationToken cancellationToken = default)
         {
-            var result = RunCaptured(start, timeoutMs, git, ReadTextAsync, cancellationToken);
+            var result = RunCaptured(start, timeoutMs, git, ReadTextAsync, cancellationToken, beforeStart);
             return new Result { Exit = result.Exit, Stdout = result.Stdout ?? "", Stderr = result.Stderr, TimedOut = result.TimedOut };
         }
 
@@ -48,7 +53,8 @@ namespace Antiphon.Checkpoints
         }
 
         private static Captured<T> RunCaptured<T>(ProcessStartInfo start, int timeoutMs, bool git,
-            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken)
+            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken,
+            Action<ProcessStartInfo> beforeStart = null)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(timeoutMs);
@@ -65,7 +71,7 @@ namespace Antiphon.Checkpoints
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
-                    var settings = RunCoreAsync(config, ReadTextAsync, deadline.Token).GetAwaiter().GetResult();
+                    var settings = RunCoreAsync(config, ReadTextAsync, deadline.Token, beforeStart).GetAwaiter().GetResult();
                     foreach (var entry in settings.Stdout.Split('\0'))
                     {
                         var split = entry.IndexOf('\n');
@@ -76,7 +82,7 @@ namespace Antiphon.Checkpoints
                         start.ArgumentList.Insert(0, "-c");
                     }
                 }
-                return RunCoreAsync(start, readStdout, deadline.Token).GetAwaiter().GetResult();
+                return RunCoreAsync(start, readStdout, deadline.Token, beforeStart).GetAwaiter().GetResult();
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             { return new Captured<T> { Exit = 128, TimedOut = true }; }
@@ -109,7 +115,8 @@ namespace Antiphon.Checkpoints
         }
 
         private static async Task<Captured<T>> RunCoreAsync<T>(ProcessStartInfo start,
-            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken)
+            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken,
+            Action<ProcessStartInfo> beforeStart)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (OperatingSystem.IsLinux())
@@ -130,6 +137,7 @@ namespace Antiphon.Checkpoints
             }
             using var process = new Process { StartInfo = start };
             IntPtr job = IntPtr.Zero;
+            beforeStart?.Invoke(start);
             if (!process.Start()) throw new InvalidOperationException("process did not start");
             try
             {

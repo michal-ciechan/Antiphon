@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -12,6 +13,68 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 {
+    [Test]
+    [Timeout(60_000)]
+    public void C1616_cleanup_does_not_spawn_driver_discovery_for_index_queries(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        CheckpointFixtureProcess.Git(root, "config", "filter.c1616.clean", "c1616-driver-must-not-run");
+        CheckpointFixtureProcess.Git(root, "config", "diff.c1616.textconv", "c1616-driver-must-not-run");
+        var starts = new List<string[]>();
+        var hardened = true;
+        var runner = new CheckpointNativeGitRunner((start, timeout, git) =>
+            CheckpointProcessRunner.RunObserved(start, timeout, git, child =>
+            {
+                var arguments = child.ArgumentList.ToArray();
+                starts.Add(arguments);
+                hardened &= arguments.Contains("core.fsmonitor=false")
+                    && arguments.Contains("diff.external=")
+                    && arguments.Any(arg => arg.StartsWith("core.hooksPath=", StringComparison.Ordinal))
+                    && child.Environment["GIT_OPTIONAL_LOCKS"] == "0"
+                    && child.Environment["GIT_CONFIG_NOSYSTEM"] == "1";
+            }, cancellationToken));
+        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), runner);
+        var write = new CheckpointWrite(context);
+        var ledger = new CheckpointOutputLedger(context);
+        var output = Path.Combine(root, "bin-c1616");
+        write.CreateFreshDirectory(output, write.Under(root)).ShouldBeNull();
+        for (var i = 0; i < 8; i++)
+            write.Text(Path.Combine(output, "payload-" + i), "owned", write.Under(output)).ShouldBeNull();
+        ledger.Seal(output).ShouldBeNull();
+        starts.Clear();
+        ledger.Remove(output).ShouldBeNull();
+        Directory.Exists(output).ShouldBeFalse();
+        var queries = starts.Count(args => args.Contains("ls-files"));
+        var discoveries = starts.Count(args => args.Contains("--get-regexp"));
+        var total = starts.Count;
+        Console.WriteLine($"C1616 cleanup payloads=8 indexQueries={queries} driverDiscoveryProcesses={discoveries} totalProcesses={total}");
+        queries.ShouldBeGreaterThanOrEqualTo(8, "per-entry tracked-file revalidation stays live");
+        hardened.ShouldBeTrue("all index queries retain Git hardening");
+
+        // A later index update must still veto removal; there is no cached Git verdict.
+        var tracked = Path.Combine(root, "bin-c1616-tracked");
+        write.CreateFreshDirectory(tracked, write.Under(root)).ShouldBeNull();
+        var keep = Path.Combine(tracked, "keep.txt");
+        write.Text(keep, "keep", write.Under(tracked)).ShouldBeNull();
+        ledger.Seal(tracked).ShouldBeNull();
+        ledger.Check(tracked).ShouldBeNull();
+        CheckpointFixtureProcess.Git(root, "add", "--", keep);
+        ledger.Remove(tracked).ShouldBe("tracked");
+        File.ReadAllText(keep).ShouldBe("keep");
+
+        var changed = Path.Combine(root, "bin-c1616-changed");
+        write.CreateFreshDirectory(changed, write.Under(root)).ShouldBeNull();
+        var tampered = Path.Combine(changed, "keep.txt");
+        write.Text(tampered, "owned", write.Under(changed)).ShouldBeNull();
+        ledger.Seal(changed).ShouldBeNull();
+        File.WriteAllText(tampered, "changed");
+        ledger.Remove(changed).ShouldContain("output-ledger-mismatch");
+        File.ReadAllText(tampered).ShouldBe("changed");
+        discoveries.ShouldBe(0, "an index-only query cannot invoke named filter/textconv drivers");
+        total.ShouldBe(queries, "one hardened child per index query");
+    }
+
     [Test]
     public async Task C1616_admission_timeout_publishes_readable_nonexecuted_receipt()
     {
