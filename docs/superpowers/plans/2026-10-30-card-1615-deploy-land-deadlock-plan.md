@@ -47,6 +47,7 @@ evidence, not a reproduction performed by this Plan task.
 | Restart can run from the controller tree. | `restart-apphost.ps1:88-94` refuses linked worktrees; `:177-208` binds expected SHA to source HEAD. `docs/orchestration-loop.md:28-37` forbids pulling during a land. | Keep canonical activation separate. No `-AllowWorktree`, restart from the isolated tree, or concurrent canonical checkout move. |
 | Timeout clears the dangerous owner. | `AgentTaskDispatcher.cs:3745-3770` describes a 240-minute role ceiling that fails the task but deliberately leaves its session alive. `AgentTaskReplyService.cs:849-858` refuses refinement after settlement. | Failed is not process exit or checkout release. Do not solve this cycle by waiting for failure, canceling blindly, or increasing the ceiling. CARD-1610 owns terminal/live-session recovery. |
 | A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the actual environment; standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
+| A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X explicitly at preparation and prohibit AppHost/desktop-runner restarts during the controller lifetime, including between phases. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
 CARD-1610 was read: its concrete example is a Review, not this Deploy. The Deploy's
@@ -65,8 +66,8 @@ No desktop files or ended native Windows run were inspected.
 | D-5 | Require delegated mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
 | D-6 | Gate the five mutating rolling phases and `all`; existing restrictions on `all`, dry-run and resume remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
 | D-7 | Classify TASK first whenever task ID is present; STANDING AGENT only with token + valid agent ID and no task ID; INTERACTIVE only with all three absent. Admit standing agents without inventing a task record or requiring a Worktree DTO. Apply the class-specific rules below. | A token is not a task ID. Requiring a task record from a standing orchestrator breaks its authorized direct rollout path. Partial/invalid identity never falls back to interactive. This is workflow admission using launcher identity, not a sandbox against deliberate environment tampering. |
-| D-8 | Finish any canonical preparation before commissioning the long controller. For later activation, first finish/join the controller and publish its receipt; wait for lands from the caller, then dispatch the short Shared activation. Within it mutate/build/verify and finish; never wait for pending lands while holding Shared. | A Shared activation that starts by waiting for queued lands recreates the cycle. New lands can queue during the short task and proceed after it finishes; a land already executing is protected by ordinary dispatch/repository admission. |
-| D-9 | Current role ceilings, parking and session recovery are unchanged. Split operational dispatches at phase boundaries if duration risks the ceiling; preserve phase receipts and resume context. A Failed controller may still own live children: inspect/join them before replacement. | Raising timeouts, assuming Failed killed the session, or auto-releasing it belongs to CARD-1610 and would be unsafe incident recovery here. |
+| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Freeze **activation**, not land publication: prohibit canonical AppHost and desktop-runner restarts while the controller owns an unfinished rollout, including between phases. Each mutating invocation requires `/api/version.sha == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
+| D-9 | Current role ceilings, parking and session recovery are unchanged. Identity admission is once per phase invocation. A task failed by its ceiling mid-phase leaves the admitted command running to its existing bounded outcome; its Worktree cannot hold unrelated lands. The next invocation refuses its terminal owner. Preserve receipts and join actual children before a replacement owner. | Do not add owner polling inside a phase or mistake Failed for command exit. CARD-1610 owns terminal/live-session recovery. A phase-boundary successor retains X and the restart prohibition until the whole rollout is complete or explicitly handed off from a proven quiescent state. |
 | D-10 | Plan review by a different company's model precedes separate TestDesign. The checkpoint roster below is a concrete proposed selection, not test execution evidence or authority to deploy. | Starting Code without the separate verification design and timing refinement would leave the production-path/race proof incomplete. |
 
 ### Caller admission (review D-1)
@@ -86,6 +87,52 @@ tell that caller to commission a fresh Worktree Deploy or use its assigned stand
 agent's controller. Do not strip environment identity or fabricate an agent/task ID.
 This preserves the standing orchestrator path while making the unassigned-card
 migration explicit. No launch-composer or backend change is required.
+
+### Activation and phase SHA contract (review D-2)
+
+1. The caller names full reviewed rc SHA **X**, completes any prerequisite lands
+   before commissioning Shared preparation, and records the currently active SHA
+   **P** separately. The short canonical task advances to X using the existing
+   supported pull/checkout procedure, verifies clean tracked source and exact
+   `HEAD == X`, and calls `restart-apphost.ps1 -ExpectedServerSha X`. If the checkout
+   is already Y or the rc tip changes before preparation, refuse/recommission with
+   a newly reviewed named SHA; never reset/rebase a published rc to manufacture X.
+   Require `/api/version.sha == X` and health after restart. Any needed desktop
+   runner build/restart and `provision-host-jq -Sha X` happen here, before the
+   controller, with HEAD X; verify runner `buildVersion` against X. There is no
+   invented `-ExpectedServerSha` parameter on the runner restart script.
+2. The long controller uses X for every phase, receipt and resume. Lands may
+   advance canonical HEAD X -> Y without activating Y; canonical HEAD and the
+   running API may intentionally differ in this window. Never pull/switch/build
+   or restart the canonical stack from the controller. The restart prohibition
+   applies to unrelated orchestrators and recovery restarts too, from the first
+   mutation until joined completion including retire-temp, not just while a
+   command is running. No new global lock/service is introduced: this is an
+   operating contract plus a mechanical phase-entry skew check.
+3. For all admitted caller classes, GET `/api/version` once per mutating invocation
+   before operator-token lookup or effects. Require a full 40-hex `sha`, normalize
+   case, and compare with X. A different SHA refuses loudly as
+   `RolloutControllerServerShaMismatch`; missing/malformed/unreadable/401/timeout
+   refuses `RolloutControllerServerVersionUnknown`. Print only reason and bounded
+   expected/observed SHA; save both in `rollout-controller.json`. Never substitute
+   the observed SHA, refresh X to current rc, wait for a match, or retry the phase.
+   Identity and version probes each have a deadline within one admission budget.
+   `check-census`, `check-host-jq` and canonical provisioning retain their existing
+   contracts; the new version guard applies to the five mutating phases and `all`.
+   `all` is still forbidden by the operating recipe; if invoked through its existing
+   script API, its initial check precedes credentials and version is checked again
+   before each subsequent subphase (no owner recheck within an admitted phase).
+4. If a restart is needed before completion, stop starting phases and establish
+   the owned command's bounded outcome/exit and a quiescent receipt. Do not restart
+   automatically or claim completion. Caller commissions an explicit recovery or
+   new rollout with a named SHA after reconciling both runner images and resume
+   state; a task status change alone does not release the restart prohibition.
+   Unexpected mid-phase API drift is not detected continuously by this change;
+   the next phase refuses. Existing phase/census refusals remain authoritative.
+5. After joined completion at X, record active server/runner SHAs and retained
+   receipt paths. A later upgrade is a new preparation targeting explicit reviewed
+   **Y**, with `-ExpectedServerSha Y`, followed by its own rollout Y. There is no
+   automatic post-drain restart to "whatever HEAD is now".
 
 ## Implementation slices
 
@@ -115,12 +162,18 @@ callers use the native clean pinned non-main source checks without a task DTO or
 task branch comparison. Preserve D-6 observational/provision exceptions and
 D-7 interactive compatibility; never query an empty task ID.
 
+Add the D-8 version probe to the same helper and the existing offline HTTP seam,
+before credential lookup. For the `all` loop, revalidate version at subsequent
+`Invoke-Phase` entries. Fixture state must explicitly return `version.sha` matching
+the invocation, plus mismatch/malformed/HTTP-failure vectors; no success default
+that hides a missing production call. Preserve old observational fixtures.
+
 Use fixed reasons `RolloutControllerWorkspaceRequired`,
 `RolloutControllerIdentityUnknown`, `RolloutControllerSourceMismatch`; name the
 validated task and a fresh Worktree controller after canonical preparation as
 recovery. Write ignored `rollout-controller.json` under the invocation evidence
 root: phase, caller class, nullable task/agent ID, nullable workspace, source SHA,
-identity result, outcome and elapsed
+expected/observed server SHA, identity result, outcome and elapsed
 milliseconds. Never retain token, full DTO, task prose or raw exception. Receipt
 failure refuses. Self-read and Git probes have finite deadlines. No new API,
 indefinite retry, modal prompt, land predicate or census exception.
@@ -157,19 +210,20 @@ references to server/infrastructure suffice; no project extraction is justified.
 | ID | Production-path witness and observable assertion | Classification |
 |---|---|---|
 | V-1 | Shared own-task DTO; invoke real wrapper for each mutating phase and allowed resume/dry-run. Refuse before operator-token access, census sleep or any traced effect. Assert fixed reason and zero effects. Old wrapper reaches an effect/wait or lacks the new reason. | New red/green admission. |
-| V-2 | Real pinned linked worktree, matching live DTO and SHA succeeds. Wrong SHA, tracked dirt, foreign tree and alias to canonical refuse. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
+| V-2 | Real pinned linked worktree, matching live DTO/source/API SHA succeeds. Wrong source SHA, tracked dirt, foreign tree and alias to canonical refuse. Canonical HEAD moving X -> Y with API X still admits controller X; API Y refuses X before credentials/effects. Missing/malformed/API-failure version refuses, including next-phase drift and subsequent `all` subphases. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
 | V-3 | Each D-7 caller class has its own method: task ID takes precedence over agent ID; token + agent/no task is admitted with no task GET; all-absent interactive remains admitted. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, task 401/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
 | V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol: Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
 | V-5 | Same-source owner/alias and unknown identity still hold. Shared writer appearing while verification releases the repository lease blocks the real resume path. | Existing safety regression; not a pure predicate test. |
 | V-6 | Bind land owner to recycled runner. Prove Shared cycle, then separate Worktree scenario: complete real land and feed production task/list/detail projections into wrapper and host HTTP fixtures. Actual census refuses/waits while pending and clears only after publication/terminal proof, controller still Working. Another genuine writer keeps recycle refused. | Integrated remedy, remote effects stubbed. |
 | R-1 | Six `C1364BoundLandWaitProofTests` methods preserve cleared/expired waits before/after removal, ordinary/resume/preview, wrapper and host. | Unchanged census regression. |
 
-Planned `DeployRolloutWorkspaceTests` (eight non-parameterized methods):
+Planned `DeployRolloutWorkspaceTests` (nine non-parameterized methods):
 `C1615_Shared_controller_refuses_before_side_effects`,
 `C1615_Worktree_controller_runs_from_its_pinned_checkout`,
 `C1615_Unknown_or_terminal_owner_refuses`, `C1615_Native_checkout_identity`,
 `C1615_Read_checks_and_canonical_provision_keep_their_contract`,
 `C1615_Standing_agent_without_task_id_is_admitted`,
+`C1615_Phase_requires_rollout_server_sha`,
 `C1615_Interactive_mode_requires_absent_task_identity`,
 `C1615_Admission_receipt_is_bounded_and_redacted`.
 
@@ -198,7 +252,7 @@ selection through the tool, without inventing a Platform table column.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 8 named methods, 0 failed, 0 skipped | 8 | 6 | 9 | true |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 9 named methods, 0 failed, 0 skipped | 9 | 6 | 9 | true |
 | CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 | true |
 | CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
 
@@ -211,8 +265,8 @@ and end in `*`; escape table pipes as `\|`. Import validates syntax, not existen
 Apply `docs/testing-and-build.md#performance-standards` and its owner
 `docs/test-performance-standards.md`. This Plan executes no product tests; only
 an isolated, slot-gated checkpoint-tool bootstrap/import validates the document.
-The proposed acceptance total is **19 executed results**: 8 script, 5 integration,
-6 census regression. Windows CP-1 adds 8 native results, reported separately.
+The proposed acceptance total is **20 executed results**: 9 script, 5 integration,
+6 census regression. Windows CP-1 adds 9 native results, reported separately.
 
 | Lane / selection | Expected elapsed, including build | Phase allocation | Provisional execution deadline |
 |---|---:|---|---:|
