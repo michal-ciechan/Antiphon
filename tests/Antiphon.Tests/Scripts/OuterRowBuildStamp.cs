@@ -23,11 +23,26 @@ internal static class OuterRowBuildStamp
 
     public static CheckpointBuildBinding EnsureForBuildOutput(string baseDirectory, string repositoryRoot, SourceObservation source)
     {
-        var binding = Binding(repositoryRoot, OutputDirectory(baseDirectory), source);
+        var outputDirectory = OutputDirectory(baseDirectory);
+        var binding = Binding(repositoryRoot, outputDirectory, source);
         // A row-built stamp stays where the runner wrote it, including a corrupt or stale one.
         // Qualification output has none: CheckpointBuildBinding.Write records this build.
         if (!File.Exists(binding.PathName))
             WriteMissing(binding);
+        else if (binding.Check() != "verified")
+        {
+            // RunScheduler adds the canonical shared layout. Native audits also permit
+            // its explicit apphost build. Reconstruct both supported property sets from
+            // our paths; never adopt arbitrary properties from the stamp being checked.
+            var output = Path.GetRelativePath(Path.Combine(repositoryRoot, "tests", "Antiphon.Tests"), outputDirectory);
+            foreach (var properties in new[] { new List<string>(), new List<string> { "--property:UseAppHost=true" } })
+            {
+                BuildStep.AppendSharedLayout(properties, repositoryRoot, "tests/Antiphon.Tests", output);
+                var shared = CheckpointBuildBinding.Expected(repositoryRoot, "tests/Antiphon.Tests", output, properties, source);
+                if (shared.Check() == "verified")
+                    return shared;
+            }
+        }
         AssertPresent(binding);
         return binding;
     }
