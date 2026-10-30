@@ -1029,6 +1029,30 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("CardWorkflowStageId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("CeilingAcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CeilingHeldAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("CeilingHoldAttempt")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CeilingHoldDispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CeilingHoldEpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CeilingHoldSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CeilingHoldSessionStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("CeilingOperatorExtended")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("CheckCount")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -1210,6 +1234,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("ModelLevel")
                         .HasColumnType("integer");
 
+                    b.Property<double?>("NextCeilingMinutes")
+                        .HasColumnType("double precision");
+
                     b.Property<DateTime?>("NextCheckAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1314,6 +1341,13 @@ namespace Antiphon.Server.Migrations
                     b.Property<long?>("ReportNudgedSequence")
                         .HasColumnType("bigint");
 
+                    b.Property<int?>("RequestedCeilingMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RequestedCeilingReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<int>("RequestedWorktreeBaseMode")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -1336,6 +1370,13 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(false);
+
+                    b.Property<int?>("ResolvedCeilingMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolvedCeilingSource")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
 
                     b.Property<string>("Result")
                         .HasColumnType("text");
@@ -9046,6 +9087,120 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_SubscriptionUsageSamples_Provider_SubscriptionKey_ObservedAt");
 
                     b.ToTable("SubscriptionUsageSamples", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskSupervisionNotice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<long?>("ConfirmingPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Digest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("DispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("FailureFrontier")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ParentSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ParentStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("QueueMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("RecipientFloor")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("RecipientSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RecipientStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReportDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("ReportFloor")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ReportForwardedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("ReportFromSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ReportText")
+                        .HasMaxLength(16000)
+                        .HasColumnType("character varying(16000)");
+
+                    b.Property<long?>("ReportThroughSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ScanFrontier")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("SessionStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SourceEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ToldAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NextAttemptAt", "Id");
+
+                    b.HasIndex("TaskId", "Attempt", "SourceEventId", "Purpose")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TaskSupervisionNotices_PurposeIdentity");
+
+                    b.ToTable("TaskSupervisionNotices");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeMirrorBinding", b =>
