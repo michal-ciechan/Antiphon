@@ -87,10 +87,14 @@ public sealed class TaskSupervisionVisibilityTests
         await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
         var cardId = Guid.NewGuid();
         var task = await SeedFailedTaskAsync(schema.ConnectionString, agent, session, workspace.Path, cardId, clock);
-        var seats = State(Host("server2", inventory: "listed", seats:
+        var seats = provider.GetRequiredService<SeatOccupancyState>();
+        seats.Publish(new SeatOccupancySnapshot(Now.UtcDateTime,
         [
-            Seat(session, agent, task.Id, cardId, SessionGeneration.Normalize(clock.GetUtcNow().UtcDateTime),
-                SeatClass.IdleTerminal, occupies: true),
+            Host("server2", inventory: "listed", seats:
+            [
+                Seat(session, agent, task.Id, cardId, SessionGeneration.Normalize(clock.GetUtcNow().UtcDateTime),
+                    SeatClass.IdleTerminal, occupies: true),
+            ]),
         ]));
 
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
@@ -126,7 +130,11 @@ public sealed class TaskSupervisionVisibilityTests
         var (agent, session) = await SeedWarmAsync(schema.ConnectionString, workspace.Path, idleMinutes: 10, clock);
         await SeedTranscriptAsync(schema.ConnectionString, session, clock, working: false);
         var task = await SeedFailedTaskAsync(schema.ConnectionString, agent, session, workspace.Path, Guid.NewGuid(), clock);
-        var seats = State(Host("server2", inventory: "unavailable", reason: "list-failed"));
+        var seats = provider.GetRequiredService<SeatOccupancyState>();
+        seats.Publish(new SeatOccupancySnapshot(Now.UtcDateTime,
+        [
+            Host("server2", inventory: "unavailable", reason: "list-failed"),
+        ]));
 
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
         var attention = await ReadAttentionAsync(schema.ConnectionString, clock, seats);
@@ -528,6 +536,7 @@ public sealed class TaskSupervisionVisibilityTests
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-c1610-wt"),
         });
+        services.AddSingleton(new SeatOccupancyState());
         services.AddScoped<AgentTaskService>();
         services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();

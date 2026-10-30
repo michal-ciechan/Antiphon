@@ -9250,16 +9250,20 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0691 D-3: the stale arm removes rows without a kill, so it may only take a row whose
         // session is terminal. Created and Stopping (a kill that threw) are not.
         var unfinishedSessionIds = new HashSet<Guid>();
+        var sessionStartedAt = new Dictionary<Guid, DateTime>();
+        var sessionRunnerIds = new Dictionary<Guid, string?>();
         if (sessionIds.Count > 0)
         {
             foreach (var row in await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id)
                     && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
                         || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
-                .Select(s => new { s.Id, s.Status })
+                .Select(s => new { s.Id, s.Status, s.StartedAt, s.RunnerId })
                 .ToListAsync(ct))
             {
                 unfinishedSessionIds.Add(row.Id);
+                sessionStartedAt[row.Id] = row.StartedAt;
+                sessionRunnerIds[row.Id] = row.RunnerId;
                 if (row.Status is SessionStatus.Starting or SessionStatus.Running)
                     liveSessionIds.Add(row.Id);
             }
@@ -9286,19 +9290,52 @@ public sealed partial class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
-        // Protect recent work in both the TTL and cap arms. Query the whole warm set so a
-        // protected cap member is replaced by the next oldest idle member, never another worker.
+        // CARD-1610: Working is kept however old the transcript is. A Created/Stopping session, a
+        // Running session with no proved generation, or a remote inventory that has not answered
+        // cannot prove idle. A Failed task whose session is still unfinished is held, not retired.
+        var uncertainSessionIds = new HashSet<Guid>();
+        foreach (var sid in unfinishedSessionIds)
+        {
+            var live = liveSessionIds.Contains(sid);
+            var started = sessionStartedAt.GetValueOrDefault(sid);
+            if (!live
+                || (live && started == default)
+                || _runtime?.RemoteInventoryPending(sessionRunnerIds.GetValueOrDefault(sid)) == true)
+                uncertainSessionIds.Add(sid);
+        }
+
+        var failedLiveSessionIds = new HashSet<Guid>();
+        if (sessionIds.Count > 0)
+        {
+            foreach (var sid in await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Status == AgentTaskStatus.Failed
+                    && t.AgentSessionId != null
+                    && sessionIds.Contains(t.AgentSessionId.Value))
+                .Select(t => t.AgentSessionId!.Value)
+                .Distinct()
+                .ToListAsync(ct))
+            {
+                if (unfinishedSessionIds.Contains(sid))
+                    failedLiveSessionIds.Add(sid);
+            }
+        }
+
+        // Protect in both the TTL and cap arms. Query the whole warm set so a protected cap
+        // member is replaced by the next oldest idle member, never another worker.
         var warmSessions = parsed.Where(p => warm.Contains(p.Agent) && p.SessionId.HasValue)
             .Select(p => p.SessionId!.Value).Distinct().ToList();
         var workingSessions = await SessionMessageQueueService.IsWorkingBatchAsync(_db, warmSessions, ct);
-        var lastTranscript = await _db.TranscriptEntries.AsNoTracking()
-            .Where(t => warmSessions.Contains(t.AgentSessionId))
-            .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { SessionId = g.Key, At = g.Max(t => t.CreatedAt) })
-            .ToDictionaryAsync(t => t.SessionId, t => t.At, ct);
+        var lastTranscript = warmSessions.Count == 0
+            ? new Dictionary<Guid, DateTime>()
+            : await _db.TranscriptEntries.AsNoTracking()
+                .Where(t => warmSessions.Contains(t.AgentSessionId))
+                .GroupBy(t => t.AgentSessionId)
+                .Select(g => new { SessionId = g.Key, At = g.Max(t => t.CreatedAt) })
+                .ToDictionaryAsync(t => t.SessionId, t => t.At, ct);
         var protectedAgents = parsed.Where(p => p.SessionId is Guid sid
-                && liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid)
-                && lastTranscript.GetValueOrDefault(sid) > cutoff)
+                && ((liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid))
+                    || uncertainSessionIds.Contains(sid)
+                    || failedLiveSessionIds.Contains(sid)))
             .Select(p => p.Agent).ToHashSet();
         var acted = 0;
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
@@ -9307,10 +9344,25 @@ public sealed partial class AgentTaskDispatcher
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
             agent.PoolIdleSince = now;
-            var sid = Guid.Parse(agent.PersistentSessionId!);
-            _logger.LogWarning(
-                "Deferred retirement of warm delegate '{Name}': session {Id} is mid-turn (last transcript {At:O})",
-                agent.Name, sid, lastTranscript[sid]);
+            if (!Guid.TryParse(agent.PersistentSessionId, out var sid))
+            {
+                acted++;
+                continue;
+            }
+
+            if (workingSessions.GetValueOrDefault(sid) && lastTranscript.TryGetValue(sid, out var at))
+            {
+                _logger.LogWarning(
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is mid-turn (last transcript {At:O}). Detection only; the session is never killed.",
+                    agent.Name, sid, at);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is retained (unproved idle or a Failed task whose session has not exited). Detection only; the session is never killed.",
+                    agent.Name, sid);
+            }
+
             acted++;
         }
         foreach (var group in warm.GroupBy(a => (
@@ -9339,6 +9391,10 @@ public sealed partial class AgentTaskDispatcher
             stale.Add(row.Agent);
         }
 
+        acted += await RecordPooledWorkingPastTtlAsync(
+            pool, sessionStartedAt, liveSessionIds, workingSessions, busyAgentIds, failedLiveSessionIds,
+            lastTranscript, now, ct);
+
         var incidentAgentIds = (await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value))
             .Select(i => i.AgentId!.Value)
@@ -9346,15 +9402,68 @@ public sealed partial class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
+        var retireSessionIds = retire
+            .Select(agent => Guid.TryParse(agent.PersistentSessionId, out var sid) ? sid : (Guid?)null)
+            .Where(sid => sid.HasValue)
+            .Select(sid => sid!.Value)
+            .Distinct()
+            .ToList();
+        var recheckWorking = await SessionMessageQueueService.IsWorkingBatchAsync(_db, retireSessionIds, ct);
+        var recheckUnfinished = retireSessionIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.AgentSessions.AsNoTracking()
+                .Where(s => retireSessionIds.Contains(s.Id)
+                    && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
+                .Select(s => new { s.Id, s.Status, s.StartedAt, s.RunnerId })
+                .ToListAsync(ct))
+            .Where(s => s.Status is SessionStatus.Created or SessionStatus.Stopping
+                || s.StartedAt == default
+                || _runtime?.RemoteInventoryPending(s.RunnerId) == true
+                || (s.Status is SessionStatus.Starting or SessionStatus.Running
+                    && recheckWorking.GetValueOrDefault(s.Id)))
+            .Select(s => s.Id)
+            .ToHashSet();
+        var recheckFailed = retireSessionIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Status == AgentTaskStatus.Failed
+                    && t.AgentSessionId != null
+                    && retireSessionIds.Contains(t.AgentSessionId.Value))
+                .Select(t => t.AgentSessionId!.Value)
+                .ToListAsync(ct))
+            .Where(recheckUnfinished.Contains)
+            .ToHashSet();
+        // A Failed session is held even when the recheck above classified it as idle.
+        if (retireSessionIds.Count > 0)
+        {
+            foreach (var sid in await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Status == AgentTaskStatus.Failed
+                    && t.AgentSessionId != null
+                    && retireSessionIds.Contains(t.AgentSessionId.Value))
+                .Select(t => t.AgentSessionId!.Value)
+                .ToListAsync(ct))
+            {
+                if (unfinishedSessionIds.Contains(sid) || recheckUnfinished.Contains(sid))
+                    recheckFailed.Add(sid);
+            }
+        }
+
         foreach (var agent in retire)
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
             if (Guid.TryParse(agent.PersistentSessionId, out var sid)
-                && workingSessions.GetValueOrDefault(sid))
+                && (recheckUnfinished.Contains(sid) || recheckFailed.Contains(sid) || recheckWorking.GetValueOrDefault(sid)))
+            {
+                agent.PoolIdleSince = now;
                 _logger.LogWarning(
-                    "Retiring warm delegate '{Name}': session {Id} reads mid-turn but has been silent since {At:O} (full idle TTL elapsed)",
-                    agent.Name, sid, lastTranscript.GetValueOrDefault(sid));
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is retained on recheck. Detection only; the session is never killed.",
+                    agent.Name, sid);
+                acted++;
+                continue;
+            }
+
             var idleSince = agent.PoolIdleSince;
             if (!await KillPooledSessionAsync(agent, ct))
             {

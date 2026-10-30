@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -80,6 +81,9 @@ public sealed class AgentTaskService
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
     private readonly SessionMessageQueueService? _messageQueue;
+    // CARD-1610. Optional. Absent, a Failed task's detail cannot tell a fresh listed seat from
+    // an unconfirmed one and reports the release as unknown.
+    private readonly SeatOccupancyState? _seats;
 
     public AgentTaskService(
         AppDbContext db,
@@ -120,8 +124,10 @@ public sealed class AgentTaskService
         AgentTaskWorktreeBaseResolver? baseResolver = null,
         SessionMessageQueueService? messageQueue = null,
         IServiceScopeFactory? seatReleaseScopes = null,
-        DispatchConcurrencySettingsService? dispatchConcurrency = null)
+        DispatchConcurrencySettingsService? dispatchConcurrency = null,
+        SeatOccupancyState? seats = null)
     {
+        _seats = seats;
         _dispatchConcurrency = dispatchConcurrency;
         _seatReleaseScopes = seatReleaseScopes;
         _messageQueue = messageQueue;
@@ -2823,6 +2829,7 @@ public sealed class AgentTaskService
             catch (JsonException) { }
         }
         AgentTaskSessionDto? sessionDetail = null;
+        FailedTaskSessionFactsDto? failedSession = null;
         if (task.AgentSessionId is Guid sessionId)
         {
             var session = await _db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
@@ -2834,6 +2841,13 @@ public sealed class AgentTaskService
                     .Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (DateTime?)t.CreatedAt, ct);
                 sessionDetail = new AgentTaskSessionDto(sessionId, session.Status, working,
                     session.LastSeenAt, session.EndedAt, lastTranscriptAt);
+                if (task.Status == AgentTaskStatus.Failed
+                    && session.Status is SessionStatus.Created or SessionStatus.Starting
+                        or SessionStatus.Running or SessionStatus.Stopping)
+                {
+                    failedSession = FailedTaskSessionFacts.Describe(
+                        task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime);
+                }
             }
         }
         return new AgentTaskDetailDto(
@@ -2874,7 +2888,8 @@ public sealed class AgentTaskService
                 .OrderByDescending(d => d.CreatedAt).ThenByDescending(d => d.Id)
                 .Select(d => new TaskSyncDebtDto(d.Id, d.State.ToString(), d.SourceSha,
                     d.ConfirmedSha, d.ReasonCode, d.Attempts, d.NextAttemptAt, d.SourceReadyAt))
-                .FirstOrDefaultAsync(ct));
+                .FirstOrDefaultAsync(ct),
+            FailedSession: failedSession);
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
