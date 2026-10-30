@@ -273,7 +273,13 @@ public class LandingGit : ILandingGit
             static (finished, state) =>
             {
                 _ = finished.Exception;
-                ((Action)state!)();
+                try { ((Action)state!)(); }
+                catch (IOException)
+                {
+                    // Journal removal already logged/annotated its failure and kept the fence.
+                    // Observe it here rather than losing it in an unobserved continuation task.
+                    Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+                }
             },
             whenClosed,
             CancellationToken.None,
