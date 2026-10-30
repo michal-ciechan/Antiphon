@@ -78,7 +78,7 @@ evidence, not a reproduction performed by this Plan task.
 | Environment IDs authenticate caller class. | `AgentTaskService.AuthenticateAsync:186-234` resolves task hashes first, then session hashes, then capabilities (whose usage stamp writes). `AgentTaskEndpoints:184-193,537-548` makes detail GET public and ignores bad polling tokens. | The new route projects the token's principal without a caller-selected ID or persistence writes. |
 | Existing locks span the whole rollout. | `apphost-common.ps1:16-19,28` expires restart/launch locks at 15 minutes; `deploy-server2.ps1:234-275` holds the remote rollout lock around a POST only. | Add a heartbeat marker and synchronized restart admission; valid-stale is explicitly fail-open, unknown is fail-closed. |
 | One phase task can wait for the entire drain. | `deploy-server2.ps1:12,1246,1295` defaults to 480 minutes, while TaskDeadlinePolicy limits local tools to 90 and tasks to 240. Invoke-HostCase has no local child deadline. | Cap drain slices at 30, bound whole phase/local cleanup, and require joined journal handover. |
-| A clean pinned branch cannot block land. | `AgentTaskLandingProtocol.ScanTarget:557-563` refuses any non-main worktree on the land target. | Detached standing/interactive source and detached main activation; registered task feat branch is the branch-contract exception. |
+| A clean pinned branch cannot block land. | `AgentTaskLandingProtocol:470-473,557-564` records `target_checked_out_elsewhere` during canonical advance **after confirmed publication**, producing LandedWithResidue. It does not refuse or hold the land. | Detached standing/interactive source and detached main activation; registered task feat branch is the branch-contract exception. |
 | Version response exposes a sha field. | `server/Application/Dtos/VersionDtos.cs:16-19` and `VersionEndpoints.cs:19` expose the SHA as JSON `version`; `Resolve-AppHostLoadedIdentity` reads that member. | Round-3 correction: validate `version`, never invent `sha` or accept informationalVersion as proof. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
@@ -107,7 +107,7 @@ decision remains for another Plan round.
 | D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
 | D-10 | This is the caller's final Plan round with verification design folded in. Next is Code after CARD-1609 lands; no further Plan/TestDesign pass. Code collects bounded timing evidence, then ordinary Review evaluates the implemented production paths and complete receipts. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. Before Code dispatch, confirm CARD-1609 is actually landed on rc and master and record both exact SHAs; no landing status is inferred from its plan. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
-| D-12 | Standing/interactive controller source and the canonical activation checkout are detached at X. A managed task keeps its registered private feat branch, as required by git-common; never put a land target branch in any controller worktree. Refuse symbolic standing/interactive HEAD and task branches outside the registered feat forms. | A controller on rc holds every rc land at target_checked_out_elsewhere. Detaching a managed task would violate its assigned-branch contract, so the existing private feat form is the narrow exception. A throwaway clone adds custody/caching overhead and is not the default. |
+| D-12 | Standing/interactive controller source and the canonical activation checkout are detached at X. A managed task keeps its registered private feat branch, as required by git-common; never put a land target branch in any controller worktree. Refuse symbolic standing/interactive HEAD and task branches outside the registered feat forms. | A controller on rc permits publication but leaves `target_checked_out_elsewhere` residue: the canonical checkout and its local rc ref do not advance, retaining the CARD-0358 stale-AppHost-source hazard. Detaching a managed task would violate its assigned-branch contract, so the existing private feat form is the narrow exception. A throwaway clone adds custody/caching overhead and is not the default. |
 | D-13 | Maintain the existing doc-contract pins and include their affected classes in CP-4. Preserve unrelated authority, retention and branch-contract phrases. | Dropping pinned text without updating/checking its owner tests creates a predictable red build; a new duplicate prose-only suite is unnecessary. |
 
 ### Caller admission (review D-1)
@@ -124,7 +124,7 @@ path fields, and a small DTO, never a full task/session entity:
 |---|---|
 | Task | `callerClass, taskId, sessionId, agentId, workspace, status, worktreePath, branch` from that token's task. Require Worktree, Dispatched/Working and its registered native non-main linked checkout; Shared refuses `RolloutControllerWorkspaceRequired`. Missing facts, Blocked/terminal task or mismatched supplied environment IDs refuse `RolloutControllerIdentityUnknown`. A missing task-ID environment variable changes nothing. |
 | StandingAgent | `callerClass, sessionId, agentId` from a live session with a non-null `StandingAgentId`. No task-detail GET or synthetic task claim. Require clean pinned non-main controller source and existing operator authorization. Provided agent ID must match; any provided task ID refuses. |
-| Interactive | No token header returns only `callerClass=Interactive`. The wrapper admits this class only when token, task ID and agent ID are all absent. Whitespace or partial identity is malformed. Existing operator authorization remains mandatory. |
+| Interactive | No token header returns only `callerClass=Interactive`. The wrapper admits this class only when `ANTIPHON_TASK_TOKEN`, `ANTIPHON_TASK_ID`, `ANTIPHON_AGENT_ID`, `ANTIPHON_SESSION_ID` and `ANTIPHON_ORCHESTRATOR` are all absent (including no empty supplied values). Whitespace or partial identity is malformed. Existing operator authorization remains mandatory. |
 | Unsupported / unknown | Unknown, empty supplied or stale credentials return generic 403 with no principal facts. A token-only unassigned card session (no StandingAgentId), a capability principal or ended session returns 403 `RolloutCallerUnsupported`; never infer standing from session existence or interactive from failed authentication. |
 
 Implement the read-only projection in `AgentTaskService.cs` and its DTO in
@@ -434,7 +434,12 @@ is credited as a successful remote completion.
 
 The code at `AgentTaskLandingProtocol.cs:557-563` inspects every Git worktree
 registration. A non-main controller with `refs/heads/rc/...` checked out causes
-`target_checked_out_elsewhere`, regardless of token class or Shared status.
+`target_checked_out_elsewhere` **after publication**, regardless of token class or
+Shared status in this canonical-advance check. This is LandedWithResidue, not a
+pre-publication hold/refusal; a separate Shared claim can still hold admission.
+The canonical checkout's own branch/local target ref stays behind the published
+remote ref. A subsequent restart builds stale canonical files (CARD-0358), so a
+successful land alone cannot prove the source was advanced or activated.
 Standing and interactive controllers therefore use an owned linked worktree
 created detached at X, and admission requires `git symbolic-ref -q HEAD` to report
 detached with a valid exact HEAD, not merely a clean tree. Reject all symbolic
@@ -461,8 +466,17 @@ interactive controller on rc refuses before credentials, detached X admits,
 unknown HEAD refuses, and a registered task feat branch admits without any
 checkout mutation. Extend the real land witness to prove rc publication with
 detached canonical/controller HEADs still at X; the target ref becomes Y.
-The adversarial branch-on-target fixture must show the real landing protocol's
-refusal before the guard, not mock its reason. These are vectors within existing
+The adversarial Worktree-controller-on-target fixture bypasses only the new
+controller admission by setting up Git directly, then drives the real land
+service/protocol: assert **remote publication Y**, terminal LandedWithResidue and
+`CanonicalAdvanceReason=target_checked_out_elsewhere`, with canonical source/local
+rc ref unadvanced. Assert the reason from the persisted operation, never a mocked
+refusal. The positive detached fixture must publish Y and update local rc to Y
+without this residue, while canonical/controller detached HEADs remain X.
+`ScanTarget` returns `(null, null)` for an otherwise known detached main with no
+foreign target holder, so canonical advance updates the target ref without moving
+source files. This preserves named-X activation and avoids the stale local-ref
+residue; later activation still deliberately selects reviewed Y. These are vectors within existing
 methods, so the nine/five rosters do not expand.
 
 ### Phase tasks, bounded waits and successor recipe (review D-3)
@@ -611,7 +625,7 @@ script against the live canonical checkout.
 `tests/Antiphon.Tests/Scripts/ActiveRolloutMarkerTests.cs`. Extend the needed
 fixture transport in `scripts/fixtures/c727-fake-http.ps1` and `C1008WrapperFixture`
 in `RollingVolumeRecycleScriptTests.cs`; explicitly clear inherited task identity
-and agent identity in legacy interactive fixtures. Feed owner facts through the new token-resolved caller DTO,
+agent, session and orchestrator identity in legacy interactive fixtures. Feed owner facts through the new token-resolved caller DTO,
 never a test-only workspace bypass. Reuse `LandingSafetyHarness`, `LandingGitFixture`,
 `C1008WrapperFixture` and the production wrapper/host census extraction in
 `tests/Antiphon.Tests/Scripts/C1361CensusProbes.cs`; adapt its helper visibility or
@@ -682,7 +696,7 @@ qualification, drain-temp and retire-temp. Those steps never pull/restart AppHos
 Preserve the existing canary, continuous-dispatch and final retire gates.
 
 Replace these existing passages, rather than appending contradictory guidance
-(line numbers refer to the round-2 source base):
+(line numbers refer to the inspected round-4 assigned base; refresh after CARD-1609):
 
 | File / existing text | Required replacement |
 |---|---|
@@ -814,8 +828,8 @@ references to server/infrastructure suffice; no project extraction is justified.
 |---|---|---|
 | V-1 | Shared own-task DTO; invoke real wrapper for each mutating phase and allowed resume/dry-run. Refuse before operator-token access, census sleep or any traced effect. Assert fixed reason and zero effects. Old wrapper reaches an effect/wait or lacks the new reason. | New red/green admission. |
 | V-2 | Real pinned linked worktree, matching live DTO/source/API SHA succeeds. Wrong source SHA, tracked dirt, foreign tree and alias to canonical refuse. Rc ref moving X -> Y while canonical detached HEAD stays X with API X still admits controller X; API Y refuses X before credentials/effects. Missing/malformed/API-failure version refuses, including next-phase drift and subsequent `all` subphases. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
-| V-3 | Each D-7 caller class has its own method: task token takes precedence even with task ID dropped or forged agent ID; a genuine standing token is admitted with no task-detail GET; all-absent interactive remains admitted. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, identity 403/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
-| V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol: Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
+| V-3 | Each D-7 caller class has its own method: task token takes precedence even with task ID dropped or forged agent ID; a genuine standing token is admitted with no task-detail GET; all-five-absent interactive remains admitted; a lone session ID or orchestrator marker refuses. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, identity 403/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
+| V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol (including the checkout-pinning publication-plus-residue and detached positive vectors): Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
 | V-5 | Same-source owner/alias and unknown identity still hold. Shared writer appearing while verification releases the repository lease blocks the real resume path. | Existing safety regression; not a pure predicate test. |
 | V-6 | Bind land owner to recycled runner. Prove Shared cycle, then separate Worktree scenario: complete real land and feed production task/list/detail projections into wrapper and host HTTP fixtures. Actual census refuses/waits while pending and clears only after publication/terminal proof, controller still Working. Another genuine writer keeps recycle refused. | Integrated remedy, remote effects stubbed. |
 | R-1 | Six `C1364BoundLandWaitProofTests` methods preserve cleared/expired waits before/after removal, ordinary/resume/preview, wrapper and host. | Unchanged census regression. |
