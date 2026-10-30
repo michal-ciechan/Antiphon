@@ -2354,6 +2354,26 @@ function ConvertTo-QualificationStampText {
     return [string]$Value
 }
 
+function ConvertTo-QualificationUtcTicks {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    try {
+        if ($Value -is [datetimeoffset]) { return [int64]([datetimeoffset]$Value).UtcTicks }
+        if ($Value -is [datetime]) {
+            $stamp = [datetime]$Value
+            if ($stamp.Kind -eq [DateTimeKind]::Local) { return [int64]$stamp.ToUniversalTime().Ticks }
+            if ($stamp.Kind -eq [DateTimeKind]::Unspecified) {
+                return [int64]([datetime]::SpecifyKind($stamp, [DateTimeKind]::Utc)).Ticks
+            }
+            return [int64]$stamp.Ticks
+        }
+        $parsed = [datetimeoffset]::Parse([string]$Value, [cultureinfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+        return [int64]$parsed.UtcTicks
+    } catch {
+        return $null
+    }
+}
+
 function ConvertFrom-QualificationJToken {
     param($Token)
     if ($null -eq $Token) { return $null }
@@ -2747,8 +2767,8 @@ function Write-QualificationRunPhase {
                 if ($null -ne $row.seconds) { $phaseSeconds = [double]$row.seconds }
                 $kept.Add([ordered]@{
                     name = [string]$row.name
-                    startedAt = [string]$row.startedAt
-                    endedAt = [string]$row.endedAt
+                    startedAt = (ConvertTo-QualificationStampText -Value $row.startedAt)
+                    endedAt = (ConvertTo-QualificationStampText -Value $row.endedAt)
                     seconds = $phaseSeconds
                 })
             }
@@ -2758,8 +2778,8 @@ function Write-QualificationRunPhase {
     if ($null -ne $Seconds) { $phaseSeconds = [double]$Seconds }
     $kept.Add([ordered]@{
         name = [string]$Name
-        startedAt = [string]$StartedAt
-        endedAt = [string]$EndedAt
+        startedAt = (ConvertTo-QualificationStampText -Value $StartedAt)
+        endedAt = (ConvertTo-QualificationStampText -Value $EndedAt)
         seconds = $phaseSeconds
     })
     $doc = [ordered]@{ version = 1; phases = @($kept.ToArray()) }
@@ -2772,6 +2792,8 @@ function Get-QualificationSetupAccounting {
     $sum = 0.0
     $overlapped = $false
     $countedOnce = $false
+    $firstStartUtcTicks = $null
+    $recordedFirstStart = $false
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
     $path = Join-Path $dir 'setup-phases.json'
     $intervals = New-Object System.Collections.Generic.List[object]
@@ -2786,10 +2808,12 @@ function Get-QualificationSetupAccounting {
                 if ($phaseName -eq 'build' -or $phaseName -eq 'npm-build' -or $phaseName -eq 'dotnet-build') {
                     if ($null -ne $row.seconds) { $sum += [double]$row.seconds }
                 }
-                $startTicks = $null
-                $endTicks = $null
-                try { $startTicks = [datetimeoffset]::Parse([string]$row.startedAt).UtcTicks } catch { $startTicks = $null }
-                try { $endTicks = [datetimeoffset]::Parse([string]$row.endedAt).UtcTicks } catch { $endTicks = $null }
+                $startTicks = ConvertTo-QualificationUtcTicks -Value $row.startedAt
+                $endTicks = ConvertTo-QualificationUtcTicks -Value $row.endedAt
+                if (-not $recordedFirstStart) {
+                    $recordedFirstStart = $true
+                    $firstStartUtcTicks = $startTicks
+                }
                 if ($null -ne $startTicks -and $null -ne $endTicks) {
                     $intervals.Add([pscustomobject]@{ StartTicks = [int64]$startTicks; EndTicks = [int64]$endTicks })
                 }
@@ -2805,6 +2829,7 @@ function Get-QualificationSetupAccounting {
         setupSeconds = [double]$setup
         perChunkBuildSum = [double]$sum
         overlapped = [bool]$overlapped
+        firstStartUtcTicks = $firstStartUtcTicks
     }
 }
 
