@@ -11,8 +11,17 @@ namespace Antiphon.SessionRunner;
 public sealed class RunnerCustodyLedger
 {
     public VerificationCustodyStore Store { get; }
+    private readonly ILinuxCustodyRecovery? _recovery;
 
-    public RunnerCustodyLedger(string root, IVerificationCustodyFiles? files = null) => Store = new(root, files: files);
+    public RunnerCustodyLedger(string root, IVerificationCustodyFiles? files = null,
+        ILinuxCustodyRecovery? recovery = null)
+    {
+        Store = new(root, files: files);
+        _recovery = recovery;
+    }
+
+    /// <summary>Test seam. Production reads stay on <see cref="Store"/> until explicit release calls recovery.</summary>
+    internal ILinuxCustodyRecovery? RecoveryForTests => _recovery;
 
     public IDisposable AcquireSession(Guid sessionId)
     {

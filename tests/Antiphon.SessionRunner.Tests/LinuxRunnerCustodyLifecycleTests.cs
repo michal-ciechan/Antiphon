@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -8,7 +12,8 @@ namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
 /// CARD-1614 native Linux custody lifecycle. Slice A owns the installed-probe and
-/// namespace methods. Root-exit, natural completion and lost-host release stay out.
+/// namespace methods. Slice B adds root-exit, natural completion and lost-host release.
+/// Those three skip until the entrypoint namespace marker is published. A skip is not a pass.
 /// </summary>
 [NativeLinuxOnly("Linux custody lifecycle executes on Linux only.")]
 [Category("Integration")]
@@ -107,6 +112,62 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         result.Stdout.ShouldContain("rc2=3");
     }
 
+    [Test]
+    public async Task C1614_Root_exit_read_does_not_seal_live_descendant()
+    {
+        RequireNativeLifecycle();
+        await using var fx = await NativeHold.StartAsync();
+        await fx.WaitForDescendantAsync();
+        await fx.WaitForRootExitAsync();
+        var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Draining);
+        status.Receipt.ShouldBeNull();
+        File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
+        Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C1614_Natural_completion_accepts_exact_receipt_and_allows_shutdown()
+    {
+        RequireNativeLifecycle();
+        await using var fx = await NativeHold.StartAsync(hold: false);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        VerificationCustodyStatus status;
+        do
+        {
+            status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, timeout.Token);
+            if (status.Receipt is null)
+                await Task.Delay(100, timeout.Token);
+        } while (status.Receipt is null);
+        var receipt = fx.Store.ValidateReceipt(status.Receipt, fx.Binding, status.Host!);
+        receipt.Disposition.ShouldBe(VerificationCustodyState.Exited);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.TerminationSucceeded.ShouldBeNull();
+        await fx.Runtime.SessionForTests(fx.Binding.Generation.SessionId).ShutdownForTests();
+    }
+
+    [Test]
+    public async Task C1614_Lost_host_explicit_release_kills_but_stays_unknown()
+    {
+        RequireNativeLifecycle();
+        await using var fx = await NativeHold.StartAsync();
+        await fx.WaitForDescendantAsync();
+        fx.KillHost();
+        Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+        var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, true, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Receipt.ShouldBeNull();
+        Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeFalse();
+        File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+    }
+
+    private static void RequireNativeLifecycle()
+    {
+        RequireHelpers();
+        if (!File.Exists("/run/antiphon-custody/namespace"))
+            throw new SkipTestException("Requires the entrypoint-published namespace marker.");
+    }
+
     private static void RequireHelpers()
     {
         if (!OperatingSystem.IsLinux())
@@ -166,4 +227,94 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     }
 
     private readonly record struct ShellResult(int ExitCode, string Stdout, string Stderr);
+
+    private sealed class NativeHold : IAsyncDisposable
+    {
+        public required SessionRunnerRuntime Runtime { get; init; }
+        public required VerificationExecutionBinding Binding { get; init; }
+        public required VerificationCustodyStore Store { get; init; }
+        public required string ReleasePath { get; init; }
+        public required string DescendantPath { get; init; }
+        public required string RootPath { get; init; }
+        public int RootPid { get; private set; }
+        public int DescendantPid { get; private set; }
+        public int HostPid { get; private set; }
+
+        public static async Task<NativeHold> StartAsync(bool hold = true)
+        {
+            var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "c1614-life-" + Guid.NewGuid().ToString("N")));
+            var snapshot = Path.Combine(root, "snapshot");
+            Directory.CreateDirectory(snapshot);
+            var settings = new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(root, "logs"),
+                PtyBackend = "inbox",
+                LinuxCustodyQualified = true,
+            };
+            var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+            var now = DateTime.UtcNow;
+            var binding = new VerificationExecutionBinding(Guid.NewGuid(),
+                new(Guid.NewGuid(), Guid.NewGuid(), new string('b', 40)),
+                new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
+                new(root, Path.Combine(root, ".git"), snapshot,
+                    Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/c1614", Guid.NewGuid()),
+                VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId);
+            var script = Path.Combine(root, "payload.sh");
+            var descendant = Path.Combine(root, "descendant.pid");
+            var release = Path.Combine(root, "release");
+            var body = hold
+                ? "#!/bin/sh\nsetsid sh -c 'echo $$ > \"" + descendant + "\"; while [ ! -f \"" + release + "\" ]; do sleep 0.1; done' </dev/null >/dev/null 2>&1 &\nsleep 0.2\nexit 0\n"
+                : "#!/bin/sh\nexit 0\n";
+            await File.WriteAllTextAsync(script, body);
+            var request = new RunnerLaunchRequest(binding.Generation.SessionId, "/bin/sh", [script],
+                new Dictionary<string, string>(), snapshot, 80, 24, VerificationBinding: binding);
+            var started = await runtime.StartAsync(request, CancellationToken.None);
+            return new NativeHold
+            {
+                Runtime = runtime, Binding = binding, Store = runtime.CustodyForTests.Store,
+                ReleasePath = release, DescendantPath = descendant, RootPath = root,
+                RootPid = started.Pid ?? 0, HostPid = started.HostPid ?? 0,
+            };
+        }
+
+        public async Task WaitForDescendantAsync()
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (File.Exists(DescendantPath) && int.TryParse((await File.ReadAllTextAsync(DescendantPath)).Trim(), out var pid) && pid > 0)
+                {
+                    DescendantPid = pid;
+                    return;
+                }
+                await Task.Delay(100);
+            }
+            throw new System.TimeoutException("descendant pid was not published");
+        }
+
+        public async Task WaitForRootExitAsync()
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (RootPid > 0 && !Directory.Exists("/proc/" + RootPid))
+                    return;
+                await Task.Delay(100);
+            }
+            throw new System.TimeoutException("tracked root did not exit");
+        }
+
+        public void KillHost()
+        {
+            try { Process.GetProcessById(HostPid).Kill(entireProcessTree: false); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            try { await File.WriteAllTextAsync(ReleasePath, "release"); } catch (IOException) { }
+            try { await Runtime.DisposeAsync(); } catch { }
+            try { Directory.Delete(RootPath, recursive: true); } catch { }
+        }
+    }
 }

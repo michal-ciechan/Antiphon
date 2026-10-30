@@ -12,6 +12,26 @@ public sealed record CustodyFailure(string Reason, DateTime AtUtc);
 /// </summary>
 public sealed record LinuxNamespaceRecord(int Revision, Guid NamespaceId, Guid ContainerId);
 
+/// <summary>CARD-1614. Root membership observed while the tracked root was alive. Not a receipt.</summary>
+public sealed record LinuxPlacementRecord(int Revision, int Pid, DateTime StartTimeUtc, Guid ContainerId, Guid NamespaceId);
+
+/// <summary>
+/// CARD-1614. Explicit Linux release that observed zero when a receipt is impossible.
+/// Release evidence only. Never a receipt and never source-clean.
+/// </summary>
+public sealed record LinuxReleaseDisposition(
+    int Revision, Guid StoreId, Guid ExecutionId, Guid NamespaceId,
+    Guid HostInstanceId, Guid ContainerId, DateTime ReleasedAtUtc);
+
+/// <summary>CARD-1614. First time an execution was observed Draining or post-seal Unknown. Written once.</summary>
+public sealed record LinuxUnresolvedRecord(int Revision, DateTime FirstSeenUtc, string State);
+
+/// <summary>CARD-1614. The one warning emitted after the unresolved state has lasted 30 minutes.</summary>
+public sealed record LinuxUnresolvedWarning(int Revision, DateTime FirstSeenUtc, DateTime WarnedAtUtc, string State);
+
+/// <summary>CARD-1614. Dead-host helper attempt. Written once. The response stays Unknown.</summary>
+public sealed record LinuxRecoveryRecord(int Revision, Guid ContainerId, bool KillSucceeded, int KillError, DateTime AtUtc);
+
 /// <summary>External I/O seam for durable custody writes, including the pre-rename fault boundary.</summary>
 public interface IVerificationCustodyFiles
 {
