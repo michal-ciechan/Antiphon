@@ -167,6 +167,83 @@ public sealed class VolumeRetirementReceiptTests
         fixture.Removed.ShouldBeEmpty();
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Manual_attestation_is_exact_and_cannot_waive_findings()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        var receipt = ReceiptPath(fixture);
+        var scripted = await File.ReadAllTextAsync(receipt);
+        var missing = await CheckPreview(fixture, "C1008_MODE=manual");
+        missing.Exit.ShouldNotBe(0, "J10 manual without attestation/commissioned authority must refuse before consuming Ready; " + missing.Output);
+        (await File.ReadAllTextAsync(receipt)).ShouldBe(scripted);
+        fixture.Removed.ShouldBeEmpty();
+
+        var attestation = Path.Combine(fixture.Root, "manual.json");
+        var intent = new JsonObject
+        {
+            ["schema"] = 1, ["mode"] = "manual", ["actor"] = "commissioned-fixture-delegate",
+            ["authorityRef"] = "fixture-task-J10", ["reason"] = "exercise exact manual retirement",
+            ["utc"] = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            ["operationId"] = VolumeRetirementFixture.Operation, ["phase"] = "Preview",
+            ["targets"] = JsonNode.Parse(scripted)!["targets"]!.DeepClone(), ["previewDigest"] = null,
+            ["fingerprints"] = JsonNode.Parse(scripted)!["fingerprints"]!.DeepClone()
+        };
+        await File.WriteAllTextAsync(attestation, intent.ToJsonString());
+        var context = "C1008_MODE=manual\nC1008_MANUAL_ACTOR=commissioned-fixture-delegate\n" +
+            "C1008_MANUAL_AUTHORITY_REF=fixture-task-J10\nC1008_ATTESTATION_FILE=" + VolumeRetirementFixture.Quote(attestation);
+        await VolumeRetirementFixture.ReadyPreview(fixture, context);
+        var manual = await File.ReadAllTextAsync(receipt);
+        JsonNode.Parse(manual)!["mode"]!.GetValue<string>().ShouldBe("manual", "J10 manual provenance survives the real writer");
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            await File.ReadAllBytesAsync(receipt))).ToLowerInvariant();
+        intent["phase"] = "Apply";
+        intent["previewDigest"] = digest;
+        var valid = intent.ToJsonString();
+        foreach (var vector in new[] { "missing", "actor", "authority", "digest", "operation", "target", "fingerprint", "reason", "stale", "mode", "unsigned" })
+        {
+            var changed = JsonNode.Parse(valid)!;
+            var extra = context;
+            switch (vector)
+            {
+                case "missing": extra += "\nunset C1008_ATTESTATION_FILE"; break;
+                case "actor": changed["actor"] = "somebody-else"; break;
+                case "authority": extra += "\nunset C1008_MANUAL_AUTHORITY_REF"; break;
+                case "digest": changed["previewDigest"] = new string('0', 64); break;
+                case "operation": changed["operationId"] = "c1008" + new string('f', 32); break;
+                case "target": changed["targets"]![0] = "antiphon-runner-cache-npm-content"; break;
+                case "fingerprint": changed["fingerprints"]!["antiphon-runner-temp_work"]!["CreatedAt"] = "replacement"; break;
+                case "reason": changed["reason"] = " "; break;
+                case "stale": changed["utc"] = "2000-01-01T00:00:00Z"; break;
+                case "mode": changed["mode"] = "scripted"; break;
+                case "unsigned": changed["actor"] = "<actor>"; break;
+            }
+            await File.WriteAllTextAsync(attestation, changed.ToJsonString());
+            var rejected = await CheckPreview(fixture, extra);
+            rejected.Exit.ShouldNotBe(0, "J10 attestation " + vector + "; " + rejected.Output);
+            (await File.ReadAllTextAsync(receipt)).ShouldBe(manual, "J10 refusal cannot rewrite Ready");
+            fixture.Removed.ShouldBeEmpty();
+        }
+        await File.WriteAllTextAsync(attestation, valid);
+        var accepted = await CheckPreview(fixture, context);
+        accepted.Exit.ShouldBe(0, "J10 exact commissioned attestation consumes the same receipt; " + accepted.Output);
+        JsonNode.Parse(await File.ReadAllTextAsync(receipt))!["attestation"]!["actor"]!
+            .GetValue<string>().ShouldBe("commissioned-fixture-delegate");
+        using var unsafeFixture = new C1008HostFixture(main: false);
+        var (_, repo) = await VolumeRetirementFixture.SeedPublishedOuter(unsafeFixture);
+        await File.AppendAllTextAsync(Path.Combine(repo, "readme.txt"), "unpublished dirty bytes\n");
+        var unsafeAttestation = Path.Combine(unsafeFixture.Root, "manual.json");
+        await File.WriteAllTextAsync(unsafeAttestation, intent.ToJsonString());
+        var refused = await unsafeFixture.Run("retire-temp-runner",
+            context.Replace(attestation, unsafeAttestation, StringComparison.Ordinal), dryRun: true);
+        refused.Exit.ShouldNotBe(0, "J10 manual authority cannot waive content findings; " + refused.Output);
+        refused.Output.ShouldContain("RecycleWorktreeDirty");
+        unsafeFixture.Removed.ShouldBeEmpty();
+        File.Exists(ReceiptPath(unsafeFixture)).ShouldBeFalse("J10 unsafe manual preview cannot publish Ready");
+    }
+
     private static string ReceiptPath(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server", "retirement", VolumeRetirementFixture.Operation, "receipt.json");
 
