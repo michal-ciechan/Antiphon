@@ -168,14 +168,21 @@ fi
 # custody-unready continuation as a failed boot, not an entrypoint refusal.
 if [ -r /usr/local/lib/antiphon-custody-common.sh ]; then
   # shellcheck disable=SC1091
-  source /usr/local/lib/antiphon-custody-common.sh
-  custody_namespace_entrypoint_step \
-    /var/lib/antiphon-custody \
-    /run/antiphon-custody \
-    /usr/local/lib/antiphon-custody-common.sh
+  # A readable library that fails to load is the same continuation as a missing
+  # one. The step call stays bare: its own failure path returns 0.
+  if source /usr/local/lib/antiphon-custody-common.sh \
+    && declare -F custody_namespace_entrypoint_step >/dev/null 2>&1; then
+    custody_namespace_entrypoint_step \
+      /var/lib/antiphon-custody \
+      /run/antiphon-custody \
+      /usr/local/lib/antiphon-custody-common.sh
+  else
+    echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2 || true
+    export SessionRunner__LinuxCustodyQualified=false || true
+  fi
 else
-  echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2
-  export SessionRunner__LinuxCustodyQualified=false
+  echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2 || true
+  export SessionRunner__LinuxCustodyQualified=false || true
 fi
 
 # --- step 4: iptables backend (D-4) ---------------------------------------------------
