@@ -254,6 +254,46 @@ public class RemoteControlMaintenanceQueueTests
     }
 
     [Test]
+    public async Task RV514_Unreadable_frame_at_fence_sequence_is_refreshed_not_terminal()
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        await h.ArmProbeAfterWriteAsync();
+        var generation = h.Generation;
+        var stage = 0;
+        var partialUses = 0;
+        h.Adapter.BeforeRenderedSnapshot = () =>
+        {
+            if (h.Adapter.RenderedScreenOverride is not null && ++partialUses > 2)
+            {
+                h.Adapter.RenderedScreenOverride = null;
+                h.Adapter.SnapshotSequence++;
+            }
+        };
+        h.Runner.SnapshotOverride = sessionId =>
+        {
+            if (h.Adapter.ConditionalInputs.SequenceEqual(["/remote-control"]) && stage == 0)
+            {
+                stage = 1;
+                h.Adapter.SnapshotSequence++;
+                h.Adapter.RenderedScreenOverride = "Crunched for 1s\n\n";
+            }
+            return Task.FromResult(new SessionRunnerSnapshotDto(sessionId,
+                h.Adapter.SnapshotRawOutput(), h.Adapter.SnapshotRenderedScreen(),
+                h.Adapter.SnapshotSequence, generation, generation));
+        };
+
+        var result = await h.ReserveAndExecuteAsync();
+
+        result.ShouldBe(RemoteControlArmResult.ArmedObserved);
+        stage.ShouldBe(1);
+        partialUses.ShouldBeGreaterThan(2);
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control", "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe(["/remote-control"]);
+        h.Runner.RawInputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(10_000)]
     [Arguments("input")]
     [Arguments("menu")]
     [Arguments("working")]
