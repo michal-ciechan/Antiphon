@@ -16,5 +16,6 @@ public sealed class ProcessStopIntentStore(string root,
         return request;
     }
     public Task<bool> TryRecordAsync(ProcessStopIntentDto intent, CancellationToken ct = default) => Task.FromResult(false);
+    public static ProcessStopIntentDto? ReadRecovered(string root, Guid sessionId, DateTime generation) => null;
     public static string FileNameFor(ProcessStopIntentDto intent) => $"{intent.SessionId:N}-{intent.AcceptedStartedAt.Ticks}-{intent.RequestId:N}.json";
 }
