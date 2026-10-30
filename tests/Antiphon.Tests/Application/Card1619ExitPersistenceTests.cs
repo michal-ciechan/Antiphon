@@ -230,6 +230,7 @@ public class Card1619ExitPersistenceTests
             await using var db = value.Db();
             db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "raw", Cwd = "/tmp", CreatedAt = generation, StartedAt = generation, LastSeenAt = generation,
                 Status = terminal ? SessionStatus.Stopped : SessionStatus.Running,
+                ExitCode = terminal ? 123 : null, // Legacy integer without a signal is incomplete evidence.
                 TerminationSource = terminal ? SessionTerminationSource.OperatorRequest : SessionTerminationSource.Unknown,
                 FailureReason = terminal ? "retained request detail" : null });
             await db.SaveChangesAsync();
