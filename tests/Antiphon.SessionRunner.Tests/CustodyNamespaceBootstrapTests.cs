@@ -138,6 +138,21 @@ public sealed class CustodyNamespaceBootstrapTests
               /sys/fs/cgroup/freezer/antiphon-custody
             cp "$library" /usr/local/lib/antiphon-custody-common.sh
             printf '%s\n' "$ns" > /run/antiphon-custody/namespace
+            miss=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            mdir=/sys/fs/cgroup/pids/antiphon-custody/$ns/$miss/tree
+            mkdir -p "$mdir" /sys/fs/cgroup/freezer/antiphon-custody/$ns/$miss/tree
+            sleep 30 &
+            victim=$!
+            printf '%s\n' "$victim" > "$mdir/cgroup.procs"
+            set +e
+            bash "$kill_helper" "$miss"
+            missing_rc=$?
+            set -e
+            if kill -0 "$victim" 2>/dev/null; then echo missing_victim=alive; else echo missing_victim=dead; fi
+            echo "missing_rc=$missing_rc"
+            kill "$victim" 2>/dev/null || true
+            wait "$victim" 2>/dev/null || true
+            victim=0
             pdir=/sys/fs/cgroup/pids/antiphon-custody/$ns/$id/tree
             fdir=/sys/fs/cgroup/freezer/antiphon-custody/$ns/$id/tree
             mkdir -p "$pdir" "$fdir"
@@ -153,13 +168,16 @@ public sealed class CustodyNamespaceBootstrapTests
             set -e
             if kill -0 "$victim" 2>/dev/null; then echo victim=alive; else echo victim=dead; fi
             echo "kill_rc=$kill_rc"
-            if kill -0 "$victim" 2>/dev/null && [ "$kill_rc" -ne 0 ]; then
+            if kill -0 "$victim" 2>/dev/null && [ "$kill_rc" -ne 0 ] && [ "$missing_rc" -ne 0 ]; then
               exit 0
             fi
             exit 1
             """);
         failed.ExitCode.ShouldBe(0, failed.Stdout);
         failed.Stdout.ShouldContain("victim=alive");
+        failed.Stdout.ShouldContain("missing_victim=alive");
+        failed.Stdout.ShouldContain("CustodyFreezeFailed");
+        failed.Stdout.ShouldContain("CustodyFreezerMissing");
     }
 
     [Test]

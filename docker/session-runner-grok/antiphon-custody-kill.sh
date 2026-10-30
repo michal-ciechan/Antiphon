@@ -91,7 +91,7 @@ kill_v2() {
 
 kill_v1() {
   local id="$1"
-  local ns pids_dir freezer_dir pid pids read_failed=0 thaw_failed=0 freeze_failed=0
+  local ns pids_dir freezer_dir pid pids read_failed=0 thaw_failed=0
   ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
   pids_dir="$V1_PIDS_ROOT/$ns/$id"
   freezer_dir="$V1_FREEZER_ROOT/$ns/$id"
@@ -101,26 +101,27 @@ kill_v1() {
     echo "C604_CUSTODY_REFUSED CustodyTreeMissing" >&2
     exit 4
   fi
-  freeze_failed=0
-  if [ -f "$freezer_dir/tree/freezer.state" ]; then
-    if ! echo FROZEN > "$freezer_dir/tree/freezer.state"; then
-      freeze_failed=1
-    fi
+  # Freeze must stick before any pid is read or signalled. A missing freezer, or a
+  # freeze write that fails, refuses with the tree still running. A later read or
+  # thaw failure still thaws a freeze that did stick, and still signals nothing
+  # when the pid list itself could not be read.
+  if [ ! -f "$freezer_dir/tree/freezer.state" ]; then
+    refuse CustodyFreezerMissing
+  fi
+  if ! echo FROZEN > "$freezer_dir/tree/freezer.state"; then
+    refuse CustodyFreezeFailed
   fi
   if ! pids="$(tree_pids "$pids_dir/tree/cgroup.procs")"; then
     read_failed=1
     pids=""
   fi
-  for pid in $pids; do
-    kill -KILL "$pid" 2>/dev/null || true
-  done
-  if [ -f "$freezer_dir/tree/freezer.state" ]; then
-    if ! echo THAWED > "$freezer_dir/tree/freezer.state"; then
-      thaw_failed=1
-    fi
+  if [ "$read_failed" -eq 0 ]; then
+    for pid in $pids; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
   fi
-  if [ "$freeze_failed" -ne 0 ]; then
-    refuse CustodyFreezeFailed
+  if ! echo THAWED > "$freezer_dir/tree/freezer.state"; then
+    thaw_failed=1
   fi
   if [ "$read_failed" -ne 0 ]; then
     refuse CustodyTreeUnreadable
