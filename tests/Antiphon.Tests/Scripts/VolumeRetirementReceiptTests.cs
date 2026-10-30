@@ -327,7 +327,7 @@ public sealed class VolumeRetirementReceiptTests
         using var holder = new C1008HostFixture(main: false);
         var held = Path.Combine(holder.Root, "held");
         var release = Path.Combine(holder.Root, "release");
-        var first = holder.Run("retire-temp-runner", $"""
+        var first = holder.Run("retire-temp-runner", $$"""
             eval "$C1008_CACHE_LOCK_SOURCE_BODY"
             c1008_status_proof() {
                 touch {{VolumeRetirementFixture.Quote(held)}}
@@ -346,7 +346,7 @@ public sealed class VolumeRetirementReceiptTests
                 fixtures.Add(contender);
                 var requested = Path.Combine(contender.Root, "requested");
                 var acquired = Path.Combine(contender.Root, "acquired");
-                var extra = $"""
+                var extra = $$"""
                     SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(holder.Root, "server"))}}
                     eval "$C1008_CACHE_LOCK_SOURCE_BODY"
                     flock() {
@@ -370,7 +370,7 @@ public sealed class VolumeRetirementReceiptTests
                 contender.Trace.ShouldBeEmpty("J7 no Docker read or effect before admission: " + entry);
             }
             using var timed = new C1008HostFixture(main: false);
-            var timeout = await timed.Run("deploy-temp-runner", $"""
+            var timeout = await timed.Run("deploy-temp-runner", $$"""
                 SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(holder.Root, "server"))}}
                 flock() { command flock -w 0.1 "$3"; }
                 """);
@@ -397,7 +397,7 @@ public sealed class VolumeRetirementReceiptTests
         var cacheRelease = Path.Combine(cache.Root, "cache-release");
         var requestedCache = Path.Combine(waiting.Root, "cache-requested");
         var acquiredCache = Path.Combine(waiting.Root, "cache-acquired");
-        var cacheRun = cache.Run("retire-temp-runner", $"""
+        var cacheRun = cache.Run("retire-temp-runner", $$"""
             eval "$C1008_CACHE_LOCK_SOURCE_BODY"
             LANE=host
             c849_lock
@@ -409,7 +409,7 @@ public sealed class VolumeRetirementReceiptTests
         try
         {
             await WaitForBarrier(cacheHeld, cacheRun);
-            waitingRun = waiting.Run("retire-temp-runner", $"""
+            waitingRun = waiting.Run("retire-temp-runner", $$"""
                 SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(cache.Root, "server"))}}
                 eval "$C1008_CACHE_LOCK_SOURCE_BODY"
                 flock() {

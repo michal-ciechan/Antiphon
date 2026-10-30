@@ -337,6 +337,13 @@ later guard marks PartialRefused and stops before the next target; work is last.
 Preview and apply use the same read-only content scan. Changed local refs, reflogs,
 indices or linked-admin metadata require a fresh preview, even when newly published.
 Each preview nonce has an immutable host artifact; proof.md is a rendering.
+Temp resume reopens that protected operation and immutable preview, checks the
+complete remaining incarnation set, then freshly audits retained content. Only a
+durable delete intent permits confirmed absence to become `removed-observed`;
+that result does not attribute who removed it. Replacement or absence without an
+intent refuses. A completed replay rechecks absence and records no duplicate
+intent, effect or removal. File data and the renamed record's directory are flushed
+before the coordinator acknowledges persistence.
 Main keeps the v1 collector: three attempts, a 30s sleep between Drift retries, and
 after the journal records container removal the third attempt may keep those rows.
 A content or census refusal at gate 9 returns nonzero and leaves the rollout incomplete.
