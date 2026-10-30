@@ -2,6 +2,33 @@ using Antiphon.Agents.Pty;
 
 namespace Antiphon.SessionRunner;
 
+/// <summary>Production dead-host release. Uses the installed helper for the recorded container only.</summary>
+internal sealed class LinuxInstalledCustodyRecovery(IProcessLivenessProbe probe) : ILinuxCustodyRecovery
+{
+    private const string NamespaceMarker = "/run/antiphon-custody/namespace";
+
+    public bool HostGone(int pid, DateTime startUtc) => !probe.IsAlive(pid, startUtc);
+
+    public Guid ReadNamespace()
+    {
+        try
+        {
+            var text = File.ReadAllText(NamespaceMarker).Trim();
+            return Guid.TryParseExact(text, "D", out var id) ? id : Guid.Empty;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Guid.Empty;
+        }
+    }
+
+    public PtyTerminationObservation Kill(Guid containerId) =>
+        new LinuxCgroupContainment(containerId).Terminate();
+
+    public IReadOnlyList<int> ReadTreePids(Guid containerId) =>
+        new LinuxCgroupContainment(containerId).ReadActive().Pids;
+}
+
 /// <summary>
 /// CARD-1614. Explicit dead-host release for one recorded Linux container.
 /// Production uses the installed helper. Tests inject a recording fake.

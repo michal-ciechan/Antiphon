@@ -191,6 +191,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     {
         _settings = settings.Value;
         _linuxRecovery = linuxRecovery;
+        _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
             _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
@@ -198,7 +199,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(
-            Path.Combine(_settings.SessionLogPath, "verification-custody"), recovery: _linuxRecovery));
+            Path.Combine(_settings.SessionLogPath, "verification-custody"),
+            recovery: _linuxRecovery ?? new LinuxInstalledCustodyRecovery(_processLiveness)));
         _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
@@ -206,7 +208,6 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _labelClock = timeProvider ?? TimeProvider.System;
         _herdrPaneReadTimeout = TimeSpan.FromMilliseconds(
             Math.Max(250, _herdrClient?.Settings.PaneReadTimeoutMs ?? new HerdrSettings().PaneReadTimeoutMs));
-        _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
         _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
@@ -492,15 +493,53 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             using var custodyLease = _custody.Value.AcquireSession(binding.Generation.SessionId);
             if (seal) _custody.Value.Seal(binding);
             else _custody.Value.Store.RequireBinding(binding);
-            if (_custody.Value.ReadFinal(binding) is { } final) return final;
+            if (_custody.Value.ReadFinal(binding) is { } final) return NoteUnresolved(final);
             if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
                 && session.VerificationBinding == binding)
-                return await session.CollectCustodyAsync(ct);
+                return NoteUnresolved(await session.CollectCustodyAsync(ct));
             if (_custody.Value.ReadProducer(binding) is { } producer)
-                return _custody.Value.Accept(producer);
-            return _custody.Value.ReadUnavailable(binding);
+                return NoteUnresolved(_custody.Value.Accept(producer));
+            if (seal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
+                return NoteUnresolved(_custody.Value.ReleaseDeadHost(binding));
+            return NoteUnresolved(_custody.Value.ReadUnavailable(binding));
         }
         finally { gate.Release(); }
+    }
+
+    private VerificationCustodyStatus NoteUnresolved(VerificationCustodyStatus status)
+    {
+        if (status.Binding.Backend != VerificationCustodyBackends.LinuxCgroup || status.Receipt is not null)
+            return status;
+        if (status.State is not (VerificationCustodyState.Draining or VerificationCustodyState.Unknown))
+            return status;
+        var store = _custody.Value.Store;
+        var binding = status.Binding;
+        var now = _labelClock.GetUtcNow().UtcDateTime;
+        if (now.Kind != DateTimeKind.Utc)
+            now = DateTime.SpecifyKind(now, DateTimeKind.Utc);
+        var first = store.ReadRecord<LinuxUnresolvedRecord>(binding, "linux-unresolved.json");
+        if (first is null)
+        {
+            store.WriteRecord(binding, "linux-unresolved.json",
+                new LinuxUnresolvedRecord(1, now, status.State.ToString()));
+            return status;
+        }
+
+        var seen = first.FirstSeenUtc.Kind == DateTimeKind.Utc
+            ? first.FirstSeenUtc
+            : DateTime.SpecifyKind(first.FirstSeenUtc, DateTimeKind.Utc);
+        if (now - seen < TimeSpan.FromMinutes(30))
+            return status;
+        if (store.ReadRecord<LinuxUnresolvedWarning>(binding, "linux-unresolved-warning.json") is not null)
+            return status;
+        store.WriteRecord(binding, "linux-unresolved-warning.json",
+            new LinuxUnresolvedWarning(1, seen, now, status.State.ToString()));
+        var container = status.Host?.ContainerId ?? Guid.Empty;
+        _logger.LogWarning(
+            "custody-unresolved execution {ExecutionId} container {ContainerId}",
+            binding.ExecutionId.ToString("D"),
+            container.ToString("D"));
+        return status;
     }
 
     public VerificationExecutionBinding ResolveCustodyBinding(Guid sessionId, Guid executionId, DateTime acceptedStartedAt) =>
@@ -2062,9 +2101,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 }
             }
 
-            // Dead (or unadoptable) host: the ConPTY died with it, so the child is gone too.
-            // Register the session as Exited with the fate the manifest recorded so the server
-            // sees a real exit instead of an unknown session.
+            // A dead unbound host took its ConPTY child with it. A live host that still carries
+            // a verification binding was not killed: adoption failure is not an automatic stop.
+            // The operator verifies that host's pid and start identity, stops it through an owned
+            // handle, then reissues CleanupVerification. Registering the discovered session as
+            // Exited reports the manifest's fate. It is not proof a bound child has exited.
             var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
             if (manifest.VerificationBinding is { } exitedBinding)
                 exitedSession.SetCustody(_custody.Value, exitedBinding);
@@ -4505,11 +4546,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     if (CustodyObserveOverride is { } observe)
                         observed = await observe(binding, ct);
-                    else if (_client is not { } client) return _custodyLedger.ReadUnavailable(binding);
+                    else if (_client is not { } client)
+                    {
+                        if (binding.Backend == VerificationCustodyBackends.LinuxCgroup && RunnerSealPresent(binding))
+                            return _custodyLedger.ReleaseDeadHost(binding);
+                        return _custodyLedger.ReadUnavailable(binding);
+                    }
                     else
                     {
-                        var seal = HasExited || _custodyLedger.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
-                        observed = await client.GetCustodyAsync(binding, seal, ct);
+                        var linux = binding.Backend == VerificationCustodyBackends.LinuxCgroup;
+                        var runnerSeal = RunnerSealPresent(binding);
+                        var seal = linux ? runnerSeal : HasExited || runnerSeal;
+                        try
+                        {
+                            observed = await client.GetCustodyAsync(binding, seal, ct);
+                        }
+                        catch (Exception ex) when (linux && runnerSeal
+                            && ex is not OperationCanceledException and not VerificationCustodyException)
+                        {
+                            return _custodyLedger.ReleaseDeadHost(binding);
+                        }
                     }
                 }
                 if (observed.Receipt is not null && _tailer is { } tailer)
@@ -4534,7 +4590,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 try
                 {
+                    if (ReleaseDispositionMatched())
+                        return;
                     var custody = await CollectCustodyAsync(ct);
+                    if (ReleaseDispositionMatched())
+                        return;
                     if (custody.Receipt is not null && _client is { } client)
                     {
                         await client.ShutdownAsync(ct);
@@ -4551,6 +4611,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 }
             }
         }
+
+        private bool RunnerSealPresent(VerificationExecutionBinding binding) =>
+            _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
+
+        private bool ReleaseDispositionMatched() =>
+            VerificationBinding is { } binding && _custodyLedger!.MatchesReleaseDisposition(binding);
 
         /// <summary>
         /// The connected client, waiting out the cold-start window when necessary. On a cold
