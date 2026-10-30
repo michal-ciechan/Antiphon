@@ -52,6 +52,7 @@ internal sealed class TaskCeilingHarness : IAsyncDisposable
                 Status = SessionStatus.Running, AgentKind = AgentKind.ClaudeCode, LastSeenAt = now, Cwd = Path.GetTempPath() });
         db.AgentTasks.Add(new AgentTask { Id = h.TaskId, RootTaskId = h.TaskId, Role = role, Title = "Ceiling witness",
             Goal = "keep working", Status = AgentTaskStatus.Working, AgentSessionId = h.SessionId,
+            CommitOnSettle = CommitOnSettlePolicy.Never,
             ParentSessionId = h.ParentId, ReplyTo = AgentTaskReplyTo.Session,
             WorkingDirectory = Path.GetTempPath(), DispatchedAt = now.AddMinutes(-ageMinutes), CreatedAt = now.AddMinutes(-ageMinutes) });
         db.TranscriptEntries.AddRange(new TranscriptEntry { AgentSessionId = h.SessionId, Sequence = 1,
