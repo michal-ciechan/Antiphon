@@ -1,27 +1,29 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: round-2 amendment in progress; previous 12-row import is historical only.
+Status: round-2 amendment complete; 14-row import passed; ready for final Opus plan Review.
 Plan tasks: `9a468e98` (round 1), `3b469108` (round 2); no product code edits.
 Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
 
 ## Round-2 amendment register
 
-Review `0e97ad1e` was read in full. This skeleton is published before further
-investigation; the old design below is not ready for Code until these edits and
-re-import are complete. Keep the confirmed consumer inventory, additive wire
-compatibility, RC-first landing and CARD-1610/1614 boundaries.
+Review `0e97ad1e` was read in full. All four defects are addressed in this plan.
+The confirmed consumer inventory, additive reader compatibility, RC-first landing
+and CARD-1610/1614 boundaries remain. A skeleton and each defect correction were
+committed and pushed separately; no product files changed.
 
-- Review D-1: verify pinned Porta source and loaded binary; replace the managed
-  copy with a Linux-only, version/shape-checked reflection read and fast-exit replay.
-- Review D-2: make recording best-effort; record failures never block an authorized
-  signal. Replace the write-refusal witnesses with actual stop/degraded-text cases.
-- Review D-3: disk records are untrusted. Only issuer memory or corroborated server
-  stop requests can qualify attribution; add a planted-record/self-kill witness.
-- Review D-4: split storage/transport S3a from classification/consumers S3b, each
-  at most 150 minutes; reconcile the roster, costs and importer.
-- Resolve all six advisories against source, including generation regressions,
-  ProcessExit wording, launcher kill, old-writer loss, fsync and the V-11 fixture.
+| Review finding | Resolution |
+|---|---|
+| D-1 | Verified package/source/loaded metadata; D-6 uses pinned Linux reflection, null on drift, two-level fast-exit replay and a loud assembly-contract witness. No Porta copy or dependency changes. |
+| D-2 | D-9 makes recording best-effort and always attempts an authorized signal; V-13/V-14 prove unavailable storage still kills and degrades attribution. |
+| D-3 | D-10 accepts live issuer memory only for issued attribution. The named server row proves request only. Planted/recovered records stay unverified; V-13/V-15 cover self-signal and final text. |
+| D-4 | S3a storage/transport and S3b classification/consumers have distinct files, tests, builds and 145-minute budgets; S4 follows both. |
+| A-1 | Add narrow R-5 generation regressions; decline the suggested whole-class expansions because the new V rows cover their changed branches (roster rationale below). |
+| A-2 | Keep ProcessExit/source/code diagnostic assertions and remove self-exit claims (D-12). |
+| A-3 | Add launcher cleanup as a host-target stop; explicitly exclude capability/server probe kills. |
+| A-4 | Freeze the old writer's field loss; missing evidence stays unknown and cannot erase stronger server evidence. |
+| A-5 | Specify file write-through, Flush(true), rename and directory fsync; any failure degrades records without refusing a stop. |
+| A-6 | Name Card1619NativeExitFixture, based on the existing in-process runner capture; no test-project staging change. |
 
 ## Decisions
 
@@ -330,6 +332,9 @@ without a durable request; preserve sender unknown in that case. The custody
 helper's own timeout tree-kill at `IPtyCustodyContainment.cs:195` targets the helper,
 not proof of the tracked root's exit; give it target-kind helper evidence and
 retain Unknown accounting. Add these arms to V-13's fallback/host-target tests.
+An upstream `Dispose`/`TryKill` that swallows its syscall failure supplies only an
+attempt, not issued evidence. Closing the master is a hangup attempt, not proof
+of a successfully delivered signal. Never promote a void return to issuer proof.
 Include `src/Antiphon.PtyHost.Client/PtyHostLauncher.cs:229`, whose launch-failure
 cleanup tree-kills the host, as a separate host-target issuer path in S4 and the
 V-13 host-target witness. `LinuxCgroupCustodyProbe.cs:136` kills only its timed-out
@@ -520,6 +525,12 @@ V-12/S3b reuses that fixture for four native cases through final failure/attenti
 text (9/15/exit0/exit23); injected DTOs cannot replace these cases. The report-first
 test stores a marked report and asserts its outcome wins before dead-session
 failure. An exit by itself never supplies a task result.
+V-13/V-15's planted-record case uses an agent-writable scratch root and an owned
+child that self-terminates by signal, with no stop request in either issuer's
+memory or server state. V-15 reuses the native fixture to assert final database,
+dispatcher and attention text. Do not substitute a pure formatter test for that
+trust-boundary witness. Native Linux classes use the existing NativeLinuxOnly
+policy and process limiter; Windows exclusion is not Linux execution credit.
 
 Red commits may introduce compile-compatible nullable scaffolding with default
 unknown evidence, then exercise the real current path and assert dropped signal,
@@ -547,10 +558,10 @@ These files do not exist in this Plan commit.
 | V-9 `Card1619RunnerExitTests`, SessionRunner.Tests, Linux | `Exit_while_detached_survives_adoption`, `Dead_host_manifest_preserves_signal`, `Old_host_adoption_keeps_signal_unknown`, `Http_exit_and_list_keep_signal`, `Phone_home_exit_and_recovery_keep_signal`, `Stale_generation_does_not_replace_exit_evidence` (6) | Restart plus HTTP/phone-home event/list paths retain evidence; wrong/missing generation cannot overwrite it |
 | V-10 `Card1619ExitPolicyTests`, Antiphon.Tests, Unit | `Describe_exit_evidence` with 10 `[Arguments]` cases: external 9, external 15, unknown positive, normal 0, normal 23, legacy 0, unknown code, requested-only, normal-exit race, CPU-spin policy stop (10) | Exact truthful text/classification; no self-exit or guessed sender; control asserts normal code 137 stays code 137 |
 | V-11 `Card1619ExitPersistenceTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_database_and_api` with four cases (9/15/exit0/exit23), `Live_event_and_reconciliation_agree`, `Terminal_row_is_enriched_without_changing_request_source`, `Resume_and_stale_events_keep_generation_boundary`, `Migration_preserves_old_rows_and_nullable_contract` (8) | Fresh DbContext after commit, live/reconciliation parity, restart/reset, additive schema upgrade; assertion fails on lost signal |
-| V-12 `Card1619ExitConsumerTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_failure_and_attention_text` with four cases (9/15/exit0/exit23), `Report_before_signal_death_still_settles`, `Signal_death_without_report_never_succeeds`, `Check_and_supervisor_keep_signal_evidence`, `Stop_stuck_remains_pending_without_observed_exit`, `Pool_and_terminal_seat_do_not_release_from_code_zero`, `Launch_cleanup_does_not_steal_a_normal_exit`, `Api_attempt_and_diagnostics_preserve_optional_signal` (11) | Actual consumer methods/projections, not source-string tests; hold/absence/custody/report authority unchanged |
+| V-12 `Card1619ExitConsumerTests`, Antiphon.Tests, Integration/Linux | `Native_exit_reaches_failure_and_attention_text` with four cases (9/15/exit0/exit23), `Report_before_signal_death_still_settles`, `Signal_death_without_report_never_succeeds`, `Check_and_supervisor_keep_signal_evidence`, `Stop_stuck_remains_pending_without_observed_exit`, `Pool_and_terminal_seat_do_not_release_from_code_zero`, `Launch_cleanup_does_not_steal_a_normal_exit`, `Api_attempt_and_diagnostics_preserve_optional_signal` (11) | Four real native observations reach identical dispatcher/attention clauses; actual consumer methods/projections preserve hold/absence/custody/report authority |
 | V-13 `Card1619StopIntentTests`, PtyHost.Tests, portable ordering plus Linux host | `Intent_is_durable_before_signal_when_storage_works`, `Write_failure_still_stops_and_never_claims_attribution` with 2 cases (ENOSPC seam, real unwritable directory), `Issued_update_follows_syscall`, `Crash_before_send_is_only_requested`, `Crash_after_send_before_update_is_unknown`, `Fallback_records_SIGHUP_separately`, `Natural_exit_race_is_not_our_kill`, `Host_kill_is_not_child_wait_evidence`, `Planted_issued_record_and_self_signal_remain_unconfirmed` (10) | Successful store proves file flush/rename/directory fsync ordering; both storage-failure cases still terminate an owned real child, preserve observed signal and render stop sender unknown |
 | V-14 `Card1619LinuxStopIntentTests`, SessionRunner.Tests, Linux | `Own_stop_preserves_SIGKILL_and_intent`, `Restart_recovers_requested_intent`, `Kill_all_records_each_owned_generation`, `Orphan_and_pending_kills_keep_identity`, `Custody_invocation_records_intent_before_helper`, `Unobserved_or_failed_kill_retains_stop_debt`, `Unwritable_record_directory_does_not_block_stop` (7) | Real runtime routes with deterministic boundary hooks; wrong PID/start/generation sends nothing; record failure still kills with unknown sender; intent/helper exit is not success |
-| V-15 `Card1619StopAttributionTests`, Antiphon.Tests, Integration | `Matching_live_issuer_intent_is_qualified_Antiphon_stop`, `No_intent_means_sender_unknown`, `Mismatched_generation_or_signal_is_not_attributed`, `Requested_only_and_failed_intents_remain_uncertain`, `Late_intent_enrichment_preserves_known_exit`, `Operator_and_policy_sources_are_not_overwritten`, `Planted_record_self_signal_stays_unconfirmed_in_task_and_attention`, `Server_request_without_issuer_is_request_only` (8) | DTO/storage round trip and final task/attention text, including request-only and normal-exit races |
+| V-15 `Card1619StopAttributionTests`, Antiphon.Tests, Integration/Linux | `Matching_live_issuer_intent_is_qualified_Antiphon_stop`, `No_intent_means_sender_unknown`, `Mismatched_generation_or_signal_is_not_attributed`, `Requested_only_and_failed_intents_remain_uncertain`, `Late_intent_enrichment_preserves_known_exit`, `Operator_and_policy_sources_are_not_overwritten`, `Planted_record_self_signal_stays_unconfirmed_in_task_and_attention`, `Server_request_without_issuer_is_request_only` (8) | DTO/storage round trip and final task/attention text, including request-only and normal-exit races |
 | V-16 `Card1619LinuxCustodyStopIntentTests`, SessionRunner.Tests, native cgroup-v1 | `Explicit_release_records_signal_without_fabricating_custody`, `Dead_host_recovery_records_intent_and_remains_unknown` (2) | Demonstrated live descendant in owned bound tree before release, observed exit afterward; intent cannot turn Unknown into a receipt |
 
 R-2 keeps all 5 existing `PtyKillProcessTreeTests` on native Windows. R-3 keeps all
@@ -572,16 +583,17 @@ exercise the changed native, source and live/reconcile branches directly. This i
 the minimal roster choice, not a claim those unrun classes passed.
 CP-8 typechecks optional client fields; it has no invented Vitest assertion count.
 
-Suffix audit at plan base: R-4 methods are unique; `PtyKillProcessTreeTests` and
-`AgentTaskLivenessTests` have no distinct longer-prefix class collision. Proposed
+Suffix audit repeated at round-2 base: R-4 and R-5 methods are unique;
+`PtyKillProcessTreeTests`, `AgentTaskLivenessTests` and `SessionGenerationExitTests`
+have no distinct longer-prefix class collision. Proposed
 `Card1619*Tests` names are unused. Repeat the declaration census after adding them
 and after porting. OR operands below are parenthesized, each ending in `*`; table
 pipes are escaped. Fresh TRX must contain each named class/method with zero skips
 on its required lane. A skipped native witness remains owed.
 
-Linux-native CP-1/3/4/5/9/10/13/14 and cgroup-v1 CP-12 are required Linux evidence.
+Linux-native CP-1/3/4/5/9/10/11/13/14 and cgroup-v1 CP-12 are required Linux evidence.
 Portable subcases do not replace native rows. CP-2 runs on Windows at the **final
-S1-S4 source**, covering modern and explicit inbox paths. macOS and cgroup-v2 are
+S1/S2/S3a/S3b/S4 source**, covering modern and explicit inbox paths. macOS and cgroup-v2 are
 outside this card's activation claim; CARD-1614's v2 obligation stays open. No
 new fleet host provisioning or Linux custody advertisement is implied.
 
@@ -590,7 +602,7 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-pty/` | linux-native-pty-exit | `/*/*/Card1619UnixExitTests/*` | V-1..6 plus private-contract guards | all 10 listed, 0 failed/skipped | 10 | 4 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-2 | S1-S4 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-windows/` | windows-native-exit-regression | `/*/*/(Card1619WindowsExitTests*)\|(PtyKillProcessTreeTests*)/*` | R-1,R-2 | all 7 listed, 0 failed/skipped | 7 | 7 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-2 | S1,S2,S3a,S3b,S4 | `tests/Antiphon.Agents.Pty.Tests -> bin-card1619-windows/` | windows-native-exit-regression | `/*/*/(Card1619WindowsExitTests*)\|(PtyKillProcessTreeTests*)/*` | R-1,R-2 | all 7 listed, 0 failed/skipped | 7 | 7 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-3 | S2 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host/` | linux-host-wire-and-skew | `/*/*/(Card1619ExitWireTests*)\|(Card1619LinuxHostExitTests*)/*` | V-7,V-8 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-4 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner/` | linux-runner-exit-adoption | `/*/*/Card1619RunnerExitTests/*` | V-9 | all 6 listed, 0 failed/skipped | 6 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-5 | S3a | `tests/Antiphon.Tests -> bin-card1619-storage/` | linux-server-exit-storage | `/*/*/Card1619ExitPersistenceTests/*` | V-11 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
@@ -600,7 +612,7 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-8 | S3a | n/a | portable-client-contract | `pwsh -NoProfile -File scripts/typecheck-client.ps1` | V-11 API contract | exit 0, both client projects typecheck | n/a | 2 | true | n/a |
 | CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 10 listed, 0 failed/skipped | 10 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 7 listed, 0 failed/skipped | 7 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | portable-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | linux-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-12 | S4 | CP-10 | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-14 | S3b | CP-13 | linux-generation-exit-regression | `/*/*/SessionGenerationExitTests/(C502_V1_queued_A_exit_released_after_B_resumed_changes_nothing*)\|(C502_V3_matching_B_exit_closes_B_after_the_stale_A_exit_was_ignored*)\|(C502_V9_severed_stream_then_a_snapshot_Exited_A_does_not_close_B*)` | R-5 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 
@@ -675,13 +687,36 @@ The Plan-only import at `df2178a7aeb87bc4727c69a94d9cdb543a8b2a53` accepted **12
 build slot. The bootstrap held its slot for 30 seconds. Five compiler warnings
 were emitted in existing checkpoint/HostCleanup sources; no product tests ran.
 The output was isolated under `/tmp/card1619-plan-build/`; generated YAML stays
-ignored. Final import after the documentation refinements is recorded at handoff.
+ignored. This is historical round-1 validation, not the amended roster.
+
+Round-2 import at `53ff2364a6930b5b0610129b90d827f20679bb4a` accepted **14 rows**,
+exit 0. Command: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label
+card1619-round2-import -SlotWaitMinutes 10 -- dotnet run --project
+tools/Antiphon.Checkpoints --property:OutputPath=/tmp/card1619-round2-3b469108/bin-tools/
+-- import --plan docs/superpowers/plans/2026-10-30-card-1619-linux-pty-exit-signal-plan.md
+--out .antiphon/card1619-round2.yaml`. Slot wait was 16 seconds, held time 40
+seconds; the five existing compiler warnings remained. The wrapper noted that
+dotnet run's implicit build uses its default node count (the host lease was held).
+Use the documented build-first/DLL recipe for subsequent checkpoint execution.
+There were no product tests or native process-stop experiments in this Plan task.
+
+Current roster totals: **102 required test results plus one typecheck command**.
+In numeric CP order, minima are 10/7/11/6/8/6/3/n.a./10/7/8/2/21/3; estimates
+are 4/7/6/6/9/1/2/2/6/6/9/2/10/2 whole minutes. Group sums are S1=4, S2=12,
+S3a=11, S3b=15, S4=23, final Windows=7. CP-13 precedes its reuse rows in the
+table because import resolves earlier build references. Final re-import after
+the lane/After-list and narrative refinements is recorded in the handoff report.
+Generated YAML and tool outputs remain ignored/scratch; remove this task's
+isolated tool output before settlement.
 
 Placement reads on 2026-10-30 succeeded for both required API routes. The current
 default selected an eligible Linux runner; an eligible Windows lane was available
 and another Linux lane was drained/unavailable. These are observations, not a
 fleet pin. Re-read before dispatch, omit `-Runner`, and set `-Platform Linux` or
 `-Platform Windows` only for their native rows; portable work omits Platform.
+Round-2 re-read both at 11:41 UTC: default revision 2, eligible Linux and Windows
+lanes available; an additional Linux lane was unavailable/draining. These reads
+do not pin a host. `-Platform Any` explicitly removes an inherited OS pin.
 
 `git fetch origin master` observed
 `698bf1b73e8abf449d5569ea74ac8c82e80f92a1`. The required master merge-tree check
@@ -691,17 +726,27 @@ them. Do not merge this branch wholesale into master. The RC merge-tree check
 against `e4c9547e10e3da59fd20684b49c029cdc6063fa8` was clean. Recheck the actual
 landing tip; the separate master port is intentional, not a hidden landability
 claim. CARD-1610 reference read at `76c583946d5c594052305da87a8b99e85f8639bd`.
+Round-2 fetch observed the same RC/master tips. At `53ff2364a6930b5b0610129b90d827f20679bb4a`,
+RC merge-tree was clean; master had the identical 12 conflicts as round-2 base
+`de6ca95fe5521b6a64e564298b7436d65460af26`, none on this plan. The evidence guard
+over those six round-2 commits reported 0 violations; final-tip results belong
+to the handoff report.
 
 ## Review and handoff
 
 Read the investigation at `docs/investigations/2026-10-30-codex-session-exit-no-report.md`.
 Review the completed plan with Opus before Code. Resolve placement from `GET /api/runner-defaults` and `GET /api/session-runners`; use portable, Linux-native and Windows-native lane names, not a fixed fleet location.
 
-Opus should judge D-6's bounded managed dependency patch, D-7's legacy/raw code
-versus signal contract, D-9's refusal on lost provenance, generation-safe terminal
-enrichment, native-asset propagation, and the 150-minute slices. No unanswered
-operator decision prevents this plan: these are explicit design decisions for
-review, not silently assumed implementation facts. On acceptance, commission
-S1 Code from the current pinned RC with this artifact; follow with S2-S4 and
-independent native Review. Product tests, native gates and measured performance
-remain owed, and the old mixed-version fleet cannot be credited as fixed.
+The design changed materially: the fork is removed, stop availability and trust
+rules change, and S3 is split. Therefore dispatch **final Opus plan Review**, not
+Code yet. Review D-6's pinned private-field/replay contract, D-9/D-10's best-effort
+and untrusted-record behavior, generation-safe enrichment and the five bounded
+slices. There is no unresolved operator choice; simpler conservative defaults
+are enumerated in Decisions.
+
+On acceptance commission S1 Code from pinned RC
+`e4c9547e10e3da59fd20684b49c029cdc6063fa8` (`rc/2026-10-27`), applying this plan
+artifact; follow with S2, S3a, S3b and S4 in order, then native Final Review. If
+the caller changes that source pin, re-audit overlapping CARD-1610/1614 files and
+the precise roster at dispatch. Product tests, native gates and measured p95
+remain owed; import success is not product verification or mixed-fleet activation.
