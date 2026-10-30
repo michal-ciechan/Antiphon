@@ -1481,6 +1481,15 @@ try {
         $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:foreignReadBytes += $opened.Stream.Position; ' + $dispose))
         Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
     }
+    $savedForeignBudget = ${function:New-QualificationReadBudget}
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $phaseReader = Get-Item -LiteralPath 'Function:Get-QualificationPhaseSums'
+    $savedForeignReaders['Get-QualificationPhaseSums'] = $phaseReader.ScriptBlock
+    $script:foreignListedPaths = [Collections.Generic.List[string]]::new()
+    $script:foreignListedCounts = [Collections.Generic.List[int]]::new()
+    $listStatement = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
+    $phaseInstrumented = $phaseReader.ScriptBlock.ToString().Replace($listStatement, ($listStatement + '; $script:foreignListedPaths.Add($folder); $script:foreignListedCounts.Add($entries.Count)'))
+    Set-Item -LiteralPath 'Function:Get-QualificationPhaseSums' -Value ([scriptblock]::Create($phaseInstrumented))
     $foreignSw = [Diagnostics.Stopwatch]::StartNew()
     $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
     $foreignSw.Stop()
@@ -1492,8 +1501,7 @@ try {
     $ownJournalBytes = [int64](Get-Item -LiteralPath (Join-Path $ownChunk $ownName)).Length
     Write-Host ('MEASURED journal-read-bytes=' + $script:foreignReadBytes + ' own-journal-bytes=' + $ownJournalBytes)
     Assert-Check ($script:foreignReadBytes -eq $ownJournalBytes) 'own-chunk-reads-only-own-journal-bytes'
-    # About twice the observed loaded maximum; product's 200 ms deadline is unchanged.
-    Assert-Check ($foreignSw.Elapsed.TotalSeconds -lt 0.75) 'own-chunk-aggregation-wall-budget'
+    Assert-Check ($script:foreignListedPaths.Count -eq 1 -and $script:foreignListedPaths[0] -eq $ownChunk -and $script:foreignListedCounts[0] -eq 2) 'own-chunk-lists-only-own-directory'
     $foreignExit = ([int]$foreignAgg.ChunkExitCode -eq 5 -and [string]$foreignAgg.ChunkResult -eq 'KEEP-5')
     Assert-Check ($foreignOwn -and $foreignExit) 'own-chunk-ignores-foreign-journals'
 } catch {
@@ -1503,11 +1511,12 @@ try {
     if ($null -ne $savedForeignReaders) {
         foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
     }
+    if ($null -ne $savedForeignBudget) { ${function:New-QualificationReadBudget} = $savedForeignBudget }
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # CARD-1598: the product retains its 200 ms read deadline when the shared timing
-# root holds 600 other journals. Host scheduling has a separate wall allowance.
+# root holds 600 other journals. Correctness uses an injected unexhausted budget.
 # A rerun must not open the earlier attempt.
 $crowdRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-crowd-' + [guid]::NewGuid().ToString('N'))
 $crowdLog = Join-Path $crowdRoot 'logs'
