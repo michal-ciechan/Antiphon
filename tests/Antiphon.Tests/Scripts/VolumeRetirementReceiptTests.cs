@@ -36,18 +36,19 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(fixture);
         var receipt = ReceiptPath(fixture);
         var original = await File.ReadAllTextAsync(receipt);
-        foreach (var vector in new[] { "duplicate", "unknown", "truncated", "hardlink", "symlink", "writable", "digest" })
+        foreach (var vector in new[] { "duplicate", "unknown", "truncated", "hardlink", "symlink", "writable", "digest", "flush" })
         {
             await File.WriteAllTextAsync(receipt, original);
             var mutation = vector switch
             {
                 "duplicate" => "sed -i 's/\"schema\":2/\"schema\":1,\"schema\":2/' \"$file\"",
-                "unknown" => "jq '.allowDelete=true' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
+                "unknown" => "jq -cS '.allowDelete=true' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
                 "truncated" => "printf '{' > \"$file\"",
                 "hardlink" => "ln \"$file\" \"$root/alias\"",
                 "symlink" => "mv \"$file\" \"$root/real\"; ln -s \"$root/real\" \"$file\"",
                 "writable" => "chmod 0777 \"$root\"",
                 "digest" => "C1008_EXPECTED_PROOF_DIGEST=" + new string('0', 64),
+                "flush" => "sync() { return 1; }",
                 _ => throw new InvalidOperationException(vector)
             };
             var check = await CheckPreview(fixture, mutation);
@@ -74,25 +75,38 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(fixture);
         var file = ReceiptPath(fixture);
         var original = await File.ReadAllTextAsync(file);
-        foreach (var field in new[] { "Name", "CreatedAt", "Mountpoint", "Labels", "role", "operationId", "phaseNonce", "daemon" })
+        foreach (var field in new[] { "Name", "CreatedAt", "Mountpoint", "Labels", "role", "operationId", "phaseNonce", "daemon", "inode" })
         {
             await File.WriteAllTextAsync(file, original);
             var mutation = field switch
             {
                 "operationId" => "C1008_OPERATION=c100800000000000000000000000000000002",
-                "phaseNonce" => "jq '.phaseNonce=\"foreign\"' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
+                "phaseNonce" => "jq -cS '.phaseNonce=\"foreign\"' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
                 "daemon" => "docker() { if [ \"$1\" = info ]; then printf 'other-daemon\\n'; else return 2; fi; }",
-                "role" => "jq '.targets[0]=\"antiphon-runner_work\"' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
-                "Labels" => "jq '.volumes[\"antiphon-runner-temp_work\"].Labels[\"foreign\"]=\"owner\"' \"$C1008_FIXTURE_ROOT/docker.json\" > \"$root/docker-next\"; mv \"$root/docker-next\" \"$C1008_FIXTURE_ROOT/docker.json\"",
-                _ => "jq '.volumes[\"antiphon-runner-temp_work\"]." + field + "=\"replacement\"' \"$C1008_FIXTURE_ROOT/docker.json\" > \"$root/docker-next\"; mv \"$root/docker-next\" \"$C1008_FIXTURE_ROOT/docker.json\""
+                "role" => "jq -cS '.targets[0]=\"antiphon-runner_work\"' \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"",
+                "inode" => "mount=\"$C1008_FIXTURE_ROOT/volumes/antiphon-runner-temp_work/_data\"; mv \"$mount\" \"$mount.old\"; mkdir \"$mount\"",
+                "Labels" => "jq -cS '.volumes[\"antiphon-runner-temp_work\"].Labels[\"foreign\"]=\"owner\"' \"$C1008_FIXTURE_ROOT/docker.json\" > \"$root/docker-next\"; mv \"$root/docker-next\" \"$C1008_FIXTURE_ROOT/docker.json\"",
+                _ => "jq -cS '.volumes[\"antiphon-runner-temp_work\"]." + field + "=\"replacement\"' \"$C1008_FIXTURE_ROOT/docker.json\" > \"$root/docker-next\"; mv \"$root/docker-next\" \"$C1008_FIXTURE_ROOT/docker.json\""
             };
             var check = await CheckPreview(fixture, mutation);
             check.Exit.ShouldNotBe(0, "J3 must refuse changed " + field + "; " + check.Output);
             await File.WriteAllTextAsync(fixture.StatePath, fixture.Docker.ToJsonString());
+            if (field == "inode")
+            {
+                var mount = VolumeRetirementFixture.WorkMount(fixture);
+                Directory.Delete(mount);
+                Directory.Move(mount + ".old", mount);
+                // Renaming changes ctime: a new legitimate preview is needed for
+                // this restored incarnation, so keep the inode vector last.
+            }
             fixture.Removed.ShouldBeEmpty();
         }
         await File.WriteAllTextAsync(file, original);
-        var control = await CheckPreview(fixture);
+        // A second fixture supplies an unchanged positive control; the inode cut
+        // above intentionally invalidates the first fixture's protected preview.
+        using var unchanged = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(unchanged);
+        var control = await CheckPreview(unchanged);
         control.Exit.ShouldBe(0, "J3 unchanged incarnations; " + control.Output);
     }
 
@@ -105,15 +119,27 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(fixture);
         var file = ReceiptPath(fixture);
         var original = await File.ReadAllTextAsync(file);
-        foreach (var edit in new[] { ".readyAt=\"2000-01-01T00:00:00Z\"", ".readyAt=\"2099-01-01T00:00:00Z\"", ".policyVersion=99", ".schema=1" })
+        var ready = DateTimeOffset.Parse(JsonNode.Parse(original)!["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds();
+        foreach (var fakeNow in new[] { ready + 901, ready - 61 })
+        {
+            await File.WriteAllTextAsync(file, original);
+            var check = await CheckPreview(fixture, $$"""
+                date() {
+                    if [ "$*" = '-u +%s' ]; then printf '%s\n' '{{fakeNow}}'; else command date "$@"; fi
+                }
+                """);
+            check.Exit.ShouldNotBe(0, "J4 real immutable receipt expires or exceeds clock skew; " + check.Output);
+        }
+        foreach (var edit in new[] { ".policyVersion=99", ".schema=1" })
         {
             await File.WriteAllTextAsync(file, original);
             var check = await CheckPreview(fixture, "jq " + VolumeRetirementFixture.Quote(edit) +
-                " \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"");
+                " \"$file\" > \"$root/mutated\"; mv \"$root/mutated\" \"$file\"; cp \"$file\" \"$root/preview.json\"");
             check.Exit.ShouldNotBe(0, "J4 stale/future/unsupported proof refuses " + edit + "; " + check.Output);
             fixture.Removed.ShouldBeEmpty();
         }
         await File.WriteAllTextAsync(file, original);
+        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(file)!, "preview.json"), original);
         (await CheckPreview(fixture)).Exit.ShouldBe(0, "J4 current compatible proof is usable");
     }
 
@@ -155,6 +181,7 @@ public sealed class VolumeRetirementReceiptTests
             C1008_TARGETS=(antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state)
             CASE_DIR="$C1008_FIXTURE_ROOT/evidence/retire-temp-runner"
             docker() { bash {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh"))}} "$@"; }
+            sudo() { [ "$1" = -n ] && shift; "$@"; }
             c1008_volume() { docker volume inspect "$1" | jq -c '.[0]'; }
             source {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh"))}}
             root="$SERVER2_ROOT/retirement/$C1008_OPERATION"; file="$root/receipt.json"

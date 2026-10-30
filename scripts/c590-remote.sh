@@ -6036,9 +6036,7 @@ c1008_volume() {
            ((.[0].Options | type)=="object" and (.[0].Options | length)==0)) and
          (.[0].Labels | type)=="object" and (.[0].CreatedAt | type)=="string" and
          (.[0].Mountpoint | type)=="string" then .[0] |
-           {Name,Driver,Options,CreatedAt,Mountpoint,Labels:(.Labels|with_entries(select(
-             .key=="com.docker.compose.project" or .key=="com.docker.compose.volume" or
-             .key=="io.antiphon.owner" or .key=="io.antiphon.cache-schema" or .key=="io.antiphon.cache-role")))}
+           {Name,Driver,Options,CreatedAt,Mountpoint,Labels,Scope}
          else error("identity") end' || return 2
 }
 
