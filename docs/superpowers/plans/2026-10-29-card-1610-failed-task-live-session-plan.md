@@ -245,10 +245,14 @@ explains why a failed live session need not appear orphaned. Do not call runner
 List per task on every attention GET; reuse bounded cached seat observations.
 Deduplicate generic SeatIdle/SlotOrphan warnings for this same concern, retaining
 other concerns. Clear only after authoritative exit/release or new ownership,
-not because Failed was already written. No new client test rows are required:
-use the existing attention rendering contract and add optional DTO facts; the
-CLI text is covered by its offline script tests. A bespoke client control is
-out of scope for this reduced design.
+not because Failed was already written. Use the existing attention rendering
+contract and add optional DTO facts; the CLI text has offline script tests.
+The existing BlockedQuestionCard needs a small explicit Ceiling branch: its
+fallback otherwise sends an ordinary answer or offers Retry. Add Continue,
+bounded Extend and existing Cancel controls that send the typed action/episode,
+and report "Decision recorded; session continues" instead of "Queued for the
+delegate". No auto-continue, Refine or Retry affordance appears for this kind.
+Update client/src/api/agentTasks.ts and its existing reply mutation typing.
 
 ## D-4 detail: Deploy and declared long work
 
@@ -430,11 +434,14 @@ Changing the classification during TestDesign requires revising this table,
 allowlist and count floor together. Any fixture that begins spawning must gain
 the assembly-local limiter and strict-roster membership before running.
 
-Client command rows from round 1 are removed with the bespoke client feature.
-There is therefore no uncounted Vitest obligation. If TestDesign establishes a
-necessary client behavior change, add a named command checkpoint with exact
-Vitest JSON `numTotalTests`/passed/failed floors and source binding before Code;
-a success string alone is not a test-count floor.
+Replace round-1's client visibility tests with three focused cases in
+client/src/features/delegations/BlockedCeilingHold.test.tsx: Continue sends a
+typed decision without ordinary reply; Extend validates/sends minutes and stale
+episode refusal; Cancel uses the existing route. Each also asserts no generic
+Retry/auto-continue affordance. CP-20/21 require a fresh Vitest JSON receipt with
+numTotalTests=3 and three exact case names, zero pending/todo, and for green
+numPassedTests=3/numFailedTests=0 plus exit 0. A success string is insufficient.
+These are client/Vitest, not C# Unit/Integration or ProcessSpawnLimit classes.
 
 ## D-9 detail: producer-to-recipient delivery witnesses
 
@@ -506,16 +513,16 @@ capacity for Working/Unknown. A stall is reported for a decision, never killed.
 
 | Slice | Product and documentation files | Test files / ordinary checkpoints |
 |---|---|---|
-| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and existing client type mirror; AttentionKind/AgentIncidentKind; delegate status rendering in its owning scripts/lib partial; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards |
+| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind; scripts/delegate.ps1 Status branch; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards |
 | S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; BlockedContextBuilder.cs; AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
 | S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs and hosted recovery; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
-| S4 declared Deploy budget and docs | scripts/delegate.ps1 and actual scripts/lib delegate parameter/body/status partials; scripts/deploy-server2.ps1; DTO/create/reply binding; docs/docker-stack.md, docs/ops-http.md, docs/testing-and-build.md reference only if its instruction changes | Scripts/TaskCeilingScriptTests.cs (8); TestLaneCategoryGuardTests, TestClassificationGuardTests, ProcessSpawnLimitTests; slow-tests-allowlist.txt and strict roster |
+| S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/BlockedQuestionCard.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/BlockedCeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
 
 Paths without a directory in this table are under server/Application/Services
-unless their explicit layer is named above. Code resolves existing script partials
-before editing; no duplicate parameter parser. Add new types only at their owning
+unless their explicit layer is named above. scripts/delegate.ps1 owns these
+parameter and switch branches; no duplicate parameter parser. Add types at their owning
 layer. Domain remains infrastructure-free. No build-slot broker, runner release
-protocol, raw killing API or client control is added. Existing generic attention
+protocol or raw killing API is added. Existing generic attention
 presentation consumes the new facts; preserve nullable DTO compatibility.
 
 Commit failing behavioral witnesses before fixes. S1 is a small independently
@@ -536,7 +543,7 @@ and method-scoped positive control for each behavior before Code.
 
 | IDs | Class and exact planned methods | Cases / required observations |
 |---|---|---|
-| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, notice-debt, source-custody; D-3/D-10 invariants |
+| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody; D-3/D-10 invariants. S3 adds notice-debt fields later, so S1 does not depend on that producer |
 | V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless) + 4 guard inputs (phase wins, boot, heartbeat, unknown); 12 |
 | V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review, Code, Deploy, Plan; 4 |
 | V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | ModelWait and LocalExecution each; 4 |
@@ -547,12 +554,13 @@ and method-scoped positive control for each behavior before Code.
 | V-9 | TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt; C1610_Failed_delegate_has_complete_UserPrompt; C1610_Stale_notice_is_not_delivered | D-9's three named arguments per method; 9 |
 | V-10 | TaskCeilingScriptTests.C1610_Status; C1610_Declared_budget; C1610_Ceiling_reply; C1610_Drain_wait | 2 (fresh/unknown), 2 (valid/invalid input sets), 1 (both typed actions), 3 (default/delegated refusal/explicit standalone); 8. Default drain arm proves still-busy retains drain state; delegated arm rejects Phase=all and waits >60 before side effects |
 | R-1 | AgentTaskPoolTests.C1610_Janitor_retains_working_after_full_ttl | 1 changed existing witness; old line kills and must go red |
-| R-2 | AgentTaskOverdueDeadlineTests.an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives | 1; retain the genuine phase-failure path, not a ceiling-only fixture |
+| R-2 | AgentTaskOverdueDeadlineTests.an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives | 1; existing idle TurnEnd ceiling-failure fixture remains valid under D-1; do not relabel it a phase test |
 | R-3 | TaskDeadlinePolicyTests.a_token_count_does_not_reset_the_role_ceiling; a_token_count_does_not_reset_the_local_tool_clock | 2; unchanged heartbeat clock ownership |
 | R-4 | DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt | 3; eligible/busy/crash, original parent failure note |
 | R-5 | SessionRuntimeActionRecoveryTests.C1259_admitted_task_attempt_cannot_settle_its_replacement | 2; catchup false/true |
 | R-6 | TerminalSeatReleaseTests.Working_remains_protected_after_arbitrary_silence; Explicit_operator_release_keeps_its_contract | 2; unchanged runner safety boundary |
 | R-7 | TestLaneCategoryGuardTests; TestClassificationGuardTests; ProcessSpawnLimitTests | 23 executed results per green group; include new process classes in strict roster |
+| V-11 | BlockedCeilingHold.test.tsx | 3 Vitest cases: Continue, Extend, Cancel; D-8 defines exact receipt floors |
 
 No new runner capability or live provider test is needed. Existing
 TaskOwnerGuard accepts Blocked with a live bound session, so a hold does not end
@@ -566,7 +574,8 @@ attribute add no cases. Inspect fresh TRX results; --list-tests is not evidence.
 
 Lanes: all `server-*` rows are portable **server Unit/Integration** as identified
 by Group; `scripts-*` are portable **script Integration** (offline pwsh stubs);
-`runner-*` is portable **session-runner Integration**. No host pin and no OS flag
+`runner-*` is portable **session-runner Integration**; `client-*` is portable
+**client/Vitest**. No host pin and no OS flag
 is needed. Unit and Integration cases are not mixed in one filter invocation.
 Same After group shares a build; each distinct source group owns fresh output.
 
@@ -591,6 +600,8 @@ Same After group shares a build; each distinct source group owns fresh output.
 | CP-17 | S2-S4 | CP-11 | server-attempt-regression | `/*/*/SessionRuntimeActionRecoveryTests/C1259_admitted_task_attempt_cannot_settle_its_replacement` | R-5 | 2 passed, 0 failed/skipped | 2 | 1 |
 | CP-18 | S2-S4 | CP-11 | server-unit-guards-hold | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
 | CP-19 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-safety-regression | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | R-6 | 2 passed, 0 failed/skipped | 2 | 3 |
+| CP-20 | S2-S4-red | n/a | client-ceiling-red | `pwsh -NoProfile -File scripts/test-client.ps1 BlockedCeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-11 | JSON total=3; all 3 names; intended control assertion red, not typecheck/setup failure | n/a | 2 |
+| CP-21 | S2-S4 | n/a | client-ceiling | `pwsh -NoProfile -File scripts/test-client.ps1 BlockedCeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-11 | JSON total=3, passed=3, failed/pending/todo=0; exact names; exit 0 | n/a | 2 |
 
 Run each committed After group once through the checkpoint tool. CP-19 belongs
 to S1 even though printed last; run server and runner projects sequentially.
@@ -604,12 +615,13 @@ red witnesses target actual missing behavior, not missing types or methods.
 
 ### Cost
 
-**19 rows, 5 producer builds, 47 estimated execution/build minutes**, excluding
-admission. Planned floors sum to **196 executions**: 70 red-witness executions
-and 126 green/regression executions, including repeated guard coverage at two
-different source groups. Unique new cases: 69; changed janitor case: 1.
+**21 rows, 5 producer builds, 51 estimated execution/build minutes**, excluding
+admission. Planned TUnit floors sum to **196 executions**: 70 red-witness
+executions and 126 green/regression executions. Add 3 red and 3 green Vitest
+executions = **202 total**. Guards repeat at two different source groups.
+Unique new cases: 69 TUnit + 3 Vitest; changed janitor case: 1.
 No product tests have run in Plan. These estimates require TestDesign refinement.
-Code authoring allowance is provisionally 180 minutes plus 47 ordinary minutes;
+Code authoring allowance is provisionally 180 minutes plus 51 ordinary minutes;
 post-land mutation cost is not claimed zero and remains for TestDesign's exact
 method/variant inventory. Independent plan Review returns to TestDesign before
 Code. No broad Unit/full-suite rerun is authorized by this targeted plan.
@@ -646,7 +658,7 @@ category, sample count and run IDs. Small samples remain provisional.
 | Admission | Unknown; card reports historical 10-25 minute waits | 15 minutes per acquisition as a provisional scheduling cap, not measured p95 |
 
 Expected complete group costs from the table: S1-red 7 minutes; S1 green including
-runner safety 12; S2-S4-red 12; S2-S4-green 16. Total **47**, versus round 1's 80.
+runner safety 12; S2-S4-red 14; S2-S4-green 18. Total **51**, versus round 1's 80.
 Five builds instead of twelve; four are Antiphon.Tests, one SessionRunner.Tests.
 No source-stamp reuse across different commits, and no repeat setup per case.
 Because the cumulative campaign exceeds 30 minutes, **caller commissions a
@@ -662,7 +674,7 @@ individual `timeoutMinutes` use max(15, 3x EstimatedMinutes). The import validat
 below checks syntax/counts only and **does not claim** the old 15/29 limits are
 active. Before Code, TestDesign must commit a derived manifest with explicit
 per-row execution bounds from this table/measurements, a 10-minute server build
-bound, 15-minute slot cap, separate charged group execution caps (14/24/24/32
+bound, 15-minute slot cap, separate charged group execution caps (14/24/28/36
 minutes respectively, provisional ~2x group estimates), and a finite hard wall
 that includes each possible admission. Tool global/row/build knobs must be
 checked against their actual consumer; if one knob couples build and row time,
@@ -697,3 +709,64 @@ transitive dependents at the Code SHA. No broker/pty-backend behavior changes,
 no new project extraction, and no Full rc qualification credit is claimed; scoped
 release qualification remains CARD-1545. Cleanup removes only this run's owned
 alternate outputs after all children finish, never foreign build/evidence roots.
+
+## Final source audit and validation record
+
+Further direct source inspection found that BlockedQuestionCard's fallback would
+send an ordinary answer (or offer Retry) for an unknown Ceiling kind. D-3/D-8
+therefore include a small typed-decision branch and three receipt-counted client
+cases; removing all client coverage would have been unsound. Client rows use
+`test-client.ps1`'s actual -JsonResultPath option; before running, require the
+receipt path absent, capture native exit, then validate JSON counts/names. For
+reruns retain the old receipt in its run's evidence directory and supply a fresh
+path in the refined manifest. A missing/truncated/stale JSON or a typecheck
+failure cannot count as three tests. Typecheck/lint and npm install are included
+in this driver's phases; dependencies install once per checkout, not per case.
+Provisional client body target is 15-30 seconds / 60-second limit; the 2-minute
+row estimate includes typecheck/lint. Record cold install separately (5-minute
+provisional cap) and refine from actual p95 in TestDesign.
+
+Additional source-backed boundaries: `TaskOwnerGuard.cs:186` already admits
+Blocked tasks with a live session; no checkpoint-tool change is needed.
+`PipelineHandoffActionService` and `AgentTaskService` child admission already
+start with the card lock. Recheck D-5 superseders there in **card, handoff, task**
+order. Do not add a card lock inside the runtime's **session, task** save fence.
+The completion header is a snapshot; a replacement arriving later makes child
+admission refuse with a decision reason. It does not rewrite immutable report
+text or justify a new global lock-order project. Uncarded ambiguous lineage
+always produces next=decide rather than inventing a distributed admission lock.
+
+Fresh Deploy event read: task 2e4f7375-076d-44e4-9ae2-263d08e8a59d was dispatched
+2026-10-29 20:01:26Z and failed 2026-10-30 00:01:37Z. Its Failed event names the
+240-minute Deploy ceiling and a ToolCall **7 minutes old**, explicitly saying
+the session was not killed. This directly confirms the healthy-phase ceiling
+split. It does not identify that ToolCall as drain-temp; the retained report
+listed that phase as forthcoming. The session ended later at 02:03:19Z.
+
+Plan validation history: at `2db13eac06c53073c6810ba7ad745657a83ce6fc`, the gated
+checkpoint importer successfully imported the then-19-row table (five producer
+builds, 47 estimated minutes, 196 TUnit floor). Slot granted immediately; held
+8 seconds. Five compiler warnings in unchanged tooling, zero build/import errors.
+This was tooling validation, not product-test execution. The client correction
+adds two rows/four estimated minutes; final re-import evidence follows below.
+The six new C# class names have no pre-existing declarations/suffix collisions;
+the three guard names each map to one test class in Antiphon.Tests plus its
+shared linked guard source. The existing two token-count methods and two runner
+methods are distinct; the private TerminalSeatReleaseTests helper in a different
+file has no Test methods. TestDesign must recheck against its actual base and
+Code must verify fresh TRX rosters, not infer discovery from this source census.
+
+For typed ceiling Reply, `ceilingAction`, `episodeId` and optional `extendMinutes`
+form an exclusive request shape; ordinary message text is not required for that
+shape and is not passed through the existing message.Trim/queue path. Existing
+ordinary Reply requests remain compatible. Unsupported mixed shapes are rejected
+before mutation. The CLI and client share this contract; neither sends prose
+that the server must guess is a ceiling instruction.
+
+A ceiling hold is not a participant waiting at an idle prompt: it keeps running
+while the parent decides. A subsequent genuine blocked report may wait for input.
+With parking disabled neither has an automatic release deadline. Explicit open
+Cancel/Retry, normal process exit, or an independently authorized existing release
+is what can free the session; a note, 15-minute admission cap or 720-minute
+ceiling cap never becomes stop authority. With parking enabled, a Working hold
+is still excluded; only a separately qualified actual idle question may park.
