@@ -18,6 +18,25 @@ public class NativeLinuxPolicyWitnessMutationTests
     const string Prefix = "Linux-only by construction: fixture";
 
     [Test]
+    [Arguments("\n")]
+    [Arguments("\r\n")]
+    public void Shipped_legacy_digest_is_pinned_across_checkout_line_endings(string lineEnding)
+    {
+        var policy = File.ReadAllText(Path.Combine(RepoRoot(), "tests", "test-execution-policy.json"))
+            .ReplaceLineEndings(lineEnding);
+        var witnessed = new HashSet<string>(NativeLinuxPolicyWitness.WitnessedRowKeys, StringComparer.Ordinal);
+        var legacy = NativeLinuxWindowsReasonAudit.LegacyCanonicalRecords(policy, witnessed);
+        NativeLinuxWindowsReasonAudit.Sha256Utf8(legacy.Payload)
+            .ShouldBe(NativeLinuxPolicyWitness.LegacyExclusionDigest);
+
+        // Exercise the compiled witness too: whitespace must not hide a changed legacy row.
+        var assembly = Compile("LegacyCheckout", "R11-real.cs.txt", true);
+        var report = InspectAssembly(assembly,
+            Policy(Row("RealHost", Prefix)).ReplaceLineEndings(lineEnding), checkPin: false, baseline: "");
+        report.Success.ShouldBeTrue(report.Text);
+    }
+
+    [Test]
     public void Ungated_overload_is_rejected()
     {
         var report = Inspect("R1", "R1-overload.cs.txt", true, Row("OverloadHost", Prefix, "Target"));
