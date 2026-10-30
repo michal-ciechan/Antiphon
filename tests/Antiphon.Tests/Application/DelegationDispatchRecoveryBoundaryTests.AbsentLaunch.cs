@@ -569,7 +569,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         IInterceptor? interceptor = null,
         bool unavailable = false,
         string? projectsRoot = null,
-        ISessionRunnerDirectory? directory = null)
+        ISessionRunnerDirectory? directory = null,
+        bool transcriptState = false)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -588,6 +589,13 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<AgentSessionRuntime>();
+        if (transcriptState)
+        {
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+            services.AddSingleton<SessionRuntimeActionCoordinator>();
+        }
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper>(stopper);
         services.AddSingleton<DelegationWorkspaceResolver>();
