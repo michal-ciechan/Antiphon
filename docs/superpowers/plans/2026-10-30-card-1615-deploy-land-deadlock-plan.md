@@ -80,7 +80,7 @@ decision remains for another Plan round.
 | D-5 | Require TASK-class mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. D-7 separately admits standing and interactive callers. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
 | D-6 | Gate the five mutating rolling phases and `all`; TASK `all` is additionally refused by D-9; existing dry-run/resume restrictions remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
 | D-7 | Classify from a bounded server-side token-resolution read, task first. Environment IDs are optional consistency checks and never select the principal. Admit authenticated standing sessions without inventing tasks; preserve explicit interactive mode with no identity supplied. | The public task-detail GET never binds its requested ID to the token. Environment-shape admission permits a Shared task to drop its task ID and pose as standing. Unknown tokens and unsupported principals fail closed; operator credentials remain independently required. |
-| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `/api/version.version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance the rc ref to Y while detached canonical HEAD and API stay X; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
+| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `(GET /api/version).version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance the rc ref to Y while detached canonical HEAD and API stay X; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
 | D-10 | This is the caller's final Plan round with verification design folded in. Next is Code after CARD-1609 lands; no further Plan/TestDesign pass. Code collects bounded timing evidence, then ordinary Review evaluates the implemented production paths and complete receipts. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. Before Code dispatch, confirm CARD-1609 is actually landed on rc and master and record both exact SHAs; no landing status is inferred from its plan. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
@@ -137,7 +137,7 @@ credential; neither filesystem markers nor operator-token custody promise that.
    clean tracked source and exact `HEAD == X` with no symbolic ref, and calls `restart-apphost.ps1 -ExpectedServerSha X`. If the reviewed rc selection changed before preparation, refuse/recommission
    with a newly reviewed named SHA. Fetch then detach at the selected immutable
    commit; do not pull on detached HEAD, reset/rebase rc, or move its published ref.
-   Require `/api/version.version == X` and health after restart. Any needed desktop
+   Require `(GET /api/version).version == X` and health after restart. Any needed desktop
    runner build/restart and `provision-host-jq -Sha X` happen here, before the
    controller, with HEAD X; verify runner `buildVersion` against X. There is no
    invented `-ExpectedServerSha` parameter on the runner restart script.
@@ -389,8 +389,10 @@ script against the live canonical checkout.
 
 ## Implementation slices
 
-**S1 — red tests first.** Add `tests/Antiphon.Tests/Scripts/DeployRolloutWorkspaceTests.cs`
-and `tests/Antiphon.Tests/Application/DeployLandIsolationTests.cs`. Extend the needed
+**S1 — red tests first.** Add `tests/Antiphon.Tests/Scripts/DeployRolloutWorkspaceTests.cs`,
+`tests/Antiphon.Tests/Application/DeployLandIsolationTests.cs`,
+`tests/Antiphon.Tests/Application/RolloutCallerIdentityTests.cs` and
+`tests/Antiphon.Tests/Scripts/ActiveRolloutMarkerTests.cs`. Extend the needed
 fixture transport in `scripts/fixtures/c727-fake-http.ps1` and `C1008WrapperFixture`
 in `RollingVolumeRecycleScriptTests.cs`; explicitly clear inherited task identity
 and agent identity in legacy interactive fixtures. Feed owner facts through the new token-resolved caller DTO,
@@ -451,7 +453,9 @@ read-only/no-cache/auth contract to `docs/ops-http.md` and `docs/antiphon-api.md
 Show fresh
 `-Role Deploy -Worktree -StartRef <reviewed-rc-sha> -Platform Windows`; omit `-Runner`,
 `-OnAgent` and `-Agent`. Keep its assigned branch and source frozen for its one phase;
-report retained evidence and the journal's next-phase recipe before settling. Pass a proven
+report retained evidence and the journal's next-phase recipe before settling.
+The task owns the local foreground process until exit; do not settle while a
+command or heartbeat runspace remains in flight. Pass a proven
 `-ProjectId` if canonical origin URL cannot resolve the worktree's project. Maintain the existing documentation contracts below. Use one active controller generation outside the runner being recycled, with
 successive phase tasks owning successive journal generations.
 
@@ -832,7 +836,15 @@ The final source roster audit corrected CP-4 from 123 to **126**: the complete
 InstructionBundleTests file has **58** test methods and **25** Arguments rows on
 five methods, giving 78 executed results. The earlier bounded file read had
 under-counted it; that draft import remains historical syntax evidence only.
-Final Linux total is 164; Windows remains 15. Re-import the corrected table.
+Final Linux total is 164; Windows remains 15.
+
+Corrected import at `f6577ac815ec42c3bc56a99db4535fccc943113d` exited 0
+with six rows and floors **9/5/6/126/12/6**, one build and all rows serial
+(lease `49576291-78a7-4529-8be3-a7e19e5bb936`, wait 0 s, held 2 s).
+Artifact: `.antiphon/c1615-r3-plan-scratch/import-corrected.yaml`.
+The prior reconciliation import at `1cd067444` also accepted six rows (lease
+`ddc97aac-d7ec-48cf-a1bd-70c7e2babff4`, wait 0 s, held 2 s); it still carried
+the superseded CP-4 floor. Neither import ran product tests.
 
 Round-3 route reads succeeded on 2026-10-30: runner defaults revision 2;
 catalogue one Windows and two Linux runner entries; effective orchestrator
