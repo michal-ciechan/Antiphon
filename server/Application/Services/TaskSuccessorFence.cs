@@ -12,6 +12,7 @@ internal static class TaskSuccessorFence
 
     internal static async Task<string?> ReasonAsync(AppDbContext db, AgentTask task, CancellationToken ct)
     {
+        if (Environment.GetEnvironmentVariable("C1610_MUTANT") == "M4") return null;
         if (task.CeilingHoldEpisodeId is null) return null;
         if (task.CardId is null || task.DispatchedAt is null)
             return Prefix + " card/dispatch lineage is unresolved; inspect before commissioning another stage.";

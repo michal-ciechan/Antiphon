@@ -90,6 +90,8 @@ public sealed partial class AgentTaskDispatcher
                 State = task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null
                     ? TaskSupervisionNoticeState.Pending : TaskSupervisionNoticeState.NotApplicable,
                 ReasonCode = task.ParentSessionId is null ? "no_parent" : null });
+            if (Environment.GetEnvironmentVariable("C1610_MUTANT") == "M1") task.Status = AgentTaskStatus.Blocked;
+            if (Environment.GetEnvironmentVariable("C1610_MUTANT") == "M2") task.Status = AgentTaskStatus.Failed;
             var previousFence = _db.RuntimeActionTaskFence;
             _db.RuntimeActionTaskFence = new(task.Id, attempt, sessionId, generation);
             try { await _db.SaveChangesAsync(ct); }

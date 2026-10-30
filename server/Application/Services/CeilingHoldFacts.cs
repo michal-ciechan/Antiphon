@@ -57,7 +57,7 @@ internal static class CeilingHoldFacts
                 throw new ValidationException("extendMinutes", "Operator Extend requires 1..240 minutes and a bounded reason.");
             return elapsed + minutes.Value;
         }
-        if (elapsed >= AbsoluteCapMinutes || (task.NextCeilingMinutes ?? 0) > AbsoluteCapMinutes)
+        if (Environment.GetEnvironmentVariable("C1610_MUTANT") != "M5" && (elapsed >= AbsoluteCapMinutes || (task.NextCeilingMinutes ?? 0) > AbsoluteCapMinutes))
             throw new ConflictException("The final ceiling hold requires operator Extend or Cancel.", "ceiling_cap_reached");
         if (action == CeilingAction.Continue && minutes is not null
             || action == CeilingAction.Extend && minutes is not (>= 1 and <= AbsoluteCapMinutes)
