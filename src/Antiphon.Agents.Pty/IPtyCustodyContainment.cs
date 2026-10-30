@@ -76,6 +76,13 @@ public sealed class LinuxCgroupContainment : IPtyCustodyContainment
     public const string KillHelper = "/usr/local/bin/antiphon-custody-kill";
     public const string CustodyRootName = "antiphon-custody";
 
+    /// <summary>
+    /// Accounting file for one execution inside one namespace. Callers pass the namespace;
+    /// there is no fallback to the global custody root.
+    /// </summary>
+    public static string ExecutionProcsPath(Guid namespaceId, Guid containerId) =>
+        LinuxCustodyOperations.ResolveProcsPath(namespaceId, containerId);
+
     private readonly ILinuxCustodyOperations _operations;
 
     public LinuxCgroupContainment(Guid containerId, ILinuxCustodyOperations? operations = null)
@@ -141,14 +148,40 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
     public IReadOnlyList<int> ReadTreePids(Guid containerId)
     {
         var path = TreeProcsPath(containerId);
-        // A tree directory that is gone after a successful kill is an empty tree. A tree that
-        // cannot be read for any other reason is unknown, and unknown must never look like zero.
-        if (!File.Exists(path)) return Directory.Exists(Path.GetDirectoryName(path)!)
-            ? throw new IOException("verification_custody_tree_unreadable") : [];
-        return File.ReadAllLines(path)
-            .Where(line => line.Length != 0)
-            .Select(int.Parse)
-            .ToArray();
+        // A tree directory that is gone after a successful kill is an empty tree. A missing
+        // namespace, a link, or a tree that cannot be read is unknown, and unknown must never
+        // look like zero. There is no fallback to the global custody root.
+        if (IsReparse(path))
+            throw Unreadable();
+        if (!File.Exists(path))
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (dir is not null && Directory.Exists(dir))
+                throw Unreadable();
+            return [];
+        }
+
+        try
+        {
+            var pids = new List<int>();
+            foreach (var line in File.ReadAllLines(path))
+            {
+                if (line.Length == 0)
+                    continue;
+                if (!int.TryParse(line, System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out var pid) || pid <= 0)
+                    throw Unreadable();
+                pids.Add(pid);
+            }
+
+            return pids;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (ex.Message == UnreadableMessage)
+                throw;
+            throw Unreadable(ex);
+        }
     }
 
     public PtyTerminationObservation Kill(Guid containerId)
@@ -178,27 +211,135 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
         }
     }
 
-    /// <summary>
-    /// Accounting file for one execution. The namespace id is part of the contract; the path
-    /// still uses the global custody root.
-    /// </summary>
-    public static string ResolveProcsPath(Guid namespaceId, Guid containerId)
+    /// <summary>Accounting file for one execution inside the given namespace.</summary>
+    public static string ResolveProcsPath(Guid namespaceId, Guid containerId) =>
+        FormatProcsPath(LinuxCustodyLayout.Production, namespaceId, containerId);
+
+    private string TreeProcsPath(Guid containerId) =>
+        FormatProcsPath(_layout, RequireNamespace(), containerId);
+
+    private Guid RequireNamespace()
     {
-        var ns = namespaceId.ToString("D");
-        var id = containerId.ToString("D");
-        var root = LinuxCgroupContainment.CustodyRootName;
-        return File.Exists("/sys/fs/cgroup/cgroup.controllers")
-            ? $"/sys/fs/cgroup/{root}/{ns}/{id}/tree/cgroup.procs"
-            : $"/sys/fs/cgroup/pids/{root}/{ns}/{id}/tree/cgroup.procs";
+        var marker = _layout.NamespaceMarkerPath;
+        if (string.IsNullOrWhiteSpace(marker))
+            throw Unreadable();
+        if (NodeExists(marker))
+        {
+            if (!TryReadPlainGuid(marker, out var fromMarker))
+                throw Unreadable();
+            return fromMarker;
+        }
+
+        var record = _layout.NamespaceRecordPath;
+        if (!string.IsNullOrWhiteSpace(record) && NodeExists(record))
+        {
+            if (!TryReadNamespaceRecord(record, out var fromRecord))
+                throw Unreadable();
+            return fromRecord;
+        }
+
+        throw Unreadable();
     }
 
-    private string TreeProcsPath(Guid containerId)
+    private static string FormatProcsPath(LinuxCustodyLayout layout, Guid namespaceId, Guid containerId)
     {
-        var id = containerId.ToString("D");
-        var root = _layout.CgroupRoot;
         var name = LinuxCgroupContainment.CustodyRootName;
-        return File.Exists(Path.Combine(root, "cgroup.controllers"))
-            ? Path.Combine(root, name, id, "tree", "cgroup.procs")
-            : Path.Combine(root, "pids", name, id, "tree", "cgroup.procs");
+        var v2 = File.Exists(Path.Combine(layout.CgroupRoot, "cgroup.controllers"));
+        return v2
+            ? Path.Combine(layout.CgroupRoot, name, namespaceId.ToString("D"), containerId.ToString("D"), "tree", "cgroup.procs")
+            : Path.Combine(layout.CgroupRoot, "pids", name, namespaceId.ToString("D"), containerId.ToString("D"), "tree", "cgroup.procs");
+    }
+
+    private const string UnreadableMessage = "verification_custody_tree_unreadable";
+
+    private static IOException Unreadable(Exception? inner = null) =>
+        inner is null ? new IOException(UnreadableMessage) : new IOException(UnreadableMessage, inner);
+
+    private static bool NodeExists(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists || info.LinkTarget is not null || Directory.Exists(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static bool IsReparse(string path)
+    {
+        try
+        {
+            // A missing path reports attributes as -1, and every bit of -1 is set, including
+            // ReparsePoint. That is not a link. Only a real symlink is refused.
+            var info = new FileInfo(path);
+            if (info.LinkTarget is not null)
+                return true;
+            if (!info.Exists)
+                return false;
+            var attributes = info.Attributes;
+            return (int)attributes >= 0 && (attributes & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadPlainGuid(string path, out Guid id)
+    {
+        id = Guid.Empty;
+        if (!TryReadPlainText(path, out var text))
+            return false;
+        return Guid.TryParseExact(text.Trim(), "D", out id) && id != Guid.Empty;
+    }
+
+    private static bool TryReadNamespaceRecord(string path, out Guid id)
+    {
+        id = Guid.Empty;
+        if (!TryReadPlainText(path, out var text))
+            return false;
+        foreach (var key in new[] { "\"namespaceId\"", "\"NamespaceId\"" })
+        {
+            var at = text.IndexOf(key, StringComparison.Ordinal);
+            if (at < 0)
+                continue;
+            var colon = text.IndexOf(':', at + key.Length);
+            if (colon < 0)
+                continue;
+            var open = text.IndexOf('"', colon + 1);
+            if (open < 0)
+                continue;
+            var close = text.IndexOf('"', open + 1);
+            if (close < 0)
+                continue;
+            var value = text.Substring(open + 1, close - open - 1);
+            if (Guid.TryParseExact(value, "D", out id) && id != Guid.Empty)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadPlainText(string path, out string text)
+    {
+        text = "";
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.LinkTarget is not null || !info.Exists)
+                return false;
+            var attributes = info.Attributes;
+            if ((int)attributes >= 0 && (attributes & FileAttributes.ReparsePoint) != 0)
+                return false;
+            text = File.ReadAllText(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }
