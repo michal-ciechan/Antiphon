@@ -8440,7 +8440,6 @@ c1008_private_identity() {
 c1008_owned_mounts() {
     require_lane host
     local owned="$1" model="$2" volumes="$3" source canonical kind file
-    if [ "$owned" = '[]' ]; then C1008_OWNED='[]'; return 0; fi
     # Metadata in the Docker host namespace only; no contents or inode pinning.
     while IFS=$'\t' read -r source file; do
         [ -n "$source" ] || continue
@@ -10047,7 +10046,8 @@ case_retire_temp_containers() {
     c1008_owned_mounts "$owned" "$model" "$volumes"; owned="$C1008_OWNED"
     # Best-effort history can enrich diagnostics but cannot admit/refuse cleanup.
     # The actual candidate's image is observed and pinned until its exact rm.
-    C994_IMAGE="$(c994_lookup_image >/dev/null 2>&1 && printf '%s' "${C994_IMAGE:-}")" || C994_IMAGE=''
+    read -r C994_IMAGE C994_ORIGINAL < <(c994_lookup_image >/dev/null 2>&1 && printf '%s %s\n' "${C994_IMAGE:-}" "${C994_ORIGINAL:-}") \
+        || { C994_IMAGE=''; C994_ORIGINAL=''; }
     image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
     if [ -n "$image" ]; then
         [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || c994_refuse TempContainerStateUnknown
