@@ -50,8 +50,107 @@ No desktop files or ended native Windows run were inspected.
 
 ## Implementation slices
 
-Source analysis and decisions are complete. Detailed slices, red witnesses, checkpoint
-manifest and timing budget follow in the next committed section.
+**S1 — red tests first.** Add `tests/Antiphon.Tests/Scripts/DeployRolloutWorkspaceTests.cs`
+and `tests/Antiphon.Tests/Application/DeployLandIsolationTests.cs`. Extend the needed
+fixture transport in `scripts/fixtures/c727-fake-http.ps1` and `C1008WrapperFixture`
+in `RollingVolumeRecycleScriptTests.cs`; explicitly clear inherited task identity
+in legacy interactive fixtures. Feed owner facts through normal task-detail DTOs,
+never a test-only workspace bypass. Reuse `LandingSafetyHarness`, `LandingGitFixture`,
+`C1008WrapperFixture` and the existing production host census extraction harness.
+Use private real Git worktrees for native identity. Commit/push the tests and their
+red outcome before implementing the guard.
+
+**S2 — controller admission.** Add `scripts/lib/rollout-controller.ps1`, called by
+`scripts/deploy-server2.ps1` after pure argument checks but before operator-token
+lookup or operational effects. GET `/api/agent-tasks/{ANTIPHON_TASK_ID}` with
+existing task authentication. Validate `summary.id`, Worktree, live status,
+registered `worktreePath`, native filesystem/Git root identity, clean tracked
+source and `HEAD == -Sha`. Reject wrong/unregistered trees and unknown identities;
+compare canonical identities, not path prefixes. The actual controller is native
+Windows, not a mirror whose registered path names a different machine. Preserve
+D-6 observational/provision exceptions and D-7 interactive compatibility.
+
+Use fixed reasons `RolloutControllerWorkspaceRequired`,
+`RolloutControllerIdentityUnknown`, `RolloutControllerSourceMismatch`; name the
+validated task and a fresh Worktree controller after canonical preparation as
+recovery. Write ignored `rollout-controller.json` under the invocation evidence
+root: phase, task ID, workspace, source SHA, identity result, outcome and elapsed
+milliseconds. Never retain token, full DTO, task prose or raw exception. Receipt
+failure refuses. Self-read and Git probes have finite deadlines. No new API,
+indefinite retry, modal prompt, land predicate or census exception.
+
+**S3 — operating contract.** Update `docs/docker-stack.md` continuous dispatch and
+phase/source notes, `docs/orchestration-loop.md` Shared activation guidance, and
+`docs/apphost-runbook.md` source notes. Show fresh
+`-Role Deploy -Worktree -StartRef <reviewed-rc-sha> -Platform Windows`; omit `-Runner`,
+`-OnAgent` and `-Agent`. Keep its assigned branch and source frozen through phases;
+commit narrative evidence after operational SHA checks finish. Pass a proven
+`-ProjectId` if canonical origin URL cannot resolve the worktree's project. No
+prose-only tests. Use a single rollout owner outside the runner being recycled.
+
+Canonical-only steps: rc pull/checkout, AppHost build/restart, desktop runner
+restart when needed, and `provision-host-jq`. The controller tree supports
+`check-census`, `check-host-jq`, deploy-temp, drain-old, redeploy-old, smoke/cache
+qualification, drain-temp and retire-temp. Those steps never pull/restart AppHost.
+Preserve the existing canary, continuous-dispatch and final retire gates.
+
+## Red witnesses, classification and roster
+
+Separate TestDesign must finish positive-control details and measured costs. Scope:
+scripts plus server/git integration; no messaging/client/pty behavior changes, no
+live AppHost, production runner, SSH or Docker in tests. Existing test-project
+references to server/infrastructure suffice; no project extraction is justified.
+
+| ID | Production-path witness and observable assertion | Classification |
+|---|---|---|
+| V-1 | Shared own-task DTO; invoke real wrapper for each mutating phase and allowed resume/dry-run. Refuse before operator-token access, census sleep or any traced effect. Assert fixed reason and zero effects. Old wrapper reaches an effect/wait or lacks the new reason. | New red/green admission. |
+| V-2 | Real pinned linked worktree, matching live DTO and SHA succeeds. Wrong SHA, tracked dirt, foreign tree and alias to canonical refuse. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
+| V-3 | Invalid/missing ID, token without ID, 401/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks, canonical provision guard and true interactive use retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
+| V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol: Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
+| V-5 | Same-source owner/alias and unknown identity still hold. Shared writer appearing while verification releases the repository lease blocks the real resume path. | Existing safety regression; not a pure predicate test. |
+| V-6 | Bind land owner to recycled runner. Prove Shared cycle, then separate Worktree scenario: complete real land and feed production task/list/detail projections into wrapper and host HTTP fixtures. Actual census refuses/waits while pending and clears only after publication/terminal proof, controller still Working. Another genuine writer keeps recycle refused. | Integrated remedy, remote effects stubbed. |
+| R-1 | Six `C1364BoundLandWaitProofTests` methods preserve cleared/expired waits before/after removal, ordinary/resume/preview, wrapper and host. | Unchanged census regression. |
+
+Planned `DeployRolloutWorkspaceTests` (seven non-parameterized methods):
+`C1615_Shared_controller_refuses_before_side_effects`,
+`C1615_Worktree_controller_runs_from_its_pinned_checkout`,
+`C1615_Unknown_or_terminal_owner_refuses`, `C1615_Native_checkout_identity`,
+`C1615_Read_checks_and_canonical_provision_keep_their_contract`,
+`C1615_Interactive_mode_requires_absent_task_identity`,
+`C1615_Admission_receipt_is_bounded_and_redacted`.
+
+Planned `DeployLandIsolationTests` (five non-parameterized methods):
+`C1615_Worktree_deploy_allows_rc_and_master_publication`,
+`C1615_Shared_deploy_holds_before_admission`,
+`C1615_Source_checkout_owner_and_unknown_identity_hold`,
+`C1615_Shared_writer_appearing_during_verification_holds`,
+`C1615_Bound_census_clears_only_after_real_land_completes`.
+Internal matrix vectors do not multiply executed counts. Split expensive matrices
+only with updated roster/counts/cost before Code dispatch.
+
+Red-first: run exact new negative methods V-1/V-2/V-3 at the S1 tests-only commit
+using one isolated build. These are explicitly accounted runs outside the green
+table. Capture expected assertion failures, never fixture/build errors or zero
+tests. V-4/V-5/V-6 and R-1 are expected green at base because the selected fix relies
+on existing isolation; they are not evidence that the absent guard went red.
+
+### Checkpoints
+
+Run once after S1-S3 are committed. CP-1 builds; CP-2/3 reuse the same output and
+slice group. All rows initially execute in the Linux lane. A separate native
+Windows task executes CP-1 only with its own isolated build for operational
+wrapper/path branches; no prior desktop run counts. TestDesign encodes that
+selection through the tool, without inventing a Platform table column.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 7 named methods, 0 failed, 0 skipped | 7 | 6 | 9 |
+| CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 |
+| CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 |
+
+Exact class filters avoid suffix expansion. Check declared names again in TestDesign
+and actual fresh TRX in Code. If combining later, each OR operand must be parenthesized
+and end in `*`; escape table pipes as `\|`. Import validates syntax, not existence or execution.
 
 ## Performance budget
 
