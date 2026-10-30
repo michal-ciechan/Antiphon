@@ -241,7 +241,8 @@ public class Card1619StopIntentTests
         public Process Child { get; private set; } = null!;
         public TaskCompletionSource<ExitedMessage> Exit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task? _reader;
-        private bool _hostDisposed;
+        private Task? _hostDispose;
+        private Channel<PtyHostMessage>? _messages;
         private readonly Stopwatch _signalClock = new();
         public TimeSpan SignalLatency { get; private set; }
         public static async Task<Fixture> StartAsync(Func<ProcessStopIntentDto, CancellationToken, Task<bool>>? writer = null, bool unwritable = false)
@@ -256,6 +257,7 @@ public class Card1619StopIntentTests
                 f.Host = new(new PtyHostOptions { SessionId = f.Id, PipeName = "unused", ManifestDir = Path.Combine(f.Root, "manifests"), LingerTtl = TimeSpan.FromSeconds(1) }, new HostLog(null)) { StopIntents = f.Store };
                 var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var channel = Channel.CreateUnbounded<PtyHostMessage>();
+                f._messages = channel;
                 f.Host.Attach(0, channel.Writer);
                 f._reader = Task.Run(async () => {
                     await foreach (var value in channel.Reader.ReadAllAsync())
@@ -287,9 +289,9 @@ public class Card1619StopIntentTests
         }
         public async Task DisposeHostAsync()
         {
-            if (_hostDisposed || Host is null) return;
-            _hostDisposed = true;
-            await Host.DisposeAsync();
+            if (Host is null) return;
+            _hostDispose ??= Host.DisposeAsync().AsTask();
+            await _hostDispose.WaitAsync(TimeSpan.FromSeconds(5));
         }
         public async ValueTask DisposeAsync()
         {
@@ -301,7 +303,13 @@ public class Card1619StopIntentTests
                 Child.Dispose();
             }
             await DisposeHostAsync();
+            _messages?.Writer.TryComplete();
             if (_reader is not null) await _reader.WaitAsync(TimeSpan.FromSeconds(5));
+            if (Store is not null)
+            {
+                Store.Dispose();
+                await Store.WorkerCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }
     }

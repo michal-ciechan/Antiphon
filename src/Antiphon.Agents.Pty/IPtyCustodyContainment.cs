@@ -17,6 +17,9 @@ public interface IPtyCustodyContainment
     /// <summary>Identity of this container, recorded on the receipt as the host's ContainerId.</summary>
     Guid ContainerId { get; }
 
+    /// <summary>Optional observer for helper-target timeout signals; never changes custody accounting.</summary>
+    PtyStopCallback? StopSignal { get => null; set { } }
+
     /// <summary>
     /// Rewrite the launch so the child lands inside the container. Windows returns it unchanged
     /// (placement is part of the suspended spawn); Linux prefixes the root-owned shim, which is
@@ -111,7 +114,9 @@ public sealed class LinuxCgroupContainment : IPtyCustodyContainment
         return new((uint)pids.Count, pids);
     }
 
-    public PtyTerminationObservation Terminate() => _operations.Kill(ContainerId);
+    public PtyStopCallback? StopSignal { get; set; }
+
+    public PtyTerminationObservation Terminate() => _operations.Kill(ContainerId, StopSignal);
 }
 
 /// <summary>Seam over the two real-world effects, so the Windows-executing tests can drive both.</summary>
@@ -122,6 +127,7 @@ public interface ILinuxCustodyOperations
 
     /// <summary>`sudo -n antiphon-custody-kill &lt;id&gt;`.</summary>
     PtyTerminationObservation Kill(Guid containerId);
+    PtyTerminationObservation Kill(Guid containerId, PtyStopCallback? observer) => Kill(containerId);
 }
 
 /// <summary>
@@ -177,7 +183,9 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
         }
     }
 
-    public PtyTerminationObservation Kill(Guid containerId)
+    public PtyTerminationObservation Kill(Guid containerId) => Kill(containerId, null);
+
+    public PtyTerminationObservation Kill(Guid containerId, PtyStopCallback? observer)
     {
         try
         {
@@ -193,7 +201,13 @@ internal sealed class LinuxCustodyOperations : ILinuxCustodyOperations
             // than racing it with a second kill.
             if (!process.WaitForExit(TimeSpan.FromSeconds(45)))
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
+                try
+                {
+                    bool? Send() { process.Kill(entireProcessTree: true); return true; }
+                    if (observer is not null) observer(process.Id, 9, "HelperTimeout", Send);
+                    else Send();
+                }
+                catch { }
                 return new(false, 0);
             }
             return new(process.ExitCode == 0, process.ExitCode);

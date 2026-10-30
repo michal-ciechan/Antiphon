@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -87,7 +88,7 @@ public class Card1619LinuxStopIntentTests
     {
         await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
         var binding = world.Binding;
-        var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
+        using var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
         world.Runtime.CustodyForTests.StopIntents = store;
         world.Recovery.BeforeKill = () => store.Snapshot(binding.Generation.SessionId, binding.Generation.AcceptedStartedAt)!
             .Outcome.ShouldBe(ProcessStopOutcome.Requested);
@@ -129,7 +130,7 @@ public class Card1619LinuxStopIntentTests
             File.Exists(sidecarPath).ShouldBeFalse();
         }
         await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
-        var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
+        using var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
         world.Runtime.CustodyForTests.StopIntents = store;
         world.Recovery.Result = new(false, 13);
         world.Recovery.Pids = [42];
@@ -204,6 +205,7 @@ public class Card1619LinuxStopIntentTests
             SessionLogPath = Root, CpuWatchdogEnabled = false, PtyHostLingerHours = 0.01 }), NullLogger<SessionRunnerRuntime>.Instance);
         public static async Task<Fixture> StartAsync()
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-runner-stop-readiness");
             var f = new Fixture();
             try
             {
@@ -227,9 +229,12 @@ public class Card1619LinuxStopIntentTests
         }
         public async ValueTask DisposeAsync()
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "card1619-runner-stop-owned-join");
             if (Runtime is not null) await Runtime.DisposeAsync();
             foreach (var owned in new[] { Child, Host })
             { if (owned is null) continue; if (!owned.HasExited) owned.Kill(true); await owned.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); owned.Dispose(); }
+            if (Runtime is not null) await Runtime.StopIntents.WorkerCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+            if (Store is not null) { Store.Dispose(); await Store.WorkerCompletion.WaitAsync(TimeSpan.FromSeconds(5)); }
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }
     }

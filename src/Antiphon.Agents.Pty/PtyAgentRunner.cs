@@ -11,6 +11,9 @@ namespace Antiphon.Agents.Pty;
 public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDisposable
 {
     private IPtySession? _conn;
+    public Func<int?, bool>? StopWasIssued { get; set; }
+    private readonly object _localStopGate = new();
+    private readonly HashSet<int> _localIssuedSignals = new();
     public PtyStopCallback? StopSignal { get; set; }
     private CancellationTokenSource? _readCts;
     private Task? _readTask;
@@ -215,7 +218,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             // Linux the equivalent boundary is "immediately before the fork that the shim will
             // place", and the tracked pid is the shim's own pid, which is what it execs into.
             custody.RecordStartIntent();
-            _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+            _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
             custody.RecordTracking(_conn.Pid);
             try
             {
@@ -241,7 +244,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         {
             _conn = backend.Backend == PtyBackend.ModernConPty
                 ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options, custody, CustodyNative, ct)
-                : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+                : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct), stopSignal: DispatchStopSignal);
         }
         if (BeforeExitSubscriptionForTest is { } beforeSubscribe)
             await beforeSubscribe(_conn);
@@ -251,6 +254,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             if (_custody is not null) _custodyInputClosed = true;
             if (_jobObject?.HasReachedMemoryLimit() == true)
                 SetExitReason(PtyExitReason.MemoryKilled);
+            else if (OperatingSystem.IsLinux() && observation.ExitSignal is > 0 && (StopWasIssued?.Invoke(observation.ExitSignal) ?? LocalStopWasIssued(observation.ExitSignal)))
+                SetExitReason(PtyExitReason.KilledByRequest);
             else
                 SetExitReason(PtyExitReason.ProcessExited);
             ExitHandledForTest?.Invoke();
@@ -533,13 +538,30 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         _conn.Resize(cols, rows);
     }
 
+    private bool? DispatchStopSignal(int pid, int signal, string path, Func<bool?> send)
+    {
+        if (StopSignal is { } recorder) return recorder(pid, signal, path, send);
+        lock (_localStopGate)
+        {
+            var issued = send();
+            if (issued == true) _localIssuedSignals.Add(signal);
+            return issued;
+        }
+    }
+
+    private bool LocalStopWasIssued(int? signal)
+    {
+        lock (_localStopGate) return signal is > 0 && _localIssuedSignals.Contains(signal.Value);
+    }
+
     public async Task<bool> KillAsync(TimeSpan timeout)
     {
         if (_conn is null) return true;
-        SetExitReason(PtyExitReason.KilledByRequest);
+        var deadline = OperatingSystem.IsLinux() ? Task.Delay(timeout) : null; // Linux grace begins at entry
+        if (!OperatingSystem.IsLinux()) SetExitReason(PtyExitReason.KilledByRequest);
         _conn.Kill();
         _jobObject?.TryTerminate();
-        var done = await Task.WhenAny(_exitTcs.Task, Task.Delay(timeout));
+        var done = await Task.WhenAny(_exitTcs.Task, deadline ?? Task.Delay(timeout));
         return done == _exitTcs.Task;
     }
 
@@ -569,7 +591,19 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 // CARD-0604 D-17. The seal is what terminates on Linux: the cgroup is emptied by
                 // the root-owned helper and the tree's own procs file is then re-read. A tree
                 // that is still populated is Draining, never a fabricated zero.
-                _linuxTermination = containment.Terminate();
+                if (StopSignal is { } stop)
+                {
+                    // The helper's result is issued-operation evidence only. Accounting below
+                    // still decides custody, and a helper timeout targets the helper separately.
+                    containment.StopSignal = stop;
+                    PtyTerminationObservation? termination = null;
+                    stop(_conn?.Pid ?? 0, 9, "CustodyRelease", () => {
+                        termination = containment.Terminate();
+                        return termination.Succeeded;
+                    });
+                    _linuxTermination = termination ?? new(false, 0);
+                }
+                else _linuxTermination = containment.Terminate();
                 var population = containment.ReadActive();
                 if (population.Count != 0) return new(population.Count, false);
                 _custodyDrainTask ??= DrainCustodyOutputAsync(null);
@@ -642,6 +676,11 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
         try { _readCts?.Cancel(); } catch { }
         try { _jobMonitorCts?.Cancel(); } catch { }
+        // Unix disposal owns the existing master-close/SIGHUP operation. Do it before
+        // joining a reader that may be blocked on the still-live slave. Windows keeps
+        // its original native teardown order.
+        var disposedUnix = OperatingSystem.IsLinux() && _conn is not null;
+        if (disposedUnix) _conn!.Dispose();
         if (_readTask is not null)
         {
             try { await _readTask; } catch { }
@@ -650,7 +689,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         {
             try { await _jobMonitorTask; } catch { }
         }
-        _conn?.Dispose();
+        if (!disposedUnix) _conn?.Dispose();
         _jobObject?.Dispose();
         _readCts?.Dispose();
         _jobMonitorCts?.Dispose();

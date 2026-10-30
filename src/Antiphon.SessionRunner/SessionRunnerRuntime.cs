@@ -38,10 +38,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
     private readonly TranscriptClaimRegistry _transcriptClaims = new();
-    public ProcessStopIntentStore? StopIntents { get; set; }
+    private ProcessStopIntentStore? _stopIntents;
+    public ProcessStopIntentStore StopIntents
+    {
+        get => _stopIntents ??= new(Path.Combine(_settings.SessionLogPath, "stop-intents"),
+            warning: message => _logger.LogWarning("{StopDiagnostic}", message));
+        set
+        {
+            if (ReferenceEquals(_stopIntents, value)) return;
+            _stopIntents?.Dispose();
+            _stopIntents = value;
+            if (_launcher is not null) _launcher.StopIntents = value;
+            if (_custody?.IsValueCreated == true) _custody.Value.StopIntents = value;
+            foreach (var session in _sessions.Values) session.StopIntents = value;
+        }
+    }
     internal void StopOwnedProcess(int pid, DateTime start, Guid sessionId, DateTime generation, ProcessStopTarget target)
     {
-        if (new SystemProcessLivenessProbe().IsAlive(pid, start)) KillPidBestEffort(pid);
+        KillPidBestEffort(pid, StopIntents, sessionId, generation, target, start);
     }
 
     private readonly SessionRunnerSettings _settings;
@@ -206,7 +220,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(
             Path.Combine(_settings.SessionLogPath, "verification-custody"),
-            recovery: _linuxRecovery ?? new LinuxInstalledCustodyRecovery(_processLiveness)));
+            recovery: _linuxRecovery ?? new LinuxInstalledCustodyRecovery(_processLiveness)) { StopIntents = StopIntents });
         _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
@@ -216,6 +230,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Math.Max(250, _herdrClient?.Settings.PaneReadTimeoutMs ?? new HerdrSettings().PaneReadTimeoutMs));
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
+        if (OperatingSystem.IsLinux()) _launcher.StopIntents = StopIntents;
         _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
         _absence = CreateAbsenceEvidence(phoneHomeSettings?.Value is { Enabled: true } ph ? ph.LaunchGenerationsPath : null);
     }
@@ -650,7 +665,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         request = CodexWindowsLaunchPolicy.Apply(request, useHerdr);
         RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
 
-        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
         session.RetainCheckout(request.Cwd);
         if (request.VerificationBinding is { } binding)
@@ -816,7 +831,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // and precedes the runtime registration and the pane binding.
         RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
         await CreationEffectAsync(request.SessionId, "attach");
-        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
         if (!_sessions.TryAdd(request.SessionId, session))
         {
@@ -1179,6 +1194,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, false, KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt, session.ToDto().ExitReason);
             }
 
+            session.StopIntents = StopIntents;
             await session.KillAsync(timeout, ct);
             return new RunnerKillGenerationResult(
                 sessionId, true, KillGenerationOutcomes.Killed, session.AcceptedStartedAt, session.ToDto().ExitReason);
@@ -1234,6 +1250,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
 
             CompactionStopSignals.Add((sessionId, request.AttemptId));
+            session.StopIntents = StopIntents;
             await session.KillAsync(timeout, ct);
             var confirmed = session.HasExited;
             var result = new CompactionContinuationStopResult(
@@ -1770,7 +1787,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             try
             {
-                await session.KillAsync(timeout, ct);
+                session.StopIntents = StopIntents;
+            await session.KillAsync(timeout, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && !session.TerminalReleaseInProgress)
             {
@@ -1850,7 +1868,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             try
             {
-                await session.KillAsync(timeout, ct);
+                session.StopIntents = StopIntents;
+            await session.KillAsync(timeout, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -2076,7 +2095,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
-                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
+                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims) { StopIntents = StopIntents };
                 session.BindAcceptedGeneration(manifest.AcceptedStartedAt);
                 if (manifest.VerificationBinding is { } binding)
                     session.SetCustody(_custody.Value, binding);
@@ -2103,7 +2122,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                             manifest, _settings, _events, _logger));
                         continue;
                     }
-                    if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid);
+                    if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid, StopIntents,
+                        manifest.SessionId, manifest.AcceptedStartedAt ?? DateTime.MinValue, ProcessStopTarget.Host, null);
                 }
             }
 
@@ -2112,7 +2132,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // The operator verifies that host's pid and start identity, stops it through an owned
             // handle, then reissues CleanupVerification. Registering the discovered session as
             // Exited reports the manifest's fate. It is not proof a bound child has exited.
-            var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
+            var ownHostStop = manifest.AcceptedStartedAt is { } stoppedGeneration
+                ? StopIntents.Snapshot(manifest.SessionId, stoppedGeneration, 9) : null;
+            var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger,
+                ownHostStop is { Target: ProcessStopTarget.Host, Outcome: ProcessStopOutcome.Issued } ? ownHostStop : null);
             if (manifest.VerificationBinding is { } exitedBinding)
                 exitedSession.SetCustody(_custody.Value, exitedBinding);
             _sessions.TryAdd(manifest.SessionId, exitedSession);
@@ -2192,7 +2215,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 case HerdrBarVerdict.Adopt:
                     var session = new RunnerSession(
-                        sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+                        sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
                     session.BindAcceptedGeneration(sidecar.AcceptedStartedAt);
                     await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                     _sessions.TryAdd(sidecar.SessionId, session);
@@ -2240,7 +2263,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 // R4/R5: unknown pane. OS-alive → orphan kill (R5); then RestartPresumedDead.
                 TryKillOrphanedChild(sidecar, probe);
-                return HerdrBarVerdict.RestartPresumedDead;
+                return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+                    && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                    ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
 
             var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
@@ -2250,7 +2275,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 // R2/R3: restored-but-empty (P7) or orphan. OS-alive → kill by pid (R3).
                 TryKillOrphanedChild(sidecar, probe);
-                return HerdrBarVerdict.RestartPresumedDead;
+                return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+                    && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                    ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
 
             // R1: pid present — also require pane.read to answer.
@@ -2268,7 +2295,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 "Herdr adoption bar failed for session {SessionId}; treating as RestartPresumedDead",
                 sidecar.SessionId);
             TryKillOrphanedChild(sidecar, probe);
-            return HerdrBarVerdict.RestartPresumedDead;
+            return OperatingSystem.IsLinux() && IsOsAlive(sidecar, probe)
+                && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
         }
     }
 
@@ -2336,7 +2365,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return false;
         }
 
-        KillPidBestEffort(pid);
+        KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
         _logger.LogWarning(
             "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
             sidecar.PaneId, sidecar.SessionId, pid);
@@ -2415,16 +2445,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
-    private static void KillPidBestEffort(int pid)
+    private static void KillPidBestEffort(int pid, ProcessStopIntentStore? intents, Guid sessionId,
+        DateTime generation, ProcessStopTarget target, DateTime? expectedStart)
     {
         try
         {
-            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            if (process.HasExited) return;
+            if (OperatingSystem.IsLinux() && expectedStart is { } start && !SessionGeneration.Equal(process.StartTime.ToUniversalTime(), start)) return;
+            if (OperatingSystem.IsLinux() && intents is not null)
+                intents.StopProcess(process, sessionId, generation, target, ProcessStopPath.ProcessTree);
+            else process.Kill(entireProcessTree: true);
         }
-        catch
-        {
-            // Already gone.
-        }
+        catch { /* already gone; never manufacture observed child exit */ }
     }
 
     /// <summary>
@@ -2490,16 +2523,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _sessions.TryRemove(sessionId, out _);
             await session.DisposeAsync();
         }
+        _stopIntents?.Dispose();
     }
 
-    private RunnerSession GetSession(Guid sessionId) =>
-        _sessions.TryGetValue(sessionId, out var session)
-            ? session
-            : throw new KeyNotFoundException($"Session '{sessionId}' was not found.");
+    private RunnerSession GetSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            throw new KeyNotFoundException($"Session '{sessionId}' was not found.");
+        session.StopIntents = StopIntents;
+        return session;
+    }
 
     /// <summary>Per-session state. Internal so <see cref="HerdrEventPumpService"/> can verify/apply status.</summary>
     internal sealed class RunnerSession : IAsyncDisposable
     {
+        private ProcessStopIntentStore? _stopIntents;
+        internal ProcessStopIntentStore? StopIntents
+        {
+            get => _stopIntents;
+            set { _stopIntents = value; if (_herdrChild is HerdrPaneChild child) child.StopIntents = value; }
+        }
         internal string? CheckoutPath { get; private set; }
         internal void RetainCheckout(string? cwd) => CheckoutPath = string.IsNullOrWhiteSpace(cwd)
             ? null : RunnerWorkspaceService.TryResolveFinal(cwd);
@@ -2565,6 +2608,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime? _herdrAgentStatusSinceUtc;
         private Action? _onHerdrPaneSetChanged;
         private int _hostPid;
+        private DateTime? _hostStartTimeUtc;
         private int? _childPid;
         private DateTime _startedAt;
         private TerminalScreen? _screen;
@@ -2928,10 +2972,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (sidecar.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid);
+                KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
                 _logger.LogWarning(
                     "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
                     sidecar.PaneId, sidecar.SessionId, pid);
+                if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc)) return;
                 herdr.RaiseVerifiedClosed(HerdrExitReasons.RestartPresumedDead);
                 return;
             }
@@ -2961,7 +3007,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
                     placement,
-                    findBound);
+                    findBound) { StopIntents = StopIntents };
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -3042,7 +3088,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
                     placement,
-                    findBound) { RequiredWorkspacePath = checkout };
+                    findBound) { RequiredWorkspacePath = checkout, StopIntents = StopIntents };
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -3315,8 +3361,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     // required to equal this binding's backend -- so the binding is the same
                     // answer, reachable from inside the per-session state.
                     custodyBackend: VerificationBinding?.Backend,
+                    acceptedStartedAt: _acceptedStartedAt,
                     ct: ct);
 
+                using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
+                    _hostStartTimeUtc = host.StartTime.ToUniversalTime();
                 _client = await PtyHostClient.ConnectAsync(
                     PtyHostProtocol.PipeNameFor(_sessionId),
                     TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
@@ -3425,6 +3474,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     .VerifyAsync(_sessionId, receipt, ct))
                 GrokRulesReceipt = receipt;
             _hostPid = manifest.HostPid;
+            _hostStartTimeUtc = null;
             _childPid = manifest.ChildPid;
             _adopted = true;
             _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc;
@@ -3435,6 +3485,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            if (OperatingSystem.IsLinux())
+            {
+                using var connectedHost = System.Diagnostics.Process.GetProcessById(_hostPid);
+                _hostStartTimeUtc = connectedHost.StartTime.ToUniversalTime();
+            }
             if (VerificationBinding is { } binding)
             {
                 var identity = manifest.VerificationHost
@@ -3581,7 +3636,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             PtyHostManifest manifest,
             SessionRunnerSettings settings,
             SessionRunnerEventHub events,
-            ILogger logger)
+            ILogger logger,
+            ProcessStopIntentDto? liveHostStop = null)
         {
             var session = new RunnerSession(manifest.SessionId, settings, events, logger)
             {
@@ -3594,7 +3650,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _status = "Exited",
                 _exitCode = manifest.ExitCode,
                 _exitSignal = manifest.ExitSignal,
-                _exitStopIntent = ProcessStopIntent.Recovered(manifest.ExitStopIntent),
+                _exitStopIntent = liveHostStop ?? ProcessStopIntent.Recovered(manifest.ExitStopIntent)
+                    ?? (manifest.AcceptedStartedAt is { } gen ? ProcessStopIntentStore.ReadRecovered(
+                        Path.Combine(settings.SessionLogPath, "pty-hosts", "stop-intents"), manifest.SessionId, gen) : null),
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
                 _acceptedStartedAt = manifest.AcceptedStartedAt is { } accepted
                     ? SessionGeneration.Normalize(accepted) : null,
@@ -3782,7 +3840,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 liveAntiphonPanes: () => Array.Empty<HerdrPaneAllocator.LivePane>(),
                 _processLiveness,
                 placement,
-                findBound);
+                findBound) { StopIntents = StopIntents };
             // Re-bind the existing pane without re-launching: reconstruct the child's identity fields.
             await herdrChild.AttachExistingAsync(sidecar, ct);
             herdrChild.Exited += exit =>
@@ -4283,7 +4341,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 && sidecar?.ChildPid is int pid
                 && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid);
+                KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                ProcessStopTarget.Child, sidecar.ChildStartedAtUtc);
+                if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+                {
+                    _logger.LogWarning("Pending session {SessionId} stop remains unobserved; retaining owner and sidecar", _sessionId);
+                    return;
+                }
             }
 
             HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
@@ -4396,6 +4460,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private void HandleExited(ExitedMessage exited)
         {
+            if (exited.ExitStopIntent is { Provenance: ProcessStopProvenance.LiveIssuer } intent
+                && (intent.SessionId != _sessionId || _acceptedStartedAt is not { } generation
+                    || !SessionGeneration.Equal(intent.AcceptedStartedAt, generation)
+                    || intent.HostInstanceId == Guid.Empty || intent.HostInstanceId != _client?.Hello.HostInstanceId
+                    || intent.Target is not (ProcessStopTarget.Child or ProcessStopTarget.Custody)
+                    || intent.TargetPid != _childPid || intent.TargetStartedAtUtc is not { } childStart
+                    || !SessionGeneration.Equal(childStart, _startedAt)))
+                exited = exited with { ExitStopIntent = ProcessStopIntent.Recovered(intent) };
             bool transitioned;
             string exitReason;
             lock (_gate)
@@ -4524,8 +4596,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             try
             {
                 using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
-                if (!host.HasExited && IsPtyHostProcessName(host.ProcessName))
-                    host.Kill(entireProcessTree: true);
+                if (!host.HasExited && IsPtyHostProcessName(host.ProcessName)
+                    && (!OperatingSystem.IsLinux() || _hostStartTimeUtc is null || SessionGeneration.Equal(host.StartTime.ToUniversalTime(), _hostStartTimeUtc.Value)))
+                {
+                    if (OperatingSystem.IsLinux() && StopIntents is { } intents)
+                    {
+                        var intent = intents.StopProcess(host, _sessionId, _acceptedStartedAt ?? DateTime.MinValue,
+                            ProcessStopTarget.Host, ProcessStopPath.OwnerShutdown, _client?.Hello.HostInstanceId ?? Guid.Empty);
+                        lock (_gate) _exitStopIntent ??= intent;
+                    }
+                    else host.Kill(entireProcessTree: true);
+                }
             }
             catch
             {
