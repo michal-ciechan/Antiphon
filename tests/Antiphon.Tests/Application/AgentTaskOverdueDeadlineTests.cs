@@ -834,11 +834,12 @@ public class AgentTaskOverdueDeadlineTests
 
     /// <summary>
     /// CARD-1151 R1. A prompt that was only QUEUED (a <c>QueuedUserPrompt</c>, never accepted by
-    /// the session) is not a boot episode, so it earns no boot protection: the role ceiling fails
-    /// the task exactly as it did before CARD-1151. dispatched-idle is the Review's shape
+    /// the session) is not a boot episode. dispatched-idle retains its ceiling failure;
+    /// CARD-1610 holds a positively Working session and leaves terminal-session ownership
+    /// to the dead-session reconciler. dispatched-idle is the Review's shape
     /// (Dispatched, Working false); working-inherited-mid-turn keeps the session Working through
     /// an inherited ToolCall from before dispatch; terminal-session has a Stopped, ended row. Uses
-    /// only symbols that exist at the CARD-1151 base, so the same method runs there unchanged.
+    /// the same queued-only cases and the no-boot/no-stop protection across all three owners.
     /// </summary>
     [Test]
     [Arguments("dispatched-idle")]
@@ -867,15 +868,42 @@ public class AgentTaskOverdueDeadlineTests
 
         await using var verify = CreateContext();
         var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
-        failed.Status.ShouldBe(AgentTaskStatus.Failed, $"{shape}: nothing was ever received, so nothing is protected");
+        if (shape == "working-inherited-mid-turn")
+        {
+            failed.Status.ShouldBe(AgentTaskStatus.Working, "a Working ceiling is a counted decision hold");
+            CeilingHoldFacts.Active(failed).ShouldBeTrue();
+            failed.CeilingHoldEpisodeId.ShouldNotBeNull();
+            failed.CompletedAt.ShouldBeNull();
+            failed.FailureReason.ShouldBeNull();
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task
+                && e.Type == AgentTaskEventType.Held)).ShouldBe(1);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task
+                && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+        }
+        else if (shape == "terminal-session")
+        {
+            failed.Status.ShouldBe(AgentTaskStatus.Dispatched, "the live-ceiling sweep does not own terminal reconciliation");
+            failed.CeilingHoldEpisodeId.ShouldBeNull();
+            failed.CompletedAt.ShouldBeNull();
+            failed.FailureReason.ShouldBeNull();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task
+                && (e.Type == AgentTaskEventType.Failed || e.Type == AgentTaskEventType.Held))).ShouldBe(0);
+        }
+        else
+        {
+            failed.Status.ShouldBe(AgentTaskStatus.Failed, "an idle queued-only prompt earns no boot protection");
+            failed.CompletedAt.ShouldNotBeNull();
+            failed.FailureReason.ShouldNotBeNull();
+            failed.FailureReason.ShouldContain($"{Ceiling}-minute ceiling for role Code");
+            failed.FailureReason.ShouldContain("Last transcript entry: QueuedUserPrompt");
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task
+                && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        }
         failed.FailureCode.ShouldBeNull();
-        failed.FailureReason.ShouldNotBeNull();
-        failed.FailureReason.ShouldContain($"{Ceiling}-minute ceiling for role Code");
-        failed.FailureReason.ShouldContain("Last transcript entry: QueuedUserPrompt");
         failed.Attempt.ShouldBe(1);
-        stopper.Killed.ShouldBeEmpty("the ceiling failure never stops the session");
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        failed.AgentSessionId.ShouldBe(scenario.SessionId);
+        stopper.Killed.ShouldBeEmpty("ceiling decisions never stop the session");
         (await verify.AgentTaskEvents.AnyAsync(
             e => e.AgentTaskId == task && e.Detail.StartsWith("BootStall"))).ShouldBeFalse(
             "a queued-only prompt is no boot episode, so there is nothing to detect");

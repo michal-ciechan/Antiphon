@@ -812,6 +812,9 @@ public class BootStallDetectionTests
 
         if (shape == "queued-only-past-ceiling")
         {
+            // This arm supplies the complete seeded observation. Runner ingestion is not
+            // its subject; the matching accepted generation is still checked by the sweep.
+            world.CatchUp = (_, _) => Task.CompletedTask;
             (await world.RunOverdueSweepAsync()).ShouldBe(1, world.Warnings());
             var task = await world.TaskAsync();
             task.Status.ShouldBe(AgentTaskStatus.Failed, "nothing was received, so nothing is protected");
