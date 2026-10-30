@@ -75,7 +75,7 @@ choice of design.
 
 **D-3 — S3 does not name the existing operating text that re-creates the cycle or contradicts the new split.**
 - *Where:* plan S3 and D-8.
-- *Failure:* orchestration-loop.md:27-29 says "Before and after an AppHost pull or restart, verify that
+- *Failure:* orchestration-loop.md:29-31 says "Before and after an AppHost pull or restart, verify that
   queued lands have finished ... Wait for any land in progress before pulling". Inside the short
   Shared activation, every land requested after its dispatch is Held **by the activation itself**.
   An activation agent that follows this sentence waits on its own hold: the CARD-1615 cycle again,
