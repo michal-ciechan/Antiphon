@@ -17,7 +17,7 @@ are historical and this document is not executable Code authority.
    AppHost restart; qualify all conflicting activation/autonomy instructions.
 3. Review D-3 — complete: phase-scoped tasks, at most 30-minute drain slices, durable
    journal and explicit successor handover; CARD-1610 is not a dependency.
-4. Review D-4 — pending: detached standing/interactive controller and canonical
+4. Review D-4 — complete: detached standing/interactive controller and canonical
    activation HEAD; reject any controller checkout of a landing target.
 5. Review D-5 — pending: update existing documentation pins deliberately and add
    their complete affected class roster to the closed checkpoints.
@@ -61,6 +61,11 @@ No desktop files or ended native Windows run were inspected.
 
 ## Decisions
 
+These are the caller's stated defaults, settled here from inspected code. D-7
+implements review D-1; D-8 plus the marker implements review D-2; D-9 implements
+review D-3; D-12 implements review D-4; D-13 implements review D-5. No open product
+decision remains for another Plan round.
+
 | ID | Decision and reason | Rejected alternative / risk |
 |---|---|---|
 | D-1 | Use existing Worktree mode for the long rollout. Pin its initial source to the reviewed rc SHA, execute scripts from that owned checkout, use a fresh owner per explicit phase or bounded drain slice, joined through the durable rollout journal. | **(a) Target-aware Deploy exemption:** off-target publication can be safe, but role alone proves neither read-only behavior nor a stable canonical HEAD. A checkout switch after admission or during verification can make the later canonical fast-forward conflict with Deploy. Sound implementation needs coordinated checkout ownership, not just a ref comparison. |
@@ -74,6 +79,8 @@ No desktop files or ended native Windows run were inspected.
 | D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
 | D-10 | This dispatch requests revised-plan Review, then Code; verification design is therefore included here. Review evaluates the caller/SHA/doc corrections and executable test design; Code collects the bounded provisional timing samples. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. CARD-1609 plan round 2 is task `02c3c411` per this dispatch. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
+| D-12 | Standing/interactive controller source and the canonical activation checkout are detached at X. A managed task keeps its registered private feat branch, as required by git-common; never put a land target branch in any controller worktree. Refuse symbolic standing/interactive HEAD and task branches outside the registered feat forms. | A controller on rc holds every rc land at target_checked_out_elsewhere. Detaching a managed task would violate its assigned-branch contract, so the existing private feat form is the narrow exception. A throwaway clone adds custody/caching overhead and is not the default. |
+| D-13 | Maintain the existing doc-contract pins and include their affected classes in CP-4. Preserve unrelated authority, retention and branch-contract phrases. | Dropping pinned text without updating/checking its owner tests creates a predictable red build; a new duplicate prose-only suite is unnecessary. |
 
 ### Caller admission (review D-1)
 
@@ -115,18 +122,18 @@ credential; neither filesystem markers nor operator-token custody promise that.
 
 1. The caller names full reviewed rc SHA **X**, completes any prerequisite lands
    before commissioning Shared preparation, and records the currently active SHA
-   **P** separately. The short canonical task advances to X using the existing
-   supported pull/checkout procedure, verifies clean tracked source and exact
-   `HEAD == X`, and calls `restart-apphost.ps1 -ExpectedServerSha X`. If the checkout
-   is already Y or the rc tip changes before preparation, refuse/recommission with
-   a newly reviewed named SHA; never reset/rebase a published rc to manufacture X.
+   **P** separately. The short canonical task fetches the reviewed rc object and detaches
+   canonical HEAD at X under its existing repository/Shared ownership, verifies
+   clean tracked source and exact `HEAD == X` with no symbolic ref, and calls `restart-apphost.ps1 -ExpectedServerSha X`. If the reviewed rc selection changed before preparation, refuse/recommission
+   with a newly reviewed named SHA. Fetch then detach at the selected immutable
+   commit; do not pull on detached HEAD, reset/rebase rc, or move its published ref.
    Require `/api/version.sha == X` and health after restart. Any needed desktop
    runner build/restart and `provision-host-jq -Sha X` happen here, before the
    controller, with HEAD X; verify runner `buildVersion` against X. There is no
    invented `-ExpectedServerSha` parameter on the runner restart script.
 2. The long controller uses X for every phase, receipt and resume. Lands may
-   advance canonical HEAD X -> Y without activating Y; canonical HEAD and the
-   running API may intentionally differ in this window. Never pull/switch/build
+   advance the rc ref X -> Y while canonical detached HEAD and API remain X.
+   Do not reattach canonical HEAD to the moving target until rollout completion. Never pull/switch/build
    or restart the canonical stack from the controller. The deferred-activation policy applies to unrelated orchestrators too,
    through joined retire-temp completion. A same-X recovery restart is allowed
    by the marker but commissioned only at a proven quiescent boundary. The active-rollout marker below enforces the AppHost SHA restriction across
@@ -221,6 +228,39 @@ Use actual helper/script admission, temporary canonical/controller Git roots,
 a controlled clock and existing process-effect stubs. Assert no restart effects
 on refusal; matching-X and stale controls reach the effect sentinel. Race tests
 use barriers, never sleeps. Native Windows runs cover replacement/file sharing.
+
+### Checkout pinning (review D-4)
+
+The code at `AgentTaskLandingProtocol.cs:557-563` inspects every Git worktree
+registration. A non-main controller with `refs/heads/rc/...` checked out causes
+`target_checked_out_elsewhere`, regardless of token class or Shared status.
+Standing and interactive controllers therefore use an owned linked worktree
+created detached at X, and admission requires `git symbolic-ref -q HEAD` to report
+detached with a valid exact HEAD, not merely a clean tree. Reject all symbolic
+branches for these two caller classes as `RolloutControllerSourceMismatch`.
+Do not turn an unreadable HEAD into detached success.
+
+Managed phase tasks already sit on their own registered feat branch. Keep that
+branch, cross-check it against the server-resolved identity, and reject rc/master
+or any non-registered branch. This is the assigned-branch exception above, not
+permission for a task to detach itself. No branch change is made by this Plan.
+
+Canonical preparation likewise leaves its **main** checkout detached at X before
+activation. Lands can then update target refs without moving source files beneath
+the running/preparing stack. Verify no foreign worktree holds the selected rc
+target before commissioning the rollout; never detach another task's tree.
+After completion, another short canonical preparation fetches/detaches reviewed Y.
+Update the normal rollout recipe's pull wording accordingly, preserving the
+general ban `never pull while a land runs` outside this detached procedure.
+
+Add vectors to existing `C1615_Native_checkout_identity`: a clean standing or
+interactive controller on rc refuses before credentials, detached X admits,
+unknown HEAD refuses, and a registered task feat branch admits without any
+checkout mutation. Extend the real land witness to prove rc publication with
+detached canonical/controller HEADs still at X; the target ref becomes Y.
+The adversarial branch-on-target fixture must show the real landing protocol's
+refusal before the guard, not mock its reason. These are vectors within existing
+methods, so the nine/five rosters do not expand.
 
 ### Phase tasks, bounded waits and successor recipe (review D-3)
 
@@ -324,13 +364,15 @@ lookup or operational effects. Classify D-7 with the new caller-identity GET for
 Validate server-resolved task identity, Worktree, live status,
 registered `worktreePath`, native filesystem/Git root identity, clean tracked
 source and `HEAD == -Sha`. Reject wrong/unregistered trees and unknown identities;
-require a registered non-main linked worktree and its expected symbolic branch,
+require a registered non-main linked worktree and its expected private feat branch,
 not just a DTO whose path happens to equal the main checkout. Compare canonical
 identities, not path prefixes. New fixtures run the actual production script bytes
 from their private registered worktree; they cannot bypass this proof. The actual controller is native
-Windows, not a mirror whose registered path names a different machine. Standing
-callers use the native clean pinned non-main source checks without a task DTO or
-task branch comparison. Preserve D-6 observational/provision exceptions and
+Windows, not a mirror whose registered path names a different machine. Standing/interactive
+callers use the native clean pinned non-main source checks without a task DTO and
+must have detached HEAD. Refuse any symbolic ref for those classes; a TASK must
+match its registered feat/card-<n>-<stage>-<8hex> or feat/card-task-<8hex> branch.
+Do not silently detach any caller or change its branch during admission. Preserve D-6 observational/provision exceptions and
 D-7 interactive compatibility; never query an empty task ID.
 
 Add the D-8 version probe to the same helper and the existing offline HTTP seam,
@@ -369,7 +411,7 @@ report retained evidence and the journal's next-phase recipe before settling. Pa
 prose-only tests. Use one active controller generation outside the runner being recycled, with
 successive phase tasks owning successive journal generations.
 
-Canonical-only steps: rc pull/checkout, AppHost build/restart, desktop runner
+Canonical-only steps: reviewed rc fetch and explicit detached checkout, AppHost build/restart, desktop runner
 restart when needed, and `provision-host-jq`. The controller tree supports
 `check-census`, `check-host-jq`, deploy-temp, drain-old, redeploy-old, smoke/cache
 qualification, drain-temp and retire-temp. Those steps never pull/restart AppHost.
@@ -380,7 +422,7 @@ Replace these existing passages, rather than appending contradictory guidance
 
 | File / existing text | Required replacement |
 |---|---|
-| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Never pull during a Running land. During rollout X, rc lands may advance canonical HEAD, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; same-X recovery needs a quiescent journal and explicit X. The live marker mechanically refuses other AppHost restarts; a valid expired marker warns and fails open. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
+| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Never pull during a Running land. During rollout X, rc lands may advance the rc ref while canonical detached HEAD stays X, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; same-X recovery needs a quiescent journal and explicit X. The live marker mechanically refuses other AppHost restarts; a valid expired marker warns and fails open. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
 | `docs/docker-stack.md:473-474`, "From the canonical desktop checkout" for manual running-main cleanup | "From the pinned controller checkout on the Windows operational host, record main's status and exact candidates under that controller's printed rollout receipt path." Keep every existing running-main/ownership/publication/zero-work condition. The manual attested retirement path introduced by CARD-1609 also uses the controller tree; replace its canonical absolute evidence example with `<controller-root>/.antiphon/rolling-server2/manual-retire-<run>/`. This changes location, not cleanup authority. |
 | `docs/docker-stack.md:513-514`, normal `retire-temp` "from the canonical desktop checkout" | "Run normal retire-temp from the pinned controller checkout with the same rollout SHA X and preserved resume context, after the phase identity/version admission checks." Preserve offline publication audit and strict volume proof. |
 | `AGENTS.md:55`, "Restart and deploy scripts refuse ... when run from a linked Git worktree" | "`scripts/restart-apphost.ps1` and `scripts/deploy-local.ps1` refuse linked worktrees by default because they control the shared local stack. Their source is the canonical checkout. `scripts/deploy-server2.ps1` runs its rolling phases from the pinned controller worktree; only `provision-host-jq` requires canonical source. Desktop runner restarts remain canonical operations by policy; do not claim its script implements a linked-worktree guard. Never use `-AllowWorktree` for rollout preparation." |
