@@ -496,7 +496,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_custody.Value.ReadFinal(binding) is { } final) return NoteUnresolved(final);
             if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
                 && session.VerificationBinding == binding)
-                return NoteUnresolved(await session.CollectCustodyAsync(ct));
+                return NoteUnresolved(await session.CollectCustodyAsync(seal, ct));
             if (_custody.Value.ReadProducer(binding) is { } producer)
                 return NoteUnresolved(_custody.Value.Accept(producer));
             if (seal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
@@ -4538,7 +4538,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        internal async Task<VerificationCustodyStatus> CollectCustodyAsync(CancellationToken ct)
+        internal async Task<VerificationCustodyStatus> CollectCustodyAsync(bool explicitSeal, CancellationToken ct)
         {
             var binding = VerificationBinding
                 ?? throw new VerificationCustodyException("verification_custody_binding_required");
@@ -4554,7 +4554,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         observed = await observe(binding, ct);
                     else if (_client is null && CustodySealProbeForTests is null)
                     {
-                        if (binding.Backend == VerificationCustodyBackends.LinuxCgroup && RunnerSealPresent(binding))
+                        // A prior runner-seal.json is not a request. Recovery runs once per
+                        // explicit seal, never from an ordinary read or the observer.
+                        if (explicitSeal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
                             return _custodyLedger.ReleaseDeadHost(binding);
                         return _custodyLedger.ReadUnavailable(binding);
                     }
@@ -4571,7 +4573,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                             else
                                 observed = await _client!.GetCustodyAsync(binding, seal, ct);
                         }
-                        catch (Exception ex) when (linux && runnerSeal
+                        catch (Exception ex) when (explicitSeal && linux
                             && ex is not OperationCanceledException and not VerificationCustodyException)
                         {
                             return _custodyLedger.ReleaseDeadHost(binding);
@@ -4602,7 +4604,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     if (ReleaseDispositionMatched())
                         return;
-                    var custody = await CollectCustodyAsync(ct);
+                    var custody = await CollectCustodyAsync(explicitSeal: false, ct);
                     if (ReleaseDispositionMatched())
                         return;
                     if (custody.Receipt is not null && _client is { } client)
@@ -4611,6 +4613,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         return;
                     }
                     if (custody.Reason == "custody_observer_unavailable") return;
+                    // No client and no receipt is a dead host. Stop. Do not kill. Draining
+                    // with a live override keeps polling until the disposition matches.
+                    if (_client is null && custody.Receipt is null
+                        && custody.State == VerificationCustodyState.Unknown)
+                        return;
                     await Task.Delay(TimeSpan.FromSeconds(1), ct);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
