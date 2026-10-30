@@ -144,7 +144,7 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("launchCoverageComplete").GetBoolean().ShouldBeFalse("the launched timeout marked coverage complete");
         observed.GetProperty("launchTestsPassed").GetBoolean().ShouldBeFalse("the launched timeout marked tests passed");
         observed.GetProperty("refusedLaunchStarted").GetBoolean().ShouldBeFalse("a refused admission started a test process");
-        observed.GetProperty("refusedLaunchReasonOk").GetBoolean().ShouldBeTrue(text);
+        observed.GetProperty("refusedLaunchReasonOk").GetBoolean().ShouldBeTrue(observed.GetProperty("text").GetString());
     }
 
     private static async Task<JsonElement> Run(string mode, CancellationToken cancellationToken)
