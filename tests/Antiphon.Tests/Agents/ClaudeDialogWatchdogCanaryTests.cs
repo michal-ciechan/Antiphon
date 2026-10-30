@@ -94,21 +94,36 @@ public class ClaudeDialogWatchdogCanaryTests
                 var probe = question
                     ? "Use AskUserQuestion now to ask which color I prefer, with Blue and Green as choices. Wait for my answer; do not choose for me."
                     : "Run exactly node permission-probe.cjs using Bash now. Do not edit files or run any other command. Wait for my permission.";
-                await f.Harness.Runtime.SendInputAsync(f.SessionId, PtyInputEncoding.EncodeBody(probe), ct);
-                await Task.Delay(100, ct);
-                await f.Harness.Runtime.SendInputAsync(f.SessionId, "\r", ct);
-                var tool = question ? "AskUserQuestion" : "Bash";
-                await WaitAsync(async () =>
+                if (debug.ControlledSubmission)
+                    await debug.SubmitAsync(runner, probe, ct);
+                else
                 {
-                    var snapshot = await runner.GetSnapshotAsync(f.SessionId, ct);
-                    var transcript = await runner.GetTranscriptAsync(f.SessionId, ct);
-                    var blocked = snapshot.Dialog?.State == ProviderDialogState.Blocked;
-                    var submitted = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
-                        && PromptSubmissionMatch.IsCompleteIn(probe, e.Text));
-                    var called = transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
-                    debug.Observe(snapshot, transcript, blocked, submitted, called);
-                    return blocked && submitted && called;
-                }, TimeSpan.FromMinutes(2), ct);
+                    await f.Harness.Runtime.SendInputAsync(f.SessionId, PtyInputEncoding.EncodeBody(probe), ct);
+                    await Task.Delay(100, ct);
+                    await f.Harness.Runtime.SendInputAsync(f.SessionId, "\r", ct);
+                }
+                var tool = question ? "AskUserQuestion" : "Bash";
+                try
+                {
+                    await WaitAsync(async () =>
+                    {
+                        var snapshot = await runner.GetSnapshotAsync(f.SessionId, ct);
+                        var transcript = await runner.GetTranscriptAsync(f.SessionId, ct);
+                        var blocked = snapshot.Dialog?.State == ProviderDialogState.Blocked;
+                        var submitted = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
+                            && PromptSubmissionMatch.IsCompleteIn(probe, e.Text));
+                        var called = transcript.Entries.Any(e => e.Kind == TranscriptKinds.ToolCall && e.ToolName == tool);
+                        debug.Observe(snapshot, transcript, blocked, submitted, called);
+                        return blocked && submitted && called;
+                    }, TimeSpan.FromMinutes(2), ct);
+                }
+                catch (System.TimeoutException) when (question && debug.ControlledSubmission)
+                {
+                    // Preserve the failed precondition. Diagnostic dismissal only reveals when
+                    // the CLI persists its pending tool call; it never converts this run to green.
+                    await debug.CaptureAfterQuestionDismissalAsync(runner, probe, ct);
+                    throw;
+                }
                 File.Exists(marker).ShouldBeFalse();
                 var before = await runner.GetSnapshotAsync(f.SessionId, ct);
                 var pendingTool = (await runner.GetTranscriptAsync(f.SessionId, ct)).Entries.Last(e =>
