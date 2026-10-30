@@ -85,7 +85,9 @@ function New-FFHistoricalFixture {
     foreach ($suite in @('antiphon','session-runner','agents-pty','e2e')) {
         $name = $suite + '-failed.trx'
         [IO.File]::WriteAllText((Join-Path $run $name), ('<TestRun><TestDefinitions>'+$defsBySuite[$suite]+'</TestDefinitions><Results>'+$rowsBySuite[$suite]+'</Results></TestRun>'))
-        $suites += [ordered]@{ id=$suite; chunk='failed'; trx=$name; exitCode=1; timedOut=$false }
+        # Identity-union control isolates evidence from summary accounting faults.
+        # Real failed-summary shapes are independently exercised below.
+        $suites += [ordered]@{ id=$suite; chunk='failed'; trx=$name; exitCode=0; timedOut=$false }
     }
     $extra = @('CheckpointOrFilterTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointAppTests','CheckpointAdmissionContractTests','CheckpointSlotExecutorTests','CheckpointExecutorLogTests')
     $diag = "    version: 2.2.2`nTest framework UID: 'TUnitExtension' Version: '1.44.0.0'`n"
@@ -105,7 +107,7 @@ function New-FFHistoricalFixture {
     [IO.File]::WriteAllText((Join-Path $run 'recovered.diag'),$recoveredDiag)
     [IO.File]::WriteAllText((Join-Path $run 'recovered.trx'),'<TestRun><TestDefinitions><UnitTest id="recovered"><TestMethod className="Antiphon.Tests.Checkpoints.RecoveredTests" name="Case8" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="recovered" outcome="Passed" /></Results></TestRun>')
     $suites += [ordered]@{id='antiphon';chunk='recovered';trx='recovered.trx';execution='recovered.diag';timedOut=$false;exitCode=0}
-    $suites += [ordered]@{ id='antiphon'; chunk='all-group-105'; trx='antiphon-all-group-105.trx'; execution='antiphon-all-group-105-execution/invocation.diag'; timedOut=$true; exitCode=1 }
+    $suites += [ordered]@{ id='antiphon'; chunk='all-group-105'; trx='antiphon-all-group-105.trx'; execution='antiphon-all-group-105-execution/invocation.diag'; timedOut=$true; exitCode=0 }
     $summary = [ordered]@{ runId='retained-run'; attempt='1'; invocationId='retained-run'; completedAt='2026-10-29T00:00:00Z'; sha=('a'*40); profile='rc'; platform='windows'; policyHash=('b'*64); selectedSuites=@('antiphon','session-runner','agents-pty','e2e'); suites=$suites; timingRoot='timing' }
     Write-FFJson (Join-Path $run 'summary.json') $summary
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
