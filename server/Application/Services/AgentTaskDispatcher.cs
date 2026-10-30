@@ -3860,6 +3860,11 @@ public sealed partial class AgentTaskDispatcher
         if (suspected is not { Breached: true })
             return false;
 
+        // An outstanding decision does not need another full pull every five seconds.
+        // Separate phase facts still bring a genuinely overdue phase through the usual gates.
+        if (CeilingHoldFacts.Active(task) && suspected.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling && suspected.Boot is null)
+            return false;
+
         // Gate 1 — CARD-0072 owns this session.
         if (await _db.ApiErrorRecoveries.AsNoTracking()
             .AnyAsync(r => r.AgentSessionId == sessionId && r.ResolvedAt == null, ct))
@@ -3898,7 +3903,16 @@ public sealed partial class AgentTaskDispatcher
         var evaluatedDispatch = task.DispatchedAt;
         var evaluatedGeneration = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
             .Select(s => (DateTime?)s.StartedAt).FirstOrDefaultAsync(ct);
-        await CatchUpTranscriptAsync(sessionId, ct);
+        var confirmedCeilingPull = false;
+        if (suspected.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
+            && evaluatedGeneration is { } accepted && CatchUpOverride is null)
+            confirmedCeilingPull = _runtime is not null && await _runtime.CatchUpForCeilingAsync(sessionId, accepted, ct);
+        else
+        {
+            var suppliedObservation = CatchUpOverride is not null;
+            await CatchUpTranscriptAsync(sessionId, ct);
+            confirmedCeilingPull = suppliedObservation;
+        }
         var wait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, true, ct);
         await _db.Entry(task).ReloadAsync(ct);
         if (task.AgentSessionId != sessionId || task.Attempt != evaluatedAttempt || task.DispatchedAt != evaluatedDispatch
@@ -3929,6 +3943,7 @@ public sealed partial class AgentTaskDispatcher
 
         if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling)
         {
+            if (!confirmedCeilingPull) return false;
             var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
             if (session is null || evaluatedGeneration is not { } generation || generation == default
                 || session.StartedAt != generation || session.Status != SessionStatus.Running

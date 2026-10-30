@@ -56,6 +56,10 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Failed seat held', color: 'warning', icon: TbClockPause,
     hint: 'A Failed task still has a live or unconfirmed session. Detection only. Open the task; nothing is killed.',
   },
+  CeilingHold: {
+    label: 'Ceiling decision', color: 'warning', icon: TbClockPause,
+    hint: 'The delegate continues and still consumes capacity. Open the task to inspect its ceiling decision.',
+  },
   TaskInputUnreadable: {
     label: 'Input unreadable', color: 'warning', icon: TbEyeOff,
     hint: 'The delegate says it cannot read a caller refinement or reply. Open the task and session evidence.',

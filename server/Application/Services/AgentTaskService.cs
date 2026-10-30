@@ -2962,8 +2962,25 @@ public sealed class AgentTaskService
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct, string? reason = null)
     {
+        var observed = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+        var gate = (observed.Status == AgentTaskStatus.Working || observed.CeilingHeldAt is not null)
+            && observed.AgentSessionId is { } sessionId ? _messageQueue?.GetLock(sessionId) : null;
+        if (gate is not null) await gate.WaitAsync(ct);
+        try
+        {
+            return await CancelCoreAsync(id, observed.Attempt, observed.AgentSessionId, reason, ct);
+        }
+        finally { gate?.Release(); }
+    }
+
+    private async Task<AgentTaskSummaryDto> CancelCoreAsync(Guid id, int attempt, Guid? sessionId, string? reason, CancellationToken ct)
+    {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.Attempt != attempt || task.AgentSessionId != sessionId)
+            throw new ConflictException("The task attempt changed before cancellation.");
 
         if (IsSettled(task.Status))
             throw new ConflictException($"Task {DelegationReportFormatter.Short(id)} has already finished.");

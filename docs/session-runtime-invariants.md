@@ -10,6 +10,30 @@ a boot wedge. Reconcile receipts first, then allow Enter-only recovery only from
 a complete idle composer. A positively changed generation can take the ordinary
 first-write path. Other providers and ordinary messages retain their existing rules.
 
+## Ceiling supervision (CARD-1610 S2)
+
+A confirmed Working task at its role ceiling stays Working and counted. Its typed,
+attempt-bound ceiling episode is separate from Blocked and ordinary question parking.
+No failure, completion, workspace release, pool-idle mark or delegate input follows a hold.
+The real 20-minute model-wait and 90-minute tool deadlines continue to apply and a breached
+phase wins over a larger ceiling fraction. Boot remains detection only. An unavailable,
+incomplete or wrong-generation transcript observation defers the ceiling decision.
+
+Typed Reply carries only ceilingAction, episodeId and optional extendMinutes. Continue
+re-arms one original ceiling interval from max(elapsed, next bound), clipped at 720 total
+elapsed minutes. Extend refuses a bound above 720. At that cap the task stays held and
+counted until Cancel or an authenticated operator Extend (1..240 minutes, bounded reason)
+re-arms elapsed+minutes. A caller-supplied origin or boolean grants no operator authority.
+The next breach holds again. These decisions preserve the report floor and send no input.
+Ordinary reports settle a hold normally; Cancel and Retry retain their explicit stop authority.
+
+The question and ceilingHold DTO expose the transcript tail, age and nullable phase clock.
+For tails without a phase clock they explicitly say the ceiling is the only deadline.
+S2 persists a separate CeilingParent notice obligation. S3 must deliver it durably, forward
+late Failed reports for triage and fence successor admission before S2/S3 can land together.
+S2 alone is not an activation boundary. S4 dispatch budgets, client controls and Deploy
+changes remain separately ordered after their prerequisites.
+
 ## Deferred transcript effects (CARD-1259)
 
 CARD-1574 receipt-readiness observation is separate from catch-up's "new rows"

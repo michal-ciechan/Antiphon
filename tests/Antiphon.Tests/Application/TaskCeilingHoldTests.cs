@@ -173,6 +173,26 @@ public sealed class TaskCeilingHoldTests
         (await verify.TaskSupervisionNotices.CountAsync(n => n.TaskId == h.TaskId
             && n.Purpose == TaskSupervisionNoticePurpose.CeilingParent)).ShouldBe(1);
         h.Stopper.Killed.ShouldBeEmpty();
+        if (arm == "custody")
+        {
+            using var scope = h.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CancelAsync(h.TaskId, CancellationToken.None);
+            var canceled = await h.TaskAsync();
+            canceled.Status.ShouldBe(AgentTaskStatus.Canceled);
+            canceled.CeilingAcknowledgedAt.ShouldNotBeNull();
+            h.Stopper.Killed.ShouldHaveSingleItem().ShouldBe(h.SessionId);
+        }
+        else
+        {
+            await using var unknown = await TaskCeilingHarness.CreateAsync();
+            unknown.Dispatcher.CatchUpOverride = null;
+            await unknown.SweepAsync();
+            var retained = await unknown.TaskAsync();
+            retained.Status.ShouldBe(AgentTaskStatus.Working);
+            retained.CeilingHoldEpisodeId.ShouldBeNull("a failed transcript pull cannot establish current activity");
+            retained.FailureReason.ShouldBeNull();
+            unknown.Stopper.Killed.ShouldBeEmpty();
+        }
     }
 
     [Test]
@@ -231,6 +251,12 @@ public sealed class TaskCeilingHoldTests
             var population = DispatchConcurrencyPolicy.Count(rows, null);
             population.Parallel.ShouldBe(4);
             population.Roles[AgentTaskRole.Code].Parallel.ShouldBe(4);
+            var policy = DispatchConcurrencyPolicy.Resolve(DispatchConcurrencyPolicy.ImportSeed(settings,
+                h.Clock.GetUtcNow().UtcDateTime), null, null, 0, 0);
+            var decision = DispatchConcurrencyPolicy.DecideCreate(policy, population, AgentTaskRole.Code, false);
+            decision.Admit.ShouldBeFalse();
+            decision.Exceeded.ShouldContain(c => c.Axis == DispatchConcurrencyPolicy.AxisAbsolute);
+            decision.Exceeded.ShouldContain(c => c.Axis == DispatchConcurrencyPolicy.AxisRole);
         }
         else if (arm == "local")
         {
