@@ -5,6 +5,27 @@ Date: 2026-10-30. Plan task `42241722`; source base
 The [native investigation](../../investigations/2026-10-30-card-1199-windows-runnable-feasibility.md)
 is measurement evidence, not clean-source qualification.
 
+## Round-2 amendment status
+
+Plan task `dd46f01b`, base `421c3de68a81b32ded14f40af85a4e9ff50a1938`.
+The complete review `.antiphon/task-3b1ff9b6.md` is the amendment input.
+This working skeleton retains the confirmed 35-row premise and verification
+design. Code is held until the following amendments are complete and final
+Opus review accepts the revised plan:
+
+- Review D-1: independently build the graph-audit tool for CP-46; establish
+  scheduler dependencies and cleanup lifetime from source.
+- Review D-2: target rc first, then a separate reviewed master port; order every
+  slice after rc top-up 38 / CARD-1613 and use its renamed policy wrapper.
+- Review D-3: correct/add measured S/T/O entries in
+  `scripts/lib/nightly-class-costs.json`, preserving policy-hash semantics and
+  reconciling S3 admission pricing.
+- Incorporate A-1..A-9, explicitly split Linux Code and native Windows Verify
+  commissions, import the final table, and land only plan commits.
+
+R-2 remains an open operator decision, default pending/required. No product
+source edits or product test execution belong to this Plan task.
+
 ## Objective and premise correction
 
 Run the exact 35 existing cases on native Windows, preserving all their assertions
