@@ -14,6 +14,37 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class QualificationCheckoutSourceTests
 {
+    [Test]
+    public void C885_Cleanup_clears_read_only_objects_before_removing_owned_tree()
+    {
+        var scratch = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(),
+            "c885-cleanup-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var tree = Directory.CreateDirectory(Path.Combine(scratch, "owned-repo")).FullName;
+            var objects = Directory.CreateDirectory(Path.Combine(tree, ".git", "objects", "ab")).FullName;
+            var gitObject = Path.Combine(objects, "readonly-object");
+            File.WriteAllText(gitObject, "owned object");
+            // Both names are inside this test's scratch. The retained hard link observes
+            // attribute clearing even on Linux, where unlinking read-only files succeeds.
+            var observation = Path.Combine(scratch, "attribute-witness");
+            NativeHardLink.Create(observation, gitObject);
+            File.SetAttributes(gitObject, File.GetAttributes(gitObject) | FileAttributes.ReadOnly);
+            File.GetAttributes(observation).HasFlag(FileAttributes.ReadOnly).ShouldBeTrue("read-only setup");
+
+            CleanupScratch(tree);
+
+            Directory.Exists(tree).ShouldBeFalse("owned tree removed");
+            File.GetAttributes(observation).HasFlag(FileAttributes.ReadOnly)
+                .ShouldBeFalse("clear the read-only bit before deleting Git objects on Windows");
+            File.ReadAllText(observation).ShouldBe("owned object");
+        }
+        finally
+        {
+            ReadOnlyDirectory.Delete(scratch);
+        }
+    }
+
     private static readonly string[] RootMarkers =
     [
         ".antiphon-nightly-owned",
@@ -63,9 +94,11 @@ public sealed class QualificationCheckoutSourceTests
         finally
         {
             if (Directory.Exists(scratch))
-                Directory.Delete(scratch, recursive: true);
+                CleanupScratch(scratch);
         }
     }
+
+    private static void CleanupScratch(string scratch) => Directory.Delete(scratch, recursive: true);
 
     private static async Task<string[]> Porcelain(string root)
     {
