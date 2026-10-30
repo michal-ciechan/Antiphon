@@ -931,6 +931,63 @@ public sealed class RcFullTimingContractTests
         }
         '@
         [IO.File]::WriteAllText($seamPath, $seam)
+        $planningSeamPath = Join-Path $work 'planning-seams.ps1'
+        $planningSeam = @'
+        $NightlySeams = @{
+            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
+            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+            HostPlatform = { return 'linux' }
+            StartProcess = {
+                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+                $argv = @($ArgumentList)
+                if ($argv -contains '--list-tests') {
+                    Start-Sleep -Milliseconds 250
+                    return @{ ExitCode = 1; TimedOut = $true; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+                }
+                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+            }
+        }
+        '@
+        [IO.File]::WriteAllText($planningSeamPath, $planningSeam)
+        $supplementalSeamPath = Join-Path $work 'supplemental-seams.ps1'
+        $supplementalSeam = @'
+        $NightlySeams = @{
+            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
+            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+            HostPlatform = { return 'linux' }
+            StartProcess = {
+                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+                $argv = @($ArgumentList)
+                if ($argv -contains '--list-tests') {
+                    Start-Sleep -Milliseconds 400
+                    $diagIndex = [array]::IndexOf($argv, '--diagnostic-output-directory')
+                    if ($diagIndex -lt 0 -or ($diagIndex + 1) -ge $argv.Count) { throw 'seam-missing-diagnostic-directory' }
+                    $diagDir = [string]$argv[$diagIndex + 1]
+                    New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
+                    $diag = '{"format":"antiphon-tunit-discovery-v1","tunitVersion":"1.44.0","mtpVersion":"2.2.2","assemblyHash":"seam-timing-hash","nodes":[{"uid":"uid-seam","assembly":"Antiphon.Tests","namespace":"Antiphon.Tests.Scripts","type":"SeamTimingProbeTests","method":"Probe","signature":"","state":"Discovered","excluded":false,"categories":[]}]}'
+                    [IO.File]::WriteAllText((Join-Path $diagDir 'log.diag'), $diag)
+                    return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+                }
+                if ($argv -contains '--report-trx') {
+                    $nameIndex = [array]::IndexOf($argv, '--report-trx-filename')
+                    $dirIndex = [array]::IndexOf($argv, '--results-directory')
+                    if ($nameIndex -lt 0 -or $dirIndex -lt 0) { throw 'seam-missing-trx' }
+                    $trxPath = Join-Path ([string]$argv[$dirIndex + 1]) ([string]$argv[$nameIndex + 1])
+                    $trxDir = Split-Path -Parent $trxPath
+                    if ($trxDir -and -not (Test-Path -LiteralPath $trxDir)) { New-Item -ItemType Directory -Path $trxDir -Force | Out-Null }
+                    $trx = '<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="uid-seam" name="Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe"><TestMethod className="Antiphon.Tests.Scripts.SeamTimingProbeTests" name="Probe" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="uid-seam" testName="Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe" outcome="Passed" /></Results></TestRun>'
+                    [IO.File]::WriteAllText($trxPath, $trx)
+                    return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+                }
+                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
+            }
+        }
+        '@
+        [IO.File]::WriteAllText($supplementalSeamPath, $supplementalSeam)
+        $planningLog = Join-Path $log 'planning'
+        $supplementalLog = Join-Path $log 'supplemental'
+        New-Item -ItemType Directory -Path $planningLog -Force | Out-Null
+        New-Item -ItemType Directory -Path $supplementalLog -Force | Out-Null
         $problems = New-Object System.Collections.Generic.List[string]
         $discoveryNull = $false
         $setupNpmCi = $false
@@ -943,7 +1000,17 @@ public sealed class RcFullTimingContractTests
         try {
             $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $log -TimingRoot $timing -Suites @('scripts') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'call-site' -Trigger 'manual' -SeamsPath $seamPath -AllowSharedTree
         } catch {
-            $problems.Add('invoke-threw')
+            $problems.Add('scripts-threw')
+        }
+        try {
+            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $planningLog -TimingRoot $timing -Suites @('antiphon') -Profile 'rc' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'planning-site' -Trigger 'manual' -SeamsPath $planningSeamPath -AllowSharedTree
+        } catch {
+            $problems.Add('planning-threw')
+        }
+        try {
+            $null = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot $supplementalLog -TimingRoot $timing -Suites @('antiphon') -Profile 'nightly' -Sha '9f00008facfc48e75555c08df59887019b3f8dfe' -RunId 'supplemental-site' -Trigger 'manual' -SeamsPath $supplementalSeamPath -AllowSharedTree
+        } catch {
+            $problems.Add('supplemental-threw')
         }
         $setupPath = Join-Path $timing 'setup-phases.json'
         if (Test-Path -LiteralPath $setupPath) {
