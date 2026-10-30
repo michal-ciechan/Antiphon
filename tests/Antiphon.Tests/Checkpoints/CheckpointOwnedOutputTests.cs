@@ -77,7 +77,6 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
     [Arguments("link")]
     public void changed_inventory_is_refused(string variant)
     {
-        if (variant == "link" && OperatingSystem.IsWindows()) Skip.Test("Linux symlink proof; Windows junction remains R2");
         var root = InitRepo();
         var output = Path.Combine(root, "bin-ledger");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
@@ -87,9 +86,21 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         if (variant == "file") File.WriteAllText(extra, "USER");
         if (variant == "changed") File.WriteAllText(Path.Combine(output, "compiler.dll"), "USER");
         if (variant == "directory") Directory.CreateDirectory(extra);
-        if (variant == "link") File.CreateSymbolicLink(extra, Path.Combine(root, "outside.txt"));
+        if (variant == "link" && !OperatingSystem.IsWindows()) File.CreateSymbolicLink(extra, Path.Combine(root, "outside.txt"));
+        var junctionTarget = Path.Combine(root, "outside");
         try
         {
+            if (variant == "link" && OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(junctionTarget);
+                File.WriteAllText(Path.Combine(junctionTarget, "keep.txt"), "OUTSIDE");
+                var start = new ProcessStartInfo("cmd.exe");
+                foreach (var arg in new[] { "/d", "/c", "mklink", "/J", extra, junctionTarget })
+                    start.ArgumentList.Add(arg);
+                var made = CheckpointFixtureProcess.Run(start, 30_000);
+                made.Exit.ShouldBe(0, made.Stdout + made.Stderr);
+                File.GetAttributes(extra).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
+            }
             var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-ledger"], 0, false, false, createdPaths: [output]);
             result.Deleted.ShouldBeEmpty();
             result.Refusals.ShouldNotBeEmpty();
@@ -97,9 +108,22 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
             if (variant == "file") File.ReadAllText(extra).ShouldBe("USER");
             if (variant == "changed") File.ReadAllText(Path.Combine(output, "compiler.dll")).ShouldBe("USER");
             if (variant == "directory") Directory.Exists(extra).ShouldBeTrue();
-            if (variant == "link") new FileInfo(extra).LinkTarget.ShouldNotBeNull();
+            if (variant == "link" && OperatingSystem.IsWindows())
+            {
+                new DirectoryInfo(extra).LinkTarget.ShouldNotBeNull();
+                File.ReadAllText(Path.Combine(junctionTarget, "keep.txt")).ShouldBe("OUTSIDE");
+                File.ReadAllText(Path.Combine(output, "compiler.dll")).ShouldBe("COMPILER");
+            }
+            else if (variant == "link") new FileInfo(extra).LinkTarget.ShouldNotBeNull();
         }
-        finally { if (variant == "link") new FileInfo(extra).Delete(); }
+        finally
+        {
+            if (variant == "link" && OperatingSystem.IsWindows())
+            {
+                if (new DirectoryInfo(extra).LinkTarget is not null) Directory.Delete(extra);
+            }
+            else if (variant == "link") new FileInfo(extra).Delete();
+        }
     }
 
     // case -> valid ledger -> red if cleanup cannot reclaim its own unchanged payload.
