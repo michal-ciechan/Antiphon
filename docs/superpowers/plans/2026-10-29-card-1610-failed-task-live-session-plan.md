@@ -11,7 +11,7 @@ and each defect response were committed and pushed during this round.
 
 This is the pushed skeleton; each item is resolved in place before handoff.
 
-- R3-1: retain Working with typed hold fields; inspect Reply and all four occupancy/Check selectors.
+- R3-1 resolved: Working + typed fields; exclusive Reply action, separate question projection, four counting/Check witnesses (D-1).
 - R3-2: Continue re-arms through 720 minutes; final hold requires explicit operator Extend.
 - R3-3: preserve docker-stack step-5 stop authority; use ANTIPHON_TASK_TOKEN and foreground-safe resumable slices.
 - R3-4: forward Failed late reports as durable parent triage notes without settlement or handoff.
@@ -20,8 +20,8 @@ This is the pushed skeleton; each item is resolved in place before handoff.
 ## Decisions
 
 - **D-1 — Adopt a non-failing ceiling hold for all roles, including Deploy.**
-  A Working session at its role ceiling remains alive; its task becomes Blocked
-  with a typed ceiling question. Cancel, continue/extend via Reply, and ordinary
+  A Working session at its role ceiling remains alive; its task stays Working
+  with an attempt-bound typed ceiling hold and an answerable attention question. Cancel, continue/extend via Reply, and ordinary
   report settlement remain available. A hold must remain in phase supervision:
   model-wait and tool deadlines still fail real stalls. CARD-1151 is a precedent
   for detection-only handling, not an existing Blocked transition (its code
@@ -67,7 +67,8 @@ changing global phase deadlines to hide long test or drain commands.
 | A role ceiling proves a hang | TryFailOverdueAsync fails even with a recent ToolCall | Hold Working sessions, preserve phase failure |
 | Boot detection already blocks tasks | AgentTaskDispatcher.BootStall.cs explicitly preserves status | Reuse detection principle, implement hold transitions explicitly |
 | Retry cannot stop Failed+live | RequeueCoreAsync calls StopDelegateAsync | Reuse existing authority and controls |
-| Blocked automatically keeps phase/report processing | Deadline/reply selectors currently accept Dispatched/Working | Explicitly admit typed ceiling holds; do not widen all Blocked tasks |
+| Blocked keeps occupancy | DispatchConcurrencyPolicy, dispatcher local cap, pipeline in-flight and CARD-0079 select Dispatched/Working | Keep Status=Working; do not widen these selectors |
+| Reply only accepts Blocked | AnswerAsync also handles a Working open-question tool; it validates nonblank message before routing | Add an exclusive typed ceiling path before ordinary answer logic |
 | Deploy fits its ceiling | Default drain wait 480 exceeds ceiling 240 | All-role hold plus declared budget and bounded command waits |
 
 ## Slices
@@ -99,9 +100,9 @@ release it. Parking must never treat a Working ceiling hold as an idle question.
 
 ## Handoff
 
-This round returns to independent design Review; TestDesign remains separate
-before Code. The completed artifact includes the source-backed contract,
-per-slice tests and checkpoint table. This round does not authorize implementation.
+Verification design is included in this final Plan round. Next is Code based on
+origin/master, after the D-6 ordering gates and performance assessment. This
+dispatch edits the plan only; the caller commissions implementation separately.
 
 ## D-1 detail: typed ceiling hold and continuing supervision
 
@@ -115,54 +116,62 @@ adjust ModelWait only. Defaults remain ModelWait=20, LocalExecution=90 minutes;
 provider input waits retain their own existing classification and policy.
 
 For a positively Working, current-generation session with no breached phase,
-ceiling breach commits Blocked, a typed Ceiling block reason, and one question:
-"This task has run N minutes against its C-minute ceiling. Its session is still
-working. Continue under phase supervision, cancel, or extend the ceiling by M?"
-No CompletedAt, failure event, report, stage outcome, workspace-consumer release,
-pool-idle mark or completion settlement is written. Session input is unnecessary
-for this control-plane transition. Parent notification says `next=decide` and
-explicitly says the delegate continues. Do not emit a terminal Failed header.
+ceiling breach commits **Status=Working**, a typed active ceiling episode and
+one durable parent-question obligation. No CompletedAt, Blocked event, failure
+reason/code, report, stage outcome, workspace release, pool-idle mark or terminal
+settlement is written. Session input is unnecessary. The parent note says
+next=decide and explicitly says the delegate continues and still consumes capacity.
 
-Persist nullable attempt-scoped hold fields on AgentTask (episode ID, held-at,
-accepted session StartedAt, acknowledged-at), plus the resolved ceiling and
-source. Add BlockedKind.Ceiling (append enum values) for classification/UI; do not
-encode eligibility by searching FailureReason prose. Defaults/nulls preserve old
-rows. Hold identity includes task, attempt, session, generation and dispatch;
-existing optimistic concurrency and session/task fence reject stale decisions.
-Generate EF migrations with the CLI during Code. No separate wait-ledger entity.
+Persist nullable attempt-scoped hold fields on AgentTask: episode ID, held-at,
+accepted session StartedAt, acknowledged-at, resolved initial ceiling/source and
+next ceiling at absolute elapsed minutes. DTO ceilingHold is separate from
+blocked; do not add BlockedKind.Ceiling or overload FailureReason/Result.
+Identity includes task, attempt, session, generation and DispatchedAt. Nulls
+preserve old rows. Generate EF migrations with the CLI during Code. No wait ledger.
 
-A shared expression/predicate, **Dispatched or Working or current typed ceiling
-hold**, must be used at each affected consumer: overdue sweep and its post-pull
-check; AgentTaskReplyService.OnTurnEndLockedAsync/OnTranscriptActionAsync;
-AgentSessionRuntime catch-up and AdmitActionsAsync; SessionRuntimeActionCoordinator
-RequestAsync; and the runtime-action save fence. Audit AppDbContext's task fence
-and the dead-session/unsafe-refusal paths too. Existing task/session/generation
-fences remain mandatory. Ordinary question/quota/routing Blocked tasks are not
-made settle-eligible. A complete report already admitted while Working remains
-attributed after the hold and uses normal settlement (including commit/push and
-review evidence requirements). A done/blocked/failed report resolves the hold
-atomically with its ordinary outcome; the same report cannot settle twice.
+Keeping Working preserves the existing overdue, progress/loop, reply settlement,
+AgentSessionRuntime catch-up/admission, SessionRuntimeActionCoordinator and
+AppDbContext save-fence populations. Inspect these sites, but do not widen any
+Blocked selector. An already admitted report retains its original attribution;
+done/blocked/failed resolves the active hold atomically with normal settlement.
+Cancel/Retry retire the episode with the old attempt and keep their stop semantics.
+A normal report can settle without an answer. No hold prompt goes to the delegate.
 
-Reply gets an explicit typed ceiling action, exposed by delegate.ps1 and the
-existing reply endpoint: Continue or Extend with positive integral minutes.
-Cancel uses the existing Cancel operation. Continue marks this ceiling episode
-acknowledged and returns Working, suppressing further *role-ceiling* holds for
-this attempt; phase and loop supervision continue without an end-time waiver.
-Extend sets the absolute ceiling to `max(elapsed minutes, current ceiling)+M`,
-limited by D-4's cap, clears the active hold and rearms at that new ceiling.
-Do not parse arbitrary prose as a number. Reject a stale episode/attempt/round
-or unsupported action with 409/validation before changes. Invalid answers leave
-the question open. Reply on other Blocked kinds keeps its existing behavior.
+The minimal Reply change is a nullable exclusive ceilingAction/episodeId/
+extendMinutes shape in ReplyToAgentTaskRequest and POST /{id}/reply in
+server/Api/Endpoints/AgentTaskEndpoints.cs. Branch to a new
+AgentTaskReplyService.AnswerCeilingAsync BEFORE AnswerAsync's nonblank-message,
+workspace-answer, open-question and Blocked routing. The typed method accepts
+only Working + current active episode + matching attempt/generation, under the
+existing recipient gate and task save fence. Mixed ordinary-message/typed shapes,
+stale episode/attempt and invalid actions refuse without mutation. Ordinary
+AnswerAsync and ContinueWithAuthorityAsync remain unchanged, including the
+existing Working open-question exception and Blocked-only standing authority.
 
-For this special reply, **do not update RepliedAt/RepliedAtSequence, queue a new
-prompt, clear pending report attribution or create a new task attempt**. The
-original turn is still running; existing Reply's watermark change would discard
-its eventual report. Record the control decision as an event and publish normal
-task invalidation. Cancel/Retry retire the hold with the old attempt; their stop
-semantics remain unchanged. Persisted decisions survive restart without repeated
-hold notes. Exclude Ceiling from standing-authority auto-continue, question
-parking, follow-up reuse and generic question auto-resume. It continues to own
-its seat, workspace reservation and concurrency occupancy.
+For the typed decision do not change RepliedAt/RepliedAtSequence, queue input,
+clear pending report attribution, reserve a new workspace or create an attempt.
+Record the decision, publish task/attention invalidation and clear the active
+question only after the new bound is persisted. Continue/Extend re-arm according
+to R3-2 below; neither grants an indefinite waiver. Restart uses persisted episode
+and obligation keys, so a repeated tick cannot send a second question. A separate
+ceilingHold DTO and CeilingHoldCard in TaskDetailBody expose typed Continue,
+Extend and existing Cancel; the normal BlockedQuestionCard remains for Blocked.
+The attention producer selects Working + active episode, never only Blocked.
+
+| Counting/selection site (source at round-3 base) | Disposition and witness |
+|---|---|
+| DispatchConcurrencyPolicy.cs:364-368 IsOpen/IsParallel, stage and absolute limits | No selector edit. C1610_Hold_keeps_occupancy(stage-absolute): four Code tasks including one held still count four; fifth create refuses 409 on the expected constraints |
+| AgentTaskDispatcher.cs:510-516 local active and MaxConcurrentTasks | No count edit. C1610_Hold_keeps_occupancy(local): held local task consumes its slot and queued fifth never launches |
+| AgentTaskPipelineStatusService.cs:182-188 fleet/scoped/local in-flight | No selector edit. C1610_Hold_keeps_occupancy(pipeline): scope/role/host counts and remaining stay unchanged across hold; repeat after restart |
+| CheckCompactionContinuationService.cs:619/653 occupant/owning Check selection | No selector edit. C1610_Hold_keeps_occupancy(check): qualified CARD-0079 still sees the held owning Check and performs only its existing conditional stop path; unqualified seats remain untouched |
+
+All four witnesses drive the actual policy/service selectors, not a fixture-side
+count. S2 lists these four inspected files and the full existing regression
+classes. A typed hold remains excluded from generic question parking, follow-up
+reuse and auto-continue by retaining Working and using a separate projection.
+It retains seat, workspace reservation and concurrency occupancy for its whole
+unanswered lifetime. The rejected alternative (Blocked plus broadened selectors)
+would require a fleet-wide census and risks missed counting/stop predicates.
 
 The pre-ceiling warning remains a projection. At breach, positively idle
 non-boot tasks use the existing overdue failure and D-2 notice; a stale/unknown
@@ -258,8 +267,8 @@ Deduplicate generic SeatIdle/SlotOrphan warnings for this same concern, retainin
 other concerns. Clear only after authoritative exit/release or new ownership,
 not because Failed was already written. Use the existing attention rendering
 contract and add optional DTO facts; the CLI text has offline script tests.
-The existing BlockedQuestionCard needs a small explicit Ceiling branch: its
-fallback otherwise sends an ordinary answer or offers Retry. Add Continue,
+Add a separate CeilingHoldCard for detail.ceilingHold in TaskDetailBody; leave
+BlockedQuestionCard and its ordinary answer behavior unchanged. Add Continue,
 bounded Extend and existing Cancel controls that send the typed action/episode,
 and report "Decision recorded; session continues" instead of "Queued for the
 delegate". No auto-continue, Refine or Retry affordance appears for this kind.
@@ -340,7 +349,8 @@ Also guard the narrower real concurrency risk introduced by holds: a previously
 held task can finish after its caller separately commissioned a replacement.
 Normal settlement may retain its valid report/outcome, but before constructing
 the parent completion/handoff check for a newer task on the same board/card/role
-since HeldAt (any status, including already completed). Under the ordinary
+since the held attempt's **DispatchedAt**, not HeldAt (any status, including
+already completed, including a successor admitted between the 80% warning and hold). Under the ordinary
 settlement/admission serialization, record the decision and force next=decide
 with superseding IDs when one exists. A different role alone is not a conflict;
 retry/attempt/session fences still apply independently. Recheck when reserving
@@ -446,7 +456,7 @@ allowlist and count floor together. Any fixture that begins spawning must gain
 the assembly-local limiter and strict-roster membership before running.
 
 Replace round-1's client visibility tests with three focused cases in
-client/src/features/delegations/BlockedCeilingHold.test.tsx: Continue sends a
+client/src/features/delegations/CeilingHold.test.tsx: Continue sends a
 typed decision without ordinary reply; Extend validates/sends minutes and stale
 episode refusal; Cancel uses the existing route. Each also asserts no generic
 Retry/auto-continue affordance. CP-20/21 require a fresh Vitest JSON receipt with
@@ -525,9 +535,9 @@ capacity for Working/Unknown. A stall is reported for a decision, never killed.
 | Slice | Product and documentation files | Test files / ordinary checkpoints |
 |---|---|---|
 | S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind and client/src/api/attention.ts kind mirror; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards. CLI status waits for S4's script tests |
-| S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; BlockedContextBuilder.cs; AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
+| S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; inspect unchanged DispatchConcurrencyPolicy.cs, AgentTaskPipelineStatusService.cs, CheckCompactionContinuationService.cs, TaskProgressPolicy.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; new CeilingHoldFacts.cs and AttentionService hold projection (BlockedContextBuilder stays unchanged); AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
 | S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs and hosted recovery; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
-| S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/BlockedQuestionCard.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/BlockedCeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
+| S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/CeilingHoldCard.tsx and TaskDetailBody.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/CeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
 
 Paths without a directory in this table are under server/Application/Services
 unless their explicit layer is named above. scripts/delegate.ps1 owns these
@@ -571,7 +581,7 @@ and method-scoped positive control for each behavior before Code.
 | R-5 | SessionRuntimeActionRecoveryTests.C1259_admitted_task_attempt_cannot_settle_its_replacement | 2; catchup false/true |
 | R-6 | TerminalSeatReleaseTests.Working_remains_protected_after_arbitrary_silence; Explicit_operator_release_keeps_its_contract | 2; unchanged runner safety boundary |
 | R-7 | TestLaneCategoryGuardTests; TestClassificationGuardTests; ProcessSpawnLimitTests | 23 executed results per green group; include new process classes in strict roster |
-| V-11 | BlockedCeilingHold.test.tsx | 3 Vitest cases: Continue, Extend, Cancel; D-8 defines exact receipt floors |
+| V-11 | CeilingHold.test.tsx | 3 Vitest cases: Continue, Extend, Cancel; D-8 defines exact receipt floors |
 
 No new runner capability or live provider test is needed. Existing
 TaskOwnerGuard accepts Blocked with a live bound session, so a hold does not end
@@ -611,8 +621,8 @@ Same After group shares a build; each distinct source group owns fresh output.
 | CP-17 | S2-S4 | CP-11 | server-attempt-regression | `/*/*/SessionRuntimeActionRecoveryTests/C1259_admitted_task_attempt_cannot_settle_its_replacement` | R-5 | 2 passed, 0 failed/skipped | 2 | 1 |
 | CP-18 | S2-S4 | CP-11 | server-unit-guards-hold | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
 | CP-19 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-safety-regression | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | R-6 | 2 passed, 0 failed/skipped | 2 | 3 |
-| CP-20 | S2-S4-red | n/a | client-ceiling-red | `pwsh -NoProfile -File scripts/test-client.ps1 BlockedCeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-11 | JSON total=3; all 3 names; intended control assertion red, not typecheck/setup failure | n/a | 2 |
-| CP-21 | S2-S4 | n/a | client-ceiling | `pwsh -NoProfile -File scripts/test-client.ps1 BlockedCeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-11 | JSON total=3, passed=3, failed/pending/todo=0; exact names; exit 0 | n/a | 2 |
+| CP-20 | S2-S4-red | n/a | client-ceiling-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-11 | JSON total=3; all 3 names; intended control assertion red, not typecheck/setup failure | n/a | 2 |
+| CP-21 | S2-S4 | n/a | client-ceiling | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-11 | JSON total=3, passed=3, failed/pending/todo=0; exact names; exit 0 | n/a | 2 |
 
 Run each committed After group once through the checkpoint tool. CP-19 belongs
 to S1 even though printed last; run server and runner projects sequentially.
