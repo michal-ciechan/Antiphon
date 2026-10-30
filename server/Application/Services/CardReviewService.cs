@@ -207,6 +207,7 @@ public sealed class CardReviewService
             body.AppendLine($"- Completed: {completedAt:O}");
         if (lastAttempt.ExitCode is int exitCode)
             body.AppendLine($"- Exit code: {exitCode}");
+        body.AppendLine($"- Exit evidence: {SessionExitPolicy.Describe(lastAttempt.ExitCode, lastAttempt.ExitSignal)}");
         if (!string.IsNullOrWhiteSpace(lastAttempt.ErrorDetails))
             body.AppendLine($"- Error: {lastAttempt.ErrorDetails.Trim()}");
 

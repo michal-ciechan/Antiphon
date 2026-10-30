@@ -34,7 +34,7 @@ internal sealed class RunnerTerminalSession
     /// Null when that call did not report one (including <see cref="AgentExitReason.Unknown"/>).
     /// </summary>
     public AgentExitReason? GenerationKillCause { get; private set; }
-    public Task<int> Exited { get; private set; } = Task.FromResult(0);
+    public Task<int> Exited { get; private set; } = Task.FromResult(-1);
     private readonly TaskCompletionSource<AgentExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<AgentExitObservation> Completion => _completion.Task;
 
@@ -311,7 +311,7 @@ internal sealed class RunnerTerminalSession
         EnsureStarted();
         var session = await _client.KillAsync(_sessionId, ct);
         ExitReason = session.ExitReason;
-        return session.Status == "Exited" || session.ExitCode is not null;
+        return session.Status == "Exited" || session.ExitCode is not null || session.ExitSignal is > 0;
     }
 
     public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, CancellationToken ct)
@@ -367,7 +367,7 @@ internal sealed class RunnerTerminalSession
 
                     ExitReason = session.ExitReason;
                     _completion.TrySetResult(new(session.ExitCode, session.ExitSignal, session.ExitStopIntent));
-                    return session.ExitCode ?? 0;
+                    return new AgentExitObservation(session.ExitCode, session.ExitSignal, session.ExitStopIntent).CompatibilityCode;
                 }
             }
             catch

@@ -19,7 +19,7 @@ public sealed class RawPtyAdapter : IAgentProtocolAdapter
     private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
 
-    public Task<int> Exited => _runner.Exited;
+    public Task<int> Exited => AgentExitObservation.CompatibilityAsync(Completion);
     public Task<AgentExitObservation> Completion => ObserveCompletionAsync();
     private async Task<AgentExitObservation> ObserveCompletionAsync()
     {

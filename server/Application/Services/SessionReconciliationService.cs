@@ -802,16 +802,17 @@ public sealed class SessionReconciliationService
 
         HerdrSupervisionFailureEvidence.Record(session,
             HerdrSupervisionFailureEvidence.FromExitReason(runnerSession.ExitReason));
-        session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
-            ? SessionStatus.Stopped
-            : SessionStatus.Failed;
         if (!SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent))
             _logger.LogWarning("Conflicting exit snapshot for session {SessionId}; retaining first evidence", session.Id);
+        session.Status = SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal,
+            runnerSession.ExitReason, session.TerminationSource) ? SessionStatus.Stopped : SessionStatus.Failed;
         if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
         {
             session.FailureReason =
                 $"Reconciliation found the runner exited while the database session was still live ({runnerSession.ExitReason}, "
-                + $"code {runnerSession.ExitCode?.ToString() ?? "unknown"}).";
+                + $"code {session.ExitCode?.ToString() ?? "unknown"}). "
+                + SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal, session.TerminationSource,
+                    SessionExitEvidence.ReadIntent(session.ExitStopIntentJson));
         }
         SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));
         session.EndedAt ??= now;

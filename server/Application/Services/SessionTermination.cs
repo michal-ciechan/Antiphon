@@ -8,6 +8,7 @@ namespace Antiphon.Server.Application.Services;
 /// First-writer-wins stamp for <see cref="AgentSession.TerminationSource"/> (CARD-0256, CARD-0316).
 /// Platform closers record a source with the terminal status write; an exit event never erases a
 /// request, and a request never writes <see cref="SessionTerminationSource.Unknown"/>.
+/// ProcessExit records an observation, never voluntary exit or a signal sender.
 /// </summary>
 public static class SessionTermination
 {
