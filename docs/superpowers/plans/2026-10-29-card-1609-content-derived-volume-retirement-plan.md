@@ -14,7 +14,7 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 
 | Review defect | Revision obligation | Status |
 |---|---|---|
-| D-1 | Whole-minute checkpoint estimates and successful import | Pending |
+| D-1 | Whole-minute checkpoint estimates; import verification recorded below | Estimates corrected; import pending |
 | D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Pending |
 | D-3 | Complete read-only offender preview, human and machine forms | Pending |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Pending |
@@ -497,7 +497,7 @@ when its behavioral vectors and witnesses remain explicit.
 
 ## Performance budget
 
-This Plan ran no builds, tests, audits or destructive operations. Apply
+This Plan runs only the checkpoint importer (leased tool bootstrap if needed), not product tests or live audits. Apply
 `docs/testing-and-build.md#performance-standards` and its owner. The 5225-second
 800-repository audit and 1404-second OLD replay at load 17 are documented production
 samples (CARD-1316), not a measured p95 for the new design. The existing real-Docker
@@ -640,13 +640,13 @@ through `scripts/build-slot.ps1` if needed; the checkpoint runner takes build sl
 for its rows. Continue `wait` until terminal exit (75 is running), in foreground
 wait windows no longer than 60 seconds. Preserve exact CHECKPOINT lines with source
 and build provenance; the S1 rows are intentional assertion-red evidence, not green.
-Remove only task-owned alternate outputs after all runs have joined.
+Remove only task-owned alternate outputs after all runs have joined. CP-11 intentionally builds on the native Windows lane; an importer duplicate-build warning is expected because cross-host CP-3 output cannot be reused.
 
 Import the manifest to ignored YAML to set per-row deadlines explicitly rather
 than inherit the importer's 15-minute/3x floor: provisional execution caps CP-1=10m,
-CP-2=1m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=3m, CP-8=2m, CP-9=2m,
+CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=2m,
 CP-10=8m, CP-11=10m. These are roughly 2x the stated estimates, not measured-p95
-claims. Red-group charged cap 11m, final Linux 28m, Windows 10m; each hard wall
+claims. Red-group charged cap 12m, final Linux 29m, Windows 10m; each hard wall
 adds one finite 45m admission allowance. Reconcile with measured p95 under the
 collection obligation before final qualification. If a group reaches 30m, stop
 repeating it and hand timing evidence to Debug. No full assembly run is authorized.
@@ -656,12 +656,12 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
-| CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 0.2 | true |
+| CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 1 | true |
 | CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C10,J1-J10 | all 20 listed methods, 0 failed/skipped | 20 | 5 | true |
 | CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 | all 11 listed methods, 0 failed/skipped | 11 | 1 | true |
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
-| CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 1.5 | true |
+| CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
 | CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)` | R1 | all 7 methods, 0 failed/skipped | 7 | 1 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
