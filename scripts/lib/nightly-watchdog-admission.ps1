@@ -75,6 +75,7 @@ function Get-NightlyWatchdogErrorFactors {
         if ($outcome -ceq 'Failed') { $failed++ }
         if ($plannedKnown) { [void]$ratios.Add($wall / $planned) }
     }
+    if (-not $plannedKnown) { $censored = $true }
     $e95 = 1.0
     $emax = 1.0
     if ($ratios.Count -gt 0) {
