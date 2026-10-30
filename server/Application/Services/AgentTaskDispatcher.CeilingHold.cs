@@ -32,6 +32,9 @@ public sealed partial class AgentTaskDispatcher
             var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
             if (verdict is not { Breached: true, Kind: TaskDeadlinePolicy.DeadlineKind.Ceiling, Boot: null, Working: true })
                 return false;
+            if (!CeilingHoldFacts.CanHold(task.Status, generation, session.StartedAt,
+                session.Status == SessionStatus.Running, _runtime?.RemoteInventoryPending(session.RunnerId) != true,
+                verdict.Working, verdict.Boot is not null, verdict.PhaseDeadline?.Breached == true)) return false;
             if (CeilingHoldFacts.Active(task)) return true;
             if (task.ResolvedCeilingMinutes is null) CeilingHoldFacts.Resolve(task, _settings);
             var now = UtcNow();
