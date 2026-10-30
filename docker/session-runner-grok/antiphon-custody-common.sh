@@ -67,7 +67,8 @@ custody_read_namespace() {
 
 # Holds flock on fd 9. 0 acquired; 1 missing directory or the 2-second bound expired.
 custody_acquire_probe_lock() {
-  local dir=/run/antiphon-custody lock="$dir/probe.lock"
+  local dir=/run/antiphon-custody
+  local lock="$dir/probe.lock"
   if [ -L "$dir" ] || [ ! -d "$dir" ]; then
     return 1
   fi
