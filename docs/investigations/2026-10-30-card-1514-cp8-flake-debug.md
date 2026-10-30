@@ -150,8 +150,18 @@ FIFO/launch witnesses.
 
 The replacement observes stream positions at disposal in the actual bounded,
 header, JSONL and TRX readers, plus every attempted stream-open path. It permits
-at most two opens, only the dense regular sidecar and huge regular journal, and at
-most 524288 total consumed bytes (two 256 KiB read caps); FIFO, link and denied
-paths must not open. This protects bounded work on the 100 MB corpus independently
+at most two successful streams, only the dense regular sidecar and huge regular
+journal, and one additional refused open of the regular mode-000 file. The exact
+byte ceiling is dense-sidecar length plus the 256 KiB header cap plus its one
+8 KiB sentinel refill (470345 bytes for this corpus); FIFO and link paths must
+never reach open, and the denied path must never yield a stream. This protects
+bounded work on the 100 MB corpus independently
 of shared-host scheduling. The exit/result/refusal/null-metric assertion is
 unchanged except for extracting its old wall predicate into its own named check.
+
+The first added structural baseline at `e5c05093773738dc8365f327af37a0824e7fde5d`
+correctly remained red: my initial census wrongly allowed only two attempted opens
+instead of two streams plus the refused mode-000 attempt. It recorded .100705 s,
+470345 bytes and three attempts. No product behavior or verdict failed. The test
+now distinguishes attempts from successful streams and accounts for the scanner's
+8 KiB sentinel refill; the failed receipt is retained in `pc-baseline-final/1/`.
