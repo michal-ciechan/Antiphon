@@ -83,6 +83,11 @@ $out = [ordered]@{
     zeroWallN = 0
     zeroWallCensored = $false
     cultureDoubleKept = $false
+    measuredAboveSuite = 0
+    measuredAboveAdmitted = $false
+    boundAboveAdmitted = $true
+    plannedAboveBoundAdmitted = $true
+    clampedE95 = 0
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -90,6 +95,10 @@ $out = [ordered]@{
     partialRetained = $false
     killedAtCap = $false
     notPass = $false
+    launchTimeoutMs = 0
+    launchCoverageComplete = $true
+    launchTestsPassed = $true
+    trxPresentCoverageComplete = $true
 }
 
 try {
@@ -425,6 +434,32 @@ try {
                 [Threading.Thread]::CurrentThread.CurrentCulture = $savedCulture
             }
 
+            $aboveSuite = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $out.measuredAboveSuite = [double]$aboveSuite.WatchdogSeconds
+            $out.measuredAboveAdmitted = [bool]$aboveSuite.Admitted
+            if (-not $aboveSuite.Admitted -or [double]$aboveSuite.WatchdogSeconds -ne 4800) {
+                Add-Problem ('measured-clamped-to-suite W=' + $aboveSuite.WatchdogSeconds + ' adm=' + $aboveSuite.Admitted)
+            }
+            $boundAbove = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 2400.0; Wmax = 3600.0; Censored = $false
+            })
+            $out.boundAboveAdmitted = [bool]$boundAbove.Admitted
+            if ($boundAbove.Admitted -or [string]$boundAbove.Reason -ne 'policy-max-mismatch') {
+                Add-Problem ('ceiling-above-wmax-admitted W=' + $boundAbove.WatchdogSeconds + ' reason=' + $boundAbove.Reason)
+            }
+            $overBound = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 1200 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 900.0; Wmax = 4800.0; Censored = $false
+            })
+            $out.plannedAboveBoundAdmitted = [bool]$overBound.Admitted
+            if ($overBound.Admitted -or [string]$overBound.Reason -ne 'launch-estimate-ceiling') {
+                Add-Problem ('planned-above-bound-admitted W=' + $overBound.WatchdogSeconds + ' reason=' + $overBound.Reason)
+            }
+            $smallFactors = Get-NightlyWatchdogErrorFactors -Samples (New-Walls 20 180 'Passed') -PlannedSeconds 900
+            $out.clampedE95 = [double]$smallFactors.E95
+            if ([double]$smallFactors.E95 -lt 1) { Add-Problem ('e95-clamp-removed ' + $smallFactors.E95) }
+
             $rounded = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 900 -MarginSeconds 60
             $low = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 100 -MarginSeconds 60
             $out.rounding2040 = ([double]$rounded -eq 2040)
@@ -468,6 +503,59 @@ try {
             }
             if (-not $out.partialRetained) { Add-Problem 'partial-diagnostic-deleted' }
             if (-not $out.killedAtCap) { Add-Problem 'cap-did-not-fire' }
+            $withTrx = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $true
+            $out.trxPresentCoverageComplete = [bool]$withTrx.CoverageComplete
+            if ($withTrx.CoverageComplete -or $withTrx.TestsPassed -or $withTrx.Pass -or -not $withTrx.Incomplete) {
+                Add-Problem 'trx-present-marked-complete'
+            }
+            $launchRoot = Join-Path $work 'launch'
+            New-Item -ItemType Directory -Path $launchRoot -Force | Out-Null
+            $record = Join-Path $launchRoot 'timeout-ms.txt'
+            $seamsPath = Join-Path $launchRoot 'seams.ps1'
+            $seamText = @'
+$NightlySeams = @{
+    HostPlatform = { return 'linux' }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $joined = @($ArgumentList) -join ' '
+        if ($joined.IndexOf('--report-trx') -ge 0) {
+            [System.IO.File]::WriteAllText('__RECORD__', [string]$TimeoutMilliseconds)
+            $results = ''
+            $trxName = ''
+            for ($i = 0; $i -lt @($ArgumentList).Count; $i++) {
+                if ([string]$ArgumentList[$i] -eq '--results-directory') { $results = [string]$ArgumentList[$i + 1] }
+                if ([string]$ArgumentList[$i] -eq '--report-trx-filename') { $trxName = [string]$ArgumentList[$i + 1] }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($results) -and -not [string]::IsNullOrWhiteSpace($trxName)) {
+                New-Item -ItemType Directory -Path $results -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $results $trxName), '<TestRun />')
+            }
+            return @{ ExitCode = 1; TimedOut = $true; ChildrenExited = $true; CleanupComplete = $true; LogText = '' }
+        }
+        return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; LogText = '' }
+    }
+    WaitCleanup = { param($RunResult) return $true }
+}
+'@
+            $seamText = $seamText.Replace('__RECORD__', ($record -replace '\\', '/'))
+            [System.IO.File]::WriteAllText($seamsPath, $seamText)
+            try {
+                $launched = Invoke-AntiphonNightlyTests -RepoRoot $repo -LogRoot (Join-Path $launchRoot 'logs') -Suites @('pty-host') -Profile 'nightly' -AllowSharedTree -SeamsPath $seamsPath -Sha '0' -RunId 's3-witness'
+                $out.launchCoverageComplete = [bool]$launched.coverageComplete
+                $out.launchTestsPassed = [bool]$launched.testsPassed
+                if ($launched.coverageComplete) { Add-Problem 'launch-timeout-marked-complete' }
+                if ($launched.testsPassed) { Add-Problem 'launch-timeout-marked-passed' }
+            } catch {
+                Add-Problem ('launch-witness ' + $_.Exception.Message)
+            }
+            if (-not (Test-Path -LiteralPath $record)) {
+                Add-Problem 'launch-timeout-missing'
+            } else {
+                $launchMs = 0
+                [void][int]::TryParse(([System.IO.File]::ReadAllText($record).Trim()), [ref]$launchMs)
+                $out.launchTimeoutMs = $launchMs
+                if ($launchMs -ne 1200000) { Add-Problem ('launch-timeout-ms ' + $launchMs) }
+            }
         } else {
             Add-Problem 'unknown-mode'
         }

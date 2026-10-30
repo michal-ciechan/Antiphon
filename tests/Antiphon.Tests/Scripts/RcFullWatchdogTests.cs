@@ -107,6 +107,11 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("zeroWallN").GetInt32().ShouldBe(19, "a zero wall counted as a complete sample");
         observed.GetProperty("zeroWallCensored").GetBoolean().ShouldBeTrue("a zero wall left the calibration valid");
         observed.GetProperty("cultureDoubleKept").GetBoolean().ShouldBeTrue("a de-DE double wall was dropped");
+        observed.GetProperty("measuredAboveSuite").GetDouble().ShouldBe(4800, "a measured cap above the suite watchdog was clamped down");
+        observed.GetProperty("measuredAboveAdmitted").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("boundAboveAdmitted").GetBoolean().ShouldBeFalse("W(C) above Wmax was admitted");
+        observed.GetProperty("plannedAboveBoundAdmitted").GetBoolean().ShouldBeFalse("a plan above the calibrated bound was admitted");
+        observed.GetProperty("clampedE95").GetDouble().ShouldBeGreaterThanOrEqualTo(1, "p95 below 1 was stored as the error factor");
     }
 
     [Test]
@@ -122,6 +127,10 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("reason").GetString().ShouldBe("watchdog-timeout");
         observed.GetProperty("partialRetained").GetBoolean().ShouldBeTrue("partial diagnostic was deleted");
         observed.GetProperty("killedAtCap").GetBoolean().ShouldBeTrue();
+        observed.GetProperty("trxPresentCoverageComplete").GetBoolean().ShouldBeFalse("a present TRX marked the timeout complete");
+        observed.GetProperty("launchTimeoutMs").GetInt32().ShouldBe(1_200_000, "the native launch did not receive the pty-host watchdog");
+        observed.GetProperty("launchCoverageComplete").GetBoolean().ShouldBeFalse("the launched timeout marked coverage complete");
+        observed.GetProperty("launchTestsPassed").GetBoolean().ShouldBeFalse("the launched timeout marked tests passed");
     }
 
     private static async Task<JsonElement> Run(string mode, CancellationToken cancellationToken)

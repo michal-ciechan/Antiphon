@@ -1581,7 +1581,6 @@ function Invoke-AntiphonNightlyTests {
                     if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
                     Update-QualificationChunkTiming @timingUpdate
                     $suiteResults += $row
-                    if ($run.TimedOut) { $coverageComplete = $false }
                 }
                 if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
                     $unionNodes = @()
