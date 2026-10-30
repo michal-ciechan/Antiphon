@@ -94,3 +94,77 @@ release it. Parking must never treat a Working ceiling hold as an idle question.
 This round returns to independent design Review; TestDesign remains separate
 before Code. The next revisions in this task replace this skeleton with the
 source-backed contract, per-slice tests and imported checkpoint table.
+
+## D-1 detail: typed ceiling hold and continuing supervision
+
+`TaskDeadlinePolicy.EvaluateAsync` currently chooses the largest fraction, then
+`TryFailOverdueAsync` fails that verdict. This must become a shared evaluation
+with separate ceiling and phase facts and an explicit disposition. After the
+existing catch-up and identity recheck, a breached **real phase** wins over a
+ceiling hold, even when ceiling fraction is larger. Preserve the existing boot,
+API-recovery, commit-recovery and provider-dialog guards. CARD-1604 heartbeats
+adjust ModelWait only. Defaults remain ModelWait=20, LocalExecution=90 minutes;
+provider input waits retain their own existing classification and policy.
+
+For a positively Working, current-generation session with no breached phase,
+ceiling breach commits Blocked, a typed Ceiling block reason, and one question:
+"This task has run N minutes against its C-minute ceiling. Its session is still
+working. Continue under phase supervision, cancel, or extend the ceiling by M?"
+No CompletedAt, failure event, report, stage outcome, workspace-consumer release,
+pool-idle mark or completion settlement is written. Session input is unnecessary
+for this control-plane transition. Parent notification says `next=decide` and
+explicitly says the delegate continues. Do not emit a terminal Failed header.
+
+Persist nullable attempt-scoped hold fields on AgentTask (episode ID, held-at,
+accepted session StartedAt, acknowledged-at), plus the resolved ceiling and
+source. Add BlockedKind.Ceiling (append enum values) for classification/UI; do not
+encode eligibility by searching FailureReason prose. Defaults/nulls preserve old
+rows. Hold identity includes task, attempt, session, generation and dispatch;
+existing optimistic concurrency and session/task fence reject stale decisions.
+Generate EF migrations with the CLI during Code. No separate wait-ledger entity.
+
+A shared expression/predicate, **Dispatched or Working or current typed ceiling
+hold**, must be used at each affected consumer: overdue sweep and its post-pull
+check; AgentTaskReplyService.OnTurnEndLockedAsync/OnTranscriptActionAsync;
+AgentSessionRuntime catch-up and AdmitActionsAsync; SessionRuntimeActionCoordinator
+RequestAsync; and the runtime-action save fence. Audit AppDbContext's task fence
+and the dead-session/unsafe-refusal paths too. Existing task/session/generation
+fences remain mandatory. Ordinary question/quota/routing Blocked tasks are not
+made settle-eligible. A complete report already admitted while Working remains
+attributed after the hold and uses normal settlement (including commit/push and
+review evidence requirements). A done/blocked/failed report resolves the hold
+atomically with its ordinary outcome; the same report cannot settle twice.
+
+Reply gets an explicit typed ceiling action, exposed by delegate.ps1 and the
+existing reply endpoint: Continue or Extend with positive integral minutes.
+Cancel uses the existing Cancel operation. Continue marks this ceiling episode
+acknowledged and returns Working, suppressing further *role-ceiling* holds for
+this attempt; phase and loop supervision continue without an end-time waiver.
+Extend sets the absolute ceiling to `max(elapsed minutes, current ceiling)+M`,
+limited by D-4's cap, clears the active hold and rearms at that new ceiling.
+Do not parse arbitrary prose as a number. Reject a stale episode/attempt/round
+or unsupported action with 409/validation before changes. Invalid answers leave
+the question open. Reply on other Blocked kinds keeps its existing behavior.
+
+For this special reply, **do not update RepliedAt/RepliedAtSequence, queue a new
+prompt, clear pending report attribution or create a new task attempt**. The
+original turn is still running; existing Reply's watermark change would discard
+its eventual report. Record the control decision as an event and publish normal
+task invalidation. Cancel/Retry retire the hold with the old attempt; their stop
+semantics remain unchanged. Persisted decisions survive restart without repeated
+hold notes. Exclude Ceiling from standing-authority auto-continue, question
+parking, follow-up reuse and generic question auto-resume. It continues to own
+its seat, workspace reservation and concurrency occupancy.
+
+The pre-ceiling warning remains a projection. At breach, positively idle
+non-boot tasks use the existing overdue failure and D-2 notice; a stale/unknown
+runner/activity observation cannot establish eligibility for a new hold or a
+safe stop and gets attention plus a bounded re-observation. Never reinterpret
+unknown as idle. Boot remains CARD-1151 detection-only with unchanged status.
+
+Required tests (planned): ceiling Working holds across Review/Code/Deploy/Plan;
+boot status unchanged; phase wins even at a larger ceiling fraction; held task
+later crosses each real phase limit; normal report before any answer; continue
+and extend without a prompt/watermark change; stale answers; report-versus-hold,
+report-versus-answer, cancel and retry races; restart dedup; ordinary Blocked
+exclusion; unchanged reservations/seat/parking and zero stopper calls.
