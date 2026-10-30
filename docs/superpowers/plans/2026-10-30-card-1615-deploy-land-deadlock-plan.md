@@ -7,8 +7,8 @@ plus round-1 plan and design review), branch `feat/card-task-28be9547`, inspecte
 
 ## Round-2 revision ledger
 
-This initial outline is a WIP; the three corrections below will be completed in
-separate pushed slices before another design review:
+The three corrections below are complete in separate pushed slices, ready for
+another design review:
 
 1. Review D-1: classify task, standing-agent and interactive callers independently;
    preserve the standing orchestrator's authorized rollout path and test each class.
@@ -17,11 +17,10 @@ separate pushed slices before another design review:
 3. Review D-3: replace the conflicting queued-land wait, canonical rollout source,
    broad worktree refusal and stale Shared-default instructions by exact location.
 
-Also settle CARD-1609 landing order, CARD-1610 phase-boundary behavior, receipt
-retention and Windows operational prerequisites; finish verification design in
-this plan so the revised plan goes to Review, then Code. Re-import the checkpoints
-and reconcile roster/counts. Until the ledger is marked complete, later round-1
-wording remains subject to these explicit corrections.
+CARD-1609 landing order, CARD-1610 phase-boundary behavior, receipt retention and
+Windows operational prerequisites are specified below. Verification design is
+folded into this revision under the requested Review-then-Code handoff. Import
+results below distinguish historical round-1 evidence from this revision.
 
 Choose **option (d), an owned Worktree controller**, with an early script admission
 check against accidental Shared execution. Keep canonical pull/restart/provisioning
@@ -68,7 +67,7 @@ No desktop files or ended native Windows run were inspected.
 | D-7 | Classify TASK first whenever task ID is present; STANDING AGENT only with token + valid agent ID and no task ID; INTERACTIVE only with all three absent. Admit standing agents without inventing a task record or requiring a Worktree DTO. Apply the class-specific rules below. | A token is not a task ID. Requiring a task record from a standing orchestrator breaks its authorized direct rollout path. Partial/invalid identity never falls back to interactive. This is workflow admission using launcher identity, not a sandbox against deliberate environment tampering. |
 | D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Freeze **activation**, not land publication: prohibit canonical AppHost and desktop-runner restarts while the controller owns an unfinished rollout, including between phases. Each mutating invocation requires `/api/version.sha == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Current role ceilings, parking and session recovery are unchanged. Identity admission is once per phase invocation. A task failed by its ceiling mid-phase leaves the admitted command running to its existing bounded outcome; its Worktree cannot hold unrelated lands. The next invocation refuses its terminal owner. Preserve receipts and join actual children before a replacement owner. | Do not add owner polling inside a phase or mistake Failed for command exit. CARD-1610 owns terminal/live-session recovery. A phase-boundary successor retains X and the restart prohibition until the whole rollout is complete or explicitly handed off from a proven quiescent state. |
-| D-10 | Plan review by a different company's model precedes separate TestDesign. The checkpoint roster below is a concrete proposed selection, not test execution evidence or authority to deploy. | Starting Code without the separate verification design and timing refinement would leave the production-path/race proof incomplete. |
+| D-10 | This dispatch requests revised-plan Review, then Code; verification design is therefore included here. Review evaluates the caller/SHA/doc corrections and executable test design; Code collects the bounded provisional timing samples. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. CARD-1609 plan round 2 is task `02c3c411` per this dispatch. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
 
 ### Caller admission (review D-1)
@@ -232,9 +231,9 @@ with the recorded resume context. A Failed-but-live session needs CARD-1610's
 supported ownership/recovery assessment; no automatic cancellation or kill is
 part of this repair. Merely installing this guard does not release an old owner.
 
-## Red witnesses, classification and roster
+## Verification design
 
-Separate TestDesign must finish positive-control details and measured costs. Scope:
+Verification design is included for the explicit Review-then-Code handoff. Scope:
 scripts plus server/git integration; no messaging/client/pty behavior changes, no
 live AppHost, production runner, SSH or Docker in tests. Existing test-project
 references to server/infrastructure suffice; no project extraction is justified.
@@ -268,19 +267,63 @@ Planned `DeployLandIsolationTests` (five non-parameterized methods):
 Internal matrix vectors do not multiply executed counts. Split expensive matrices
 only with updated roster/counts/cost before Code dispatch.
 
-Red-first: run exact new negative methods V-1/V-2/V-3 at the S1 tests-only commit
-using one isolated build. These are explicitly accounted runs outside the green
-table. Capture expected assertion failures, never fixture/build errors or zero
-tests. V-4/V-5/V-6 and R-1 are expected green at base because the selected fix relies
-on existing isolation; they are not evidence that the absent guard went red.
+Red-first: at the pushed S1 tests-only commit, build once into fresh
+`bin-c1615-red/` and run seven exact-method rows, one result each, in the Linux
+lane using a scratch checkpoint manifest. Each filter is
+`/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/<exact-method>`:
+
+- `C1615_Shared_controller_refuses_before_side_effects` (V-1).
+- `C1615_Native_checkout_identity` (V-2).
+- `C1615_Phase_requires_rollout_server_sha` (V-2).
+- `C1615_Unknown_or_terminal_owner_refuses` (V-3).
+- `C1615_Standing_agent_without_task_id_is_admitted` (V-3).
+- `C1615_Interactive_mode_requires_absent_task_identity` (V-3).
+- `C1615_Admission_receipt_is_bounded_and_redacted` (V-3).
+
+These are **seven expected assertion failures**, not seven green results or PCs.
+The two admitted caller classes go red on their missing new classification
+receipt, not on a requirement to reject them. Stage all assertion/effect traces
+before reading a possibly absent receipt so a missing file is reported as the
+intended assertion, not a fixture error. The Shared vector must demonstrate the
+old wrapper reaching its stubbed effect without accessing a real credential.
+Commit the tests first, retain red receipts against that SHA, then commit/push S2
+and S3 before the green run. V-1..V-3 are the only red-first witnesses.
+V-4/V-5/V-6 and R-1 characterize existing behavior and are expected green with
+unchanged landing/census production code. They do not prove the absent guard red.
+
+V-6's Shared leg must run real `AgentTaskLandService.RunAsync`, capture its actual
+Held request and projected task/list/detail response, and pass those projections
+to both wrapper and extracted production host census. Never seed Held as the
+assertion's premise. In the separate Worktree leg assert remote ref publication,
+terminal request proof, controller still Working, unchanged source HEAD, and only
+then the census clearing. Use a barrier in V-5 at the real verification lease
+release/resume boundary, not sleeps or the simplified writer predicate.
+
+New tests are integration/script tests in the server/git-operations categories;
+use the existing assembly limiter for each process-spawning method. Native
+identity vectors use actual filesystem/Git roots on each lane, including native
+case/separator aliases; host-inapplicable cases are named vector omissions, not
+skipped methods. No live stack, SSH or Docker action is allowed in these fixtures.
+
+Pending post-land method-scoped positive controls (not ordinary Code runs): remove
+only the Shared refusal and run `C1615_Shared_controller_refuses_before_side_effects`;
+route standing identity into the task branch and run
+`C1615_Standing_agent_without_task_id_is_admitted`; suppress the SHA mismatch
+refusal and run `C1615_Phase_requires_rollout_server_sha`. Each control uses
+`/*/*/DeployRolloutWorkspaceTests/<exact-method>`, must fail its intended assertion,
+then is restored and that same method runs green. They touch the same helper, so
+run sequentially; retain individual evidence. No mutation of land admission or
+census is commissioned by this plan.
 
 ### Checkpoints
 
 Run once after S1-S3 are committed. CP-1 builds; CP-2/3 reuse the same output and
 slice group. All rows initially execute in the Linux lane. A separate native
 Windows task executes CP-1 only with its own isolated build for operational
-wrapper/path branches; no prior desktop run counts. TestDesign encodes that
-selection through the tool, without inventing a Platform table column.
+wrapper/path branches; no prior desktop run counts. Code selects Windows with
+`--rows CP-1`, without inventing a Platform table column. These are the closed
+ordinary green selections; red-first selections and optional bounded calibration
+above/below are the only extra authorized executions.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
@@ -288,8 +331,8 @@ selection through the tool, without inventing a Platform table column.
 | CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 | true |
 | CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
 
-Exact class filters avoid suffix expansion. Check declared names again in TestDesign
-and actual fresh TRX in Code. If combining later, each OR operand must be parenthesized
+Exact class filters avoid suffix expansion. Check declared names again when Code
+adds them and verify actual fresh TRX. If combining later, each OR operand must be parenthesized
 and end in `*`; escape table pipes as `\|`. Import validates syntax, not existence or execution.
 
 ## Performance budget
@@ -302,15 +345,16 @@ The proposed acceptance total is **20 executed results**: 9 script, 5 integratio
 
 | Lane / selection | Expected elapsed, including build | Phase allocation | Provisional execution deadline |
 |---|---:|---|---:|
-| Linux CP-1 | 6 min | build/restore 3; script/Git/HTTP fixtures 2.5; receipt/cleanup 0.5 | build 6 min; row 6 min |
+| Linux CP-1 | 6 min | build/restore 3; script/Git/HTTP fixtures 2.5; receipt/cleanup 0.5 | row 6 min; build floor exception below |
 | Linux CP-2 | 4 min, reused build | shared DB readiness/template 1; clones/seed 0.5; Git/land/census 2; cleanup 0.5 | row 8 min |
 | Linux CP-3 | 2 min, reused build | process startup/body 1.5; receipts/cleanup 0.5 | row 4 min |
 | Linux ordinary batch | 12 min | one build, serial rows | charged execution 24 min; admission 5 min; hard wall 29 min |
-| Native Windows CP-1 | 9 min | build/restore 5; native script/path fixtures 3.5; cleanup 0.5 | build 10 min; row 8 min; charged 18 min; admission 5 min; hard wall 23 min |
+| Native Windows CP-1 | 9 min | build/restore 5; native script/path fixtures 3.5; cleanup 0.5 | build/row 10 min override; charged 20 min; admission 5 min; hard wall 25 min |
+| Linux S1 red batch | 7 min | one build 3; seven serial exact-method rows 3.5; cleanup 0.5 | each row 2 min; charged 18 min; admission 5 min; hard wall 23 min |
 
 **Measured p95: unknown, sample n=0 for these proposed selections.** These are
 planning estimates, not measured costs or a compliance claim. CARD-1615 carries the
-bounded calibration obligation: TestDesign first looks for comparable retained
+bounded calibration obligation: Code first looks for comparable retained
 receipts; Code collects per-method/phase samples from required red/green runs and,
 where needed, at most five targeted calibration executions of the slow new methods.
 Do not repeat the full table solely for timing. Record sample count/source/host/load,
@@ -320,8 +364,28 @@ new land methods 120 seconds; a matrix that cannot fit must split. Any retained
 exception needs measured evidence and its tracking card. Existing long class
 attributes are not permission to copy generous bounds.
 
-TestDesign imports YAML, pins the provisional build/row/admission/hard-wall budgets
-above using supported manifest/CLI settings, then replaces them with measurements.
+Code imports YAML and sets `build.slotWaitMinutes: 5`, serial rows,
+`timeouts.rowMinutes: 4` and CP-specific `timeoutMinutes: 6`, `8`, `4` for Linux.
+Use `run <manifest.yaml> --rows CP-1,CP-2,CP-3 --serial --total-timeout 24
+--hard-wall-timeout 29 --expected-source-sha <committed-code-sha>` through the
+checkpoint tool; the tool owns its build slots. For native Windows CP-1 use its
+own fresh build and `--rows CP-1 --row-timeout 10 --total-timeout 20
+--hard-wall-timeout 25`. Wait on the printed run ID until exit is not 75; an
+observer ending is not executor completion. Use one run per committed slice group.
+For the S1 scratch manifest use seven exact rows sharing its one build, each
+`minExecuted: 1`, `timeoutMinutes: 2`, `serial: true`, and the red batch total/wall
+bounds above. Keep generated manifests/receipts ignored and report exact source SHA.
+
+**Known tool limitation / CARD-1615 provisional exception:**
+`RunScheduler.BuildDeadlineMinutes` floors a scheduled build at 15 minutes even
+when row deadlines are smaller. It has no independent build-timeout field.
+The Linux/red manifests therefore retain that 15-minute build deadline bounded
+by their charged/hard-wall totals; do not claim an unsupported six-minute build
+pin. Windows uses the supported ten-minute `--row-timeout` override for both
+build and CP-1 (a provisional ten-minute row exception to its eight-minute target).
+Code records actual build/row p95 and sample provenance and reports remaining
+tool constraints under CARD-1615; do not widen these limits or modify the scheduler
+in this card. These provisional exceptions are not measured performance compliance.
 The importer defaults (`max(15, 3 * EstimatedMinutes)`) do **not** satisfy R5; its
 successful import is not approval of those default timeouts. Keep build time and
 slot wait separate from test-body time. Slot timeout is not run, never bypass.
@@ -340,8 +404,9 @@ and category; record Docker/readiness (not applicable here unless shared DB star
 requires it), template/migration, clone/seed, Git/filesystem, HTTP, process startup,
 body, teardown and wall remainder. Unknown is null, never zero. Time each owner GET,
 Git probe, census read and process cleanup separately. Provisional admission probes:
-one owner GET capped at 5 seconds, each Git probe at 5 seconds, whole admission
-15 seconds; owned child cleanup has a separate bounded join. TestDesign refines these
+one owner GET and one version GET each capped at 5 seconds, each Git probe at
+5 seconds, whole admission 15 seconds (individual deadlines share that remaining
+budget); owned child cleanup has a separate bounded join. Code refines these
 from measurements without widening existing recycle waits. Any selection/batch/run
 expected or observed over 30 minutes triggers Debug with source/load/phase evidence;
 no full-suite or rc qualification is added to this card.
@@ -356,7 +421,7 @@ The importer accepted 3 rows with one build and floors 7/5/6, exit 0; the genera
 YAML stays ignored at `.antiphon/c1615-plan-scratch/import.yaml`. The final Serial
 annotation was re-imported successfully (3 rows, exit 0, slot wait 0 seconds), with
 the final YAML at `.antiphon/c1615-plan-scratch/import-final.yaml`. These are document checks. Required product red,
-green, timing and native Windows execution remain for TestDesign/Code; none is claimed.
+green, timing and native Windows execution remain for Code; none is claimed.
 No new input-waiting session is introduced. If an operational task waits for input,
 parking remains disabled and there is no automatic release deadline; caller resolution
 or separately authorized explicit stop/release must establish actual process exit.
@@ -375,10 +440,14 @@ Delete only this task's two owned `bin-c1615-plan/` output directories afterward
 
 Live GET `/api/runner-defaults` (revision 2) and `/api/session-runners` succeeded on
 2026-10-30. Portable implementation/tests use the default eligible runner, without
-`-Runner` or `-Platform`. Native Windows filesystem/activation qualification uses
+`-Runner` or `-Platform`. Native Windows filesystem qualification uses
 `-Platform Windows`, without pinning a host; refresh both routes before dispatch.
-Actual rollout control uses the Windows operational lane with existing operator-token
-and SSH access, outside the recycled runner; the Plan runs on Linux. No fleet address
+The current catalogue has exactly one Windows runner, `desktop`, so this resolves
+to the required operational host. Actual rollout control needs that desktop
+account's owner-only operator-token file and SSH identity, outside the recycled
+runner. If a second Windows runner appears, verify those prerequisites and pin
+the qualified host with `-Runner` only when necessary; Windows alone is not the
+credential/access proof. The Plan runs on Linux. No fleet address
 belongs in a checkpoint or new helper.
 
 This branch only publishes the plan. Product changes must first be reviewed on the
