@@ -8291,8 +8291,19 @@ C1008_GIT
             *C1008_AUDIT_BODY*|*C1008_GIT*|*C1609_CONTENT_AUDIT_INSERT*) insert='' ;;
         esac
         if [ -n "$insert" ]; then
+            # Literal splice. ${var//pat/repl} treats & as the matched text and
+            # expands ${} inside the replacement, which rewrites this file.
             stub=$'# C1609_CONTENT_AUDIT_INSERT\nc1609_prepare_common() { c1609_skip_publication=0; }\nc1609_consider_fetch_head() { consider_pseudoref "$1" FETCH_HEAD; }\nc1609_list_offenders() { :; }\nc1609_finish_blocks() { :; }'
-            program="${program//"$stub"/$insert}"
+            case "$program" in
+                *"$stub"*)
+                    before="${program%%"$stub"*}"
+                    after="${program#*"$stub"}"
+                    case "$after" in
+                        *"$stub"*) ;;
+                        *) program="${before}${insert}${after}" ;;
+                    esac
+                    ;;
+            esac
         fi
     fi
     printf '%s\n' "$program"
