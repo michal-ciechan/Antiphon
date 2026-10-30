@@ -72,6 +72,11 @@ $out = [ordered]@{
     agentsPtyAboveAdmitted = $true
     markdownPdfAboveAdmitted = $true
     messagingAboveAdmitted = $true
+    lowFactorWatchdog = 0
+    lowFactorReason = ''
+    lowFactorAdmitted = $false
+    tinyFactorWatchdog = 0
+    emaxOrderWatchdog = 0
     coverageComplete = $true
     testsPassed = $true
     incomplete = $false
@@ -347,6 +352,30 @@ try {
                 $row = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds 1800 -Basis 'default' -PolicyObject $policy.Object
                 $out[$namedOver[$suiteName]] = [bool]$row.Admitted
                 if ($row.Admitted) { Add-Problem ($suiteName + '-1800-admitted W=' + $row.WatchdogSeconds) }
+            }
+
+            $lowFactor = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 0.2; Emax = 0.2; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $tinyFactor = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 0.01; Emax = 0.01; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $emaxOrder = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 2.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
+            })
+            $out.lowFactorWatchdog = [double]$lowFactor.WatchdogSeconds
+            $out.lowFactorReason = [string]$lowFactor.Reason
+            $out.lowFactorAdmitted = [bool]$lowFactor.Admitted
+            $out.tinyFactorWatchdog = [double]$tinyFactor.WatchdogSeconds
+            $out.emaxOrderWatchdog = [double]$emaxOrder.WatchdogSeconds
+            if ([double]$lowFactor.WatchdogSeconds -ne 3600 -or [string]$lowFactor.Reason -ne 'unmeasured-cost' -or -not $lowFactor.Admitted) {
+                Add-Problem ('e95-below-one W=' + $lowFactor.WatchdogSeconds + ' reason=' + $lowFactor.Reason + ' adm=' + $lowFactor.Admitted)
+            }
+            if ([double]$tinyFactor.WatchdogSeconds -ne 3600 -or [string]$tinyFactor.Reason -ne 'unmeasured-cost') {
+                Add-Problem ('e95-tiny W=' + $tinyFactor.WatchdogSeconds + ' reason=' + $tinyFactor.Reason)
+            }
+            if ([double]$emaxOrder.WatchdogSeconds -ne 3600 -or [string]$emaxOrder.Reason -ne 'unmeasured-cost') {
+                Add-Problem ('emax-below-e95 W=' + $emaxOrder.WatchdogSeconds + ' reason=' + $emaxOrder.Reason)
             }
 
             $rounded = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 900 -MarginSeconds 60
