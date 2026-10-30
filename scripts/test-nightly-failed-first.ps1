@@ -236,7 +236,9 @@ function Test-RefusesIncompleteEvidence {
     $policy=Read-NightlyExecutionPolicy -RepoRoot $repo
     $whole='Antiphon.Tests.Card0168InteractiveProbeTests'
     $methodClass='Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests'
-    $policyRows=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform linux)
+    $executionPlatform='windows'
+    if ([IO.Path]::DirectorySeparatorChar -eq '/') { $executionPlatform='linux' }
+    $policyRows=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform $executionPlatform)
     $methodRow=@($policyRows | Where-Object { $_.Class -ceq 'TestDbFixtureLazyInitializationTests' })[0]
     $exHistory=Copy-FFObject $h
     $exHistory.members=@([pscustomobject]@{suite='antiphon';className=$whole;reasons=@('prior-failure');observations=@()})
@@ -248,8 +250,22 @@ function Test-RefusesIncompleteEvidence {
     $exNodes += New-FFNode $methodClass 'A_db_free_exact_method_selection_constructs_and_starts_no_database'
     $exSuite[0].nodes=$exNodes; $exSuite[0].chunks=@([pscustomobject]@{id='all';classes=@($methodClass);nodes=$exNodes})
     $r=Resolve-NightlyPriorFailures $exHistory $exSuite PriorFailureSweep
-    Assert-FF (@($r.members[0].requiredUids).Count -eq 1 -and @($r.excludedUids).Count -eq 3 -and $r.exclusionProfile -ceq 'rc' -and $r.policyDigest -ceq $policy.Hash -and $r.exclusionPolicyFileDigest -ceq (Get-NightlyHistoryDigest $policy.Path) -and $r.exclusionPlatform -ceq 'linux' -and @($r.excludedUids | Where-Object { $_.reason -cne $methodRow.Reason -or $_.owner -cne $methodRow.Owner }).Count -eq 0) 'methodExclusions'
+    Assert-FF (@($r.members[0].requiredUids).Count -eq 1 -and @($r.excludedUids).Count -eq 3 -and $r.exclusionProfile -ceq 'rc' -and $r.policyDigest -ceq $policy.Hash -and $r.exclusionPolicyFileDigest -ceq (Get-NightlyHistoryDigest $policy.Path) -and $r.exclusionPlatform -ceq $executionPlatform -and @($r.excludedUids | Where-Object { $_.reason -cne $methodRow.Reason -or $_.owner -cne $methodRow.Owner }).Count -eq 0) 'methodExclusions'
     Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures -History $exHistory -Suites $exSuite -QualificationMode PriorFailureSweep -ExclusionContext ([pscustomobject]@{profile='nightly'}) } 'partial-exclusion-profile-mismatch') 'exclusionMismatch'
+    $goodContext=@{profile='rc';policyDigest=$policy.Hash;exclusionPolicyFileDigest=(Get-NightlyHistoryDigest $policy.Path);exclusionPlatform=$executionPlatform}
+    $bindingsOk=$true
+    foreach ($dictionary in @($true,$false)) {
+        $context=$goodContext
+        if (-not $dictionary) { $context=[pscustomobject]$goodContext }
+        $bound=Resolve-NightlyPriorFailures $exHistory $exSuite PriorFailureSweep -ExclusionContext $context
+        if (@($bound.members[0].requiredUids).Count -ne 1 -or @($bound.excludedUids).Count -ne 3) { $bindingsOk=$false }
+        foreach ($field in 'policyDigest','exclusionPolicyFileDigest','exclusionPlatform') {
+            $context=$goodContext.Clone(); $context[$field]='mismatching-context'
+            if (-not $dictionary) { $context=[pscustomobject]$context }
+            if (-not (Test-FFRefusal { Resolve-NightlyPriorFailures $exHistory $exSuite PriorFailureSweep -ExclusionContext $context } 'partial-exclusion-profile-mismatch')) { $bindingsOk=$false }
+        }
+    }
+    Assert-FF $bindingsOk 'contextBindings'
     $noChunk=Copy-FFObject $h
     foreach ($m in $noChunk.members) { foreach ($o in $m.observations) { $o.chunk='' } }
     $r=Resolve-NightlyPriorFailures $noChunk $current PriorFailureSweep
@@ -324,7 +340,7 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=38 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=39 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
