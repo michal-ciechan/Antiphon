@@ -1,21 +1,22 @@
 # CARD-1610: Hold a live task at its role ceiling
 
 Date: 2026-10-30. Round 3 Plan, revising the round-2 design in place.
-Source base: `93a21a1fac2ab3965cce5a48503d54fb71132c07`.
-Status: round-3 revision in progress; verification design is folded into this final Plan round.
+Round-3 source/census base: `8e311b52225ea4d16df3b098241ebae23601fe14`.
+Prior round source: `93a21a1fac2ab3965cce5a48503d54fb71132c07`.
+Status: final round-3 design; verification design is folded into this final Plan round.
 Implementation handoff will be Code on origin/master after the stated ordering gates.
 No product changes are authorized by this Plan dispatch. The initial skeleton
 and each defect response were committed and pushed during this round.
 
 ## Round-3 resolution checklist
 
-This is the pushed skeleton; each item is resolved in place before handoff.
+All five review defects are resolved in the sections and executable roster below.
 
 - R3-1 resolved: Working + typed fields; exclusive Reply action, separate question projection, four counting/Check witnesses (D-1).
 - R3-2 resolved: bounded Continue, explicit 720-minute final hold and authenticated bounded operator Extend; no-phase-tail witnesses (D-4).
 - R3-3 resolved: keep step-5 authority; token presence defines delegation; 5-minute default/8-minute maximum drain slices with 9-minute foreground bound (D-4).
 - R3-4 resolved: bounded independent Failed-report scan, distinct durable parent triage obligation and eligible/busy/crash/identity witnesses (D-5/D-9).
-- R3-5: include full affected classes and sharded Unit lane; recount and re-import.
+- R3-5 resolved: full affected classes, 39 Unit shards plus method-only Unit and new policy cases; counts/costs recalculated. Final importer validation follows.
 
 ## Decisions
 
@@ -87,8 +88,8 @@ checkpoint import is the requested tooling validation. Detailed provisional cost
 and exact filters are below. Reuse one producer build per unchanged committed group;
 share database/container/migrations once per run and isolate tests with schemas.
 Record admission, build, startup, migration, body, teardown and external-call time
-separately. Missing samples are not measured p95; TestDesign must collect bounded
-samples and set timeouts near 2x measured p95. Any run expected over 30 minutes
+separately. Missing samples are not measured p95; the required Debug timing assessment and
+Code's necessary runs collect bounded samples and set timeouts near 2x measured p95. Any run expected over 30 minutes
 requires Debug before repetition. Import defaults are 45/15/90 minutes for
 slot/row/total, not the round-1 plan's claimed limits.
 
@@ -484,7 +485,7 @@ CodexTokenCountAt in TaskDeadlinePolicy. These three facts are distinct.
 Land S1 (visibility/janitor) first after ordinary Review, then request its own
 reviewed rc port for prompt safety relief. S2/S3 (hold, controls and delivery)
 ship together to master after their shared checkpoint group; port together only
-after independent design Review, TestDesign, ordinary Code/Review and migration
+after this folded verification design, ordinary Code/Review and migration
 qualification. S4 (Deploy CLI/docs) follows the CARD-1615 admission resolution
 and integration review; do not concurrently edit its rollout/admission area or
 use this plan as authority to bypass source-writer holds. Until the coordinated
@@ -494,8 +495,8 @@ this plan does not broaden their code surface or depend on unlanded performance
 claims. The caller owns canonical rc activation and source-SHA confirmation.
 This task does no tags, publication, deployment, rc rebase or desktop-file reads.
 
-Placement was read from GET /api/runner-defaults and GET /api/session-runners on
-2026-10-30 around 03:08Z. The catalogue had an eligible Linux and Windows lane,
+Placement was read again from GET /api/runner-defaults and GET /api/session-runners
+on 2026-10-30 at 03:57Z (runner-default revision 2). The catalogue had an eligible Linux and Windows lane,
 plus an unavailable drained Linux entry. Use live defaults at dispatch; omit
 -Runner unless intentionally pinning one host, omit -Platform for portable work
 (-Platform Any unpins). Every checkpoint below names its logical lane; no fleet
@@ -538,18 +539,18 @@ file per named class. These replace all seven round-1 proposed classes.
 |---|---|---|---|---:|
 | TaskSupervisionVisibilityTests | Integration | No; no allowlist entry | None: fake runtime/stopper, no child processes | 8 |
 | TaskCeilingPolicyTests | Unit | No; no allowlist entry | None: pure policy/control validation | 12 |
-| TaskCeilingHoldTests | Integration | No; no allowlist entry | None: isolated schema and injected runner | 20 |
-| TaskCeilingControlTests | Integration | No; no allowlist entry | None: service/transaction barriers, no children | 12 |
-| TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 9 |
-| TaskCeilingScriptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 8 |
+| TaskCeilingHoldTests | Integration | No; no allowlist entry | None: isolated schema and injected runner | 25 |
+| TaskCeilingControlTests | Integration | No; no allowlist entry | None: service/transaction barriers, no children | 19 |
+| TaskSupervisionReceiptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 15 |
+| TaskCeilingScriptTests | Integration | Slow; add fully qualified name and CARD-1610 reason to slow-tests-allowlist.txt | ParallelLimiter<ProcessSpawnLimit>; add to strict roster | 11 |
 
-Total new cases **69**, not 69 assertions. Category guards are explicit checkpoint
+Total new cases **90**, not 90 assertions. Category guards are explicit checkpoint
 rows at each green source group: TestLaneCategoryGuardTests (1), shared
 TestClassificationGuardTests (1), ProcessSpawnLimitTests (21 expanded cases:
 seven singleton methods, six CPU arguments, eight override arguments) = **23**.
 No runner source or new runner test class remains; its unchanged two-method safety
 selection has a separate project row, not another new-class census obligation.
-Changing the classification during TestDesign requires revising this table,
+Changing the classification during Code requires revising this table,
 allowlist and count floor together. Any fixture that begins spawning must gain
 the assembly-local limiter and strict-roster membership before running.
 
@@ -557,7 +558,7 @@ Replace round-1's client visibility tests with three focused cases in
 client/src/features/delegations/CeilingHold.test.tsx: Continue sends a
 typed decision without ordinary reply; Extend validates/sends minutes and stale
 episode refusal; Cancel uses the existing route. Each also asserts no generic
-Retry/auto-continue affordance. CP-20/21 require a fresh Vitest JSON receipt with
+Retry/auto-continue affordance. The client red/green rows require a fresh Vitest JSON receipt with
 numTotalTests=3 and three exact case names, zero pending/todo, and for green
 numPassedTests=3/numFailedTests=0 plus exit 0. A success string is insufficient.
 These are client/Vitest, not C# Unit/Integration or ProcessSpawnLimit classes.
@@ -611,7 +612,11 @@ fence (two cases) as independent regression checkpoints.
 `RetireIdleWarmAgentsAsync` currently protects Working sessions only when their
 last transcript is newer than the TTL cutoff, then logs "reads mid-turn but has
 been silent" and calls KillPooledSessionAsync. Both TTL and cap eviction must
-exclude **all Working and Unknown** sessions, regardless of transcript age.
+exclude every Working session regardless of transcript age. IsWorkingBatchAsync
+returns bool, not an Unknown enum: uncertainty means absent transcript evidence,
+an unfinished session (Created/Stopping) outside liveSessionIds, an unavailable
+fresh runner sample or mismatched generation. These cannot prove idle and are
+also retained. An authoritative terminal session can take the existing stale arm.
 Recheck under the existing release gate immediately before any idle retirement;
 remote automatic release continues to require the runner's conditional idle
 proof. No force fallback and no new timer exception. Preserve pool agent,
@@ -626,7 +631,11 @@ identity, age and custody guidance. Repeated ticks/restarts do not create anothe
 incident for the same episode. No fresh runner sample means Unknown, not cleared.
 Use the existing bounded pool sweep and seat sampler; no per-request runner fanout.
 A task-bound Failed session uses FailedTaskSessionHeld, suppressing the duplicate
-pool warning. A genuinely idle warm session retains existing TTL/cap retirement.
+pool warning. A positively idle warm session retains existing TTL/cap retirement. If every
+member is Working or uncertain, PoolMaxIdlePerDirectory cannot be reached: keep
+the excess, report it, and do not kill to satisfy the cap. It remains a soft
+retirement cap, not a new admission limit; existing host/stage capacity still
+bounds new dispatch. This card adds no speculative prewarming or over-cap fill.
 Resolution requires proved idle/end or a new open owner; retain historical audit.
 
 Replace, do not delete, the contradictory existing test
@@ -639,282 +648,407 @@ capacity for Working/Unknown. A stall is reported for a decision, never killed.
 
 ## Revised slices and concrete file ownership
 
-| Slice | Product and documentation files | Test files / ordinary checkpoints |
+All services below are under server/Application/Services unless a full path is
+shown. DTOs live in server/Application/Dtos; entities/enums in server/Domain;
+EF mapping is server/Infrastructure/Data/AppDbContext.cs and migrations are CLI
+generated. Tests below are under tests/Antiphon.Tests/Application except Scripts
+and the named client file. Work is based on origin/master after the CARD-1604 deadline prerequisite;
+coordinate the CARD-1615 source-writer/rollout fix before S4. Recheck these cards'
+landed SHAs at commissioning; a plan observation is not current landing evidence.
+
+| Slice | Files and concrete behavior | Tests |
 |---|---|---|
-| S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind and client/src/api/attention.ts kind mirror; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards. CLI status waits for S4's script tests |
-| S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; inspect unchanged DispatchConcurrencyPolicy.cs, AgentTaskPipelineStatusService.cs, CheckCompactionContinuationService.cs, TaskProgressPolicy.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; new CeilingHoldFacts.cs and AttentionService hold projection (BlockedContextBuilder stays unchanged); AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
-| S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs, LateFailedReportForwarder.cs and Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
-| S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/CeilingHoldCard.tsx and TaskDetailBody.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/CeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
+| S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (8), changed AgentTaskPoolTests janitor case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
+| S2 hold/control | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue; AgentTaskReplyService.cs typed AnswerCeilingAsync; AgentTaskService.cs retry; new CeilingHoldFacts.cs; AttentionService hold projection; AgentTask.cs; DTOs; server/Api/Endpoints/AgentTaskEndpoints.cs; EF mapping/migration | TaskCeilingPolicyTests (12), TaskCeilingHoldTests (25), TaskCeilingControlTests (19); full policy/overdue/boot/reply/runtime classes and occupancy witnesses |
+| S2 inspected unchanged | DispatchConcurrencyPolicy.cs; AgentTaskPipelineStatusService.cs; CheckCompactionContinuationService.cs; TaskProgressPolicy.cs; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; AppDbContext runtime fence; tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs | No broadening of Blocked; Working naturally remains selected. Full relevant regression classes below; CARD-0079 witness is narrowly qualified |
+| S3 notices/triage/fencing | Failure writers in D-2 (AgentTaskDispatcher.cs, AgentTaskReplyService.cs, ApiErrorRecoveryService.cs, SpecialistTaskRunner.cs and task-related landing recovery); new TaskSupervisionNotice domain entity/Purpose/State with EF mapping; SessionQueuedMessage purpose identity; SessionMessageQueueService.cs; CompletionNoteWork.cs; Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; new LateFailedReportForwarder.cs; DelegationReportFormatter.cs; TaskCompletionNotification.cs; PipelineHandoffActionService.cs; AgentTaskService child admission; lifecycle/runtime docs | TaskSupervisionReceiptTests (15); full DelegationDispatchRecoveryBoundaryTests including C1161, full reply/runtime and completion-recovery classes, successor/control witnesses |
+| S4 budgets/Deploy/client | scripts/delegate.ps1 typed Reply/create/Status and explicit operator-Extend option using existing token helper; scripts/deploy-server2.ps1; dispatch/clone/formatter/DTO budget bindings; client/src/api/agentTasks.ts; new features/delegations/CeilingHoldCard.tsx, TaskDetailBody.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests (11); client/src/features/delegations/CeilingHold.test.tsx (3); existing script contracts in Full Unit shards; allowlist/ProcessSpawnLimit roster guards |
 
-Paths without a directory in this table are under server/Application/Services
-unless their explicit layer is named above. scripts/delegate.ps1 owns these
-parameter and switch branches; no duplicate parameter parser. Add types at their owning
-layer. Domain remains infrastructure-free. No build-slot broker, runner release
-protocol or raw killing API is added. Existing generic attention
-presentation consumes the new facts; preserve nullable DTO compatibility.
+TaskSupervisionNotice has a typed purpose (CeilingParent, FailureDelegate,
+LateFailedParent), immutable task/attempt/generation/recipient/event identity and
+bounded payload, plus Pending/Told/Superseded/NotApplicable receipt state. The
+failure purpose retains its report-scan frontier even after its own notice is
+Told. A unique purpose key prevents task-wide completion stamps from hiding
+other obligations. This is delivery accounting, not a wait-credit or outcome-
+correction ledger. No broker, new runner protocol or automatic stop is added.
 
-Commit failing behavioral witnesses before fixes. S1 is a small independently
-reviewable safety slice. S2-S4 are one **test/build group**, committed as meaningful
-source slices before the green run; their mutually dependent hold/report behavior
-must not be activated piecemeal. Share one isolated build for all rows at each
-unchanged committed group, never across red versus green source. No source edits
-while a run is in flight. TestDesign owns the detailed guard/positive-control
-inventory before Code; this Plan's ordinary roster below is not executed evidence.
+Commit behavioral tests before fixes. S1 is independently reviewable and can be
+ported first. S2/S3 ship together; S4 waits for CARD-1615. S2-S4 share a final
+source/build group after those ordering gates, not piecemeal activation. Never
+edit source during a running checkpoint. Compatible type/scaffold changes may
+precede red witnesses but retain old behavior; compile errors do not count red.
 
-## Ordinary verification roster (for subsequent TestDesign)
+## Verification design
 
-New names below are design commitments, not existing tests or passing results.
-Each Arguments value becomes one executed result. All tests call real production
-policy/services/scripts through existing seams; no test that compares its own
-fixture constants counts. TestDesign must identify the intended failing assertion
-and method-scoped positive control for each behavior before Code.
+This section folds TestDesign into this last Plan round; **next: code**. It is
+an executable ordinary roster, not a claim that tests exist or ran. At Code's
+actual base reconcile the committed roster with source discovery and fresh TRX;
+unknown/missing/extra cases refuse Full credit until explained and the manifest
+is amended. Do not silently omit a class or run a broader suite. The following
+new class counts are exact design commitments (90 TUnit + 3 client cases).
 
-| IDs | Class and exact planned methods | Cases / required observations |
+| ID | New class/method | Expanded cases and essential oracle |
 |---|---|---|
-| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody; D-3/D-10 invariants. S3 adds notice-debt fields later, so S1 does not depend on that producer |
-| V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless) + 4 guard inputs (phase wins, boot, heartbeat, unknown); 12 |
-| V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review, Code, Deploy, Plan; 4 |
-| V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | ModelWait and LocalExecution each; 4 |
-| V-5 | TaskCeilingHoldTests.C1610_Normal_report_settles_hold | done, blocked, failed; 3 |
-| V-6 | TaskCeilingHoldTests.C1610_Hold_race_preserves_identity; C1610_Hold_preserves_custody_and_restart_identity; C1610_Non_ceiling_blocks_remain_excluded | report/retry/cancel/generation (4), custody/restart (2), question/quota/routing (3); 9; Hold class total 20 |
-| V-7 | TaskCeilingControlTests.C1610_Continue_keeps_report_floor; C1610_Extend_validates_and_rearms; C1610_Stale_answer_is_refused; C1610_Answer_races_report_without_reprompt | 1 + 3 (valid/cap/invalid) + 2 (episode/attempt) + 1 = 7 |
-| V-8 | TaskCeilingControlTests.C1610_Successor_fence_uses_card_and_role; C1610_Replacement_racing_handoff_is_held; C1610_Retry_resets_hold_but_preserves_requested_ceiling | 3 (same-role/different-role/no-card) + 1 + 1 = 5; Control total 12 |
-| V-9 | TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt; C1610_Failed_delegate_has_complete_UserPrompt; C1610_Stale_notice_is_not_delivered | D-9's three named arguments per method; 9 |
-| V-10 | TaskCeilingScriptTests.C1610_Status; C1610_Declared_budget; C1610_Ceiling_reply; C1610_Drain_wait | 2 (fresh/unknown), 2 (valid/invalid input sets), 1 (both typed actions), 3 (default/delegated refusal/explicit standalone); 8. Default drain arm proves still-busy retains drain state; delegated arm rejects Phase=all and waits >60 before side effects |
-| R-1 | AgentTaskPoolTests.C1610_Janitor_retains_working_after_full_ttl | 1 changed existing witness; old line kills and must go red |
-| R-2 | AgentTaskOverdueDeadlineTests.an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives | 1; existing idle TurnEnd ceiling-failure fixture remains valid under D-1; do not relabel it a phase test |
-| R-3 | TaskDeadlinePolicyTests.a_token_count_does_not_reset_the_role_ceiling; a_token_count_does_not_reset_the_local_tool_clock | 2; unchanged heartbeat clock ownership |
-| R-4 | DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt | 3; eligible/busy/crash, original parent failure note |
-| R-5 | SessionRuntimeActionRecoveryTests.C1259_admitted_task_attempt_cannot_settle_its_replacement | 2; catchup false/true |
-| R-6 | TerminalSeatReleaseTests.Working_remains_protected_after_arbitrary_silence; Explicit_operator_release_keeps_its_contract | 2; unchanged runner safety boundary |
-| R-7 | TestLaneCategoryGuardTests; TestClassificationGuardTests; ProcessSpawnLimitTests | 23 executed results per green group; include new process classes in strict roster |
-| V-11 | CeilingHold.test.tsx | 3 Vitest cases: Continue, Extend, Cancel; D-8 defines exact receipt floors |
+| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 8 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody. Actual attention plus custody/no-stop assertions |
+| V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless), 4 guards (phase-wins, boot, heartbeat, uncertain); 12 |
+| V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review/Code/Deploy/Plan/Check; 5; Working status and active episode, no terminal save/release |
+| V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | Each ModelWait/LocalExecution; 4; real phase failure wins despite larger ceiling fraction |
+| V-5 | TaskCeilingHoldTests.C1610_Normal_report_settles_hold | done/blocked/failed; 3; original report floor, exactly one normal outcome |
+| V-6 | TaskCeilingHoldTests.C1610_Hold_race_preserves_identity; C1610_Hold_preserves_custody_and_restart_identity; C1610_Non_ceiling_blocks_remain_excluded | report/retry/cancel/generation (4), custody/restart (2), question/quota/routing (3); 9 |
+| V-7 | TaskCeilingHoldTests.C1610_Hold_keeps_occupancy | stage-absolute/local/pipeline/check; 4; D-1 actual selectors and 409/remaining/launch/CARD-0079 oracles; Hold total 25 |
+| V-8 | TaskCeilingControlTests.C1610_Continue_keeps_report_floor; C1610_Extend_validates_and_rearms; C1610_Stale_answer_is_refused; C1610_Answer_races_report_without_reprompt | 1 + valid/cap/invalid (3) + episode/attempt (2) + 1; 7 |
+| V-9 | TaskCeilingControlTests.C1610_Successor_fence_uses_card_and_role; C1610_Replacement_racing_handoff_is_held; C1610_Retry_resets_hold_but_preserves_requested_ceiling | same-role/different-role/no-card/pre-hold-successor (4) + 1 + 1; 6 |
+| V-10 | TaskCeilingControlTests.C1610_No_phase_tail_rearms; C1610_Final_cap_requires_operator_extend | compaction/title/queue (3), ordinary-refusal/unauthorized-operator/authenticated-rearm (3); Control total 19 |
+| V-11 | TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt; C1610_Failed_delegate_has_complete_UserPrompt; C1610_Failed_late_report_parent_has_complete_UserPrompt | eligible/busy/crash each; 9; D-9 real producer to full recipient UserPrompt plus decoy, durable retry, zero automatic stops |
+| V-12 | TaskSupervisionReceiptTests.C1610_Stale_notice_is_not_delivered; C1610_Late_report_identity_is_fenced | retry/generation-replacement/settled-hold (3); retry/generation-reuse/pre-failure-report (3); Receipt total 15 |
+| V-13 | TaskCeilingScriptTests.C1610_Status; C1610_Declared_budget; C1610_Ceiling_reply; C1610_Drain_wait | fresh/unknown (2), valid/invalid input sets (2), typed-action shape and explicit operator-mode auth (1), drain default/eight/oversize-or-all/inherited-token/standalone/resume (6); 11 |
+| V-14 | CeilingHold.test.tsx | Continue, Extend, Cancel; 3. Render a Working held task through TaskDetailBody, assert typed payload, no ordinary reply/Retry/auto-continue, cap guidance and stale answer feedback |
 
-No new runner capability or live provider test is needed. Existing
-TaskOwnerGuard accepts Blocked with a live bound session, so a hold does not end
-an in-flight checkpoint run; TestDesign retains that source check and the existing
-ownership harness when choosing its detailed controls. Suffix-collision census
-must precede execution: each wildcard class/method token must name only its
-listed roster, partial declarations are one class, nested helpers with no Test
-attribute add no cases. Inspect fresh TRX results; --list-tests is not evidence.
+S1-red expected outcomes are explicit: failed-fresh, failed-unknown, taskless-ttl,
+taskless-cap, restart-resolution and failed-dedup fail their missing feature
+assertion (6 red); real-idle and source-custody are existing safety guards (2
+green). The changed janitor test is one more red (old kill). Never count a guard
+that already passes as a new red. New negative cases in later red groups may
+already pass; retain per-case expected outcomes in the red receipt rather than
+requiring every argument to fail. New behavior must have a genuine assertion red.
+
+Before a fix, record each witness's actual failure and the tested SHA. After the
+fix, all ordinary rows must pass with no unexpected skip. Positive controls are
+method-scoped on the committed bound pack in the separately commissioned
+post-land Mutation stage: force Blocked in C1610_Working_ceiling_holds; drop each
+Working selector in C1610_Hold_keeps_occupancy; suppress re-arm in
+C1610_No_phase_tail_rearms; admit unsigned cap override in
+C1610_Final_cap_requires_operator_extend; move Reply watermark in
+C1610_Continue_keeps_report_floor; use HeldAt in
+C1610_Successor_fence_uses_card_and_role; restore old TTL kill in
+C1610_Visibility_and_pool_safety; skip obligation replay/pretend queue ACK is
+receipt in each of the three producer receipt methods; admit wrong attempt in
+C1610_Late_report_identity_is_fenced; and remove delegated validation in
+C1610_Drain_wait. Each precise method filter must fail its named oracle, then
+pass after restore; no whole-class mutation run and no fixture/build failure as red.
+
+### Full existing affected classes
+
+Counts below are Roslyn syntax census at the round-3 base, with Arguments
+expanded and partial declarations merged by actual class/namespace. They are
+expected execution counts, not executed results. AgentTaskOverdueDeadlineTests
+has 36 cases; its file also declares AgentTaskDispatcherWiringTests separately.
+AgentTaskReplyC547HoldTests.cs is a partial of **AgentTaskReplyIntegrationTests**,
+not a class named after the file. Full-class selections below include every
+method; do not replace them with C1161/C1259 or the single changed janitor case.
+Changing an existing assertion is allowed only for the designed behavior change:
+keep real-idle, phase, boot, commit-recovery, receipt and identity guards intact.
+
+| Existing full class | Expanded cases | Source/lane | Group |
+|---|---:|---|---|
+| AgentTaskPoolTests | 48 | 1 source file(s), Integration | S1 and final |
+| AgentTaskOverdueDeadlineTests | 36 | 1 source file(s), Integration | S1 and final |
+| AttentionServiceTests | 167 | 3 source file(s), Integration/Slow | S1 and final |
+| SeatOccupancyAttentionTests | 10 | 1 source file(s), Integration | S1 and final |
+| TaskDeadlinePolicyTests | 39 | 1 source file(s), Integration | final |
+| BootStallDetectionTests | 59 | 1 source file(s), Integration | final |
+| AgentTaskReplyIntegrationTests | 341 | 18 source file(s), Integration | final |
+| DelegationDispatchRecoveryBoundaryTests | 382 | 24 source file(s), Integration | final |
+| SessionRuntimeActionRecoveryTests | 17 | 1 source file(s), Integration/Slow | final |
+| SessionRuntimeActionTests | 28 | 1 source file(s), Integration/Slow | final |
+| SessionRuntimeActionRoutingTests | 35 | 2 source file(s), Integration/Slow | final |
+| SessionRuntimeActionDeferralTests | 12 | 1 source file(s), Integration/Slow | final |
+| SessionRuntimeActionTemporaryBlockTests | 4 | 1 source file(s), Integration/Slow | final |
+| DispatchConcurrencyAdmissionTests | 8 | 1 source file(s), Integration | final |
+| AgentTaskConcurrencyLimitTests | 25 | 1 source file(s), Integration | final |
+| AgentTaskPipelineStatusTests | 69 | 6 source file(s), Integration | final |
+| CheckCompactionRecoveryFlowTests | 1 | 1 source file(s), Integration | final |
+| TaskProgressStallSweepTests | 13 | 1 source file(s), Integration | final |
+| CompletionNoteDurableSweepTests | 1 | 1 source file(s), Integration | final |
+| ApiErrorRecoveryServiceTests | 40 | 1 source file(s), Integration/Slow | final |
+| SpecialistTaskRunnerDeadlineTests | 7 | 1 source file(s), Integration | final |
+| PipelineHandoffPilotTests | 12 | 1 source file(s), Integration | final |
+| AgentTaskDetailBlockedContextTests | 10 | 1 source file(s), Integration | final |
+| AgentTaskDispatcherWiringTests | 1 | 1 source file(s), Integration | final |
+
+S1 full Pool includes all three cap/TTL regressions called out by Review; rename
+only the contradictory full-TTL Working-kill method. Full Overdue covers commit
+recovery/abandonment saves. Full reply includes every C547 hold/recovery/audit
+partial. Full runtime classes protect saved action identity even though Working
+holds need no widened runtime selector. CompletionNoteWorkQueueTests, concurrency
+policy, report formatter, Docker/deploy script contracts and classification guards
+are included in the sharded Unit lane below. No product test executes in Plan.
+
+### Final Unit coverage and filter census
+
+The source-derived Unit roster contains **471 class-tagged classes / 6,252
+expanded cases**, including the shared linked Antiphon.TestSupport guard. The
+new TaskCeilingPolicyTests contributes 12 via its own green row. A separate exact
+method row covers MatrixDefaultComplexityCreateTests' method-only Unit tag (1).
+Thus final Unit membership is **6,265 cases** at this design base. The Unit
+shards partition existing classes; CP policy plus the method-only row completes
+the lane. Do not claim Full from class shards alone (CARD-1573). Compare the
+union of TRX test identities/categories against source discovery at the actual
+Code SHA, including conditional/platform data. A missing case leaves Full
+incomplete; an added case requires a roster/count update before execution.
+
+Nine MethodDataSource methods were expanded from source providers, not counted
+as singleton methods: ClaudeEffort InvalidCases=6; DispatchHold HoldSentences=18;
+RolePolicy validation InvalidCases=8/ValidCases=12; RolePolicyRead Unsupported=15;
+RemoteScriptContract hidden-location fixture=132; EntityScalarSnapshot consumer
+files=4, distinct groups=9, unsupported runtime values=14. Other expanded counts
+come from explicit Arguments or singleton tests. This is census, not discovery
+or passing-test evidence. Preserve fresh TRX and receipt membership.
+
+Suffix census found two real collisions: RunnerGrokAdapterReadyTests also prefixes
+RunnerGrokAdapterReadyTestsPty; OutboundConversionManifestTests also prefixes
+OutboundConversionManifestTestsPump. Their Unit classes get **single exact class**
+rows; no wildcard can pull in the Integration companion. Every other combined
+class token below has parentheses and a trailing *, pipes escaped in Markdown.
+New C1610 class names have no source declaration/collision at this base. Recheck
+if source changes; partials count once and helper declarations with no Test do
+not add executions. All listed new C1610 methods are distinct within their class.
 
 ### Checkpoints
 
-Lanes: all `server-*` rows are portable **server Unit/Integration** as identified
-by Group; `scripts-*` are portable **script Integration** (offline pwsh stubs);
-`runner-*` is portable **session-runner Integration**; `client-*` is portable
-**client/Vitest**. No host pin and no OS flag
-is needed. Unit and Integration cases are not mixed in one filter invocation.
-Same After group shares a build; each distinct source group owns fresh output.
+Each Group names its logical lane: server-unit, server-integration, script-
+integration, runner-integration or client-Vitest. Portable work uses live defaults,
+no host pin or OS flag. Native platform evidence, if a selected existing test
+requires it, must use its required OS and cannot be credited by a skipped test.
+Run Antiphon.Tests and SessionRunner.Tests sequentially; no Pty assembly here.
+One build per distinct output per committed After group; no reuse across SHAs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 executed; intended behavior assertion reds retained | 8 | 6 |
-| CP-2 | S1-red | CP-1 | server-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-1 | 1 executed; old kill causes intended assertion red | 1 | 1 |
-| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 passed, 0 failed/skipped | 8 | 6 |
-| CP-4 | S1 | CP-3 | server-janitor | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | R-1 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-5 | S1 | CP-3 | server-failed-pool | `/*/*/AgentTaskOverdueDeadlineTests/an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-6 | S1 | CP-3 | server-unit-guards-s1 | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
-| CP-7 | S2-S4-red | `tests/Antiphon.Tests -> bin-c1610-hold-red/` | server-unit-policy-red | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 executed; intended budget/disposition reds retained | 12 | 5 |
-| CP-8 | S2-S4-red | CP-7 | server-hold-control-red | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-8 | 32 executed; intended hold/control assertion reds retained | 32 | 2 |
-| CP-9 | S2-S4-red | CP-7 | server-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-9 | 9 executed; intended missing-receipt reds retained | 9 | 3 |
-| CP-10 | S2-S4-red | CP-7 | scripts-hold-deploy-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-10 | 8 executed; intended wire/wait assertion reds retained | 8 | 2 |
-| CP-11 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed, 0 failed/skipped | 12 | 5 |
-| CP-12 | S2-S4 | CP-11 | server-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-8 | 32 passed, 0 failed/skipped | 32 | 2 |
-| CP-13 | S2-S4 | CP-11 | server-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-9 | 9 passed, 0 failed/skipped | 9 | 3 |
-| CP-14 | S2-S4 | CP-11 | scripts-hold-deploy | `/*/*/TaskCeilingScriptTests/C1610_*` | V-10 | 8 passed, 0 failed/skipped | 8 | 2 |
-| CP-15 | S2-S4 | CP-11 | server-heartbeat-regression | `/*/*/TaskDeadlinePolicyTests/(a_token_count_does_not_reset_the_role_ceiling*)\|(a_token_count_does_not_reset_the_local_tool_clock*)` | R-3 | 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-16 | S2-S4 | CP-11 | server-parent-receipt-regression | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1161_Failed_caller_note_has_one_complete_user_prompt` | R-4 | 3 passed, 0 failed/skipped | 3 | 1 |
-| CP-17 | S2-S4 | CP-11 | server-attempt-regression | `/*/*/SessionRuntimeActionRecoveryTests/C1259_admitted_task_attempt_cannot_settle_its_replacement` | R-5 | 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-18 | S2-S4 | CP-11 | server-unit-guards-hold | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-7 | 23 passed, 0 failed/skipped | 23 | 1 |
-| CP-19 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-safety-regression | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | R-6 | 2 passed, 0 failed/skipped | 2 | 3 |
-| CP-20 | S2-S4-red | n/a | client-ceiling-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-11 | JSON total=3; all 3 names; intended control assertion red, not typecheck/setup failure | n/a | 2 |
-| CP-21 | S2-S4 | n/a | client-ceiling | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-11 | JSON total=3, passed=3, failed/pending/todo=0; exact names; exit 0 | n/a | 2 |
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 executed: 6 intended reds and 2 safety guards green | 8 | 6 |
+| CP-2 | S1-red | CP-1 | server-integration-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | S1 | 1 intended assertion red | 1 | 1 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 8 passed; no failed/skipped | 8 | 6 |
+| CP-4 | S1 | CP-3 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | S1 full class | 48 passed; no failed/skipped | 48 | 4 |
+| CP-5 | S1 | CP-3 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | S1 full class | 36 passed; no failed/skipped | 36 | 4 |
+| CP-6 | S1 | CP-3 | server-integration-AttentionServiceTests | `/*/*/AttentionServiceTests/*` | S1 full class | 167 passed; no failed/skipped | 167 | 12 |
+| CP-7 | S1 | CP-3 | server-integration-SeatOccupancyAttentionTests | `/*/*/SeatOccupancyAttentionTests/*` | S1 full class | 10 passed; no failed/skipped | 10 | 2 |
+| CP-8 | S1 | CP-3 | server-unit-guards | `/*/*/(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | guards | 23 passed; no failed/skipped | 23 | 1 |
+| CP-9 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1610-runner-safety/` | runner-integration-safety | `/*/*/TerminalSeatReleaseTests/(Working_remains_protected_after_arbitrary_silence*)\|(Explicit_operator_release_keeps_its_contract*)` | runner safety | 2 passed; no failed/skipped | 2 | 3 |
+| CP-10 | S2-S4-red | `tests/Antiphon.Tests -> bin-c1610-hold-red/` | server-unit-policy-red | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 executed; intended behavioral reds plus guards | 12 | 5 |
+| CP-11 | S2-S4-red | CP-10 | server-integration-hold-control-red | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 executed; intended behavioral reds plus guards | 44 | 3 |
+| CP-12 | S2-S4-red | CP-10 | server-integration-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 15 executed; missing receipt/recovery assertions red | 15 | 4 |
+| CP-13 | S2-S4-red | CP-10 | script-integration-budget-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 executed; intended script assertions red | 11 | 3 |
+| CP-14 | S2-S4-red | n/a | client-Vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-14 | JSON total=3; all names; intended behavioral red, no setup error | n/a | 2 |
+| CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
+| CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 passed; no failed/skipped | 44 | 3 |
+| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 15 passed; no failed/skipped | 15 | 4 |
+| CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
+| CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 8 passed; no failed/skipped | 8 | 2 |
+| CP-20 | S2-S4 | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-14 | fresh JSON total=3 passed=3 failed/pending/todo=0; all names; exit 0 | n/a | 2 |
+| CP-21 | S2-S4 | CP-15 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | full affected class | 48 passed; no failed/skipped | 48 | 4 |
+| CP-22 | S2-S4 | CP-15 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | full affected class | 36 passed; no failed/skipped | 36 | 4 |
+| CP-23 | S2-S4 | CP-15 | server-integration-AttentionServiceTests | `/*/*/AttentionServiceTests/*` | full affected class | 167 passed; no failed/skipped | 167 | 12 |
+| CP-24 | S2-S4 | CP-15 | server-integration-SeatOccupancyAttentionTests | `/*/*/SeatOccupancyAttentionTests/*` | full affected class | 10 passed; no failed/skipped | 10 | 2 |
+| CP-25 | S2-S4 | CP-15 | server-integration-TaskDeadlinePolicyTests | `/*/*/TaskDeadlinePolicyTests/*` | full affected class | 39 passed; no failed/skipped | 39 | 3 |
+| CP-26 | S2-S4 | CP-15 | server-integration-BootStallDetectionTests | `/*/*/BootStallDetectionTests/*` | full affected class | 59 passed; no failed/skipped | 59 | 4 |
+| CP-27 | S2-S4 | CP-15 | server-integration-AgentTaskReplyIntegrationTests | `/*/*/AgentTaskReplyIntegrationTests/*` | full affected class | 341 passed; no failed/skipped | 341 | 25 |
+| CP-28 | S2-S4 | CP-15 | server-integration-DelegationDispatchRecoveryBoundaryTests | `/*/*/DelegationDispatchRecoveryBoundaryTests/*` | full affected class | 382 passed; no failed/skipped | 382 | 25 |
+| CP-29 | S2-S4 | CP-15 | server-integration-SessionRuntimeActionRecoveryTests | `/*/*/SessionRuntimeActionRecoveryTests/*` | full affected class | 17 passed; no failed/skipped | 17 | 3 |
+| CP-30 | S2-S4 | CP-15 | server-integration-SessionRuntimeActionTests | `/*/*/SessionRuntimeActionTests/*` | full affected class | 28 passed; no failed/skipped | 28 | 3 |
+| CP-31 | S2-S4 | CP-15 | server-integration-SessionRuntimeActionRoutingTests | `/*/*/SessionRuntimeActionRoutingTests/*` | full affected class | 35 passed; no failed/skipped | 35 | 3 |
+| CP-32 | S2-S4 | CP-15 | server-integration-SessionRuntimeActionDeferralTests | `/*/*/SessionRuntimeActionDeferralTests/*` | full affected class | 12 passed; no failed/skipped | 12 | 2 |
+| CP-33 | S2-S4 | CP-15 | server-integration-SessionRuntimeActionTemporaryBlockTests | `/*/*/SessionRuntimeActionTemporaryBlockTests/*` | full affected class | 4 passed; no failed/skipped | 4 | 1 |
+| CP-34 | S2-S4 | CP-15 | server-integration-DispatchConcurrencyAdmissionTests | `/*/*/DispatchConcurrencyAdmissionTests/*` | full affected class | 8 passed; no failed/skipped | 8 | 2 |
+| CP-35 | S2-S4 | CP-15 | server-integration-AgentTaskConcurrencyLimitTests | `/*/*/AgentTaskConcurrencyLimitTests/*` | full affected class | 25 passed; no failed/skipped | 25 | 3 |
+| CP-36 | S2-S4 | CP-15 | server-integration-AgentTaskPipelineStatusTests | `/*/*/AgentTaskPipelineStatusTests/*` | full affected class | 69 passed; no failed/skipped | 69 | 4 |
+| CP-37 | S2-S4 | CP-15 | server-integration-CheckCompactionRecoveryFlowTests | `/*/*/CheckCompactionRecoveryFlowTests/*` | full affected class | 1 passed; no failed/skipped | 1 | 1 |
+| CP-38 | S2-S4 | CP-15 | server-integration-TaskProgressStallSweepTests | `/*/*/TaskProgressStallSweepTests/*` | full affected class | 13 passed; no failed/skipped | 13 | 2 |
+| CP-39 | S2-S4 | CP-15 | server-integration-CompletionNoteDurableSweepTests | `/*/*/CompletionNoteDurableSweepTests/*` | full affected class | 1 passed; no failed/skipped | 1 | 2 |
+| CP-40 | S2-S4 | CP-15 | server-integration-ApiErrorRecoveryServiceTests | `/*/*/ApiErrorRecoveryServiceTests/*` | full affected class | 40 passed; no failed/skipped | 40 | 5 |
+| CP-41 | S2-S4 | CP-15 | server-integration-SpecialistTaskRunnerDeadlineTests | `/*/*/SpecialistTaskRunnerDeadlineTests/*` | full affected class | 7 passed; no failed/skipped | 7 | 2 |
+| CP-42 | S2-S4 | CP-15 | server-integration-PipelineHandoffPilotTests | `/*/*/PipelineHandoffPilotTests/*` | full affected class | 12 passed; no failed/skipped | 12 | 3 |
+| CP-43 | S2-S4 | CP-15 | server-integration-AgentTaskDetailBlockedContextTests | `/*/*/AgentTaskDetailBlockedContextTests/*` | full affected class | 10 passed; no failed/skipped | 10 | 2 |
+| CP-44 | S2-S4 | CP-15 | server-integration-AgentTaskDispatcherWiringTests | `/*/*/AgentTaskDispatcherWiringTests/*` | full affected class | 1 passed; no failed/skipped | 1 | 1 |
+| CP-45 | S2-S4 | CP-15 | server-unit-shard-01 | `/*/Antiphon.Tests/(CachingChatClientTests*)\|(LandDeliveryWaitRoutingTests*)\|(ProcessSpawnLimitTests*)\|(ProgressAwareWaitTests*)/*` | Final Unit partition | 44 passed; no failed/skipped | 44 | 2 |
+| CP-46 | S2-S4 | CP-15 | server-unit-shard-02 | `/*/Antiphon.Tests.Agents/(AgentLaunchSpecTests*)\|(AgentProtocolAdapterFactoryTests*)\|(AgentRegistrySettingsTests*)\|(AgentRegistryTests*)\|(AgentSessionSettingsTests*)\|(CodexAdapterRawResponseTests*)\|(CodexResponseAnalyzerTests*)\|(CodexWorkingIndicatorTests*)\|(FakeLlmApiSelfTests*)\|(GrokAdapterTests*)\|(GrokCredentialStoreTests*)\|(GrokFreshWorktreeQualificationTests*)\|(GrokLinuxBlockingPromptTests*)\|(GrokLinuxStartupReadinessTests*)\|(GrokModelListParserTests*)\|(GrokSignInPromptDetectorTests*)\|(GrokStartupCaptureStoreTests*)\|(GrokStartupReadinessTests*)\|(GrokStartupSizeTests*)\|(GrokTrustPromptDetectorTests*)\|(HerdrEnvelopeBodyTests*)\|(OpenCodeAdapterTests*)\|(RunnerClaudeAdapterEffortPromptTests*)\|(RunnerClaudeAdapterTrustPromptTests*)\|(RunnerClaudeAdapterVerifiedPromptTests*)/*` | Final Unit partition | 216 passed; no failed/skipped | 216 | 3 |
+| CP-47 | S2-S4 | CP-15 | server-unit-shard-03 | `/*/Antiphon.Tests.Agents/(RunnerCodexAdapterReadyTests*)\|(RunnerCodexAdapterSubmitConfirmTests*)\|(RunnerCodexAdapterTurnCompleteTests*)/*` | Final Unit partition | 29 passed; no failed/skipped | 29 | 2 |
+| CP-48 | S2-S4 | CP-15 | server-unit-shard-04 | `/*/Antiphon.Tests.Agents/RunnerGrokAdapterReadyTests/*` | Final Unit partition | 22 passed; no failed/skipped | 22 | 2 |
+| CP-49 | S2-S4 | CP-15 | server-unit-shard-05 | `/*/Antiphon.Tests.Agents/(RunnerGrokAdapterSignInPromptTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerTerminalSessionGenerationTests*)\|(RunnerTerminalSessionInputEncodingTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)\|(TranscriptNormalizerTests*)\|(TranscriptTurnBaselineTests*)/*` | Final Unit partition | 107 passed; no failed/skipped | 107 | 2 |
+| CP-50 | S2-S4 | CP-15 | server-unit-shard-06 | `/*/Antiphon.Tests.AgentTui/(AgentTuiOperationCoordinatorTests*)\|(AgentTuiSecretProtectorTests*)\|(AgentTuiSmokeScriptTests*)\|(DollarEnvArgTests*)\|(RunnerProbePowerShellFixtureTests*)\|(RunnerProcessProbeRedactionTests*)/*` | Final Unit partition | 158 passed; no failed/skipped | 158 | 2 |
+| CP-51 | S2-S4 | CP-15 | server-unit-shard-07 | `/*/Antiphon.Tests.ApiKeys/(AgentLaunchEnvTests*)\|(ApiKeyPlaceholderTests*)\|(ApiKeyProtectorTests*)\|(ProviderEndpointProjectionTests*)/*` | Final Unit partition | 89 passed; no failed/skipped | 89 | 2 |
+| CP-52 | S2-S4 | CP-15 | server-unit-shard-08 | `/*/Antiphon.Tests.Application/(AbsentLaunchPolicyTests*)\|(AgentContextContractTests*)\|(AgentExecutableResolverTests*)\|(AgentPinPathTests*)\|(AgentPresetsTests*)\|(AgentSessionRuntimeBoundedReadTests*)\|(AgentTaskDecisionQuestionTests*)\|(AgentTaskDispatcherPredicateTests*)\|(AgentTaskLandingStateTests*)\|(AgentTaskLandQueueVisibilityTests*)\|(AgentTaskLandVerificationEvidenceTests*)\|(AgentTaskLivenessTests*)\|(AlarmSettingsValidatorTests*)/*` | Final Unit partition | 249 passed; no failed/skipped | 249 | 4 |
+| CP-53 | S2-S4 | CP-15 | server-unit-shard-09 | `/*/Antiphon.Tests.Application/(ApiErrorClassifierTests*)\|(ApiErrorRetryScheduleTests*)\|(AreaMapContractTests*)\|(AreaMapLoaderTests*)\|(AttentionKindWireTests*)\|(AttentionSettingsValidatorTests*)\|(AwayDigestFormatterTests*)\|(BlockedQuestionTests*)\|(BlockedTaskParkProjectionTests*)\|(BoardServiceNeedsHumanReviewTests*)\|(BootStallDocumentationTests*)\|(BootStallPolicyTests*)\|(BootWedgeContractTests*)\|(CapacityRecoveryPolicyTests*)\|(CardAliasNormalizationTests*)\|(CardFilePolicyTests*)\|(CardFilePrivacyDocumentationTests*)\|(CardIdentifierAllocatorTests*)\|(CardRankingOrderTests*)\|(CardRankingTests*)\|(CardTaskFileRendererTests*)\|(CardWorkflowRunFactoryTests*)\|(ChannelContractsTests*)\|(ChannelInboundDebouncerTests*)\|(ChannelMachineTurnMatchTests*)/*` | Final Unit partition | 173 passed; no failed/skipped | 173 | 3 |
+| CP-54 | S2-S4 | CP-15 | server-unit-shard-10 | `/*/Antiphon.Tests.Application/(ChannelOutboundContractTests*)\|(ChannelOutboundEvidenceAccountingTests*)\|(ChannelOutboundStorageTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelReplyAttachmentReaderTests*)\|(CheckCompactionContinuationSettingsTests*)\|(CheckInterpretationValidatorTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckScheduleBackoffTests*)\|(CheckScheduleElapsedTimesTests*)\|(CheckScheduleRoundingTests*)\|(CheckSpecialistLaunchPolicyTests*)\|(ClaudeEffortByRoleSettingsTests*)\|(ClaudeLaunchArgsTests*)\|(ClaudeRemoteControlLaunchArgsTests*)\|(CodexLaunchArgsTests*)\|(CodexPhoneHomeProjectionTests*)\|(ColumnTextTests*)\|(CommitOnSettleDocumentationTests*)\|(CommitOnSettlePolicyResolverTests*)\|(CommitRecoveryObligationsTests*)\|(CompactionContinuationPolicyTests*)\|(CompletionHeaderOverlapTests*)/*` | Final Unit partition | 250 passed; no failed/skipped | 250 | 4 |
+| CP-55 | S2-S4 | CP-15 | server-unit-shard-11 | `/*/Antiphon.Tests.Application/(CompletionNoteWorkQueueTests*)\|(ComplexityEffectiveComposeTests*)\|(ComplexityRoutingComposeTests*)\|(ContextCompactionSettingsTests*)\|(D2AdvisoryDocumentationTests*)\|(DelegateBindRefusalRecoveryTests*)\|(DelegateBranchNameTests*)\|(DelegationAllowedRootsFileTests*)\|(DelegationCapabilityContractTests*)\|(DelegationCostTests*)\|(DelegationDenyHookPolicyTests*)\|(DelegationKindPricingTests*)\|(DelegationLeaseSettingsTests*)\|(DelegationPoolDefaultsTests*)\|(DelegationQuestionDetectionTests*)\|(DelegationReportFormatterTests*)\|(DelegationScopeLeaseTests*)\|(DelegationWorkspaceBoundaryTests*)\|(DeliveryBackendCeilingsTests*)/*` | Final Unit partition | 245 passed; no failed/skipped | 245 | 4 |
+| CP-56 | S2-S4 | CP-15 | server-unit-shard-12 | `/*/Antiphon.Tests.Application/(DesktopCapabilitiesSnapshotTests*)\|(DiagnosisTests*)\|(DiagnosticsRedactorTests*)\|(DialogDeliveryAdmissionTests*)\|(DirectoryBrowseServiceTests*)\|(DirectoryMatcherTests*)\|(DispatchBaseWarningRosterTests*)\|(DispatchConcurrencyPolicyTests*)\|(DispatchHoldLedgerTests*)\|(ExpectationDirectiveTests*)\|(ExpectationPipelineTests*)\|(GitIndexLockTests*)\|(GrokComposerScreenTests*)\|(GrokDeliveryShapeTests*)\|(GrokLaunchArgsTests*)\|(GrokNativeSessionResumeTests*)\|(GrokQuestionPopupTests*)\|(GrokRulesLiveEvidenceTests*)\|(GrokRulesTransportCompatibilityTests*)\|(HerdrAgentKindMapTests*)\|(HerdrLaunchContextTitleTests*)\|(HerdrStatusDisagreementTests*)/*` | Final Unit partition | 241 passed; no failed/skipped | 241 | 4 |
+| CP-57 | S2-S4 | CP-15 | server-unit-shard-13 | `/*/Antiphon.Tests.Application/(HerdrSupervisionFailureEvidenceTests*)\|(HostCleanupWorktreeInventoryTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsCacheTests*)\|(InstructionBundleTests*)\|(InstructionFileStampTests*)\|(InstructionFragmentTests*)\|(InternalDecisionPolicyTests*)\|(IssueTrackerConfigParserTests*)\|(KeepSixDocumentationTests*)\|(KeepSixProjectionTests*)\|(LandFailureDiagnosticTests*)\|(LandMergeWriterTests*)/*` | Final Unit partition | 214 passed; no failed/skipped | 214 | 3 |
+| CP-58 | S2-S4 | CP-15 | server-unit-shard-14 | `/*/Antiphon.Tests.Application/(LandReceiptScanCacheTests*)\|(LandVerificationBuildSlotTests*)\|(LaunchModelArgumentAppenderTests*)\|(LeaseTurnScenarioTests*)\|(MatrixDefaultComplexitySettingsTests*)\|(MechanicalPcContractTests*)\|(MidTurnInterruptDocumentationTests*)\|(MidTurnInterruptPolicyTests*)/*` | Final Unit partition | 184 passed; no failed/skipped | 184 | 3 |
+| CP-59 | S2-S4 | CP-15 | server-unit-shard-15 | `/*/Antiphon.Tests.Application/(ModelAliasTests*)\|(ModelLevelAliasDisplayTests*)\|(MutationRoleContractTests*)\|(OperatorShutdownCoordinatorTests*)\|(OrchestratorBundleOwnershipTests*)\|(OrchestratorInstructionsDeltaTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(OrchestratorInstructionsPathTests*)\|(OrchestratorInstructionsRecipientTests*)\|(OrchestratorInstructionsRendererTests*)\|(OrchestratorInvestigationDetectorTests*)\|(OrchestratorSettingsTests*)\|(OrchestratorWorkspaceLayoutTests*)/*` | Final Unit partition | 184 passed; no failed/skipped | 184 | 3 |
+| CP-60 | S2-S4 | CP-15 | server-unit-shard-16 | `/*/Antiphon.Tests.Application/OutboundConversionManifestTests/*` | Final Unit partition | 35 passed; no failed/skipped | 35 | 2 |
+| CP-61 | S2-S4 | CP-15 | server-unit-shard-17 | `/*/Antiphon.Tests.Application/(OutputDistillationGateTests*)\|(OutputDistillationPolicyTests*)\|(OutputDistillationQueueTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)\|(PhoneHomeRunnerSettingsValidatorTests*)\|(PhoneHomeSpillTests*)\|(PhoneHomeTaskRoutingTests*)\|(PipelineDefinitionDocumentationTests*)\|(PipelineHandoffParseTests*)\|(PipelineHandoffRouteDocumentationTests*)\|(PipelineStagesJsonTests*)\|(PlanCatalogServiceTests*)/*` | Final Unit partition | 247 passed; no failed/skipped | 247 | 4 |
+| CP-62 | S2-S4 | CP-15 | server-unit-shard-18 | `/*/Antiphon.Tests.Application/(PolicyRefreshDeltaTests*)\|(PostLandMutationContractTests*)\|(PostLandMutationPublicationTests*)\|(PostLandMutationReceiptPolicyTests*)\|(PostLandRetrospectiveContractTests*)\|(ProviderCapacityNoticeTests*)\|(ProviderContractCatalogTests*)\|(ProviderEndpointDocumentationTests*)\|(ProviderQuotaRefusalTests*)\|(PtyDeliveryCeilingsTests*)\|(PtyInlineCeilingTests*)\|(PublishedRoutingDocumentationTests*)\|(ReceiptScanDestinationTests*)\|(ReleaseBranchModelDocumentationTests*)\|(RemoteControlMenuScreenTests*)\|(RemoteControlPolicyTests*)\|(RemoteVerificationWorkspaceTests*)/*` | Final Unit partition | 242 passed; no failed/skipped | 242 | 4 |
+| CP-63 | S2-S4 | CP-15 | server-unit-shard-19 | `/*/Antiphon.Tests.Application/(RemoteWorktreeMirrorTests*)\|(RepairSourceDocumentationTests*)\|(RepositoryLeaseWaitersTests*)\|(RestartFailureClassificationTests*)\|(ReviewEvidenceParserTests*)\|(RolePolicyConfigurationValidationTests*)\|(RolePolicyReadServiceTests*)\|(RolePolicyToolBundleTests*)\|(RoutingCandidateParseTests*)\|(RunnerAbsenceEvidenceValidatorTests*)\|(RunnerBranchContractDocumentationTests*)\|(RunnerCapabilitiesFailureTests*)\|(RunnerContractMapperTranscriptEventTests*)\|(RunnerDefaultGuidanceTests*)\|(RunnerReadSourcePinTests*)\|(RunnerSlotRulesTests*)\|(RunnerWorkspaceParkPathTests*)\|(ScheduleRecurrenceTests*)\|(ScopeDriftTests*)\|(ScopedVerificationInstructionTests*)\|(ScopeOverlapPolicyTests*)\|(ScopeResolverAreaTests*)\|(SeatOccupancyProjectionTests*)/*` | Final Unit partition | 241 passed; no failed/skipped | 241 | 4 |
+| CP-64 | S2-S4 | CP-15 | server-unit-shard-20 | `/*/Antiphon.Tests.Application/(SessionContextUsageTests*)\|(SessionDeliveryProfileTests*)\|(SessionReAdoptionStateTests*)\|(SessionRunnerAbsenceEvidenceDocumentationTests*)\|(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerSettingsTests*)\|(SettlementSyncDebtAttentionTests*)\|(SettlementSyncDebtPolicyTests*)\|(SharedWriterLeaseProjectionTests*)\|(SiblingInspectionResultsTests*)\|(SiblingWarningReducerTests*)\|(SlashCommandCatalogServiceTests*)\|(SlashCommandParserTests*)\|(SourceLandingAdmissionTests*)\|(SpecialistAttemptEvidenceTests*)\|(SpecialistFailurePolicyTests*)\|(SpecialistQualificationContractTests*)\|(SpecialistRoleContractTests*)\|(StandingBootDocumentationTests*)\|(StandingBootWatchPolicyTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(StandingSpecialistHealthPolicyTests*)\|(SubagentNotificationTests*)\|(SubscriptionQuotaGateTests*)\|(SubscriptionUsageParserTests*)/*` | Final Unit partition | 241 passed; no failed/skipped | 241 | 4 |
+| CP-65 | S2-S4 | CP-15 | server-unit-shard-21 | `/*/Antiphon.Tests.Application/(TaskCompletionContinuationTests*)\|(TaskCompletionProgressPolicyTests*)\|(TaskPlatformGuidanceTests*)\|(TaskReportHousekeepingTests*)\|(TierReasoningEffortAgreementTests*)\|(TrackerSyncSummaryFormatterTests*)\|(TranscriptIncidentReplayGuardTests*)\|(TranscriptLocalCommandEchoTests*)\|(TypedBodySpillTests*)\|(UnmarkedWaitingContractTests*)\|(UsageLimitWallParserTests*)\|(VerificationReceiptPolicyTests*)\|(VerificationRoundBriefTests*)\|(VerificationRoundInstructionTests*)\|(WorkerWorkspaceDefaultMigrationShapeTests*)\|(WorkerWorkspaceDefaultStorageTests*)\|(WorkflowEngineParsingTests*)\|(WorkspaceReservationKeyTests*)\|(WorkspaceReservationLivenessTests*)/*` | Final Unit partition | 232 passed; no failed/skipped | 232 | 3 |
+| CP-66 | S2-S4 | CP-15 | server-unit-shard-22 | `/*/Antiphon.Tests.Application/(WorktreeCleanupPresentationTests*)\|(WorktreeCleanupSettingsValidatorTests*)\|(WorktreeIgnoredContentClassifierTests*)\|(WorktreeListParsingTests*)/*` | Final Unit partition | 89 passed; no failed/skipped | 89 | 2 |
+| CP-67 | S2-S4 | CP-15 | server-unit-shard-23 | `/*/Antiphon.Tests.Checkpoints/(BaselineComparerTests*)\|(BuildSlotClientTests*)\|(C1307CliCancellationTests*)\|(CheckpointAdmissionBudgetTests*)\|(CheckpointAdmissionContractTests*)\|(CheckpointAppTests*)\|(CheckpointBoundedReaderTests*)\|(CheckpointBuildBindingPathTests*)\|(CheckpointConfinementLedgerTests*)\|(CheckpointEofStallTests*)\|(CheckpointExecutorLogTests*)\|(CheckpointFixtureProcessTests*)\|(CheckpointFreshOutputSealTests*)\|(CheckpointImportTests*)\|(CheckpointLargeStampScriptTests*)\|(CheckpointLargeStampTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointLineTests*)\|(CheckpointManifestTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(CheckpointOrFilterTests*)\|(CheckpointOutputConfinementTests*)\|(CheckpointOwnedOutputTests*)\|(CheckpointProcessIdentityTests*)\|(CheckpointReceiptSafetyTests*)/*` | Final Unit partition | 216 passed; no failed/skipped | 216 | 3 |
+| CP-68 | S2-S4 | CP-15 | server-unit-shard-24 | `/*/Antiphon.Tests.Checkpoints/(CheckpointReceiptStallBudgetTests*)\|(CheckpointRepeatConfigurationTests*)\|(CheckpointRepeatDocumentationTests*)\|(CheckpointRepeatHostTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointScriptReaderDeadlineTests*)\|(CheckpointShapeConflictTests*)\|(CheckpointSlotContractTests*)\|(CheckpointStampSafetyTests*)\|(CheckpointTaskOwnershipTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempScopeTests*)\|(CheckpointTimingHarnessTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointToolSourceTests*)\|(CheckpointTrackedBaselineTests*)\|(CheckpointWindowsReadModeTests*)\|(DetachedLauncherTests*)\|(EvidenceFolderTests*)\|(ExitCodeTests*)/*` | Final Unit partition | 215 passed; no failed/skipped | 215 | 3 |
+| CP-69 | S2-S4 | CP-15 | server-unit-shard-25 | `/*/Antiphon.Tests.Checkpoints/(OutputCleanupTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoverageBindingTests*)\|(PlanCoverageCensusTests*)\|(PlanCoverageCommandTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageHandleTests*)\|(PlanCoverageParserTests*)\|(PlanCoveragePcTests*)\|(ProcessDriverTests*)\|(ReapedProcStatIdentityTests*)\|(ReportMergerTests*)\|(ReportWriterTests*)\|(RerunFilterHostTests*)\|(RerunPolicyTests*)\|(RowRunnerTests*)\|(RunSchedulerTests*)\|(RunStateStoreTests*)\|(SafeDeleteProcessBoundaryTests*)\|(ShadowCopyTests*)\|(TestPhaseCustodyTests*)\|(TestSetTimingTests*)\|(TimeoutTests*)\|(TimingJournalTests*)\|(TrxReportTests*)/*` | Final Unit partition | 196 passed; no failed/skipped | 196 | 3 |
+| CP-70 | S2-S4 | CP-15 | server-unit-shard-26 | `/*/Antiphon.Tests.Checkpoints/WaitCommandTests/*` | Final Unit partition | 12 passed; no failed/skipped | 12 | 2 |
+| CP-71 | S2-S4 | CP-15 | server-unit-shard-27 | `/*/Antiphon.Tests.Domain.StateMachine/(CardStateMachineTests*)\|(RunAttemptStateMachineTests*)\|(WorkflowStateMachineTests*)/*` | Final Unit partition | 61 passed; no failed/skipped | 61 | 2 |
+| CP-72 | S2-S4 | CP-15 | server-unit-shard-28 | `/*/Antiphon.Tests.Infrastructure/(AppDbContextModelTests*)\|(AppHostBrokerSourceGuardTests*)\|(C1307CancellationTests*)\|(C1307ToolRemovalTests*)\|(CheckpointToolProjectContractTests*)\|(CodexRootExecContractTests*)\|(CodexRunnerImageContractTests*)\|(CustodyHelperContractTests*)\|(DindRunnerContractTests*)\|(DirectoryBuildRspTests*)\|(DockerDeliveryBarrierTests*)\|(DockerDeliveryObservationTests*)\|(DockerStackContractTests*)/*` | Final Unit partition | 246 passed; no failed/skipped | 246 | 4 |
+| CP-73 | S2-S4 | CP-15 | server-unit-shard-29 | `/*/Antiphon.Tests.Infrastructure/(DockerStackDocumentationTests*)\|(DotnetToolManifestContractTests*)\|(E2ECopyOwnedPtyHostAppHostContractTests*)\|(EvidencePolicyWorkflowTests*)\|(FileSystemEvidenceRetentionTests*)\|(FileUseWindowsTests*)\|(GithubCredentialHelperTests*)\|(GitMinimumVersionGuardTests*)\|(GrokRunnerImageContractTests*)\|(GrokSha256PinTests*)\|(HostCleanupCheckpointAuthorityTests*)\|(HostCleanupCheckpointCompatibilityTests*)\|(HostCleanupCheckpointCustodyTests*)\|(HostCleanupCheckpointExtractionTests*)\|(HostCleanupCheckpointPathTests*)\|(HostCleanupCheckpointReadDeadlineTests*)\|(HostCleanupCheckpointReceiptTests*)\|(HostCleanupCheckpointSweepRaceTests*)\|(HostCleanupExecutionTests*)\|(HostCleanupOwnershipTests*)\|(HostCleanupPolicyTests*)\|(JqRunnerImageContractTests*)/*` | Final Unit partition | 247 passed; no failed/skipped | 247 | 4 |
+| CP-74 | S2-S4 | CP-15 | server-unit-shard-30 | `/*/Antiphon.Tests.Infrastructure/(LandingGitProfileTests*)\|(LandingIdentityControlTests*)\|(LandingRemovalPolicyControlTests*)\|(LogRetentionTests*)\|(OperatorDashboardSessionsTests*)\|(OperatorTokenFileTests*)\|(OrchestratorInstructionsMigrationShapeTests*)\|(PackageVersionPinContractTests*)\|(PostgresPoolConfigurationTests*)\|(RunnerPushCredentialDocsTests*)\|(SessionRunnerGrokLineEndingContractTests*)\|(ShellFixtureLineEndingContractTests*)\|(WorktreeDeleteAccessProbeTests*)\|(WorktreeLockDiagnosticsTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerTests*)/*` | Final Unit partition | 250 passed; no failed/skipped | 250 | 4 |
+| CP-75 | S2-S4 | CP-15 | server-unit-shard-31 | `/*/Antiphon.Tests.Infrastructure/WorktreeRemovalDefaultTests/*` | Final Unit partition | 5 passed; no failed/skipped | 5 | 2 |
+| CP-76 | S2-S4 | CP-15 | server-unit-shard-32 | `/*/Antiphon.Tests.Infrastructure.Resilience/(HttpReadResilienceTests*)\|(HttpResilienceRegistrationTests*)\|(ResilienceBudgetTests*)\|(ResilienceCircuitTests*)\|(ResilienceOptionsAndTelemetryTests*)\|(ResiliencePredicateTests*)/*` | Final Unit partition | 46 passed; no failed/skipped | 46 | 2 |
+| CP-77 | S2-S4 | CP-15 | server-unit-shard-33 | `/*/Antiphon.Tests.Migrations/(CommitOnSettleMigrationTests*)\|(PipelineDefinitionMigrationShapeTests*)/*` | Final Unit partition | 4 passed; no failed/skipped | 4 | 2 |
+| CP-78 | S2-S4 | CP-15 | server-unit-shard-34 | `/*/Antiphon.Tests.Scripts/(C1008PlatformContractTests*)\|(C1364BoundLandWaitProofTests*)\|(DelegateScriptInterruptSwitchTests*)\|(DelegateScriptRunnerSwitchTests*)\|(HostJqPrerequisiteScriptTests*)\|(ProcessSpawnTimeoutPolicyTests*)\|(QualificationCheckoutSourceTests*)\|(RefreshGithubTokenRemoteCommandTests*)\|(RefreshGithubTokenScriptTests*)/*` | Final Unit partition | 67 passed; no failed/skipped | 67 | 2 |
+| CP-79 | S2-S4 | CP-15 | server-unit-shard-35 | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/*` | Final Unit partition | 499 passed; no failed/skipped | 499 | 12 |
+| CP-80 | S2-S4 | CP-15 | server-unit-shard-36 | `/*/Antiphon.Tests.Scripts/(RetiredTempContainerHostTests*)\|(RetiredTempContainerScriptTests*)\|(RollingProductionMountTests*)\|(RollingVolumeRecycleCensusChurnTests*)\|(RollingVolumeRecycleScriptTests*)\|(ScriptHarnessProcessContractTests*)\|(SeedSmokeTargetingPackContractTests*)\|(SelectorLineEndingAttributeTests*)\|(TestTimingReportTests*)\|(VerifyDevStackSmokeTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | Final Unit partition | 168 passed; no failed/skipped | 168 | 4 |
+| CP-81 | S2-S4 | CP-15 | server-unit-shard-37 | `/*/Antiphon.Tests.TestHelpers/(BuildOutputNestingTests*)\|(CheckCompactionFixtureTests*)\|(ControlledLandingGitTests*)\|(DelegationHarnessCensusTests*)\|(DelegationTestServicesTests*)\|(DirectoryLinkFixtureTests*)\|(EntityScalarSnapshotConsumerGuardTests*)\|(EntityScalarSnapshotTests*)\|(LiveFixtureTextTests*)\|(LoadTimeoutBoundWitnessTests*)\|(LoadTimeoutWaitTests*)\|(PairedOverheadStatisticsTests*)\|(ScaledTimeProviderTests*)\|(SlowTestTripwireTests*)\|(TestAppHostPathTests*)\|(TestClassificationPolicyTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)\|(TestLaneCategoryGuardTests*)\|(TestPhaseSummaryTests*)/*` | Final Unit partition | 250 passed; no failed/skipped | 250 | 4 |
+| CP-82 | S2-S4 | CP-15 | server-unit-shard-38 | `/*/Antiphon.Tests.TestHelpers/(TestPhaseSupervisorTests*)\|(TestSchemaCacheTests*)\|(TestTimingLifecycleTests*)\|(TestTimingRecorderTests*)\|(WindowsDeliveryFixtureWitnessTests*)/*` | Final Unit partition | 37 passed; no failed/skipped | 37 | 2 |
+| CP-83 | S2-S4 | CP-15 | server-unit-shard-39 | `/*/Antiphon.TestSupport/TestClassificationGuardTests/*` | Final Unit partition | 1 passed; no failed/skipped | 1 | 2 |
+| CP-84 | S2-S4 | CP-15 | server-unit-method-tag | `/*/Antiphon.Tests.Application/MatrixDefaultComplexityCreateTests/The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` | method-only Unit | 1 passed; Category=Unit; no failed/skipped | 1 | 1 |
 
-Run each committed After group once through the checkpoint tool. CP-19 belongs
-to S1 even though printed last; run server and runner projects sequentially.
-Bootstrap the tool through scripts/build-slot.ps1; the checkpoint executor takes
-its own driver slots. Await run/wait until exit is not 75, using foreground
-windows no longer than 45 seconds. Exit 4 is not run, never permission to bypass
-the gate. Preserve red and green receipts independently; compile/fixture errors
-and zero tests do not demonstrate an intended red. Compatible contract/refactor
-scaffolding may precede the tests-first commit, but must retain old behavior so
-red witnesses target actual missing behavior, not missing types or methods.
+Run each committed After group once with the checkpoint tool and wait until its
+exit is not 75; use foreground windows at most 45 seconds and own every child.
+Bootstrap the tool through scripts/build-slot.ps1; the executor takes driver
+slots itself. Never nest the executor's long run inside a held outer slot. Exit
+4 means not run; no unleased or NoSlot fallback receives credit. Preserve red
+and green receipts separately. Client rows need fresh, previously absent JSON
+paths with the three exact test names; exit 0 or a success string alone is not
+a receipt. Keep previous receipts, choose new paths on retry, validate native
+exit and total/passed/failed/pending/todo counts.
 
-### Cost
+### Cost and performance execution contract
 
-**21 rows, 5 producer builds, 51 estimated execution/build minutes**, excluding
-admission. Planned TUnit floors sum to **196 executions**: 70 red-witness
-executions and 126 green/regression executions. Add 3 red and 3 green Vitest
-executions = **202 total**. Guards repeat at two different source groups.
-Unique new cases: 69 TUnit + 3 Vitest; changed janitor case: 1.
-No product tests have run in Plan. These estimates require TestDesign refinement.
-Code authoring allowance is provisionally 180 minutes plus 51 ordinary minutes;
-post-land mutation cost is not claimed zero and remains for TestDesign's exact
-method/variant inventory. Independent plan Review returns to TestDesign before
-Code. No broad Unit/full-suite rerun is authorized by this targeted plan.
+**84 rows, 5 producer builds, 317 provisional build/execution minutes**, excluding
+admission. TUnit floors sum to **8,093 executions** (91 red-phase, 8,002 green/
+regression); client adds 3 red and 3 green = **8,099 total**. New cases are 90
+TUnit plus 3 client; the renamed janitor case is existing. Final Unit covers
+6,265 identities, while guards and S1 classes intentionally repeat on different
+source groups. No full assembly run beyond the specified Unit lane is added.
 
-## Performance budget details
+| Committed group | Rows | Estimated execution/build minutes | TUnit floor | Provisional execution cap | Independent hard wall |
+|---|---:|---:|---:|---:|---:|
+| S1-red | 2 | 7 | 9 | 14 minutes | 44 minutes |
+| S1 | 7 | 32 | 294 | 64 minutes | 94 minutes |
+| S2-S4-red | 5 | 17 | 82 | 34 minutes | 64 minutes |
+| S2-S4 | 70 | 261 | 7708 | 522 minutes | 552 minutes |
 
-Apply [performance standards](../../testing-and-build.md#performance-standards)
-and [R1-R9](../../test-performance-standards.md). No measured p95 exists for the
-proposed tests: sample size **0**, source base named above, Linux Plan, no product
-run or load sample. Do not label estimates as measured. CARD-1610 owns provisional
-collection, with CARD-1404 for cost packing and CARD-1514/1531 for phase/admission
-instrumentation. TestDesign first consults comparable retained receipts; Code's
-first necessary red and green runs collect per-test timings without adding broad
-repetitions solely to manufacture a percentile. Replace provisional limits with
-about **2x comparable measured p95**, identifying SHA, host, platform, load,
-category, sample count and run IDs. Small samples remain provisional.
+These are missing-sample scheduling bounds, not measured p95. The hard wall
+allows at most 30 total extra wall minutes for admission/other excluded time;
+each acquisition has a separate 15-minute cap. It does not promise all 70 rows
+can wait 15 minutes each. Exceeding either wall or execution stops the run with
+partial evidence and an incomplete gate, never an automatic budget increase.
 
-| Component | Provisional expected duration | Finite provisional execution bound |
+R1 requires a **caller-commissioned Debug timing assessment before Code executes
+this roster**, because S1, final group and the aggregate exceed 30 minutes. It
+uses these exact filters and existing comparable receipts, including the two
+largest full integration classes (341/382 cases), then bounds necessary first
+runs. This is scheduling/measurement work, not another Plan/TestDesign round.
+No new delegation is launched by this Plan delegate. Debug may recommend shared
+setup repairs or disjoint method partitions covering the same full classes;
+record the change and counts in this plan before running them. No dropped tests.
+The 317-minute estimate is materially higher than round 2's 51 because Final
+coverage was missing. Authoring provision is 180 minutes, making 497 minutes
+before queue waits; the caller must commission within available supervision and
+ordering limits, not assume this feature is already active in the host.
+
+### Performance budget details
+
+Apply docs/testing-and-build.md#performance-standards and R1-R9 in
+docs/test-performance-standards.md. At this Plan base there are **zero measured
+samples** for the new tests or this expanded selection; no measured p95 is
+claimed. CARD-1610 owns first-run collection, CARD-1404 cost/timeout refinement,
+CARD-1514/1531 phase/admission instrumentation. Consult comparable retained
+receipts first; collect per-test p95/sample count/host/platform/load/run/SHA from
+the necessary red/green runs, not repeated full sweeps solely for statistics.
+Use approximately 2x comparable measured p95; small samples stay provisional.
+
+| Phase/component | Provisional target | Provisional finite bound |
 |---|---|---|
-| Pure test body | <1 second | 2 seconds, excluding shared discovery/setup |
-| DB/service/barrier body | 1-10 seconds | 20 seconds, no wall-clock minute sleeps |
-| Script/receipt body | 5-30 seconds | 60 seconds; process cleanup included |
-| One server build | 3-5 minutes | 10 minutes; restore/compile separated |
-| One runner build | 1-2 minutes | 4 minutes |
-| Shared container/readiness/migrations | 10-40 seconds once per assembly/run | 80 seconds provisional; retain existing tighter call limits |
-| Schema clone/data prep | 1-3 seconds per scenario | 6 seconds |
-| Shared queue/web host setup | 1-5 seconds | 10 seconds; restart tests recreate scopes only unless process restart is the subject |
-| Unit/guard row body | <30 seconds | 1 minute |
-| Visibility/hold/control row body | 30-120 seconds | 4 minutes |
-| Receipt row body | 1-3 minutes | 6 minutes |
-| Script row body | 30-90 seconds | 3 minutes |
-| Runner safety row body | 10-60 seconds | 2 minutes |
-| Teardown/output drain | 1-10 seconds | 20 seconds; timeout retains residue/custody evidence |
-| Admission | Unknown; card reports historical 10-25 minute waits | 15 minutes per acquisition as a provisional scheduling cap, not measured p95 |
+| Pure policy body | below 1 second | 2 seconds outside shared discovery |
+| DB/service/barrier body | 1-10 seconds | 20 seconds, injected clock for 20/90/240/720-minute thresholds |
+| Receipt/script body | 5-30 seconds | 60 seconds including process cleanup |
+| Server build | 3-5 minutes | 10-minute target; actual scheduler coupling below |
+| Runner build | 1-2 minutes | 4-minute target; actual scheduler coupling below |
+| Container/readiness/migrations | 10-40 seconds once per assembly run | 80 seconds; existing tighter external deadlines stay |
+| Per-case schema/data | 1-3 seconds | 6 seconds |
+| Shared queue/web host | 1-5 seconds | 10 seconds; crash tests recreate scope, not infrastructure |
+| New visibility/hold/control row body | 30-180 seconds | 6 minutes |
+| New receipt row body | 2-4 minutes | 8 minutes |
+| Existing integration and Unit shard row | estimate in CP table | initially 2x that estimate, pending comparable measured p95 |
+| Client typecheck/lint/test row | 1-2 minutes | 4 minutes; cold dependency install separately 5 minutes |
+| Teardown/output drain | 1-10 seconds | 20 seconds; retain residue on timeout |
+| Admission | unmeasured for this campaign | 15 minutes/acquisition plus independent group hard wall |
 
-Expected complete group costs from the table: S1-red 7 minutes; S1 green including
-runner safety 12; S2-S4-red 14; S2-S4-green 18. Total **51**, versus round 1's 80.
-Five builds instead of twelve; four are Antiphon.Tests, one SessionRunner.Tests.
-No source-stamp reuse across different commits, and no repeat setup per case.
-Because the cumulative campaign exceeds 30 minutes, **caller commissions a
-scoped Debug timing assessment before Code** under R1, using this exact roster
-and available build/fixture receipts. This delegate cannot sub-delegate. The
-Debug task must account for aggregate builds and queue waits, not pretend that
-splitting groups removes the obligation. A single group observed above 30
-minutes also requires its own timing investigation before repetition.
+The importer defaults (45-minute admission, 15-minute row minimum, 90-minute
+legacy total and max(15,3x estimate) row bounds) are **not** the execution policy.
+For Code, retain the imported YAML as provenance and materialize a derived
+ignored manifest with exactly these rows: build.slotWaitMinutes=15, row
+timeoutMinutes=max(2,2x EstimatedMinutes), timeouts.rowMinutes=2, and explicit
+per-group --total-timeout/--hard-wall-timeout values from the table. The tool
+accepts a manifest as a positional argument to run (Program.cs LoadSelection),
+so use that derived manifest rather than re-importing away the override.
+Record its digest and all overrides in the stored report.
 
-Importer facts, not performance policy: generated defaults are
-`build.slotWaitMinutes=45`, `timeouts.rowMinutes=15`, `timeouts.totalMinutes=90`;
-individual `timeoutMinutes` use max(15, 3x EstimatedMinutes). The import validation
-below checks syntax/counts only and **does not claim** the old 15/29 limits are
-active. Before Code, TestDesign must commit a derived manifest with explicit
-per-row execution bounds from this table/measurements, a 10-minute server build
-bound, 15-minute slot cap, separate charged group execution caps (14/24/28/36
-minutes respectively, provisional ~2x group estimates), and a finite hard wall
-that includes each possible admission. Tool global/row/build knobs must be
-checked against their actual consumer; if one knob couples build and row time,
-record the measured justified exception instead of claiming independent limits.
-Keep the imported default manifest as historical provenance; the derived manifest
-is a new artifact with exact selection and all deviations visible to Review.
-A hard wall over 30 minutes is an allowance, not measured execution; record
-admission separately and carry the aggregate Debug decision. No unlisted run or
-silent timeout widening is permitted to resolve a refused/slow row.
+Actual scheduler limitation: a shared build's bound is at least 15 minutes and
+the maximum dependent row timeout; there is no independent 10-minute build
+knob in this flow. Final's large full-class rows provisionally imply a 50-minute
+build ceiling although build target is 5 minutes. This is a disclosed temporary
+CARD-1404 exception, not a claimed 10-minute enforced limit. Debug must examine
+that coupling and comparable build p95 before execution; split selections with
+unchanged coverage or use the existing supported row override only with recorded
+justification. Never pretend legacy totalMinutes is consumed by the scheduler.
+A row over 30 minutes triggers Debug before repeating; do not fix red by widening
+a timeout, loosening assertions or adding retries.
 
-Share PostgreSQL container and template/migrations once per assembly/run. New DB
-tests use isolated schemas and transaction/barrier state, not whole-database
-cleanup or parallel global sweeps. Share BridgeQueueHarness startup where
-configuration is identical; distinct recipient/decoy sessions are isolated, not
-a new container per test. A receipt crash is a service/queue failure injection;
-only a test explicitly proving process death may recreate the process and must
-measure that cost. Clock advance simulates 20/90/240-minute thresholds. External
-DB, filesystem, HTTP, CLI, readiness and output-drain calls each carry bounded
-cancellation and duration spans. No production runner/AppHost/browser is used.
+Share PostgreSQL/container/template/migrations once per assembly run; use isolated
+schemas and barriers, never global cleanup per test. Share BridgeQueueHarness
+startup where configuration is identical, with isolated recipient/decoy sessions.
+Crash cases inject the post-save queue failure and reconstruct a scope; a real
+process restart is justified and timed only when it is the subject. Tests that
+spawn keep the assembly-local ParallelLimiter<ProcessSpawnLimit> and strict
+roster membership; new receipt/script classes also join the Slow allowlist.
+Any inherited global fixture cannot safely overlap: mark the affected manifest
+rows serial during derived-manifest preparation and retain the reason/cost.
 
-Evidence lives in ignored `.antiphon/c1610-checkpoints/` per run/source group:
-TRX, native exit, exact case/category membership, source/build binding, host/load,
-admission/build/discovery/setup/body/teardown timings and external-call spans.
-Unknown phases remain unknown, remainder is explicit, wall time is separate
-from summed parallel spans. Preserve failed receipts and unexpected-red baseline
-checks at their exact methods. Record actual versus expected counts per CP.
+Capture admission, build, discovery, container/readiness, migrations, schema
+clone/data, host startup, body, teardown and output drain separately. External
+DB, filesystem, HTTP, CLI and readiness calls need bounded cancellation and
+duration spans. Keep unknown phases null and remainder explicit; wall time is
+not the sum of overlapping spans. Preserve exact TRX identities/categories,
+counts, original CHECKPOINT lines, native exit and source/build receipts under
+ignored .antiphon/c1610-checkpoints/<run>/; validate SHA/source-clean/build binding
+before Review claims green. Confirm unexpected inherited red at the base using
+only the failing methods. No production runner, provider profile or live Docker
+rollout supplies test evidence.
 
-App ownership: server supervision/queue/database -> server application batch;
-script CLI -> server API contract plus offline script integration; runner safety
--> shared session-runner batch. Retain the actual ProjectReference graph and
-transitive dependents at the Code SHA. No broker/pty-backend behavior changes,
-no new project extraction, and no Full rc qualification credit is claimed; scoped
-release qualification remains CARD-1545. Cleanup removes only this run's owned
-alternate outputs after all children finish, never foreign build/evidence roots.
+App categories: server supervision/database/queue; offline CLI scripts and
+client controls; unchanged session-runner safety. Capture the actual direct
+ProjectReference graph and transitive dependents at Code's SHA. Full Unit is
+a required ordinary profile lane, not rc qualification. No broker/pty change,
+new project extraction, tag, publish or rc qualification credit is claimed.
+Delete only owned alternative outputs after joining all children. This Plan
+uses only its scratch output root for tooling, obeying the dispatch's deletion
+restriction; it deletes nothing elsewhere.
 
-## Final source audit and validation record
+## Round-3 validation and handoff record
 
-Further direct source inspection found that BlockedQuestionCard's fallback would
-send an ordinary answer (or offer Retry) for an unknown Ceiling kind. D-3/D-8
-therefore include a small typed-decision branch and three receipt-counted client
-cases; removing all client coverage would have been unsound. Client rows use
-`test-client.ps1`'s actual -JsonResultPath option; before running, require the
-receipt path absent, capture native exit, then validate JSON counts/names. For
-reruns retain the old receipt in its run's evidence directory and supply a fresh
-path in the refined manifest. A missing/truncated/stale JSON or a typecheck
-failure cannot count as three tests. Typecheck/lint and npm install are included
-in this driver's phases; dependencies install once per checkout, not per case.
-Provisional client body target is 15-30 seconds / 60-second limit; the 2-minute
-row estimate includes typecheck/lint. Record cold install separately (5-minute
-provisional cap) and refine from actual p95 in TestDesign.
+Prior round tooling import (21 rows, 5 builds, 51 minutes, 196 TUnit floor) and
+review f5c62876 are historical; they do not validate this expanded manifest.
+Round-3 read-only source census used Roslyn syntax nodes, including partials and
+linked shared guard, then inspected all nine Unit data providers. It found the
+C547 filename/class mismatch, a second class in the Overdue file, and two Unit
+class-prefix collisions; the exact selections above account for them.
 
-Additional source-backed boundaries: `TaskOwnerGuard.cs:186` already admits
-Blocked tasks with a live session; no checkpoint-tool change is needed.
-`PipelineHandoffActionService` and `AgentTaskService` child admission already
-start with the card lock. Recheck D-5 superseders there in **card, handoff, task**
-order. Do not add a card lock inside the runtime's **session, task** save fence.
-The completion header is a snapshot; a replacement arriving later makes child
-admission refuse with a decision reason. It does not rewrite immutable report
-text or justify a new global lock-order project. Uncarded ambiguous lineage
-always produces next=decide rather than inventing a distributed admission lock.
+The original runtime observations in D-7 remain dated round-2 evidence, not
+fresh claims. Round-3 runner defaults/catalogue were read at 03:57Z. CARD-1609
+was read at 04:13Z: InProgress, content-derived retirement gate and attested
+manual path. Therefore S4 follows **both CARD-1615 and CARD-1609** on master and
+uses separately reviewed rc ports afterward. S1 is independent of those script
+changes; preserve CARD-1604 heartbeat semantics before deadline work. No native
+Windows rc run is resumed and no deployment is performed by this task.
 
-Fresh Deploy event read: task 2e4f7375-076d-44e4-9ae2-263d08e8a59d was dispatched
-2026-10-29 20:01:26Z and failed 2026-10-30 00:01:37Z. Its Failed event names the
-240-minute Deploy ceiling and a ToolCall **7 minutes old**, explicitly saying
-the session was not killed. This directly confirms the healthy-phase ceiling
-split. It does not identify that ToolCall as drain-temp; the retained report
-listed that phase as forthcoming. The session ended later at 02:03:19Z.
+For final source safety: keep card/handoff/task ordering at successor admission.
+Do not acquire a new card lock inside runtime session/task save fencing. The
+completion header is a snapshot; later replacement admission refuses automatic
+handoff with a decision reason. Uncarded ambiguous lineage is always decide.
+Failed report forwarding never calls handoff reservation. Hold/question, 720 cap
+or a checkpoint timeout never authorizes a stop. With parking off there is no
+automatic release deadline; existing open Cancel/Retry, process exit or separately
+authorized release frees custody. CARD-0079 and docker-stack step 5 retain only
+their existing narrow authority.
 
-Plan validation history: at `2db13eac06c53073c6810ba7ad745657a83ce6fc`, the gated
-checkpoint importer successfully imported the then-19-row table (five producer
-builds, 47 estimated minutes, 196 TUnit floor). Slot granted immediately; held
-8 seconds. Five compiler warnings in unchanged tooling, zero build/import errors.
-This was tooling validation, not product-test execution. The client correction
-adds two rows/four estimated minutes; final re-import evidence follows below.
-The six new C# class names have no pre-existing declarations/suffix collisions;
-the three guard names each map to one test class in Antiphon.Tests plus its
-shared linked guard source. The existing two token-count methods and two runner
-methods are distinct; this checkout has one TerminalSeatReleaseTests declaration
-in the runner test project. TestDesign must recheck against its actual base and
-Code must verify fresh TRX rosters, not infer discovery from this source census.
-
-For typed ceiling Reply, `ceilingAction`, `episodeId` and optional `extendMinutes`
-form an exclusive request shape; ordinary message text is not required for that
-shape and is not passed through the existing message.Trim/queue path. Existing
-ordinary Reply requests remain compatible. Unsupported mixed shapes are rejected
-before mutation. The CLI and client share this contract; neither sends prose
-that the server must guess is a ceiling instruction.
-
-A ceiling hold is not a participant waiting at an idle prompt: it keeps running
-while the parent decides. A subsequent genuine blocked report may wait for input.
-With parking disabled neither has an automatic release deadline. Explicit open
-Cancel/Retry, normal process exit, or an independently authorized existing release
-is what can free the session; a note, 15-minute admission cap or 720-minute
-ceiling cap never becomes stop authority. With parking enabled, a Working hold
-is still excluded; only a separately qualified actual idle question may park.
-
-Final importer validation at `ab23f3967bdcf2564df625be7299bee14eec1627`:
-**21 rows imported, exit 0**, using the already-built tool under a granted host
-slot (0-second wait, 2-second lease). Generated ignored manifest:
-`.antiphon/c1610-plan-round2-final.yaml`. Independent totals read from that YAML:
-5 builds, EstimatedMinutes sum 51, MinExecuted sum 196; six additional Vitest
-executions have their explicit JSON floors. Actual imported defaults are still
-45/15/90, with CP-1/3 individual timeouts 18 minutes and remaining TUnit rows 15;
-these are validation output, not the refined execution budget promised above.
-Both imports were foreground and joined. No product tests ran; product behavior
-and all ordinary/PC acceptance remain unverified until subsequent stages.
-
-The evidence-history guard over base `93a21a1fac2ab3965cce5a48503d54fb71132c07`
-to `ab23f3967bdcf2564df625be7299bee14eec1627` found 13 commits, zero evidence
-entries and zero violations. `git fetch origin master` followed by
-`git merge-tree --write-tree origin/master HEAD` was conflict-free against
-`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca` (tree
-`82d5b79541273d8f86755e60aa12dc8666dadb7a`). Later commits only clarify plan
-prose/validation; final branch publication and merge check are reported to the
-caller. No plan test count is a claim of executed tests.
+Final importer result and pushed source checks are appended after execution.
