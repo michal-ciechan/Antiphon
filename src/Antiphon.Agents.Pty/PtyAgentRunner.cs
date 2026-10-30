@@ -198,6 +198,25 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             custody.RecordStartIntent();
             _conn = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
             custody.RecordTracking(_conn.Pid);
+            try
+            {
+                var population = _containment.ReadActive();
+                var contained = false;
+                foreach (var member in population.Pids)
+                {
+                    if (member == _conn.Pid)
+                    {
+                        contained = true;
+                        break;
+                    }
+                }
+
+                custody.RecordLinuxPlacement(contained);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Missing accounting is not placement. Natural finality stays Unknown.
+            }
         }
         else
         {
@@ -500,7 +519,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
 
     /// <summary>
     /// Irreversibly close this producer's input gate before observing OS accounting. A timeout
-    /// or failed read throws and cannot be interpreted as an empty container. No kill occurs here.
+    /// or failed read throws and cannot be interpreted as an empty container.
+    /// Windows queries the job and does not kill. Explicit Linux release terminates through
+    /// the root-owned helper, then re-reads the retained tree. Ordinary Linux observation uses
+    /// <see cref="ObserveLinuxAccountingAsync"/> and does not terminate.
     /// </summary>
     public async Task<PtyCustodyObservation> SealAndObserveCustodyAsync(CancellationToken ct = default)
     {
@@ -536,6 +558,35 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             _custodyDrainTask ??= DrainCustodyOutputAsync(modern);
             await _custodyDrainTask.WaitAsync(ct);
             return new(modern.QueryActiveProcesses(), true);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    /// <summary>
+    /// Read the retained Linux tree without terminating it. <paramref name="fence"/> closes input
+    /// and persists the producer seal only after a zero read, then drains and reads again.
+    /// A producer seal never authorizes <see cref="IPtyCustodyContainment.Terminate"/>.
+    /// </summary>
+    public async Task<PtyCustodyObservation> ObserveLinuxAccountingAsync(bool fence, CancellationToken ct = default)
+    {
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            if (_containment is not { } containment || _custody is null)
+                throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+            var before = containment.ReadActive();
+            if (!fence || before.Count != 0)
+                return new(before.Count, false);
+            if (!_custodySealed)
+            {
+                _custodyInputClosed = true;
+                _custody.RecordSeal();
+                _custodySealed = true;
+            }
+
+            _custodyDrainTask ??= DrainCustodyOutputAsync(null);
+            await _custodyDrainTask.WaitAsync(ct);
+            return new(containment.ReadActive().Count, true);
         }
         finally { _writeGate.Release(); }
     }

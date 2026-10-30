@@ -92,8 +92,11 @@ authority. The application checkpoint adds reservation, all-attempt sealing and
 guarded removal, with focused real receipt-to-removal tests. The complete ordinary
 acceptance matrix remains unfinished; do not deploy this checkpoint.
 Linux cgroup custody is separate and stays unadvertised (CARD-1614). Terminal-task cleanup
-can terminate that containment. This Windows seal still does not terminate, and the existing
-linger and kill-on-close job remain.
+can terminate that containment. The task orchestrator invokes that cleanup after Succeeded,
+Failed, or Canceled settlement. Dead-host recovery stays Unknown, and a live host that
+adoption could not take is an operator stop, not an automatic kill. Missing accounting is
+never zero. This Windows seal still does not terminate, and the existing linger and
+kill-on-close job remain. A successful kill is not a receipt.
 See the [current evidence and remaining work](../investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
 and [earlier native checkpoint](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
 Native tests on Windows 10.0.19045 showed that new-console descendants can add a

@@ -134,13 +134,9 @@ public sealed class LinuxCgroupContainmentTests
 
             var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
             operations.ReadTreePids(execution).ShouldBe([41, 42]);
-            // test.PENDING slice B (CP-34): a missing tree directory, a missing
-            // custody root, or a marker that names a different namespace still
-            // returns an empty list. No Linux custody caller reaches ReadTreePids
-            // while qualification is false: Detect returns null before a tracked
-            // launch, and the entrypoint never sets LinuxCustodyQualified. Slice B
-            // owns the strict-read Unknown. This empty result is not that witness.
-            operations.ReadTreePids(Guid.NewGuid()).ShouldBeEmpty();
+            // A missing tree is unknown. An empty procs file, covered below, stays observed zero.
+            Should.Throw<IOException>(() => operations.ReadTreePids(Guid.NewGuid()))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
 
             var malformed = Guid.NewGuid();
             WriteProcs(root, Path.Combine(ns.ToString("D"), malformed.ToString("D")), "nope\n");
