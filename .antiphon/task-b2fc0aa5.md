@@ -1,12 +1,12 @@
 # CARD-1609 continuation b2fc0aa5
 
-DRAFT: checkpoint run remains in flight. Replace this outcome and the pending table before settlement.
+Partial continuation at the 150-minute budget. Final targeted tests are GREEN; the full checkpoint run remains RED (exit 5). S5 is incomplete. The first report-only commit accidentally published this draft when the unavailable python3 command failed; this corrective report commit preserves that history.
 
 S5 is incomplete. Six receipt witnesses (J2-J6 and J9) were added red-first where the required behavior was missing. J1 plus those six methods comprise the current seven-method receipt class. J7/J8/J10 and N1-N3 remain absent; CP-3 therefore has 22 methods rather than its required 25. No missing method, native row, or production audit is credited.
 
 Assigned base: `a9ed7b7bf1a3d889b50e2df39ee3df0c3eacadae`.
 Branch: `feat/card-task-b2fc0aa5`.
-Current pushed tip: `7ad5d070fcf52b02acf1ce961037e56d85eea645`.
+Code tip: `c80f5de16ef550ac621eb6e3574323cba760a607`. Checkpoint source: `7ad5d070fcf52b02acf1ce961037e56d85eea645`. Final progress marker identifies report publication tip.
 
 ## Published changes
 
@@ -18,9 +18,13 @@ Current pushed tip: `7ad5d070fcf52b02acf1ce961037e56d85eea645`.
 | `8536d74cf310e5f4208f82c24de42ff4d6d27d91` | Temp apply uses the same real read-only scan as preview; compares local inventory; exact state/dind/tmp/work removal with individual durable intents/results; four census attempts inside 180 monotonic seconds and bounded task HTTP reads. |
 | `7ad5d070fcf52b02acf1ce961037e56d85eea645` | Reinspect the complete incarnation immediately before each delete; preview holds rollout/cache locks; hash ref names, reflogs, indices and linked-admin metadata; update owner docs and obsolete Compose-deletion pins. |
 
+| `0acf5373c08783d2bbbbda2a7d7dcc66846ffb4b` | Missing Ready receipt refuses before helper, preserving state-credential diagnostic. |
+| `c80f5de16ef550ac621eb6e3574323cba760a607` | Child-local executable fake Docker preserves real GNU timeout; strengthen origin-gone-counts recovery pin; update obsolete deletion-order/create-image assertions. |
+| `89a54bc055b18ed6bb0277be37a92faf90faa21d` | Initial report publication; superseded by this corrective report commit. |
+
 All commits were pushed individually. No branch switch, amend, reset, rebase, force push, rc edit, tag, deployment or activation occurred.
 
-Changed production files: `scripts/c1008-retirement.sh`, `scripts/c1008-content-audit.sh`, `scripts/c590-remote.sh`. Changed fixture: `scripts/fixtures/c1008-fake-docker.sh`. Changed tests: `VolumeRetirementReceiptTests.cs`, `WindowsUnitSkipRoster.cs`, `WindowsUnitPlatformAdmissionTests.cs`, `RemoteScriptContractTests.cs`, `DockerStackDocumentationTests.cs`. Owner docs: `docs/docker-stack.md`, `docs/orchestration-loop.md`.
+Changed production files: `scripts/c1008-retirement.sh`, `scripts/c1008-content-audit.sh`, `scripts/c590-remote.sh`. Changed fixtures: `scripts/fixtures/c1008-fake-docker.sh`, `scripts/fixtures/c1105-git-audit.cjs`. Changed tests: `VolumeRetirementReceiptTests.cs`, `WindowsUnitSkipRoster.cs`, `WindowsUnitPlatformAdmissionTests.cs`, `RemoteScriptContractTests.cs`, `DockerStackDocumentationTests.cs`, `RollingVolumeRecycleScriptTests.cs`, `RetiredTempContainerHostTests.cs`. Owner docs: `docs/docker-stack.md`, `docs/orchestration-loop.md`.
 
 Receipt authority stays on the host. Each preview nonce has an immutable `preview-<nonce>.json`; `preview.json` and `proof.md` are current renderings. Ready consumption rejects noncanonical/multiple/duplicate JSON, unknown authorizing members, wrong schema/policy, link/custody/digest failures, expired/future proofs, changed daemon/retirement/incarnations, and changed local safety inventory. Host stat includes nanosecond ctime. All label values participate through a digest; unapproved labels are not newly exported into the v1 journal. File and directory flushes precede authorizing acknowledgements and delete intents. Successful deletions get their own result; Completed no longer invents intents for absent targets.
 
@@ -37,6 +41,8 @@ All builds/tests used host slots, `TEMP=/tmp`, isolated `bin-c1609-j/` or checkp
 | J5/J6 at `9b2cbd6b6` | 2 | 0 | 2 | 0 | Intended: unsafe changes still deleted four volumes; broad Compose removal bypassed between-delete guard. 3m10s. |
 | J5/J6 with scripts at `8536d74cf` | 2 | 2 | 0 | 0 | 4m09s. Selected C# bodies unchanged from the preceding build; final source-qualified build below is separate. |
 
+Final c80 build passed, zero errors, 3m29.94s. Final exact targeted run: 10 executed / 10 passed / 0 failed / 0 skipped, 7m24.204s. Includes all seven receipt methods, state-credential refusal, historical-image cleanup, deployment acceptance. Node origin-gone-counts leaf passed. Logs: `.antiphon/c1609-final-repair-build.log`, `.antiphon/c1609-final-repair-targets.log`, `.antiphon/c1609-final-repair-targets/run.trx`, `.antiphon/c1609-origin-gone-counts-green.log`. Real GNU deadlines retained through executable fake Docker on child PATH; all thirteen receipt-lookup counterexamples and exact removal/cache guards retained.
+
 Manual isolated build durations: 10m18s, 9m23s, 11m34s. Final checkpoint driver build reports 12m30s. These exceed the plan's provisional ten-minute build cap in three cases; no test timeout was increased. J5's red run was 2m19s, exceeding the plan's provisional 120-second method budget. Comparable loaded p95 and production p95 remain unknown; preserve these costs for Debug/performance follow-up rather than claiming the planned estimates were measured.
 
 Targeted logs/TRX: `.antiphon/c1609-j-red`, `.antiphon/c1609-j-green`, `.antiphon/c1609-j56-red`, `.antiphon/c1609-j56-green`, with matching `.log` files.
@@ -45,19 +51,35 @@ Final checkpoint run: `.antiphon/checkpoints/20261030-124644-de27/`; manifest `.
 
 | CP | Executed / passed / failed / skipped | Status |
 |---|---|---|
-| CP-3 | pending | Requires 25; only 22 present. |
-| CP-4 | pending | |
-| CP-5 | pending | |
-| CP-6 | pending | |
-| CP-7 | pending | |
-| CP-8 | pending | |
-| CP-9 | pending | |
-| CP-15 | pending | |
-| CP-16 | pending | |
+| CP-3 | n/a | Timeout 10m; only 22 of required 25 methods present. |
+| CP-4 | n/a | Timeout 2m. |
+| CP-5 | 30 / 30 / 0 / 0 | Green. |
+| CP-6 | 132 / 131 / 1 / 0 | Red: origin-gone-counts anchored diagnostic pin; inherited at base, repaired c80; Node leaf green. |
+| CP-7 | 52 / 52 / 0 / 0 | Green. |
+| CP-8 | n/a | Timeout 2m. |
+| CP-9 | n/a | Timeout 6m; observed cleanup harness/order failure repaired; exact target green at c80. |
+| CP-15 | 16 / 16 / 0 / 0 | Green. |
+| CP-16 | 23 / 22 / 1 / 0 | Red: deployment harness/order failure repaired; exact target green at c80. |
 | CP-10 | 0 / 0 / 0 / 0 | Owed: N1-N3 absent. |
 | CP-11/12/13 | 0 / 0 / 0 / 0 | Owed: native Windows, unavailable in this Linux checkout. |
 
-FINAL_CHECKPOINT_LINES_PENDING
+Run terminal exit 5; all drivers joined. Three green, two assertion-red, four timeout rows. Wall 2790.7709185s (46m30.8s), execution 2595.3259733s (43m15.3s), admission 195.4449382s. Debug required before repeating this over-30-minute group. No timeout/minimum widened. Timed-out counts remain n/a. CP-3 observed an introduced J1 helper-before-Ready/fake-CLI failure, now exact-target green. CP-6 inherited failure reproduced at assigned base: `.antiphon/c1609-baseline-origin-gone-counts.log`. Targeted repairs do not relabel historical checkpoint outcomes.
+
+Unedited CHECKPOINT lines:
+
+```text
+CHECKPOINT CP-3 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)|(VolumeRetirementReceiptTests*)/* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=10m slot=granted waited=75s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)|(VolumeRetirementWrapperTests*)/* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=2m slot=granted waited=15s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)|(C1105_Git_audit_seed_content*)|(C1105_Git_audit_index_content*)|(C1105_Git_audit_object_completeness*) executed=30 passed=30 failed=0 skipped=0 trx=/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/20261030-124644-de27/rows/CP-5/run.trx slot=granted waited=30s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations executed=132 passed=131 failed=1 skipped=0 trx=/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/20261030-124644-de27/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)|(C1335_Mirror_owner_stamp_in_linked_admin*) executed=52 passed=52 failed=0 skipped=0 trx=/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/20261030-124644-de27/rows/CP-7/run.trx slot=granted waited=15s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-8 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)|(C1008_Option_manifest_is_strict*)|(C1008_Wrapper_option_manifest_is_strict*)|(C1008_Present_or_unknown_temp_keeps_null_refusal*)|(C1008_Busy_routed_and_land_in_flight_refuse*)|(C1008_Preview_helper_removal_is_owned*)|(C1008_Wrapper_retired_absent_null_is_accepted*)|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)|(C1008_Host_proof_file_omits_credentials*)|(C1008_Documentation_and_transport_pins_match*) executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=2m slot=granted waited=15s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-9 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=6m slot=granted waited=0s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-15 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/20261030-124644-de27/rows/CP-15/run.trx slot=granted waited=0s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+CHECKPOINT CP-16 commit=7ad5d070fcf52b02acf1ce961037e56d85eea645 build=reused filter=/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C0995_Deploy_temp_checks_host_absence_before_checkout*)|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)|(C849_Deploy_prepares_and_verifies_before_acceptance*)|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)|(C849_Docker_volume_paths_have_no_bare_host_reads*)|(C849_Seed_publishes_complete_payloads_before_its_marker*)|(Temp_deploy_uses_its_own_project_and_the_inspected_grok_store*)|(Nested_lane_never_uses_sudo_or_python*)|(C1067_Nested_lane_sudo_guard_is_sensitive*)|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)|(C849_Deploy_ordering_contract_is_pinned*)|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)|(C912_Cold_exception_never_weakens_maintenance_or_donor_gates*)|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*) executed=23 passed=22 failed=1 skipped=0 trx=/work/worktrees/task-b2fc0aa5/.antiphon/checkpoints/20261030-124644-de27/rows/CP-16/run.trx slot=granted waited=0s dirty=0 source=7ad5d070fcf52b02acf1ce961037e56d85eea645 sourceState=clean buildSource=verified
+```
+
+SHA-validated clean source at both ends, fingerprint 14fa401c28a78968027b488d36d9bf34ed328dbddd78c15b94b5bfde6e74dc9b, buildSource=verified. Driver build accounting 883.0445879s, compiler output 12m29.79s.
 
 ## Brief's open points and remaining acceptance
 
@@ -77,13 +99,13 @@ The first production action remains **preview-only** after reviewed tool activat
 
 No `.csproj`, `.sln`, `.props`, `.targets`, package/SDK definition, land policy or approval manifest changed. The real command `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1609-j/Antiphon.LandGraphAudit.dll` exited 0: digest `20DE49F6B177E5A238F20D4F8C7F33EAEE6B511A9163CDB902D9136EF06DECB6`, count 66, approved. `-Update` was not run. That check's definition inputs remain unchanged at the final tip.
 
-`scripts/check-evidence-diff.ps1` over the full assigned base..tip exited 0: 5 commits, 0 evidence entries, 0 violations. `scripts/check-os-witnesses.ps1` exited 0 with `.antiphon/c1609-os-witnesses.json`: ten inspected paths, twenty unchanged lexical candidates, no changed OS-selected production branch, no AppHost restart required. These are static checks, not native Windows credit.
+`scripts/check-evidence-diff.ps1` over the full assigned base..tip exited 0: 7 code commits, 0 evidence entries, 0 violations before report publication. `scripts/check-os-witnesses.ps1` exited 0 with `.antiphon/c1609-os-witnesses-final.json`: thirteen inspected paths, unchanged OS selectors, no changed OS-selected production branch, no AppHost restart required. These are static checks, not native Windows credit.
 
-After `git fetch origin master`, merge-tree against `698bf1b73e8abf449d5569ea74ac8c82e80f92a1` exited 0; tree `ff839b82aa71f13f13be8ef1845b90bfe87ca6f2`. This is a conflict-free simulation, not land or activation.
+After `git fetch origin master`, merge-tree against `bce716158d9a3fcca5bf548a07fdb257de637f1f` exited 0; tree `4e2af1e9272f938f184e7ac3eae52aa24c247440`. This is a conflict-free simulation, not land or activation.
 
 Input gap: `.antiphon/task-19f9c7ca.md` was absent from this mirror. The available earlier report, full plan, and actual source were used; no desktop files were read. Existing design-review report files named by the plan were not present here. This is not independent final Review.
 
-OUTPUT_CLEANUP_AND_REMOTE_PENDING
+All 34 task-owned live bin-c1609-j directories and tests/Antiphon.Tests/bin-c1609-final removed by exact literal path after all processes joined. Checkpoint build evidence archive remains in the checkpoint evidence store. Only this permitted Markdown report is committed; JSON/TRX/log evidence remains ignored. Remote final tip is verified and carried in the progress marker.
 
 ## Exact owed commands
 
