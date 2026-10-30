@@ -1,8 +1,22 @@
 # Incremental executed-manifest publication
 
-Task `bb0b355c`; base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`.
+Round 2 task `9fe15cf1`; assigned base `01a0d1ff018d2afbe54bb54a110be45bbd450338`. Round 1 task `bb0b355c` investigated product base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`.
 CARD-1514 names the existing timing workstream; no new card identity is inferred.
-Status: plan complete under the decisions below; independent plan Review is next. Product code is unchanged. Verification design is included; no separate TestDesign dispatch is needed after review accepts it.
+Status: round-2 revision in progress; independent plan Review is next. Product code is unchanged. Verification design is included; no separate TestDesign dispatch is needed after review accepts it.
+
+## Round-2 revision record
+
+The review at `.antiphon/task-662aa259.md` confirms the diagnosis and journal/final-projection approach. This first pushed skeleton is not an implementation-ready plan; each item below remains pending until its sections and witnesses are revised.
+
+| Review item | Required revision | State |
+|---|---|---|
+| D-1 | Add direct-consumer regression checkpoints and recount results/budgets. | Pending |
+| D-2 | Define invocation/attempt generations and sealed-root reuse with a second-process witness. | Pending |
+| D-3 | Specify exact versus semantic equivalence and legacy parse-round-trip behavior. | Pending |
+| D-4 | Bound publication retries, recover in process, retain explicit gaps and later chunks. | Pending |
+| D-5 | Replace the liveness stub with a production-loop witness; inventory operator/orchestrator watchers. | Pending |
+
+Native Windows replay at scale stays OWED. Re-anchor S1 and current S3 hunks, add sequence/full-run differential obligations, re-import the table and publish final totals. No product code changes are commissioned here.
 
 ## Decisions
 
