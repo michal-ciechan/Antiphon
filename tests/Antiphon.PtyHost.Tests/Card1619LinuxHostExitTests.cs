@@ -49,8 +49,11 @@ public class Card1619LinuxHostExitTests
             client.OnOutput += (_, chunk) => { if (chunk.Contains("card1619-ready")) ready.TrySetResult(); };
             client.OnExited += value => exit.TrySetResult(value);
             var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+            var script = signal == 0
+                ? "printf 'card1619-ready\\n'; while [ ! -f release ]; do sleep 0.02; done; exit 23"
+                : "printf 'card1619-ready\\n'; read line; exit 23";
             var launched = await client.LaunchAsync(new LaunchMessage("/bin/sh",
-                ["-c", "printf 'card1619-ready\\n'; read line; exit 23"], new Dictionary<string, string>(),
+                ["-c", script], new Dictionary<string, string>(),
                 root, 80, 24, 0, false, Path.Combine(root, "session.ansi.log"), AcceptedStartedAt: generation), default);
             child = Process.GetProcessById(launched.ChildPid);
             var childIdentity = StartTicks(child.Id);
@@ -71,11 +74,8 @@ public class Card1619LinuxHostExitTests
             }
             else
             {
-                // The host survives a disconnected observer and accepts input on a new pipe.
-                client = await PtyHostClient.ConnectAsync(pipe, TimeSpan.FromSeconds(5), default);
-                await client.InputAsync("finish\n", default);
-                await client.DisposeAsync();
-                client = null;
+                // Release only after disconnect, without racing the old Unix listener's teardown.
+                File.WriteAllText(Path.Combine(root, "release"), "release");
             }
             var path = PtyHostManifest.PathFor(dir, id);
             var deadline = DateTime.UtcNow.AddSeconds(5);
