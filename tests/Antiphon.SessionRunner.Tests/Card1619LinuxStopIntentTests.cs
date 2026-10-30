@@ -20,7 +20,7 @@ public class Card1619LinuxStopIntentTests
     {
         await using var f = await Fixture.StartAsync();
         var mismatch = await f.Runtime.KillGenerationAsync(f.Id, f.Generation.AddSeconds(1), TimeSpan.FromSeconds(5), default);
-        mismatch.Applied.ShouldBeFalse();
+        mismatch.Killed.ShouldBeFalse();
         f.Child.HasExited.ShouldBeFalse();
         var stopped = await f.Runtime.KillAsync(f.Id, TimeSpan.FromSeconds(5), default, "CpuSpinKilled");
         stopped.ExitSignal.ShouldBe(9);

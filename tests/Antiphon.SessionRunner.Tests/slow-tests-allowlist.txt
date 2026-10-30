@@ -13,3 +13,5 @@ Antiphon.SessionRunner.Tests.CompletedCardWorkspaceRemovalTests
 Antiphon.SessionRunner.Tests.LegacyWorkspaceRemovalGateTests
 # CARD-1614: installed-helper and namespace probes need the session-testing image; measured native rows exceed 5s.
 Antiphon.SessionRunner.Tests.LinuxRunnerCustodyLifecycleTests
+# CARD-1619 native cgroup-v1 release uses owned tracked descendants and installed helpers.
+Antiphon.SessionRunner.Tests.Card1619LinuxCustodyStopIntentTests
