@@ -211,7 +211,10 @@ synthetic NotExecuted in any of the 35 prevents completeness, and ensure 35
 Passed contributes complete coverage for that isolated roster. This is a census
 contract, not native execution evidence. Do not mark unrelated R-2 rows passed.
 
-The wrapper compares the exact class/method set with
+The wrapper passes its scratch input through the existing
+`ScriptHarnessOptions.AdditionalArguments` seam (a named `-CompiledRosterPath`
+parameter on the harness), keeping the process limiter/owner intact. It compares
+the exact class/method set with
 `CheckpointRoster.CompiledCases(typeof(CheckpointShapeConflictTests).Assembly,
 "Antiphon.Tests.Checkpoints")`, selecting S/T/O and subtracting only the named
 Windows O sibling. Require set equality, no duplicates, and count 35; a renamed,
@@ -930,35 +933,68 @@ No session-waits-for-input behavior is added or changed by this plan.
 
 ## Plan validation and acceptance handoff
 
-The actual checkpoint importer accepted **50 rows** on this branch, exit 0,
-using the required command shape through the host build-slot gate:
+Round 2 importer accepted **53 rows, eight shared test builds**, exit 0 at
+`e4a7e23bd`. The 223 whole-minute estimates in the union table include all
+build-once allocations; actual closed lists total 221m on Linux and 222m on
+Windows (443m across all slices/lanes, including the expected-red row). These
+are planning sums, not one authorized aggregate execution. CP-46 also performs
+its own command-scoped tool build, already included in its 5m estimate.
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-plan-import -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199-plan-tool/ -- import --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --out .antiphon/plan-42241722/imported.yaml
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-round2-import -SlotWaitMinutes 10 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199r2import/ -- import --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --out .antiphon/plan-dd46f01b/imported.yaml
 ```
 
-Initial bootstrap/import held lease `19e2a65a-beef-4843-ae13-de02c35e4264`
-for 25s after 0s admission; compilation had five warnings and no errors. The
-importer's two CP-41/CP-42 72-minute-default advisories are retained and explicitly
-addressed by the deadline overlay above, not suppressed. This validates table
-syntax/build reuse/OR safety; it does not claim any proposed test already exists
-or has run. No product tests or native Windows actions were run by Plan.
+Unedited importer/slot outcome:
 
-Static source/plan audit: 35 unique target identities, 50 checkpoint rows, 57
-method suffix comparisons with no current/planned suffix collision, and zero
-covering RC policy exclusions. The concrete new methods are named in the plan;
-Code must repeat the identity audit against its fresh TRX after implementation.
-Both platform discovery routes were read successfully. The only assigned source
-deliverable is this plan; generated import/audit evidence stays ignored.
+```text
+BUILD SLOT granted lease=26f5953f-18de-4c96-832b-6788384b116f waited=0s maxcpucount=6
+WARNING CP-41: derived row timeout (72 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+WARNING CP-42: derived row timeout (72 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+imported 53 rows -> .antiphon/plan-dd46f01b/imported.yaml
+BUILD SLOT released lease=26f5953f-18de-4c96-832b-6788384b116f held=7s
+```
 
-Opus review should check the corrected policy premise, the portable collision
-marker, the real-driver environment forwarding, exact residual skip census,
-file-link capability failure behavior, and the bounded slice/timeout exceptions.
-Once accepted, commission S-A followed by S-B1/S-B2 and S-C1/S-C2, then S-F,
-with native Windows evidence for every enabled case. Preserve pending R-2 and
-commission the aggregate Debug work; no new go-ahead is needed for the 35 rows.
+The bootstrap emitted five compiler warnings and no errors. Its implicit
+`dotnet run` build used the default node count, as the slot wrapper disclosed;
+Code bootstraps may build first under the wrapper to apply the grant's cap.
+The two importer deadline advisories remain addressed by the explicit overlay,
+not suppressed. No product tests, native Windows actions, graph audit or Full
+qualification ran in Plan. Historical round-1 validation remains 50 rows,
+lease `19e2a65a-beef-4843-ae13-de02c35e4264`, 25s held; it is superseded by
+this 53-row plan rather than relabeled.
+
+Static source/plan audit: 35 unique target identities, 53 checkpoint rows, and
+35 class/method OR-operand checks without suffix collisions. The audit combined
+current source with the top-up 38 policy wrapper and explicitly planned names;
+it does not claim compiled execution. Code must repeat the identity comparison
+against its fresh compiled roster/TRX. The exact CP-36/45 counts are 3/7; the
+legacy control's distinct name cannot expand CP-45. The post-top-up policy has
+zero S/T/O exclusions and no NativeLinuxOnly marker on those source classes.
+The runtime skip census remains 23 -> 15 -> 10 -> 3 -> 0.
+
+Both platform discovery routes returned HTTP 200 in round 2. Default placement
+resolved to Linux, with eligible Linux and native Windows lanes; no host is
+pinned. Only this plan file changed relative to the assigned base. Generated
+import and static-audit evidence stays under ignored `.antiphon/plan-dd46f01b/`;
+remove only the Plan-owned `bin-c1199r2import` directories after the joined
+importer. Do not remove unrelated scratch or evidence.
+
+After fetching origin/master, `git merge-tree --write-tree origin/master HEAD`
+returned exit 1 with four inherited conflicts: `.antiphon/task-af2b78c8.md`,
+`docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md`,
+`server/Application/Services/CapacityRecoveryService.cs`, and
+`tests/Antiphon.Tests/Application/CapacityLockOrderTests.cs`. This is not a
+landable whole branch. Use the separate plan-only Docs publication described
+above; no merge, rebase, conflict repair or target push was performed here.
+
+Final Opus review checks review D-1/D-2/D-3, A-1..A-9, the self-building audit
+row, the post-CARD-1613 roster, the separate cost-file/price handoff and explicit
+native commissions. After acceptance and confirmed rc top-up 38 publication,
+commission S-A, S-B1/S-B2, S-C1/S-C2, S-F, then the required S-F-cost follow-up
+in order. Preserve pending R-2 and commission the aggregate Debug work. Existing
+authority covers implementing the 35 rows; no further go-ahead is needed.
 
 --- next stage ---
 next: review
-handoff: Opus reviews this source-checked plan, especially the zero-policy-exclusion correction, per-row native witnesses, Git isolation, and performance exceptions; then commission its <=150-minute Code slices with Windows and Linux evidence. Keep R-2 and aggregate Debug separate.
+handoff: Final Opus review of the round-2 plan, then Linux Code plus native Windows Verify per slice after rc top-up 38 lands. Land rc fixes first and separately port master; publish only the plan delta. Keep R-2 pending and aggregate Debug separate; require measured cost refresh before Full credit.
 artifact: docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md
