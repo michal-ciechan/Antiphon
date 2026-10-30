@@ -13,6 +13,51 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 {
     [Test]
+    public async Task C1616_admission_timeout_publishes_readable_nonexecuted_receipt()
+    {
+        await using var broker = await BuildSlotBrokerFixture.StartAsync(budget: 1);
+        const string endpoint = "http://slots.test/build-slots";
+        const string start = "2026-10-30T00:00:00Z";
+        var holder = new BuildSlotClient(broker.Handler, endpoint, pid: 100, processStartUtc: start);
+        var session = await holder.ProbeAsync(CancellationToken.None);
+        await using var held = await holder.AcquireAsync(session, "held-control", CancellationToken.None);
+        held.State.ShouldBe("granted");
+        var now = DateTimeOffset.UtcNow;
+        var queued = new BuildSlotClient(broker.Recording(), endpoint, pid: 101, processStartUtc: start,
+            wait: TimeSpan.FromSeconds(1), clock: () => now,
+            delay: (_, _) => { now += TimeSpan.FromSeconds(1); return Task.CompletedTask; });
+        var root = TempDir();
+        Directory.CreateDirectory(Path.Combine(root, "tests", "Proof"));
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1616", Project = "tests/Proof", OutputPath = "bin-c1616/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-c1616", Filter = "/*/*/Proof/*", After = ["S1"] }],
+        };
+        var driver = new FakeDriver();
+        var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), Slots = queued, Driver = driver, Output = TextWriter.Null };
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest(), root, runtime);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(4);
+        driver.Starts.ShouldBeEmpty("admission timeout must precede every build and test driver");
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        state.Phase.ShouldBe("done");
+        state.CreatedOutputPaths.ShouldBeEmpty();
+        ReportWriter.RequiredReceiptRefusal(run, state).ShouldBeNull("terminal admission receipt must pass the production reader");
+        var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+        report.ExitCode.ShouldBe(4);
+        report.Verdict.ShouldBe("RED");
+        report.OutputNames.ShouldBeEmpty();
+        report.OutputPaths.ShouldBeEmpty();
+        var row = report.Rows.Single();
+        row.State.ShouldBe("slot-timeout");
+        row.Executed.ShouldBe(0);
+        row.ExitCode.ShouldBe(4);
+        row.SlotReason.ShouldBe("slot-admission-deadline-exceeded");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]), "unexecuted evidence cannot qualify");
+        broker.Broker.List().Occupied.ShouldBe(1, "the held control must still own its slot");
+    }
+
+    [Test]
     public async Task C1531_inputs_resolve_without_disabling_bounds()
     {
         var root = TempDir();
