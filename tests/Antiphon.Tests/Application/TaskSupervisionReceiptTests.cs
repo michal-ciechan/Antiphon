@@ -82,6 +82,17 @@ public sealed class TaskSupervisionReceiptTests
         await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
         await h.SweepAsync();
         await using var parent = await OpenAsync(h, h.ParentId);
+        // Receipt the independent ordinary Failed completion before measuring the triage
+        // watch's one-sweep latency. It otherwise owns the parent's first queue turn.
+        await parent.MarkIdleAsync();
+        await parent.Queue.OnTurnEndAsync(h.ParentId, CancellationToken.None);
+        await using (var originalDb = h.Context())
+        {
+            var original = await originalDb.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == h.TaskId
+                && m.Origin == QueuedMessageOrigin.Delegation);
+            (await PromptsAsync(h, h.ParentId, 0)).Where(p => p.Text?.Contains(original.Body, StringComparison.Ordinal) == true)
+                .ShouldHaveSingleItem("the original Failed completion receives its own queue turn first");
+        }
         await using (var db = h.Context())
         {
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.TaskId);
