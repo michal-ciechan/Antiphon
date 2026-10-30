@@ -3908,8 +3908,12 @@ public sealed partial class AgentTaskDispatcher
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         var evaluatedAttempt = task.Attempt;
         var evaluatedDispatch = task.DispatchedAt;
-        var evaluatedGeneration = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
-            .Select(s => (DateTime?)s.StartedAt).FirstOrDefaultAsync(ct);
+        // Boot facts already carry the accepted generation; their writer rechecks it under
+        // its ownership fence. Keep the separate pre-pull observation for non-boot paths.
+        var evaluatedGeneration = suspected.Boot?.SessionStartedAt;
+        if (suspected.Boot is null)
+            evaluatedGeneration = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+                .Select(s => (DateTime?)s.StartedAt).FirstOrDefaultAsync(ct);
         var confirmedCeilingPull = false;
         if (suspected.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
             && evaluatedGeneration is { } accepted && CatchUpOverride is null)

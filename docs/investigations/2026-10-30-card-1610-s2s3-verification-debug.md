@@ -176,7 +176,7 @@ none is blamed on master or waived as inherited red. No assertion budget, timer,
 retry or selection is relaxed. Their committed pre-fix tests are the red witness.
 
 CP-46 passed 215, failed 0, skipped 1, min 216 unchanged (roster-miss):
-AgentLaunchSpecTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine
+AgentRegistrySettingsTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine
 reports `The npm shim layout is Windows-specific`. Retain this native-placement
 gap alongside CP-52's two skips; no unchanged Linux rerun is warranted.
 
@@ -188,3 +188,28 @@ unrepaired inside the 150-minute task budget. No stopped run is a completed gate
 The next single producer runs the affected rows first, then the exact unexecuted
 roster. Previously passing unrelated rows are not repeated. Historical outcomes
 and costs remain intact, including the earlier stopped CP-17 green observation.
+
+## Batched repair after the red witnesses
+
+Production repair reuses `suspected.Boot.SessionStartedAt`, already read by the
+boot policy, and retains the existing pre-pull SELECT for every non-boot path.
+The boot writer still rechecks ownership/generation under its own fence. This
+removes the redundant statement without raising any exact SQL budget or changing
+phase clocks, ceiling hold admission, CARD-1604 or stop authority.
+
+Attention now distinguishes `Closing on the deadline: a role ceiling decision
+is approaching` from `Past its deadline: a role ceiling decision is due`.
+It continues to say Working remains counted and unknown observations defer.
+The two original headline assertions remain intact; phase-deadline wording is
+unchanged. Queued-only test shapes retain all three cases and the original
+idle-failure assertions; the Working and terminal shapes gain explicit assertions
+for their S2 owners, including no failure/completion/stop/boot event.
+The separate BootStallWorld queued-only arm now explicitly supplies its seeded
+complete observation and retains all original failure/no-boot/no-stop assertions.
+
+The next producer prioritizes CP-26/22/23/16/17/28/92, then every unexecuted row
+from CP-49 onward. CP-17 receives a current-source completed-row receipt because
+the earlier 22-pass result belonged to a stopped run. Its earlier outcome and
+cost are retained. This is the required targeted verification after production
+and fixture repairs, not an arbitrary full rerun. The new build is necessary
+because source changed; previous outputs remain untouched until all runs end.

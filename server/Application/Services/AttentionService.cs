@@ -1370,7 +1370,10 @@ public sealed partial class AttentionService
                     null,
                     task.Title,
                     deadline.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
-                        ? $"Role ceiling decision approaching or due. Working remains counted; unknown observations defer action. {deadline.Summary}"
+                        ? (deadline.Breached
+                            ? "Past its deadline: a role ceiling decision is due. "
+                            : "Closing on the deadline: a role ceiling decision is approaching. ")
+                            + $"Working remains counted; unknown observations defer action. {deadline.Summary}"
                         : deadline.Breached
                         ? $"Past its deadline — the next sweep will fail it. {deadline.Summary}"
                         : $"Closing on the deadline that will fail it. {deadline.Summary}",
