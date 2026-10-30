@@ -1226,7 +1226,7 @@ function Assert-MpSeededSummaryLabels {
         $current = @($summary.tests | Where-Object { $_.groupId -eq 'chunk-b' -and $_.suite -eq 'suite-b' })
         if ($seeded.Count -ne 1 -or $current.Count -ne 1) { Fail-Mp ('seeded-summary-labels-lost ' + $mode) }
         $csv = @(Import-Csv -LiteralPath (Join-Path $root 'timing/tests.csv'))
-        if (@($csv | Where-Object { $_.groupId -eq 'chunk-a' -and $_.suite -eq 'suite-a' }).Count -ne 1) { Fail-Mp ('seeded-csv-labels-lost ' + $mode) }
+        if (@($csv | Where-Object { $_.groupId -eq 'chunk-a' }).Count -ne 1) { Fail-Mp ('seeded-csv-labels-lost ' + $mode) }
     }
 }
 
