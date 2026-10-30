@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -396,7 +398,7 @@ public sealed class RunnerWorkspaceBindingTests
     [Arguments("legacy-missing")]
     public async Task C1032_StoreIdentityRefused(string setup)
     {
-        // CP-22 requires Linux to certify all ten results with zero skips.
+        // CP-22 certifies all ten results on Linux; Windows uses an ACL for unreadable.
         // case: missing, empty, whitespace, garbled, wrong-length, directory, unreadable —
         //   a bound request names this runner and the nonempty custody guid.
         // mutation: substitute RunnerStoreId when StoreIdPath cannot be parsed as a guid.
@@ -410,7 +412,7 @@ public sealed class RunnerWorkspaceBindingTests
         // case: legacy-missing — an unbound path-only request and no registration file.
         // mutation: require a parsed registration guid before the legacy mirror.
         // red: legacyMirrorExists.ShouldBeTrue() — the path-only request is refused.
-        if (setup == "unreadable" && !OperatingSystem.IsLinux())
+        if (setup == "unreadable" && !OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
             throw new SkipTestException("Mode-bit denial of the registration file is Linux-only.");
 
         const string registrationText = "11111111-1111-1111-1111-111111111111";
@@ -418,6 +420,7 @@ public sealed class RunnerWorkspaceBindingTests
         var custody = Guid.Parse(custodyText);
         using var scratch = Scratch.Create();
         var storePath = Path.Combine(scratch.Root, "runner-store-id");
+        FileSecurity? originalRegistrationAcl = null;
         try
         {
             switch (setup)
@@ -444,6 +447,18 @@ public sealed class RunnerWorkspaceBindingTests
                     File.WriteAllText(storePath, custodyText);
                     if (OperatingSystem.IsLinux())
                         DenyRegistrationRead(storePath);
+                    if (OperatingSystem.IsWindows())
+                    {
+                        var registration = new FileInfo(storePath);
+                        originalRegistrationAcl = registration.GetAccessControl(AccessControlSections.Access);
+                        var deniedAcl = registration.GetAccessControl(AccessControlSections.Access);
+                        using var identity = WindowsIdentity.GetCurrent();
+                        deniedAcl.AddAccessRule(new FileSystemAccessRule(identity.User!,
+                            FileSystemRights.ReadData, AccessControlType.Deny));
+                        registration.SetAccessControl(deniedAcl);
+                        Should.Throw<UnauthorizedAccessException>(() => File.ReadAllText(storePath),
+                            "Windows ACL must deny the current user's registration read");
+                    }
                     var denied = false;
                     try
                     {
@@ -554,6 +569,16 @@ public sealed class RunnerWorkspaceBindingTests
         }
         finally
         {
+            if (OperatingSystem.IsWindows() && originalRegistrationAcl is not null)
+            {
+                var registration = new FileInfo(storePath);
+                registration.SetAccessControl(originalRegistrationAcl);
+                registration.GetAccessControl(AccessControlSections.Access)
+                    .GetSecurityDescriptorSddlForm(AccessControlSections.Access)
+                    .ShouldBe(originalRegistrationAcl.GetSecurityDescriptorSddlForm(AccessControlSections.Access),
+                        "registration ACL must be restored exactly");
+                File.ReadAllText(storePath).ShouldBe(custodyText, "registration must be readable after ACL restoration");
+            }
             if (setup == "unreadable" && OperatingSystem.IsLinux() && File.Exists(storePath))
                 RestoreRegistrationRead(storePath);
         }
