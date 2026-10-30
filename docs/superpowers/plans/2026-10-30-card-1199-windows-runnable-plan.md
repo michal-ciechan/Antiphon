@@ -747,6 +747,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-51 | S-B1 | `CP-13` | both-hostile-legacy-control | `/*/*/CheckpointFixtureGitEnvironmentTests/legacy_hostile_config_produces_hardened_status_differential` | V-2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-52 | S-C1 | `CP-26` | both-staged-fixture-requalification | `/*/*/CheckpointShapeConflictTests/shape_staged_untracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-53 | S-F-cost | `tests/Antiphon.Tests -> bin-c1199cost/` | both-class-cost-admission | `/*/*/RcRosterRepairTests/C1199_Costs` | V-3 R-4 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
+| CP-54 | S-F | `CP-41` | both-final-documentation | `/*/*/ReleaseBranchModelDocumentationTests/C1199_FinalClosureDocumentation` | V-3 R-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 
 ## Performance budget
 
