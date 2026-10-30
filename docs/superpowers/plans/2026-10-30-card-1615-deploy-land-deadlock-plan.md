@@ -8,10 +8,10 @@ base was `ade54222543381e2e1b31ad79d8ae33a4035f70b`.
 
 ## Round-4 revision ledger
 
-Skeleton checkpoint: the four final-review repairs below are being reconciled
-into the detailed design. This checkpoint is not yet ready for Code. Retain the
-confirmed token-first route, phase-scoped tasks, documentation pins, dependency
-ordering and six-row checkpoint roster. Historical validation remains historical.
+The four final-review repairs are specified below, with production-path witnesses.
+The confirmed token-first route, phase-scoped tasks, documentation pins, dependency
+ordering and six-row checkpoint roster are retained. Import validation is recorded
+below; product execution remains for Code. Historical evidence stays historical.
 
 1. Review D-1: make watchdog recovery marker-aware: canonical HEAD X permits
    automatic same-X recovery of a down stack; a mismatch must alert, not retry silently.
@@ -28,10 +28,10 @@ Also take A-1 (all session/orchestrator environment absent for interactive), A-2
 (failed same-X restart deliberately stops heartbeat renewal during its retained
 15-minute lock) and A-3 (current source line-number label).
 
-### Round-3 design retained for reconciliation
+### Confirmed round-3 design retained
 
-All five caller decisions are specified below with production-path witnesses and
-closed checkpoints. Historical evidence is labelled; Code execution remains pending.
+All five earlier review decisions remain specified with production-path witnesses
+and closed checkpoints. Historical evidence is labelled; Code execution remains pending.
 
 1. Review D-1 — complete: classify from server-resolved token ownership; environment
    IDs are cross-checks, never authentication. Add the bounded read-only route.
@@ -73,12 +73,14 @@ evidence, not a reproduction performed by this Plan task.
 | Restart can run from the controller tree. | `restart-apphost.ps1:88-94` refuses linked worktrees; `:177-208` binds expected SHA to source HEAD. `docs/orchestration-loop.md:28-37` forbids pulling during a land. | Keep canonical activation separate. No `-AllowWorktree`, restart from the isolated tree, or concurrent canonical checkout move. |
 | Timeout clears the dangerous owner. | `AgentTaskDispatcher.cs:3745-3770` describes a 240-minute role ceiling that fails the task but deliberately leaves its session alive. `AgentTaskReplyService.cs:849-858` refuses refinement after settlement. | Failed is not process exit or checkout release. Do not solve this cycle by waiting for failure, canceling blindly, or increasing the ceiling. CARD-1610 owns terminal/live-session recovery. |
 | A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the server-resolved token principal; environment values are cross-checks only. Standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
-| A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X explicitly at preparation and defer later-SHA activation using the live marker; allow only explicit same-X quiescent recovery while live, and loudly allow the valid-stale exception. |
-
+| A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X at preparation and retain durable rollout protection through every handover; planned same-X recovery is quiescent, watchdog down-stack recovery is the narrow automatic exception. Stale state alerts and never silently unlocks. |
 | Environment IDs authenticate caller class. | `AgentTaskService.AuthenticateAsync:186-234` resolves task hashes first, then session hashes, then capabilities (whose usage stamp writes). `AgentTaskEndpoints:184-193,537-548` makes detail GET public and ignores bad polling tokens. | The new route projects the token's principal without a caller-selected ID or persistence writes. |
-| Existing locks span the whole rollout. | `apphost-common.ps1:16-19,28` expires restart/launch locks at 15 minutes; `deploy-server2.ps1:234-275` holds the remote rollout lock around a POST only. | Add a heartbeat marker and synchronized restart admission; valid-stale is explicitly fail-open, unknown is fail-closed. |
+| Existing locks span the whole rollout. | `apphost-common.ps1:16-19,28` expires restart/launch locks at 15 minutes; `deploy-server2.ps1:234-275` holds the remote rollout lock around a POST only. | Add durable Active state independent of heartbeat, synchronized restart admission and audited recovery; neither stale nor unknown silently unlocks. |
 | One phase task can wait for the entire drain. | `deploy-server2.ps1:12,1246,1295` defaults to 480 minutes, while TaskDeadlinePolicy limits local tools to 90 and tasks to 240. Invoke-HostCase has no local child deadline. | Cap drain slices at 30, bound whole phase/local cleanup, and require joined journal handover. |
 | A clean pinned branch cannot block land. | `AgentTaskLandingProtocol:470-473,557-564` records `target_checked_out_elsewhere` during canonical advance **after confirmed publication**, producing LandedWithResidue. It does not refuse or hold the land. | Detached standing/interactive source and detached main activation; registered task feat branch is the branch-contract exception. |
+| Watchdog always supplies the expected rollout SHA. | `scripts/apphost-common.ps1:600-613` starts restart without ExpectedServerSha; `watchdog-apphost.ps1:329-332` does not stamp exit 3 and retries at its next scheduled fire. `:99-123` already observes outage independently. | Pass X only when canonical HEAD is X; otherwise alert without invoking restart. Preserve existing cadence and outage signals. |
+| A controller heartbeat covers phase handovers. | Each foreground phase exits; `deploy-server2.ps1:1238-1245` preserves an existing old-runner drain on re-entry. No durable cross-task Active guard exists at this base. | Persist Active until Completed/audited Closed, use a 60-minute handover deadline, and reject another rollout even after heartbeat expiry. |
+| Unknown rollout state may permanently prevent AppHost recovery. | The new marker guard is planned, not existing code; current restart already separates refusal from effects. | Add an explicit audited reason-bearing unknown-marker override without lifting ordinary rollout protection. |
 | Version response exposes a sha field. | `server/Application/Dtos/VersionDtos.cs:16-19` and `VersionEndpoints.cs:19` expose the SHA as JSON `version`; `Resolve-AppHostLoadedIdentity` reads that member. | Round-3 correction: validate `version`, never invent `sha` or accept informationalVersion as proof. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
@@ -89,10 +91,11 @@ No desktop files or ended native Windows run were inspected.
 
 ## Decisions
 
-These are the caller's stated defaults, settled here from inspected code. D-7
-implements review D-1; D-8 plus the marker implements review D-2; D-9 implements
-review D-3; D-12 implements review D-4; D-13 implements review D-5. No open product
-decision remains for another Plan round.
+These are the caller's stated defaults, settled here from inspected code. D-7..D-13
+retain the earlier review decisions. D-14..D-16 settle round-4 watchdog, durable
+state and quarantine; D-12 carries the corrected publication/residue rationale.
+Where code cannot prove recovery, choose fail-closed with an explicit audited
+recovery path. No open product decision remains for another Plan round.
 
 | ID | Decision and reason | Rejected alternative / risk |
 |---|---|---|
@@ -103,14 +106,17 @@ decision remains for another Plan round.
 | D-5 | Require TASK-class mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. D-7 separately admits standing and interactive callers. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
 | D-6 | Gate the five mutating rolling phases and `all`; TASK `all` is additionally refused by D-9; existing dry-run/resume restrictions remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
 | D-7 | Classify from a bounded server-side token-resolution read, task first. Environment IDs are optional consistency checks and never select the principal. Admit authenticated standing sessions without inventing tasks; preserve explicit interactive mode with no identity supplied. | The public task-detail GET never binds its requested ID to the token. Environment-shape admission permits a Shared task to drop its task ID and pose as standing. Unknown tokens and unsupported principals fail closed; operator credentials remain independently required. |
-| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `(GET /api/version).version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance the rc ref to Y while detached canonical HEAD and API stay X; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
+| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; durable Active rollout state mechanically refuses ordinary AppHost restart unless the explicit expected SHA is X. Later rc activation is deferred; planned same-X recovery requires a quiescent journal, while the down-stack watchdog may recover at proven canonical X. Unknown state has only the explicit audited D-16 override. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `(GET /api/version).version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance the rc ref to Y while detached canonical HEAD and API stay X; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
 | D-10 | This is the caller's final Plan round with verification design folded in. Next is Code after CARD-1609 lands; no further Plan/TestDesign pass. Code collects bounded timing evidence, then ordinary Review evaluates the implemented production paths and complete receipts. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. Before Code dispatch, confirm CARD-1609 is actually landed on rc and master and record both exact SHAs; no landing status is inferred from its plan. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
 | D-12 | Standing/interactive controller source and the canonical activation checkout are detached at X. A managed task keeps its registered private feat branch, as required by git-common; never put a land target branch in any controller worktree. Refuse symbolic standing/interactive HEAD and task branches outside the registered feat forms. | A controller on rc permits publication but leaves `target_checked_out_elsewhere` residue: the canonical checkout and its local rc ref do not advance, retaining the CARD-0358 stale-AppHost-source hazard. Detaching a managed task would violate its assigned-branch contract, so the existing private feat form is the narrow exception. A throwaway clone adds custody/caching overhead and is not the default. |
 | D-13 | Maintain the existing doc-contract pins and include their affected classes in CP-4. Preserve unrelated authority, retention and branch-contract phrases. | Dropping pinned text without updating/checking its owner tests creates a predictable red build; a new duplicate prose-only suite is unnecessary. |
+| D-14 | Make the watchdog marker-aware: recover a down stack with explicit X only when canonical HEAD equals X; alert on mismatch/unknown, preserve two-minute cadence, probe spacing, cooldown and flap cap. A failed restart stops controller renewal. | Waiting for marker expiry can keep AppHost down for a whole phase; implicit HEAD restart can activate Y. Recovery is same-X and still honors existing locks. |
+| D-15 | Separate durable Active state from the five-minute heartbeat. Protect all phase gaps; allow a joined successor for 60 minutes, then alert/refuse until audited reconciliation/close. Refuse a new rollout over any unfinished state. | A liveness-only marker silently loses protection during normal dispatch gaps. Automatic abandonment or deadline extension guesses at remote outcome and permits interleaved rollouts. |
+| D-16 | Explicit reason-bearing quarantine/one-invocation restart override for Unknown, with durable audit and retained bytes/disposition. Ordinary rollout admission stays blocked until audited close; valid Active cannot use this flag. | Permanent unknown-state refusal prevents recovery. Silent deletion, automatic override or a general unlock would erase evidence and permit version drift. |
 
-### Caller admission (review D-1)
+### Caller admission (earlier review D-1)
 
 Add `GET /api/agent-tasks/caller-identity` as a literal route before the existing
 `/{id}` mapping. This endpoint has no caller-selected task/session ID. It reads
@@ -192,7 +198,7 @@ credential; neither filesystem markers nor operator-token custody promise that.
    automatically from the controller or claim completion. Watchdog crash recovery
    is the narrow automatic same-X exception below. Caller commissions an explicit recovery or
    new rollout with a named SHA after reconciling both runner images and resume
-   state; task status alone does not prove quiescence or release a live marker.
+   state; task status alone does not prove quiescence or release durable Active state.
    Unexpected mid-phase API drift is not detected continuously by this change;
    the next phase refuses. Existing phase/census refusals remain authoritative.
 5. After joined completion at X, record active server/runner SHAs and retained
@@ -216,7 +222,8 @@ quarantine/one-invocation recovery below is the sole unknown-marker override.
 Schema 1: `rolloutId, sha, controllerId, callerClass, phase, sequence,
 createdAtUtc, heartbeatAtUtc, expiresAtUtc, rolloutState, phaseState,
 handoverStartedAtUtc, handoverDeadlineUtc, journalPath, journalGeneration`.
-IDs/SHA and bounded local paths are validated; no tokens or task prose.
+IDs/SHA and bounded local paths are validated; journalPath must equal the fixed
+canonical logs/rollouts/<validated-rolloutId>/journal.json location. No tokens or task prose.
 **rolloutState=Active is durable**, from first deploy-temp admission until joined
 final retire-temp Completed or explicit audited Closed. ReadyForNext, SlicePending,
 RecoveryRequired, process exit and heartbeat expiry all remain Active. Completed
@@ -273,7 +280,9 @@ Restart decision table (all existing worktree/source/lock guards still apply):
 A foreground controller owns its heartbeat runspace and joins/disposes it in
 finally; never leave a background writer. Renewals serialize through the same
 short gate and require rollout ID/controller ID/sequence equality, a still-live
-heartbeat and no active restart/launch lock. Expired owners cannot silently renew;
+heartbeat and no active restart/launch lock or unresolved recovery intent (even
+if a quarantined/unreadable marker has since become readable). Check the renewal
+failure signal before each new phase effect. Expired owners cannot silently renew;
 re-admission needs the quiescent successor/recovery proof. Any journal/marker
 generation mismatch after a partial write refuses; do not repair it by guessing. Renewal failure
 stops new effects and records uncertainty; it does not authorize killing remote
@@ -392,7 +401,10 @@ continue independently at 180 seconds; no new notification service or secret is
 required. On a changed/resolved condition retain the audit and record resolution,
 never erase the rollout's unfinished state. ProbeOnly logs the proposed action
 and sends no alert or restart. Observe this condition after health observation
-and before recovery guards so a retained lock/cooldown does not hide it.
+and before recovery guards so a retained lock/cooldown does not hide it. Intentional
+maintenance still suppresses notifications/recovery as it does today; it does not
+clear rollout state or extend its handover deadline. Healthy-stack fires evaluate
+stale rollout deadlines independently, without calling restart.
 
 Preserve cadence: scheduled fire every **2 minutes**; three down probes **15 seconds**
 apart; **15-minute** cooldown after an actual attempt; **3 attempts / 60 minutes**.
@@ -515,18 +527,20 @@ invocations require it. Resolve its journal to canonical
 It survives task-worktree cleanup. Under the marker gate, persist schema,
 rollout ID/X, current and next phase, sequence, predecessor/current controller
 IDs, caller class, task IDs, start/end UTC, overall drain budget consumed,
-`ResumeRecycle` operation ID, saved-donor context, scoped project ID, source
+`ResumeRecycle` operation ID, saved-donor context, scoped project ID, durable
+rolloutState plus handover start/deadline, source
 receipt paths and hashes, original/retained evidence paths, exit code, joined
 local-child proof, host outcome proof and `ReadyForNext/SlicePending/
-RecoveryRequired/Completed`. Bound/sanitize fields and write atomically.
+RecoveryRequired/Completed/Closed`. Bound/sanitize fields and write atomically.
 Never store tokens or arbitrary task prose. Full phase receipts remain in the
 evidence roots; copy/hash the minimal handover proof into the durable journal
 directory before settlement can remove the predecessor tree.
 
 Successor procedure:
 
-1. The foreground phase records its outcome and joins all owned children and
-   heartbeat runspace. Normal drain exhaustion emits `RolloutSlicePending`
+1. The foreground phase joins all owned children, stops/joins its heartbeat
+   runspace, then records the outcome and handover deadline under the gate.
+   Normal drain exhaustion emits `RolloutSlicePending`
    (exit 3, explicitly pending, never success), same-phase next action and spent
    allowance. It does not clear drain routing or redo drain POSTs on resume.
    Only that identified wait-boundary condition is pending; unrelated errors
@@ -600,8 +614,8 @@ failure and permits a new rollout only after an exact audited Closed transition.
 
 S1 adds the four classes named below, extends only their reusable test fixtures
 and stages tests first. S2 adds the identity DTO/route/service projection and
-controller helper. S2b adds the marker helper, restart hook and bounded phase
-journal. S3 changes the eight instruction/API documents listed above and the two
+controller helper. S2b adds durable state, restart/watchdog hooks, audited recovery/close and the
+bounded phase journal. S3 changes the nine instruction/API documents listed below and the two
 existing doc-pin test methods. No migrations, project files, props/targets,
 global.json, launch composer or landing/census policy change is commissioned.
 AGENTS/skills are executable instructions for land classification: this is a build
@@ -611,7 +625,7 @@ Use existing restart effect seams in `scripts/test-apphost-server-version.ps1`
 as the model for CP-6's inert fixture; copy required helper dependencies into its
 temporary source tree. The six CP-6 methods also cover existing no-marker
 worktree/SHA/launch-lock refusal paths and `-NoBuild`/`-StopOnly`:
-a live mismatched marker must refuse before shutdown even for StopOnly;
+any unfinished mismatched marker must refuse before shutdown even for StopOnly;
 WhatIf remains observational. Native Windows vectors run the helper/restart
 admission under PowerShell 7 and Windows PowerShell 5.1. They are internal vectors
 within the same six test methods, not extra checkpoint commands. Do not run any
@@ -669,14 +683,18 @@ be saved. Identity read and Git probes have finite deadlines. The bounded identi
 the only new HTTP surface; no indefinite retry, modal prompt, land predicate or census exception.
 
 **S2b — marker and phase custody.** Implement the active marker/restart guard,
-phase budget, bounded host-child wrapper and journal in `scripts/lib/active-rollout.ps1`,
-`scripts/lib/rollout-controller.ps1`, `scripts/restart-apphost.ps1` and
-`scripts/deploy-server2.ps1`. Do not edit landing/census classification or weaken
+phase budget, bounded host-child wrapper, journal, quarantine and close in
+`scripts/lib/active-rollout.ps1`, `scripts/lib/rollout-controller.ps1`,
+`scripts/restart-apphost.ps1`, new `scripts/close-rollout.ps1` and
+`scripts/deploy-server2.ps1`. Add marker-aware recovery to
+`scripts/watchdog-apphost.ps1` and the optional literal expected-SHA forwarding in
+`scripts/apphost-common.ps1`. Keep daemon/shared script edits ASCII/5.1 compatible. Do not edit landing/census classification or weaken
 CARD-1609 retirement proofs. Commit/push after the S1 red evidence.
 
 **S3 — operating contract.** Update `docs/docker-stack.md` continuous dispatch and
 phase/source notes, `docs/orchestration-loop.md` Shared activation guidance,
-`docs/apphost-runbook.md` source notes, `AGENTS.md` and
+`docs/apphost-runbook.md` source/recovery notes, `docs/bootstrap.md` watchdog
+policy, `AGENTS.md` and
 `.claude/skills/antiphon-delegate/SKILL.md` and
 `.claude/skills/antiphon-orchestrator/SKILL.md`. Add the caller-identity route's
 read-only/no-cache/auth contract to `docs/ops-http.md` and `docs/antiphon-api.md`.
@@ -700,17 +718,18 @@ Replace these existing passages, rather than appending contradictory guidance
 
 | File / existing text | Required replacement |
 |---|---|
-| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Outside this detached preparation, never pull while a land runs; the rolling phases need no land freeze. During rollout X, rc lands may advance the rc ref while canonical detached HEAD stays X, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; same-X recovery needs a quiescent journal and explicit X. The live marker mechanically refuses other AppHost restarts; a valid expired marker warns and fails open. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
+| `docs/orchestration-loop.md:29-37`, "Before and after an AppHost pull or restart, verify that queued lands have finished" and "Wait for any land in progress before pulling" | "Before commissioning canonical preparation, the caller may wait for prerequisite lands. A Running land prevents Shared dispatch through the repository lease. Inside Shared preparation, never wait for Held or Queued lands, including those queued after dispatch: this task can itself hold them. Perform the named-SHA preparation, verify and settle; those lands then proceed. Outside this detached preparation, never pull while a land runs; the rolling phases need no land freeze. During rollout X, rc lands may advance the rc ref while canonical detached HEAD stays X, but later-SHA AppHost and desktop-runner activation is deferred until joined rollout completion; planned same-X recovery needs a quiescent journal and explicit X. The down-stack watchdog may recover at proven canonical X. Durable Active state refuses other ordinary restarts across handovers; expiry alerts and never unlocks. Unknown-marker recovery requires the explicit reason-bearing audited quarantine. Require API SHA X at each mutating phase; require HEAD and API equal the named activation SHA at preparation completion." Keep child-journal, lock and no-`AllowWorktree` rules. |
 | `docs/docker-stack.md:473-474`, "From the canonical desktop checkout" for manual running-main cleanup | "From the pinned controller checkout on the Windows operational host, record main's status and exact candidates under that controller's printed rollout receipt path." Keep every existing running-main/ownership/publication/zero-work condition. The manual attested retirement path introduced by CARD-1609 also uses the controller tree; replace its canonical absolute evidence example with `<controller-root>/.antiphon/rolling-server2/manual-retire-<run>/`. This changes location, not cleanup authority. |
 | `docs/docker-stack.md:513-514`, normal `retire-temp` "from the canonical desktop checkout" | "Run normal retire-temp from the pinned controller checkout with the same rollout SHA X and preserved resume context, after the phase identity/version admission checks." Preserve offline publication audit and strict volume proof. |
 | `AGENTS.md:55`, "Restart and deploy scripts refuse ... when run from a linked Git worktree" | "`scripts/restart-apphost.ps1` and `scripts/deploy-local.ps1` refuse linked worktrees by default because they control the shared local stack. Their source is the canonical checkout. `scripts/deploy-server2.ps1` runs its rolling phases from the pinned controller worktree; only `provision-host-jq` requires canonical source. Desktop runner restarts remain canonical operations by policy; do not claim its script implements a linked-worktree guard. Never use `-AllowWorktree` for rollout preparation." |
 | `.claude/skills/antiphon-delegate/SKILL.md:184` and following Shared-default bullets | "Fresh Workers and Orchestrators default to Worktree regardless of role or `-Dir`. An explicit existing-agent selection (`-Agent` / agentId) defaults Shared; explicit workspace and follow-up rules still apply. Use a fresh Worktree task for long rollout control; use an explicitly Shared, bounded task only for canonical preparation, with no pending-land wait inside it. Settlement commits the task's own footprint unless `-NoCommit`." Remove the stale implication that Shared is the normal fresh-task default. |
 
-| `docs/orchestration-loop.md:15-21`, autonomy grant | Keep the grant's existing authority sentence, immediately qualify it: "During an active rollout, defer activation of later rc tips. The active-rollout marker guards AppHost restart; same-SHA recovery needs a quiescent journal. A stale marker warns and permits ordinary restart checks, never proves quiescence." Keep human-only exclusions. |
+| `docs/orchestration-loop.md:15-21`, autonomy grant | Keep the grant's existing authority sentence, immediately qualify it: "During an active rollout, defer activation of later rc tips. Durable Active rollout state guards AppHost restart through phase handovers. Planned same-SHA recovery needs quiescence; the down-stack watchdog may recover at canonical X. Stale state alerts and remains protected; unknown state requires explicit audited quarantine." Keep human-only exclusions. |
 | `docs/orchestration-loop.md:372-390`, post-land activation and terminal-card checks | Continue checking/reporting activation on every terminal move; while rollout X is active, record later landed Y as activation deferred and never claim its feature active. Commission Y preparation only after joined rollout completion. Same-X quiescent recovery uses explicit X; never default to moving HEAD. |
-| `docs/orchestration-loop.md:622`, standing rule 7 | Replace the unconditional changed-rc-tip restart trigger with "restart for a changed reviewed rc tip only when no active rollout defers activation; during rollout follow the marker and quiescent recovery contract." |
+| `docs/orchestration-loop.md:622`, standing rule 7 | Replace the unconditional changed-rc-tip restart trigger with "restart for a changed reviewed rc tip only when no active rollout defers activation; during rollout follow durable Active state, planned quiescent recovery and the narrow watchdog same-X exception." |
 | `.claude/skills/antiphon-orchestrator/SKILL.md:174-179`, landing step 6 | Add the same deferral before any pull/restart instruction, preserve post-rebase receipt identity, and close cards with desired/active SHA plus deferred status. Read marker before canonical movement. |
-| `docs/apphost-runbook.md:196-220`, post-land recipe | Select reviewed rc X, never origin/master as deployment target; check marker before pull/detach/restart. Document live mismatch exit 3, explicit same-X allowance, stale warning and malformed refusal; link phase-journal recovery. |
+| `docs/apphost-runbook.md:196-220`, post-land recipe | Select reviewed rc X, never origin/master as deployment target; check marker before pull/detach/restart. Document durable mismatch exit 3, explicit same-X/watchdog allowance, stale alerts, the 60-minute handover deadline, audited close and the reason-bearing quarantine procedure, including unreadable-file recovery and unresolved audit custody. |
+| `docs/bootstrap.md:579,637-651`, watchdog and dead-launch refinement | Preserve cadence, existing outage sinks, maintenance and dead-launch proof. Add HEAD X/expected X recovery, mismatch alerts, durable handover protection and a link to audited quarantine/close; no installer changes. |
 | `AGENTS.md:53/56`, autonomy and current-rc statement | Qualify authority and current-tip activation by the rollout marker. Hosts stay on named rollout X while later rc lands publish; deferred activation is explicit. Keep the existing runner-restart boundary sentence unchanged. |
 
 Also replace the opening docker-stack recipe's moving "current rc tip" with
@@ -760,7 +779,7 @@ queued-land wait and pull ban; `DockerStackDocumentationTests.cs:45-47` pins
 `need no land freeze` and `never pull while a land runs` case-sensitively.
 Keep those latter two phrases verbatim in their correct scope. Replace the
 obsolete queued-land pin with `Inside Shared preparation, never wait for Held or
-Queued lands`, and assert the new live-marker guard/deferred-activation clause.
+Queued lands`, and assert the durable-state guard/deferred-activation clause and narrow watchdog exception.
 Keep the authority sentence and append its qualification; pin that qualification
 in the same existing method, preserving its removal-must-fail assertion pattern.
 Update DockerStackDocumentationTests' existing lands-proceed method to also pin
@@ -925,7 +944,7 @@ census is commissioned by this plan.
 
 Also pending after land: bypass task-first token resolution and run
 `/*/*/RolloutCallerIdentityTests/Task_token_wins_over_session_and_missing_environment_ids`;
-bypass only the live-marker mismatch guard and run
+bypass only the durable-marker mismatch guard and run
 `/*/*/ActiveRolloutMarkerTests/Live_marker_requires_explicit_matching_sha`;
 bypass only the joined-predecessor requirement and run
 `/*/*/ActiveRolloutMarkerTests/Successor_handover_requires_joined_receipt`.
@@ -951,7 +970,7 @@ S1 red rows and bounded timing calibration are the only additional executions.
 | CP-3 | S1-S3 | CP-1 | linux-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
 | CP-4 | S1-S3 | CP-1 | linux-doc-contracts | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(DockerStackDocumentationTests*)\|(InstructionBundleTests*)\|(RunnerBranchContractDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(ReleaseBranchModelDocumentationTests*)\|(CommitOnSettleDocumentationTests*)\|(AgentContextContractTests*)/*` | D-5 and all touched doc pins | 126 results in eight classes, 0 failed, 0 skipped | 126 | 1 | 2 | true |
 | CP-5 | S1-S3 | CP-1 | linux-caller-identity | `/*/Antiphon.Tests.Application/(RolloutCallerIdentityTests*)\|(AgentTaskCallerResolutionTests*)/*` | D-1 real resolution and existing caller behavior | 5 new + 7 existing results, 0 failed, 0 skipped | 12 | 3 | 4 | true |
-| CP-6 | S1-S3 | CP-1 | linux-marker-handover / windows-native | `/*/Antiphon.Tests.Scripts/ActiveRolloutMarkerTests/*` | D-2, D-3 marker, restart, custody, successor | 6 named methods, 0 failed, 0 skipped | 6 | 3 | 4 | true |
+| CP-6 | S1-S3 | CP-1 | linux-marker-handover / windows-native | `/*/Antiphon.Tests.Scripts/ActiveRolloutMarkerTests/*` | round-4 D-1..D-3 watchdog, durable state, override, custody, successor | 6 named methods, 0 failed, 0 skipped | 6 | 3 | 4 | true |
 
 Class/method OR operands are individually parenthesized and every operand ends
 in `*`; table pipes are escaped. Check the intended suffix roster again after
@@ -968,7 +987,11 @@ an isolated, slot-gated checkpoint-tool bootstrap/import validates the document.
 The proposed Linux acceptance total is **164 executed results**:
 9 controller + 5 land + 6 census + 126 documentation + 12 caller identity +
 6 marker/handover. Native Windows CP-1/CP-6 add **15 results** separately.
-The confirmed original 9+5+6 roster is unchanged; these additions cover the new scope.
+The confirmed original 9+5+6 roster is unchanged. Round-4 watchdog/cadence,
+durable-state and override vectors live within the existing six CP-6 methods;
+their added process/IO cost must be measured before retaining these provisional
+3-minute Linux/4-minute Windows estimates. No real 2/5/15/60-minute wait is allowed
+in tests; controlled clocks/waits and independent effect stubs cover those bounds.
 
 | Lane / selection | Expected elapsed, including build | Phase allocation | Provisional execution deadline |
 |---|---:|---|---:|
