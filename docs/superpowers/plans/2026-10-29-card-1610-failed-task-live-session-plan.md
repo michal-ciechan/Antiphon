@@ -885,9 +885,6 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-96 | S2-S3-fix-red | `tests/Antiphon.Tests -> bin-c1610-watch-red/` | server-integration-watch-red | `/*/*/TaskSupervisionReceiptTests/C1610_Failure_watch_closes_without_a_report` | ended final scan and unknown legacy identity | 2 intended assertion reds before fix | 2 | 2 |
-| CP-93 | S2-S3-fix | `tests/Antiphon.Tests -> bin-c1610-fix/` | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 1 | 4 |
-| CP-94 | S2-S3-fix | CP-93 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
-| CP-95 | S2-S3-fix | CP-93 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/C664_RequeueThenCanceled_RetirementClaimAccepted` | Cancel post-commit workspace release sibling | 1 passed; no failed/skipped | 1 | 2 |
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 executed; pre-fix red: zero-row-ttl, zero-row-cap, zero-row-recheck; mixed-cap and zero-row-terminal red only with the first-pass clause removed; no skipped | 22 | 6 |
 | CP-2 | S1-red | CP-1 | server-integration-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | S1 | 1 intended assertion red | 1 | 1 |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 passed; no failed/skipped | 22 | 6 |
@@ -904,8 +901,8 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-13 | S2-S4-red | CP-10 | script-integration-budget-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 executed; intended script assertions red | 11 | 3 |
 | CP-14 | S2-S4-red | n/a | client-Vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-14 | JSON total=3; all names; intended behavioral red, no setup error | n/a | 2 |
 | CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
-| CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 passed; no failed/skipped | 44 | 3 |
-| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 passed; no failed/skipped | 21 | 5 |
+| CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 49 passed; no failed/skipped | 49 | 3 |
+| CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 27 passed; no failed/skipped | 27 | 5 |
 | CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
 | CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 22 passed; no failed/skipped | 22 | 2 |
 | CP-20 | S2-S4 | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-14 | fresh JSON total=3 passed=3 failed/pending/todo=0; all names; exit 0 | n/a | 2 |
@@ -985,6 +982,10 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-90 | S2-S4 | CP-15 | server-integration-CheckCompactionAutomaticRestartTests | `/*/*/CheckCompactionAutomaticRestartTests/*` | CARD-0079 full regression | 11 passed; no failed/skipped | 11 | 3 |
 | CP-91 | S2-S4 | CP-15 | server-integration-CheckCompactionRecoveryPersistenceTests | `/*/*/CheckCompactionRecoveryPersistenceTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 1 |
 | CP-92 | S2-S4 | CP-15 | server-integration-supervision-retention | `/*/*/DataRetentionServiceTests/C1610_Unresolved_supervision_retains_evidence_until_told` | S3 retention safeguards | 6 passed; no failed/skipped | 6 | 2 |
+| CP-93 | S2-S3-fix | CP-15 | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 41 | 4 |
+| CP-94 | S2-S3-fix | CP-15 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
+| CP-95 | S2-S3-fix | CP-15 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/C664_RequeueThenCanceled_RetirementClaimAccepted` | Cancel post-commit workspace release sibling | 1 passed; no failed/skipped | 1 | 2 |
+| CP-97 | S2-S3-fix | CP-15 | server-integration-closed-watch-retention | `/*/*/DataRetentionServiceTests/C1610_Closed_report_watch_releases_evidence` | closed watch permits real retention pruning | 6 passed; no failed/skipped | 6 | 2 |
 
 Debug task 40e35f61 adds CP-92 to close the preceding S3 report's explicit
 retention coverage gap. Six isolated-schema cases exercise source/recipient
