@@ -436,3 +436,38 @@ There is therefore no uncounted Vitest obligation. If TestDesign establishes a
 necessary client behavior change, add a named command checkpoint with exact
 Vitest JSON `numTotalTests`/passed/failed floors and source binding before Code;
 a success string alone is not a test-count floor.
+
+## D-9 detail: producer-to-recipient delivery witnesses
+
+`TaskSupervisionReceiptTests.C1610_Hold_parent_has_complete_UserPrompt(mode)`
+has exactly three Arguments: eligible, busy, crash. Drive the **real** hold
+producer through dispatcher/persistence, actual queue admission/flush, runtime
+normalizer and transcript ingestion into a BridgeQueueHarness parent plus decoy.
+Assert one complete correlated UserPrompt contains the full hold question,
+identity and next=decide after the captured parent sequence floor. Assert zero
+matching prompts in the decoy. Enqueued/Sent flags, ack-only counters, fragments,
+terminal redraws and a formatter self-comparison cannot pass this test.
+
+Eligible delivers once while idle. Busy remains Pending with zero prompts until
+that parent's TurnEnd, then delivers once. Crash faults the first queue insert
+**after the durable hold obligation commits**, reconstructs the service scope,
+and drives recovery twice: one obligation, one logical message, one complete
+prompt. A separate negative in the stale-notice method settles the task before
+flush and proves the parent receives the ordinary final report without obsolete
+hold action text. The hold message has a distinct purpose identity, so it never
+discharges or suppresses that final caller receipt.
+
+`C1610_Failed_delegate_has_complete_UserPrompt(mode)` repeats the three arms for
+the failed task's own session. Busy has no injected input before TurnEnd; crash
+retains Failed and its notice obligation across restart; accepted delivery says
+that later output is triage only. Capture actual full UserPrompt text in the
+recipient transcript, not the queue row. `C1610_Stale_notice_is_not_delivered`
+has three arguments: retry, generation-replacement, settled-hold. It proves no
+old instruction reaches the replacement/finished turn. All nine cases assert
+zero automatic stopper/release calls and preserve foreign sessions. Own and
+join harness children; do not use any production runner or provider profile.
+
+There is no correction producer after D-5, so a correction-specific witness is
+removed rather than pretended covered by C1161. Retain the existing C1161 Failed
+**parent** receipt method (three cases) and C1259 accepted-attempt replacement
+fence (two cases) as independent regression checkpoints.
