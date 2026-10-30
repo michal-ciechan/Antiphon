@@ -2713,6 +2713,12 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_resume_preserves_proof() => C1105AuditContract("resume");
 
+    // The resume witness pastes production functions. This fails when one of those
+    // functions calls a function that the paste does not define and does not stub.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Resume_extraction_is_closed() => C1105AuditContract("closure");
+
     // One case per Git-directory location in the fixture's HIDDEN-LOCATIONS table: a
     // private commit stored only there refuses, a published one passes. A new location
     // is one table row.
