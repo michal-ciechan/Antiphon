@@ -1,0 +1,3 @@
+Frozen reader/writer sources from bfc97689355219c23eab78e8b386ba146768af3c,
+src/Antiphon.PtyHost.Protocol/{PtyHostMessages,PtyHostFraming,PtyHostManifest}.cs.
+Only namespace changed. These fixtures must not follow new schema members.

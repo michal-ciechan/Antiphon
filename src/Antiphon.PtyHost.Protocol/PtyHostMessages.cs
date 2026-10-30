@@ -112,7 +112,7 @@ public sealed record AttachedMessage(long ReplayFromSeq, long LastSeq) : PtyHost
 
 public sealed record OutputMessage(long Seq, string Chunk) : PtyHostMessage;
 
-public sealed record ExitedMessage(int? ExitCode, string ExitReason, long LastSeq) : PtyHostMessage;
+public sealed record ExitedMessage(int? ExitCode, string ExitReason, long LastSeq, int? ExitSignal = null) : PtyHostMessage;
 
 public sealed record StatusReplyMessage(
     string Status,
@@ -122,7 +122,8 @@ public sealed record StatusReplyMessage(
     int Rows,
     long LastSeq,
     int? ExitCode,
-    string? ExitReason) : PtyHostMessage;
+    string? ExitReason,
+    int? ExitSignal = null) : PtyHostMessage;
 
 /// <summary>
 /// The requested attach point fell out of the replay ring. The client must rebuild state from

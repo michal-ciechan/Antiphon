@@ -30,6 +30,7 @@ public sealed record PtyHostManifest
     public string? AnsiLogPath { get; init; }
     public DateTime CreatedAtUtc { get; init; }
     public int? ExitCode { get; init; }
+    public int? ExitSignal { get; init; }
     public string? ExitReason { get; init; }
     public DateTime? ExitedAtUtc { get; init; }
     public DateTime? AcceptedStartedAt { get; init; }
