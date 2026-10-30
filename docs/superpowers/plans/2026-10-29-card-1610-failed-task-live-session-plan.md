@@ -1,10 +1,21 @@
 # CARD-1610: Hold a live task at its role ceiling
 
-Date: 2026-10-30. Round 2 Plan, replacing the round-1 design in place.
+Date: 2026-10-30. Round 3 Plan, revising the round-2 design in place.
 Source base: `93a21a1fac2ab3965cce5a48503d54fb71132c07`.
-Status: revised design for independent Review, then separate TestDesign.
+Status: round-3 revision in progress; verification design is folded into this final Plan round.
+Implementation handoff will be Code on origin/master after the stated ordering gates.
 No product changes are authorized by this Plan dispatch. The initial skeleton
 and each defect response were committed and pushed during this round.
+
+## Round-3 resolution checklist
+
+This is the pushed skeleton; each item is resolved in place before handoff.
+
+- R3-1: retain Working with typed hold fields; inspect Reply and all four occupancy/Check selectors.
+- R3-2: Continue re-arms through 720 minutes; final hold requires explicit operator Extend.
+- R3-3: preserve docker-stack step-5 stop authority; use ANTIPHON_TASK_TOKEN and foreground-safe resumable slices.
+- R3-4: forward Failed late reports as durable parent triage notes without settlement or handoff.
+- R3-5: include full affected classes and sharded Unit lane; recount and re-import.
 
 ## Decisions
 
