@@ -295,12 +295,15 @@ async function n2(f) {
     const holder=shell(g,'c1008_rollout_lock; touch '+q(held)+'; for n in $(seq 1 1000); do [ ! -e '+q(release)+' ] || exit 0; sleep 0.02; done; exit 72','holder');
     await barrier(()=>rootRun('test -f '+q(held),true).code===0,holder);
     const created=g.stem+'-writer-created'; scope.volumes.push(created);g.names.push(created);save();
-    const writer=shell(g,'c1008_rollout_lock; docker volume create --label '+q(label+'='+scope.prefix)+' '+q(created)+'; touch '+q(entered),'writer');
+    const writer=shell(g,'printf "%s\\n" "$" > '+q(g.host+'/writer-pid')+'; c1008_rollout_lock; docker volume create --label '+q(label+'='+scope.prefix)+' '+q(created)+'; touch '+q(entered),'writer');
     try {
       // The lock is a real kernel lock on the production-selected file.
       assert.notEqual(rootRun('flock -n '+q(g.host+'/server/locks/rollout.lock')+' true',true).code,0);
       const inode=rootRun('stat -c %i '+q(g.host+'/server/locks/rollout.lock')).stdout.trim();
-      const probe="awk -v inode="+q(inode)+" '$0 ~ /->/ && index($0, \":\" inode \" \") {found=1} END {exit !found}' /proc/locks";
+      // /proc/locks hides nested PID-namespace owners on some hosts. Bind the
+      // actual flock child's kernel wait channel and FD 8 to the exact inode.
+      const probe='p=$(cat '+q(g.host+'/writer-pid')+'); for c in $(cat /proc/$p/task/$p/children); do '
+        +'[ "$(cat /proc/$c/wchan)" = locks_lock_inode_wait ] && [ "$(stat -Lc %i /proc/$c/fd/8)" = '+q(inode)+' ] && exit 0; done; exit 1';
       let waiting=false,settled=false;writer.finally(()=>{settled=true;});
       for(let n=0;n<100 && !settled;n++){if(rootRun(probe,true).code===0){waiting=true;break;}await new Promise(r=>setTimeout(r,20));}
       assert(waiting,'N2 supported writer is blocked in kernel flock before any Docker create');
