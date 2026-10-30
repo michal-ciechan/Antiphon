@@ -271,7 +271,7 @@ public sealed class VolumeRetirementReceiptTests
                 set -euo pipefail
                 source <(sed -n '/^c1008_audit_checked() {/,/^}/p' {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"))}})
                 C1008_PROJECT={{project}}; TEMP_PROJECT=antiphon-runner-temp; C1008_RESUME=1
-                C1008_RECORD="$(jq -cn --arg name "$C1008_PROJECT"_work '{phase:"removing",volumes:{($name):{outcome:"pending"}},audit:"old-audit"}')"
+                C1008_RECORD="$(jq -cn --arg name "$C1008_PROJECT"_work '{phase:"removing",volumes:{($name):{outcome:"pending"} },audit:"old-audit"}')"
                 c1008_volume() { printf null; }
                 c1008_audit() { printf 'audit check=metadata status=2 repo=. reason=role-unknown\n'; return 2; }
                 c1008_save() { :; }
