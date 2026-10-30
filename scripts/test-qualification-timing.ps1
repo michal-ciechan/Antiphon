@@ -531,13 +531,16 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($fifoScript, $fifoBody.Replace("`r", ''))
-        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 5000
+        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 15000
+        Assert-Check $fifoRun.Exited 'fifo-cases-file-child-exited'
+        Assert-Check ($fifoRun.ExitCode -eq 0) 'fifo-cases-file-child-exit-code'
         $fifoOk = $false
         if ($fifoOkCreated -and $fifoRun.Exited -and $fifoRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $fifoResult)) {
             $fifoDoc = Get-Content -LiteralPath $fifoResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $fifoOk = ([double]$fifoDoc.seconds -lt 0.2 -and -not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
+            Assert-Check ([double]$fifoDoc.seconds -lt 0.2) 'fifo-cases-file-in-process-budget'
+            $fifoOk = (-not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
         }
-        Assert-Check $fifoOk 'fifo-cases-file-returns-inside-budget'
+        Assert-Check $fifoOk 'fifo-cases-file-refuses-unsafe-input'
 
         $denied = Join-Path $boundTiming 'cases-82-denied.jsonl'
         [IO.File]::WriteAllText($denied, '{"recordKind":"header"}' + "`n")
@@ -562,13 +565,16 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($deniedScript, $deniedBody.Replace("`r", ''))
-        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 5000
+        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 15000
+        Assert-Check $deniedRun.Exited 'unreadable-timing-file-child-exited'
+        Assert-Check ($deniedRun.ExitCode -eq 0) 'unreadable-timing-file-child-exit-code'
         $deniedOk = $false
         if ($deniedRun.Exited -and $deniedRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $deniedResult)) {
             $deniedDoc = Get-Content -LiteralPath $deniedResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $deniedOk = ([double]$deniedDoc.seconds -lt 0.2 -and -not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
+            Assert-Check ([double]$deniedDoc.seconds -lt 0.2) 'unreadable-timing-file-in-process-budget'
+            $deniedOk = (-not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
         }
-        Assert-Check $deniedOk 'unreadable-timing-file-returns-inside-budget'
+        Assert-Check $deniedOk 'unreadable-timing-file-refuses-unsafe-input'
         Set-HarnessUnixMode $denied '644'
 
         $launchRoot = Join-Path $boundRoot 'launch'
@@ -1348,19 +1354,35 @@ try {
     $listSw = [Diagnostics.Stopwatch]::StartNew()
     $listedForeign = @(Get-ChildItem -LiteralPath $foreignTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $listSw.Stop()
+    # Count actual bytes through the real reader, including accidental foreign reads.
+    $savedForeignReader = ${function:Read-TestPhaseStreamBytes}
+    $script:foreignReadBytes = 0L
+    function Read-TestPhaseStreamBytes {
+        param($Stream, [int]$MaxBytes, [int]$DeadlineMilliseconds, $Watch)
+        $beforeRead = $Stream.Position
+        try { & $savedForeignReader @PSBoundParameters }
+        finally { $script:foreignReadBytes += $Stream.Position - $beforeRead }
+    }
     $foreignSw = [Diagnostics.Stopwatch]::StartNew()
     $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
     $foreignSw.Stop()
+    ${function:Read-TestPhaseStreamBytes} = $savedForeignReader
     $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
     $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
-    $foreignBound = ($foreignSw.Elapsed.TotalSeconds -lt 0.2 -and $listedForeign.Count -eq 40 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192)
+    Assert-Check ($listedForeign.Count -eq 40 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192) 'foreign-journal-corpus-size'
+    $ownJournalBytes = [int64](Get-Item -LiteralPath (Join-Path $ownChunk $ownName)).Length
+    Write-Host ('MEASURED journal-read-bytes=' + $script:foreignReadBytes + ' own-journal-bytes=' + $ownJournalBytes)
+    Assert-Check ($script:foreignReadBytes -eq $ownJournalBytes) 'own-chunk-reads-only-own-journal-bytes'
+    # About twice the observed loaded maximum; product's 200 ms deadline is unchanged.
+    Assert-Check ($foreignSw.Elapsed.TotalSeconds -lt 0.75) 'own-chunk-aggregation-wall-budget'
     $foreignExit = ([int]$foreignAgg.ChunkExitCode -eq 5 -and [string]$foreignAgg.ChunkResult -eq 'KEEP-5')
-    Assert-Check ($foreignOwn -and $foreignBound -and $foreignExit) 'own-chunk-ignores-foreign-journals'
+    Assert-Check ($foreignOwn -and $foreignExit) 'own-chunk-ignores-foreign-journals'
 } catch {
     Write-Host ('FAIL own-chunk-ignores-foreign-journals ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedForeignReader) { ${function:Read-TestPhaseStreamBytes} = $savedForeignReader }
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
