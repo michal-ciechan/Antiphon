@@ -45,6 +45,17 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// </summary>
     internal IPtyCustodyContainment? CustodyContainment { get; set; }
 
+    /// <summary>
+    /// Test seam. The host fixture installs a fake containment before launch. Production
+    /// leaves this unset and builds a <see cref="LinuxCgroupContainment"/>.
+    /// </summary>
+    public void UseContainmentForTests(IPtyCustodyContainment containment)
+    {
+        if (_conn is not null)
+            throw new InvalidOperationException("Containment is fixed once the runner has started.");
+        CustodyContainment = containment;
+    }
+
     public PtyTerminationObservation? CustodyTermination =>
         _linuxTermination ?? (_conn as ModernConPtyConnection)?.LastTermination;
 
