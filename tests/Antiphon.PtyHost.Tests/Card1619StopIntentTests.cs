@@ -215,6 +215,17 @@ public class Card1619StopIntentTests
         recovered.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
     }
 
+    private sealed class Phase(string operation) : IDisposable
+    {
+        private readonly Stopwatch _timer = Stopwatch.StartNew();
+        public void Dispose() => Console.WriteLine(JsonSerializer.Serialize(new {
+            kind = "card1619.phase", operation, elapsedSeconds = _timer.Elapsed.TotalSeconds,
+            testId = TestContext.Current?.Metadata.TestDetails.TestId,
+            run = Environment.GetEnvironmentVariable("ANTIPHON_TEST_PHASE_RUN_ID"),
+            group = Environment.GetEnvironmentVariable("ANTIPHON_TEST_PHASE_GROUP_ID")
+        }));
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "card1619-stop-" + Guid.NewGuid().ToString("N"));
@@ -231,7 +242,7 @@ public class Card1619StopIntentTests
         public TimeSpan SignalLatency { get; private set; }
         public static async Task<Fixture> StartAsync(Func<ProcessStopIntentDto, CancellationToken, Task<bool>>? writer = null, bool unwritable = false)
         {
-            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-host-stop-readiness");
+            using var phase = new Phase("card1619-host-stop-readiness");
             var f = new Fixture();
             try
             {
@@ -265,7 +276,7 @@ public class Card1619StopIntentTests
             AttemptedSignal = signal, Path = ProcessStopPath.ProcessTree };
         public async Task<ExitedMessage> StopAsync()
         {
-            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "card1619-host-stop-exit");
+            using var phase = new Phase("card1619-host-stop-exit");
             _signalClock.Restart();
             (await Host.KillAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
             return await Exit.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -278,7 +289,7 @@ public class Card1619StopIntentTests
         }
         public async ValueTask DisposeAsync()
         {
-            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "card1619-host-owned-join");
+            using var phase = new Phase("card1619-host-owned-join");
             if (Child is not null)
             {
                 if (!Child.HasExited) Child.Kill(true);
