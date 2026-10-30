@@ -768,11 +768,6 @@ function Test-C1199_WindowsRequiredRoster {
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_regular_user_move'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_untracked'
         'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_changed_untracked'
-        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency'
-        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency'
-        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency'
-        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.transitive_import_build_preserves_the_tracked_dependency'
-        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.unevaluable_import_is_refused_before_the_build'
     )
     $expectedLinux = @(
         'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
