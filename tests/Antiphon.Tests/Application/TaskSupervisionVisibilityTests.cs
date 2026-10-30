@@ -22,9 +22,10 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1610 S1. Janitor, attention and task detail.
-/// reuse is red until a historical Failed task stops holding a reused session.
-/// absent-transcript is red until a transcript with no turn-end is retained.
-/// retain-* pass on the current janitor and fail if those states are treated as idle.
+/// A Failed task holds a seat only while it is the current proved-generation owner.
+/// Created, Stopping, a missing generation, and a pending remote inventory stay.
+/// A transcript with rows but no turn boundary stays. A transcript with no rows
+/// remains eligible for TTL and cap retirement.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]

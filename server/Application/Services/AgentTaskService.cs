@@ -2845,8 +2845,18 @@ public sealed class AgentTaskService
                     && session.Status is SessionStatus.Created or SessionStatus.Starting
                         or SessionStatus.Running or SessionStatus.Stopping)
                 {
-                    failedSession = FailedTaskSessionFacts.Describe(
-                        task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime);
+                    var owners = await FailedTaskSessionOwnership.CurrentOwnersAsync(
+                        _db,
+                        new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>
+                        {
+                            [session.Id] = (session.Status, session.StartedAt),
+                        },
+                        ct);
+                    if (owners.TryGetValue(session.Id, out var owner) && owner.Id == task.Id)
+                    {
+                        failedSession = FailedTaskSessionFacts.Describe(
+                            task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime);
+                    }
                 }
             }
         }
