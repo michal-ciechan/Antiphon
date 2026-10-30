@@ -38,7 +38,7 @@ public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
             "-Root", root, "-Repository", CheckpointFixtures.RepoRoot, "-Mode", mode,
         })
             psi.ArgumentList.Add(arg);
-        if (verifyConfiguredGit)
+        if (mode == "encoding")
         {
             var executable = Path.Combine(AppContext.BaseDirectory, "checkpoint-git-fixture",
                 "Antiphon.Checkpoints.GitFixture" + (OperatingSystem.IsWindows() ? ".exe" : ""));
