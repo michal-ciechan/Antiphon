@@ -18,8 +18,10 @@ public sealed class RcFailureHistoryTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     [Test, Timeout(180_000)]
     public Task RefusesIncompleteEvidence(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 28,
-            ["FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.wrongSuiteFull",
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 32,
+            ["FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.chunk-exit",
+             "FF RefusesIncompleteEvidence.chunk-result", "FF RefusesIncompleteEvidence.chunk-detail",
+             "FF RefusesIncompleteEvidence.chunk-short", "FF RefusesIncompleteEvidence.wrongSuiteFull",
              "FF RefusesIncompleteEvidence.wrongSuitePartial", "FF RefusesIncompleteEvidence.missingFull",
              "FF RefusesIncompleteEvidence.missingPartial", "FF RefusesIncompleteEvidence.renamed",
              "FF RefusesIncompleteEvidence.excluded", "FF RefusesIncompleteEvidence.methodExclusions",
