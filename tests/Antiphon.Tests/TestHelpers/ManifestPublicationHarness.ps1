@@ -1196,7 +1196,42 @@ function Invoke-V9 {
     Write-MpResult -Ok $true -Reason 'v9'
 }
 
+function Assert-MpSeededSummaryLabels {
+    foreach ($mode in @('legacy', 'successor')) {
+        $root = Join-Path $Work ('summary-seed-' + $mode)
+        New-Item -ItemType Directory -Path (Join-Path $root 'timing') -Force | Out-Null
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText((Join-Path $root 'timing/groups-planned.json'), '{"version":1,"runId":"labels","attempt":"1","suite":"suite-a","assembly":"Antiphon.Tests","groups":[]}', $utf8)
+        $trx = Join-Path $root 'a.trx'
+        Write-MpDefinedTrx -Path $trx -ClassName 'Fixture.Seeded' -Outcome 'Passed'
+        $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
+        if ($mode -eq 'legacy') {
+            Invoke-LegacyExecutedManifest -Verdict $verdict -LogRoot $root -TrxPath $trx -Suite 'suite-a' -Chunk 'chunk-a' -RunId 'labels' -Attempt '1' -HostWallSeconds 1
+        } else {
+            $ctx = Open-MpContext -LogRoot $root -RunId 'labels' -Attempt '1' -Suite 'suite-a' -Source 'unknown'
+            Publish-MpChunk -LogRoot $root -TrxPath $trx -Suite 'suite-a' -Chunk 'chunk-a' -RunId 'labels' -Attempt '1' -HostWallSeconds 1
+            Complete-TestPhaseExecutedProjection -Context $ctx -Terminal 'orchestration-error' | Out-Null
+            Close-MpContext -Context $ctx
+        }
+        $ctx = Open-MpContext -LogRoot $root -RunId 'labels' -Attempt '1' -Suite 'suite-a' -Source 'unknown'
+        if ($ctx.Refused -or -not $ctx.HasSeed) { Fail-Mp ('labels-seed-not-created ' + $mode) }
+        $trxB = Join-Path $root 'b.trx'
+        Write-MpDefinedTrx -Path $trxB -ClassName 'Fixture.Current' -Outcome 'Failed'
+        Publish-MpChunk -LogRoot $root -TrxPath $trxB -Suite 'suite-b' -Chunk 'chunk-b' -RunId 'labels' -Attempt '1' -HostWallSeconds 2
+        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
+        Close-MpContext -Context $ctx
+        Invoke-TestPhaseRunSummary -RunDirectory $root -Top 5
+        $summary = Get-Content -Raw (Join-Path $root 'timing/summary.json') | ConvertFrom-Json
+        $seeded = @($summary.tests | Where-Object { $_.groupId -eq 'chunk-a' -and $_.suite -eq 'suite-a' })
+        $current = @($summary.tests | Where-Object { $_.groupId -eq 'chunk-b' -and $_.suite -eq 'suite-b' })
+        if ($seeded.Count -ne 1 -or $current.Count -ne 1) { Fail-Mp ('seeded-summary-labels-lost ' + $mode) }
+        $csv = @(Import-Csv -LiteralPath (Join-Path $root 'timing/tests.csv'))
+        if (@($csv | Where-Object { $_.groupId -eq 'chunk-a' -and $_.suite -eq 'suite-a' }).Count -ne 1) { Fail-Mp ('seeded-csv-labels-lost ' + $mode) }
+    }
+}
+
 function Invoke-V10 {
+    Assert-MpSeededSummaryLabels
     $legacy = Join-Path $Work 'legacy'
     New-Item -ItemType Directory -Path (Join-Path $legacy 'timing') -Force | Out-Null
     $utf8 = New-Object System.Text.UTF8Encoding $false
