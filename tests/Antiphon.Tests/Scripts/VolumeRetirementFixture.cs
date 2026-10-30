@@ -195,7 +195,10 @@ internal static class VolumeRetirementFixture
 
     internal static async Task ReadyPreview(C1008HostFixture fixture, string extra = "")
     {
-        var preview = await fixture.Run("retire-temp-runner", extra, dryRun: true);
+        // GNU timeout execs docker by name and skips the fixture function. The shell
+        // timeout keeps the preview on the fake daemon, the same way content proofs do.
+        var probe = string.IsNullOrEmpty(extra) ? ShellProbe : extra + "\n" + ShellProbe;
+        var preview = await fixture.Run("retire-temp-runner", probe, dryRun: true);
         preview.Exit.ShouldBe(0, "c1609: a Ready preview precedes apply; " + preview.Output);
         preview.Output.ShouldContain(ReadyMarker);
         fixture.Removed.ShouldBeEmpty("c1609: the Ready preview removes nothing");
