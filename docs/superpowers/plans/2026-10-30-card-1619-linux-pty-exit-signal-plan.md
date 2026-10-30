@@ -1,9 +1,27 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: round-2 amendment complete; 14-row import passed; ready for final Opus plan Review.
-Plan tasks: `9a468e98` (round 1), `3b469108` (round 2); no product code edits.
+Status: round-3 amendment in progress; round-2 import is historical only.
+Plan tasks: `9a468e98` (round 1), `3b469108` (round 2), `af4bf774` (round 3); no product code edits.
 Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
+
+## Round-3 amendment register
+
+Final review `10e7c145` was read in full at round-3 base
+`1d1ac16723ed370700ea10be429de0c70bdc51f6`. Its verified Porta contract,
+same-process issuer/observer path and closed round-1 findings are retained.
+This initial skeleton records the chosen corrections; the sections below and
+checkpoint import will be reconciled before the final Code-ready handoff.
+
+| Finding | Round-3 decision / remaining amendment |
+|---|---|
+| D-1 | Move every integer compatibility-value change into S3b, alongside ownership/classification consumers. Name HostSession's structured read and add the seven ready-gate regressions. |
+| D-2 | Signal first; publish issuer memory under the gate, then attempt diagnostic writes outside it with a 100 ms deadline enforced at the production journal boundary. A never-completing writer must not delay signaling or stop completion. |
+| A-1/A-2 | Issuer memory remains authority when disk fails; specify server-request/no-issuer and host-target/no-child-observation text. |
+| A-3 | Exercise the production PortaExitSignalReader in the real-assembly contract witness. |
+| A-4 | Separate the cgroup-v1 checkpoint run so its missing fixture cannot invalidate other S4 receipts. |
+| A-5 | Re-create the master migration after CARD-1610's migration; do not copy the RC Designer/snapshot. |
+| A-6 | Chain Code slices from preceding tips, carry this branch-only plan in every checkout, and forbid landing S1..S3b individually. |
 
 ## Round-2 amendment register
 
