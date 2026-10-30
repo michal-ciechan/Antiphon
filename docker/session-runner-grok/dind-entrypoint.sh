@@ -164,25 +164,19 @@ fi
 # --- step 3b: custody namespace (CARD-1614) -------------------------------------------
 # A failed namespace leaves custody unadvertised. It must not refuse dockerd or the runner.
 # The guid is never printed. Success does not turn qualification on.
-namespace_boot_status=0
-set +e
-namespace_boot_output="$(bash -c '
-source /usr/local/lib/antiphon-custody-common.sh || exit 1
-mkdir -p /var/lib/antiphon-custody /run/antiphon-custody || exit 1
-chmod 0700 /var/lib/antiphon-custody || exit 1
-chmod 0755 /run/antiphon-custody || exit 1
-custody_namespace_boot /var/lib/antiphon-custody /run/antiphon-custody
-' 2>&1)"
-namespace_boot_status=$?
-set -e
-if [ "$namespace_boot_status" -ne 0 ]; then
+# The library is sourced only when it is readable. A missing library is the same
+# custody-unready continuation as a failed boot, not an entrypoint refusal.
+if [ -r /usr/local/lib/antiphon-custody-common.sh ]; then
+  # shellcheck disable=SC1091
+  source /usr/local/lib/antiphon-custody-common.sh
+  custody_namespace_entrypoint_step \
+    /var/lib/antiphon-custody \
+    /run/antiphon-custody \
+    /usr/local/lib/antiphon-custody-common.sh
+else
   echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2
   export SessionRunner__LinuxCustodyQualified=false
-  if [ -f /run/antiphon-custody/namespace ] && [ ! -L /run/antiphon-custody/namespace ]; then
-    rm -f /run/antiphon-custody/namespace
-  fi
 fi
-unset namespace_boot_output
 
 # --- step 4: iptables backend (D-4) ---------------------------------------------------
 if ! iptables -nL >/dev/null 2>&1; then
