@@ -14,8 +14,8 @@ Review source: `.antiphon/task-3372044d.md`, read in full on 2026-10-30.
 
 | Review defect | Revision obligation | Status |
 |---|---|---|
-| D-1 | Whole-minute checkpoint estimates; import verification recorded below | Estimates corrected; import pending |
-| D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Pending |
+| D-1 | Whole-minute checkpoint estimates; import verification recorded below | Done: original 11 rows import successfully after correction |
+| D-2 | Landed CARD-1607 baseline and explicit fate of its two tests | Done: baseline and preservation R6 |
 | D-3 | Complete read-only offender preview, human and machine forms | Pending |
 | D-4 | FETCH_HEAD, narrow fixture classifier, gone-tracking decisions | Pending |
 | D-5 | Bounded census retries, durable partial/resume behavior | Pending |
@@ -33,7 +33,18 @@ The volume gate must inspect current content with current trusted tools, prove
 publication on a credential-capable host, and authorize only the inspected volume
 incarnations. Missing historical receipts must not block that process.
 
-Evidence read on 2026-10-29:
+Round-2 code baseline, read without merging on 2026-10-30: master
+`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca` and rc/2026-10-27
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`. CARD-1607 is landed on master as
+`4277f94cb3f85236409db1ec286ba5b6a1a8c7e1` plus parser fix
+`337c94aeb22bd5d4714d26944b232ac4cbd7ccfb`, and rc as
+`29218e553d15854fca3540f29fd5cb3df2d2b122`. The four touched existing production
+scripts (c590-remote, c590-real, deploy-server2, c1008-host-proof) are byte-identical
+between those inspected master/rc tips. The assigned branch intentionally retains
+older product source; Code must start from the then-current landed baseline, carry
+this plan forward, and record its actual baseline SHA before S1 reds.
+
+Round-1 evidence read on 2026-10-29 (historical observations):
 
 - Antiphon board CARD-1609, CARD-1607 and CARD-1594, using `scripts/card.ps1 get`.
   CARD-1594 records four independent refusal families and the earlier writable
@@ -44,7 +55,8 @@ Evidence read on 2026-10-29:
   `scripts/deploy-server2.ps1`, `scripts/c590-real.ps1`, the Docker owner and tests.
 - CARD-1607's `scripts/c1008-host-proof.ps1` and its shell consumer at
   `d301a70ba8855e8180708d85b3bafecbbd838420`, branch `feat/card-task-b7de5a59`.
-  That file is absent at this task's base. Reading it did not merge its branch.
+  That historical branch is superseded by the landed revisions above. Round 2 reads
+  the landed helper and both consumers directly; no product merge is part of Plan.
 - Deploy task `a04846da-9cc1-477a-92f2-9fecfb4b3725` and both prototype files at
   `C:\src\Antiphon\.antiphon\rolling-server2\manual-retire-20261029T022320Z\`.
   The original delegate's file route returned 404 after retirement; a surviving
@@ -478,7 +490,7 @@ made by this Plan task.
 | Slice | Files and concrete change | Tests / closure |
 |---|---|---|
 | S1: regression witnesses | Add `tests/Antiphon.Tests/Scripts/VolumeRetirementContentTests.cs`, `VolumeRetirementReceiptTests.cs` and a shared `VolumeRetirementFixture.cs`; extend `scripts/fixtures/c1008-fake-docker.sh` only for observations/fault cuts. Drive current entrypoints so no missing-method/unknown-argument error can masquerade as red. | C1/C2/J1 fail on intended readiness/no-deletion assertions against unchanged production at the task base; CP-1/2. |
-| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Integrate/refactor `scripts/c1008-host-proof.ps1` from reviewed CARD-1607 code as available, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C10, H1-H6 and R3-R5. |
+| S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C10, H1-H6 and R3-R5. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch of `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes and partial resume. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations. | J1-J10, R1/R2 and N2/N3. |
 | S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1`; update `scripts/deploy-server2.ps1` and `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W5. ASCII transport scripts; LF shell files. |
 | S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..11; update runbook command examples and refusal recovery. |
@@ -494,6 +506,20 @@ Retain `C1594_Antiphon_evidence_gitdir` unchanged. In
 `C1105_Temp_cleanup_uses_previous_generation` now proves older actual topology is
 recognized without loading its old build. A changed test name is not coverage loss
 when its behavioral vectors and witnesses remain explicit.
+
+CARD-1607 test disposition (S2, preservation R6 in CP-8): retain both existing
+method names so their vectors remain traceable. Rewrite
+`C1008_Host_proof_admits_only_an_authenticated_private_origin` for v2 temp:
+retain authenticated success, unpublished-child refusal, missing/wrong/old/malformed
+proof, non-auth errors and no-credential/helper-custody assertions; replace the
+"only after classified auth failure" expectation with proof for every origin.
+Keep a v1-main adapter vector for the existing fallback. H2/H3/H4 extend those
+vectors, not substitute for them. Rewrite
+`C1008_Host_proof_file_omits_credentials` to retain artifact/log/argv sentinel
+assertions: v2 rejects credential-bearing URLs before invocation rather than
+silently sanitizing one into authority; a trusted clean origin with ambient fixture
+credentials proves success without exporting secrets. Keep v1 scrubbing coverage
+in its main adapter; H5/H6 add v2 protocol/deadline cases. Neither test is deleted.
 
 ## Performance budget
 
@@ -606,8 +632,8 @@ N = `VolumeRetirementDockerTests`. Exact proposed method names and obligations:
 | N2 | `Replacement_and_concurrent_reference_block_delete` | Real same-name replacement between phases, new named/bind reference, supported writer blocked by lock; no wrong volume deleted. |
 | N3 | `Exact_deletion_and_crash_resume_preserve_other_volumes` | Real all-safe set removed by exact name; main/cache/sentinel survive; crash cuts resume without duplicate/replacement deletion. |
 
-Preservation rows: R1 = seven named RollingVolumeRecycleScriptTests methods in
-CP-8; R2 = nine named retired-container methods in CP-9; R3 = 30 argument results
+Preservation rows: R1 = seven original named RollingVolumeRecycleScriptTests methods in
+CP-8; R6 = the two CARD-1607 methods in CP-8; R2 = nine named retired-container methods in CP-9; R3 = 30 argument results
 from four Git recovery/seed/index/object methods in CP-5; R4 = the existing 132
 hidden-location results in CP-6; R5 = 40 evidence-name plus 12 mirror-owner results
 in CP-7. R3-R5 already pass for protected behavior at base; do not fabricate red
@@ -618,8 +644,8 @@ Mutation stage, scoped to exact methods on a bound pack, never a whole class.
 ### Lanes, roster and execution
 
 Read `GET /api/runner-defaults` and `GET /api/session-runners` again at dispatch.
-They were read for this Plan on 2026-10-29: revision 2; an eligible Linux default
-and an eligible Windows peer were advertised, with different occupancy. These are
+They were read again on 2026-10-30: revision 2; an eligible Linux default
+and an eligible Windows peer were advertised (8/10 and 2/2 occupied respectively). These are
 observations, not permanent placement instructions. CP-1..10 require the native
 Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11
 requires the native Windows PowerShell/Git lane. No host is pinned. Omit `-Runner`;
@@ -662,7 +688,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
 | CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
-| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)` | R1 | all 7 methods, 0 failed/skipped | 7 | 1 | true |
+| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)` | R1,R6 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
 | CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W5 native Windows | all 11 methods, 0 failed/skipped | 11 | 5 | true |
@@ -673,8 +699,7 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
    generated-data classifier and attestation defaults. No production volume audit
    or deletion is part of this Plan or its Code fixture tests.
 2. Implement the versioned scanner/proof/coordinator with the tests committed red
-   first. Bring reviewed CARD-1607 helpers forward deliberately; do not blindly
-   transplant an unreviewed branch or replace newer sanitization. Keep v1 main
+   first. Extend the landed CARD-1607 helpers deliberately, retaining current sanitization. Keep v1 main
    recycle behavior. Complete both native lanes before release credit.
 3. Publish current compatible tooling and the audit descriptor through the normal
    reviewed deployment path. Observe installed runtime/protocol directly. A code
