@@ -165,6 +165,35 @@ function Test-FFRefusal([scriptblock]$Action, [string]$Reason) {
     try { & $Action | Out-Null; return $false } catch { return ($_.Exception.Message -clike ('*'+$Reason+'*')) }
     finally { $script:FFOperations.Add([ordered]@{kind='body';operation='refusal';reason=$Reason;seconds=$watch.Elapsed.TotalSeconds}) }
 }
+function Test-FFChunkAccounting([string]$Variant) {
+    $run=Join-Path $root ('accounting-'+$Variant)
+    [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
+    $nodes=@((New-FFNode 'Antiphon.Tests.Accounting.FirstTests' 'Run' 'first'),(New-FFNode 'Antiphon.Tests.Accounting.SecondTests' 'Run' 'second'))
+    # Real writer shape: no coverageComplete, trx or execution properties.
+    $row=[ordered]@{id='antiphon';chunk='all';name='antiphon all';log='C:\retired\logs\accounting\antiphon-all.log';exitCode=0;timedOut=$false;skipped=$false;result='pass'}
+    switch ($Variant) {
+        'exit' { $row.exitCode=-1073741819 }
+        'result' { $row.result='FAIL' }
+        'detail' { $row.detail='missing-terminal-accounting' }
+    }
+    $summary=[ordered]@{runId='accounting';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'}
+    Write-FFJson (Join-Path $run 'summary.json') $summary
+    Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+    Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})})
+    $defs=''; $results=''
+    foreach ($n in $nodes) {
+        if ($Variant -ceq 'short' -and $n.Uid -ceq 'second') { continue }
+        $defs += '<UnitTest id="'+$n.Uid+'"><TestMethod className="'+$n.ClassName+'" name="Run" /></UnitTest>'
+        $results += '<UnitTestResult testId="'+$n.Uid+'" outcome="Passed" />'
+    }
+    if ($Variant -cne 'missing') { [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'),('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><TestDefinitions>'+$defs+'</TestDefinitions><Results>'+$results+'</Results></TestRun>')) }
+    $exp=Export-NightlyPriorFailures $run (Join-Path $root ('accounting-'+$Variant+'.json')) -PassThru
+    $history=Read-NightlyPriorFailures $exp.Path $exp.Digest
+    $suite=@([pscustomobject]@{id='antiphon';nodes=$nodes;chunks=@([pscustomobject]@{id='all';classes=@($nodes.ClassName);nodes=$nodes});exclusions=@()})
+    $full=Resolve-NightlyPriorFailures $history $suite Full
+    $reason=@{exit='summary-nonzero-exit';result='summary-failed-result';detail='summary-detail';short='short-trx';missing='missing-trx'}[$Variant]
+    return (@($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { Resolve-NightlyPriorFailures $history $suite PriorFailureSweep } 'prior-failure-sweep-unresolved'))
+}
 function Test-RefusesIncompleteEvidence {
     $replay=New-FFReplay
     $fx=New-FFHistoricalFixture
@@ -179,6 +208,7 @@ function Test-RefusesIncompleteEvidence {
     }
     $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep
     Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne ('c'*40) -and $h.policyHash -cne ('d'*64)) 'validControl'
+    foreach ($variant in 'exit','result','detail','short') { Assert-FF (Test-FFChunkAccounting $variant) ('chunk-'+$variant) }
     $retainedPlan=[IO.File]::ReadAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'))
     Remove-Item -LiteralPath (Join-Path $fx.Run 'timing/groups-planned-antiphon.json')
     $wrong=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'wrong-suite.json') -PassThru
@@ -282,7 +312,7 @@ function Test-RefusesIncompleteEvidence {
 }
 switch -Exact ($Case) {
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=28 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=32 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
