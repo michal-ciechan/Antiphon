@@ -17,8 +17,8 @@ The round-2 findings and validation below remain historical evidence.
 | D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Done: D-20, S3/S4, J8/W6 |
 | D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Dispositions/16-row roster complete; final import recorded below |
 | D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Done: D-21 and master/rc order; current 1615 D-11 checked |
-| D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Pending |
-| A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Pending |
+| D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Done: D-17 exact raw bytes, C13/PC-SeedHeaders |
+| A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Done: rollout step 4 is preview-only with measured refusal prevalence |
 
 ## Round-2 revision ledger
 
@@ -479,8 +479,44 @@ external includes/alternates/hooks/custom filters, and a complete readable objec
 closure. HEAD/main and every retained reflog side must identify the same sole
 parentless seed commit; reject all other refs/tags/stash/pseudorefs, linked admins,
 operations or extra commits, including commits with the same fixture author.
-Validate author AND committer, message and exact reviewed tree bytes/modes; only
-commit timestamps may vary. Validate index/worktree against that exact seed with
+Validate the **whole raw commit object**, not a parsed subset of its headers.
+Catalog v1 permits SHA-1 repositories only; another object format is unclassified
+until its exact shape is reviewed. The trusted expected tree is
+`831fc61e72b5c6b9570f91d6eabc272ad8f2899f`, independently derived from two
+mode-100644 entries: `.gitignore` blob
+`94d1ec507d791eab738351179c145df29bd8fb9d` (`.antiphon/` plus one LF) and
+`seed.txt` blob `e50285176007e126bede4a894b09763c6c194f6d` (`benign fixture`, no LF).
+Validate these raw tree/blob bytes as well as their IDs; an input tree ID is not
+the source of the expected value.
+
+Read `git cat-file commit <oid>` as a length-checked byte stream, with replacement
+objects/lazy fetch disabled. Do not use pretty/log formatting, header maps,
+shell command substitution (which strips final LF), text normalization or trimming.
+After a strict full-buffer grammar check, capture only the author/committer epoch
+and timezone tokens. Each epoch is canonical nonnegative decimal seconds (no sign,
+leading zero except `0`, whitespace or overflow); each timezone is exactly a sign
+and four decimal digits with hours 00..23 and minutes 00..59. Reject unknown forms.
+Construct this expected ASCII byte buffer independently, interpolating only those
+four validated timestamp tokens; `\n` below is exactly byte 0A:
+
+```text
+tree 831fc61e72b5c6b9570f91d6eabc272ad8f2899f\n
+author Fixture <fixture@example.invalid> <author-epoch> <author-zone>\n
+committer Fixture <fixture@example.invalid> <committer-epoch> <committer-zone>\n
+\n
+seed\n
+```
+
+The display line breaks separate the five byte segments; concatenate them with
+no additional separators. Require equal length and **byte-for-byte equality** of
+the entire raw object against that expected buffer. No parent line (zero parents),
+extra header, repeated/reordered header, continuation line, CR, BOM, NUL, extra
+blank line or trailing byte is admitted. In particular `gpgsig`, `gpgsig-sha256`,
+`mergetag`, `encoding` and custom headers always refuse, even if a Git parser
+otherwise reports the same tree/author/committer/message or the signature is valid.
+Header-carried bytes are protected content, not disposable scaffolding. Only the
+four timestamp tokens vary; no raw candidate header or message is reused to build
+the expected object. Validate index/worktree against that exact seed with
 no extra content (apart from empty directories and standard Git init scaffolding).
 A full match emits disposable-fixture plus classifier version, path and commit ID;
 it needs no origin. Otherwise report no-remote-unclassified with all available
@@ -494,6 +530,11 @@ byte duplicate of the known seed carries no unique protected content. Initially
 exempt; add another reviewed exact shape only with its own witness. Normal clean
 published repositories in test-output still use ordinary host proof. Rejected:
 path-only, author-only, all-of-/tmp disposal, and a volume-authored disposal marker.
+Also rejected: comparing only tree/identity/message or ignoring unknown commit
+headers. The reviewed fixture command does not explicitly disable ambient signing
+or encoding settings: if those produce extra headers, even that fixture is refused
+by this narrower rule. This intentional false refusal is measured in rollout step 4;
+do not relax the byte contract to accommodate it.
 
 **D-18 — Gone-tracking after a rebase remains content-based refusal.** A local
 ref whose origin branch was deleted passes only if the original retained OIDs
@@ -1004,7 +1045,7 @@ path; H1-H6 remain portable host logic. Exact methods and obligations:
 | C10 | `Absent_work_does_not_skip_other_volumes` | Work absent plus unsafe state/tmp/dind still refuses; all absent is a typed no-op, creates nothing. PC: early return from absent work. |
 | C11 | `Preview_lists_every_offender_without_effects` | Two repos across work and tmp with distinct unpublished/reflog/FETCH_HEAD commits plus dirty/evidence/state findings: assert every exact location/kind/OID in JSONL and rendered proof, no deletes. An unreadable repo still lists other repos, marks unvisited scope and complete=false. PC: restore first-finding exit. |
 | C12 | `Fetch_head_requires_proven_objects_not_fresh_names` | Published old commit and published lazy-fetch blob pass without mutation; private commit/blob, missing object, malformed and mixed entries refuse with every location/OID. PC: skip FETCH_HEAD or accept every non-commit. |
-| C13 | `Only_exact_known_seed_fixtures_are_disposable` | D-17 exact no-remote seed passes in work and tmp; copied real repo, second fixture-authored commit, changed tree/message/committer, remote, reflog-only work, dirty bytes, unapproved path, symlink and catalog spoof each refuse/list. PC: classify by author/path alone. |
+| C13 | `Only_exact_known_seed_fixtures_are_disposable` | D-17 exact no-remote raw seed passes in work and tmp; copied real repo, second fixture-authored commit, changed tree/message/committer, remote, reflog-only work, dirty bytes, unapproved path, symlink and catalog spoof each refuse/list. Sixth adversarial repository: identical permitted fields/tree but payload in gpgsig, encoding or custom/continuation header; require refusal and zero deletes. Also reordered/duplicate header, parent, CR/NUL/trailing-byte variants refuse. PC-SeedHeaders substitutes field-only comparison: intended refusal assertion must turn red, then the same method green after restoration. |
 | C14 | `Gone_tracking_retains_original_commit_protection` | Deleted origin ref with original commit reachable from another head passes; rebased equivalent tree without original OID refuses/list; real archive-head publication then passes. PC: equate patch/tree with reachability. |
 | J1 | `Preview_receipt_is_required_and_consumed` | D-7/8: direct low-level apply without Ready refuses; wrapper auto-preview uses exact durable proof once. Red at base: low-level apply deletes despite absent authorizing preview. |
 | J2 | `Receipt_shape_custody_and_digest_are_strict` | Invalid/duplicate fields, foreign owner/links/writable ancestor/truncated files/digest mismatch/failed flush refuse. PC: trust copied PASS or skip custody. |
@@ -1071,6 +1112,24 @@ method-scoped positive controls. R7 = all 16 retired-container script methods in
 23-result deploy contract roster in CP-16; R9 = all 16 documentation pins in CP-13.
 New C3-J10/H/N controls run later in the separate
 Mutation stage, scoped to exact methods on a bound pack, never a whole class.
+
+**PC-SeedHeaders (required C13 red witness):** build an owned real Git seed with
+the exact D-17 tree, then write a valid raw commit via `git hash-object -t commit -w
+--stdin` with a custom header carrying a harmless unique sentinel; bind HEAD/main
+and reflog sides to this sole commit. Add `gpgsig` continuation and `encoding`
+variants independently. Real `cat-file commit` must show the extra bytes while
+the separately parsed author/committer/tree/message match the allowed seed. The
+fixture must reach the v2 fixture classifier, not fail a path/ownership/dirty-tree
+prerequisite. Run only
+`/*/*/VolumeRetirementContentTests/Only_exact_known_seed_fixtures_are_disposable`.
+In the commissioned Mutation stage, replace only the full-byte comparison with
+the round-2 field-only predicate: the assertion that the header-bearing repository
+is refused must fail, with no fixture/build errors. Restore exact comparison and
+run that identical method green; the canonical byte-identical control must be
+admitted throughout. Preserve each header variant's result in the method's evidence.
+This is a classifier positive-control red, **not** a claim that the unchanged
+baseline accepts no-remote seeds; the baseline has no v2 exemption. It adds no
+ordinary checkpoint execution beyond C13 in CP-3 and does not change S1's four reds.
 
 ### Lanes, roster and execution
 
@@ -1146,8 +1205,10 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 
 ## Rollout and compatibility
 
-1. Independent design review first. Validate the fail-open/lock boundary, schema,
-   generated-data classifier and attestation defaults. No production volume audit
+1. This final Plan round incorporates both prior design reviews. Code executes
+   the stated fail-closed defaults; ordinary implementation Review still validates
+   the fail-open/lock boundary, schema, classifier, attestations and checkpoint
+   evidence. No further Plan/TestDesign is required. No production volume audit
    or deletion is part of this Plan or its Code fixture tests.
 2. Implement the versioned scanner/proof/coordinator with the tests committed red
    first. Extend the landed CARD-1607 helpers deliberately, retaining current sanitization. Keep v1 main
@@ -1156,9 +1217,17 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
    reviewed deployment path. Observe installed runtime/protocol directly. A code
    land does not activate host scripts or an image. No runner restart is inherently
    required for this maintenance-only path.
-4. First preview on a deliberately retired, known test volume set and retained
-   mixed-history fixtures. Record complete refusals as well as successes. The
-   original four prototype volumes are gone and cannot supply a live replay.
+4. **Preview-only first, before enabling apply/deletes.** After the known retired
+   test-volume preview, commission one read-only preview of the eligible live
+   retired set using current installed tools. Record complete findings, total
+   repositories, exact-template matches, unclassified crashed-test repos outside
+   the CARD-1605 template (including `/tmp`), header-shape refusals and counts/rates
+   by reason. Record unknown/incomplete denominators explicitly; do not call them
+   zero. Retain both JSONL and proof.md and review this refusal prevalence before
+   enabling apply. Out-of-template leftovers stay refused by design; recover them
+   externally or commission a separately reviewed classifier, then preview again.
+   No apply follows an incomplete or refused preview. The original four prototype
+   volumes are gone and cannot supply a live replay.
 5. Enable current-proof `retire-temp` and the explicit manual entry. Preserve
    historical receipts unchanged, generated receipts ignored and main/cache
    volumes untouched. Existing callers with a creating `-Sha` continue to work;
