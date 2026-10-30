@@ -210,7 +210,8 @@ checkout and retained phase receipts. The helper and restart script stay ASCII a
 Windows PowerShell 5.1 compatible; avoid PowerShell-7-only JSON/filesystem APIs. Restrict it to a regular file under the
 verified canonical logs directory; refuse links, oversized (>16 KiB), malformed,
 unreadable or unsupported-schema content with `ActiveRolloutMarkerUnknown`.
-Do not turn unknown content into the stale exception.
+Do not turn unknown content into absence or an expired-state permission. The explicit
+quarantine/one-invocation recovery below is the sole unknown-marker override.
 
 Schema 1: `rolloutId, sha, controllerId, callerClass, phase, sequence,
 createdAtUtc, heartbeatAtUtc, expiresAtUtc, rolloutState, phaseState,
@@ -267,7 +268,7 @@ Restart decision table (all existing worktree/source/lock guards still apply):
 | Durable Active X (fresh, handover or stale) | X | Marker permits restart; existing source HEAD must still equal X. Planned recovery requires quiescence; watchdog recovery of a down stack follows the narrow exception below. |
 | Heartbeat stale or handover expired, still Active X | Any | Emit the loud stale alert and apply the two Active-X rows above; time alone never permits Y or an implicit HEAD restart. |
 | Verified absent with no incomplete journal, or proven Completed/audited Closed | Any ordinarily valid request | Existing restart behavior; retain terminal history. |
-| Malformed, unreadable, unsafe path or future-skewed | Any | Exit 3 `ActiveRolloutMarkerUnknown`; no automatic overwrite or bypass. |
+| Malformed, unreadable, unsupported-schema or future-skewed | Ordinary request | Exit 3 `ActiveRolloutMarkerUnknown`; recovery requires the explicit audited quarantine flag below. Unsafe canonical/gate path still refuses. |
 
 A foreground controller owns its heartbeat runspace and joins/disposes it in
 finally; never leave a background writer. Renewals serialize through the same
@@ -289,9 +290,73 @@ At joined final retire-temp completion, write the completion journal/proof then
 atomically mark rolloutState=Completed only if both files still belong to this
 rollout/generation. A partial terminal transition remains protected until repaired;
 never infer completion from task status. Retain historical receipts.
-No marker deletion, general unlock flag, global DB lock, new service, or fleet
-location is required. Direct dev-aspire/other restart paths are not covered by this
+No automatic marker deletion, global DB lock, new service, or fleet location is
+required. The narrow audited quarantine below does not unlock rollout effects. Direct dev-aspire/other restart paths are not covered by this
 specific guard; operating policy continues to require restart-apphost as the front door.
+
+### Explicit unknown-marker recovery (round-4 review D-3)
+
+Add `restart-apphost.ps1 -QuarantineRolloutMarker -RolloutOverrideReason <text>
+-ExpectedServerSha <full-sha>`. This is explicit recovery authority for a malformed,
+unreadable, unsupported-schema or future-skewed marker only. The reason must be
+1-512 printable characters; require the explicit expected SHA to equal canonical
+HEAD and preserve all other restart guards. A valid Active marker, even stale,
+**refuses this override**: use same-X restart or the audited close procedure.
+The watchdog never supplies the flag. No interactive prompt or automatic override.
+
+Retry transient marker sharing violations at most **3 reads total**, with bounded
+100/300 ms waits inside a **2-second** read budget. Parsing/schema/ACL failures
+are not retried. After that, ordinary callers fail loudly; an explicit override
+revalidates Unknown under the same gate. Before effects, append an immutable
+recovery intent under `logs/rollouts/recovery/<recoveryId>/` containing actor IDs
+when available, UTC, reason, canonical HEAD/explicit SHA, marker path, classified
+error, prior identity/hash when readable (otherwise null), and disposition.
+Do not log raw malformed contents or filesystem exceptions. Print ERROR
+`ActiveRolloutMarkerQuarantineOverride` and the receipt path; record the override
+and final restart exit/version proof in the restart receipt, including failures.
+Audit-write failure refuses before kill/build/start.
+
+For a safe regular marker, atomically rename to
+`logs/active-rollout.quarantine-<utc>-<recoveryId>.json` without deleting bytes.
+If sharing/ACL denial prevents reading or renaming, record `PreservedUnreadable`
+and leave the original in place: the same explicit request may proceed with its
+one-invocation override after the durable audit succeeds. This avoids making a
+locked corrupt file an indefinite ban on AppHost recovery. Never follow a symlink
+or move a file outside canonical logs; an unsafe marker is left in place and its
+safe parent-local audit records that disposition. Unknown canonical/gate ownership
+or inability to write the audit still refuses; the runbook requires filesystem
+ownership/access repair and a fresh explicit invocation, never silent bypass.
+
+Quarantine does **not** mean rollout completion or absence. Every admission checks
+for an unresolved recovery intent under the gate; it keeps ordinary restarts and
+new rollout effects Unknown even if the marker was renamed. Only this invocation
+may bypass that marker uncertainty, at the explicitly recorded HEAD; it cannot
+bypass live restart/launch locks, source checks or release a running controller.
+If a readable journal identifies X, print any requested recovery-SHA mismatch as
+an explicit override risk in the receipt; never change that journal's SHA. All
+existing controllers must stop effects on the changed/missing marker and require
+reconciliation. A later ordinary watchdog fire alerts while the recovery is
+unresolved; a further manual recovery needs a new reason-bearing receipt.
+
+Document the full procedure in `docs/apphost-runbook.md`: inspect the bounded
+refusal and owner evidence, use the flag from canonical source with the named
+SHA/reason, retain quarantined bytes or unreadable-file disposition, verify
+`/api/version` and reconcile remote rollout state. Extend `close-rollout.ps1`
+with an exclusive `-RecoveryReceiptId <id>` parameter set for this case: require
+that exact open receipt, hash-linked local/remote reconciliation and proof no
+controller remains live, then audit Closed for identified unfinished journals
+and resolve the recovery intent. Unknown rollout IDs are recorded as unknown,
+never invented. No receipt resolution on restart success alone. This is the
+explicit close/override path; a fresh rollout still needs its normal preparation.
+
+CP-6 `Malformed_or_unreadable_marker_refuses` must witness ordinary refusal;
+corrupt-file quarantine plus exact reason/audit and reached restart sentinel;
+unreadable/unrenamable file plus PreservedUnreadable audit and one-invocation
+recovery; bounded sharing retries; future skew; missing reason/wrong SHA and
+valid-Active override refusals; audit failure yields zero effects. A second
+ordinary restart/new rollout must still refuse until explicit reconciliation
+closes the recovery intent. Native Windows exercises real sharing denial and
+PowerShell 5.1; clocks/transports are inert. No new checkpoint methods are added.
 
 ### Watchdog same-X recovery (round-4 review D-1)
 
