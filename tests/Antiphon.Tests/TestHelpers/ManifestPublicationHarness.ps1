@@ -1223,6 +1223,7 @@ function Invoke-MpMatrixArm {
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $script:TestPhaseExecutedContext = $null
     $script:TestPhaseCommitFault = $null
+    $script:QualificationTimingRoot = $null
     $ctx = Open-TestPhaseExecutedContext -LogRoot $root -RunId 'run-m' -Attempt '1' -Suite 'markdown-pdf' -Source 'unknown'
     if ($null -eq $ctx -or $ctx.Refused) { Fail-Mp ($Name + ' context-refused') }
     $verdict = [pscustomobject]@{ ExitCode = 0; coverageComplete = $true; testsPassed = $true }
