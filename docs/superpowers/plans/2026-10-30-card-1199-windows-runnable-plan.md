@@ -9,9 +9,9 @@ is measurement evidence, not clean-source qualification.
 
 Plan task `dd46f01b`, base `421c3de68a81b32ded14f40af85a4e9ff50a1938`.
 The complete review `.antiphon/task-3b1ff9b6.md` is the amendment input.
-This working skeleton retains the confirmed 35-row premise and verification
-design. Code is held until the following amendments are complete and final
-Opus review accepts the revised plan:
+The revised plan retains the confirmed 35-row premise and verification design.
+All three defects and A-1..A-9 are addressed below; final Opus review remains
+required before Code. Amendment decisions:
 
 - Review D-1: independently build the graph-audit tool for CP-46; establish
   scheduler dependencies and cleanup lifetime from source.
@@ -20,8 +20,10 @@ Opus review accepts the revised plan:
 - Review D-3: correct/add measured S/T/O entries in
   `scripts/lib/nightly-class-costs.json`, preserving policy-hash semantics and
   reconciling S3 admission pricing.
-- Incorporate A-1..A-9, explicitly split Linux Code and native Windows Verify
-  commissions, import the final table, and land only plan commits.
+- A-1..A-9: six-minute CP-21/24 deadlines, compiled roster equality, explicit
+  Git environment/NuGet configuration, CP-51 legacy control, CP-52 fixture
+  requalification, separate lane budgets, and plan-only publication. The final
+  importer record below supersedes the historical 50-row validation.
 
 R-2 remains an open operator decision, default pending/required. No product
 source edits or product test execution belong to this Plan task.
@@ -66,7 +68,9 @@ and then removing them would weaken the existing gate and misstate the change.
   directory link or junction for the file symbolic-link case.
 - D-5: preserve the existing Windows Full obligation. Add exact roster/census
   regression checks; no relaxed skip verdict or cross-platform receipt merger.
-  Existing policy hash stays `a7c88a0ab7b92daa0e9a72a8b2f377ca4a8678eaa0d469d22d1d97551c676382`.
+  Preserve the post-top-up policy hash. The round-1 historical hash was
+  `a7c88a0ab7b92daa0e9a72a8b2f377ca4a8678eaa0d469d22d1d97551c676382`;
+  do not restore it over independently landed policy changes.
   If the eventual Code base has covering exclusions, stop and enumerate the
   actual delta for plan review; this plan does not authorize arbitrary removals.
 - D-6: include verification design here, then obtain the caller's requested Opus
@@ -148,6 +152,10 @@ reviewed plan document to the other target as needed, without replaying reports.
 | A directory symlink pass proves junction safety | S PlaceUser uses Directory.CreateSymbolicLink; no junction variant | Keep R-2 open |
 | Approval refresh follows every C# edit | `LandVerificationBuildGraph.Includes` selects project/props/targets/solution/SDK/package definition inputs, not arbitrary C# or execution-policy JSON | Default definition delta is empty; final audit verifies, not invents, a new graph |
 | 35m44s is the successful incremental Full cost | Initial run includes 23 early failures and one extra Windows sibling; build separate | Measure successful cost; do not reuse failing timings as success p95 |
+| Table order makes CP-46 wait for CP-41 | Scheduler prioritizes a ready serial command; importer ignores command Build cells | CP-46 builds its own evaluator before its check, in a distinct owned output |
+| The policy wrapper keeps its round-1 name/count | CARD-1613/top-up 38 uses LinuxOnlyWindowsExclusionPolicy with six internal assertions | Select the new method, keeping CP-36=3 and CP-45=7 TUnit results |
+| Execution policy contains class prices | Separate nightly-class-costs.json has O=25s/6 with five failures; S/T absent | Require native S/T/O cost refresh and separate cost digest before Full |
+| One Code delegate can supply both native lanes | Assigned worktrees execute on one OS | Separate Linux Code and native Windows Verify for every slice |
 
 ## Source map
 
@@ -176,12 +184,13 @@ Aliases below are exact repository files, not replacement implementations:
 
 ## Slices and handoff bounds
 
-Every slice is a committed, pushed source group with exact ordinary checkpoints
-on Windows and Linux. No concurrent edits to these shared files. Partial slices
+Every slice is a committed, pushed source group, authored by Linux Code, then
+verified independently by native Windows Verify at the identical SHA. Both
+tasks have explicit lane budgets below. No concurrent edits to shared files. Partial slices
 leave the remaining Windows cases required/incomplete; they do not qualify Full.
 Preserve the investigation's original failures and counts.
 
-### S-A: twelve gate-only results (110-minute Code ceiling)
+### S-A: twelve gate-only results
 
 Files: S, T; `scripts/test-rc-platform.ps1`;
 `tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs` (mandatory named wrapper);
@@ -216,8 +225,7 @@ set assertion. This remains one TUnit test. The gap check iterates each of the
 35 identities through the real verdict function; one representative is insufficient.
 
 Tests: CP-1..CP-12 and CP-36. Include the exact skip-census updates in
-`scripts/lib/checkpoint-usage.ps1` described below. Implementation/review preparation 40 minutes;
-ordinary two-lane execution/build allowance 60 minutes; reporting 10 minutes.
+`scripts/lib/checkpoint-usage.ps1` described below. Linux authoring allowance 40 minutes; separate lane commissions and budgets are below.
 The native existing-output-symlink setup remains Directory.CreateSymbolicLink.
 In S-A, add a portable MSBuild WriteLinesToFile marker under the fixture's
 ignored .antiphon directory immediately before the mutation Exec. Require that
@@ -228,7 +236,7 @@ unchanged. S-C replaces the unreachable collision commands too; require marker
 presence for the ten mutation cases once ported. Do not infer no-build solely
 from the absence of Build succeeded.
 
-### S-B1: isolated Git helper and eight baseline results (150-minute ceiling)
+### S-B1: isolated Git helper and eight baseline results
 
 Files: new `tests/Antiphon.Tests/Checkpoints/CheckpointFixtureGitEnvironment.cs`,
 new `CheckpointFixtureGitEnvironmentTests.cs`, selected call sites in S/T/O,
@@ -241,9 +249,33 @@ GIT_CONFIG_SYSTEM to those files and GIT_CONFIG_NOSYSTEM=1. Set child HOME,
 USERPROFILE and XDG_CONFIG_HOME to owned empty directories; preserve SDK/NuGet
 cache locations explicitly (NUGET_PACKAGES and a run-owned, once-initialized
 DOTNET_CLI_HOME) for dotnet children so isolation does not force a package
-download/first-use setup per test. Do not copy host credentials or profiles. Remove inherited GIT_CONFIG, GIT_CONFIG_PARAMETERS,
-GIT_CONFIG_COUNT and matching KEY_n/VALUE_n entries, as well as repository/index
-redirectors. Pin local core.autocrlf=false before writing/staging fixtures. Keep
+download/first-use setup per test. Preserve NuGet configuration explicitly:
+moving HOME drops Linux's `~/.nuget/NuGet/NuGet.Config`, while Windows still
+finds `%APPDATA%/NuGet/NuGet.Config` (APPDATA is unchanged). Before isolation,
+resolve the effective fixture restore sources/mappings and non-secret settings
+once per run. Write a run-owned explicit restore config with those effective
+values and pass its absolute path via `RestoreConfigFile` to every seed and
+nested fixture restore/build on both platforms. Preserve NUGET_PACKAGES and
+credential-provider mechanisms; do not copy credentials or profiles. Compare
+effective sources/mappings before and after in the helper boundary test without
+logging config contents. If preserving the effective configuration requires an
+unapproved credential copy, fail setup with the named prerequisite rather than
+silently changing sources or falling back to downloads.
+
+Remove the installed Git's `git rev-parse --local-env-vars` set (query once with
+a 30s bound), plus a fixed portable minimum: GIT_ALTERNATE_OBJECT_DIRECTORIES,
+GIT_OBJECT_DIRECTORY, GIT_DIR, GIT_WORK_TREE, GIT_IMPLICIT_WORK_TREE,
+GIT_GRAFT_FILE, GIT_INDEX_FILE, GIT_NO_REPLACE_OBJECTS, GIT_REPLACE_REF_BASE,
+GIT_PREFIX, GIT_SHALLOW_FILE, GIT_COMMON_DIR, GIT_CONFIG,
+GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT. Also clear GIT_NAMESPACE,
+GIT_CEILING_DIRECTORIES and every GIT_CONFIG_KEY_n/GIT_CONFIG_VALUE_n before
+installing the owned configuration values. Set GIT_NO_REPLACE_OBJECTS=1 and
+GIT_ATTR_NOSYSTEM=1 for isolated fixture children; the latter is an intentional
+test-fixture restriction, not a change to production HardenGit (which does not
+set it). Keep repository-local `.gitattributes` effective. Global/system
+includes.path, safe.directory, credential helpers and init.defaultBranch are
+discarded by replacing those configuration sources, consistent with HardenGit's
+global/system boundary. Pin local core.autocrlf=false before writing/staging fixtures. Keep
 explicit fixture commit identity and signing=false; never rewrite input bytes
 just to make status pass. The helper is used on BOTH platforms.
 
@@ -266,8 +298,11 @@ stat cache deterministically, and assert the fixture commit appears clean to
 production's hardened reader. Base fails with a named dirty path, as the native
 report demonstrated; it must not depend on this host's actual .gitconfig.
 The corrected path isolates before init/add/commit and passes that assertion.
-Keep a separate diagnostic legacy control proving the hostile config was read
-and produces the differential. Verify global and system config sources, local
+Keep the separately named diagnostic test
+`CheckpointFixtureGitEnvironmentTests.legacy_hostile_config_produces_hardened_status_differential`
+(CP-51): it must PASS by observing the unisolated child's sentinel setting and
+the expected dirty CRLF/LF differential. It does not call the repaired helper
+and cannot match the regression method's suffix filter. Verify global and system config sources, local
 config still effective, parent environment unchanged, two parallel child roots
 independent, and no eager process launch outside the strict ProcessSpawnLimit. The environment
 control must independently query a harmless sentinel setting present only in the
@@ -275,23 +310,25 @@ owned global/system config and assert it absent after isolation: local
 autocrlf=false alone must not mask a broken config isolation helper.
 
 Tests: CP-37 red first (one deliberate failing regression, no fixture/build
-error); then CP-13..CP-20, CP-38/CP-48/CP-50 green and CP-39 on Linux.
+error); then CP-13..CP-20, CP-38/CP-48/CP-50/CP-51 green and CP-39 on Linux.
 CP-47 requalifies the five S-A T methods and S staged-untracked once because
 their shared setup changed.
 The O sites can be wired now while their five gates remain until S-B2.
-Authoring 40m + red/green builds and two-lane checks 95m + reporting 15m.
+Linux authoring 40m; red/green and Windows evidence have separate task budgets.
+Push the compiling red source, obtain both lanes' CP-37 assertion failures,
+then author the fix. Windows Verify cannot repair or mutate the source branch.
 If measured runs exceed that bound, hand off committed remaining CP IDs;
 do not silently replace real-build checks with mocks.
 
-### S-B2: five confinement results (100-minute ceiling)
+### S-B2: five confinement results
 
 Files: O gates; the shared helper only if the preceding call-site audit missed a
 route. Retain the already-Windows O sibling, its UseAppHost assertions and its
 explicit separate count. Tests: CP-21..CP-25; CP-40 Windows only. Linux must run
 exactly the five portable methods, not the Windows-only sibling (which skips).
-Authoring 20m + two-lane ordinary evidence 65m + reporting 15m.
+Linux authoring allowance 20m; separate Windows Verify supplies native evidence.
 
-### S-C1: seven ordinary native mutations (125-minute ceiling)
+### S-C1: seven ordinary native mutations
 
 Files: S and a test-only Windows fixture writer in the same file or new
 `CheckpointShapeFixture.cs`. Keep the existing Linux command strings byte-for-byte.
@@ -306,9 +343,12 @@ modified-tracked, deleted-tracked, regular-user-move, deleted-untracked and
 changed-untracked. Port the collision sentinel actions in the same change so an
 incorrectly launched build can actually mutate its sentinel on Windows and be
 caught. Tests: CP-26..CP-32 plus CP-49 (four collision guards affected by
-that arrangement change). Authoring 45m + evidence 65m + reporting 15m.
+that arrangement change) and CP-52 (exact CP-1 staged-untracked requalification
+using the S-C1 build). Include CP-52 unconditionally: WriteProject is shared,
+so fail-closed requalification is simpler than guessing whether its route moved.
+Linux authoring allowance 45m; separate lane execution budgets are below.
 
-### S-C2: staged shape replacement and file symlink (125-minute ceiling)
+### S-C2: staged shape replacement and file symlink
 
 Files: S/native fixture writer. Port directory-on-file, file-on-directory and
 symlink-on-file, exactly as specified below; remove their last runtime gates.
@@ -318,9 +358,9 @@ creation capability on the native lane and report missing privilege/Developer
 Mode as a prerequisite failure, without changing host policy. The investigation
 proves directory symlinks on one host, not universal file-link privilege.
 Tests: CP-33..CP-35. Each mutation row requires its ignored build-target marker
-and exact state transition before its result can qualify. Authoring 45m + evidence 65m + reporting 15m.
+and exact state transition before its result can qualify. Linux authoring allowance 45m; separate lane budgets are below.
 
-### S-F: final acceptance and one graph approval (150-minute ceiling)
+### S-F: final acceptance and one graph approval
 
 No fixture redesign here. Finish all source changes, inspect the final tracked
 build-definition delta and commit/push BEFORE audit. There should be no project,
@@ -429,7 +469,7 @@ bootstrap/import and the deadline overlay; they are diagnostic one-row commands.
 For ordinary execution use the grouped row sets to share the build.
 
 ```powershell
-$c1199Tool = Join-Path (Get-Location).Path 'tools/Antiphon.Checkpoints/bin-c1199-plan-tool/Antiphon.Checkpoints.dll
+$c1199Tool = Join-Path (Get-Location).Path 'tools/Antiphon.Checkpoints/bin-c1199-plan-tool/Antiphon.Checkpoints.dll'
 $c1199Manifest = Join-Path (Get-Location).Path '.antiphon/c1199-checkpoints.yaml'
 ```
 
@@ -455,10 +495,10 @@ $c1199Manifest = Join-Path (Get-Location).Path '.antiphon/c1199-checkpoints.yaml
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-18 --serial` / S-B1 | `T.staged_untracked_file_is_kept_and_indexed` | P1 index/worktree delta; P3 negative receipt. Require USER-KEEP, index entry, named tamper and source_ineligible; omitting git-add or deleting newly staged file fails. | No fixture port | 2 / 23.91 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-19 --serial` / S-B1 | `T.staged_ignored_file_is_kept_and_indexed` | P1 ignored-path/index delta; P3 negative receipt. Require IGNORED-KEEP and forced-add entry; removing force or undoing the index fails. | No fixture port | 2 / 49.07 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-20 --serial` / S-B1 | `T.passing_script_requires_writable_source_receipt` | Script passing build/test to required source.json write. Require collision directory and source.json exit 2 after executed=1; add executed=1/collision proof so unrelated early refusal cannot pass. Logging receipt failure with exit 0 must fail. | No fixture port | 2 / 16.43 |
-| `dotnet $c1199Tool run $c1199Manifest --rows CP-21 --serial` / S-B2 | `O.imported_props_build_preserves_the_tracked_dependency` | P2 imported References.props; P1/P3 owned outputs. Require original tracked Lib DLL/assets AND new owned Lib.dll/artifacts assets; skipping graph/build or writing normal Lib output fails. | No fixture port | 2 / 164.99 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-21 --serial` / S-B2 | `O.imported_props_build_preserves_the_tracked_dependency` | P2 imported References.props; P1/P3 owned outputs. Require original tracked Lib DLL/assets AND new owned Lib.dll/artifacts assets; skipping graph/build or writing normal Lib output fails. | No fixture port | 3 / 164.99 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-22 --serial` / S-B2 | `O.directory_build_props_build_preserves_the_tracked_dependency` | P2 Directory.Build.props import; P1/P3 outputs. Require original DLL/assets plus both new owned files; bypass implicit import or confinement fails. | No fixture port | 2 / 111.92 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-23 --serial` / S-B2 | `O.conditional_import_build_preserves_the_tracked_dependency` | P2 real condition/property graph evaluation; P1/P3 outputs. Require condition-selected Lib in owned output plus unchanged tracked bytes; static-only graph or no build fails. | No fixture port | 2 / 147.07 |
-| `dotnet $c1199Tool run $c1199Manifest --rows CP-24 --serial` / S-B2 | `O.transitive_import_build_preserves_the_tracked_dependency` | P2 transitive imported graph; P1/P3 outputs. Require deepest Lib outputs in App owned root and tracked bytes unchanged; dropping transitive edge fails. | No fixture port | 2 / 166.16 |
+| `dotnet $c1199Tool run $c1199Manifest --rows CP-24 --serial` / S-B2 | `O.transitive_import_build_preserves_the_tracked_dependency` | P2 transitive imported graph; P1/P3 outputs. Require deepest Lib outputs in App owned root and tracked bytes unchanged; dropping transitive edge fails. | No fixture port | 3 / 166.16 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-25 --serial` / S-B2 | `O.unevaluable_import_is_refused_before_the_build` | P2 graph evaluation refusal before build. Require graph-unevaluated and KEEP-SENTINEL, no build success; generic dirty refusal or treating missing import as empty graph fails. | No fixture port | 1 / 18.35 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-26 --serial` / S-C1 | `S.shape_untracked_descendant` | P1 CaptureUntracked/Stamp/Settle. Require moved USER-UNTRACKED descendant, tracked.txt tamper, manual command and invalid receipt; unchanged arrangement fails. | Port: remove tracked regular file; Directory.Move user-dir to tracked.txt; do not stage descendant. | 1 / 56.57 |
 | `dotnet $c1199Tool run $c1199Manifest --rows CP-27 --serial` / S-C1 | `S.shape_ignored_descendant` | P1 ignored manifest/Stamp/Settle. Require USER-IGNORED and exact invalid receipt; overlooking ignored child or leaving original tracked file fails. | Port: same directory move, preserve user.dat ignore entry and unstaged state. | 1 / 54.28 |
@@ -513,11 +553,12 @@ the explicit per-row deadlines; its selection must be byte-equivalent to import.
 |---|---|---|---|
 | S-A | CP-1..CP-12,CP-36 | same | 12 per lane |
 | S-B1 red | CP-37 | CP-37 | 1 expected configuration assertion failure per lane, separately committed before fix |
-| S-B1 green | CP-13..CP-20,CP-38,CP-47,CP-48,CP-50 | same plus CP-39 | 8 new plus 6 explicitly requalified per lane |
+| S-B1 green | CP-13..CP-20,CP-38,CP-47,CP-48,CP-50,CP-51 | same plus CP-39 | 8 new plus 6 explicitly requalified per lane |
 | S-B2 | CP-21..CP-25,CP-40 | CP-21..CP-25 | 5 plus 1 existing Windows sibling |
-| S-C1 | CP-26..CP-32,CP-49 | same | 7 new plus 4 collision requalifications |
+| S-C1 | CP-26..CP-32,CP-49,CP-52 | same | 7 new plus 4 collision and 1 staged-untracked requalifications |
 | S-C2 | CP-33..CP-35 | same | 3 per lane |
 | S-F | CP-41..CP-46 | CP-41..CP-43,CP-45,CP-46 | 35 per lane, plus 1 existing Windows sibling |
+| S-F-cost | CP-53 | CP-53 | 1 support test per lane; no 35-row re-execution |
 
 Ranges above are descriptive: pass explicit comma-separated IDs to `--rows`.
 Build outputs are slice-owned, fresh, inventoried and removed after joined
@@ -550,10 +591,10 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-18 | S-B1 | `CP-13` | both-s-b1-18 | `/*/*/CheckpointTrackedBaselineTests/staged_untracked_file_is_kept_and_indexed` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
 | CP-19 | S-B1 | `CP-13` | both-s-b1-19 | `/*/*/CheckpointTrackedBaselineTests/staged_ignored_file_is_kept_and_indexed` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
 | CP-20 | S-B1 | `CP-13` | both-s-b1-20 | `/*/*/CheckpointTrackedBaselineTests/passing_script_requires_writable_source_receipt` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
-| CP-21 | S-B2 | `tests/Antiphon.Tests -> bin-c1199b2/` | both-s-b2-21 | `/*/*/CheckpointOutputConfinementTests/imported_props_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
+| CP-21 | S-B2 | `tests/Antiphon.Tests -> bin-c1199b2/` | both-s-b2-21 | `/*/*/CheckpointOutputConfinementTests/imported_props_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 13 | true |
 | CP-22 | S-B2 | `CP-21` | both-s-b2-22 | `/*/*/CheckpointOutputConfinementTests/directory_build_props_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
 | CP-23 | S-B2 | `CP-21` | both-s-b2-23 | `/*/*/CheckpointOutputConfinementTests/conditional_import_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
-| CP-24 | S-B2 | `CP-21` | both-s-b2-24 | `/*/*/CheckpointOutputConfinementTests/transitive_import_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 2 | true |
+| CP-24 | S-B2 | `CP-21` | both-s-b2-24 | `/*/*/CheckpointOutputConfinementTests/transitive_import_build_preserves_the_tracked_dependency` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
 | CP-25 | S-B2 | `CP-21` | both-s-b2-25 | `/*/*/CheckpointOutputConfinementTests/unevaluable_import_is_refused_before_the_build` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-26 | S-C1 | `tests/Antiphon.Tests -> bin-c1199c1/` | both-s-c1-26 | `/*/*/CheckpointShapeConflictTests/shape_untracked_descendant` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 11 | true |
 | CP-27 | S-C1 | `CP-26` | both-s-c1-27 | `/*/*/CheckpointShapeConflictTests/shape_ignored_descendant` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
@@ -580,6 +621,9 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
 | CP-50 | S-B1 | `CP-13` | both-git-regression-green | `/*/*/CheckpointFixtureGitEnvironmentTests/fixture_commit_matches_hardened_status_under_hostile_config` | V-2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-51 | S-B1 | `CP-13` | both-hostile-legacy-control | `/*/*/CheckpointFixtureGitEnvironmentTests/legacy_hostile_config_produces_hardened_status_differential` | V-2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-52 | S-C1 | `CP-26` | both-staged-fixture-requalification | `/*/*/CheckpointShapeConflictTests/shape_staged_untracked` | V-1 V-4 R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-53 | S-F-cost | `tests/Antiphon.Tests -> bin-c1199cost/` | both-class-cost-admission | `/*/*/RcRosterRepairTests/C1199_Costs` | V-3 R-4 | exactly 1 passed; 0 failed/skipped | 1 | 12 | true |
 
 ## Performance budget
 
@@ -606,8 +650,8 @@ merge failed first-run durations with passing controls into an invented p95.
 |---|---|---:|---|
 | S-A twelve passes | Sum of per-case samples 711.93s (11m52s); not a contiguous run | 18 across exact-method rows | 10m per source group/lane, based on 9m56s native build |
 | S-B1 eight corrected T cases | Passing control 797.40s (13m17s) | 17; plus 11 for six shared-setup regression cases | Same group build; red needs its own build |
-| S-B2 five corrected O cases | Passing control 448.44s (7m28s); outer wall 504.14s includes 45s admission | 9, plus existing sibling 1 on Windows | 10m |
-| S-C1 seven ports | First failed arrangements sum 381.65s; no successful port sample | 8, plus 3 collision checks | 10m |
+| S-B2 five corrected O cases | Passing control 448.44s (7m28s); outer wall 504.14s includes 45s admission | 11, plus existing sibling 1 on Windows | 10m |
+| S-C1 seven ports | First failed arrangements sum 381.65s; no successful port sample | 8, plus 3 collision checks and 1 staged-untracked requalification | 10m |
 | S-C2 three ports | Failed arrangements sum 151.92s; no successful port sample | 6 | 10m |
 | S-F all 35, class batches | No complete clean-source passing run exists | Shape 14 + T 24 + O 10 = 48; Windows sibling 1 separate | 10m, included in CP-41's 24 |
 | Initial investigation aggregate | 35m43.591s includes the 56.273s Windows sibling and early failures | Historical cost retained, not a success estimate | Excludes 9m56.13s build |
@@ -617,8 +661,8 @@ body time on them. Forecast its incremental successful body cost at **about
 40-50 minutes**, provisional: 11m52s of unchanged passes + 20m46s of corrected
 configuration controls + roughly 9-14 minutes for native ports and launch
 remainder. The final checkpoint budget uses 48 minutes. The existing O Windows
-sibling is already in Full, so do not count it again. The new helper's three
-support tests add a separately measured small cost (budget 3 minutes).
+sibling is already in Full, so do not count it again. The new helper's four
+support tests add a separately measured small cost (budget 4 minutes).
 
 Use `new Full wall = latest comparable Full wall - old 35-skip wall + measured
 35-success wall + new support-test wall + measured build/packing delta`.
@@ -698,6 +742,10 @@ S-F-cost budget: Linux Code 60m (20 authoring + 20 build/check + 10 slot allowan
 + 10 reporting); Windows Verify 40m (20 build/check + 10 slot + 10 reporting).
 One shared test build per lane; CP-53 body estimate 2m, deadline 4m. This is a
 required follow-up, separate from the aggregate-run Debug investigation.
+Its cost JSON and test/harness edits do not change graph definition inputs;
+retain S-F's single `-Update`, with no second refresh. If implementation requires
+a definition-file change, stop this follow-up and commission a revised graph
+approval separately rather than silently expanding D-7.
 
 ### Aggregate-run Debug and parallel work
 
@@ -775,13 +823,13 @@ coverage result.
 Do not run with the importer's automatic 15-minute/3x defaults: import currently
 sets CP-41/CP-42 to **72 minutes** and warns. Produce an ignored YAML from this
 plan, then change ONLY the documented timeout fields (and timing environment
-metadata); verify all 50 IDs, After, build IDs, filters, counts and estimates
+metadata); verify all 53 IDs, After, build IDs, filters, counts and estimates
 are identical to import. This is the executable checkpoint manifest for Code,
 not a policy/schema change. Keep the unedited import alongside it.
 
 | Rows | Explicit timeoutMinutes | Basis / limitation |
 |---|---:|---|
-| CP-1..CP-35 | Twice the per-row execution Minutes in the per-row table (2, 4 or 6) | Rounded 2x provisional successful/sample-based planning bound; excludes shared build |
+| CP-1..CP-35 | Twice the per-row execution Minutes in the per-row table (2, 4 or 6) | CP-21 and CP-24 are 6m: about 2x late-failure samples 164.99/166.16s, and above retained 300s method clocks; other bounds provisional; shared build separate |
 | CP-36 | 4 | 2m support batch, provisional |
 | CP-37 | 2 | Tests-first one-case red body; its 10m build is separate |
 | CP-38 | 4 | Two new helper tests, provisional |
@@ -793,8 +841,9 @@ not a policy/schema change. Keep the unedited import alongside it.
 | CP-45 | 4 | 2m guard batch, provisional |
 | CP-46 | 10 | 2x (2m independent tool build + 3m audit), provisional; evaluator clocks unchanged |
 | CP-47 | 22 | 2x 11m six-case regression batch, provisional |
-| CP-48,CP-50 | 2 | One small case each, provisional |
+| CP-48,CP-50,CP-51,CP-52 | 2 | One small case each, provisional |
 | CP-49 | 6 | 2x 3m collision batch, provisional |
+| CP-53 | 4 | 2x 2m offline cost/admission witness; 10m shared build separate |
 
 Set `timeouts.rowMinutes: 20` for the shared-build floor (approximately 2x the
 9m56s build sample) and `build.slotWaitMinutes: 10` for each acquisition; never
@@ -825,13 +874,37 @@ p95, with any remaining exception named. A 40s operation should have no more
 than approximately two minutes. Failed arrangement samples cannot justify a
 larger successful deadline; Linux and Windows distributions stay separate.
 
-S-A budget 110m; S-B1 150m (40 authoring, 95 red/green and both-lane checks,
-15 reporting); S-B2 100m; S-C1/C2 125m each; S-F 150m. These are bounded task
-ceilings, not a claim of measured implementation time. Reuse exact same-source
-receipts when permitted, never relabel them. Caller may commission the second
-OS verification as its own task against the immutable pushed slice when a lane
-cannot be reached from the authoring host. No running delegate is sent a remote
-snapshot or silently moved; no source mutation while its verification runs.
+### Separate commission budgets
+
+Each cell is a whole-minute wall ceiling, not a measured duration. Linux Code
+includes authoring, its local checks and reporting; Windows Verify includes
+only native checks and reporting. Both include one 10m admission contingency.
+No task is assumed to reach the other OS. Task source remains frozen during
+native verification; any repair gets a new committed SHA and affected rows.
+
+| Slice | Linux Code | Native Windows Verify | Allocation rationale |
+|---|---:|---:|---|
+| S-A | 90 | 60 | Linux 40 authoring + 30 build/body + 10 admission + 10 report; Windows same 30 build/body + 10 admission + 20 report |
+| S-B1 | 150 | 110 | Linux 40 authoring + 85 red/green build/body + 10 admission + 15 report; Windows 85 checks + 10 admission + 15 report, across the red then green commits |
+| S-B2 | 65 | 45 | Linux 20 authoring + 25 build/body + 10 admission + 10 report; Windows 25 checks + 10 admission + 10 report |
+| S-C1 | 90 | 50 | Linux 45 authoring + 25 build/body + 10 admission + 10 report; Windows 25 checks + 10 admission + 15 report |
+| S-C2 | 85 | 45 | Linux 45 authoring + 20 build/body + 10 admission + 10 report; Windows 20 checks + 10 admission + 15 report |
+| S-F | 110 | 95 | Linux 15 finalization + 70 build/body/audit + 10 admission + 15 report; Windows 70 checks + 10 admission + 15 report |
+| S-F-cost | 60 | 40 | Linux 20 authoring + 20 build/body + 10 admission + 10 report; Windows 20 checks + 10 admission + 10 report |
+| Total commissioned ceilings | 650 | 445 | 1095m aggregate task allocation, not elapsed critical path or a test run |
+
+S-B1's Windows Verify task joins its red run before the Linux author writes the
+fix, then continues against the pushed green SHA. If scheduling cannot preserve
+that bounded task, commission distinct red and green native tasks sharing the
+110m allowance; do not hold a live session waiting indefinitely. These are
+execution handoffs, not changes to product input-wait/session release behavior.
+A task that actually waits keeps its seat with parking disabled; only explicit
+owner settlement/release ends that wait, with no automatic deadline (CARD-1083).
+
+Re-use exact same-source receipts where permitted and keep their original SHA;
+never relabel them. S-F-cost produces its own narrow final-source receipts.
+The aggregate Debug obligation applies per over-30m selection and is not waived
+by splitting the authorship and native evidence into different tasks.
 
 ## R-2 decision retained
 
