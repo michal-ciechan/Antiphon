@@ -571,7 +571,7 @@ const hidden = {
         /^audit check=rev-list status=0 repo=repo proof=fetched commits=1 tips=1 gone-tracking=0 unadvertised-local=0$/m],
     // Replay 3b (policy pending): a tracking ref for a branch origin deleted still refuses; the receipt counts it.
     'origin-gone-counts': [U, () => { trackingOnly(); git('branch', 'kept-local', priv()); },
-        /^audit check=rev-list status=0 repo=repo proof=fetched commits=2 tips=2 gone-tracking=1 unadvertised-local=1$/m],
+        /^audit check=rev-list status=0 repo=repo proof=fetched commits=2 tips=2 gone-tracking=1 unadvertised-local=1 recovery=publish-the-original-commit-to-an-origin-archive-branch-then-preview-again$/m],
     // Repair 7: the proof fetches share one allowance. Spent, no fetch starts and the present heads decide.
     'origin-fetch-allowance-spent': [U, () => { staleMaster(); allowance(0); }, /^audit check=rev-list status=0 repo=repo proof=present /m,
         () => assert.equal(starts('+refs/heads/*:refs/c1008/origin/*'), 0, 'no fetch once the allowance is spent')],

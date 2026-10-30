@@ -790,8 +790,8 @@ public sealed class RollingVolumeRecycleScriptTests
         await VolumeRetirementFixture.ReadyPreview(host, retiredExtra);
         var retired = await host.Run("retire-temp-runner", retiredExtra);
         retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
-        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
-            "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work" });
         var journalPath = Path.Combine(host.Root, "server/recycle", operation + ".json");
         File.Exists(journalPath).ShouldBeTrue("c1050-host-operation: actual wrapper operation names the persisted journal");
         var journal = JsonNode.Parse(File.ReadAllText(journalPath))!;
@@ -3199,6 +3199,16 @@ internal sealed class C1008HostFixture : IDisposable
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false,
         Func<string, string>? sourceTransform = null)
     {
+        // GNU timeout execs by name rather than calling the shell function below.
+        // Keep its real deadline and put the owned fake CLI on the child PATH.
+        // This also prevents an unprobed apply from reaching the worker daemon.
+        var dockerBin = Path.Combine(Root, "docker-cli");
+        Directory.CreateDirectory(dockerBin);
+        var dockerCli = Path.Combine(dockerBin, "docker");
+        await File.WriteAllTextAsync(dockerCli, "#!/bin/sh\nexec bash " +
+            VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh")) + " \"$@\"\n");
+        var executable = await C994ScriptProcess.Run("chmod", "0755", dockerCli);
+        if (executable.Exit != 0) throw new InvalidOperationException("fake Docker executable: " + executable.Output);
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
@@ -3252,6 +3262,7 @@ internal sealed class C1008HostFixture : IDisposable
         var script = Path.Combine(Root, "remote.sh");
         File.WriteAllText(script, source);
         var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.Environment["PATH"] = dockerBin + ":" + Environment.GetEnvironmentVariable("PATH");
         psi.ArgumentList.Add(script);
         psi.Environment["C590_CASE"] = hostCase;
         psi.Environment["C590_SHA"] = new string('a', 40);

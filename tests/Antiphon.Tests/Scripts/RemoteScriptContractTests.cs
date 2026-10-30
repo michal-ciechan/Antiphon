@@ -7146,8 +7146,8 @@ public sealed class RemoteScriptContractTests
             await VolumeRetirementFixture.ReadyPreview(retained);
             var run = await retained.Run("retire-temp-runner");
             run.Exit.ShouldBe(0, run.Output);
-            retained.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
-                "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+            retained.Removed.ShouldBe(new[] { "antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work" });
             var ledger = JsonNode.Parse(File.ReadAllText(retained.StatePath))!["volumes"]!.AsObject();
             foreach (var name in new[] { "antiphon-runner_runner-state", "antiphon-runner-cache-nuget-packages",
                 "antiphon-runner-cache-nuget-scratch", "antiphon-runner-cache-npm-content" })

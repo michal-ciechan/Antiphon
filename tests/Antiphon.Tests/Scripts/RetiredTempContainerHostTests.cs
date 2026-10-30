@@ -423,8 +423,10 @@ public sealed class RetiredTempContainerHostTests
         var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
         foreign.Exit.ShouldBe(0,"c994-image-binding: a completed receipt from another SHA still audits; "+foreign.Output);
         foreign.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
-        f.Removed.ShouldBe(new[]{"antiphon-runner-temp_work","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state"});
-        f.Trace.Where(a=>a.Length>0&&a[0]=="create").Any(a=>a.Contains("sha256:"+new string('a',64))).ShouldBeTrue("c994-image-binding: apply uses the retired image");
+        f.Removed.ShouldBe(new[]{"antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work"});
+        f.Trace.Where(a=>a.Length>0&&a[0]=="run").Any(a=>a.Contains(C1008HostFixture.SessionImage)).ShouldBeTrue("c1609-helper: apply runs the inspected read-only helper");
+        f.Trace.Any(a=>a.Contains("down")&&a.Contains("-v")).ShouldBeFalse("c1609-helper: no broad Compose deletion");
 
         using var historical = Fixture("session-runner");
         (await Cleanup(historical)).Exit.ShouldBe(0, "c1609-historical-image: seed");
