@@ -147,7 +147,7 @@ function proof(f) {
 function shell(f, body, suffix='run') {
   fs.writeFileSync(scope.root+'/current-operation.json',JSON.stringify({op:f.op,receipt:f.host+'/server/retirement/'+f.op+'/receipt.json'}));
   let src=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
-  const marker="trap 'ec=$?; if [ \"$WROTE\" != 1 ]";
+  const marker="\ntrap 'ec=$?; if [ \"$WROTE\" != 1 ]";
   assert.equal(src.split(marker).length,2,'unique real entrypoint injection');
   const lines=[
     'LANE=host','HOST_PROJECT='+q(f.main),'TEMP_PROJECT='+q(f.project),'C1008_PROJECT='+q(f.project),
@@ -166,7 +166,7 @@ function shell(f, body, suffix='run') {
     f.proof?'C1008_HOST_PROOF='+q(f.proof)+'; C1008_OPERATION_STARTED='+f.started:'',
     body,'exit 0'
   ].join('\n');
-  src=src.replace(marker,lines+'\n'+marker);
+  src=src.replace(marker,'\n'+lines+'\n'+marker);
   const filename=scope.root+'/'+f.stem+'-'+suffix+'.sh';
   fs.writeFileSync(filename,'export C590_CASE=retire-temp-runner C590_SHA='+q(scope.source)+' C590_RUN=native C590_REEXEC=1\n'+src,{mode:0o600});
   return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-r','-w','--','bash',filename],{},180000);
