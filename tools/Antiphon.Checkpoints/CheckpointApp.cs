@@ -850,8 +850,12 @@ public static class CheckpointApp
             }).ToList(),
             Rows = rows,
             Unlisted = [],
+            // Configured builds can time out before creating any output. Describe the
+            // actual inventory; Builds/Rows retain the nonexecuted admission result.
+            OutputPaths = state.CreatedOutputPaths.ToList(),
             OutputNames = manifest.Builds
-                .Where(build => state.Builds.FirstOrDefault(item => item.Id == build.Id)?.State != "unused")
+                .Where(build => state.CreatedOutputPaths.Any(path =>
+                    Path.GetFileName(Path.TrimEndingDirectorySeparator(path)) == build.Id))
                 .Select(build => build.Id + "/").ToList(),
             MaxConcurrentRows = state.MaxConcurrentRows,
             MaxConcurrentBuilds = state.MaxConcurrentBuilds,
