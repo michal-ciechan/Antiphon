@@ -26,6 +26,46 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskSupervisionReceiptTests
 {
     [Test]
+    public async Task C1610_Unknown_parent_backlog_does_not_starve_a_deliverable_notice()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(role: AgentTaskRole.Deploy,
+            kind: TranscriptKinds.ToolCall, lastAgeMinutes: 6);
+        await using var recipient = await OpenAsync(h, h.ParentId);
+        await h.SweepAsync();
+        await recipient.MarkIdleAsync();
+        string expected;
+        await using (var db = h.Context())
+        {
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.TaskId);
+            var notice = await db.TaskSupervisionNotices.AsNoTracking().SingleAsync(n => n.TaskId == h.TaskId);
+            expected = notice.Body;
+            // Persist legacy unknown-coordinate debt ahead of the real producer's notice.
+            for (var i = 0; i < 32; i++)
+            {
+                var oldTask = new AgentTask();
+                db.Entry(oldTask).CurrentValues.SetValues(task);
+                oldTask.Id = Guid.NewGuid();
+                oldTask.AgentId = null;
+                oldTask.CreatedAt = task.CreatedAt.AddMinutes(-1);
+                db.AgentTasks.Add(oldTask);
+                var unknown = new TaskSupervisionNotice();
+                db.Entry(unknown).CurrentValues.SetValues(notice);
+                unknown.Id = Guid.NewGuid();
+                unknown.TaskId = oldTask.Id;
+                unknown.RecipientStartedAt = null;
+                unknown.NextAttemptAt = h.Clock.GetUtcNow().UtcDateTime.AddHours(-1);
+                db.TaskSupervisionNotices.Add(unknown);
+            }
+            await db.SaveChangesAsync();
+        }
+        await RecoverAsync(recipient, h.Clock);
+        await RecoverAsync(recipient, h.Clock);
+        (await PromptsAsync(h, h.ParentId, 0)).Where(p => p.Text?.Contains(expected, StringComparison.Ordinal) == true)
+            .ShouldHaveSingleItem("unknown parent debt must back off so the next bounded batch can deliver");
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     [Arguments("eligible")]
     [Arguments("busy")]
     [Arguments("crash")]
