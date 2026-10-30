@@ -9235,6 +9235,15 @@ c1008_recycle() {
     mkdir -p "$SERVER2_ROOT/recycle" || c1008_refuse RecycleReceiptUnavailable
     c1008_save || c1008_refuse RecycleReceiptUnavailable
     C1008_ACTIVE=1
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" != 1 ]; then
+        # A missing capability refuses before starting an expensive helper. Keep
+        # the names-only state refusal diagnostic, including absent-work cases.
+        c1609_scan=0
+        c1609_state_credential_scan || c1609_scan=$?
+        if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
+        if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
+        [ -f "$(c1609_retirement_root)/receipt.json" ] || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+    fi
     c1008_audit_checked; audit="$C1008_AUDIT"
     if [ "${C1008_RESUME:-0}" = 1 ]; then
         [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
