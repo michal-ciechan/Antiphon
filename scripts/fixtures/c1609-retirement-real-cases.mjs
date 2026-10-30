@@ -146,6 +146,16 @@ function proof(f) {
 }
 function shell(f, body, suffix='run') {
   fs.writeFileSync(scope.root+'/current-operation.json',JSON.stringify({op:f.op,receipt:f.host+'/server/retirement/'+f.op+'/receipt.json'}));
+  let retirement=repo+'/scripts/c1008-retirement.sh';
+  if(process.env.C1609_NATIVE_PC==='N2-name-only' && suffix==='replacement'){
+    const original=fs.readFileSync(retirement,'utf8');
+    const guard='    [ "$current" = "$(jq -cS .fingerprints "$file")" ] || return 1';
+    assert.equal(original.split(guard).length,2,'method-scoped incarnation PC');
+    retirement=scope.root+'/'+f.stem+'-pc-retirement.sh';
+    const mutated=original.replace(guard,'    : # N2 PC deliberately ignores the incarnation tuple');
+    fs.writeFileSync(retirement,mutated,{mode:0o600});
+    fs.writeFileSync(retirement+'.provenance.json',JSON.stringify({source:scope.source,original:hash(original),mutated:hash(mutated),method:'Replacement_and_concurrent_reference_block_delete'}));
+  }
   let src=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
   const marker="\ntrap 'ec=$?; if [ \"$WROTE\" != 1 ]";
   assert.equal(src.split(marker).length,2,'unique real entrypoint injection');
@@ -157,7 +167,8 @@ function shell(f, body, suffix='run') {
     'C1008_RECORD='+q(JSON.stringify({image:scope.digest,project:f.project,volumes:{}})),
     'C1609_CONTENT_AUDIT_FILE='+q(repo+'/scripts/c1008-content-audit.sh'),
     'C1609_VOLUME_METADATA_FILE='+q(repo+'/scripts/c1008-volume-metadata.sh'),
-    'source '+q(repo+'/scripts/c1008-retirement.sh'),
+    'source '+q(retirement),
+    process.env.C1609_NATIVE_PC==='N3-no-intent' && suffix==='apply' ? 'c1609_target_intent() { :; }' : '',
     'sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then for last; do :; done; mkdir -p -- "$last"; chmod 0700 "$last"; else "$@"; fi; }',
     'write_result() { WROTE=1; printf "NATIVE_RESULT %s %s %s\\n" "$1" "$2" "$3"; exit "$3"; }',
     'c1008_status_proof() { C1008_CENSUS="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown; }',
@@ -286,8 +297,13 @@ async function n2(f) {
     const created=g.stem+'-writer-created'; scope.volumes.push(created);g.names.push(created);save();
     const writer=shell(g,'c1008_rollout_lock; docker volume create --label '+q(label+'='+scope.prefix)+' '+q(created)+'; touch '+q(entered),'writer');
     try {
-      // A nonblocking independent flock probe proves the lock is held, without a timing guess.
+      // The lock is a real kernel lock on the production-selected file.
       assert.notEqual(rootRun('flock -n '+q(g.host+'/server/locks/rollout.lock')+' true',true).code,0);
+      const inode=rootRun('stat -c %i '+q(g.host+'/server/locks/rollout.lock')).stdout.trim();
+      const probe="awk -v inode="+q(inode)+" '$0 ~ /->/ && index($0, \":\" inode \" \") {found=1} END {exit !found}' /proc/locks";
+      let waiting=false,settled=false;writer.finally(()=>{settled=true;});
+      for(let n=0;n<100 && !settled;n++){if(rootRun(probe,true).code===0){waiting=true;break;}await new Promise(r=>setTimeout(r,20));}
+      assert(waiting,'N2 supported writer is blocked in kernel flock before any Docker create');
       assert.notEqual(rootRun('test -e '+q(entered),true).code,0);
     } finally {rootRun('touch '+q(release));await holder;const w=await writer;assert.equal(w.code,0,'supported writer resumes');}
     preserve(g);
@@ -316,8 +332,11 @@ const legacySeed=[
   'C1008_ACTIVE=1; C1609_APPLY_ACTIVE=1; c1008_save'
 ].join('\n');
 async function n3(f) {
+  const callOffset=fs.statSync(scope.root+'/docker-calls.jsonl').size;
   proof(f);await ready(f);
   const applied=await shell(f,'c1008_lock; c1609_require_ready_preview || exit 2\n'+legacySeed+'\n'+effectBody(),'apply');
+  const firstCalls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').slice(callOffset).trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
+  assert(firstCalls.filter(c=>c.args[0]==='volume'&&c.args[1]==='rm').every(c=>c.intentBeforeRm),'N3 every real delete has a durable intent before the effect');
   assert.equal(applied.code,0,'N3 exact real delete loop: '+applied.stdout+applied.stderr);
   assert.equal(receipt(f).state,'Completed');for(const n of f.targets)assert.equal(call(cli,['volume','inspect',n],true).code,1);
   preserve(f);
@@ -346,7 +365,7 @@ async function n3(f) {
       preserve(g);
     } finally {cleanupObjects(g.names,g.ids);}
   }
-  const calls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
+  const calls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').slice(callOffset).trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
   const removes=calls.filter(c=>c.args[0]==='volume'&&c.args[1]==='rm');
   assert(removes.length>=4);assert(removes.every(c=>c.args.length===4&&c.args[2]==='--'),'N3 only exact non-force deletion');
   assert(removes.every(c=>c.intentBeforeRm),'N3 every real delete has a durable intent');
@@ -365,7 +384,7 @@ async function shim() {
     const operation=JSON.parse(fs.readFileSync(opFile));
     const record=JSON.parse(fs.readFileSync(operation.receipt));
     intentBeforeRm=record.intents?.some(i=>i.name===args[3]&&i.intent==='remove'&&i.result==='pending')===true;
-    fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:original,intentBeforeRm})+'\n');
+    fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:original,intentBeforeRm,operation:operation.op})+'\n');
     const r=call(cli,args,true);
     process.stdout.write(r.stdout);process.stderr.write(r.stderr);
     if(r.code===0&&fault.cut==='kill-after-rm'&&fault.operation===operation.op&&fault.name===args[3])process.kill(Number(process.env.C1609_CUT_PID),'SIGKILL');
@@ -415,7 +434,7 @@ else {
       for(const id of leftovers){const c=json('inspect',id)[0];assert(c.Config.Labels['io.antiphon.preview-audit']?.startsWith(f.op+':'));removeContainer(id);}
       cleanupObjects(f.names,f.ids);
     }
-    fs.writeFileSync(scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json',JSON.stringify({source:scope.source,imageSource:scope.imageSource,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
+    fs.writeFileSync(scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json',JSON.stringify({source:scope.source,imageSource:scope.imageSource,pc:process.env.C1609_NATIVE_PC||null,id,failure:failure?.message||null,phase:'case',cleanup:'absent',shims:['private project names','fixture-scoped complete Docker census','deterministic live status; Docker references real','owned root metadata namespace']},null,2));
     if(failure)process.exitCode=1;else console.log('C1609_NATIVE '+id+' passed cleanup=absent evidence='+scope.root+'/'+id+'-'+scope.source.slice(0,12)+'-'+f.stem+'.json');
   }
 }
