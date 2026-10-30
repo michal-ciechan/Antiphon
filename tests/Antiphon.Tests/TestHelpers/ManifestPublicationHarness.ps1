@@ -1087,7 +1087,8 @@ function Invoke-MpQualification {
         [int]$FaultAt = 0,
         [int]$FaultUntil = 0,
         [string]$FaultStage = 'Rename',
-        [int]$FaultRemaining = 2
+        [int]$FaultRemaining = 2,
+        [string]$PublicationMode = ''
     )
     $root = Join-Path $Work $Name
     New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -1116,11 +1117,41 @@ function Invoke-MpQualification {
     $env:MP_MODE = $Mode
     $script:TestPhaseCommitFault = $null
     $script:TestPhaseExecutedContext = $null
+    $openOriginal = ${function:Open-TestPhaseExecutedContext}
+    $projectOriginal = ${function:Complete-TestPhaseExecutedProjection}
+    $heldWriter = $null
+    if ($PublicationMode -eq 'none') {
+        Set-Item function:Open-TestPhaseExecutedContext -Value {
+            param($LogRoot, $TimingRoot, $RunId, $Attempt, $Suite, $Source, $InvocationId, [switch]$ProjectOnly, [switch]$Recover)
+            return (New-TestPhaseRefusedContext -Reason 'witness-no-journal')
+        }
+    } elseif ($PublicationMode -eq 'missing-state') {
+        Set-Item function:Complete-TestPhaseExecutedProjection -Value {
+            param($Context, $LogRoot, $TimingRoot, $Terminal)
+            & $projectOriginal @PSBoundParameters | Out-Null
+            if ($null -ne $Context -and -not $Context.Refused) {
+                Remove-Item -LiteralPath (Join-Path $Context.TimingRoot 'groups-executed.state.json') -Force
+            }
+        }
+    } elseif ($PublicationMode -eq 'torn') {
+        $seed = Open-TestPhaseExecutedContext -LogRoot $log -TimingRoot $timing -RunId ('mp-' + $Name) -Attempt '1' -Suite '' -Source ('a' * 40)
+        if ($seed.Refused) { Fail-Mp 'verdict-torn-setup-refused' }
+        $bad = Join-Path (Join-Path (Join-Path $timing 'groups-executed.journal') $seed.Generation) '00000001.json'
+        [System.IO.File]::WriteAllText($bad, '{"torn":', $utf8)
+        Close-TestPhaseExecutedContext -Context $seed
+    } elseif ($PublicationMode -eq 'held') {
+        $journal = Join-Path $timing 'groups-executed.journal'
+        New-Item -ItemType Directory -Path $journal -Force | Out-Null
+        $heldWriter = [System.IO.File]::Open((Join-Path $journal 'writer.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         $result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $log -TimingRoot $timing -Suites $Suites -Profile 'nightly' -Sha ('a' * 40) -GitRef 'origin/master' -RunId ('mp-' + $Name) -Attempt 1 -Trigger 'manual' -SeamsPath $seam -PolicyPath $policy -AllowSharedTree
     } finally {
+        Set-Item function:Open-TestPhaseExecutedContext -Value $openOriginal
+        Set-Item function:Complete-TestPhaseExecutedProjection -Value $projectOriginal
+        if ($null -ne $heldWriter) { $heldWriter.Dispose() }
         $ErrorActionPreference = $previous
         Remove-Item Env:MP_STATE -ErrorAction SilentlyContinue
         Remove-Item Env:MP_TIMING -ErrorAction SilentlyContinue
@@ -1422,24 +1453,63 @@ function Invoke-V11 {
     Write-MpResult -Ok $true -Reason 'v11'
 }
 
+function Get-MpVerdictOutputs {
+    param($Run)
+    if ($null -eq $Run.Summary -or $null -eq $Run.Result) { Fail-Mp 'verdict-output-absent' }
+    $ledger = @()
+    foreach ($row in @($Run.Summary.suites)) {
+        $entry = [ordered]@{}
+        foreach ($key in @('id', 'name', 'suite', 'chunk', 'result', 'exitCode', 'timedOut', 'skipped', 'coverageComplete', 'testsPassed', 'evidenceReasons', 'requiredUidCount', 'excludedUidCount', 'censusDigest', 'exclusions')) {
+            if ($row.PSObject.Properties.Name -contains $key) { $entry[$key] = $row.$key }
+        }
+        $ledger += $entry
+    }
+    $receipt = [ordered]@{}
+    foreach ($key in @('outcome', 'succeeded', 'coverageComplete', 'testsPassed', 'reasons', 'policyHash', 'coverageScope', 'platform', 'requiredSuites', 'selectedSuites', 'nativeActiveMax')) {
+        if ($Run.Summary.PSObject.Properties.Name -notcontains $key) { Fail-Mp ('receipt-field-absent ' + $key) }
+        $receipt[$key] = $Run.Summary.$key
+    }
+    $returned = [ordered]@{}
+    foreach ($key in @('ExitCode', 'coverageComplete', 'testsPassed', 'reasons', 'PolicyHash', 'coverageScope', 'platform', 'NativeActiveMax')) { $returned[$key] = $Run.Result.$key }
+    # Timings, run/root identities and paths are observational. Verdicts, reasons,
+    # UID counts/digests and policy identity remain literal production values.
+    $originalEvidence = @()
+    foreach ($file in @(Get-ChildItem -LiteralPath $Run.Log -Filter '*.trx' -File | Sort-Object Name)) {
+        $originalEvidence += [ordered]@{ name = $file.Name; sha256 = (Get-MpSha $file.FullName) }
+    }
+    $json = [ordered]@{ ledger = $ledger; receipt = $receipt; returned = $returned; originalEvidence = $originalEvidence } | ConvertTo-Json -Depth 30 -Compress
+    return $json.Replace((Split-Path -Parent $Run.Log), '<root>').Replace(('mp-' + $Run.Name), '<run>')
+}
+
 function Invoke-V12 {
-    $candidate = Join-Path $Work 'candidate'
-    $auth = Join-Path $candidate 'authority'
-    New-Item -ItemType Directory -Path $auth -Force | Out-Null
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText((Join-Path $auth 'authority.json'), '{"schemaVersion":1,"kind":"authority"}', $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $auth 'ledger.json'), '{"schemaVersion":1,"kind":"ledger"}', $utf8)
-    [System.IO.File]::WriteAllText((Join-Path $auth 'receipt.json'), '{"schemaVersion":1,"kind":"receipt"}', $utf8)
-    $before = (Get-MpSha (Join-Path $auth 'authority.json')) + (Get-MpSha (Join-Path $auth 'ledger.json')) + (Get-MpSha (Join-Path $auth 'receipt.json'))
-    . (Join-Path $Repo 'scripts/lib/release-authority.ps1')
-    $first = Test-ReleaseGateExecutionLedger -CandidateRoot $candidate -Pinned $null -Green $null
-    $run = Invoke-MpQualification -Name 'ledger' -Mode 'success' -Suites @('markdown-pdf') -ChunkClasses @{ 'markdown-pdf' = @('Fixture.One', 'Fixture.Two') }
-    $after = (Get-MpSha (Join-Path $auth 'authority.json')) + (Get-MpSha (Join-Path $auth 'ledger.json')) + (Get-MpSha (Join-Path $auth 'receipt.json'))
-    if ($before -ne $after) { Fail-Mp 'publication-changed-authority-bytes' }
-    $second = Test-ReleaseGateExecutionLedger -CandidateRoot $candidate -Pinned $null -Green $null
-    if ((@($first.Reasons) -join ',') -ne (@($second.Reasons) -join ',')) { Fail-Mp 'publication-changed-validator-reasons' }
-    if ($run.FlatAtBarrier -ne 'absent') { Fail-Mp ('ledger-flat-present-before-terminal ' + $run.FlatAtBarrier) }
-    Write-MpResult -Ok $true -Reason 'v12'
+    $classes = @{ 'markdown-pdf' = @('Fixture.One', 'Fixture.Two', 'Fixture.Three', 'Fixture.Four', 'Fixture.Five', 'Fixture.Six') }
+    foreach ($outcome in @('success', 'failed', 'missing-trx')) {
+        $baseline = Invoke-MpQualification -Name ($outcome + '-none') -Mode $outcome -Suites @('markdown-pdf') -ChunkClasses $classes -PublicationMode 'none'
+        if (Test-Path -LiteralPath (Join-Path $baseline.Timing 'groups-executed.journal/current.json')) { Fail-Mp 'no-journal-control-created-journal' }
+        if ($outcome -eq 'success' -and (-not $baseline.Summary.succeeded -or [int]$baseline.Result.ExitCode -ne 0)) { Fail-Mp 'verdict-baseline-not-green' }
+        if ($outcome -ne 'success' -and ($baseline.Summary.succeeded -or [int]$baseline.Result.ExitCode -eq 0)) { Fail-Mp ('verdict-baseline-not-red ' + $outcome) }
+        $expected = Get-MpVerdictOutputs -Run $baseline
+        foreach ($publication in @('clean', 'gap', 'torn', 'missing-state', 'held')) {
+            $fault = @{}
+            if ($publication -eq 'gap') { $fault = @{ FaultAt = 2; FaultUntil = 5; FaultRemaining = 2 } }
+            $run = Invoke-MpQualification -Name ($outcome + '-' + $publication) -Mode $outcome -Suites @('markdown-pdf') -ChunkClasses $classes -PublicationMode $publication @fault
+            $actual = Get-MpVerdictOutputs -Run $run
+            [System.IO.File]::WriteAllText((Join-Path $run.State 'verdict-outputs.json'), $actual)
+            if ($actual -cne $expected) { Fail-Mp ('publication-changed-real-verdict ' + $outcome + '/' + $publication) }
+            if ($run.FlatAtBarrier -ne 'absent') { Fail-Mp ('verdict-flat-before-terminal ' + $publication) }
+            if ($publication -eq 'held') {
+                if (Test-Path -LiteralPath (Join-Path $run.Timing 'groups-executed.journal/current.json')) { Fail-Mp 'held-writer-did-not-refuse' }
+                if (-not (Test-Path -LiteralPath (Join-Path $run.Timing 'phase-summary-failed'))) { Fail-Mp 'held-writer-marker-absent' }
+            } elseif ($publication -ne 'clean') {
+                $quality = Get-TestPhasePublicationQuality -RunDirectory $run.Log
+                $token = 'publication-' + $publication
+                if ($publication -eq 'torn') { $token = 'publication-corruption' }
+                if ($publication -eq 'missing-state') { $token = 'publication-state-missing' }
+                if (@($quality) -notcontains $token) { Fail-Mp ('verdict-fault-not-observed ' + $publication + ' ' + (@($quality) -join ',')) }
+            }
+        }
+    }
+    Write-MpResult -Ok $true -Reason 'v12-real-verdict-matrix'
 }
 
 function Invoke-V13 {
