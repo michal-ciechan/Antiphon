@@ -18,7 +18,7 @@ public sealed class RcFailureHistoryTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     [Test, Timeout(180_000)]
     public Task RefusesIncompleteEvidence(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 38,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 39,
             ["FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.chunk-exit",
              "FF RefusesIncompleteEvidence.chunk-result", "FF RefusesIncompleteEvidence.chunk-detail",
              "FF RefusesIncompleteEvidence.chunk-short", "FF RefusesIncompleteEvidence.standaloneMissingTrx",
@@ -26,7 +26,8 @@ public sealed class RcFailureHistoryTests
              "FF RefusesIncompleteEvidence.wrongSuitePartial", "FF RefusesIncompleteEvidence.missingFull",
              "FF RefusesIncompleteEvidence.missingPartial", "FF RefusesIncompleteEvidence.renamed",
              "FF RefusesIncompleteEvidence.excluded", "FF RefusesIncompleteEvidence.methodExclusions",
-             "FF RefusesIncompleteEvidence.exclusionMismatch", "FF RefusesIncompleteEvidence.noOldChunk",
+             "FF RefusesIncompleteEvidence.exclusionMismatch", "FF RefusesIncompleteEvidence.contextBindings",
+             "FF RefusesIncompleteEvidence.noOldChunk",
              "FF RefusesIncompleteEvidence.empty", "FF RefusesIncompleteEvidence.digest",
              "FF RefusesIncompleteEvidence.schema", "FF RefusesIncompleteEvidence.provenance-sourceRunId",
              "FF RefusesIncompleteEvidence.provenance-sourceSha", "FF RefusesIncompleteEvidence.provenance-policyHash",
