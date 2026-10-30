@@ -27,6 +27,10 @@ internal static class CheckpointShapeWindowsFixture
         var userMove = Quote(Path.Combine(root, "user-move.txt"));
         return linuxCommand switch
         {
+            "rm -f -- tracked.txt && mv -- user-dir tracked.txt && git --git-dir=.git --work-tree=. add -A -- tracked.txt && git --git-dir=.git --work-tree=. restore --staged -- tracked.txt/unstaged.txt"
+                or "rm -rf -- dir && mv -- payload.dat dir && git --git-dir=.git --work-tree=. add -A -- dir"
+                or "ln -sfn -- link-target.txt tracked.txt && git --git-dir=.git --work-tree=. add -- tracked.txt" =>
+                "$ErrorActionPreference = 'Stop'\n# S-C2 red witness: target executes without its shape mutation.\n",
             "rm -f -- tracked.txt && mv -- user-dir tracked.txt" =>
                 "$ErrorActionPreference = 'Stop'\n"
                 + $"if (-not [System.IO.File]::Exists({tracked})) {{ throw 'tracked.txt missing' }}\n"

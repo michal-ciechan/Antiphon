@@ -21,7 +21,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     [Timeout(240_000)]
     public Task shape_directory_on_file(CancellationToken cancellationToken)
     {
-        RequireLinux();
         return AssertShapeAsync("directory-on-file", cancellationToken);
     }
 
@@ -29,7 +28,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     [Timeout(240_000)]
     public Task shape_file_on_directory(CancellationToken cancellationToken)
     {
-        RequireLinux();
         return AssertShapeAsync("file-on-directory", cancellationToken);
     }
 
@@ -37,7 +35,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     [Timeout(240_000)]
     public Task shape_symlink_on_file(CancellationToken cancellationToken)
     {
-        RequireLinux();
         return AssertShapeAsync("symlink-on-file", cancellationToken);
     }
 
@@ -161,12 +158,20 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         switch (shape)
         {
             case "directory-on-file":
+                if (!Directory.Exists(Path.Combine(root, "tracked.txt"))) return "replacement-directory-missing";
+                if (Directory.Exists(Path.Combine(root, "user-dir"))) return "directory-move-source-still-present";
                 if (File.ReadAllText(Path.Combine(root, "tracked.txt/unstaged.txt")) != "USER-UNSTAGED") return "unstaged-bytes-lost";
                 if (GitOut(root, "ls-files", "--", "tracked.txt/secret.txt").Trim().Length == 0) return "staged-index-changed";
+                if (GitOut(root, "show", ":tracked.txt/secret.txt").TrimEnd('\r', '\n') != "USER-SECRET") return "staged-secret-bytes-changed";
+                if (GitOut(root, "ls-files", "--", "tracked.txt").Split('\n').Any(x => x.TrimEnd('\r') == "tracked.txt")) return "old-file-index-entry-retained";
                 if (GitOut(root, "ls-files", "--", "tracked.txt/unstaged.txt").Trim().Length != 0) return "unstaged-index-changed";
-                return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "secret.txt"), "USER-SECRET", "tracked.txt", output), receipt);
+                return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "secret.txt"), "USER-SECRET", "tracked.txt", output), receipt));
             case "file-on-directory":
-                return FinishConflict(ConflictFile(result, Path.Combine(root, "dir"), "USER-FILE", "dir/a.txt", output), receipt);
+                if (!File.Exists(Path.Combine(root, "dir"))) return "replacement-file-missing";
+                if (File.Exists(Path.Combine(root, "payload.dat"))) return "file-move-source-still-present";
+                if (GitOut(root, "ls-files", "--", "dir").Trim() != "dir") return "replacement-index-entry-missing-or-old-entry-retained";
+                if (GitOut(root, "show", ":dir").TrimEnd('\r', '\n') != "USER-FILE") return "staged-replacement-bytes-changed";
+                return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "dir"), "USER-FILE", "dir/a.txt", output), receipt));
             case "symlink-on-file":
             {
                 var link = new FileInfo(Path.Combine(root, "tracked.txt"));
@@ -175,7 +180,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 var target = Path.Combine(root, "link-target.txt");
                 if (!File.Exists(target) || Encoding.ASCII.GetString(File.ReadAllBytes(target)) != "LINK-BYTES")
                     return "link-target-lost";
-                return FinishConflict(ConflictText(result, "tracked.txt", output), receipt);
+                if (GitOut(root, "ls-files", "--", "tracked.txt").Trim() != "tracked.txt") return "link-index-entry-missing";
+                return WithMutationMarker(root, FinishConflict(ConflictText(result, "tracked.txt", output), receipt));
             }
             case "untracked-descendant":
                 return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "user.txt"), "USER-UNTRACKED", "tracked.txt", output), receipt));
@@ -586,12 +592,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     private string GitOut(string root, params string[] args) => _git.Git(root, args);
 
     private void Git(string root, params string[] args) => _ = GitOut(root, args);
-
-    private static void RequireLinux()
-    {
-        if (!OperatingSystem.IsLinux())
-            Skip.Test("CARD-1199 shape-conflict proof runs on Linux; Windows junctions remain an R2 disclosure.");
-    }
 
     internal sealed record RunResult(int Exit, string Output);
 }
