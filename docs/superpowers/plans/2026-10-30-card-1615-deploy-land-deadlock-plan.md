@@ -50,7 +50,13 @@ evidence, not a reproduction performed by this Plan task.
 | Restart can run from the controller tree. | `restart-apphost.ps1:88-94` refuses linked worktrees; `:177-208` binds expected SHA to source HEAD. `docs/orchestration-loop.md:28-37` forbids pulling during a land. | Keep canonical activation separate. No `-AllowWorktree`, restart from the isolated tree, or concurrent canonical checkout move. |
 | Timeout clears the dangerous owner. | `AgentTaskDispatcher.cs:3745-3770` describes a 240-minute role ceiling that fails the task but deliberately leaves its session alive. `AgentTaskReplyService.cs:849-858` refuses refinement after settlement. | Failed is not process exit or checkout release. Do not solve this cycle by waiting for failure, canceling blindly, or increasing the ceiling. CARD-1610 owns terminal/live-session recovery. |
 | A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the server-resolved token principal; environment values are cross-checks only. Standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
-| A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X explicitly at preparation and prohibit AppHost/desktop-runner restarts during the controller lifetime, including between phases. |
+| A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X explicitly at preparation and defer later-SHA activation using the live marker; allow only explicit same-X quiescent recovery while live, and loudly allow the valid-stale exception. |
+
+| Environment IDs authenticate caller class. | `AgentTaskService.AuthenticateAsync:186-234` resolves task hashes first, then session hashes, then capabilities (whose usage stamp writes). `AgentTaskEndpoints:184-193,537-548` makes detail GET public and ignores bad polling tokens. | The new route projects the token's principal without a caller-selected ID or persistence writes. |
+| Existing locks span the whole rollout. | `apphost-common.ps1:16-19,28` expires restart/launch locks at 15 minutes; `deploy-server2.ps1:234-275` holds the remote rollout lock around a POST only. | Add a heartbeat marker and synchronized restart admission; valid-stale is explicitly fail-open, unknown is fail-closed. |
+| One phase task can wait for the entire drain. | `deploy-server2.ps1:12,1246,1295` defaults to 480 minutes, while TaskDeadlinePolicy limits local tools to 90 and tasks to 240. Invoke-HostCase has no local child deadline. | Cap drain slices at 30, bound whole phase/local cleanup, and require joined journal handover. |
+| A clean pinned branch cannot block land. | `AgentTaskLandingProtocol.ScanTarget:557-563` refuses any non-main worktree on the land target. | Detached standing/interactive source and detached main activation; registered task feat branch is the branch-contract exception. |
+| Version response exposes a sha field. | `server/Application/Dtos/VersionDtos.cs:16-19` and `VersionEndpoints.cs:19` expose the SHA as JSON `version`; `Resolve-AppHostLoadedIdentity` reads that member. | Round-3 correction: validate `version`, never invent `sha` or accept informationalVersion as proof. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
 Round 1 read CARD-1610: its concrete example is a Review, not this Deploy. The Deploy's
@@ -72,12 +78,12 @@ decision remains for another Plan round.
 | D-3 | Bound Held/Queued/Running/NeedsResolution lands remain in flight. Add no census exemption. | **(c) Ignore a land held only by this Deploy:** it still cannot run until Deploy ends, so continuous lands remain broken. The holder may settle/fail while a live process survives; the land can become runnable during recycle. Multi-holder and stale-detail cases make an exception unsafe. A fast named refusal is useful; admission supplies it before waiting. |
 | D-4 | **(d) Worktree plus separate canonical activation** is the selected fix. A linked worktree isolates files while existing land admission already permits its independent owner. Keep remote deployment checkout preparation under existing single-rollout ownership. | A separate clone adds credentials/cache/identity handling; a ReadOnly label is false for Git movement, evidence and deployment effects. A Worktree controller that still invokes canonical pull/restart would retain the race: forbid that in its dispatch contract. |
 | D-5 | Require TASK-class mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. D-7 separately admits standing and interactive callers. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
-| D-6 | Gate the five mutating rolling phases and `all`; existing restrictions on `all`, dry-run and resume remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
+| D-6 | Gate the five mutating rolling phases and `all`; TASK `all` is additionally refused by D-9; existing dry-run/resume restrictions remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
 | D-7 | Classify from a bounded server-side token-resolution read, task first. Environment IDs are optional consistency checks and never select the principal. Admit authenticated standing sessions without inventing tasks; preserve explicit interactive mode with no identity supplied. | The public task-detail GET never binds its requested ID to the token. Environment-shape admission permits a Shared task to drop its task ID and pose as standing. Unknown tokens and unsupported principals fail closed; operator credentials remain independently required. |
-| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `/api/version.version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
+| D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `/api/version.version == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance the rc ref to Y while detached canonical HEAD and API stay X; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
-| D-10 | This dispatch requests revised-plan Review, then Code; verification design is therefore included here. Review evaluates the caller/SHA/doc corrections and executable test design; Code collects the bounded provisional timing samples. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
-| D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. CARD-1609 plan round 2 is task `02c3c411` per this dispatch. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
+| D-10 | This is the caller's final Plan round with verification design folded in. Next is Code after CARD-1609 lands; no further Plan/TestDesign pass. Code collects bounded timing evidence, then ordinary Review evaluates the implemented production paths and complete receipts. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
+| D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. Before Code dispatch, confirm CARD-1609 is actually landed on rc and master and record both exact SHAs; no landing status is inferred from its plan. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
 | D-12 | Standing/interactive controller source and the canonical activation checkout are detached at X. A managed task keeps its registered private feat branch, as required by git-common; never put a land target branch in any controller worktree. Refuse symbolic standing/interactive HEAD and task branches outside the registered feat forms. | A controller on rc holds every rc land at target_checked_out_elsewhere. Detaching a managed task would violate its assigned-branch contract, so the existing private feat form is the narrow exception. A throwaway clone adds custody/caching overhead and is not the default. |
 | D-13 | Maintain the existing doc-contract pins and include their affected classes in CP-4. Preserve unrelated authority, retention and branch-contract phrases. | Dropping pinned text without updating/checking its owner tests creates a predictable red build; a new duplicate prose-only suite is unnecessary. |
 
@@ -85,8 +91,11 @@ decision remains for another Plan round.
 
 Add `GET /api/agent-tasks/caller-identity` as a literal route before the existing
 `/{id}` mapping. This endpoint has no caller-selected task/session ID. It reads
-`X-Antiphon-Task-Token` only; never accept a token in query/body or echo it.
-Return `Cache-Control: no-store` and a small DTO, never a full task/session entity:
+`X-Antiphon-Task-Token` only; require exactly one nonempty header value when
+supplied, refusing duplicates/comma-joined ambiguity. Never accept a token in
+query/body or echo it.
+Return `Cache-Control: no-store` on success and error, at most 16 KiB with bounded
+path fields, and a small DTO, never a full task/session entity:
 
 | Server-resolved class | Response and admission |
 |---|---|
@@ -96,7 +105,8 @@ Return `Cache-Control: no-store` and a small DTO, never a full task/session enti
 | Unsupported / unknown | Unknown, empty supplied or stale credentials return generic 403 with no principal facts. A token-only unassigned card session (no StandingAgentId), a capability principal or ended session returns 403 `RolloutCallerUnsupported`; never infer standing from session existence or interactive from failed authentication. |
 
 Implement the read-only projection in `AgentTaskService.cs` and its DTO in
-`server/Application/Dtos/RolloutCallerIdentityDto.cs`. Factor the common token
+`server/Application/Dtos/RolloutCallerIdentityDto.cs`; map it in
+`server/Api/Endpoints/AgentTaskEndpoints.cs`. Factor the common token
 resolver used by `AuthenticateAsync` so both remain task-first. The projection
 uses no-tracking reads and must not stamp capability `LastUsedAt` or save changes:
 the existing capability arm at lines 220-234 does write. Preserve current
@@ -104,7 +114,8 @@ AuthenticateAsync behavior for its existing callers; reject capabilities in this
 read before its usage-stamp arm. Missing-header Interactive is intentional and
 discloses no data; it is not an authenticated task claim. Reuse the existing
 ForbiddenException response convention; do not use ResolvePollingCallerAsync,
-which deliberately catches bad authentication. Bound cancellation and output;
+which deliberately catches bad authentication. Use one bounded DB attempt under request cancellation; this read is not added to
+the resilience retry registry. Bound cancellation and output;
 never log headers, token hashes, full DTOs or raw exceptions.
 
 The wrapper calls this route once per mutating invocation, before the operator
@@ -169,7 +180,8 @@ Add `scripts/lib/active-rollout.ps1`, shared by the controller helper and
 `scripts/restart-apphost.ps1`. Resolve the canonical main checkout from Git's
 common-directory/main-worktree registration, not a fixed path or environment
 override. Keep `logs/active-rollout.json` there, separate from the controller
-checkout and retained phase receipts. Restrict it to a regular file under the
+checkout and retained phase receipts. The helper and restart script stay ASCII and
+Windows PowerShell 5.1 compatible; avoid PowerShell-7-only JSON/filesystem APIs. Restrict it to a regular file under the
 verified canonical logs directory; refuse links, oversized (>16 KiB), malformed,
 unreadable or unsupported-schema content with `ActiveRolloutMarkerUnknown`.
 Do not turn unknown content into the stale exception.
@@ -242,7 +254,9 @@ Do not turn an unreadable HEAD into detached success.
 Managed phase tasks already sit on their own registered feat branch. Keep that
 branch, cross-check it against the server-resolved identity, and reject rc/master
 or any non-registered branch. This is the assigned-branch exception above, not
-permission for a task to detach itself. No branch change is made by this Plan.
+permission for a task to detach itself. No branch change is made by this Plan. The later canonical Shared preparation brief
+must explicitly commission the main-checkout detach operation; it has no assigned
+feat checkout to switch. The managed phase task's assigned branch remains untouched.
 
 Canonical preparation likewise leaves its **main** checkout detached at X before
 activation. Lands can then update target refs without moving source files beneath
@@ -278,7 +292,8 @@ The current `Invoke-HostCase` uses a synchronous child without its own deadline
 start/wait/output-drain/cancellation and joined cleanup, while preserving manifest
 arguments and host proofs. Phase wall budget: 75 minutes including all census
 waits, HTTP calls and host children, with a separate bounded two-minute local
-cleanup/join. The local tool remains below its 90-minute deadline. Every nested
+cleanup/join. The local tool remains below its 90-minute deadline. Each task starts this phase
+promptly and settles after it; do not batch phases merely because ceiling time remains. Every nested
 wait consumes the remaining phase allowance; no reset at each host case. Drain
 polling specifically stops at 30 minutes, with per-read deadlines consuming the
 same remaining slice. These operating bounds are not test performance measurements.
@@ -343,6 +358,27 @@ receipt succeeds, proving no dependency on CARD-1610. Extend the six-method
 ActiveRolloutMarkerTests roster's handover method; use clock advancement and
 barriers, never real 30-minute sleeps.
 
+### Implementation scope and compatibility
+
+S1 adds the four classes named below, extends only their reusable test fixtures
+and stages tests first. S2 adds the identity DTO/route/service projection and
+controller helper. S2b adds the marker helper, restart hook and bounded phase
+journal. S3 changes the seven instruction/API documents listed above and the two
+existing doc-pin test methods. No migrations, project files, props/targets,
+global.json, launch composer or landing/census policy change is commissioned.
+AGENTS/skills are executable instructions for land classification: this is a build
+land, not a docs-only skip, and requires ordinary Code/Review gates.
+
+Use existing restart effect seams in `scripts/test-apphost-server-version.ps1`
+as the model for CP-6's inert fixture; copy required helper dependencies into its
+temporary source tree. The six CP-6 methods also cover existing no-marker
+worktree/SHA/launch-lock refusal paths and `-NoBuild`/`-StopOnly`:
+a live mismatched marker must refuse before shutdown even for StopOnly;
+WhatIf remains observational. Native Windows vectors run the helper/restart
+admission under PowerShell 7 and Windows PowerShell 5.1. They are internal vectors
+within the same six test methods, not extra checkpoint commands. Do not run any
+script against the live canonical checkout.
+
 ## Implementation slices
 
 **S1 — red tests first.** Add `tests/Antiphon.Tests/Scripts/DeployRolloutWorkspaceTests.cs`
@@ -402,7 +438,9 @@ CARD-1609 retirement proofs. Commit/push after the S1 red evidence.
 phase/source notes, `docs/orchestration-loop.md` Shared activation guidance,
 `docs/apphost-runbook.md` source notes, `AGENTS.md` and
 `.claude/skills/antiphon-delegate/SKILL.md` and
-`.claude/skills/antiphon-orchestrator/SKILL.md`. Show fresh
+`.claude/skills/antiphon-orchestrator/SKILL.md`. Add the caller-identity route's
+read-only/no-cache/auth contract to `docs/ops-http.md` and `docs/antiphon-api.md`.
+Show fresh
 `-Role Deploy -Worktree -StartRef <reviewed-rc-sha> -Platform Windows`; omit `-Runner`,
 `-OnAgent` and `-Agent`. Keep its assigned branch and source frozen for its one phase;
 report retained evidence and the journal's next-phase recipe before settling. Pass a proven
@@ -539,8 +577,8 @@ route/response is an intended assertion failure, never a fixture/build error.
 
 ## Verification design
 
-Verification design is included for the explicit Review-then-Code handoff. Scope:
-scripts plus server/git integration; no messaging/client/pty behavior changes, no
+Verification design is included for the explicit Code handoff after CARD-1609. Scope:
+scripts plus server API/git integration; no messaging/client/pty behavior changes, no
 live AppHost, production runner, SSH or Docker in tests. Existing test-project
 references to server/infrastructure suffice; no project extraction is justified.
 
@@ -575,7 +613,7 @@ only with updated roster/counts/cost before Code dispatch.
 
 Red-first: at the pushed S1 tests-only commit, build once into fresh
 `bin-c1615-red/` and run eleven exact-method rows, one result each, in the Linux
-lane using a scratch checkpoint manifest. Each filter is
+lane using a scratch checkpoint manifest. The first seven filters are
 `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/<exact-method>`:
 
 - `C1615_Shared_controller_refuses_before_side_effects` (V-1, including task-ID removal with unchanged task token).
@@ -600,9 +638,18 @@ before reading a possibly absent receipt so a missing file is reported as the
 intended assertion, not a fixture error. The Shared vector must demonstrate the
 old wrapper reaching its stubbed effect without accessing a real credential.
 Commit the tests first, retain red receipts against that SHA, then commit/push S2
-and S3 before the green run. V-1..V-3 plus the four API/marker/handover methods above are the red-first witnesses.
+S2b and S3 before the green run. V-1..V-3 plus the four API/marker/handover methods above are the red-first witnesses.
 V-4/V-5/V-6 and R-1 characterize existing behavior and are expected green with
 unchanged landing/census production code. They do not prove the absent guard red.
+
+The handover red method begins with an invocation using only existing phase
+arguments, lets the old wrapper reach its stubbed effect/exit, and asserts the
+missing joined journal as an assertion failure before any new-parameter resume.
+Do not count an old-script parameter-binding error as red. API red methods map the
+existing endpoint collection in the shared minimal test host and assert the
+missing caller-identity response before parsing; no reference to the not-yet-added
+DTO/helper may prevent S1 compiling. The four new classes are staged in S1,
+including marker/API tests; S2/S2b add production code only after their red receipts.
 
 V-6's Shared leg must run real `AgentTaskLandService.RunAsync`, capture its actual
 Held request and projected task/list/detail response, and pass those projections
@@ -633,6 +680,17 @@ refusal and run `C1615_Phase_requires_rollout_server_sha`. Each control uses
 then is restored and that same method runs green. They touch the same helper, so
 run sequentially; retain individual evidence. No mutation of land admission or
 census is commissioned by this plan.
+
+Also pending after land: bypass task-first token resolution and run
+`/*/*/RolloutCallerIdentityTests/Task_token_wins_over_session_and_missing_environment_ids`;
+bypass only the live-marker mismatch guard and run
+`/*/*/ActiveRolloutMarkerTests/Live_marker_requires_explicit_matching_sha`;
+bypass only the joined-predecessor requirement and run
+`/*/*/ActiveRolloutMarkerTests/Successor_handover_requires_joined_receipt`.
+These make six pending controls in total. Restore each mutation and run that same
+method green; no product repair or PC execution is part of Plan. A-1's task-token
+precedence and later-all-phase version check have ordinary witnesses; additional
+all-phase mutation is not commissioned because the operating recipe forbids all.
 
 ### Checkpoints
 
@@ -747,11 +805,11 @@ no full-suite or rc qualification is added to this card.
 ## Plan validation and remaining evidence
 
 The existing census roster was inspected: six declared methods, no argument expansion.
-The two proposed classes do not yet exist and have no source-name/suffix collision;
+The four proposed classes do not yet exist and have no source-name/suffix collision;
 the exact CP-3 class has no suffixed sibling. CP-4/CP-5 OR expansion has been
 checked against declared source classes; their proposed floors are 123/12.
 
-**Round-2 validation:** at `25530ecc98293f6c81e6721de2d0dffcc45120d2`, the
+**Historical round-2 validation:** at `25530ecc98293f6c81e6721de2d0dffcc45120d2`, the
 slot-gated isolated tool build finished in 5.13 seconds (5 warnings, 0 errors;
 lease `16baf3a8-1af6-43ae-8cf5-20ca77adb25d`, waited 0 seconds, held 6 seconds).
 Import exited 0 with 3 rows, one shared build, floors **9/5/6**, `serial: true`,
@@ -765,7 +823,7 @@ results. `check-evidence-diff` at that tip reported 5 commits, 0 evidence entrie
 to `.antiphon/c1615-r2-plan-scratch/import-final.yaml`; lease
 `ae13a6f8-a7e5-457a-8081-6c1bad08b6ff` waited 0 seconds and held 4 seconds.
 
-**Historical round-1 evidence, retained without crediting it to round 2:** at
+**Historical round-1 evidence, retained without crediting it to later rounds:** at
 `ff6b10c3264a60b959ce232b70be705bc37e638b`, the isolated checkpoint-tool bootstrap
 completed in 6.90 seconds (5 compiler warnings, 0 errors; slot wait 0 seconds).
 The importer accepted 3 rows with one build and floors 7/5/6, exit 0; the generated
@@ -781,12 +839,12 @@ The role ceiling and a terminal task status are not that proof.
 Reproduce import after a slot-gated isolated tool build:
 
 ```sh
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r2-import-build -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj --property:OutputPath=bin-c1615-r2/ --property:UseAppHost=false -nodeReuse:false --verbosity minimal
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r2-import -SlotWaitMinutes 5 -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1615-r2/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md --out .antiphon/c1615-r2-plan-scratch/import.yaml
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r3-import-build -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj --property:OutputPath=bin-c1615-r3/ --property:UseAppHost=false -nodeReuse:false --verbosity minimal
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-r3-import -SlotWaitMinutes 5 -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1615-r3/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md --out .antiphon/c1615-r3-plan-scratch/import.yaml
 ```
 
-Delete only this task's owned `tools/Antiphon.Checkpoints/bin-c1615-r2/` and
-`src/Antiphon.HostCleanup/bin-c1615-r2/` output directories afterward.
+Delete only this task's owned `tools/Antiphon.Checkpoints/bin-c1615-r3/` and
+`src/Antiphon.HostCleanup/bin-c1615-r3/` output directories afterward.
 
 ## Placement and publication
 
