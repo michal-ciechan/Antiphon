@@ -242,11 +242,11 @@ public class Card1619ExitConsumerTests
         (await structured.Exited).ShouldBe(-1);
         await using (var db = store.CreateContext())
         {
-            var row = await db.AgentSessions.SingleAsync(x => x.Id == seed.SessionId);
-            row.FailureReason.ShouldBe(AgentSessionService.NotReadyBase);
-            row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
-            row.ExitCode.ShouldBe(0);
-            row.ExitSignal.ShouldBe(9);
+            var killedRow = await db.AgentSessions.SingleAsync(x => x.Id == seed.SessionId);
+            killedRow.FailureReason.ShouldBe(AgentSessionService.NotReadyBase);
+            killedRow.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            killedRow.ExitCode.ShouldBe(0);
+            killedRow.ExitSignal.ShouldBe(9);
         }
 
 
