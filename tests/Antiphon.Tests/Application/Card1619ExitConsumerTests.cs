@@ -269,12 +269,24 @@ public class Card1619ExitConsumerTests
     [Test]
     public async Task Api_attempt_and_diagnostics_preserve_optional_signal()
     {
+        var failures = new List<Exception>();
+        foreach (var check in new Func<Task>[] { AssertUnknownRecoveryAsync, AssertOptionalProjectionAsync,
+            async () => {
         await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
             "Exited", null, AgentExitReason.Unknown, 0));
         // Windows producers report signal zero with the original signed code. This portable
         // consumer witness complements the still-owed native modern/inbox CP-2.
         await AssertAdapterAsync(new SessionRunnerSessionDto(Guid.NewGuid(), null, DateTime.UtcNow,
             "Exited", -1, AgentExitReason.KilledByRequest, 0, ExitSignal: 0));
+            } })
+        {
+            try { await check(); } catch (Exception ex) { failures.Add(ex); }
+        }
+        if (failures.Count > 0) throw new AggregateException(failures);
+    }
+
+    private static async Task AssertOptionalProjectionAsync()
+    {
         await using var s = await Card1619ConsumerFixture.Scenario.CreateAsync();
         var task = await s.AddTaskAsync(AgentTaskStatus.Working, SessionStatus.Failed);
         await SetExitAsync(s, task.SessionId, 0, 9);
@@ -283,7 +295,7 @@ public class Card1619ExitConsumerTests
         var card = new Card { AgentSessions = [row] };
         BoardService.ToCardDto(card).Sessions.Single().ExitSignal.ShouldBe(9);
         var body = CardReviewService.BuildPullRequestBody(card, new RunAttempt { ExitCode = 0, ExitSignal = 9 });
-        body.ShouldContain("killed by signal 9 (SIGKILL)");
+
         var runner = new Card1619ConsumerFixture.FakeRunnerClient(s.ConnectionString);
         var attention = new AttentionService(db, runner, Options.Create(new SupervisionSettings()),
             Options.Create(new DelegationSettings()), TimeProvider.System, NullLogger<AttentionService>.Instance);
@@ -292,8 +304,37 @@ public class Card1619ExitConsumerTests
         using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
         using var reader = new StreamReader(zip.GetEntry("session.json")!.Open());
         using var json = JsonDocument.Parse(await reader.ReadToEndAsync());
+        body.ShouldSatisfyAllConditions(
+            value => value.ShouldContain("killed by signal 9 (SIGKILL)"),
+            _ => json.RootElement.TryGetProperty("exitSignal", out var signal).ShouldBeTrue("diagnostic archive carries the actual signal"),
+            _ => json.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(0));
         json.RootElement.GetProperty("exitSignal").GetInt32().ShouldBe(9);
-        json.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(0);
+    }
+
+    private static async Task AssertUnknownRecoveryAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "card1619-unknown-" + Guid.NewGuid().ToString("N"));
+        var settings = new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = root, CpuWatchdogEnabled = false };
+        try
+        {
+            Directory.CreateDirectory(settings.PtyHostManifestDir);
+            var id = Guid.NewGuid();
+            var generation = DateTime.UtcNow;
+            new Antiphon.PtyHost.Protocol.PtyHostManifest {
+                SessionId = id, PipeName = "unused-" + id.ToString("N"), HostPid = 0,
+                HostStartTimeUtc = generation, CreatedAtUtc = generation, ExitedAtUtc = generation,
+                AcceptedStartedAt = generation, ExitReason = "ProcessVanished"
+            }.SaveAtomic(Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(settings.PtyHostManifestDir, id));
+            await using var runtime = new Antiphon.SessionRunner.SessionRunnerRuntime(Options.Create(settings),
+                NullLogger<Antiphon.SessionRunner.SessionRunnerRuntime>.Instance);
+            using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await runtime.AdoptOrphanedHostsAsync(new Antiphon.SessionRunner.SystemProcessLivenessProbe(), ct.Token);
+            var observed = runtime.Get(id);
+            observed.Status.ShouldBe("Exited");
+            observed.ExitCode.ShouldBeNull("a missing wait result is not a native -1");
+            observed.ExitSignal.ShouldBeNull();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     private sealed class SingleAdapterFactory(IAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
@@ -343,10 +384,10 @@ public class Card1619ExitConsumerTests
         store.Runtime.Register(observed.SessionId, adapter);
         var persisted = await store.Runtime.GetSessionAsync(observed.SessionId, default);
         persisted.Status.ShouldBe("Exited");
-        Should.SatisfyAllConditions(
-            () => compatibility.ShouldBe(observed.ExitSignal is > 0 ? -1 : observed.ExitCode ?? -1),
-            () => persisted.ExitCode.ShouldBe(observed.ExitCode, "compatibility -1 is never a native code"),
-            () => persisted.ExitSignal.ShouldBe(observed.ExitSignal));
+        compatibility.ShouldSatisfyAllConditions(
+            _ => compatibility.ShouldBe(observed.ExitSignal is > 0 ? -1 : observed.ExitCode ?? -1),
+            _ => persisted.ExitCode.ShouldBe(observed.ExitCode, "compatibility -1 is never a native code"),
+            _ => persisted.ExitSignal.ShouldBe(observed.ExitSignal));
     }
 
     private static async Task SetExitAsync(Card1619ConsumerFixture.Scenario s, Guid id, int code, int signal)
