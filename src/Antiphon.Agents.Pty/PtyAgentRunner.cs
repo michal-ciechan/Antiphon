@@ -37,6 +37,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private PtyTerminationObservation? _linuxTermination;
     internal IPtyCustodyNative? CustodyNative { get; init; }
     internal Action? ReadProcessedForTest { get; set; }
+    internal Func<IPtySession, Task>? BeforeExitSubscriptionForTest { get; init; }
+    internal Action? ExitHandledForTest { get; init; }
+    private readonly TaskCompletionSource<PtyExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<PtyExitObservation> Completion => _completion.Task;
 
     /// <summary>
     /// CARD-0604 D-17 test seam: the Linux containment this runner should use for a tracked
@@ -235,6 +239,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options, custody, CustodyNative, ct)
                 : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
         }
+        if (BeforeExitSubscriptionForTest is { } beforeSubscribe)
+            await beforeSubscribe(_conn);
         void HandleExit(int exitCode)
         {
             if (_custody is not null) _custodyInputClosed = true;
@@ -243,6 +249,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             else
                 SetExitReason(PtyExitReason.ProcessExited);
             _exitTcs.TrySetResult(exitCode);
+            _completion.TrySetResult(new PtyExitObservation(exitCode, null));
+            ExitHandledForTest?.Invoke();
         }
         _conn.Exited += HandleExit;
         // The suspended tracked launch retains its process handle before resume. Replay an
