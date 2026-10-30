@@ -1087,4 +1087,37 @@ automatic release deadline; existing open Cancel/Retry, process exit or separate
 authorized release frees custody. CARD-0079 and docker-stack step 5 retain only
 their existing narrow authority.
 
-Final importer result and pushed source checks are appended after execution.
+Validation at plan commit 4f8071b6de6dab22abfbd3039ec0c1bdab3dee47:
+the gated importer accepted **91 rows**, exit 0. Independent YAML totals: five
+producer builds, 335 estimated minutes, 8,166 TUnit floors (plus six client
+executions). The Unit shard union is 471 existing classes; the exact method-only
+Unit selection has **eight Arguments**, giving 6,272 final Unit identities with
+the new policy class. Roslyn source-to-filter audit found zero existing-server
+roster mismatches; canonical OR audit found zero unsafe shapes. The two runner
+methods retain the independently verified round-2 count of two.
+
+Essential tooling provenance (not product-test receipts):
+
+```text
+BUILD SLOT granted lease=82fb74da-3e5d-4ec7-bd52-582399e14894 waited=0s maxcpucount=6
+WARNING CP-27: derived row timeout (75 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+WARNING CP-28: derived row timeout (75 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+imported 91 rows -> .antiphon/c1610-r3-counted.yaml
+BUILD SLOT released lease=82fb74da-3e5d-4ec7-bd52-582399e14894 held=2s
+```
+
+The tool was built once under a granted slot (9 seconds, five warnings in
+unchanged tooling, zero build errors), with output entirely in this task's
+scratch root. Later imports reused that binary under fresh slots. Product test
+execution count in Plan is **zero**; this validates syntax/roster, not behavior.
+CP-27/28's default 75-minute advisory is addressed by the explicit performance
+assessment/derived-manifest contract above, not silently credited as compliant.
+Generated YAML, census and tooling outputs remain ignored.
+
+A fetched origin/master at 98fc3ceb6440a17b68cafe3ecc21c76d190b18ca had a clean
+merge-tree check against the plan branch; no merge/rebase was performed. Final
+push/source/evidence checks and full published SHA are reported to the caller.
+Next is Code on origin/master with the required timing assessment; S1 is
+independent, S2/S3 together after the heartbeat prerequisite, S4 after CARD-1615
+and CARD-1609. Ordinary Final Review and separately reviewed rc ports remain
+required. No product edits, tags, rollout or Windows qualification ran here.
