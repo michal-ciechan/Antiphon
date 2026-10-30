@@ -13,17 +13,27 @@ internal static class LateFailedReportForwarder
         DateTime now, CancellationToken ct)
     {
         if (failure.Purpose != TaskSupervisionNoticePurpose.FailureDelegate || failure.ReportForwardedAt is not null
+            || failure.ReportWatchClosedAt is not null
             || !await TaskSupervisionNoticeService.SourceCurrentAsync(db, task, failure, ct)) return;
+        var ended = await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == failure.SessionId
+            && s.StartedAt == failure.SessionStartedAt && s.EndedAt != null
+            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed), ct);
         var latest = await db.TranscriptEntries.Where(t => t.AgentSessionId == failure.SessionId)
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
-        if (latest <= failure.ScanFrontier) return;
+        if (latest <= failure.ScanFrontier && !ended) return;
         var candidate = await ReadReportAsync(db, task, failure, ct);
-        if (candidate is null) { failure.ScanFrontier = latest; return; }
+        if (candidate is null)
+        {
+            failure.ScanFrontier = latest;
+            if (ended) TaskSupervisionNoticeService.CloseReportWatch(failure, now, "final_transcript_scanned", deliveryImpossible: true);
+            return;
+        }
         var (rows, raw) = candidate.Value;
         if (await db.TaskSupervisionNotices.AnyAsync(n => n.TaskId == task.Id && n.Attempt == failure.Attempt
             && n.SourceEventId == failure.SourceEventId && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent, ct))
         {
             failure.ReportForwardedAt = now;
+            TaskSupervisionNoticeService.CloseReportWatch(failure, now, "report_forwarded");
             return;
         }
         var newer = await db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id && t.CreatedAt > failure.DispatchedAt
@@ -64,6 +74,7 @@ internal static class LateFailedReportForwarder
         });
         failure.ReportForwardedAt = now;
         failure.ScanFrontier = latest;
+        TaskSupervisionNoticeService.CloseReportWatch(failure, now, "report_forwarded", deliveryImpossible: ended);
         await db.SaveChangesAsync(ct);
     }
 

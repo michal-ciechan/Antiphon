@@ -17,6 +17,55 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskCeilingControlTests
 {
     [Test]
+    [Arguments("continue")]
+    [Arguments("cancel")]
+    public async Task C1610_Concurrent_decisions_preserve_the_terminal_outcome(string other)
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        await h.SweepAsync();
+        var episode = (await h.TaskAsync()).CeilingHoldEpisodeId;
+        async Task<bool> ContinueAsync()
+        {
+            try { await h.DecideAsync(episode: episode); return true; }
+            catch (ConflictException ex) when (ex.Code == "ceiling_episode_stale") { return false; }
+        }
+        var first = ContinueAsync();
+        if (other == "continue")
+        {
+            var results = await Task.WhenAll(first, ContinueAsync());
+            results.Count(ok => ok).ShouldBe(1);
+            (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Working);
+            h.Stopper.Killed.ShouldBeEmpty();
+        }
+        else
+        {
+            await using var scope = h.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CancelAsync(h.TaskId, CancellationToken.None);
+            await first;
+            (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Canceled);
+            (await ContinueAsync()).ShouldBeFalse();
+            await h.SweepAsync();
+            (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Canceled);
+            h.Stopper.Killed.ShouldHaveSingleItem().ShouldBe(h.SessionId);
+        }
+    }
+
+    [Test]
+    public async Task C1610_Working_query_cost_is_measured()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        await using var db = h.Context();
+        var samples = new List<double>();
+        for (var i = 0; i < 30; i++)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None)).ShouldBeTrue();
+            samples.Add(timer.Elapsed.TotalMilliseconds);
+        }
+        samples.Sort();
+        Console.WriteLine($"C1610 working-query samples=30 p50_ms={samples[14]:F3} p95_ms={samples[28]:F3} max_ms={samples[^1]:F3}");
+    }
+    [Test]
     public async Task C1610_Continue_keeps_report_floor()
     {
         await using var h = await TaskCeilingHarness.CreateAsync(ageMinutes: 240);
@@ -198,6 +247,8 @@ public sealed class TaskCeilingControlTests
     [Arguments("different-role")]
     [Arguments("no-card")]
     [Arguments("pre-hold-successor")]
+    [Arguments("own-child")]
+    [Arguments("own-grandchild")]
     public async Task C1610_Successor_fence_uses_card_and_role(string arm)
     {
         await using var h = await TaskCeilingHarness.CreateAsync();
@@ -208,17 +259,34 @@ public sealed class TaskCeilingControlTests
         (await h.TaskAsync()).CeilingHoldEpisodeId.ShouldNotBeNull();
         if (arm != "pre-hold-successor")
             successor = await SeedSuccessorAsync(h, arm == "different-role" ? AgentTaskRole.Debug : AgentTaskRole.Code);
+        var descendant = arm is "own-child" or "own-grandchild";
+        if (descendant)
+        {
+            await using var db = h.Context();
+            var child = await db.AgentTasks.SingleAsync(t => t.Id == successor);
+            child.RootTaskId = h.TaskId;
+            child.ParentTaskId = h.TaskId;
+            if (arm == "own-grandchild")
+            {
+                var grandchild = new AgentTask { Id = Guid.NewGuid(), RootTaskId = h.TaskId, ParentTaskId = child.Id,
+                    CardId = child.CardId, ProjectId = child.ProjectId, Role = child.Role, Title = "Own grandchild",
+                    Goal = child.Goal, WorkingDirectory = child.WorkingDirectory, CreatedAt = child.CreatedAt,
+                    Status = AgentTaskStatus.Succeeded };
+                db.AgentTasks.Add(grandchild);
+            }
+            await db.SaveChangesAsync();
+        }
         await h.FinishAsync();
         var settled = await h.TaskAsync();
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         settled.Result.ShouldContain("Completed the authorized work");
-        settled.NextStage.ShouldBe(arm == "different-role" ? PipelineHandoffKind.Review : PipelineHandoffKind.Decide,
+        settled.NextStage.ShouldBe(arm == "different-role" || descendant ? PipelineHandoffKind.Review : PipelineHandoffKind.Decide,
             "a held result must not launch a second same-card/role chain; missing lineage needs a decision");
-        if (arm != "different-role" && arm != "no-card") settled.NextHandoff.ShouldContain(successor.ToString("D"));
+        if (arm != "different-role" && arm != "no-card" && !descendant) settled.NextHandoff.ShouldContain(successor.ToString("D"));
         await using (var db = h.Context())
         {
             var note = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == h.TaskId);
-            note.Body.Split('\n')[0].ShouldContain(arm == "different-role" ? "next=review" : "next=decide");
+            note.Body.Split('\n')[0].ShouldContain(arm == "different-role" || descendant ? "next=review" : "next=decide");
         }
         h.Stopper.Killed.ShouldBeEmpty();
     }

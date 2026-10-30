@@ -36,4 +36,8 @@ public sealed class TaskSupervisionNotice
     public long? ReportFromSequence { get; set; }
     public long? ReportThroughSequence { get; set; }
     public DateTime? ReportForwardedAt { get; set; }
+    public DateTime? ReportWatchClosedAt { get; set; }
+    public string? ReportWatchCloseReason { get; set; }
+    public DateTime? NextReportScanAt { get; set; }
+    public int? ReportScanAttempts { get; set; }
 }

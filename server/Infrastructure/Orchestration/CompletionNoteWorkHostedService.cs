@@ -92,10 +92,21 @@ public sealed class CompletionNoteWorkHostedService(
     /// </summary>
     private async Task RecoverMissingAsync(IServiceProvider services, AppDbContext db, Guid? taskId, CancellationToken ct)
     {
-        await new TaskSupervisionNoticeService(db, services.GetRequiredService<SessionMessageQueueService>(), clock)
-            .RecoverAsync(taskId, ct);
-        Guid? cursor = null;
         Exception? failed = null;
+        try
+        {
+            // A poisoned supervision item must not poison the completion-note context or skip
+            // its independent recovery pass. Preserve the failure for the next sweep afterward.
+            await using var supervisionScope = services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+            await new TaskSupervisionNoticeService(supervisionScope.ServiceProvider.GetRequiredService<AppDbContext>(),
+                supervisionScope.ServiceProvider.GetRequiredService<SessionMessageQueueService>(), clock).RecoverAsync(taskId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            failed = ex;
+            logger.LogWarning(ex, "Supervision recovery failed; continuing completion-note recovery");
+        }
+        Guid? cursor = null;
         while (true)
         {
             var query = db.AgentTasks.AsNoTracking()

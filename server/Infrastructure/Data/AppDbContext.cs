@@ -204,10 +204,15 @@ public class AppDbContext : DbContext
             entity.HasIndex(n => new { n.TaskId, n.Attempt, n.SourceEventId, n.Purpose }).IsUnique()
                 .HasDatabaseName("IX_TaskSupervisionNotices_PurposeIdentity");
             entity.HasIndex(n => new { n.NextAttemptAt, n.Id });
+            entity.HasIndex(n => n.SessionId);
+            entity.HasIndex(n => n.RecipientSessionId);
+            entity.HasIndex(n => new { n.NextReportScanAt, n.Id })
+                .HasFilter("\"Purpose\" = 1 AND \"ReportWatchClosedAt\" IS NULL AND \"ReportForwardedAt\" IS NULL");
             entity.Property(n => n.Body).HasMaxLength(4000);
             entity.Property(n => n.Digest).HasMaxLength(64);
             entity.Property(n => n.ReportDigest).HasMaxLength(64);
             entity.Property(n => n.ReasonCode).HasMaxLength(200);
+            entity.Property(n => n.ReportWatchCloseReason).HasMaxLength(200);
             entity.Property(n => n.ReportText).HasMaxLength(16000);
             foreach (var name in new[] { nameof(TaskSupervisionNotice.TaskId), nameof(TaskSupervisionNotice.Attempt),
                          nameof(TaskSupervisionNotice.SourceEventId), nameof(TaskSupervisionNotice.Purpose),
