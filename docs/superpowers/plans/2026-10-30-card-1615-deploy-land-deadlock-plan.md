@@ -66,7 +66,10 @@ lookup or operational effects. GET `/api/agent-tasks/{ANTIPHON_TASK_ID}` with
 existing task authentication. Validate `summary.id`, Worktree, live status,
 registered `worktreePath`, native filesystem/Git root identity, clean tracked
 source and `HEAD == -Sha`. Reject wrong/unregistered trees and unknown identities;
-compare canonical identities, not path prefixes. The actual controller is native
+require a registered non-main linked worktree and its expected symbolic branch,
+not just a DTO whose path happens to equal the main checkout. Compare canonical
+identities, not path prefixes. New fixtures run the actual production script bytes
+from their private registered worktree; they cannot bypass this proof. The actual controller is native
 Windows, not a mirror whose registered path names a different machine. Preserve
 D-6 observational/provision exceptions and D-7 interactive compatibility.
 
@@ -93,6 +96,13 @@ restart when needed, and `provision-host-jq`. The controller tree supports
 `check-census`, `check-host-jq`, deploy-temp, drain-old, redeploy-old, smoke/cache
 qualification, drain-temp and retire-temp. Those steps never pull/restart AppHost.
 Preserve the existing canary, continuous-dispatch and final retire gates.
+
+An existing Shared rollout cannot be converted by changing a label. At a proven
+quiescent phase boundary, retain receipts, finish/join its owned command and settle
+the controller; let pending lands finish, then commission the isolated controller
+with the recorded resume context. A Failed-but-live session needs CARD-1610's
+supported ownership/recovery assessment; no automatic cancellation or kill is
+part of this repair. Merely installing this guard does not release an old owner.
 
 ## Red witnesses, classification and roster
 
@@ -142,11 +152,11 @@ Windows task executes CP-1 only with its own isolated build for operational
 wrapper/path branches; no prior desktop run counts. TestDesign encodes that
 selection through the tool, without inventing a Platform table column.
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows |
-|---|---|---|---|---|---|---|---:|---:|---:|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 7 named methods, 0 failed, 0 skipped | 7 | 6 | 9 |
-| CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 |
-| CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
+|---|---|---|---|---|---|---|---:|---:|---:|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 7 named methods, 0 failed, 0 skipped | 7 | 6 | 9 | true |
+| CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 | true |
+| CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
 
 Exact class filters avoid suffix expansion. Check declared names again in TestDesign
 and actual fresh TRX in Code. If combining later, each OR operand must be parenthesized
@@ -209,13 +219,26 @@ no full-suite or rc qualification is added to this card.
 ## Plan validation and remaining evidence
 
 The existing census roster was inspected: six declared methods, no argument expansion.
-The two proposed classes do not yet exist and have no source-name collision. Import
-validation and final branch publication will be recorded below. Required product red,
+The two proposed classes do not yet exist and have no source-name collision. At
+`ff6b10c3264a60b959ce232b70be705bc37e638b`, the isolated checkpoint-tool bootstrap
+completed in 6.90 seconds (5 compiler warnings, 0 errors; slot wait 0 seconds).
+The importer accepted 3 rows with one build and floors 7/5/6, exit 0; the generated
+YAML stays ignored at `.antiphon/c1615-plan-scratch/import.yaml`. The final Serial
+annotation is re-imported before handoff. These are document checks. Required product red,
 green, timing and native Windows execution remain for TestDesign/Code; none is claimed.
 No new input-waiting session is introduced. If an operational task waits for input,
 parking remains disabled and there is no automatic release deadline; caller resolution
 or separately authorized explicit stop/release must establish actual process exit.
 The role ceiling and a terminal task status are not that proof.
+
+Reproduce import after a slot-gated isolated tool build:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-plan-import-build -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj --property:OutputPath=bin-c1615-plan/ --property:UseAppHost=false -nodeReuse:false --verbosity minimal
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1615-plan-import -SlotWaitMinutes 5 -- dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1615-plan/ --property:UseAppHost=false -- import --plan docs/superpowers/plans/2026-10-30-card-1615-deploy-land-deadlock-plan.md --out .antiphon/c1615-plan-scratch/import.yaml
+```
+
+Delete only this task's two owned `bin-c1615-plan/` output directories afterward.
 
 ## Placement and publication
 
