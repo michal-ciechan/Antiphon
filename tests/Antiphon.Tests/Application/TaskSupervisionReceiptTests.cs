@@ -26,6 +26,87 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskSupervisionReceiptTests
 {
     [Test]
+    public async Task C1610_Supervision_fault_does_not_skip_completion_recovery()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync();
+        var fault = new NoticeInsertFault { Armed = true, FailSupervisionRead = true };
+        await using var parent = await OpenAsync(h, h.ParentId, fault);
+        await h.MutateAsync(t =>
+        {
+            t.Status = AgentTaskStatus.Succeeded;
+            t.Result = "Complete sourced result.\n" + DelegationReportFormatter.ReportToken(h.TaskId, "done");
+            t.SourceLandingOperationId = Guid.NewGuid();
+        });
+        await Should.ThrowAsync<InvalidOperationException>(() => RecoverAsync(parent, h.Clock));
+        fault.Fired.ShouldBeTrue();
+        await using var db = h.Context();
+        (await db.SessionQueuedMessages.AnyAsync(m => m.SourceTaskId == h.TaskId
+            && m.Origin == QueuedMessageOrigin.Delegation)).ShouldBeTrue(
+                "completion-note recovery runs even when supervision recovery throws");
+    }
+
+    [Test]
+    public async Task C1610_Live_failure_watch_backs_off_independently_of_delivery()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var recipient = await OpenAsync(h, h.SessionId);
+        foreach (var delay in new[] { 1, 2, 4, 8, 15, 30, 60, 60 })
+        {
+            await RecoverAsync(recipient, h.Clock);
+            await using var db = h.Context();
+            var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
+                && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate);
+            watch.ReportWatchClosedAt.ShouldBeNull();
+            watch.NextReportScanAt.ShouldBe(h.Clock.GetUtcNow().UtcDateTime.AddMinutes(delay));
+            var attempts = watch.ReportScanAttempts;
+            await RecoverAsync(recipient, h.Clock);
+            await db.Entry(watch).ReloadAsync();
+            watch.ReportScanAttempts.ShouldBe(attempts, "delivery recovery cannot consume another scan poll");
+            h.Clock.Advance(TimeSpan.FromMinutes(delay));
+        }
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1610_Closed_watch_backlog_cannot_starve_a_new_late_report()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        await h.SweepAsync();
+        await using var parent = await OpenAsync(h, h.ParentId);
+        await using (var db = h.Context())
+        {
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.TaskId);
+            var original = await db.TaskSupervisionNotices.AsNoTracking().SingleAsync(n => n.TaskId == h.TaskId);
+            for (var i = 0; i < 128; i++)
+            {
+                var stale = new AgentTask();
+                db.Entry(stale).CurrentValues.SetValues(task);
+                stale.Id = Guid.NewGuid(); stale.RootTaskId = stale.Id; stale.AgentId = null;
+                stale.CreatedAt = task.CreatedAt.AddDays(-1);
+                db.AgentTasks.Add(stale);
+                var closed = new TaskSupervisionNotice();
+                db.Entry(closed).CurrentValues.SetValues(original);
+                closed.Id = Guid.NewGuid(); closed.TaskId = stale.Id;
+                closed.State = TaskSupervisionNoticeState.NotApplicable;
+                closed.ReportWatchClosedAt = h.Clock.GetUtcNow().UtcDateTime.AddDays(-1);
+                closed.ReportWatchCloseReason = "final_transcript_scanned";
+                closed.NextAttemptAt = closed.CreatedAt = closed.ReportWatchClosedAt.Value;
+                db.TaskSupervisionNotices.Add(closed);
+            }
+            await db.SaveChangesAsync();
+        }
+        await h.FinishAsync();
+        await RecoverAsync(parent, h.Clock);
+        await using var verify = h.Context();
+        var triage = await verify.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
+            && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent);
+        triage.State.ShouldBe(TaskSupervisionNoticeState.Told, "one sweep must ignore all 128 closed watches");
+        (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     [Arguments("ended")]
     [Arguments("legacy")]
     public async Task C1610_Failure_watch_closes_without_a_report(string arm)
@@ -48,6 +129,8 @@ public sealed class TaskSupervisionReceiptTests
             var watch = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId
                 && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate);
             watch.ReasonCode.ShouldBe(arm == "legacy" ? "legacy_identity_unknown" : "final_transcript_scanned");
+            watch.ReportWatchClosedAt.ShouldNotBeNull();
+            watch.ReportWatchCloseReason.ShouldBe(watch.ReasonCode);
             watch.NextAttemptAt.ShouldBeGreaterThan(h.Clock.GetUtcNow().UtcDateTime.AddYears(1));
             (await TaskSupervisionNoticeService.Unresolved(db).AnyAsync(n => n.Id == watch.Id)).ShouldBeFalse(
                 "a closed report watch must stop protecting retention");
@@ -57,6 +140,23 @@ public sealed class TaskSupervisionReceiptTests
         }
         h.Clock.Advance(TimeSpan.FromDays(5));
         await RecoverAsync(parent, h.Clock);
+        if (arm == "ended")
+        {
+            await using (var db = h.Context())
+            {
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+                session.StartedAt = h.Clock.GetUtcNow().UtcDateTime;
+                session.Status = SessionStatus.Running;
+                session.EndedAt = null;
+                await db.SaveChangesAsync();
+            }
+            await h.FinishAsync();
+            await RecoverAsync(parent, h.Clock);
+            await using var verifyDb = h.Context();
+            (await verifyDb.TaskSupervisionNotices.AnyAsync(n => n.TaskId == h.TaskId
+                && n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent)).ShouldBeFalse(
+                    "a resumed generation cannot reopen or attribute a closed predecessor watch");
+        }
         (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
         h.Stopper.Killed.ShouldBeEmpty();
     }
@@ -448,10 +548,17 @@ public sealed class TaskSupervisionReceiptTests
     {
         public string? BodyFragment { get; init; }
         public bool Armed { get; set; }
+        public bool FailSupervisionRead { get; init; }
         public bool Fired { get; private set; }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
+            if (Armed && !Fired && FailSupervisionRead
+                && command.CommandText.Contains("FROM \"TaskSupervisionNotices\"", StringComparison.Ordinal))
+            {
+                Fired = true;
+                throw new InvalidOperationException("C1610 supervision read fault");
+            }
             if (Armed && !Fired && command.CommandText.Contains("INSERT INTO \"SessionQueuedMessages\"", StringComparison.Ordinal)
                 && (BodyFragment is null || command.Parameters.Cast<DbParameter>().Any(p => p.Value is string text
                     && text.Contains(BodyFragment, StringComparison.Ordinal))))

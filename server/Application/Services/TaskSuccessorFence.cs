@@ -15,7 +15,20 @@ internal static class TaskSuccessorFence
         if (task.CeilingHoldEpisodeId is null) return null;
         if (task.CardId is null || task.DispatchedAt is null)
             return Prefix + " card/dispatch lineage is unresolved; inspect before commissioning another stage.";
+        var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId
+                || t.RootTaskId == task.Id || t.ParentTaskId == task.Id)
+            .Select(t => new { t.Id, t.ParentTaskId }).ToListAsync(ct);
+        var descendants = new HashSet<Guid> { task.Id };
+        bool added;
+        do
+        {
+            added = false;
+            foreach (var member in family)
+                if (member.ParentTaskId is { } parent && descendants.Contains(parent))
+                    added |= descendants.Add(member.Id);
+        } while (added);
         var successors = await db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id
+                && !descendants.Contains(t.Id) && t.RootTaskId != task.Id
                 && t.CardId == task.CardId && t.Role == task.Role && t.CreatedAt > task.DispatchedAt)
             .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(t => t.Id).Take(32).ToListAsync(ct);
         return successors.Count == 0 ? null

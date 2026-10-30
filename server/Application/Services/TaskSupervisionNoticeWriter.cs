@@ -52,10 +52,14 @@ internal static class TaskSupervisionNoticeWriter
             RecipientSessionId = task.AgentSessionId, RecipientStartedAt = generation,
             RecipientFloor = frontier, FailureFrontier = frontier,
             ReportFloor = task.RepliedAtSequence ?? 0, ScanFrontier = frontier,
-            Body = body, Digest = DelegationNoteDigest.Compute(body), CreatedAt = now, NextAttemptAt = now,
-            State = noRecipient || provedExit ? TaskSupervisionNoticeState.NotApplicable : TaskSupervisionNoticeState.Pending,
-            ReasonCode = noRecipient ? "no_accepted_session" : provedExit ? "session_exit_recorded"
-                : generation is null ? "legacy_identity_unknown" : null,
+            Body = body, Digest = DelegationNoteDigest.Compute(body), CreatedAt = now,
+            State = noRecipient || provedExit || generation is null ? TaskSupervisionNoticeState.NotApplicable : TaskSupervisionNoticeState.Pending,
+            ReasonCode = generation is null ? "legacy_identity_unknown" : noRecipient ? "no_accepted_session"
+                : provedExit ? "session_exit_recorded" : null,
+            ReportWatchClosedAt = generation is null ? now : null,
+            ReportWatchCloseReason = generation is null ? "legacy_identity_unknown" : null,
+            NextReportScanAt = generation is null ? DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc) : now,
+            NextAttemptAt = generation is null ? DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc) : now,
         });
     }
 

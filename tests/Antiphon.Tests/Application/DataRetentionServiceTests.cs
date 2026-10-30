@@ -2002,6 +2002,19 @@ public class DataRetentionServiceTests
     [Arguments("queue")]
     [Arguments("task-tree")]
     public async Task C1610_Unresolved_supervision_retains_evidence_until_told(string arm)
+        => await SupervisionRetentionAsync(arm, closedWatch: false);
+
+    [Test]
+    [Arguments("source-transcript")]
+    [Arguments("recipient-transcript")]
+    [Arguments("source-session")]
+    [Arguments("recipient-session")]
+    [Arguments("queue")]
+    [Arguments("task-tree")]
+    public async Task C1610_Closed_report_watch_releases_evidence(string arm)
+        => await SupervisionRetentionAsync(arm, closedWatch: true);
+
+    private async Task SupervisionRetentionAsync(string arm, bool closedWatch)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
@@ -2043,7 +2056,8 @@ public class DataRetentionServiceTests
             seed.TaskSupervisionNotices.Add(new TaskSupervisionNotice
             {
                 Id = noticeId, TaskId = child, Attempt = 1, SourceEventId = Guid.NewGuid(),
-                Purpose = TaskSupervisionNoticePurpose.CeilingParent,
+                Purpose = closedWatch ? TaskSupervisionNoticePurpose.FailureDelegate : TaskSupervisionNoticePurpose.CeilingParent,
+                SessionStartedAt = closedWatch ? stale : null,
                 SessionId = source, RecipientSessionId = recipient, QueueMessageId = queueId,
                 Body = "supervision retention witness", Digest = "retention-witness",
                 State = TaskSupervisionNoticeState.Pending, CreatedAt = stale, NextAttemptAt = stale,
@@ -2095,6 +2109,11 @@ public class DataRetentionServiceTests
             var notice = await receipt.TaskSupervisionNotices.SingleAsync(n => n.Id == noticeId);
             notice.State = TaskSupervisionNoticeState.Told;
             notice.ToldAt = DateTime.UtcNow;
+            if (closedWatch)
+            {
+                notice.ReportWatchClosedAt = DateTime.UtcNow;
+                notice.ReportWatchCloseReason = "final_transcript_scanned";
+            }
             await receipt.SaveChangesAsync();
         }
         await PruneAsync();

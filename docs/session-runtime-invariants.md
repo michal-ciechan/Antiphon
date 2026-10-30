@@ -44,6 +44,15 @@ digest, lineage facts and next=decide. Failed, its reason/result/completion time
 stay unchanged. No report-forwarding path settles, retries, lands or reserves a handoff.
 Unresolved notices retain their source, recipient transcript, queue row and task tree.
 
+Report watches have a separate retry clock: 1, 2, 4, 8, 15, 30, then 60 minutes
+between scans (the completion worker checks due work on its existing 15-minute sweep).
+After an authoritative ended source's final stored transcript window is scanned, the
+watch closes durably. Unknown historical identities are not watchable. Closed watches
+consume no scan slots and confer no retention protection; independently pending parent
+triage/delivery debt still retains its evidence. A resumed generation is a successor:
+it never reopens the predecessor watch or supplies its accepted identity. Cancel commits
+under the queue gate, then releases that gate before post-commit seat/workspace release.
+
 A held result whose card/role has a successor since dispatch uses next=decide, including a
 replacement created before the hold or one already terminal. Missing card lineage also needs
 a decision. Handoff recording and child admission recheck under their existing card/handoff

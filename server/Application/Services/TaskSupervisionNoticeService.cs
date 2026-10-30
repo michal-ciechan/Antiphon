@@ -13,18 +13,22 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
         .Where(n => n.State == TaskSupervisionNoticeState.Pending
             || n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.State == TaskSupervisionNoticeState.Superseded
             || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null
+                && n.ReportWatchClosedAt == null
                 && n.SessionStartedAt != null && n.State != TaskSupervisionNoticeState.Superseded
                 && n.ReasonCode != "report_attribution_superseded");
 
     internal async Task RecoverAsync(Guid? taskId, CancellationToken ct)
     {
         var now = clock.GetUtcNow().UtcDateTime;
-        var due = db.TaskSupervisionNotices.Where(n => n.NextAttemptAt <= now
-            && (n.State == TaskSupervisionNoticeState.Pending
-                || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null));
+        var due = db.TaskSupervisionNotices.Where(n =>
+            n.State == TaskSupervisionNoticeState.Pending && n.NextAttemptAt <= now
+            || n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate && n.ReportForwardedAt == null
+                && n.ReportWatchClosedAt == null && n.State != TaskSupervisionNoticeState.Superseded
+                && (n.NextReportScanAt == null || n.NextReportScanAt <= now));
         if (taskId is { } id) due = due.Where(n => n.TaskId == id);
-        // Keep room for legacy backfill even when old failure-report watches remain due.
-        var rows = await due.OrderBy(n => n.NextAttemptAt).ThenBy(n => n.Id).Take(24).ToListAsync(ct);
+        // Delivery and report discovery have independent clocks. Closed watches use no scan slot.
+        var rows = await due.OrderBy(n => n.State == TaskSupervisionNoticeState.Pending
+            ? n.NextAttemptAt : n.NextReportScanAt ?? n.CreatedAt).ThenBy(n => n.Id).Take(24).ToListAsync(ct);
         if (rows.Count < 32)
         {
             var missing = db.AgentTasks.AsNoTracking().Where(t => t.Status == AgentTaskStatus.Failed
@@ -41,20 +45,34 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             await db.SaveChangesAsync(ct);
             rows = rows.Concat(db.TaskSupervisionNotices.Local.Where(n => n.CreatedAt == now)).DistinctBy(n => n.Id).Take(32).ToList();
         }
-        // Failure notice delivery does not close report discovery, including ended generations.
+        // A Told receipt does not close report discovery. An ended source gets one final scan.
         foreach (var failure in rows.Where(n => n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
         {
-            var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
-            if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
-                || task.DispatchedAt != failure.DispatchedAt || task.ParentSessionId != failure.ParentSessionId)
+            if (failure.ReportWatchClosedAt is not null || failure.ReportForwardedAt is not null
+                || failure.NextReportScanAt > now) continue;
+            if (failure.SessionStartedAt is null || failure.SessionStartedAt == default(DateTime)
+                || failure.SessionId is null)
             {
-                failure.ReasonCode = "report_attribution_superseded";
-                failure.NextAttemptAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
-                if (failure.State == TaskSupervisionNoticeState.Pending) failure.State = TaskSupervisionNoticeState.Superseded;
+                CloseReportWatch(failure, now, "legacy_identity_unknown", deliveryImpossible: true);
                 continue;
             }
-            if (task is not null) await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
-            failure.NextAttemptAt = now.AddMinutes(1);
+            var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == failure.TaskId, ct);
+            if (task is null || task.Attempt != failure.Attempt || task.AgentSessionId != failure.SessionId
+                || task.DispatchedAt != failure.DispatchedAt || task.ParentSessionId != failure.ParentSessionId
+                || !await SourceCurrentAsync(db, task, failure, ct))
+            {
+                CloseReportWatch(failure, now, "report_attribution_superseded", deliveryImpossible: true);
+                failure.State = TaskSupervisionNoticeState.Superseded;
+                continue;
+            }
+            await LateFailedReportForwarder.DiscoverAsync(db, task, failure, now, ct);
+            if (failure.ReportWatchClosedAt is null)
+            {
+                var attempt = Math.Min(failure.ReportScanAttempts ?? 0, 30);
+                failure.ReportScanAttempts = attempt + 1;
+                failure.NextReportScanAt = now.AddMinutes(attempt switch
+                    { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 15, 5 => 30, _ => 60 });
+            }
         }
         var deliveries = rows.Concat(db.TaskSupervisionNotices.Local.Where(n =>
                 n.Purpose == TaskSupervisionNoticePurpose.LateFailedParent && n.CreatedAt == now))
@@ -81,6 +99,18 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
             }
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    internal static void CloseReportWatch(TaskSupervisionNotice notice, DateTime now, string reason,
+        bool deliveryImpossible = false)
+    {
+        notice.ReportWatchClosedAt ??= now;
+        notice.ReportWatchCloseReason ??= reason;
+        notice.NextReportScanAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
+        if (!deliveryImpossible) return;
+        if (notice.State == TaskSupervisionNoticeState.Pending) notice.State = TaskSupervisionNoticeState.NotApplicable;
+        notice.ReasonCode = reason;
+        notice.NextAttemptAt = DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc);
     }
 
     private async Task<bool> ConfirmAsync(TaskSupervisionNotice notice, CancellationToken ct)
