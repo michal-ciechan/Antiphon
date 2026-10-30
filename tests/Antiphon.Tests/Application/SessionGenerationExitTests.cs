@@ -45,6 +45,8 @@ public class SessionGenerationExitTests
         row.StartedAt.ShouldBe(scenario.GenerationB);
         row.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
         row.ExitCode.ShouldBeNull();
+        row.ExitSignal.ShouldBeNull();
+        row.ExitStopIntentJson.ShouldBeNull();
         row.EndedAt.ShouldBeNull();
         row.FailureReason.ShouldBeNull();
         row.RestartFailureKind.ShouldBeNull();
@@ -95,7 +97,7 @@ public class SessionGenerationExitTests
         scenario.Bus.Clear();
         await scenario.WriteExitAsync(scenario.GenerationA);
         await scenario.WaitForPumpAsync();
-        await scenario.WriteExitAsync(scenario.GenerationB, exitCode: 1, reason: "KilledByRequest");
+        await scenario.WriteExitAsync(scenario.GenerationB, exitCode: 1, reason: "KilledByRequest", legacySignal: true);
         await WaitUntilAsync(async () =>
         {
             await using var db = scenario.Db();
@@ -106,6 +108,9 @@ public class SessionGenerationExitTests
         var row = await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId);
         row.Status.ShouldBe(SessionStatus.Failed);
         row.FailureReason.ShouldStartWith("Process exited (KilledByRequest, code 1)");
+        row.FailureReason.ShouldContain("signal unknown");
+        row.FailureReason.ShouldNotContain("exited on its own");
+        row.ExitSignal.ShouldBeNull();
         row.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
         row.EndedAt.ShouldNotBeNull();
         (await verify.Agents.SingleAsync(a => a.Id == scenario.AgentId)).Status.ShouldBe(AgentStatus.Failed);
@@ -435,6 +440,8 @@ public class SessionGenerationExitTests
             var row = await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId);
             row.Status.ShouldBe(SessionStatus.Running);
             row.StartedAt.ShouldBe(scenario.GenerationB);
+            row.ExitSignal.ShouldBeNull();
+            row.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
         }
 
         scenario.Handler.ListedSessions =
@@ -604,7 +611,7 @@ public class SessionGenerationExitTests
             IncidentCountAtB = await verify.AgentIncidents.CountAsync(i => i.SessionId == SessionId);
         }
 
-        public async Task WriteExitAsync(DateTime generation, int exitCode = 1, string? reason = null)
+        public async Task WriteExitAsync(DateTime generation, int exitCode = 1, string? reason = null, bool legacySignal = false)
         {
             var captured = JsonSerializer.Deserialize<RunnerSessionExitedEvent>(CapturedExitJson, WebJson)!;
             var rewritten = captured with
@@ -612,6 +619,7 @@ public class SessionGenerationExitTests
                 SessionId = SessionId,
                 AcceptedStartedAt = generation,
                 ExitCode = exitCode,
+                ExitSignal = legacySignal ? null : captured.ExitSignal,
                 ExitReason = reason ?? captured.ExitReason,
             };
             rewritten.ExitReason.ShouldBe("KilledByRequest");
@@ -686,6 +694,7 @@ public class SessionGenerationExitTests
                 // the same KillAsync; the reason is what proves the frame is a kill.
                 if (OperatingSystem.IsWindows())
                     payload.ExitCode.ShouldNotBe(0);
+                payload.ExitSignal.ShouldBe(OperatingSystem.IsWindows() ? 0 : 9);
                 payload.AcceptedStartedAt.ShouldBe(generation);
                 return (evt.Json, generation);
             }
