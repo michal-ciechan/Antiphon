@@ -654,10 +654,11 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public void parent_symlink_does_not_delete_a_tracked_stamp()
     {
-        if (!OperatingSystem.IsLinux())
-            Skip.Test("Windows junction variant is unverified");
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Parent-link qualification requires Linux or Windows");
 
         var root = InitGitRepo();
         var output = Path.Combine(root, "proj", "bin-stamp");
@@ -671,11 +672,17 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var linkRoot = Path.Combine(Path.GetTempPath(), "c1199-parent-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(linkRoot);
         var link = Path.Combine(linkRoot, "parent-link");
-        Directory.CreateSymbolicLink(link, output);
+        if (!OperatingSystem.IsWindows())
+            Directory.CreateSymbolicLink(link, output);
         var via = Path.Combine(link, "checkpoint-build-source.json");
         var probe = Path.Combine(Path.GetTempPath(), "c1199-stamp-" + Guid.NewGuid().ToString("N") + ".ps1");
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                Junction(link, output);
+                File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
+            }
             File.WriteAllText(probe, StampProbe);
             var scriptPath = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
             var start = new ProcessStartInfo("pwsh");
