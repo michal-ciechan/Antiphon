@@ -131,16 +131,22 @@ public sealed class RcFullTimingContractTests
     }
 
     [Test]
-    [Timeout(60_000)]
+    [Timeout(90_000)]
     public async Task SetupPhasesAreNonoverlapping(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(SetupScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("countedOnce").GetBoolean().ShouldBeTrue("planning and build were summed once per chunk");
-        observed.GetProperty("setupSeconds").GetDouble().ShouldBe(9);
-        observed.GetProperty("perChunkBuildSum").GetDouble().ShouldBe(6, "build was summed once per chunk");
-        observed.GetProperty("overlapped").GetBoolean().ShouldBeFalse();
+        foreach (var timeZone in new[] { "UTC", "America/New_York", "Asia/Kolkata" })
+        {
+            var root = FreshRoot();
+            var observed = await Run(SetupScript, cancellationToken, root, timeZone);
+            var detail = timeZone + " " + observed.GetProperty("text").GetString();
+            observed.GetProperty("exitCode").GetInt32().ShouldBe(0, detail);
+            observed.GetProperty("countedOnce").GetBoolean().ShouldBeTrue(detail);
+            observed.GetProperty("setupSeconds").GetDouble().ShouldBe(9, detail);
+            observed.GetProperty("perChunkBuildSum").GetDouble().ShouldBe(6, detail);
+            observed.GetProperty("overlapped").GetBoolean().ShouldBeFalse(detail);
+            observed.GetProperty("stampUtc").GetBoolean().ShouldBeTrue(detail);
+            observed.GetProperty("stampOverlapped").GetBoolean().ShouldBeFalse(detail);
+        }
     }
 
     [Test]
@@ -232,7 +238,7 @@ public sealed class RcFullTimingContractTests
         return path;
     }
 
-    private static async Task<JsonElement> Run(string body, CancellationToken cancellationToken, string root)
+    private static async Task<JsonElement> Run(string body, CancellationToken cancellationToken, string root, string timeZone = null)
     {
         var script = Path.Combine(Path.GetTempPath(), "rcspeed-" + Guid.NewGuid().ToString("N") + ".ps1");
         await File.WriteAllTextAsync(script, body, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
@@ -242,6 +248,8 @@ public sealed class RcFullTimingContractTests
         start.ArgumentList.Add(script);
         start.ArgumentList.Add(C1514Support.RepoRoot());
         start.ArgumentList.Add(root);
+        if (!string.IsNullOrEmpty(timeZone))
+            start.Environment["TZ"] = timeZone;
         var ran = await C1514Support.RunProcess(start, cancellationToken);
         var resultPath = Path.Combine(root, "observation.json");
         if (!File.Exists(resultPath))
@@ -689,6 +697,8 @@ public sealed class RcFullTimingContractTests
         $setup = -1.0
         $sum = -1.0
         $overlapped = $true
+        $stampUtc = $false
+        $stampOverlapped = $true
         try {
             if (-not (Get-Command Write-NightlyPrerequisitePhases -ErrorAction SilentlyContinue)) {
                 $problems.Add('prerequisite-writer-missing')
@@ -706,6 +716,26 @@ public sealed class RcFullTimingContractTests
             if ([double]$setup -ne 9) { $problems.Add(('setup-seconds=' + [string]$setup)) }
             if ([double]$sum -ne 6) { $problems.Add(('per-chunk-build-sum=' + [string]$sum)) }
             if ($overlapped) { $problems.Add('phases-overlapped') }
+            $stampRoot = Join-Path $work 'stamp-root'
+            New-Item -ItemType Directory -Path $stampRoot -Force | Out-Null
+            Write-QualificationRunPhase -LogRoot $stampRoot -Name 'npm-ci' -StartedAt '2026-10-30T10:00:00.5698141Z' -EndedAt '2026-10-30T12:00:00.5698141Z' -Seconds 7200
+            Write-QualificationRunPhase -LogRoot $stampRoot -Name 'npm-build' -StartedAt '2026-10-30T06:00:00.5698141Z' -EndedAt '2026-10-30T07:00:00.5698141Z' -Seconds 3600
+            $stampPath = Join-Path (Join-Path $stampRoot 'timing') 'setup-phases.json'
+            $rawStamp = ''
+            if (Test-Path -LiteralPath $stampPath) { $rawStamp = [IO.File]::ReadAllText($stampPath) }
+            $stampUtc = $rawStamp.Contains('"startedAt":"2026-10-30T10:00:00.5698141Z"') -and $rawStamp.Contains('"endedAt":"2026-10-30T12:00:00.5698141Z"')
+            if (-not $stampUtc) { $problems.Add('stamp-not-iso') }
+            $stampAcct = Get-QualificationSetupAccounting -LogRoot $stampRoot
+            $stampOverlapped = [bool]$stampAcct.overlapped
+            if ($stampOverlapped) { $problems.Add('stamp-phases-overlapped') }
+            if ($stampUtc) {
+                $hasTicks = ($stampAcct.PSObject.Properties.Name -contains 'firstStartUtcTicks') -and ($null -ne $stampAcct.firstStartUtcTicks)
+                if (-not $hasTicks) { $problems.Add('stamp-ticks-missing') }
+                else {
+                    $expectedTicks = [int64]([datetimeoffset]::Parse('2026-10-30T10:00:00.5698141Z').UtcTicks)
+                    if ([int64]$stampAcct.firstStartUtcTicks -ne $expectedTicks) { $problems.Add('stamp-ticks-shifted') }
+                }
+            }
         } catch {
             $problems.Add([string]$_.Exception.Message)
         }
@@ -717,6 +747,8 @@ public sealed class RcFullTimingContractTests
             setupSeconds = [double]$setup
             perChunkBuildSum = [double]$sum
             overlapped = [bool]$overlapped
+            stampUtc = [bool]$stampUtc
+            stampOverlapped = [bool]$stampOverlapped
         }
         [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 4))
         """;
