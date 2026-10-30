@@ -25,6 +25,8 @@ internal interface IPtySession : IDisposable
     /// <summary>Raised once with the child's exit code.</summary>
     event Action<int>? Exited;
 
+    PtyExitObservation? ReadExitObservation() => null;
+
     void Resize(int cols, int rows);
 
     void Kill();
