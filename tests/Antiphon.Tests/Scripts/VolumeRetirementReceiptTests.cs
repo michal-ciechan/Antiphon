@@ -263,6 +263,26 @@ public sealed class VolumeRetirementReceiptTests
     public async Task Journal_intents_and_partial_resume_are_exact()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
+        // The v1 absent-work adapter must never suppress a fresh v2 role
+        // failure. Main retains its cached-audit recovery contract.
+        foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
+        {
+            var checkedAudit = await VolumeRetirementFixture.Bash($$"""
+                set -euo pipefail
+                source <(sed -n '/^c1008_audit_checked() {/,/^}/p' {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"))}})
+                C1008_PROJECT={{project}}; TEMP_PROJECT=antiphon-runner-temp; C1008_RESUME=1
+                C1008_RECORD="$(jq -cn --arg name "$C1008_PROJECT"_work '{phase:"removing",volumes:{($name):{outcome:"pending"}},audit:"old-audit"}')"
+                c1008_volume() { printf null; }
+                c1008_audit() { printf 'audit check=metadata status=2 repo=. reason=role-unknown\n'; return 2; }
+                c1008_save() { :; }
+                c1008_refuse() { printf 'REFUSED %s\n' "$1"; exit 2; }
+                c1008_audit_checked
+                printf 'RESULT=%s\n' "$C1008_AUDIT"
+                """);
+            checkedAudit.Exit.ShouldBe(project == "antiphon-runner-temp" ? 2 : 0,
+                "J8 temp resume must execute fresh role proof; main keeps its v1 adapter; " + checkedAudit.Output);
+            checkedAudit.Output.ShouldContain(project == "antiphon-runner-temp" ? "reason=role-unknown" : "RESULT=old-audit");
+        }
         var failures = new List<string>();
         foreach (var cut in new[] { "before-intent", "before-rm", "after-rm", "replacement", "unattributed-absence" })
         {
