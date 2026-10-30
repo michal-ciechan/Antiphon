@@ -75,6 +75,14 @@ public sealed class ReleaseGatePublicationTests
         "C599 DraftRecovery before-write exactly one release exists");
 
     [Test]
+    public Task C599_NotesCredentialScan() => RunCaseAsync("C599_NotesCredentialScan", 13,
+        "C599 NotesCredentialScan generator preserves the Windows exclusion class",
+        "C599 NotesCredentialScan generated Windows exclusions are not credentials",
+        "C599 NotesCredentialScan Windows paths CRLF hashes and identifiers are not credentials",
+        "C599 NotesCredentialScan LF bearer is rejected with safe location",
+        "C599 NotesCredentialScan CRLF environment token is rejected with safe location");
+
+    [Test]
     public Task C599_AssetRecovery() => RunCaseAsync("C599_AssetRecovery", 29,
         "C599 AssetRecovery release-manifest.json before-write does not publish",
         "C599 AssetRecovery release-manifest.json before-write leaves a pending draft, not a release",

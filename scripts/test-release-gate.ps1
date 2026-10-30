@@ -1619,6 +1619,56 @@ function Test-C599_DraftRecovery {
     }
 }
 
+function Get-C599NotesCredentialFindings {
+    # Return metadata only: note contents must never reach a failure diagnostic.
+    param([string]$Notes)
+    $patterns = [ordered]@{ bearer = 'Bearer '; token = 'token' }
+    $lines = $Notes -split "`r?`n"
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        foreach ($name in $patterns.Keys) {
+            if ($lines[$i] -match $patterns[$name]) {
+                [pscustomobject]@{ Pattern = $name; Line = $i + 1 }
+            }
+        }
+    }
+}
+
+function Format-C599NotesCredentialFindings {
+    param([object[]]$Findings)
+    return (@($Findings | ForEach-Object { 'pattern={0} line={1}' -f $_.Pattern, $_.Line }) -join '; ')
+}
+
+function Test-C599_NotesCredentialScan {
+    # Exercise the real generator with the Windows exclusion list, even on Linux.
+    $fx = New-C599PublishFx
+    [void](Invoke-C599Publish -Fx $fx)
+    $notes = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId) 'release-notes.md') -Raw
+    $findings = @(Get-C599NotesCredentialFindings -Notes $notes)
+    Assert-C487 -Cond ($notes.Contains('RefreshGithubTokenRemoteCommandTests')) -Name 'C599 NotesCredentialScan generator preserves the Windows exclusion class'
+    Assert-C487 -Cond ($findings.Count -eq 0) -Name 'C599 NotesCredentialScan generated Windows exclusions are not credentials' -Detail (Format-C599NotesCredentialFindings $findings)
+
+    $benign = 'C:\Antiphon\releases\checkout user=fixture machine=fixture-host' + "`r`n" + ('a' * 40) + "`r`n" + ('b' * 64) + "`r`nRefreshGithubTokenRemoteCommandTests"
+    $findings = @(Get-C599NotesCredentialFindings -Notes $benign)
+    Assert-C487 -Cond ($findings.Count -eq 0) -Name 'C599 NotesCredentialScan Windows paths CRLF hashes and identifiers are not credentials' -Detail (Format-C599NotesCredentialFindings $findings)
+
+    $witnesses = @(
+        @{ Name = 'bearer'; Pattern = 'bearer'; Text = 'Bearer c599-synthetic-value' },
+        @{ Name = 'token assignment'; Pattern = 'token'; Text = 'token=c599-synthetic-value' },
+        @{ Name = 'JSON token'; Pattern = 'token'; Text = '"token": "c599-synthetic-value"' },
+        @{ Name = 'environment token'; Pattern = 'token'; Text = 'GITHUB_TOKEN=c599-synthetic-value' },
+        @{ Name = 'access token'; Pattern = 'token'; Text = 'access_token: c599-synthetic-value' }
+    )
+    foreach ($ending in @(@{ Name = 'LF'; Text = "`n" }, @{ Name = 'CRLF'; Text = "`r`n" })) {
+        foreach ($witness in $witnesses) {
+            $text = @('Release fixture', '', $witness.Text) -join $ending.Text
+            $findings = @(Get-C599NotesCredentialFindings -Notes $text)
+            $detail = Format-C599NotesCredentialFindings $findings
+            $expected = 'pattern={0} line=3' -f $witness.Pattern
+            Assert-C487 -Cond ($findings.Count -eq 1 -and $detail -ceq $expected) -Name ('C599 NotesCredentialScan {0} {1} is rejected with safe location' -f $ending.Name, $witness.Name) -Detail $detail
+        }
+    }
+}
+
 function Test-C599_AssetRecovery {
     foreach ($asset in @('release-manifest.json', 'verification-summary.json')) {
         foreach ($cut in @('before-write', 'commit-then-lose-response')) {
@@ -1649,7 +1699,8 @@ function Test-C599_AssetRecovery {
     $notes = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx2.ReleaseRoot -CandidateId $CandidateId) 'release-notes.md') -Raw
     Assert-C487 -Cond ($notes -match ([regex]::Escape([string]$r.Tag))) -Name 'C599 AssetRecovery notes name the tag' -Detail ([string]$r.Tag)
     Assert-C487 -Cond ($notes -match 'no earlier release') -Name 'C599 AssetRecovery the first release says there is no earlier release'
-    Assert-C487 -Cond ($notes -notmatch 'Bearer ' -and $notes -notmatch 'token') -Name 'C599 AssetRecovery notes carry no credential-shaped text'
+    $findings = @(Get-C599NotesCredentialFindings -Notes $notes)
+    Assert-C487 -Cond ($findings.Count -eq 0) -Name 'C599 AssetRecovery notes carry no credential-shaped text' -Detail (Format-C599NotesCredentialFindings $findings)
     Assert-C487 -Cond ($notes -match 'Exclusions') -Name 'C599 AssetRecovery notes list the exclusions'
     Assert-C487 -Cond ($notes -match 'Suites') -Name 'C599 AssetRecovery notes list the per-suite counts'
 }
