@@ -1,10 +1,23 @@
 # Incremental executed-manifest publication
 
-Round 2 task `9fe15cf1`; assigned base `01a0d1ff018d2afbe54bb54a110be45bbd450338`. Round 1 task `bb0b355c` investigated product base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`.
+Round 3 task `c4f27e76`; assigned base `68ddbc42ea4c636fe3156ca9c3d1b7cdeb248588`. Round 2 task `9fe15cf1`; assigned base `01a0d1ff018d2afbe54bb54a110be45bbd450338`. Round 1 task `bb0b355c` investigated product base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`.
 CARD-1514 names the existing timing workstream; no new card identity is inferred.
-Status: round-2 revision complete under D-1..D-17; independent plan Review is next. Product code is unchanged. Verification design is included; no separate TestDesign dispatch is needed after review accepts it.
+Status: round-3 revision in progress; this is the last commissioned Plan round. Product code is unchanged. Verification design is included; the completed handoff is Code after S3 and the rc top-up carrying S1. Round-2 acceptance remains historical, not a claim that its three remaining defects are closed.
 
-## Round-2 revision record
+## Round-3 revision record
+
+Read the complete re-review `.antiphon/task-12a27dfe.md`. Keep its accepted regression roster, generation/sealed-root behavior, failure continuity, actual-loop V-13 and verdict isolation. The three remaining defects below are revision work, not product implementation or execution receipts.
+
+| Review item | Selected correction | State |
+|---|---|---|
+| D-1 | Commit writer-settled row/header forms and keys; name `StringComparer.InvariantCultureIgnoreCase`; test three timezones and Unicode key equivalence. | Pending source check and detailed revision |
+| D-2 | Authorized writers create successors from the longest validated prefix (or empty) after corruption; preserve unresolved provenance and malformed legacy evidence. | Pending source check and detailed revision |
+| D-3 | Publication gaps and missing/mismatched state enter summary quality and force `complete=false`; coverage, receipt and qualification verdict stay independent. | Pending source check and detailed revision |
+| A-1..A-5 | Re-anchor S3, bound rescans to once per outage, record oracle provenance and verify the Slow allowlist's policy-hash exclusion. | Pending validation |
+
+Native Windows replay at scale remains **OWED**. The eleven-row checkpoint roster stays fixed unless source inspection disproves its counts; importer/totals validation will be recorded after the revisions. No further plan round is scheduled: unresolved implementation choices take the simpler fail-closed default.
+
+## Round-2 revision record (historical)
 
 The review at `.antiphon/task-662aa259.md` confirms the diagnosis and journal/final-projection approach. The skeleton was pushed first; the five reviewed defects are revised below. Implementation and native receipts remain pending.
 
