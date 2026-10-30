@@ -27,6 +27,8 @@ public sealed record HerdrPaneSidecar
     public int? ChildPid { get; init; }
     /// <summary>Exact observed OS creation identity; unlike LaunchedAtUtc, never a fallback timestamp.</summary>
     public DateTime? ChildStartedAtUtc { get; init; }
+    /// <summary>Linux kill identity; absent legacy or unreadable identities never authorize a PID kill.</summary>
+    public LinuxProcessIdentity? ChildLinuxIdentity { get; init; }
     /// <summary>The pane's shell pid, if herdr wraps one.</summary>
     public int? ShellPid { get; init; }
     /// <summary>C3 epoch and staleness judge — runner UTC at launch success.</summary>

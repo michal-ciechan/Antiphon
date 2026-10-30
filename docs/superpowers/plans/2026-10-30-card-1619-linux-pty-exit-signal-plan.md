@@ -696,12 +696,14 @@ new fleet host provisioning or Linux custody advertisement is implied.
 | CP-6 | S3b | CP-13 | portable-liveness-regression | `/*/*/AgentTaskLivenessTests/*` | R-3 | all 6 listed, 0 failed/skipped | 6 | 1 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-7 | S3b | CP-13 | portable-report-first-regression | `/*/*/AgentTaskDeadSessionReconciliationTests/(a_stopped_session_with_a_marked_done_report_succeeds_instead_of_failing*)\|(a_stopped_session_with_transcript_but_no_report_still_fails*)\|(the_predicate_and_the_attention_projection_agree_on_every_case*)` | R-4 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-8 | S3a | n/a | portable-client-contract | `pwsh -NoProfile -File scripts/typecheck-client.ps1` | V-11 API contract | exit 0, both client projects typecheck | n/a | 2 | true | n/a |
-| CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
-| CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 8 listed, 0 failed/skipped | 8 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-9 | S4 | `tests/Antiphon.PtyHost.Tests -> bin-card1619-host-intent/` | linux-stop-intent-ordering | `/*/*/Card1619StopIntentTests/*` | V-13 | all 13 listed, 0 failed/skipped | 13 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-10 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-runner-intent/` | linux-stop-intent-routes | `/*/*/Card1619LinuxStopIntentTests/*` | V-14 | all 11 listed, 0 failed/skipped | 11 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-card1619-attribution/` | linux-stop-attribution | `/*/*/Card1619StopAttributionTests/*` | V-15 | all 8 listed, 0 failed/skipped | 8 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-12 | S4-native | `tests/Antiphon.SessionRunner.Tests -> bin-card1619-cgroup-intent/` | linux-native-cgroup-v1-attribution | `/*/*/Card1619LinuxCustodyStopIntentTests/*` | V-16 | all 2 listed on owned cgroup-v1 fixture, 0 failed/skipped | 2 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-14 | S3b | CP-13 | linux-generation-exit-regression | `/*/*/SessionGenerationExitTests/(C502_V1_queued_A_exit_released_after_B_resumed_changes_nothing*)\|(C502_V3_matching_B_exit_closes_B_after_the_stale_A_exit_was_ignored*)\|(C502_V9_severed_stream_then_a_snapshot_Exited_A_does_not_close_B*)` | R-5 | all 3 listed, 0 failed/skipped | 3 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 | CP-15 | S3b | CP-13 | linux-ready-gate-launch-regression | `/*/*/AgentSessionLaunchFailureTests/(A_ready_gate_kill_*)` | R-6 | all 7 listed, 0 failed/skipped | 7 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-16 | S4 | CP-10 | linux-herdr-stop-regression | `/*/*/(HerdrAdoptionSweepTests*)\|(HerdrPaneChildKillTests*)\|(HerdrPaneSidecarTests*)/*` | S4 D-1 caller and persistence regressions | all named classes, 0 failed/skipped | 35 | 3 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-17 | S4 | CP-10 | portable-custody-release-regression | `/*/*/RunnerCustodyReleaseTests/*` | S4 D-2 recovery and retained ownership | all named methods, 0 failed/skipped | 6 | 1 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
 
 ## Exact execution commands
 
@@ -871,3 +873,22 @@ omit `-Runner`, use `-Platform Linux`/`Windows` only for native rows and no
 Platform for portable work (`Any` unpins). If the caller changes the RC source
 pin, re-audit overlapping CARD-1610/1614 files and the roster at dispatch.
 Import success is not product verification, release qualification or activation.
+
+## S4 fix qualification (CARD-1619, task 1456ad5b)
+
+D-1 uses persisted Linux boot ID and proc stat field 22; an absent legacy or unreadable
+identity refuses a PID kill with a warning and retains stop debt. No UTC approximation
+authorizes a Linux child kill. After an issued kill, observe OS exit for at most one second.
+D-2 publishes Requested under the shared gate, releases it for custody/helper calls,
+then publishes the final outcome under the gate. Direct signal publication remains atomic
+with exit observation. FIFO request order bounds retained attempts to 256.
+
+Red witnesses: Cross_process_recorded_identity_kills_pending_child and
+Slow_helper_does_not_hold_gate_over_unrelated_stop; both compiled and failed on
+a002bcc9c9c6bafa2740a94f9a64aad0ca4d0516. Separate serial green groups are
+CP-9/10/11 (21 provisional minutes), then CP-13/14/15/16/17/4 (24 provisional minutes).
+New test bounds: helper 3 seconds, unrelated stop 500 ms, helper-process IO 10 seconds;
+provisional small-sample budgets, retained TRX and checkpoint timing evidence.
+CP-16 reuses CP-10's build; CP-17 exercises the production custody recovery caller.
+Windows CP-2 (including fast-exit replay on modern/inbox) and native cgroup-v1 CP-12
+remain owed. No Windows behavior or privilege/custody policy expansion is intended.

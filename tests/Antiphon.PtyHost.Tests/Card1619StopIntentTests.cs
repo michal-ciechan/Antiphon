@@ -129,11 +129,24 @@ public class Card1619StopIntentTests
             (await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5))).ExitSignal.ShouldBe(9);
             stopped.Outcome.ShouldBe(ProcessStopOutcome.Issued);
             completed.Outcome.ShouldBe(ProcessStopOutcome.Issued);
+            Console.WriteLine($"unrelated stop latency ms={latency.TotalMilliseconds}");
+            latency.ShouldBeLessThan(TimeSpan.FromMilliseconds(500), "unrelated SIGKILL must not wait for the helper");
             during.ShouldNotBeNull();
             during.Outcome.ShouldBe(ProcessStopOutcome.Requested);
-            latency.ShouldBeLessThan(TimeSpan.FromMilliseconds(500), "unrelated SIGKILL must not wait for the helper");
         }
         finally { release.Set(); await helper.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
+    [Test]
+    public void Attempt_eviction_keeps_the_latest_256_in_request_order()
+    {
+        using var store = new ProcessStopIntentStore(Path.GetTempPath(), (_, _) => Task.FromResult(false));
+        var generation = DateTime.UtcNow;
+        var sessions = Enumerable.Range(0, 300).Select(_ => Guid.NewGuid()).ToArray();
+        foreach (var session in sessions)
+            store.Attempt(new() { RequestId = Guid.NewGuid(), SessionId = session, AcceptedStartedAt = generation }, () => true);
+        foreach (var session in sessions.Take(44)) store.Snapshot(session, generation).ShouldBeNull();
+        foreach (var session in sessions.Skip(44)) store.Snapshot(session, generation).ShouldNotBeNull();
     }
 
     [Test]

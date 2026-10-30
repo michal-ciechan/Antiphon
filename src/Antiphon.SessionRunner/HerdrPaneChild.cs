@@ -251,6 +251,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
             PaneId = request.PaneId,
             ChildPid = occupant.Pid,
             ChildStartedAtUtc = _processLiveness.TryGetStartTimeUtc(occupant.Pid),
+            ChildLinuxIdentity = LinuxProcessIdentity.TryRead(occupant.Pid),
             ShellPid = inspected.Process.ShellPid,
             LaunchedAtUtc = startUtc,
             Cwd = occupant.Cwd,
@@ -1016,6 +1017,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
             PaneId = paneId,
             ChildPid = childPid,
             ChildStartedAtUtc = childPid is int exactPid ? _processLiveness.TryGetStartTimeUtc(exactPid) : null,
+            ChildLinuxIdentity = childPid is int linuxPid ? LinuxProcessIdentity.TryRead(linuxPid) : null,
             ShellPid = shellPid,
             LaunchedAtUtc = launchedAt,
             Cwd = request.Cwd,
@@ -1148,8 +1150,8 @@ internal sealed partial class HerdrPaneChild : ISessionChild
                 if (_sidecar?.ChildPid is int child
                     && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
                 {
-                    KillPidBestEffort(child);
-                    if (OperatingSystem.IsLinux() && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
+                    var killed = KillPidBestEffort(child);
+                    if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
                         return false; // preserve ownership until the child actually disappears
                 }
 
@@ -1202,21 +1204,32 @@ internal sealed partial class HerdrPaneChild : ISessionChild
         return true;
     }
 
-    private void KillPidBestEffort(int pid)
+    private bool KillPidBestEffort(int pid)
     {
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById(pid);
-            if (process.HasExited) return;
-            if (OperatingSystem.IsLinux() && _sidecar?.ChildStartedAtUtc is { } start && !SessionGeneration.Equal(start, process.StartTime.ToUniversalTime())) return;
+            if (process.HasExited) return false;
+            if (OperatingSystem.IsLinux() && (_sidecar?.ChildLinuxIdentity is not { } identity
+                || LinuxProcessIdentity.TryRead(pid) != identity))
+            {
+                _logger.LogWarning("Herdr child stop refused for pid {Pid}: Linux start identity missing, unreadable or changed", pid);
+                return false;
+            }
             if (OperatingSystem.IsLinux() && StopIntents is { } intents)
-                intents.StopProcess(process, _sessionId, _sidecar?.AcceptedStartedAt ?? DateTime.MinValue,
+            {
+                var intent = intents.StopProcess(process, _sessionId, _sidecar?.AcceptedStartedAt ?? DateTime.MinValue,
                     ProcessStopTarget.Child, ProcessStopPath.ProcessTree);
+                if (intent.Outcome != ProcessStopOutcome.Issued) return false;
+            }
             else process.Kill(entireProcessTree: true);
+            // SIGKILL delivery is asynchronous. Observe for at most one second, never guess exit.
+            return !OperatingSystem.IsLinux() || process.WaitForExit(1000);
         }
         catch
         {
             // Already gone.
+            return false;
         }
     }
 

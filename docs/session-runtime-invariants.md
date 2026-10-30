@@ -26,9 +26,11 @@ loads always become RecoveredUnverified, even when a planted file says LiveIssue
 A new process cannot rebuild issuer authority from that file. An observed policy
 cause alone cannot create a server request for a known signal.
 
-ProcessStopIntentStore publishes requested, attempts the authorized signal, and
-publishes issued/failed under its memory gate. Only after releasing that gate does
-it offer diagnostic IO. TryRecordAsync enforces 100 ms from offer, including queue
+ProcessStopIntentStore publishes requested and issued/failed under its memory gate.
+Custody/helper operations run between those publications with the shared gate released;
+an unrelated stop or observer never waits for their helper. Direct signal publication
+remains atomic with exit observation. Retention evicts the oldest request in FIFO order.
+Only after releasing that gate does it offer diagnostic IO. TryRecordAsync enforces 100 ms from offer, including queue
 wait, on an injected clock. One worker and one pending snapshot bound each owner's
 IO; an expired in-flight writer remains owned and rejects additional work until
 it returns. Stop, observation and shutdown never await it. Timeout does not cancel
@@ -46,6 +48,11 @@ never substitute for child wait evidence. Linux disposal records the existing
 master-close/SIGHUP as an unobservable request, and closes before joining the reader.
 Refused/unobserved Linux PID stops retain their existing owner/sidecar and stop debt.
 Only observed process exit or existing custody accounting discharges that debt.
+Herdr Linux child stops require the persisted boot ID and `/proc/<pid>/stat` field 22
+start ticks, parsed after the final parenthesis of comm. UTC Process.StartTime is not
+a cross-process Linux identity. Missing legacy, unreadable or mismatched identities
+refuse the PID kill with a warning and retain ownership. An issued SIGKILL gets at most
+one second of OS exit observation before it is treated as unobserved.
 
 Exit codes and diagnostic records supply no new
 custody, janitor, terminal-seat or stop-debt release authority. Windows native
