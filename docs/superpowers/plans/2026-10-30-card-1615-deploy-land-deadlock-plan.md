@@ -1,11 +1,34 @@
 # CARD-1615: isolate rollout control from canonical activation
 
-Plan only. Round-3 assigned base `30b76fbf22dc90161acbcf5622e5d4f6ba4fc57c`,
-branch `feat/card-task-7dd90600`, inspected 2026-10-30. No product edits or rollout.
+Plan only. Round-4 assigned base `dbae0d65de7142ff61c8ec05cdd8b965d8b2f2f7`,
+branch `feat/card-task-c1db9627`, inspected 2026-10-30. No product edits or rollout.
+Round-3 base was `30b76fbf22dc90161acbcf5622e5d4f6ba4fc57c`.
 Round-2 base was `f9bf72bd500b30d7dc7fae32971a2c8c83923c69`; round-1 source
 base was `ade54222543381e2e1b31ad79d8ae33a4035f70b`.
 
-## Round-3 revision ledger
+## Round-4 revision ledger
+
+Skeleton checkpoint: the four final-review repairs below are being reconciled
+into the detailed design. This checkpoint is not yet ready for Code. Retain the
+confirmed token-first route, phase-scoped tasks, documentation pins, dependency
+ordering and six-row checkpoint roster. Historical validation remains historical.
+
+1. Review D-1: make watchdog recovery marker-aware: canonical HEAD X permits
+   automatic same-X recovery of a down stack; a mismatch must alert, not retry silently.
+2. Review D-2: separate durable rollout-active state from controller heartbeat.
+   Protection spans every handover; a 60-minute handover deadline raises a loud
+   stale condition and never removes protection. Refuse a new rollout over an
+   unfinished one; define explicit audited close.
+3. Review D-3: add explicit reason-bearing, audited quarantine for unknown/corrupt
+   markers, including bounded sharing-violation retries and documented recovery.
+4. Review D-4: correct the landing witness to publication plus canonical-advance
+   residue `target_checked_out_elsewhere`, not a pre-publication refusal.
+
+Also take A-1 (all session/orchestrator environment absent for interactive), A-2
+(failed same-X restart deliberately stops heartbeat renewal during its retained
+15-minute lock) and A-3 (current source line-number label).
+
+### Round-3 design retained for reconciliation
 
 All five caller decisions are specified below with production-path witnesses and
 closed checkpoints. Historical evidence is labelled; Code execution remains pending.
