@@ -20,7 +20,7 @@ internal interface ISessionChild : IAsyncDisposable
 
 internal sealed record ChildStarted(int? ChildPid, int? HostPid, DateTime ChildStartUtc);
 
-internal sealed record ChildExit(int? ExitCode, string Reason);
+internal sealed record ChildExit(int? ExitCode, string Reason, int? ExitSignal = null);
 
 /// <param name="ContentSequence">
 /// CARD-0164: runner-owned monotonic counter bumped when visible text changes. Folded into
