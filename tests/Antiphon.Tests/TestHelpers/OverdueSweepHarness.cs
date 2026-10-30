@@ -48,7 +48,7 @@ public static class OverdueSweepHarness
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
                 var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id, ct);
                 return new SessionRunnerSessionDto(id, null, session.StartedAt, session.Status.ToString(),
-                    session.ExitCode, Antiphon.SessionRunner.Contracts.AgentExitReason.Unknown, 0,
+                    session.ExitCode, AgentExitReason.Unknown, 0,
                     AcceptedStartedAt: session.StartedAt);
             },
         };
