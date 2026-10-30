@@ -2063,7 +2063,8 @@ public sealed partial class SessionMessageQueueService
         var pending = await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending
-                && m.Origin == QueuedMessageOrigin.Supervision)
+                && m.Origin == QueuedMessageOrigin.Supervision
+                && m.SourceTaskSupervisionNoticeId == null)
             .ToListAsync(ct);
         if (pending.Count == 0)
             return;
@@ -5290,6 +5291,7 @@ public sealed partial class SessionMessageQueueService
                     && messages.All(m => m.Origin == QueuedMessageOrigin.Supervision);
                 foreach (var message in messages.Where(m =>
                              m.Origin == QueuedMessageOrigin.Supervision
+                             && m.SourceTaskSupervisionNoticeId == null
                              && m.DeliveryAttempts >= MaxAttempts))
                 {
                     // Cancel-not-park (CARD-0082): parking exists for human-owed content. An
@@ -5300,7 +5302,8 @@ public sealed partial class SessionMessageQueueService
                 }
 
                 parked = messages.Count(m =>
-                    m.Origin != QueuedMessageOrigin.Supervision && m.DeliveryAttempts >= MaxAttempts);
+                    (m.Origin != QueuedMessageOrigin.Supervision || m.SourceTaskSupervisionNoticeId != null)
+                    && m.DeliveryAttempts >= MaxAttempts);
             }
 
             // Asked before the kill decision AND before the incident text is written, so both tell
