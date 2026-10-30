@@ -39,7 +39,8 @@ internal sealed class CanaryRepository : IDisposable
             if (Directory.Exists(docs))
                 foreach (var file in Directory.EnumerateFiles(docs, "*", new EnumerationOptions
                          { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
-                    if (file.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) files.Add(Path.GetRelativePath(repo, file));
+                    if (file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+                        files.Add(Path.GetRelativePath(repo, file).Replace(Path.DirectorySeparatorChar, '/'));
 
             var ordinary = new List<(string Source, string Destination, bool Skippable)>();
             void CopyOrdinary()
