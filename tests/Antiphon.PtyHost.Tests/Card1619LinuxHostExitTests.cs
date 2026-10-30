@@ -6,11 +6,13 @@ using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.PtyHost.Tests;
 
 [Category("PtyHost")]
 [Category("Integration")]
+[NativeLinuxOnly("CARD-1619 requires real detached Linux PTY exit observation")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class Card1619LinuxHostExitTests
 {
@@ -51,7 +53,9 @@ public class Card1619LinuxHostExitTests
                 ["-c", "printf 'card1619-ready\\n'; read line; exit 23"], new Dictionary<string, string>(),
                 root, 80, 24, 0, false, Path.Combine(root, "session.ansi.log"), AcceptedStartedAt: generation), default);
             child = Process.GetProcessById(launched.ChildPid);
-            child.StartTime.ToUniversalTime().ShouldBe(launched.ChildStartTimeUtc);
+            var childIdentity = StartTicks(child.Id);
+            PtyHostManifest.TryLoad(PtyHostManifest.PathFor(dir, id))!.ChildStartTimeUtc
+                .ShouldBe(launched.ChildStartTimeUtc);
             await client.AttachAsync(0, default);
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (detached)
@@ -62,6 +66,7 @@ public class Card1619LinuxHostExitTests
             if (signal > 0)
             {
                 child.HasExited.ShouldBeFalse();
+                StartTicks(child.Id).ShouldBe(childIdentity, "owned PID/start ticks before external signal");
                 Kill(child.Id, signal).ShouldBe(0);
             }
             else
@@ -118,4 +123,10 @@ public class Card1619LinuxHostExitTests
 
     [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static extern int Kill(int pid, int signal);
+
+    private static string StartTicks(int pid)
+    {
+        var stat = File.ReadAllText($"/proc/{pid}/stat");
+        return stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19];
+    }
 }

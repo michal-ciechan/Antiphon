@@ -18,10 +18,13 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.SessionRunner.Tests;
 
 [Category("Integration")]
+[NativeLinuxOnly("CARD-1619 requires real Linux host and runner exit observation")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class Card1619RunnerExitTests
 {
@@ -180,6 +183,7 @@ public class Card1619RunnerExitTests
         private readonly List<Process> _owned = [];
         public SessionRunnerRuntime Runtime { get; private set; } = null!;
         private Process _child = null!, _host = null!;
+        private readonly Dictionary<int, string> _identities = [];
         public string ManifestPath => PtyHostManifest.PathFor(Path.Combine(Root, "pty-hosts", "manifests"), Id);
 
         public static async Task<NativeFixture> StartAsync()
@@ -209,6 +213,7 @@ public class Card1619RunnerExitTests
         }
         public async Task<RunnerSessionDto> LaunchAsync(SessionRunnerRuntime runtime, DateTime generation)
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-host-launch-and-readiness");
             var dto = await runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
                 ["-c", "printf 'card1619-ready\\n'; read line"], new Dictionary<string, string>(), Root,
                 80, 24, AcceptedStartedAt: generation), default);
@@ -221,16 +226,19 @@ public class Card1619RunnerExitTests
             runtime.GetBuffer(Id).Buffer.ShouldContain("card1619-ready");
             dto.Status.ShouldBe("Running");
             var manifest = PtyHostManifest.TryLoad(ManifestPath)!;
-            manifest.ChildStartTimeUtc.ShouldBe(Process.GetProcessById(dto.Pid.Value).StartTime.ToUniversalTime());
+            manifest.ChildStartTimeUtc.ShouldBe(dto.StartedAt);
+            _identities[dto.Pid.Value] = StartTicks(dto.Pid.Value);
             return dto;
         }
         public void Signal(int signal)
         {
             _child.HasExited.ShouldBeFalse();
+            StartTicks(_child.Id).ShouldBe(_identities[_child.Id], "owned PID/start ticks before external signal");
             Kill(_child.Id, signal).ShouldBe(0);
         }
         public async Task DetachAndSignalAsync(int signal)
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "card1619-detached-exit-and-manifest");
             await Runtime.DisposeAsync();
             Signal(signal);
             var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -251,6 +259,7 @@ public class Card1619RunnerExitTests
         }
         public async ValueTask DisposeAsync()
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "card1619-owned-process-join");
             foreach (var runtime in _runtimes) await runtime.DisposeAsync();
             foreach (var owned in _owned)
             {
@@ -259,6 +268,12 @@ public class Card1619RunnerExitTests
                 finally { owned.Dispose(); }
             }
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
+        }
+
+        private static string StartTicks(int pid)
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            return stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19];
         }
     }
 
