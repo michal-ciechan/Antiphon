@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
