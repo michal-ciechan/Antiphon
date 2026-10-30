@@ -296,10 +296,33 @@ function Measure-MpPublish {
         }
     }
     $before = Get-MpSha -Path $flat
-    $ctx = Open-MpContext -LogRoot $root -RunId 'run-v1' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+    # Prefix import is separately charged setup. Recursive counter wrappers add
+    # substantial interpreter work to that import and are needed only while
+    # observing the following steady-state publication.
+    $originals = @{
+        'ConvertTo-TestPhaseExecutedChunk' = $script:MpChunkBlock
+        'ConvertTo-TestPhaseJsonText' = $script:MpJsonBlock
+        'Write-TestPhaseTextAtomic' = $script:MpAtomicBlock
+        'Get-NightlyFileSha256' = $script:MpHashBlock
+    }
+    $counters = @{}
+    $initialization = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        foreach ($name in $originals.Keys) {
+            $path = 'function:' + $name
+            $counters[$name] = (Get-Item -LiteralPath $path).ScriptBlock
+            Set-Item -LiteralPath $path -Value $originals[$name]
+        }
+        $ctx = Open-MpContext -LogRoot $root -RunId 'run-v1' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+    } finally {
+        foreach ($name in $counters.Keys) { Set-Item -LiteralPath ('function:' + $name) -Value $counters[$name] }
+        $initialization.Stop()
+    }
     if ($null -ne $ctx -and $ctx.Refused) { Fail-Mp ("open-refused " + [string]$ctx.Reason) }
     Reset-MpCounters
+    $publication = [System.Diagnostics.Stopwatch]::StartNew()
     Publish-MpChunk -LogRoot $root -TrxPath $TrxPath -Suite 'antiphon' -Chunk 'live-1' -RunId 'run-v1' -Attempt '1' -HostWallSeconds 1.25
+    $publication.Stop()
     $after = Get-MpSha -Path $flat
     $hashSame = ($PrefixChunks -eq 0) -or ($before -eq $after -and $before -ne '')
     $measured = [pscustomobject]@{
@@ -308,7 +331,10 @@ function Measure-MpPublish {
         HashSame = [bool]$hashSame
         FlatWrites = [int]$script:MpFlatWrites
         HashCount = [int]$script:MpHashCount
+        InitializationSeconds = $initialization.Elapsed.TotalSeconds
+        PublicationSeconds = $publication.Elapsed.TotalSeconds
     }
+    [System.IO.File]::WriteAllText((Join-Path $root 'publication-measure.json'), ($measured | ConvertTo-Json -Compress))
     Close-MpContext -Context $ctx
     $script:QualificationTimingRoot = $null
     return $measured
