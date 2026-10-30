@@ -186,4 +186,45 @@ internal static class VolumeRetirementFixture
         var flat = value.Replace('\r', ' ').Replace('\n', ' ');
         return flat.Length <= 500 ? flat : flat[..500];
     }
+
+    internal static string TmpMount(C1008HostFixture fixture) =>
+        Path.Combine(fixture.Root, "volumes", "antiphon-runner-temp_runner-tmp", "_data");
+
+    internal static string DindMount(C1008HostFixture fixture) =>
+        Path.Combine(fixture.Root, "volumes", "antiphon-runner-temp_dind-data", "_data");
+
+    internal static async Task<string> AuditText(C1008HostFixture fixture, string hostCase = "retire-temp-runner")
+    {
+        var path = Path.Combine(fixture.Root, "evidence", hostCase, "preview-audit.out");
+        return File.Exists(path) ? await File.ReadAllTextAsync(path) : "";
+    }
+
+    internal static async Task<(int Exit, string Output)> Preview(C1008HostFixture fixture)
+    {
+        return await fixture.Run("retire-temp-runner", "\n" + ShellProbe, dryRun: true);
+    }
+
+    // One published outer checkout. Nested card-1605 seeds sit under a gitignored .antiphon.
+    internal static async Task<(string Bare, string Outer)> SeedPublishedOuter(C1008HostFixture fixture, string name = "outer")
+    {
+        var bare = Path.Combine(fixture.Root, name + ".git");
+        var outer = Path.Combine(WorkMount(fixture), "repos", name);
+        var setup = await Bash($$"""
+            set -euo pipefail
+            git init -q --bare {{Quote(bare)}}
+            git -C {{Quote(bare)}} symbolic-ref HEAD refs/heads/main
+            git init -q -b main {{Quote(outer)}}
+            git -C {{Quote(outer)}} config user.name Fixture
+            git -C {{Quote(outer)}} config user.email fixture@example.invalid
+            git -C {{Quote(outer)}} config commit.gpgsign false
+            printf '.antiphon/\n' > {{Quote(outer)}}/.gitignore
+            printf 'published\n' > {{Quote(outer)}}/readme.txt
+            git -C {{Quote(outer)}} add .gitignore readme.txt
+            git -C {{Quote(outer)}} -c commit.gpgsign=false commit -qm published
+            git -C {{Quote(outer)}} remote add origin {{Quote(bare)}}
+            git -C {{Quote(outer)}} push -q origin HEAD:refs/heads/main
+            """);
+        setup.Exit.ShouldBe(0, "c1609: published outer; " + setup.Output);
+        return (bare, outer);
+    }
 }
