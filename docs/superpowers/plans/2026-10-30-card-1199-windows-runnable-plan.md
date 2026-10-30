@@ -12,28 +12,32 @@ Plan task `f8a94733`, assigned base
 `.antiphon/task-4d98fbcb.md`. This is the last, narrow plan amendment; no product
 source changes or product tests. Round-2 findings and costs remain historical.
 
-Amendment work in progress:
+Amendment completed and imported; the detailed evidence is in Plan validation:
 
-- D-1: replace CP-46's quoted PowerShell wrapper with a bare shell command and
-  require the audit's own success line, using the supported checkpoint contract.
-  Inspect every other command row for the same Windows quoting hazard.
-- D-2: require the CARD-1613 master port before this plan's master port and S3
-  publication on each target before S-F-cost. Keep one post-1613 roster/count.
-- Advisories: remove the cross-host CP-37 authoring wait, refresh rc/top-up refs,
-  correct the 0.5s/node fallback and S3 costBasis description, then re-import.
+- D-1 closed: CP-46 is a bare quote-free shell command, with the audit's exact
+  `approved` line and evaluator digest mandatory for credit. It is the only
+  command row; the supported Expect contract includes a post-run assertion.
+- D-2 closed: CARD-1613 publication on master and S3 publication on each target
+  are hard prerequisites at their stated stages. One post-1613 roster/count
+  applies to both targets; no old-name variant or admission stub is allowed.
+- Advisories taken: no cross-host CP-37 authoring wait, current rc/top-up refs,
+  explicit 0.5s/node fallback and family factor, actual S3 costBasis handoff.
+  Import retains 53 rows, eight shared builds and 223 whole-minute estimates.
 
 R-2 stays pending/required. The first remote observation in this round is
 `rc/2026-10-27` = `ade54222543381e2e1b31ad79d8ae33a4035f70b`;
 top-up 38 publication is not yet confirmed. Publish only the plan-file delta.
-This skeleton does not supersede unresolved row details until validation below.
+Verification design is included. Next is Code after confirmed top-up 38
+publication, with the later hard prerequisites and pending R-2 retained.
 
 ## Round-2 amendment status (historical)
 
 Plan task `dd46f01b`, base `421c3de68a81b32ded14f40af85a4e9ff50a1938`.
 The complete review `.antiphon/task-3b1ff9b6.md` is the amendment input.
 The revised plan retains the confirmed 35-row premise and verification design.
-All three defects and A-1..A-9 are addressed below; final Opus review remains
-required before Code. Amendment decisions:
+Round 2 addressed its three findings and A-1..A-9, then received final Opus
+review `4d98fbcb`, which found the two defects amended in round 3 above.
+Historical amendment decisions:
 
 - Review D-1: independently build the graph-audit tool for CP-46; establish
   scheduler dependencies and cleanup lifetime from source.
@@ -95,8 +99,8 @@ and then removing them would weaken the existing gate and misstate the change.
   do not restore it over independently landed policy changes.
   If the eventual Code base has covering exclusions, stop and enumerate the
   actual delta for plan review; this plan does not authorize arbitrary removals.
-- D-6: include verification design here, then obtain the caller's requested Opus
-  plan review. Its first check is the policy-premise correction. Ordinary Code
+- D-6: include verification design here; the caller's requested final Opus
+  review is recorded in `4d98fbcb`, with its final fixes in this round. Ordinary Code
   does not execute deliberate production mutants; their method-scoped inventory
   passes to post-land SourceLanding Mutation under the existing pipeline.
 - D-7: no new project, package, build target or definition file is needed. New
@@ -195,8 +199,10 @@ The cost/pricing handoff below specifies S3's interaction. No slice grants Full
 credit before its required evidence or the separate R-2 obligation is resolved.
 
 Publish **only the plan**: a separate Docs landing commission starts at the
-target and applies the exact final delta for this plan path, including round 1
-(`fca55bdda..c31d947b5`) and this amendment (`421c3de68..HEAD`). It excludes the
+target and applies the reviewed final contents/delta for this single plan path,
+including round 1 (`fca55bdda..c31d947b5`), round 2 (`421c3de68..13c691b16`)
+and round 3 (`95d190a38..HEAD`). Inspect the delta against that target, rather
+than assuming this branch's inherited history is a publication unit. It excludes the
 inherited investigation and `.antiphon/task-*.md` reports. Inspect the resulting
 single-path diff and commit it for review/land. Do not request a whole-branch
 merge of this task: the inherited `.antiphon/task-af2b78c8.md` add/add conflict
@@ -839,8 +845,11 @@ UID sets, group membership, cost digest and admission decision beside CP-53.
 `Get-NightlyClassCostTable` divides seconds by nodes; the packing target is
 900s, not a hard watchdog. A roughly 1270s T class stays alone (under the 2400s
 lone-class ceiling); S and O cannot fit together at roughly 770+505s. The old
-model priced S/T at the 0.5s/node fallback and O at 25s/6, causing severe underpacking
-estimates. Validate actual grouping after the refresh; do not force a 900s split
+model has a 0.5s/node fallback (`NightlyLaunchNodeSeconds`); the actual S/T
+`Check` family names receive its 2x Heavy factor, hence 1s/node before measured
+rows override it. O's existing measured row is 25s/6 and bypasses that factor.
+Both fallback and measured prices severely understate these bodies. Validate
+actual grouping after the refresh; do not force a 900s split
 or increase watchdogs just to fit a forecast.
 
 `Get-NightlyPolicyHash` hashes only canonical execution-policy JSON, excluding
@@ -850,6 +859,10 @@ manifest). Use the policy hash actually on the post-top-up base, preserving it
 through this work; the round-1 hash above is historical, not a pin to restore.
 S3 at `192f15240f757e04fb5fdb032e447f926e563757` consumes the revised planned
 seconds for admission (antiphon estimate ceiling 2400s, suite watchdog 3600s).
+The corrected forecasts T about 1270s, S about 770s and O about 505s all remain
+below that ceiling; they change packing and planned seconds, not the admission
+verdict. The stale prices conceal roughly 2500s in 900s-target groups and can
+increase watchdog-kill risk; they do not demonstrate an admission flip.
 Its live planner passes each chunk's `costBasis` and no calibration; changing a class
 row's basis to `trx`/`measured` does not activate calibrated watchdog reduction.
 Eligible calibration requires at least 20 uncensored matching samples, policy
@@ -1052,6 +1065,54 @@ No session-waits-for-input behavior is added or changed by this plan.
 
 ## Plan validation and acceptance handoff
 
+Round 3 imported successfully at `fd443b108` with **53 rows, eight shared test
+builds and 223 whole-minute estimates**; per-lane totals remain Linux 221m and
+Windows 222m. CP-46 remains 5m including its own evaluator build. Static audit
+found 35 unique target filters, 35 canonical OR operands with no suffix
+collisions, exactly one command row (CP-46), and zero quotes in that command.
+Its exact command and required `approved` assertion survive import unchanged.
+CP-36/45 still select 3/7 post-CARD-1613 methods; planned future names were
+included explicitly. This is source/import evidence, not compiled/native proof.
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-round3-import -SlotWaitMinutes 10 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1199r3import/ -- import --plan docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md --out .antiphon/plan-f8a94733/imported.yaml
+```
+
+Unedited round-3 importer/slot outcome (five compiler warnings, no errors):
+
+```text
+BUILD SLOT granted lease=dcb11df0-d8ca-4519-9cb5-d25786a1f87e waited=0s maxcpucount=6
+WARNING CP-41: derived row timeout (72 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+WARNING CP-42: derived row timeout (72 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)
+imported 53 rows -> .antiphon/plan-f8a94733/imported.yaml
+BUILD SLOT released lease=dcb11df0-d8ca-4519-9cb5-d25786a1f87e held=8s
+```
+
+The slot wrapper disclosed that this `dotnet run` implicit build used the
+default node count. The two timeout advisories still require the explicit
+overlay above. Generated import/static-audit evidence remains ignored under
+`.antiphon/plan-f8a94733/`; remove only the two owned `bin-c1199r3import/`
+outputs after all importer use. No product test, audit or Windows execution ran.
+The post-run log assertion remains mandatory for future CP-46 native credit.
+
+Round-3 source checks used top-up 38
+`130ea525aa1f25230123ee3584ea58dbf0604b95`, remote rc
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`, master
+`98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`, and S3
+`192f15240f757e04fb5fdb032e447f926e563757`. The 35-row runtime-skip premise,
+16 shape arguments and 13 T / 6 O methods still hold. S/T/O have no covering
+execution-policy exclusions or NativeLinuxOnly markers. The top-up wrapper has
+six assertions, master the old eight; S3 admission is absent on all three
+observed target/top-up-38 trees. Both discovery routes returned HTTP 200;
+default placement resolves to Linux and Linux/native Windows lanes were
+available. These are observations, not dispatch reservations or landed refs.
+
+Round 3 fetched master and repeated `git merge-tree --write-tree origin/master
+HEAD`: exit 1, the same four inherited conflicts recorded below. Whole-branch
+landing remains refused; publish only the plan-file delta from this task.
+
+### Historical round-2 validation
+
 Round 2 importer accepted **53 rows, eight shared test builds**, exit 0 at
 `e4a7e23bd`. The 223 whole-minute estimates in the union table include all
 build-once allocations; actual closed lists total 221m on Linux and 222m on
@@ -1106,14 +1167,14 @@ returned exit 1 with four inherited conflicts: `.antiphon/task-af2b78c8.md`,
 landable whole branch. Use the separate plan-only Docs publication described
 above; no merge, rebase, conflict repair or target push was performed here.
 
-Final Opus review checks review D-1/D-2/D-3, A-1..A-9, the self-building audit
-row, the post-CARD-1613 roster, the separate cost-file/price handoff and explicit
-native commissions. After acceptance and confirmed rc top-up 38 publication,
+The final Opus review is complete and its two defects are amended above.
+After confirmed rc top-up 38 publication,
 commission S-A, S-B1/S-B2, S-C1/S-C2, S-F, then the required S-F-cost follow-up
-in order. Preserve pending R-2 and commission the aggregate Debug work. Existing
+in order. Require the CARD-1613 master port before implementation ports and S3
+on each target before its S-F-cost. Preserve pending R-2 and commission the aggregate Debug work. Existing
 authority covers implementing the 35 rows; no further go-ahead is needed.
 
 --- next stage ---
-next: review
-handoff: Final Opus review of the round-2 plan, then Linux Code plus native Windows Verify per slice after rc top-up 38 lands. Land rc fixes first and separately port master; publish only the plan delta. Keep R-2 pending and aggregate Debug separate; require measured cost refresh before Full credit.
+next: code
+handoff: After confirmed rc top-up 38 publication, commission Linux Code and native Windows Verify per slice. Publish only the plan-file delta. Require CARD-1613 on master before ports and S3 on each target before S-F-cost. CP-46 needs approved log-line/digest proof; retain immutable CP-37 red SHA, pending R-2 and aggregate Debug.
 artifact: docs/superpowers/plans/2026-10-30-card-1199-windows-runnable-plan.md
