@@ -98,7 +98,7 @@ public sealed class QualificationCheckoutSourceTests
         }
     }
 
-    private static void CleanupScratch(string scratch) => Directory.Delete(scratch, recursive: true);
+    private static void CleanupScratch(string scratch) => ReadOnlyDirectory.Delete(scratch);
 
     private static async Task<string[]> Porcelain(string root)
     {
