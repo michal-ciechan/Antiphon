@@ -172,8 +172,8 @@ credential; neither filesystem markers nor operator-token custody promise that.
    proven quiescent boundary. The watchdog exception below permits recovery of a
    down stack at the same X during a phase, subject to existing restart guards.
    The active-rollout marker below enforces the AppHost SHA restriction across
-   phases. Its expiry is explicitly fail-open with a loud warning; do not claim
-   indefinite exclusion when the controller stops heartbeating.
+   phases. Rollout-active is durable across controller exits; heartbeat expiry never
+   lifts the SHA restriction. A late handover alerts and requires recovery.
 3. For all admitted caller classes, GET `/api/version` once per mutating invocation
    before operator-token lookup or effects. Read the DTO's `version` member (the SHA), require full 40-hex, normalize
    case, and compare with X. A different SHA refuses loudly as
@@ -213,20 +213,46 @@ unreadable or unsupported-schema content with `ActiveRolloutMarkerUnknown`.
 Do not turn unknown content into the stale exception.
 
 Schema 1: `rolloutId, sha, controllerId, callerClass, phase, sequence,
-createdAtUtc, heartbeatAtUtc, expiresAtUtc, state, journalPath`; IDs and SHA are
-validated, paths are bounded local paths, no tokens or task prose. Heartbeat every
-30 seconds, expiry five minutes after the last heartbeat, UTC with one-minute
-future-skew tolerance. Validate createdAt <= heartbeatAt and expiry exactly heartbeatAt + five minutes;
-a valid active record with `now < expiresAtUtc` is live.
-Only a valid expired record is stale. A completed record is historical, not live.
-These are explicit provisional operating defaults; expiry is a liveness fallback,
-not proof the prior process exited.
+createdAtUtc, heartbeatAtUtc, expiresAtUtc, rolloutState, phaseState,
+handoverStartedAtUtc, handoverDeadlineUtc, journalPath, journalGeneration`.
+IDs/SHA and bounded local paths are validated; no tokens or task prose.
+**rolloutState=Active is durable**, from first deploy-temp admission until joined
+final retire-temp Completed or explicit audited Closed. ReadyForNext, SlicePending,
+RecoveryRequired, process exit and heartbeat expiry all remain Active. Completed
+and Closed are distinct retained terminal states; Closed is not rollout success.
+
+Heartbeat every 30 seconds, liveness expiry five minutes after the last heartbeat,
+UTC with one-minute future-skew tolerance; validate createdAt <= heartbeatAt and
+expiry exactly heartbeatAt + five minutes. This reports controller health only.
+At a joined ReadyForNext/SlicePending boundary set handoverStartedAtUtc once and
+handoverDeadlineUtc exactly **60 minutes later**, persisted before predecessor exit.
+Repeated reads/reports cannot extend it. Before that deadline a successor may
+claim the exact joined generation. At/after it, emit `ActiveRolloutHandoverExpired`
+to the same durable alert/Event Log sinks as watchdog refusal, retain Active and
+refuse normal successor admission. No background timer is promised: every watchdog
+fire (including healthy-stack fires) and every admission evaluates the deadline;
+with the watchdog running, observation is on its two-minute cadence. A stale
+in-phase heartbeat likewise alerts `ActiveRolloutControllerStale`; it never
+proves process exit or releases SHA protection. Defaults are explicit operating
+bounds, not measured test timeouts.
 
 Create/renew atomically (same-directory temporary file plus replace) under a short
 exclusive `logs/active-rollout.gate` file handle. Never use the marker as a long
 blocking lock. A controller first validates identity/source, acquires the gate,
-refuses an active AppHost launch/restart lock or foreign live rollout, probes the
-API version while holding the gate, then writes its marker and journal, then releases the gate before credentials/phase effects.
+refuses an active AppHost launch/restart lock or **any unfinished rollout**, probes
+the API version while holding the gate, then persists Active before any phase
+effect. Write the initial marker first and journal second, both atomically; no
+effects until both agree. A crash between files is Unknown/RecoveryRequired,
+never absence. New rollout admission (deploy-temp without RolloutId) refuses
+`RolloutAlreadyActive` naming the bounded prior rollout ID and journal, regardless
+of heartbeat/deadline. A matching RolloutId admits only the specified successor
+transition, not an arbitrary phase rerun. If the marker is absent, inspect bounded
+canonical journal headers under the same gate (five-second total deadline,
+64 KiB per journal): any nonterminal journal refuses; unreadable/partial inventory
+is Unknown. An empty verified inventory alone permits first rollout admission.
+Completed/Closed journals require their matching terminal receipts. Preserve the
+previous terminal marker in its own journal directory before a new Active write.
+Release the gate before credentials/phase effects.
 Restart takes the same gate **before any kill/build/start**, reads the marker and
 publishes its existing restart lock while still holding the gate. That ordering
 closes version-check/create and restart-check/create races: controller sees the restart lock, or restart sees the
@@ -237,10 +263,10 @@ Restart decision table (all existing worktree/source/lock guards still apply):
 
 | Marker | Explicit `-ExpectedServerSha` | Result |
 |---|---|---|
-| Live active X | Missing, malformed or different Y | Exit 3 `ActiveRolloutRestartRefused`, expected X/controller/phase printed; zero kill/build/start. Defaulting to canonical HEAD never supplies explicit consent. |
-| Live active X | X | Marker permits restart; existing source HEAD must still equal X. Planned recovery requires quiescence; watchdog recovery of a down stack follows the narrow exception below. |
-| Valid stale active | Any ordinarily valid restart request | Loud `ActiveRolloutMarkerStale` warning with bounded IDs/timestamps, then ordinary restart checks. Retain marker and stale observation; do not silently clear it. |
-| Absent or completed | Any ordinarily valid request | Existing restart behavior. |
+| Durable Active X (fresh, handover or stale) | Missing, malformed or different Y | Exit 3 `ActiveRolloutRestartRefused`, expected X/controller/phase printed; zero kill/build/start. Defaulting to canonical HEAD never supplies explicit consent. |
+| Durable Active X (fresh, handover or stale) | X | Marker permits restart; existing source HEAD must still equal X. Planned recovery requires quiescence; watchdog recovery of a down stack follows the narrow exception below. |
+| Heartbeat stale or handover expired, still Active X | Any | Emit the loud stale alert and apply the two Active-X rows above; time alone never permits Y or an implicit HEAD restart. |
+| Verified absent with no incomplete journal, or proven Completed/audited Closed | Any ordinarily valid request | Existing restart behavior; retain terminal history. |
 | Malformed, unreadable, unsafe path or future-skewed | Any | Exit 3 `ActiveRolloutMarkerUnknown`; no automatic overwrite or bypass. |
 
 A foreground controller owns its heartbeat runspace and joins/disposes it in
@@ -259,8 +285,10 @@ record RecoveryRequired, join owned local children, and require reconciliation
 before succession. Do not clear the restart lock or keep renewing to hide failure.
 The existing two-fire dead-launch proof may reclaim a proven-dead lock earlier;
 CARD-1615 neither bypasses that proof nor treats a retained lock as successful recovery.
-At joined final retire-temp completion, atomically mark `state=Completed` only if
-the marker still belongs to this rollout/generation; retain historical receipts.
+At joined final retire-temp completion, write the completion journal/proof then
+atomically mark rolloutState=Completed only if both files still belong to this
+rollout/generation. A partial terminal transition remains protected until repaired;
+never infer completion from task status. Retain historical receipts.
 No marker deletion, general unlock flag, global DB lock, new service, or fleet
 location is required. Direct dev-aspire/other restart paths are not covered by this
 specific guard; operating policy continues to require restart-apphost as the front door.
@@ -324,14 +352,14 @@ Windows vectors cover the actual Event Log call boundary with inert transports.
 
 Add `tests/Antiphon.Tests/Scripts/ActiveRolloutMarkerTests.cs`, six methods:
 `Live_marker_requires_explicit_matching_sha`,
-`Stale_marker_warns_and_allows_restart`,
+`Durable_state_spans_handover_and_refuses_new_rollout`,
 `Malformed_or_unreadable_marker_refuses`,
 `Marker_and_restart_admission_are_serialized`,
 `Heartbeat_and_completion_preserve_owner`,
 `Successor_handover_requires_joined_receipt`.
 Use actual helper/script admission, temporary canonical/controller Git roots,
 a controlled clock and existing process-effect stubs. Assert no restart effects
-on refusal; matching-X and stale controls reach the effect sentinel. Race tests
+on refusal; matching-X and completed/audited-closed controls reach the effect sentinel. Race tests
 use barriers, never sleeps. Native Windows runs cover replacement/file sharing. Heartbeat/completion vectors
 also exercise phase deadline, owned child exit/output drain, failed cleanup and
 unknown remote outcome: only joined proven outcomes permit succession. No timeout
@@ -439,9 +467,12 @@ Successor procedure:
    locks, probe API X, then compare
    the expected predecessor/generation and joined proof before assigning the new
    controller ID and incrementing sequence; a concurrent successor loses and
-   refuses `RolloutHandoverConflict`. A foreign live marker cannot be stolen.
-   A stale marker still requires joined predecessor proof and API X; if a restart
-   activated Y during the expired interval, refuse and commission recovery.
+   refuses `RolloutHandoverConflict`. No foreign unfinished rollout can be stolen.
+   The handover deadline must not have elapsed; a six-minute-old heartbeat does
+   not invalidate a joined handover still inside its 60-minute allowance. API X,
+   expected generation and retained proof remain mandatory. At/after 60 minutes
+   normal resume refuses; use the explicit audited close/reconciliation below.
+   No expiry interval permits activation of Y.
 5. Final joined retire-temp writes Completed to journal/marker. Retain history;
    later activation Y is a separate short Shared preparation.
 
@@ -449,12 +480,42 @@ The handover witness uses two authenticated Worktree task fixtures with differen
 IDs and real local owned children. First drain reaches its bounded pending
 outcome, records no repeated destructive effect and a joined receipt; successor
 at X resumes the same phase, consumes remaining overall allowance, then advances.
-Negative vectors: live predecessor, absent/changed receipt, wrong X/generation,
+Negative vectors: predecessor exits then clock advances **6 minutes** (implicit
+restart still refuses, matching-X recovery and proven successor still work),
+**60 minutes** (loud stale, implicit/Y restart and normal successor refuse), new
+rollout over stale unfinished state (refuses with prior ID/journal), missing marker
+with incomplete journal (refuses), and live predecessor, absent/changed receipt, wrong X/generation,
 duplicate successor, exhausted allowance, unsupported resume, and remote outcome
 unknown all refuse before effects. A terminal predecessor with proven joined
 receipt succeeds, proving no dependency on CARD-1610. Extend the six-method
 ActiveRolloutMarkerTests roster's handover method; use clock advancement and
 barriers, never real 30-minute sleeps.
+
+### Audited close of an unfinished rollout (round-4 review D-2)
+
+Add `scripts/close-rollout.ps1 -RolloutId <guid> -ExpectedSequence <n>
+-Reason <text> -EvidenceFile <local-reconciliation-receipt>`, a separately
+commissioned short canonical recovery action, using the shared gate/helper.
+Reason is required (1-512 printable characters); record actor/task/session IDs
+when available, UTC, X, generation, previous state and receipt hash. Validate the
+fixed canonical journal identity; a caller path supplies evidence, never selects
+which state file to unlock. Require joined predecessor/local-child proof and
+explicit reconciled remote outcome, runner images/drain routing and remaining
+resume context. Unknown/live owners or mismatched evidence refuse. It performs
+no kill, restart, Docker action, land, or new deployment. This is a local rollout
+coordination close, not deletion of host deployment markers or donor material.
+
+Write an immutable close receipt and journal Closed first, then marker Closed
+under the gate; audit-write failure or partial transition retains protection.
+Print a loud `RolloutExplicitlyClosed` including prior rollout/journal, reason
+and receipt path. Never relabel it Completed or silently delete state. This
+explicit path is also the recovery for a handover older than 60 minutes; it
+requires caller reconciliation, not endless automatic redispatch. A subsequent
+rollout needs a newly commissioned named-SHA preparation and must satisfy all
+existing host/resume prerequisites; Closed grants no permission to repeat remote
+effects. A healthy, timely joined successor is the ordinary path and needs no
+close. CP-6's durable-state method asserts close rejects missing proof/audit
+failure and permits a new rollout only after an exact audited Closed transition.
 
 ### Implementation scope and compatibility
 
