@@ -621,7 +621,7 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
         @{ s='antiphon'; c='CheckpointOwnedOutputTests'; m='changed_inventory_is_refused' }
         @{ s='antiphon'; c='CheckpointScriptReaderDeadlineTests'; m='script_reader_re_arms_its_stall_window_and_the_stamp_reports_unreadable_apart_from_tampered' }
         @{ s='session-runner'; c='CompletedCardWorkspaceRemovalTests'; m='C1032_InspectionHoldShapes' }
-        @{ s='antiphon'; c='CheckpointShapeConflictTests'; m='shape_conflict_rule' }
+        @{ s='antiphon'; c='CheckpointShapeConflictTests'; m='shape_directory_on_file' }
         @{ s='antiphon'; c='CheckpointTrackedBaselineTests'; m='local_output_property_tampering_is_reported' }
         @{ s='antiphon'; c='CheckpointOutputConfinementTests'; m='imported_props_build_preserves_the_tracked_dependency' }
         @{ s='session-runner'; c='RunnerWorkspaceBindingTests'; m='C1032_StoreIdentityRefused' }

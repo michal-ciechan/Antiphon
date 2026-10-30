@@ -38,7 +38,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task intermediate_output_path_tampering_is_reported(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -58,7 +57,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task generated_target_file_tampering_is_reported(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -157,7 +155,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(180_000)]
     public async Task dirty_tracked_tree_is_refused_and_unmodified(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -256,7 +253,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     [Timeout(60_000)]
     public async Task tracked_snapshot_contains_committed_files(CancellationToken cancellationToken)
     {
-        RequireLinux();
         var root = BeginRepo();
         foreach (var relative in new[] { "App/App.csproj", "App/Marker.cs", "App/keep.txt", "outside.txt", "notes/readme.txt" })
             Write(root, relative, relative + "\n");
@@ -337,7 +333,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         // case: the build runs git update-index --add on fresh-user.txt, a path absent from HEAD.
         // mutation: restore that index path with --worktree, deleting a path HEAD does not contain.
         // red: fresh-user.txt is missing or its bytes differ after the tool or the script row.
-        RequireLinux();
         var root = BeginRepo();
         WriteStageProject(root, "git --git-dir=.git --work-tree=. update-index --add -- fresh-user.txt");
         var bytes = Encoding.ASCII.GetBytes("INDEX-KEEP");
