@@ -402,6 +402,21 @@ public sealed record AgentTaskSessionDto(
     Guid SessionId, SessionStatus Status, bool Working, DateTime LastSeenAt,
     DateTime? EndedAt, DateTime? LastTranscriptAt);
 
+/// <summary>
+/// CARD-1610. Shared Failed-task session reading for task detail and attention.
+/// <see cref="Summary"/> is either "Failed, session still Running: seat held" or
+/// "session state unknown: release unconfirmed". <see cref="Activity"/> is Working, idle,
+/// or unknown. <see cref="NoticeState"/> stays null until the notice ledger exists.
+/// </summary>
+public sealed record FailedTaskSessionFactsDto(
+    string Summary,
+    string Activity,
+    Guid? TaskId,
+    Guid? CardId,
+    Guid? SessionId,
+    string? FailureSource,
+    string? NoticeState);
+
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
     string Goal,
@@ -470,7 +485,9 @@ public sealed record AgentTaskDetailDto(
     IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null,
     TaskParkSyncDto? ParkSync = null,
     /// <summary>CARD-1082 D-7. Null when this attempt has no settlement sync debt row.</summary>
-    TaskSyncDebtDto? SyncDebt = null);
+    TaskSyncDebtDto? SyncDebt = null,
+    /// <summary>CARD-1610. Null unless this Failed task still has an unreleased session.</summary>
+    FailedTaskSessionFactsDto? FailedSession = null);
 
 /// <summary>Desktop source readiness is independent of the historical task verdict and release.</summary>
 public sealed record TaskParkSyncDto(Guid ParkId, string State, string? SourceSha, string? ReasonCode,
