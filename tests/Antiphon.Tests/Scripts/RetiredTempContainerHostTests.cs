@@ -578,7 +578,9 @@ public sealed class RetiredTempContainerHostTests
         refused.Docker["containers"]!.AsArray().Add(refused.Container('8', Project, "state-init", false, previousGeneration: true));
         File.WriteAllText(Path.Combine(refused.Root, "temp.env"),
             "RUNNER_GROK_STORE_DIR=" + refused.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
-        refused.Docker["containers"]![0]!["Mounts"]![0]!["Destination"] = "/unknown-topology";
+        refused.Docker["containers"]!.AsArray().Single(c =>
+            c!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")!
+            ["Mounts"]![0]!["Destination"] = "/unknown-topology";
         var mismatch = await Cleanup(refused);
         mismatch.Exit.ShouldBe(2, "c1609: unknown actual topology still refuses; " + mismatch.Output);
         mismatch.Output.ShouldContain("RecycleContainerStateUnknown");

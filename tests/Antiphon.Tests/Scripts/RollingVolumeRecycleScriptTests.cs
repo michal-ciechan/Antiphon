@@ -3135,6 +3135,10 @@ internal sealed class C1008HostFixture : IDisposable
 
         Directory.CreateDirectory(Path.Combine(Root, "work"));
         Directory.CreateDirectory(Path.Combine(Root, "server/cache"));
+        // Protected current runtime, deliberately independent of stack.env and
+        // historical cleanup images. The production installer writes this shape.
+        File.WriteAllText(Path.Combine(Root, "server/audit-current.json"),
+            "{\"image\":\"" + SessionImage + "\",\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
         File.WriteAllText(Path.Combine(Root, "main.env"), "SOURCE_REVISION=" + PreviousSha + "\n");
         File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=" + Root + "/grok\nSOURCE_REVISION=" + PreviousSha + "\n");
     }

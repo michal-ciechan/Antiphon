@@ -55,6 +55,43 @@ public sealed class VolumeRetirementContentTests
         missingRuntime.Removed.ShouldBeEmpty();
         runtime.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
 
+        // A current compatible runtime can differ from every creating build.
+        // The helper must use that descriptor, never the old receipt or -Sha.
+        using var current = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.RetainPreviewImage(current);
+        var currentImage = "sha256:" + new string('e', 64);
+        var descriptor = Path.Combine(current.Root, "server", "audit-current.json");
+        await File.WriteAllTextAsync(descriptor,
+            "{\"image\":\"" + currentImage + "\",\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
+        var selected = await current.Run("retire-temp-runner", probe, dryRun: true);
+        selected.Exit.ShouldBe(0, "c1609 current compatible tooling; " + selected.Output);
+        selected.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        current.Trace.Where(a => a.Length > 0 && a[0] == "run").Last().ShouldContain(currentImage,
+            "current descriptor, independent of historical cleanup image and caller SHA");
+        current.Removed.ShouldBeEmpty();
+
+        foreach (var fault in new[] { "missing", "duplicate", "policy", "writable", "symlink" })
+        {
+            using var invalid = new C1008HostFixture(main: false);
+            var path = Path.Combine(invalid.Root, "server", "audit-current.json");
+            if (fault == "missing") File.Delete(path);
+            if (fault == "duplicate") await File.WriteAllTextAsync(path,
+                "{\"image\":\"" + currentImage + "\",\"policyVersion\":0,\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
+            if (fault == "policy") await File.WriteAllTextAsync(path,
+                "{\"image\":\"" + currentImage + "\",\"policyVersion\":99,\"protocol\":2,\"schema\":1}");
+            if (fault == "writable") File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
+            if (fault == "symlink")
+            {
+                File.Move(path, path + ".real");
+                File.CreateSymbolicLink(path, path + ".real");
+            }
+            var refusedRuntime = await invalid.Run("retire-temp-runner", probe, dryRun: true);
+            refusedRuntime.Exit.ShouldBe(2, "c1609 current runtime must refuse " + fault + "; " + refusedRuntime.Output);
+            refusedRuntime.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            invalid.Removed.ShouldBeEmpty();
+            invalid.Trace.Any(a => a.Length > 0 && a[0] == "run").ShouldBeFalse("invalid current runtime starts no helper");
+        }
+
         var admitted =
             unpinned.Output.Contains(VolumeRetirementFixture.ReadyMarker, StringComparison.Ordinal) &&
             stack.Output.Contains(VolumeRetirementFixture.ReadyMarker, StringComparison.Ordinal) &&
