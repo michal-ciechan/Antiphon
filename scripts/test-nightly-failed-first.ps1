@@ -9,8 +9,20 @@ $repo = Split-Path -Parent $PSScriptRoot
 $root = New-C487Root $ResultsDirectory
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $phases = [ordered]@{}
-function Write-FFJson($Path, $Value) { [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 40), [Text.UTF8Encoding]::new($false)) }
-function Assert-FF([bool]$Ok, [string]$Name, [string]$Detail = '') { Assert-C487 $Ok ('FF ' + $Case + '.' + $Name) $Detail }
+$script:FFOperations=[Collections.Generic.List[object]]::new()
+$script:FFAssertions=[Collections.Generic.List[object]]::new()
+$script:FFLastAssertionAt=0.0
+function Write-FFJson($Path, $Value) {
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 40), [Text.UTF8Encoding]::new($false))
+    $script:FFOperations.Add([ordered]@{kind='IO';operation='write-json';artifact=[IO.Path]::GetFileName($Path);seconds=$watch.Elapsed.TotalSeconds})
+}
+function Assert-FF([bool]$Ok, [string]$Name, [string]$Detail = '') {
+    $now=$clock.Elapsed.TotalSeconds
+    $script:FFAssertions.Add([ordered]@{name=$Name;passed=$Ok;elapsedSeconds=$now;secondsSincePreviousAssertion=($now-$script:FFLastAssertionAt)})
+    $script:FFLastAssertionAt=$now
+    Assert-C487 $Ok ('FF ' + $Case + '.' + $Name) $Detail
+}
 function New-FFNode([string]$Class, [string]$Method = 'Run', [string]$Uid = '') {
     $bare = Get-NightlyBareClassIdentity $Class
     $dot = $bare.LastIndexOf('.')
@@ -42,7 +54,7 @@ function New-FFReplay {
     $ex = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows)
     $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes.ToArray() -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $ex -ProfileAware $true -Native $true -SuiteId antiphon -PolicyObject $policy.Object)
     $phases.plannerSeconds = $phase.Elapsed.TotalSeconds
-    Write-FFJson (Join-Path $root 'replay.json') ([ordered]@{ nodes=$nodes.Count; chunks=$chunks.Count; listingDigest=(Get-FileHash -LiteralPath $listing).Hash; costDigest=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'lib/nightly-class-costs.json')).Hash; policyHash=$policy.Hash })
+    Write-FFJson (Join-Path $root 'replay.json') ([ordered]@{ nodes=$nodes.Count; chunks=$chunks.Count; listingDigest=(Get-FileHash -LiteralPath $listing).Hash; costDigest=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'lib/nightly-class-costs.json')).Hash; policyHash=$policy.Hash;phases=$phases })
     [pscustomobject]@{ id='antiphon'; nodes=$nodes.ToArray(); chunks=$chunks; exclusions=$ex }
 }
 function New-FFHistoricalFixture {
@@ -77,17 +89,22 @@ function New-FFHistoricalFixture {
     }
     $extra = @('CheckpointOrFilterTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointLaunchCleanupTests','CheckpointAppTests','CheckpointAdmissionContractTests','CheckpointSlotExecutorTests','CheckpointExecutorLogTests')
     $diag = "    version: 2.2.2`nTest framework UID: 'TUnitExtension' Version: '1.44.0.0'`n"
+    $recoveredDiag=$diag
     for ($i=0; $i -lt 10; $i++) {
         $type = if ($i -lt 8) { $extra[$i] } else { 'RecoveredTests' }
         $state = if ($i -lt 7) { 'Error' } elseif ($i -lt 9) { 'InProgress' } else { 'Passed' }
         $uid = if ($i -ge 8) { 'recovered' } else { 'diag-'+$i }
         $method = if ($i -eq 7) { 'concurrent_callbacks_append_each_line_once_without_overlap' } else { 'Case'+$i }
         if ($i -eq 9) { $method='Case8' }
-        $diag += 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = '+$uid+' }, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Fixture, Namespace = Antiphon.Tests.Checkpoints, TypeName = '+$type+', MethodName = '+$method+', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, '+$state+'TestNodeStateProperty { Explanation =  } ] } }' + "`n"
+        $record = 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = '+$uid+' }, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Fixture, Namespace = Antiphon.Tests.Checkpoints, TypeName = '+$type+', MethodName = '+$method+', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, '+$state+'TestNodeStateProperty { Explanation =  } ] } }' + "`n"
+        if ($i -lt 8) { $diag += $record } else { $recoveredDiag += $record }
         if ($i -lt 9) { $nodesBySuite.antiphon += New-FFNode ('Antiphon.Tests.Checkpoints.'+$type) $method $uid }
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $run 'antiphon-all-group-105-execution'))
     [IO.File]::WriteAllText((Join-Path $run 'antiphon-all-group-105-execution/invocation.diag'),$diag)
+    [IO.File]::WriteAllText((Join-Path $run 'recovered.diag'),$recoveredDiag)
+    [IO.File]::WriteAllText((Join-Path $run 'recovered.trx'),'<TestRun><TestDefinitions><UnitTest id="recovered"><TestMethod className="Antiphon.Tests.Checkpoints.RecoveredTests" name="Case8" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="recovered" outcome="Passed" /></Results></TestRun>')
+    $suites += [ordered]@{id='antiphon';chunk='recovered';trx='recovered.trx';execution='recovered.diag';timedOut=$false;exitCode=0}
     $suites += [ordered]@{ id='antiphon'; chunk='all-group-105'; trx='antiphon-all-group-105.trx'; execution='antiphon-all-group-105-execution/invocation.diag'; timedOut=$true; exitCode=1 }
     $summary = [ordered]@{ runId='retained-run'; attempt='1'; invocationId='retained-run'; completedAt='2026-10-29T00:00:00Z'; sha=('a'*40); profile='rc'; platform='windows'; policyHash=('b'*64); selectedSuites=@('antiphon','session-runner','agents-pty','e2e'); suites=$suites; timingRoot='timing' }
     Write-FFJson (Join-Path $run 'summary.json') $summary
@@ -144,7 +161,9 @@ function Test-EvidenceUnion {
 }
 function Copy-FFObject($Value) { return ($Value | ConvertTo-Json -Depth 40 | ConvertFrom-Json) }
 function Test-FFRefusal([scriptblock]$Action, [string]$Reason) {
+    $watch=[Diagnostics.Stopwatch]::StartNew()
     try { & $Action | Out-Null; return $false } catch { return ($_.Exception.Message -clike ('*'+$Reason+'*')) }
+    finally { $script:FFOperations.Add([ordered]@{kind='body';operation='refusal';reason=$Reason;seconds=$watch.Elapsed.TotalSeconds}) }
 }
 function Test-RefusesIncompleteEvidence {
     $replay=New-FFReplay
@@ -160,12 +179,14 @@ function Test-RefusesIncompleteEvidence {
     }
     $control=Resolve-NightlyPriorFailures $h $current PriorFailureSweep
     Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne ('c'*40) -and $h.policyHash -cne ('d'*64)) 'validControl'
+    $retainedPlan=[IO.File]::ReadAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'))
     Remove-Item -LiteralPath (Join-Path $fx.Run 'timing/groups-planned-antiphon.json')
     $wrong=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'wrong-suite.json') -PassThru
     $full=Resolve-NightlyPriorFailures $wrong.History $current Full
     $un=@($full.unresolved | Where-Object { $_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-105' -and $_.reason -ceq 'historical-membership-unavailable' })
     Assert-FF (-not $wrong.History.membershipComplete -and $un.Count -eq 1 -and @($wrong.History.members | Where-Object { $_.className -ceq 'Foreign.WrongSuiteTests' }).Count -eq 0 -and @($wrong.History.members).Count -eq 34) 'wrongSuiteFull'
     Assert-FF (Test-FFRefusal { Resolve-NightlyPriorFailures $wrong.History $current PriorFailureSweep } 'historical-membership-unavailable') 'wrongSuitePartial'
+    [IO.File]::WriteAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'),$retainedPlan)
     $name='Antiphon.Tests.Application.TerminalRunnerSeatReleaseTests'
     $missing=Copy-FFObject $current
     $missing[0].nodes=@($missing[0].nodes | Where-Object { $_.ClassName -cne $name })
@@ -215,6 +236,7 @@ function Test-RefusesIncompleteEvidence {
     [IO.File]::WriteAllText((Join-Path $fx.Run 'antiphon-all-group-105-execution/other.diag'),$old)
     Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'ambiguous.json') } 'ambiguous-invocation') 'ambiguous'
     $fx.Summary.suites[-1].execution='antiphon-all-group-105-execution/invocation.diag'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    Remove-Item -LiteralPath (Join-Path $fx.Run 'timing/groups-planned-antiphon.json')
     [IO.File]::WriteAllText($diagPath,'truncated diagnostic')
     $mal=$null
     try { $mal=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'malformed.json') -PassThru } catch { }
@@ -243,6 +265,11 @@ switch -Exact ($Case) {
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=26 }
     default { throw ('unknown case: '+$Case) }
 }
+$gitWatch=[Diagnostics.Stopwatch]::StartNew()
+$sourceSha=git -C $repo rev-parse HEAD
+$phases.gitSeconds=$gitWatch.Elapsed.TotalSeconds
 $phases.wallSeconds=$clock.Elapsed.TotalSeconds
-Write-FFJson (Join-Path $root 'performance.json') ([ordered]@{ case=$Case; source=(git -C $repo rev-parse HEAD); hostName=[Environment]::MachineName; platform=[Environment]::OSVersion.ToString(); category='qualification-tooling'; phases=$phases; docker='not-used'; database='not-used'; appHost='not-used'; http='not-used'; teardown='owned ScriptHarness cleanup; see host receipt'; unclassified='wall minus measured spans' })
+$load='unknown'
+if ([IO.Path]::DirectorySeparatorChar -eq '/' -and [IO.File]::Exists('/proc/loadavg')) { $load=[IO.File]::ReadAllText('/proc/loadavg').Trim() }
+Write-FFJson (Join-Path $root 'performance.json') ([ordered]@{ case=$Case; source=$sourceSha; load=$load; assertions=$script:FFAssertions.ToArray(); operations=$script:FFOperations.ToArray(); hostName=[Environment]::MachineName; platform=[Environment]::OSVersion.ToString(); category='qualification-tooling'; phases=$phases; docker='not-used'; database='not-used'; appHost='not-used'; http='not-used'; teardown='owned ScriptHarness cleanup; see host receipt'; unclassified='wall minus measured spans' })
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
