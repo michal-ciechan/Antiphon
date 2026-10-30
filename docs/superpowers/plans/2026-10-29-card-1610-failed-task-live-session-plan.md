@@ -14,7 +14,7 @@ This is the pushed skeleton; each item is resolved in place before handoff.
 - R3-1 resolved: Working + typed fields; exclusive Reply action, separate question projection, four counting/Check witnesses (D-1).
 - R3-2 resolved: bounded Continue, explicit 720-minute final hold and authenticated bounded operator Extend; no-phase-tail witnesses (D-4).
 - R3-3 resolved: keep step-5 authority; token presence defines delegation; 5-minute default/8-minute maximum drain slices with 9-minute foreground bound (D-4).
-- R3-4: forward Failed late reports as durable parent triage notes without settlement or handoff.
+- R3-4 resolved: bounded independent Failed-report scan, distinct durable parent triage obligation and eligible/busy/crash/identity witnesses (D-5/D-9).
 - R3-5: include full affected classes and sharded Unit lane; recount and re-import.
 
 ## Decisions
@@ -388,18 +388,60 @@ fixes it. Do not bypass that hold in this card.
 
 ## D-5 detail: no late correction can start a second chain
 
-Delete round-1 S4's failure-episode ledger, Failed report admission, recovery
-sweep and Failed-to-Succeeded correction. Failed remains terminal; preserved
-transcripts and pushed commits are evidence, not an automatic new outcome.
-The failure notice explicitly tells the caller and delegate this. Historical
-7ee3b07a and 30f56bd5 require an explicit caller decision about their artifacts;
-do not rewrite old failures, infer a land, or replay their `next=review/code`.
-Any manual correction/triage note defaults to **next=decide**. It identifies all
-newer same-board/card/**role** tasks created after the failure, plus retry or
-replacement lineage and matching source branch. An unresolved overlap means
-superseded/unresolved, never permission to launch a second chain. For uncarded
-work use task-root/branch lineage; unknown lineage requires a decision. This is
-a review procedure using existing task reads, not a new automated correction API.
+Delete round-1 Failed-to-Succeeded correction and settlement admission for Failed.
+**Forwarding is a separate triage obligation, not settlement.** A Deploy failed
+by ModelWait at 20 minutes can still emit its rollout report later; it must reach
+the original parent even though Reply on Failed remains refused. Preserve Failed,
+FailureCode/Reason, CompletedAt, Result, stage outcomes and existing original
+failure notification. Never run commit/land, settle again, reopen, or dispatch next.
+
+At each failure with an accepted generation persist the attempt, dispatch time,
+session/generation, original parent, original report floor and failure transcript
+sequence in the typed notice obligation. Extend the existing bounded completion
+recovery pump with LateFailedReportForwarder.cs; scan at most 32 identities per
+pass with a persisted keyset/frontier and normal backoff. Read stored transcript
+windows (including an ended generation's final window) and reuse report-marker
+parsing/correlation, never JudgeOpenTaskAsync or SettleAsync. Ingestion continues
+for Failed sessions; this independent scan does not need to widen runtime-action
+settlement selectors or AppDbContext's open-task fence. On restart the persisted
+frontier retries uncommitted parsing/queue work. Discovery must not filter only
+open tasks or stop watching merely because the delegate notice was Told.
+
+Accept one complete [antiphon-report:<task> done|blocked|failed] report whose
+completion marker is beyond the failure frontier and whose source turn belongs
+to the accepted attempt/generation (original task brief or that failure notice).
+The body can start before failure; a pre-failure complete report alone does not
+qualify. Require current task still Failed on that attempt, unchanged generation
+and parent at obligation creation; retry/session reuse refuses attribution. Do
+not infer identity for legacy rows lacking those coordinates: retain attention
+and explicit manual triage. No parent is a durable NotApplicable reason, never
+Told. Do not discard final transcript just because the runner exited meanwhile.
+
+In one save persist immutable report excerpt/link, full report digest and source
+range plus a unique purpose key (task, attempt, failure event, LateFailedReport).
+Then enqueue one **parent triage note** through the same recovery/queue path.
+It states "Task remains Failed; late report for triage only", carries next=decide,
+and includes report text (bounded, or an exact source link plus digest), board,
+card, role, attempt/generation, branch and superseder facts. Enumerate newer
+same-board/card/role tasks since this attempt's DispatchedAt, retry/replacement
+lineage and matching branch; unknown/no-card lineage is unresolved and decide.
+Put the delegate's claimed next stage only inside quoted evidence; do not pass
+its header to PipelineHandoffAction, stage completion or landing logic. The note
+purpose is non-actionable even if the original report says next=code/land.
+
+A distinct purpose key and receipt keep this separate from the original Failed
+caller note and the delegate Failed notice: neither existing completion stamp
+can discharge it. Eligible/busy/crash delivery follows D-9 and requires one full
+correlated UserPrompt after the parent's recorded floor, zero in the decoy.
+Record Pending/Told/Superseded independently; failed enqueue after obligation
+commit is recovered, repeated transcript replay does not duplicate it. If the
+parent session is gone/reused, keep unresolved attention with the report link,
+never redirect to a foreign generation. The source remains Failed in every arm.
+
+Historical 7ee3b07a/30f56bd5 and the 8edda999 Deploy incident are not retroactively
+corrected. A coordinate-complete historical row may receive this triage forward;
+otherwise the caller explicitly inspects its retained transcript/artifact. No
+normal Reply to Failed and no new automatic result chain is introduced.
 
 Also guard the narrower real concurrency risk introduced by holds: a previously
 held task can finish after its caller separately commissioned a replacement.
@@ -546,12 +588,21 @@ retains Failed and its notice obligation across restart; accepted delivery says
 that later output is triage only. Capture actual full UserPrompt text in the
 recipient transcript, not the queue row. `C1610_Stale_notice_is_not_delivered`
 has three arguments: retry, generation-replacement, settled-hold. It proves no
-old instruction reaches the replacement/finished turn. All nine cases assert
+old instruction reaches the replacement/finished turn. All fifteen cases assert
 zero automatic stopper/release calls and preserve foreign sessions. Own and
 join harness children; do not use any production runner or provider profile.
 
-There is no correction producer after D-5, so a correction-specific witness is
-removed rather than pretended covered by C1161. Retain the existing C1161 Failed
+Add C1610_Failed_late_report_parent_has_complete_UserPrompt with eligible/busy/
+crash Arguments. Drive a real Deploy model-wait failure, store its later complete
+report, run the actual forwarder/pump and BridgeQueueHarness normalizer/ingestion.
+Assert full parent UserPrompt, source link/body, Failed unchanged, next=decide,
+superseders, no new stage outcome/child/landing and no decoy receipt. Crash after
+the triage obligation save but before queue insert, restart and recover twice.
+Add C1610_Late_report_identity_is_fenced with retry, generation-reuse and
+pre-failure-report Arguments; no triage forward may be attributed to those.
+The first three arms also replay the transcript and prove one forward, independent
+of the already delivered original Failed caller note. There are 15 receipt cases.
+There is no correction producer; these witnesses prove forwarding only. Retain the existing C1161 Failed
 **parent** receipt method (three cases) and C1259 accepted-attempt replacement
 fence (two cases) as independent regression checkpoints.
 
@@ -592,7 +643,7 @@ capacity for Working/Unknown. A stall is reported for a decision, never killed.
 |---|---|---|
 | S1 visibility and janitor safety | AgentTaskDispatcher.cs pool retirement; AttentionService.Seats.cs/Leaks.cs, shared FailedTaskSessionFacts.cs; AgentTaskDtos.cs and client/src/api/agentTasks.ts type mirror; AttentionKind/AgentIncidentKind and client/src/api/attention.ts kind mirror; docs/session-runtime-invariants.md | Application/TaskSupervisionVisibilityTests.cs (8); changed AgentTaskPoolTests method (1); S1 red/green plus existing failed-pool regression and guards. CLI status waits for S4's script tests |
 | S2 ceiling policy and controls | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; inspect unchanged DispatchConcurrencyPolicy.cs, AgentTaskPipelineStatusService.cs, CheckCompactionContinuationService.cs, TaskProgressPolicy.cs; AgentTaskDispatcher.cs overdue/stall/dead-session/refusal selectors; AgentTaskService.cs; AgentTaskReplyService.cs; new CeilingHoldFacts.cs and AttentionService hold projection (BlockedContextBuilder stays unchanged); AgentTask.cs; AgentTaskDtos.cs; AppDbContext.cs mapping/fence and generated migration; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; TaskOwnerGuard is inspected, unchanged (already accepts Blocked) | Application/TaskCeilingPolicyTests.cs (12), TaskCeilingHoldTests.cs (20), TaskCeilingControlTests.cs (12); policy heartbeat and runtime-action regressions |
-| S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs and hosted recovery; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
+| S3 receipts and successor fencing | Failure writers listed in D-2; SessionQueuedMessage identity/mapping, SessionMessageQueueService.cs, CompletionNoteWork.cs, LateFailedReportForwarder.cs and Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; DelegationReportFormatter.cs, TaskCompletionNotification.cs; PipelineHandoffActionService.cs and AgentTaskService child admission; docs/agent-card-lifecycle.md, docs/session-runtime-invariants.md | Application/TaskSupervisionReceiptTests.cs (9); C1161 (3); held successor-race tests in Control class |
 | S4 declared Deploy budget and docs | scripts/delegate.ps1 parameter/create/Reply/Status branches; scripts/deploy-server2.ps1; DTO/create/reply binding; client/src/api/agentTasks.ts and features/delegations/CeilingHoldCard.tsx and TaskDetailBody.tsx; docs/docker-stack.md, docs/ops-http.md | Scripts/TaskCeilingScriptTests.cs (8); client/src/features/delegations/CeilingHold.test.tsx (3); classification/limiter guards; slow-tests-allowlist.txt and strict roster |
 
 Paths without a directory in this table are under server/Application/Services
