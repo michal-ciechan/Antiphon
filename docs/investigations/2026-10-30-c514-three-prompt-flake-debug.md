@@ -58,7 +58,7 @@ changed Enter refresh. A deterministic held-TurnEnd witness is the next step.
 
 All case intervals in both loaded samples overlap an owned build. The base load
 used one successful nonincremental server build (160.79 s); the tip used two
-successful builds (174.97 s and 53.22 s), with a 57 ms gap. The test supervisor and
+successful builds (175.99 s and 53.22 s), with a 57 ms gap. The test supervisor and
 load supervisor each held their own granted build slot (cap 6); load builds used
 maxcpucount:2. The base loaded condition also overlapped the end of the owned tip
 measurement build. Ambient host load was recorded, not controlled or inferred.
@@ -84,8 +84,8 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
 ```
 
 ### base-alone30 — 2026-10-30T18:06:10.3660938+00:00
@@ -97,8 +97,8 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
 ```
 
 ### base-alone30 — 2026-10-30T18:06:59.2489010+00:00
@@ -110,9 +110,9 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
 ### base-alone30 — 2026-10-30T18:07:45.9481722+00:00
@@ -124,9 +124,9 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
 ### tip-alone30 — 2026-10-30T18:10:05.5714234+00:00
@@ -138,9 +138,9 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
 ### tip-alone30 — 2026-10-30T18:11:07.4160689+00:00
@@ -152,8 +152,8 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
 ```
 
 ### tip-alone30 — 2026-10-30T18:12:02.8997292+00:00
@@ -165,8 +165,8 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
 ```
 
 ### tip-alone30 — 2026-10-30T18:12:53.6911096+00:00
@@ -178,8 +178,8 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
 ```
 
 ### base-loaded15 — 2026-10-30T18:19:35.1797883+00:00
@@ -191,9 +191,9 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
 ### base-loaded15 — 2026-10-30T18:20:09.4172780+00:00
@@ -205,9 +205,9 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
 ### tip-loaded15 — 2026-10-30T18:23:03.6696732+00:00
@@ -219,8 +219,37 @@ ShouldAssertException: await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.
 Child SUBMITTED lines:
 
 ```text
-/remote-control
-c514 lane shared prefix alpha
-c514 lane shared prefix bravo
+SUBMITTED:/remote-control
+SUBMITTED:c514 lane shared prefix alpha
+SUBMITTED:c514 lane shared prefix bravo
 ```
 
+
+## Deterministic witness and fixture repair
+
+Red witness commit `d4a293992` compiled successfully and executed exactly one real
+UnixPty/fake-Claude case. It failed its required receipt assertion after 36.597 s,
+not during build/setup. The first real assistant-record commit was held while the
+later bodies were enqueued and the legacy single flush ran. Before release the
+production working-state query was asserted Working and the child held only alpha.
+After release, the final failure diagnostic proved persisted sequences 1 UserPrompt,
+2 AssistantText, 3 TurnEnd/end_turn for alpha, with alpha Sent/Delivered (one
+attempt), bravo Pending (zero attempts), charlie Pending (zero attempts). The only
+SUBMITTED body was alpha. Evidence: `witness-red/results.trx`, console, timing,
+child JSONL and source-bound build log under the evidence root.
+
+The repair is confined to tests. `DrainQueuedPromptsAsync` drives the production
+`FlushIfIdleAsync`, which reads production persisted Working state and applies the
+normal queue/receipt/custody gates, while waiting for the complete native receipts.
+The original 30-second deadline, 150 ms polling interval, real modal/one-Esc setup,
+exact ordered child-file and persisted-body equality, and exactly-once assertions
+remain. No longer sleep, assertion relaxation, invented UserPrompt or idle row was
+added. The new before-save seam forwards the pump's existing optional hook and
+forces the formerly intermittent ordering. Diagnostics retain child, transcript,
+queue verdict/attempt counts and raw output on failure.
+
+No product source or arm refresh changed. The finding does not require replaying
+an ambiguous Enter; unknown/observation-unknown remain terminal. Earlier mutation
+results are retained in the round-2 report; fresh final-fixture controls and five
+portable repetitions remain pending at this repair commit. Native Windows remains
+OWED; this Linux fixture diagnosis does not qualify the original native arm failure.
