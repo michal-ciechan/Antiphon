@@ -177,7 +177,7 @@ on the Code target and record any additional session consumer.
 | `AgentService`, `BoardService`, session events, `AgentDtos`, `BoardDtos` | API projection | Add nullable fields; no UI/HTTP compatibility break |
 | `CheckCompactionContinuationService.cs:391` | Synthesizes zero for a confirmed policy stop | Do not label it a native exit observation; preserve existing zero compatibility value with unknown signal until real event arrives; never erase later known signal |
 | Check interpreter/standing-agent checks, task deadlines and `TaskProgressStalled` | Consume task/session status and failure text; no native-code success branch | New wording only downstream; no new hold, automatic retry or kill |
-| `AgentTaskDispatcher.Pool*`, `AgentSessionJanitor*`, `TerminalRunnerSeatReleaseService` | Ownership/liveness/working/delivery gates | No code-zero release authority; preserve killed/warm/owned states and all conditional holds |
+| `AgentTaskDispatcher.cs:9047-9511` (release sweep and pool janitor), `PoolDelegateRelease`, `AgentTaskReplyService.cs:2790-2929`, `TerminalRunnerSeatReleaseService` | Ownership/liveness/working/delivery gates | No code-zero release authority; preserve killed/warm/owned states and all conditional holds |
 | `AgentControlService.cs:533`, `AgentSessionRuntime.cs:2306`, `RunnerTerminalSession.cs:312` | Code presence used as an exited hint | Keep explicit status/observed exit semantics; signal-positive observations also count as exited, never as success |
 | Git/workspace/landing results, auth/version/custody-helper probes, `BashTool`/`GitTool`, `RunnerProcessProbe` | Separate .NET child processes with their own exit codes | Not consumers of the dropped Porta field; no global rewrite of unrelated `== 0` checks; helper success is still not custody accounting |
 
@@ -234,7 +234,77 @@ own release policy; with parking disabled they have no automatic release deadlin
 
 ## Slices
 
-Source audit will name concrete files, tests, estimates and landing dependencies for transport, persistence/text and kill-intent slices.
+Each row is a separately commissioned Code task, at most 150 minutes including
+focused red/green verification. Do not dispatch all four source areas concurrently.
+Commit and push the failing witness before its repair; a compilation failure is
+not the required red. Keep code frozen during each run. The native Windows rows
+run on an eligible Windows lane at the same source SHA; Linux cannot credit them.
+
+| Slice | Value, files and tests | Budget / closure |
+|---|---|---|
+| **S1 — retain the actual native observation** | Add `src/Antiphon.Porta.Pty/` pinned managed sources/license/provenance and project; update `Antiphon.sln` and `src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj`; patch vendored `Unix/PtyConnection.cs`, `PtyExitedEventArgs.cs`, `IPtyConnection.cs` completion snapshot; add `PtyExitObservation.cs`; update `PtySession.cs`, `PtyAgentRunner.cs`, `ModernConPtyConnection.cs`. Add `tests/Antiphon.Agents.Pty.Tests/Card1619UnixExitTests.cs` and `Card1619WindowsExitTests.cs`. | 135 minutes: 25 native dependency/staging, 55 seam/replay, 25 witnesses, 15 checkpoints, 15 graph/review notes. CP-1/CP-2. No broad native fork. |
+| **S2 — carry it across process/restart boundaries** | Update `PtyHostMessages.cs`, `PtyHostManifest.cs`, `HostSession.cs`, `PtyHostClient.cs` if mapping needed, `SessionRunnerContracts.cs`, `ISessionChild.cs`, `SessionRunnerRuntime.cs`. Add `tests/Antiphon.PtyHost.Tests/Card1619ExitWireTests.cs`, `Card1619LinuxHostExitTests.cs`, `tests/Antiphon.SessionRunner.Tests/Card1619RunnerExitTests.cs`, frozen old-schema fixtures. | 140 minutes: 55 propagation, 45 real detached-host/restart and skew tests, 25 checkpoints, 15 review notes. CP-3/CP-4. Highest transport risk is exit while detached. |
+| **S3 — persist and describe it without false success** | Update `AgentSession`, `RunAttempt`, `AgentIncident`, generated migration/snapshot; `SessionRunnerDtos`, `AgentDtos`, `BoardDtos`; `RunnerContractMapper`, HTTP/phone-home launch exception mapping; `IAgentProtocolAdapter`, listed local/runner adapters and `RunnerTerminalSession`; `AgentSessionRuntime`, `AgentSessionService`, `SessionReconciliationService`, `SessionTermination`, `AgentTaskLiveness`, dispatcher/attention projections, supervisor/review/diagnostics projections, reset writers and `CheckCompactionContinuationService`; handwritten client types. Add `Application/Card1619ExitPolicyTests.cs`, `Card1619ExitPersistenceTests.cs`, `Card1619ExitConsumerTests.cs` under `tests/Antiphon.Tests/`. Update owner docs. | 150 minutes: 60 mapping/helper/persistence, 25 migration/reset/API, 35 witnesses, 20 checkpoints, 10 notes. CP-5..CP-7. If the audit reveals further branching consumers, split a follow-on Code slice before widening this budget. |
+| **S4 — record Antiphon's stop intent** | Add `ProcessStopIntent.cs` and `ProcessStopIntentStore.cs` in `src/Antiphon.PtyHost.Protocol/`; use an injected low-level stop callback in `PtySession`/`PtyAgentRunner` without introducing a PTY-to-host dependency; wire `HostSession`, `SessionRunnerRuntime`, `IPtyCustodyContainment`, `ILinuxCustodyRecovery`, `RunnerCustodyLedger`; append optional intent to wire/manifest/DTO and S3 persistence/helper. Add `Card1619StopIntentTests.cs` (PtyHost.Tests), `Card1619LinuxStopIntentTests.cs` (SessionRunner.Tests), `Application/Card1619StopAttributionTests.cs` (Antiphon.Tests). Update session/PTY owner docs. | 145 minutes: 45 durable journal/order, 35 alternate authorized paths, 35 race/crash/native tests, 20 checkpoints, 10 notes. CP-8..CP-10. No helper privilege or custody policy expansion. |
+
+S1 is independently reviewable; S2 depends on S1; S3 depends on S1/S2; S4 depends
+on all three. The signal-only fix may be reviewed/landed before S4, but the card
+and attribution acceptance remain incomplete until S4 is reviewed. Activation of
+new producers waits for S3 reader/migration readiness. New native-asset staging
+must be covered by detached-host tests before activation, even if S1 alone builds.
+
+The S3 footprint is broad but mostly mechanical propagation. Use one helper,
+one DTO projection per boundary, and focused fixtures rather than copying policy
+into every writer. If 150 minutes will be exceeded, push the complete current
+slice with its truthful evidence and request another Code dispatch; never hide
+owed consumers behind a partial completion claim.
+
+## Landing and overlapping work
+
+Classify as **fix**: target the current reviewed `rc/2026-10-27` line first,
+then commission a separate master port with its own conflict resolution/review.
+The assigned Plan branch is never merged/rebased into either target by this task.
+Code must start from the caller's pinned current RC source, retain the exact
+CARD-1614 repairs already present, and report actual source SHAs. No tags, publish,
+activation or fleet restarts belong to this Plan. A pushed/landed commit is not
+activation.
+
+CARD-1610's latest plan on `origin/feat/card-task-a98460ca` is a separate hold/
+late-report/janitor change. It keeps Working holds alive and phase-supervised;
+this fix only handles a positively exited generation. Coordinate ownership of
+`AgentTaskDispatcher`, `AgentTaskLiveness`/dead-session text, attention snapshots
+and janitor tests. Preserve its new predicates, hold fields and report-first
+ordering whichever lands first; do not import its earlier automatic Failed-to-
+Succeeded proposal. Re-run the precise dead-session/report witnesses after the
+separate master port. The corrected CARD-1610 plan targets master; that is not a
+reason to redirect this fix's RC-first instruction.
+
+Definition-file changes in S1 (`*.csproj`, solution, any props/targets/lock file)
+require `scripts/audit-land-verification-graph.ps1 -Update` after committing the
+definition input, using the real built evaluator and current pins. Commit the
+generated `LandVerificationBuildGraph.manifest.txt` and `.evaluation.txt` records;
+never hand-edit them or bypass a refused pin. Check again with `-Check`. EF
+migration `.cs` and snapshot files alone are not definition-inventory entries;
+adding migration references, package/project settings or a fixture csproj is.
+Re-run Update in any later slice/port that changes that inventory. Audit includes
+native-only package asset handling and the new project graph. A refused dynamic
+vendor build target must be simplified/reviewed, not exempted.
+
+Authorized preparatory tooling (separate from the closed product-test roster):
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph -- dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-card1619-graph/Release/net10.0/
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-update -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-graph-check -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-card1619-graph/Release/net10.0/Antiphon.LandGraphAudit.dll
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1619-migration -- dotnet ef migrations add AddSessionExitSignalEvidence --project server/Antiphon.Server.csproj --output-dir Migrations -- --property:OutputPath=bin-card1619-migration/
+```
+
+For EF, verify the installed CLI's output-path forwarding before execution; if
+its `--` arguments are application arguments, use the documented isolated build
+plus `--no-build`/matching assembly instead. Do not let a scaffolding command
+rebuild a daemon's standard bin. Record these tooling costs separately (provisional
+5 minutes graph, 5 minutes migration), and remove only producer-owned alternate
+outputs after use. Do not run migrations on a live database from Code tests.
 
 ## Performance budget
 
