@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Reflection;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Orchestration;
@@ -10,12 +11,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel]
 public sealed class TaskSupervisionReceiptTests
 {
@@ -42,22 +46,23 @@ public sealed class TaskSupervisionReceiptTests
         await using var h = await TaskCeilingHarness.CreateAsync(role: AgentTaskRole.Deploy,
             kind: purpose == "hold" ? TranscriptKinds.ToolCall : TranscriptKinds.Thinking,
             lastAgeMinutes: purpose == "hold" ? 6 : 21);
-        var fault = new NoticeInsertFault();
+        var fault = new NoticeInsertFault { BodyFragment = purpose switch { "hold" => " held]",
+            "failure" => "Your task is Failed.", _ => "Task remains Failed; late report for triage only" } };
         var recipientId = purpose == "failure" ? h.SessionId : h.ParentId;
         var recipient = await OpenAsync(h, recipientId, fault);
         await using var decoy = await OpenAsync(h);
         try
         {
-            if (mode == "busy") await recipient.MarkWorkingAsync();
             var floor = await recipient.CurrentTranscriptMaxSequenceAsync();
             await h.SweepAsync();
             if (purpose == "late") await h.FinishAsync();
             var before = await h.TaskAsync();
             before.Status.ShouldBe(purpose == "hold" ? AgentTaskStatus.Working : AgentTaskStatus.Failed);
+            if (mode == "busy") await recipient.MarkWorkingAsync();
             var expectedPurpose = purpose switch { "hold" => TaskSupervisionNoticePurpose.CeilingParent,
                 "failure" => TaskSupervisionNoticePurpose.FailureDelegate, _ => TaskSupervisionNoticePurpose.LateFailedParent };
             fault.Armed = mode == "crash";
-            await RecoverAsync(recipient);
+            await RecoverAsync(recipient, h.Clock);
             if (mode == "crash")
             {
                 fault.Fired.ShouldBeTrue("a durable obligation must survive the first queue-insert fault");
@@ -66,8 +71,9 @@ public sealed class TaskSupervisionReceiptTests
                         .ShouldBe(1, "producer obligation committed before enqueue");
                 await recipient.DisposeAsync();
                 recipient = await OpenAsync(h, recipientId);
+                h.Clock.Advance(TimeSpan.FromMinutes(2));
             }
-            await RecoverAsync(recipient);
+            await RecoverAsync(recipient, h.Clock);
             if (mode == "busy")
             {
                 (await PromptsAsync(h, recipientId, floor)).ShouldBeEmpty("no mid-turn supervision input");
@@ -77,10 +83,11 @@ public sealed class TaskSupervisionReceiptTests
                 await recipient.MarkIdleAsync();
                 await recipient.Queue.OnTurnEndAsync(recipientId, CancellationToken.None);
             }
-            await RecoverAsync(recipient);
+            await RecoverAsync(recipient, h.Clock);
             TaskSupervisionNotice notice;
             await using (var db = h.Context())
-                notice = await db.TaskSupervisionNotices.SingleAsync(n => n.TaskId == h.TaskId && n.Purpose == expectedPurpose);
+                notice = (await db.TaskSupervisionNotices.Where(n => n.TaskId == h.TaskId && n.Purpose == expectedPurpose).ToListAsync())
+                    .ShouldHaveSingleItem("a real producer must persist its independently keyed obligation");
             var prompts = await PromptsAsync(h, recipientId, floor);
             var receipt = prompts.Where(p => p.Text?.Contains(notice.Body, StringComparison.Ordinal) == true).ShouldHaveSingleItem();
             receipt.Text.ShouldContain(h.TaskId.ToString("D"));
@@ -98,7 +105,7 @@ public sealed class TaskSupervisionReceiptTests
             }
             notice.State.ShouldBe(TaskSupervisionNoticeState.Told);
             notice.ConfirmingPromptSequence.ShouldBe(receipt.Sequence);
-            await RecoverAsync(recipient);
+            await RecoverAsync(recipient, h.Clock);
             (await PromptsAsync(h, recipientId, floor)).Count(p => p.Text?.Contains(notice.Body, StringComparison.Ordinal) == true).ShouldBe(1);
             (await PromptsAsync(h, decoy.SessionId, 0)).ShouldBeEmpty();
             decoy.Adapter.SubmittedBodies.ShouldBeEmpty();
@@ -123,7 +130,7 @@ public sealed class TaskSupervisionReceiptTests
         await using var parent = await OpenAsync(h, h.ParentId);
         await parent.MarkWorkingAsync();
         await h.SweepAsync();
-        await RecoverAsync(parent);
+        await RecoverAsync(parent, h.Clock);
         if (arm == "settled-hold") await h.FinishAsync();
         else if (arm == "retry") await h.MutateAsync(t => t.Attempt++);
         else
@@ -135,7 +142,7 @@ public sealed class TaskSupervisionReceiptTests
         }
         await parent.MarkIdleAsync();
         await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
-        await RecoverAsync(parent);
+        await RecoverAsync(parent, h.Clock);
         var prompts = await PromptsAsync(h, parent.SessionId, 0);
         prompts.Any(p => p.Text?.Contains("[task " + DelegationReportFormatter.Short(h.TaskId) + " held]", StringComparison.Ordinal) == true)
             .ShouldBeFalse("stale hold guidance must not consume the next turn");
@@ -174,8 +181,8 @@ public sealed class TaskSupervisionReceiptTests
             await db.SaveChangesAsync();
         }
         if (arm != "pre-failure-report") await h.FinishAsync();
-        await RecoverAsync(parent);
-        await RecoverAsync(parent);
+        await RecoverAsync(parent, h.Clock);
+        await RecoverAsync(parent, h.Clock);
         await using (var db = h.Context())
         {
             (await db.TaskSupervisionNotices.CountAsync(n => n.TaskId == h.TaskId && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate))
@@ -187,6 +194,89 @@ public sealed class TaskSupervisionReceiptTests
         h.Stopper.Killed.ShouldBeEmpty();
     }
 
+    [Test]
+    [Arguments("dispatcher")]
+    [Arguments("conditional-arm2")]
+    [Arguments("no-report")]
+    [Arguments("api-error")]
+    [Arguments("marked-failed")]
+    [Arguments("check-compaction")]
+    public async Task C1610_Failure_writer_records_notice(string writer)
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(kind: TranscriptKinds.Thinking, lastAgeMinutes: 21);
+        var fault = new NoticeInsertFault { Armed = true, BodyFragment = "Your task is Failed." };
+        var recipient = await OpenAsync(h, h.SessionId, fault);
+        try
+        {
+            if (writer == "dispatcher") await h.SweepAsync();
+            else if (writer == "marked-failed") await h.FinishAsync("failed");
+            else if (writer == "conditional-arm2")
+            {
+                await h.MutateAsync(t => t.Status = AgentTaskStatus.Dispatched);
+                var db = (Antiphon.Server.Infrastructure.Data.AppDbContext)typeof(AgentTaskDispatcher)
+                    .GetField("_db", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(h.Dispatcher)!;
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == h.TaskId);
+                var observedType = typeof(AgentTaskDispatcher).GetNestedType("Arm2Attempt", BindingFlags.NonPublic)!;
+                var observed = Activator.CreateInstance(observedType, task.Id, task.AgentSessionId,
+                    task.ConcurrencyToken, task.DispatchedAt, task.RepliedAtSequence);
+                await InvokeAsync(h.Dispatcher, "TryFailArm2ConditionalAsync", task, "writer witness",
+                    Guid.NewGuid(), observed, CancellationToken.None);
+            }
+            else
+            {
+                await using var db = h.Context();
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == h.TaskId);
+                if (writer == "no-report")
+                    await InvokeAsync(h.Replies, "FailUnreportedTurnAsync", h.Services, db, task, h.SessionId, CancellationToken.None);
+                else if (writer == "api-error")
+                {
+                    var stubType = typeof(AgentTaskReplyService).GetNestedType("ApiErrorStubFacts", BindingFlags.NonPublic)!;
+                    var stub = Activator.CreateInstance(stubType, "authentication_failed", 401, "Please log in", 3L, null);
+                    await InvokeAsync(h.Replies, "HandleApiErrorTurnAsync", h.Services, db, task, h.SessionId, stub, CancellationToken.None);
+                }
+                else
+                {
+                    var service = new CheckCompactionContinuationService(db, h.Clock, Options.Create(new DelegationSettings()),
+                        new CheckCompactionContinuationGate(), NullLogger<CheckCompactionContinuationService>.Instance);
+                    await InvokeAsync(service, "FailOccupantAsync", task,
+                        AgentTaskFailureCode.CompactionRecoveryRetiredGeneration, "writer witness", CancellationToken.None);
+                }
+            }
+            (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed, writer);
+            TaskSupervisionNotice notice;
+            await using (var db = h.Context())
+            {
+                notice = (await db.TaskSupervisionNotices.Where(n => n.TaskId == h.TaskId
+                    && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate).ToListAsync()).ShouldHaveSingleItem(writer);
+                (await db.AgentTaskEvents.AnyAsync(e => e.Id == notice.SourceEventId && e.Type == AgentTaskEventType.Failed)).ShouldBeTrue(writer);
+                notice.State.ShouldBe(TaskSupervisionNoticeState.Pending, "a committed failure is not a prompt receipt");
+                notice.SessionId.ShouldBe(h.SessionId);
+                notice.Attempt.ShouldBe(1);
+                notice.SessionStartedAt.ShouldNotBeNull();
+            }
+            await RecoverAsync(recipient, h.Clock);
+            fault.Fired.ShouldBeTrue("queue insertion fails after the writer's transaction committed");
+            await recipient.DisposeAsync();
+            recipient = await OpenAsync(h, h.SessionId);
+            h.Clock.Advance(TimeSpan.FromMinutes(2));
+            await RecoverAsync(recipient, h.Clock);
+            await RecoverAsync(recipient, h.Clock);
+            await using (var db = h.Context())
+            {
+                var recovered = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == notice.Id);
+                recovered.State.ShouldBe(TaskSupervisionNoticeState.Told);
+                var receipt = (await PromptsAsync(h, h.SessionId, notice.RecipientFloor))
+                    .Where(p => p.Text?.Contains(notice.Body, StringComparison.Ordinal) == true).ShouldHaveSingleItem();
+                recovered.ConfirmingPromptSequence.ShouldBe(receipt.Sequence);
+            }
+            h.Stopper.Killed.ShouldBeEmpty();
+        }
+        finally { await recipient.DisposeAsync(); }
+    }
+
+    private static Task InvokeAsync(object target, string method, params object?[] arguments) =>
+        (Task)target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, arguments)!;
+
     private static Task<BridgeQueueHarness> OpenAsync(TaskCeilingHarness h, Guid? session = null, NoticeInsertFault? fault = null) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
@@ -195,10 +285,10 @@ public sealed class TaskSupervisionReceiptTests
             ConfigureDbContext = fault is null ? null : b => b.AddInterceptors(fault),
         });
 
-    private static async Task RecoverAsync(BridgeQueueHarness h)
+    private static async Task RecoverAsync(BridgeQueueHarness h, TimeProvider clock)
     {
         var worker = new CompletionNoteWorkHostedService(h.Provider.GetRequiredService<IServiceScopeFactory>(),
-            new CompletionNoteFlushQueue(), new SpecialistFailureQueue(), h.Clock,
+            new CompletionNoteFlushQueue(), new SpecialistFailureQueue(), clock,
             NullLogger<CompletionNoteWorkHostedService>.Instance);
         await using var scope = h.Provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
@@ -215,12 +305,15 @@ public sealed class TaskSupervisionReceiptTests
 
     private sealed class NoticeInsertFault : DbCommandInterceptor
     {
+        public string? BodyFragment { get; init; }
         public bool Armed { get; set; }
         public bool Fired { get; private set; }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
-            if (Armed && !Fired && command.CommandText.Contains("INSERT INTO \"SessionQueuedMessages\"", StringComparison.Ordinal))
+            if (Armed && !Fired && command.CommandText.Contains("INSERT INTO \"SessionQueuedMessages\"", StringComparison.Ordinal)
+                && (BodyFragment is null || command.Parameters.Cast<DbParameter>().Any(p => p.Value is string text
+                    && text.Contains(BodyFragment, StringComparison.Ordinal))))
             {
                 Fired = true;
                 throw new InvalidOperationException("C1610 post-commit queue insertion fault");
