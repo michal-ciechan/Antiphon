@@ -237,8 +237,7 @@ internal static class TaskDeadlinePolicy
                     var heartbeat = await LoadCodexTokenCountAsync(db, sessionId, ct);
                     if (heartbeat is DateTime hb)
                     {
-                        var activityAt = hb > last.At ? hb : last.At;
-                        phaseElapsed = Smaller(NonNegative(now - activityAt), elapsed);
+                        phaseElapsed = ModelWaitElapsed(now, dispatched, last.At, hb);
                     }
                 }
                 var label = phaseKind switch
@@ -279,6 +278,9 @@ internal static class TaskDeadlinePolicy
     internal static Verdict? Select(Verdict? ceiling, Verdict? phase) =>
         phase is { Breached: true } ? phase
         : ceiling is null || phase is not null && phase.Fraction > ceiling.Fraction ? phase : ceiling;
+
+    internal static TimeSpan ModelWaitElapsed(DateTime now, DateTime dispatched, DateTime lastAt, DateTime? heartbeat) =>
+        Smaller(NonNegative(now - (heartbeat is { } hb && hb > lastAt ? hb : lastAt)), NonNegative(now - dispatched));
 
     /// <summary>
     /// Which deadline a mid-turn session's last entry selects. <c>TurnEnd</c> is deliberately absent

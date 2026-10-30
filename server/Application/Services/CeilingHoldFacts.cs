@@ -27,11 +27,17 @@ internal static class CeilingHoldFacts
 
     internal static void Resolve(AgentTask task, DelegationSettings settings)
     {
+        ValidateInitial(task.RequestedCeilingMinutes, task.RequestedCeilingReason);
         task.ResolvedCeilingMinutes = task.RequestedCeilingMinutes ?? TaskDeadlinePolicy.CeilingMinutes(settings, task.Role);
         task.ResolvedCeilingSource = task.RequestedCeilingMinutes is not null ? "requested"
             : settings.RolePolicy.ContainsKey(task.Role.ToString()) ? "rolePolicy" : "default";
         task.NextCeilingMinutes = Math.Max(0, task.ResolvedCeilingMinutes.Value);
     }
+
+    internal static bool CanHold(AgentTaskStatus status, DateTime accepted, DateTime observed,
+        bool running, bool inventoryKnown, bool working, bool boot, bool phaseBreached) =>
+        status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working
+        && accepted != default && accepted == observed && running && inventoryKnown && working && !boot && !phaseBreached;
 
     internal static double Bound(AgentTask task, DelegationSettings settings) =>
         task.NextCeilingMinutes is { } next && double.IsFinite(next) && next >= 0 ? next
