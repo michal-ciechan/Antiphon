@@ -890,8 +890,10 @@ try {
     $agg = Invoke-QualificationPostRunAggregation -ChunkExitCode 7 -ChunkResult 'KEEP-7' -LogRoot $aggLog -TimingRoot $aggTiming -Suite 'antiphon' -Chunk 'g9' -TrxPath $aggFifo -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'agg' -Attempt '1'
     $aggWatch.Stop()
     $aggDoc = Get-Content -LiteralPath (Join-Path $aggLog 'antiphon-g9.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED hostile-aggregation=' + $aggWatch.Elapsed.TotalSeconds + ' exit=' + $agg.ChunkExitCode + ' result=' + $agg.ChunkResult + ' why=' + $aggDoc.why)
     $aggPhases = ($null -eq $aggDoc.p50Seconds -and $null -eq $aggDoc.p95Seconds -and $null -eq $aggDoc.maxSeconds -and $null -eq $aggDoc.fixtureSetupSeconds -and $null -eq $aggDoc.fixtureTeardownSeconds -and $null -eq $aggDoc.processSpawnSeconds -and $null -eq $aggDoc.processWaitSeconds)
-    $aggOk = ($aggFifoOk -and $aggWatch.Elapsed.TotalSeconds -lt 0.2 -and [int]$agg.ChunkExitCode -eq 7 -and [string]$agg.ChunkResult -eq 'KEEP-7' -and [string]$aggDoc.why -eq 'timing-read-refused' -and $aggPhases -and @($aggDoc.slowest).Count -eq 0)
+    Assert-Check ($aggWatch.Elapsed.TotalSeconds -lt 0.2) 'post-run-hostile-files-wall-budget'
+    $aggOk = ($aggFifoOk -and [int]$agg.ChunkExitCode -eq 7 -and [string]$agg.ChunkResult -eq 'KEEP-7' -and [string]$aggDoc.why -eq 'timing-read-refused' -and $aggPhases -and @($aggDoc.slowest).Count -eq 0)
     Assert-Check $aggOk 'post-run-hostile-files-keep-exit-inside-budget'
 } catch {
     Write-Host ('FAIL post-run-hostile-files-keep-exit-inside-budget ' + $_.Exception.Message)
