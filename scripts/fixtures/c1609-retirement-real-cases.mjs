@@ -402,6 +402,9 @@ async function shim() {
   }
   if(args[0]==='run' && process.env.C1609_NATIVE_HIDE_CID==='1'){
     const at=args.indexOf('--cidfile');assert(at>0);args[at+1]+='.native-withheld';
+    // Model client loss before CID publication; no signal proxy may perform
+    // the production release's job on this adversarial path.
+    args.splice(1,0,'--sig-proxy=false');
     fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:['native-cid-cut'],withheldCid:true})+'\n');
   }
   if(['kill','rm'].includes(args[0]))fs.appendFileSync(scope.root+'/docker-calls.jsonl',JSON.stringify({args:original})+'\n');
