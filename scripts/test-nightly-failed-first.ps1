@@ -220,7 +220,13 @@ function Test-RefusesIncompleteEvidence {
     $link=Join-Path $fx.Run 'linked.trx'
     New-Item -ItemType SymbolicLink -Path $link -Target (Join-Path $fx.Run $oldTrx) | Out-Null
     $fx.Summary.suites[0].trx='linked.trx'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
-    Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'link.json') } 'evidence-link') 'link'
+    $symbolicRefused=Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'link.json') } 'evidence-link'
+    $hard=Join-Path $fx.Run 'hard-linked.trx'
+    New-Item -ItemType HardLink -Path $hard -Target (Join-Path $fx.Run $oldTrx) | Out-Null
+    $fx.Summary.suites[0].trx='hard-linked.trx'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
+    $hardRefused=Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'hard-link.json') } 'evidence-link'
+    Remove-Item -LiteralPath $hard
+    Assert-FF ($symbolicRefused -and $hardRefused) 'link'
     $fx.Summary.suites[0].trx=$oldTrx; $fx.Summary.completedAt=''; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
     Assert-FF (Test-FFRefusal { Export-NightlyPriorFailures $fx.Run (Join-Path $root 'working.json') } 'run-not-closed') 'working'
     $fx.Summary.completedAt='2026-10-29T00:00:00Z'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
