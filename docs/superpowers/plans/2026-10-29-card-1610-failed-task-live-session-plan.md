@@ -884,6 +884,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
+| CP-96 | S2-S3-fix-red | `tests/Antiphon.Tests -> bin-c1610-watch-red/` | server-integration-watch-red | `/*/*/TaskSupervisionReceiptTests/C1610_Failure_watch_closes_without_a_report` | ended final scan and unknown legacy identity | 2 intended assertion reds before fix | 2 | 2 |
 | CP-93 | S2-S3-fix | `tests/Antiphon.Tests -> bin-c1610-fix/` | server-integration-terminal-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | Cancel post-commit seat release | no failed/skipped after fix | 1 | 4 |
 | CP-94 | S2-S3-fix | CP-93 | server-integration-capacity-lock-order | `/*/*/CapacityLockOrderTests/*` | Cancel gate lock order | no failed/skipped | 17 | 3 |
 | CP-95 | S2-S3-fix | CP-93 | server-integration-workspace-release | `/*/*/WorktreeRetirementRaceTests/C664_RequeueThenCanceled_RetirementClaimAccepted` | Cancel post-commit workspace release sibling | 1 passed; no failed/skipped | 1 | 2 |
