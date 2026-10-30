@@ -46,6 +46,7 @@ evidence, not a reproduction performed by this Plan task.
 | The long rollout needs the canonical desktop checkout. | `deploy-server2.ps1:44-67` only requires canonical source for `provision-host-jq`. Ordinary phases consume scripts/manifest SHA; `c590-real.ps1:101-109` selects it, and remote `c590-remote.sh:135-150` materializes a separate host deployment checkout. | The ordinary controller can use a pinned task worktree. The remote deployment checkout is separate from the desktop canonical checkout and task mirrors. |
 | Restart can run from the controller tree. | `restart-apphost.ps1:88-94` refuses linked worktrees; `:177-208` binds expected SHA to source HEAD. `docs/orchestration-loop.md:28-37` forbids pulling during a land. | Keep canonical activation separate. No `-AllowWorktree`, restart from the isolated tree, or concurrent canonical checkout move. |
 | Timeout clears the dangerous owner. | `AgentTaskDispatcher.cs:3745-3770` describes a 240-minute role ceiling that fails the task but deliberately leaves its session alive. `AgentTaskReplyService.cs:849-858` refuses refinement after settlement. | Failed is not process exit or checkout release. Do not solve this cycle by waiting for failure, canceling blindly, or increasing the ceiling. CARD-1610 owns terminal/live-session recovery. |
+| A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the actual environment; standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
 CARD-1610 was read: its concrete example is a Review, not this Deploy. The Deploy's
@@ -63,10 +64,28 @@ No desktop files or ended native Windows run were inspected.
 | D-4 | **(d) Worktree plus separate canonical activation** is the selected fix. A linked worktree isolates files while existing land admission already permits its independent owner. Keep remote deployment checkout preparation under existing single-rollout ownership. | A separate clone adds credentials/cache/identity handling; a ReadOnly label is false for Git movement, evidence and deployment effects. A Worktree controller that still invokes canonical pull/restart would retain the race: forbid that in its dispatch contract. |
 | D-5 | Require delegated mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
 | D-6 | Gate the five mutating rolling phases and `all`; existing restrictions on `all`, dry-run and resume remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
-| D-7 | Keep interactive operator invocation compatible when neither task ID nor task token exists. If either exists, require a valid task ID, successful authenticated detail read, supported workspace/path evidence, and a live Dispatched/Working owner. Missing, mismatched, Blocked or terminal ownership refuses. | Silently treating an API/auth failure as interactive mode could conceal the original Shared claim. This is workflow admission using existing identity, not a new security sandbox against deliberate environment tampering. |
+| D-7 | Classify TASK first whenever task ID is present; STANDING AGENT only with token + valid agent ID and no task ID; INTERACTIVE only with all three absent. Admit standing agents without inventing a task record or requiring a Worktree DTO. Apply the class-specific rules below. | A token is not a task ID. Requiring a task record from a standing orchestrator breaks its authorized direct rollout path. Partial/invalid identity never falls back to interactive. This is workflow admission using launcher identity, not a sandbox against deliberate environment tampering. |
 | D-8 | Finish any canonical preparation before commissioning the long controller. For later activation, first finish/join the controller and publish its receipt; wait for lands from the caller, then dispatch the short Shared activation. Within it mutate/build/verify and finish; never wait for pending lands while holding Shared. | A Shared activation that starts by waiting for queued lands recreates the cycle. New lands can queue during the short task and proceed after it finishes; a land already executing is protected by ordinary dispatch/repository admission. |
 | D-9 | Current role ceilings, parking and session recovery are unchanged. Split operational dispatches at phase boundaries if duration risks the ceiling; preserve phase receipts and resume context. A Failed controller may still own live children: inspect/join them before replacement. | Raising timeouts, assuming Failed killed the session, or auto-releasing it belongs to CARD-1610 and would be unsafe incident recovery here. |
 | D-10 | Plan review by a different company's model precedes separate TestDesign. The checkpoint roster below is a concrete proposed selection, not test execution evidence or authority to deploy. | Starting Code without the separate verification design and timing refinement would leave the production-path/race proof incomplete. |
+
+### Caller admission (review D-1)
+
+Presence means a nonempty environment value; whitespace-only supplied values are
+malformed, not absent. Evaluate these cases before reading operator credentials:
+
+| Caller class | Rule | Own test / refusal evidence |
+|---|---|---|
+| TASK: `ANTIPHON_TASK_ID` present, even when agent ID is also present | Require valid GUID, token, authenticated own-task detail with matching `summary.id`, Worktree, Dispatched/Working status and registered native checkout/branch. Shared refuses `RolloutControllerWorkspaceRequired`; unknown/missing/mismatched/Blocked/terminal owner refuses `RolloutControllerIdentityUnknown`. No fall-through on failure. | `C1615_Shared_controller_refuses_before_side_effects` and `C1615_Unknown_or_terminal_owner_refuses`, including ID + agent + token precedence and missing token. |
+| STANDING AGENT: no task ID; token + valid `ANTIPHON_AGENT_ID` | Admit direct orchestrator execution, with no task-detail request and no synthetic task/Shared claim. Require clean pinned script source in a non-main linked controller checkout; no task registry/assigned-branch proof applies. Record `callerClass=StandingAgent` and agent ID. Retain ordinary authenticated API and operator-token gates. | `C1615_Standing_agent_without_task_id_is_admitted` uses the composer's exact environment shape, asserts admission receipt/class and zero task-detail requests, then reaches the stubbed phase boundary. Malformed agent ID refuses. |
+| INTERACTIVE: no task ID, token or agent ID | Preserve interactive invocation without an owner GET; record `callerClass=Interactive`. Existing operator/phase guards remain. The operating recipe still uses a pinned controller checkout. | `C1615_Interactive_mode_requires_absent_task_identity` asserts explicit receipt classification and phase reachability; lone agent ID/token never becomes interactive. |
+
+Token-only card sessions are a real fourth **incomplete identity shape**, not a
+fourth admitted class. Refuse `RolloutControllerIdentityUnknown` before effects and
+tell that caller to commission a fresh Worktree Deploy or use its assigned standing
+agent's controller. Do not strip environment identity or fabricate an agent/task ID.
+This preserves the standing orchestrator path while making the unassigned-card
+migration explicit. No launch-composer or backend change is required.
 
 ## Implementation slices
 
@@ -74,7 +93,7 @@ No desktop files or ended native Windows run were inspected.
 and `tests/Antiphon.Tests/Application/DeployLandIsolationTests.cs`. Extend the needed
 fixture transport in `scripts/fixtures/c727-fake-http.ps1` and `C1008WrapperFixture`
 in `RollingVolumeRecycleScriptTests.cs`; explicitly clear inherited task identity
-in legacy interactive fixtures. Feed owner facts through normal task-detail DTOs,
+and agent identity in legacy interactive fixtures. Feed owner facts through normal task-detail DTOs,
 never a test-only workspace bypass. Reuse `LandingSafetyHarness`, `LandingGitFixture`,
 `C1008WrapperFixture` and the existing production host census extraction harness.
 Use private real Git worktrees for native identity. Commit/push the tests and their
@@ -82,22 +101,26 @@ red outcome before implementing the guard.
 
 **S2 — controller admission.** Add `scripts/lib/rollout-controller.ps1`, called by
 `scripts/deploy-server2.ps1` after pure argument checks but before operator-token
-lookup or operational effects. GET `/api/agent-tasks/{ANTIPHON_TASK_ID}` with
-existing task authentication. Validate `summary.id`, Worktree, live status,
+lookup or operational effects. Classify D-7 first. Only TASK callers GET
+`/api/agent-tasks/{ANTIPHON_TASK_ID}` with existing task authentication.
+Validate `summary.id`, Worktree, live status,
 registered `worktreePath`, native filesystem/Git root identity, clean tracked
 source and `HEAD == -Sha`. Reject wrong/unregistered trees and unknown identities;
 require a registered non-main linked worktree and its expected symbolic branch,
 not just a DTO whose path happens to equal the main checkout. Compare canonical
 identities, not path prefixes. New fixtures run the actual production script bytes
 from their private registered worktree; they cannot bypass this proof. The actual controller is native
-Windows, not a mirror whose registered path names a different machine. Preserve
-D-6 observational/provision exceptions and D-7 interactive compatibility.
+Windows, not a mirror whose registered path names a different machine. Standing
+callers use the native clean pinned non-main source checks without a task DTO or
+task branch comparison. Preserve D-6 observational/provision exceptions and
+D-7 interactive compatibility; never query an empty task ID.
 
 Use fixed reasons `RolloutControllerWorkspaceRequired`,
 `RolloutControllerIdentityUnknown`, `RolloutControllerSourceMismatch`; name the
 validated task and a fresh Worktree controller after canonical preparation as
 recovery. Write ignored `rollout-controller.json` under the invocation evidence
-root: phase, task ID, workspace, source SHA, identity result, outcome and elapsed
+root: phase, caller class, nullable task/agent ID, nullable workspace, source SHA,
+identity result, outcome and elapsed
 milliseconds. Never retain token, full DTO, task prose or raw exception. Receipt
 failure refuses. Self-read and Git probes have finite deadlines. No new API,
 indefinite retry, modal prompt, land predicate or census exception.
@@ -135,17 +158,18 @@ references to server/infrastructure suffice; no project extraction is justified.
 |---|---|---|
 | V-1 | Shared own-task DTO; invoke real wrapper for each mutating phase and allowed resume/dry-run. Refuse before operator-token access, census sleep or any traced effect. Assert fixed reason and zero effects. Old wrapper reaches an effect/wait or lacks the new reason. | New red/green admission. |
 | V-2 | Real pinned linked worktree, matching live DTO and SHA succeeds. Wrong SHA, tracked dirt, foreign tree and alias to canonical refuse. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
-| V-3 | Invalid/missing ID, token without ID, 401/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks, canonical provision guard and true interactive use retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
+| V-3 | Each D-7 caller class has its own method: task ID takes precedence over agent ID; token + agent/no task is admitted with no task GET; all-absent interactive remains admitted. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, task 401/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
 | V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol: Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
 | V-5 | Same-source owner/alias and unknown identity still hold. Shared writer appearing while verification releases the repository lease blocks the real resume path. | Existing safety regression; not a pure predicate test. |
 | V-6 | Bind land owner to recycled runner. Prove Shared cycle, then separate Worktree scenario: complete real land and feed production task/list/detail projections into wrapper and host HTTP fixtures. Actual census refuses/waits while pending and clears only after publication/terminal proof, controller still Working. Another genuine writer keeps recycle refused. | Integrated remedy, remote effects stubbed. |
 | R-1 | Six `C1364BoundLandWaitProofTests` methods preserve cleared/expired waits before/after removal, ordinary/resume/preview, wrapper and host. | Unchanged census regression. |
 
-Planned `DeployRolloutWorkspaceTests` (seven non-parameterized methods):
+Planned `DeployRolloutWorkspaceTests` (eight non-parameterized methods):
 `C1615_Shared_controller_refuses_before_side_effects`,
 `C1615_Worktree_controller_runs_from_its_pinned_checkout`,
 `C1615_Unknown_or_terminal_owner_refuses`, `C1615_Native_checkout_identity`,
 `C1615_Read_checks_and_canonical_provision_keep_their_contract`,
+`C1615_Standing_agent_without_task_id_is_admitted`,
 `C1615_Interactive_mode_requires_absent_task_identity`,
 `C1615_Admission_receipt_is_bounded_and_redacted`.
 
@@ -174,7 +198,7 @@ selection through the tool, without inventing a Platform table column.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 7 named methods, 0 failed, 0 skipped | 7 | 6 | 9 | true |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1615/` | portable-native-controller | `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/*` | V-1, V-2, V-3 | all 8 named methods, 0 failed, 0 skipped | 8 | 6 | 9 | true |
 | CP-2 | S1-S3 | CP-1 | portable-land-isolation | `/*/Antiphon.Tests.Application/DeployLandIsolationTests/*` | V-4, V-5, V-6 | all 5 named methods, 0 failed, 0 skipped | 5 | 4 | 6 | true |
 | CP-3 | S1-S3 | CP-1 | portable-census-regression | `/*/Antiphon.Tests.Scripts/C1364BoundLandWaitProofTests/*` | R-1 | all 6 existing methods, 0 failed, 0 skipped | 6 | 2 | 3 | true |
 
@@ -187,8 +211,8 @@ and end in `*`; escape table pipes as `\|`. Import validates syntax, not existen
 Apply `docs/testing-and-build.md#performance-standards` and its owner
 `docs/test-performance-standards.md`. This Plan executes no product tests; only
 an isolated, slot-gated checkpoint-tool bootstrap/import validates the document.
-The proposed acceptance total is **18 executed results**: 7 script, 5 integration,
-6 census regression. Windows CP-1 adds 7 native results, reported separately.
+The proposed acceptance total is **19 executed results**: 8 script, 5 integration,
+6 census regression. Windows CP-1 adds 8 native results, reported separately.
 
 | Lane / selection | Expected elapsed, including build | Phase allocation | Provisional execution deadline |
 |---|---:|---|---:|
