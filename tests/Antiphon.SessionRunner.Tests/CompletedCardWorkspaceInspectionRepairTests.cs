@@ -202,7 +202,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();
             await Task.WhenAll(stdout, stderr);
-            throw new TimeoutException("fsutil case-sensitivity capability probe exceeded ten seconds");
+            throw new System.TimeoutException("fsutil case-sensitivity capability probe exceeded ten seconds");
         }
         var diagnostic = ((await stdout) + (await stderr)).Trim();
         if (process.ExitCode != 0)
