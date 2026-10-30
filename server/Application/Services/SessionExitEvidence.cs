@@ -11,14 +11,19 @@ public static class SessionExitEvidence
 
     public static bool Apply(AgentSession session, int? code, int? signal, ProcessStopIntentDto? intent = null)
     {
+        signal = signal is >= 0 ? signal : null;
         // Keep the first complete observation. Missing-field replay cannot erase known evidence.
         if (session.ExitSignal is not null && signal is not null && session.ExitSignal != signal)
             return false;
-        // A different actual code cannot supply a missing signal for the previous observation.
         if (session.ExitCode is not null && code is not null && session.ExitCode != code)
-            return false;
+        {
+            // A legacy integer without signal evidence is incomplete. The first complete
+            // native pair takes precedence; later conflicting complete pairs stay refused.
+            if (session.ExitSignal is not null || signal is null) return false;
+            session.ExitCode = code;
+        }
         session.ExitCode ??= code;
-        session.ExitSignal ??= signal is >= 0 ? signal : null;
+        session.ExitSignal ??= signal;
         if (session.ExitStopIntentJson is null && Bound(intent, session.Id, session.StartedAt) is { } bounded)
             session.ExitStopIntentJson = JsonSerializer.Serialize(bounded, Json);
         return true;
