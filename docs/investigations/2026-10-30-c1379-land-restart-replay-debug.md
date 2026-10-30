@@ -2,6 +2,10 @@
 
 Task 472dd1cb; base `335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f`; Linux runner mirror.
 
+Outcome: 104/104 Linux executions passed, including 50 normal and 50 loaded unchanged
+trials and 3 changed-source executions. Test observation is hardened; the Windows
+incident’s underlying cause and native qualification remain unconfirmed.
+
 ## Initial evidence
 
 Windows qualification d47848cc, candidate cde8def41, group 79: 288/289 passed,
@@ -177,3 +181,69 @@ Use the host build-slot gate, isolated outputs, UseAppHost=false, native lock ow
 fresh results; the checkpoint repeat minimum is 1 per ordinal. Set ANTIPHON_C448_EVIDENCE
 and all ANTIPHON_TEST_PHASE_* metadata for the test host only. Do not touch the live
 qualification or anything under C:\\Antiphon from this Linux task. Native result: **not run**.
+
+## Final changed-source verification
+
+Repair commit `008d32c80ef99f08e31ca0fdc215f692b2617e65` passed CP-2: 3 executed,
+3 passed, 0 failed, 0 skipped; all three native repeat ordinals verified in one host.
+`validate-checkpoint-receipt.ps1 -ExpectedSourceSha 008d32c80ef99f08e31ca0fdc215f692b2617e65 -ExpectedRepeat 3`
+returned exit 0 (`CHECKPOINT SOURCE VALID`, one row). Source stayed clean and build
+binding verified. The exact class contains the same one original test; no test was
+removed, skipped or relaxed. All original assertions remain, with extra durable-terminal
+and request-identity assertions. No production fix or product red witness is claimed.
+
+CP-2 had zero admission wait, 213.41 s build, 64.79 s startup, 19.45 s test span and
+3.97 s teardown (88.20 s test-host wall; slot held 473 s including preparation/sealing).
+The three case durations have median 5.97 s and maximum 9.24 s; this is a small sample,
+not a Windows p95 estimate. Opt-in fixture phases measured 10.30 s container startup
+and 47.84 s migration, with uninstrumented time retained as remainder.
+
+The following CHECKPOINT lines are preserved verbatim, including historical refusals.
+The later report-only commit records outcomes; the changed test was verified at the
+repair SHA above. Raw generated payloads remain gitignored under `.antiphon/c1379-debug/`.
+
+Initial source mismatch (no execution):
+
+```text
+CHECKPOINT CP-1 commit=e2d43d6f9847d350e497d690820eab05ec96fe0f build=n/a filter=/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=skipped waited=0s dirty=0 source=e2d43d6f9847d350e497d690820eab05ec96fe0f sourceState=unknown buildSource=unknown repeat=50 repetitions=0/50 hostInvocations=1 reason=source_mismatch
+CHECKPOINT CP-1 EXIT CODE: 2
+```
+
+Baseline diagnostic receipt (50 tests passed; wrapper exit 2):
+
+```text
+CHECKPOINT CP-1 commit=e2d43d6f9847d350e497d690820eab05ec96fe0f build=ok filter=/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest executed=50 passed=50 failed=0 skipped=0 trx=/work/worktrees/task-472dd1cb/.antiphon/c1379-debug/baseline-50-corrected/CP-1-20261030-184257-71a8/run.trx slot=granted waited=346s dirty=0 source=e2d43d6f9847d350e497d690820eab05ec96fe0f sourceState=clean buildSource=verified repeat=50 repetitions=0/50 hostInvocations=1
+CHECKPOINT CP-1 EXIT CODE: 2
+```
+
+Changed-source acceptance receipt (exit 0):
+
+```text
+CHECKPOINT CP-2 commit=008d32c80ef99f08e31ca0fdc215f692b2617e65 build=ok filter=/*/*/LandRestartReplayTests/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-472dd1cb/.antiphon/c1379-debug/fixed/CP-2-20261030-190835-9363/run.trx slot=granted waited=0s dirty=0 source=008d32c80ef99f08e31ca0fdc215f692b2617e65 sourceState=clean buildSource=verified repeat=3 repetitions=3/3 hostInvocations=1
+CHECKPOINT CP-2 EXIT CODE: 0
+```
+
+## Restoration and handoff
+
+All build/test/load children exited and every build slot was released before cleanup.
+After inspecting producer build logs and exact paths, all 44 task-owned alternate output
+roots were removed with literal, non-forced commands: `bin-c1379-debug`,
+`bin-c1379-base50`, `bin-c1379-load` and `bin-c1379-fixed` in this assigned worktree only.
+No remaining root from that inventory exists. Build-source stamps were copied to the
+evidence root before deletion; TRX, phase/Git JSONL, logs and the output inventory remain.
+The forceful command form was rejected before execution; non-forced removal succeeded.
+No source mutation, native test, live qualification action, tag, publish, rc rebase or
+change under C:\\Antiphon occurred. No definition file changed; the real graph Check passed.
+
+Pushed slices before this final evidence amendment:
+
+| Outcome | Full commit |
+|---|---|
+| Initial Debug scope | `e2d43d6f9847d350e497d690820eab05ec96fe0f` |
+| Unchanged trials and classification limits | `c4179ec1c292145877b4c6689364411e97ea1168` |
+| Test observation repair, verified CP-2 | `008d32c80ef99f08e31ca0fdc215f692b2617e65` |
+
+Caller handoff: quick Opus check, then adopt in both rc and master through the normal
+landing path. Preserve the owed NATIVE-1/2/3 obligation after qualification d47848cc
+releases its native lock. Windows load-only flake versus a product stall remains an open
+diagnostic question; this report does not certify the native failure fixed.
