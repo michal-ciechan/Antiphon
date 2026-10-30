@@ -900,7 +900,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-12 | S2-S4-red | CP-10 | server-integration-receipts-red | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 executed; intended receipt/writer assertions red | 21 | 5 |
 | CP-13 | S2-S4-red | CP-10 | script-integration-budget-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 executed; intended script assertions red | 11 | 3 |
 | CP-14 | S2-S4-red | n/a | client-Vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-red.json` | V-14 | JSON total=3; all names; intended behavioral red, no setup error | n/a | 2 |
-| CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-hold/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
+| CP-15 | S2-S4 | `tests/Antiphon.Tests -> bin-c1610-fix-final/` | server-unit-policy | `/*/*/TaskCeilingPolicyTests/C1610_*` | V-2 | 12 passed; no failed/skipped | 12 | 5 |
 | CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 49 passed; no failed/skipped | 49 | 3 |
 | CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 27 passed; no failed/skipped | 27 | 5 |
 | CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
