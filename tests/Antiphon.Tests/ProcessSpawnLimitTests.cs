@@ -72,6 +72,7 @@ public class ProcessSpawnLimitTests
         typeof(CodexRealCliStubProxyCanaryTests),
         typeof(TestDurationTripwireTests),
         typeof(SessionQueueReceiptPlumbingTests),
+        typeof(TaskSupervisionReceiptTests),
         typeof(TestClassificationPolicyTests),
         typeof(TestDbFixtureLazyInitializationTests),
         typeof(CheckCompactionCrashTests),
