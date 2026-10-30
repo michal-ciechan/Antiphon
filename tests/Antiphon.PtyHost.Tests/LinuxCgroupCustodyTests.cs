@@ -262,7 +262,60 @@ public class LinuxCgroupCustodyTests
         world.Validate(second).ObservedAtUtc.ShouldBe(world.Validate(first).ObservedAtUtc);
     }
 
+    // P-2 / NP-35. Candidate image only: a live member, then the installed enter helper
+    // and the installed drain function. This standing runner must not execute it.
+    [Test]
+    public async Task C1614_Populated_tree_refuses_entry_and_drain_success()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync();
+        var launched = await world.LaunchAsync("echo hold-marker", world.HoldLine());
+        var members = await world.WaitForTreeAsync(atLeast: 1);
+        var procs = LinuxCgroupContainment.ExecutionProcsPath(
+            Guid.ParseExact(CurrentNamespace(), "D"), world.Containment.ContainerId);
+        new FileInfo(procs).Length.ShouldBe(0L, "a live cgroup.procs seq_file reports size zero");
+        File.ReadAllText(procs).ShouldContain(launched.ChildPid.ToString());
+        var marker = Path.Combine(world.Scratch, "second-payload");
+        var enter = await SpawnAsync(LinuxCgroupContainment.SudoExe, "-n", EnterHelper,
+            world.Containment.ContainerId.ToString("D"), "--", "/bin/sh", "-c",
+            "printf second > \"" + marker + "\"");
+        var drain = await SpawnAsync("/bin/bash", "-c",
+            "source /usr/local/lib/antiphon-custody-common.sh; custody_drain \"$1\" 1",
+            "bash", procs);
+        var alive = members.All(pid => Directory.Exists("/proc/" + pid));
+        var markerWritten = File.Exists(marker);
+        enter.Code.ShouldNotBe(0);
+        enter.Text.ShouldContain("CustodyTreeNotEmpty");
+        markerWritten.ShouldBeFalse();
+        drain.Code.ShouldNotBe(0);
+        alive.ShouldBeTrue();
+    }
+
     // --- helpers -------------------------------------------------------------------------
+
+    private readonly record struct Spawned(int Code, string Text);
+
+    private static async Task<Spawned> SpawnAsync(string file, params string[] args)
+    {
+        var psi = new ProcessStartInfo(file)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException(file);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException(file);
+        }
+
+        return new Spawned(process.ExitCode, (await stdout) + (await stderr));
+    }
 
     private static string CustodyRoot() => File.Exists("/sys/fs/cgroup/cgroup.controllers")
         ? "/sys/fs/cgroup/" + CustodyRootName
