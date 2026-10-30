@@ -122,8 +122,12 @@ public class Card1619StopAttributionTests
     {
         var (native, json) = await Card1619NativeExitFixture.CaptureAsync(9);
         await using var owned = native;
-        await VerifyAsync(native, RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited, json)!.Exited!,
+        var evt = RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited, json)!.Exited!;
+        await VerifyAsync(native, evt,
             "Antiphon stop requested; killed by signal 9 (SIGKILL); sender unconfirmed", SessionTerminationSource.OperatorRequest);
+        // A cause token from an observation is not the server's independently stored request.
+        await VerifyAsync(native, evt with { ExitReason = AgentExitReason.CpuSpinKilled, ExitStopIntent = null },
+            "killed by signal 9 (SIGKILL); sender unknown", expectedStoredSource: SessionTerminationSource.ProcessExit);
     }
 
     private static ProcessStopIntentDto Intent(Guid id, DateTime generation) => new() {
@@ -133,7 +137,8 @@ public class Card1619StopAttributionTests
         Provenance = ProcessStopProvenance.LiveIssuer, Path = ProcessStopPath.ProcessTree };
 
     private static async Task VerifyAsync(Card1619NativeExitFixture native, SessionRunnerExitedEvent evt,
-        string expected, SessionTerminationSource source = SessionTerminationSource.Unknown)
+        string expected, SessionTerminationSource source = SessionTerminationSource.Unknown,
+        SessionTerminationSource? expectedStoredSource = null)
     {
         await using var s = await Card1619ConsumerFixture.Scenario.CreateAsync();
         var task = await s.AddTaskAsync(AgentTaskStatus.Working, SessionStatus.Running,
@@ -145,6 +150,7 @@ public class Card1619StopAttributionTests
             var row = await db.AgentSessions.SingleAsync(x => x.Id == native.Id);
             row.ExitSignal.ShouldBe(evt.ExitSignal);
             if (source != SessionTerminationSource.Unknown) row.TerminationSource.ShouldBe(source);
+            if (expectedStoredSource is { } required) row.TerminationSource.ShouldBe(required);
             if (evt.ExitStopIntent is not null) row.ExitStopIntentJson.ShouldNotBeNull();
         }
         var attention = (await s.AttentionItemsAsync()).Single(x => x.Kind == AttentionKind.DeadSession);
