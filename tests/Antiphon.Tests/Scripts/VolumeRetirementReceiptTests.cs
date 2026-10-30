@@ -257,6 +257,64 @@ public sealed class VolumeRetirementReceiptTests
         errors.ShouldBeEmpty("J6 effect-boundary guards, bounded retries and complete attempt journal; " + string.Join(" | ", errors));
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Journal_intents_and_partial_resume_are_exact()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var failures = new List<string>();
+        foreach (var cut in new[] { "before-intent", "before-rm", "after-rm", "replacement", "unattributed-absence" })
+        {
+            using var fixture = new C1008HostFixture(main: false);
+            await VolumeRetirementFixture.ReadyPreview(fixture);
+            var hook = cut == "before-intent" || cut == "unattributed-absence"
+                ? "c1609_target_intent() { return 1; }"
+                : cut == "after-rm"
+                    ? "c1609_target_result() { return 1; }"
+                    : "docker() { if [ \"$1 $2\" = 'volume rm' ]; then return 1; fi; bash " +
+                      VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh")) + " \"$@\"; }";
+            var interrupted = await fixture.Run("retire-temp-runner", "c1609_load_retirement\n" + hook);
+            interrupted.Exit.ShouldNotBe(0, "J8 injected persistence/effect cut " + cut + "; " + interrupted.Output);
+            fixture.ReloadDocker();
+            var record = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!;
+            var intents = record["intents"]?.AsArray();
+            if (cut is "before-intent" or "unattributed-absence")
+                (intents?.Count ?? 0).ShouldBe(0, "J8 a failed durable intent cannot authorize removal");
+            else
+            {
+                intents!.Count.ShouldBe(1);
+                intents[0]!["name"]!.GetValue<string>().ShouldBe("antiphon-runner-temp_runner-state");
+                intents[0]!["result"]!.GetValue<string>().ShouldBe("pending");
+            }
+            fixture.Removed.Length.ShouldBe(cut == "after-rm" ? 1 : 0);
+            if (cut == "replacement")
+                fixture.Docker["volumes"]!["antiphon-runner-temp_runner-state"]!["CreatedAt"] = "2026-10-30T00:00:00Z";
+            if (cut == "unattributed-absence")
+                fixture.Docker["volumes"]!.AsObject().Remove("antiphon-runner-temp_runner-state");
+            var resumed = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+            if (cut is "replacement" or "unattributed-absence")
+            {
+                if (resumed.Exit == 0 || fixture.Removed.Length != 0)
+                    failures.Add(cut + " must refuse without another effect: " + resumed.Output);
+                continue;
+            }
+            if (resumed.Exit != 0 || fixture.Removed.Distinct().Count() != 4 || fixture.Removed.Length != 4)
+            {
+                failures.Add(cut + " must reprove and finish exactly once: " + resumed.Output);
+                continue;
+            }
+            record = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!;
+            record["state"]!.GetValue<string>().ShouldBe("Completed");
+            record["intents"]!.AsArray().Count.ShouldBe(4);
+            record["effects"]!.AsArray().Count.ShouldBe(4);
+            record["intents"]!.AsArray().All(row => row!["result"]!.GetValue<string>() is "removed" or "removed-observed").ShouldBeTrue();
+            var again = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+            again.Exit.ShouldBe(0, "J8 final receipt copy/replay does not repeat deletions; " + again.Output);
+            fixture.Removed.Length.ShouldBe(4);
+        }
+        failures.ShouldBeEmpty("J8 crash/resume safety; " + string.Join(" | ", failures));
+    }
+
     private static async Task<(int Exit, string Output)> CheckPreview(C1008HostFixture fixture, string mutation = "")
     {
         return await VolumeRetirementFixture.Bash($$"""
