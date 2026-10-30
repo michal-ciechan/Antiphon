@@ -37,10 +37,11 @@ internal sealed class PortaPtySession : IPtySession
 {
     private readonly IPtyConnection _connection;
 
-    public PortaPtySession(IPtyConnection connection)
+    public PortaPtySession(IPtyConnection connection, Action<PortaPtySession>? beforeReplayForTest = null)
     {
         _connection = connection;
         _connection.ProcessExited += (_, e) => Exited?.Invoke(e.ExitCode);
+        beforeReplayForTest?.Invoke(this);
     }
 
     public event Action<int>? Exited;
