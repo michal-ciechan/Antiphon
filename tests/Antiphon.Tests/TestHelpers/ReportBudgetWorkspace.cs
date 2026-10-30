@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -84,16 +83,8 @@ internal sealed class ReportBudgetWorkspace : IAsyncDisposable
         return path;
     }
 
-    public static string ResolveGitExecutable()
-    {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in path.Split(':', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(dir, "git");
-            if (File.Exists(candidate)) return candidate;
-        }
-        return "/usr/bin/git";
-    }
+    // Match ScratchGitRepo and CheckpointFixtureProcess: the host resolves PATH and git.exe.
+    public static string ResolveGitExecutable() => "git";
 
     public async ValueTask DisposeAsync()
     {
@@ -128,22 +119,9 @@ internal sealed class ReportBudgetWorkspace : IAsyncDisposable
 
     private static async Task GitAsync(string cwd, params string[] args)
     {
-        var psi = new ProcessStartInfo(ResolveGitExecutable())
-        {
-            WorkingDirectory = cwd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("git failed to start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException("git " + string.Join(' ', args) + ": " + await stderr);
-        await stdout;
+        var result = await ScratchGitRepo.GitInAsync(cwd, args);
+        if (!result.Ok)
+            throw new InvalidOperationException("git " + string.Join(' ', args) + ": " + result.StdErr);
     }
 
     private static string HostRoot()
