@@ -1,8 +1,27 @@
 # CARD-1619: Carry Linux PTY exit signals end to end
 
 Date: 2026-10-30. Plan source: `4e67121ef7b85a563c5563cf5fc6aa769cb45743`.
-Status: source-audited plan with folded verification design; 12-row import passed; ready for independent Opus plan Review.
-Plan task: `9a468e98`; product code is outside this dispatch.
+Status: round-2 amendment in progress; previous 12-row import is historical only.
+Plan tasks: `9a468e98` (round 1), `3b469108` (round 2); no product code edits.
+Round-2 base: `de6ca95fe5521b6a64e564298b7436d65460af26`.
+
+## Round-2 amendment register
+
+Review `0e97ad1e` was read in full. This skeleton is published before further
+investigation; the old design below is not ready for Code until these edits and
+re-import are complete. Keep the confirmed consumer inventory, additive wire
+compatibility, RC-first landing and CARD-1610/1614 boundaries.
+
+- Review D-1: verify pinned Porta source and loaded binary; replace the managed
+  copy with a Linux-only, version/shape-checked reflection read and fast-exit replay.
+- Review D-2: make recording best-effort; record failures never block an authorized
+  signal. Replace the write-refusal witnesses with actual stop/degraded-text cases.
+- Review D-3: disk records are untrusted. Only issuer memory or corroborated server
+  stop requests can qualify attribution; add a planted-record/self-kill witness.
+- Review D-4: split storage/transport S3a from classification/consumers S3b, each
+  at most 150 minutes; reconcile the roster, costs and importer.
+- Resolve all six advisories against source, including generation regressions,
+  ProcessExit wording, launcher kill, old-writer loss, fsync and the V-11 fixture.
 
 ## Decisions
 
