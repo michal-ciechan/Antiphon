@@ -1011,6 +1011,15 @@ function Invoke-AntiphonNightlyTests {
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)
     $script:QualificationTimingRoot = $TimingRoot
+    $publicationContext = $null
+    $publicationSource = [string]$Sha
+    if ([string]::IsNullOrWhiteSpace($publicationSource)) { $publicationSource = 'unknown' }
+    try {
+        $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite '' -Source $publicationSource
+    } catch {
+        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+    }
+    try {
     # A4 host sampling is not wired. Do not load a probe DLL from the build output.
     $qualificationBuildSeconds = $null
 
@@ -1653,6 +1662,21 @@ function Invoke-AntiphonNightlyTests {
             $selectionForSummary.timingRoot = [string]$TimingRoot
         }
     }
+    if ($null -ne $publicationContext -and -not $publicationContext.Refused -and -not $publicationContext.Closed) {
+        $publicationTerminal = 'success'
+        if (-not [string]::IsNullOrWhiteSpace([string]$preflight.unhandledError)) {
+            $publicationTerminal = 'orchestration-error'
+        } elseif ([string]$script:NightlyTestsOutcome -eq 'TIMEOUT') {
+            $publicationTerminal = 'timeout'
+        } elseif ($overallFailed) {
+            $publicationTerminal = 'failed-run'
+        }
+        try {
+            Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal $publicationTerminal | Out-Null
+        } catch {
+            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+        }
+    }
     $timingChunks = @()
     $suiteTimeline = @()
     try {
@@ -1725,6 +1749,11 @@ function Invoke-AntiphonNightlyTests {
         Selected = $selectedSuites
         NativeActiveMax = $nativeActiveMax
         PolicyHash = $policyHash
+    }
+    } finally {
+        if ($null -ne $publicationContext) {
+            Close-TestPhaseExecutedContext -Context $publicationContext
+        }
     }
 }
 

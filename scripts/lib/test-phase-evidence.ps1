@@ -1536,6 +1536,7 @@ function New-TestPhaseRefusedContext {
         WriterEnvironment = ''
         NeedsRecovery = $false
         RescanAttempted = $false
+        PendingGaps = (New-Object System.Collections.Generic.List[object])
     }
 }
 
@@ -1979,7 +1980,7 @@ function Import-TestPhaseGapMemory {
 }
 
 function Import-TestPhaseExistingGeneration {
-    param($Context, [string]$Generation, [bool]$ProjectOnly)
+    param($Context, [string]$Generation, [bool]$ProjectOnly, [bool]$Recover)
     $journal = Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot
     $genDir = Join-Path $journal $Generation
     $meta = Read-TestPhaseJsonFile -Path (Join-Path $genDir 'metadata.json')
@@ -1992,6 +1993,7 @@ function Import-TestPhaseExistingGeneration {
     $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
     $same = (Test-TestPhaseOrdinalEqual ([string]$meta.runId) ([string]$Context.RunId)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.attempt) ([string]$Context.Attempt)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.source) ([string]$Context.Source)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.writerEnvironment) ([string]$Context.WriterEnvironment))
     $sealed = Test-Path -LiteralPath (Join-Path $genDir 'seal.json')
+    $resumeSealed = [bool]$Recover -and $sealed -and -not $prefix.Corrupt -and $same
     if ($ProjectOnly) {
         $Context.Generation = $Generation
         $Context.Records = $prefix.Records
@@ -2004,7 +2006,7 @@ function Import-TestPhaseExistingGeneration {
         Import-TestPhaseGapMemory -Context $Context -Records $prefix.Records
         return
     }
-    if ($prefix.Corrupt -or -not $same -or $sealed) {
+    if (($prefix.Corrupt -or -not $same -or $sealed) -and -not $resumeSealed) {
         $snapshot = New-TestPhaseRefusedContext -Reason ''
         $snapshot.Refused = $false
         $snapshot.TimingRoot = $Context.TimingRoot
@@ -2089,7 +2091,8 @@ function Open-TestPhaseExecutedContext {
         [string]$Suite,
         [string]$Source,
         [string]$InvocationId,
-        [switch]$ProjectOnly
+        [switch]$ProjectOnly,
+        [switch]$Recover
     )
     if ([string]::IsNullOrWhiteSpace($Source)) { $Source = 'unknown' }
     $timing = Resolve-TestPhaseExecutedTimingRoot -LogRoot $LogRoot -TimingRoot $TimingRoot
@@ -2134,7 +2137,7 @@ function Open-TestPhaseExecutedContext {
             $ctx.CorruptionReason = 'pointer-binding'
             Initialize-TestPhaseEmptyGeneration -Context $ctx -ParentGeneration ([string]$current.generation)
         } else {
-            Import-TestPhaseExistingGeneration -Context $ctx -Generation ([string]$current.generation) -ProjectOnly:([bool]$ProjectOnly)
+            Import-TestPhaseExistingGeneration -Context $ctx -Generation ([string]$current.generation) -ProjectOnly:([bool]$ProjectOnly) -Recover:([bool]$Recover)
         }
     }
     if (-not $ProjectOnly) { $script:TestPhaseExecutedContext = $ctx }
@@ -2256,33 +2259,80 @@ function Invoke-TestPhasePrefixRescan {
 }
 
 function Add-TestPhaseGapRecord {
-    param($Context, [string]$Reason)
+    param(
+        $Context,
+        [string]$Reason,
+        [string]$Suite = '',
+        [string]$Chunk = '',
+        [string]$RunId = '',
+        [string]$Attempt = '',
+        [string]$HeaderRun = '',
+        [string]$HeaderAttempt = '',
+        [string]$HeaderSuite = '',
+        [string]$PublicationId = ''
+    )
     $Context.NeedsRecovery = $true
     if (-not $Context.Gaps.Contains('publication-gap')) { [void]$Context.Gaps.Add('publication-gap') }
+    if ([string]::IsNullOrWhiteSpace($HeaderRun)) { $HeaderRun = [string]$RunId }
+    if ([string]::IsNullOrWhiteSpace($HeaderAttempt)) { $HeaderAttempt = [string]$Attempt }
+    if ([string]::IsNullOrWhiteSpace($HeaderSuite)) { $HeaderSuite = [string]$Suite }
+    if ([string]::IsNullOrWhiteSpace($PublicationId)) { $PublicationId = [guid]::NewGuid().ToString('n') }
     $sequence = [int]$Context.NextSequence
     $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation
     $final = Join-Path $genDir ($sequence.ToString('00000000') + '.json')
-    if ([System.IO.File]::Exists($final)) { return $false }
-    $publicationId = [guid]::NewGuid().ToString('n')
-    $envelope = New-TestPhaseEnvelopeText -Kind 'gap' -Sequence $sequence -PublicationId $publicationId -Context $Context -Reason $Reason -Suite '' -Chunk '' -SettledSuite '' -SettledChunk '' -HeaderRun '' -HeaderAttempt '' -HeaderSuite '' -FreshJson '' -SettledJson ''
-    $ok = Add-TestPhaseJournalEnvelope -Context $Context -Text $envelope -PublicationId $publicationId -Sequence $sequence
-    if (-not $ok) { return $false }
+    $envelope = New-TestPhaseEnvelopeText -Kind 'gap' -Sequence $sequence -PublicationId $PublicationId -Context $Context -Reason $Reason -Suite $Suite -Chunk $Chunk -SettledSuite $Suite -SettledChunk $Chunk -HeaderRun $HeaderRun -HeaderAttempt $HeaderAttempt -HeaderSuite $HeaderSuite -FreshJson '' -SettledJson ''
+    $ok = Add-TestPhaseJournalEnvelope -Context $Context -Text $envelope -PublicationId $PublicationId -Sequence $sequence
+    if (-not $ok) {
+        $already = $false
+        if ($null -eq $Context.PendingGaps) { $Context.PendingGaps = New-Object System.Collections.Generic.List[object] }
+        foreach ($pending in $Context.PendingGaps) {
+            if ([string]$pending.PublicationId -eq $PublicationId) { $already = $true; break }
+        }
+        if (-not $already) {
+            [void]$Context.PendingGaps.Add([pscustomobject]@{
+                Reason = [string]$Reason
+                Suite = [string]$Suite
+                Chunk = [string]$Chunk
+                RunId = [string]$RunId
+                Attempt = [string]$Attempt
+                HeaderRun = [string]$HeaderRun
+                HeaderAttempt = [string]$HeaderAttempt
+                HeaderSuite = [string]$HeaderSuite
+                PublicationId = [string]$PublicationId
+            })
+        }
+        return $false
+    }
     $Context.Records.Add([pscustomobject]@{
         Kind = 'gap'
         Sequence = $sequence
         FreshJson = ''
         SettledJson = ''
-        FreshSuite = ''
-        FreshChunk = ''
-        SettledSuite = ''
-        SettledChunk = ''
-        HeaderRun = ''
-        HeaderAttempt = ''
-        HeaderSuite = ''
-        PublicationId = $publicationId
+        FreshSuite = [string]$Suite
+        FreshChunk = [string]$Chunk
+        SettledSuite = [string]$Suite
+        SettledChunk = [string]$Chunk
+        HeaderRun = [string]$HeaderRun
+        HeaderAttempt = [string]$HeaderAttempt
+        HeaderSuite = [string]$HeaderSuite
+        PublicationId = [string]$PublicationId
     })
     $Context.LastCommitted = $sequence
     $Context.NextSequence = $sequence + 1
+    return $true
+}
+
+function Submit-TestPhasePendingGaps {
+    param($Context)
+    if ($null -eq $Context.PendingGaps) { return $true }
+    while ($Context.PendingGaps.Count -gt 0) {
+        $pending = $Context.PendingGaps[0]
+        $ok = Add-TestPhaseGapRecord -Context $Context -Reason ([string]$pending.Reason) -Suite ([string]$pending.Suite) -Chunk ([string]$pending.Chunk) -RunId ([string]$pending.RunId) -Attempt ([string]$pending.Attempt) -HeaderRun ([string]$pending.HeaderRun) -HeaderAttempt ([string]$pending.HeaderAttempt) -HeaderSuite ([string]$pending.HeaderSuite) -PublicationId ([string]$pending.PublicationId)
+        if (-not $ok) { return $false }
+        if ($Context.PendingGaps.Count -gt 0 -and [string]$Context.PendingGaps[0].PublicationId -eq [string]$pending.PublicationId) {
+            $Context.PendingGaps.RemoveAt(0)
+        }
+    }
     return $true
 }
 
@@ -2292,6 +2342,13 @@ function Add-TestPhaseExecutedChunk {
     Invoke-TestPhasePrefixRescan -Context $Context
     $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) 'current.json')
     if ($null -eq $current -or -not (Test-TestPhaseOrdinalEqual ([string]$current.generation) ([string]$Context.Generation))) { throw 'stale-context' }
+    if ($null -ne $Context.PendingGaps -and $Context.PendingGaps.Count -gt 0) {
+        $drained = Submit-TestPhasePendingGaps -Context $Context
+        if (-not $drained) {
+            Write-TestPhaseFailureMarker -RunDirectory $Context.LogRoot -Code 'phase-summary-failed'
+            return $false
+        }
+    }
     $header = Get-TestPhaseNextHeader -Context $Context -RunId $RunId -Attempt $Attempt -Suite $Suite
     $freshJson = ConvertTo-TestPhaseJsonText -Value $Fresh
     $parsed = $freshJson | ConvertFrom-Json
@@ -2303,7 +2360,7 @@ function Add-TestPhaseExecutedChunk {
     $ok = Add-TestPhaseJournalEnvelope -Context $Context -Text $envelope -PublicationId $publicationId -Sequence $sequence
     if (-not $ok) {
         Write-TestPhaseFailureMarker -RunDirectory $Context.LogRoot -Code 'phase-summary-failed'
-        Add-TestPhaseGapRecord -Context $Context -Reason ([string]$Context.Reason) | Out-Null
+        Add-TestPhaseGapRecord -Context $Context -Reason ([string]$Context.Reason) -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HeaderRun ([string]$header.Run) -HeaderAttempt ([string]$header.Attempt) -HeaderSuite ([string]$header.Suite) | Out-Null
         return $false
     }
     Wait-TestPhaseCommitBarrier -Stage 'AfterAckBeforeProjection'
@@ -2329,13 +2386,15 @@ function Add-TestPhaseExecutedChunk {
     return $true
 }
 
-function Write-TestPhasePublicationState {
-    param($Context, [string]$ProjectionText)
+function Get-TestPhasePublicationStateText {
+    param($Context, $ProjectionText)
     $quality = New-Object System.Collections.Generic.List[string]
     if ($Context.Unresolved) {
         if (-not $quality.Contains('publication-corruption')) { $quality.Add('publication-corruption') }
     }
-    if ($Context.Gaps.Count -gt 0) {
+    $pending = 0
+    if ($null -ne $Context.PendingGaps) { $pending = $Context.PendingGaps.Count }
+    if ($Context.Gaps.Count -gt 0 -or $pending -gt 0) {
         if (-not $quality.Contains('publication-gap')) { $quality.Add('publication-gap') }
     }
     $complete = ($quality.Count -eq 0)
@@ -2352,8 +2411,14 @@ function Write-TestPhasePublicationState {
         projectionDigest = [string]$digest
         quality = @($quality.ToArray())
     }
+    return (ConvertTo-TestPhaseJsonText -Value $state)
+}
+
+function Write-TestPhasePublicationState {
+    param($Context, [string]$ProjectionText)
+    $text = Get-TestPhasePublicationStateText -Context $Context -ProjectionText $ProjectionText
     $path = Join-Path $Context.TimingRoot 'groups-executed.state.json'
-    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $state)
+    Write-TestPhaseTextAtomic -Path $path -Text $text
     return (Get-TestPhaseSha256File -Path $path)
 }
 
@@ -2366,20 +2431,26 @@ function Complete-TestPhaseExecutedProjection {
     }
     if ($null -eq $Context -or $Context.Refused) { return $Context }
     try {
+        if ($null -ne $Context.PendingGaps -and $Context.PendingGaps.Count -gt 0) {
+            Submit-TestPhasePendingGaps -Context $Context | Out-Null
+        }
         $text = Get-TestPhaseProjectedDocument -Context $Context
-        if ($null -eq $text -and -not $Context.Unresolved -and $Context.Gaps.Count -eq 0) { return $Context }
+        $terminalSet = -not [string]::IsNullOrWhiteSpace($Terminal)
+        if ($null -eq $text -and -not $Context.Unresolved -and $Context.Gaps.Count -eq 0 -and -not $terminalSet) { return $Context }
         if ($null -ne $text) {
             $flat = Join-Path $Context.TimingRoot 'groups-executed.json'
             Write-TestPhaseTextAtomic -Path $flat -Text $text
         }
         $stateDigest = Write-TestPhasePublicationState -Context $Context -ProjectionText $text
-        if (-not [string]::IsNullOrWhiteSpace($Terminal) -and $null -ne $text) {
+        if ($terminalSet) {
+            $projectionDigest = ''
+            if ($null -ne $text) { $projectionDigest = Get-TestPhaseSha256Text -Text $text }
             $seal = [ordered]@{
                 version = 1
                 generation = [string]$Context.Generation
                 sequence = [int]$Context.LastCommitted
                 terminal = [string]$Terminal
-                projectionDigest = (Get-TestPhaseSha256Text -Text $text)
+                projectionDigest = [string]$projectionDigest
                 stateDigest = [string]$stateDigest
             }
             $sealPath = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Context.Generation) 'seal.json'
@@ -2440,9 +2511,41 @@ function Read-TestPhaseExecutedPrefix {
 
 function Invoke-TestPhaseExecutedRecovery {
     param([string]$LogRoot, [string]$TimingRoot, [string]$RunId, [string]$Attempt, [string]$Suite, [string]$Source)
-    $ctx = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $RunId -Attempt $Attempt -Suite $Suite -Source $Source
+    $timing = Resolve-TestPhaseExecutedTimingRoot -LogRoot $LogRoot -TimingRoot $TimingRoot
+    $run = [string]$RunId
+    $att = [string]$Attempt
+    $src = [string]$Source
+    if (-not [string]::IsNullOrWhiteSpace($timing)) {
+        $current = Read-TestPhaseJsonFile -Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json')
+        if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.generation)) {
+            $metaPath = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation)) 'metadata.json'
+            $meta = Read-TestPhaseJsonFile -Path $metaPath
+            if ($null -ne $meta) {
+                if ([string]::IsNullOrWhiteSpace($run)) { $run = [string]$meta.runId }
+                if ([string]::IsNullOrWhiteSpace($att)) { $att = [string]$meta.attempt }
+                if ([string]::IsNullOrWhiteSpace($src)) { $src = [string]$meta.source }
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($src)) { $src = 'unknown' }
+    $ctx = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $run -Attempt $att -Suite $Suite -Source $src -Recover
     if ($null -eq $ctx -or $ctx.Refused) { return $ctx }
     try {
+        $genDir = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $ctx.TimingRoot) $ctx.Generation
+        $seal = Read-TestPhaseJsonFile -Path (Join-Path $genDir 'seal.json')
+        if ($null -ne $seal -and -not $ctx.Unresolved) {
+            $preview = Get-TestPhaseProjectedDocument -Context $ctx
+            $projectionDigest = ''
+            if ($null -ne $preview) { $projectionDigest = Get-TestPhaseSha256Text -Text $preview }
+            $stateText = Get-TestPhasePublicationStateText -Context $ctx -ProjectionText $preview
+            $stateDigest = Get-TestPhaseSha256Text -Text $stateText
+            $projectionMatch = Test-TestPhaseOrdinalEqual $projectionDigest ([string]$seal.projectionDigest)
+            $stateMatch = Test-TestPhaseOrdinalEqual $stateDigest ([string]$seal.stateDigest)
+            if (-not $projectionMatch -or -not $stateMatch) {
+                $ctx.Reason = 'seal-digest-mismatch'
+                return $ctx
+            }
+        }
         Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
         return $ctx
     } finally {
@@ -2451,7 +2554,7 @@ function Invoke-TestPhaseExecutedRecovery {
 }
 
 function Get-TestPhasePublicationQuality {
-    param([string]$RunDirectory)
+    param([string]$RunDirectory, $KnownPrefix)
     $tokens = New-Object System.Collections.Generic.List[string]
     try {
         $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
@@ -2475,8 +2578,12 @@ function Get-TestPhasePublicationQuality {
             $current = Read-TestPhaseJsonFile -Path $currentPath
             if ($null -eq $current -or -not (Test-TestPhaseOrdinalEqual ([string]$current.generation) ([string]$state.generation))) { $mismatch = $true }
             else {
-                $prefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
+                $prefix = $KnownPrefix
+                if ($null -eq $prefix) {
+                    $prefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
+                }
                 if ([int]$state.sequence -ne [int]$prefix.LastSequence) { $mismatch = $true }
+                if ([bool]$prefix.Corrupt -and -not $tokens.Contains('publication-corruption')) { $tokens.Add('publication-corruption') }
             }
         }
         $rootFull = ''
@@ -2599,6 +2706,10 @@ function Complete-TestPhaseLaunch {
             & $script:TestPhaseSeams.Summary
         }
         Write-TestPhaseExecutedManifest -Verdict $Verdict -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
+        $live = $script:TestPhaseExecutedContext
+        if ($null -ne $live -and -not $live.Closed -and -not $live.Refused) {
+            Complete-TestPhaseExecutedProjection -Context $live | Out-Null
+        }
         $planned = Join-Path (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot) 'groups-planned.json'
         if (Test-Path -LiteralPath $planned) {
             Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
@@ -2694,8 +2805,32 @@ function ConvertTo-TestPhaseSummaryRows {
 
     $trxGroups = @{}
     $trxSuites = @{}
+    $journalPrefix = $null
+    $currentPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json'
+    $hasJournal = (Get-TestPhasePathIdentity -Path $currentPath).Kind -eq 'regular'
+    if ($hasJournal) {
+        $current = Read-TestPhaseJsonFile -Path $currentPath
+        if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.generation)) {
+            $journalPrefix = Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) ([string]$current.generation))
+            foreach ($rec in $journalPrefix.Records) {
+                if ([string]$rec.Kind -ne 'chunk') { continue }
+                if ([string]::IsNullOrWhiteSpace([string]$rec.FreshJson)) { continue }
+                $chunkObj = $null
+                try { $chunkObj = ([string]$rec.FreshJson | ConvertFrom-Json) } catch { $chunkObj = $null }
+                if ($null -eq $chunkObj) { continue }
+                $trxRel = ''
+                if ($chunkObj.PSObject.Properties.Name -contains 'trx') { $trxRel = [string]$chunkObj.trx }
+                if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
+                $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory $trxRel))
+                $trxGroups[$fullTrx] = [string]$rec.FreshChunk
+                $suiteText = [string]$rec.FreshSuite
+                if ([string]::IsNullOrWhiteSpace($suiteText) -and $chunkObj.PSObject.Properties.Name -contains 'suite') { $suiteText = [string]$chunkObj.suite }
+                $trxSuites[$fullTrx] = $suiteText
+            }
+        }
+    }
     $executedPath = Join-Path $timing 'groups-executed.json'
-    if ((Get-TestPhasePathIdentity -Path $executedPath).Kind -eq 'regular') {
+    if ($null -eq $journalPrefix -and (Get-TestPhasePathIdentity -Path $executedPath).Kind -eq 'regular') {
         $executed = [System.IO.File]::ReadAllText($executedPath) | ConvertFrom-Json
         foreach ($chunk in @($executed.chunks)) {
             if (-not [string]::IsNullOrWhiteSpace([string]$chunk.trx)) {
@@ -2895,7 +3030,7 @@ function ConvertTo-TestPhaseSummaryRows {
             fixture = $(if ($ex) { [long]$ex.fixture } else { 0 })
         }
     }
-    foreach ($token in @(Get-TestPhasePublicationQuality -RunDirectory $RunDirectory)) {
+    foreach ($token in @(Get-TestPhasePublicationQuality -RunDirectory $RunDirectory -KnownPrefix $journalPrefix)) {
         if (-not $quality.Contains([string]$token)) { $quality.Add([string]$token) }
     }
     $complete = $quality.Count -eq 0
