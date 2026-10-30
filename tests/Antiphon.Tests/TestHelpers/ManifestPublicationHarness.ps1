@@ -274,11 +274,11 @@ function Publish-MpChunk {
     )
     $script:MpPublishedChunk = $Chunk
     if ($NullVerdict) {
-        Write-TestPhaseExecutedManifest -Verdict $null -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
+        $null = Write-TestPhaseExecutedManifest -Verdict $null -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
         return
     }
     $run = [pscustomobject]@{ ExitCode = $ExitCode }
-    Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds -CoverageComplete $Coverage -TestsPassed $Passed
+    $null = Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds -CoverageComplete $Coverage -TestsPassed $Passed
 }
 
 function Measure-MpPublish {
@@ -595,18 +595,17 @@ function Invoke-V3Reduce {
     $expected = [Environment]::GetEnvironmentVariable('MP_EXPECTED')
     if ([string]::IsNullOrWhiteSpace($source) -or -not (Test-Path -LiteralPath $source)) { Fail-Mp 'reduce-source-missing' }
     if (-not (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) { Fail-Mp 'projection-api-absent' }
-    $timing = Join-Path $Work 'timing'
-    New-Item -ItemType Directory -Path $timing -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $source '*') -Destination $timing -Recurse -Force
-    $flat = Join-Path $timing 'groups-executed.json'
-    $state = Join-Path $timing 'groups-executed.state.json'
+    # Project the writer directory in place. Copying the journal would stale-bind current.json.
+    $flat = Join-Path $source 'groups-executed.json'
+    $state = Join-Path $source 'groups-executed.state.json'
     if (Test-Path -LiteralPath $flat) { Remove-Item -LiteralPath $flat -Force }
     if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Force }
+    $logRoot = Split-Path -Parent $source
     $script:QualificationTimingRoot = $null
-    Complete-TestPhaseExecutedProjection -LogRoot $Work
+    Complete-TestPhaseExecutedProjection -LogRoot $logRoot
     if ((Get-MpSha $flat) -ne (Get-MpSha $expected)) { Fail-Mp 'reducer-timezone-bytes-differ' }
     $again = Get-MpSha $flat
-    Complete-TestPhaseExecutedProjection -LogRoot $Work
+    Complete-TestPhaseExecutedProjection -LogRoot $logRoot
     if ((Get-MpSha $flat) -ne $again) { Fail-Mp 'projection-not-stable' }
     Write-MpResult -Ok $true -Reason 'v3-reduce'
 }
@@ -659,22 +658,19 @@ function Invoke-V4 {
 }
 
 function Invoke-V4Successor {
-    $source = [Environment]::GetEnvironmentVariable('MP_SOURCE')
-    $timing = Join-Path $Work 'timing'
-    New-Item -ItemType Directory -Path (Split-Path -Parent $timing) -Force | Out-Null
-    Copy-Item -LiteralPath $source -Destination $timing -Recurse -Force
-    $before = Get-MpSha (Join-Path $timing 'groups-executed.journal')
-    $ctx = Open-MpContext -LogRoot $Work -RunId ([Environment]::GetEnvironmentVariable('MP_RUN')) -Attempt ([Environment]::GetEnvironmentVariable('MP_ATTEMPT')) -Suite 'antiphon' -Source ([Environment]::GetEnvironmentVariable('MP_SOURCE_ID'))
+    $timing = [Environment]::GetEnvironmentVariable('MP_SOURCE')
+    if ([string]::IsNullOrWhiteSpace($timing) -or -not (Test-Path -LiteralPath $timing)) { Fail-Mp 'successor-source-missing' }
+    $logRoot = Split-Path -Parent $timing
+    $ctx = Open-MpContext -LogRoot $logRoot -RunId ([Environment]::GetEnvironmentVariable('MP_RUN')) -Attempt ([Environment]::GetEnvironmentVariable('MP_ATTEMPT')) -Suite 'antiphon' -Source ([Environment]::GetEnvironmentVariable('MP_SOURCE_ID'))
     if ($null -eq $ctx) { Fail-Mp 'successor-api-absent' }
     if ($ctx.Refused) { Fail-Mp ("successor-refused " + [string]$ctx.Reason) }
     $trx = Join-Path $Work 'one.trx'
     New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'next' -Outcome 'Passed'))
-    Publish-MpChunk -LogRoot $Work -TrxPath $trx -Suite 'antiphon' -Chunk 'g0' -RunId 'run-v4' -Attempt '1' -HostWallSeconds 3
+    Publish-MpChunk -LogRoot $logRoot -TrxPath $trx -Suite 'antiphon' -Chunk 'g0' -RunId 'run-v4' -Attempt '1' -HostWallSeconds 3
     if (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue) {
         Complete-TestPhaseExecutedProjection -Context $ctx
     }
     Close-MpContext -Context $ctx
-    $current = [System.IO.File]::ReadAllText((Join-Path $timing 'groups-executed.journal/current.json')) | ConvertFrom-Json
     $gens = @(Get-ChildItem -LiteralPath (Join-Path $timing 'groups-executed.journal') -Directory)
     if ($gens.Count -lt 2) { Fail-Mp ("successor-generations=" + $gens.Count) }
     Write-MpResult -Ok $true -Reason 'v4-successor'
@@ -710,16 +706,15 @@ function Invoke-V5 {
             Fail-Mp ("barrier-not-observed stage=" + $stage + " wait=" + $wait)
         }
         Stop-MpProcess $child
-        $recoverWork = Join-Path $Work ("recover-" + $stage)
-        Copy-Item -LiteralPath $childWork -Destination $recoverWork -Recurse -Force
-        $trx = Join-Path $recoverWork 'one.trx'
-        $ctx = Open-MpContext -LogRoot $recoverWork -RunId 'run-v5' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
-        Publish-MpChunk -LogRoot $recoverWork -TrxPath $trx -Suite 'antiphon' -Chunk 'chunk-c' -RunId 'run-v5' -Attempt '1' -HostWallSeconds 1
+        # The killed process releases writer.lock. Recover this directory in place.
+        $trx = Join-Path $childWork 'one.trx'
+        $ctx = Open-MpContext -LogRoot $childWork -RunId 'run-v5' -Attempt '1' -Suite 'antiphon' -Source 'unknown'
+        Publish-MpChunk -LogRoot $childWork -TrxPath $trx -Suite 'antiphon' -Chunk 'chunk-c' -RunId 'run-v5' -Attempt '1' -HostWallSeconds 1
         if ($null -ne $ctx -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
             Complete-TestPhaseExecutedProjection -Context $ctx
         }
         Close-MpContext -Context $ctx
-        $ids = @(Read-MpChunkIds -Path (Join-Path $recoverWork 'timing/groups-executed.json'))
+        $ids = @(Read-MpChunkIds -Path (Join-Path $childWork 'timing/groups-executed.json'))
         $expectB = ($stage -eq 'AfterRenameBeforeAck' -or $stage -eq 'AfterAckBeforeProjection')
         $hasA = $ids -contains 'chunk-a'
         $hasB = $ids -contains 'chunk-b'
