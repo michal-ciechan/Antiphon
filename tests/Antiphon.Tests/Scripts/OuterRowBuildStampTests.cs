@@ -95,6 +95,7 @@ public sealed class OuterRowBuildStampTests
             var key = replacement[..replacement.IndexOf('=')] + "=";
             producer.Properties.RemoveAll(property => property.StartsWith(key, StringComparison.Ordinal));
             producer.Properties.Add(replacement);
+            producer.Properties.Sort(StringComparer.Ordinal);
             var altered = JsonSerializer.Serialize(producer, CheckpointApp.Json);
             File.WriteAllText(producer.PathName, altered);
 
