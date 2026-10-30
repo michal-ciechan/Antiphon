@@ -193,6 +193,11 @@ public class CapacityObsoleteStandingTests
             var detail = await fx.Harness.Control.StartAsync(agent.Id,
                 new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true), CancellationToken.None);
             detail.LiveSession.ShouldNotBeNull();
+            // Start returns once the replacement row is committed, then the launch queue
+            // holds that session until the process attempt settles. Reconciling in that
+            // window is the busy deferral: session NOWAIT fails and the agent lock is
+            // never taken. The order witness is the pass after the launch releases it.
+            await fx.Harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             commands.Clear();
             await fx.Recovery.ReconcileAsync(CancellationToken.None);
             commands.AssertStandingLockOrder();
@@ -573,16 +578,49 @@ public class CapacityObsoleteStandingTests
 
         public void AssertStandingLockOrder()
         {
-            var trace = CleanupTrace();
-            var dump = trace.Count == 0
-                ? "no row-lock connection\n" + string.Join("\n", Snapshot())
-                : string.Join("\n", trace);
-            var sessionLock = First(trace, IsSessionRowLock);
-            var agentLock = First(trace, IsAgentRowLock);
-            var provider = First(trace, IsProviderLock);
-            sessionLock.ShouldBeGreaterThanOrEqualTo(0, dump);
-            agentLock.ShouldBeGreaterThan(sessionLock, dump);
-            provider.ShouldBeGreaterThan(agentLock, dump);
+            List<LoggedCommand> snapshot;
+            lock (_gate)
+                snapshot = _entries.ToList();
+
+            // A busy NOWAIT attempt logs only the lock it failed on. Judge every
+            // connection that issued all three statements, and require that sequence.
+            var completions = new List<(int Session, int Agent, int Provider)>();
+            foreach (var group in snapshot.GroupBy(entry => entry.ConnectionId))
+            {
+                var texts = group.Select(entry => entry.Text).ToArray();
+                var session = First(texts, IsSessionRowLock);
+                var agent = First(texts, IsAgentRowLock);
+                var provider = First(texts, IsProviderLock);
+                if (session >= 0 && agent >= 0 && provider >= 0)
+                    completions.Add((session, agent, provider));
+            }
+
+            var dump = DumpLocks(snapshot);
+            completions.Count.ShouldBeGreaterThan(0, dump);
+            foreach (var item in completions)
+            {
+                item.Agent.ShouldBeGreaterThan(item.Session, dump);
+                item.Provider.ShouldBeGreaterThan(item.Agent, dump);
+            }
+        }
+
+        private static string DumpLocks(List<LoggedCommand> snapshot)
+        {
+            var lines = new List<string>();
+            foreach (var entry in snapshot)
+            {
+                if (!entry.Text.Contains("FOR UPDATE", StringComparison.Ordinal)
+                    && !entry.Text.Contains("advisory_xact_lock", StringComparison.Ordinal))
+                    continue;
+                var text = entry.Text.Replace('\n', ' ').Replace('\r', ' ');
+                if (text.Length > 220)
+                    text = text[..220];
+                lines.Add(entry.ConnectionId.ToString("N")[..8] + " " + text);
+            }
+
+            return lines.Count == 0
+                ? "no lock commands in " + snapshot.Count + " commands"
+                : string.Join("\n", lines);
         }
 
         public override InterceptionResult<DbDataReader> ReaderExecuting(
