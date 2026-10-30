@@ -295,7 +295,7 @@ async function n2(f) {
     const holder=shell(g,'c1008_rollout_lock; touch '+q(held)+'; for n in $(seq 1 1000); do [ ! -e '+q(release)+' ] || exit 0; sleep 0.02; done; exit 72','holder');
     await barrier(()=>rootRun('test -f '+q(held),true).code===0,holder);
     const created=g.stem+'-writer-created'; scope.volumes.push(created);g.names.push(created);save();
-    const writer=shell(g,'printf "%s\\n" "$" > '+q(g.host+'/writer-pid')+'; c1008_rollout_lock; docker volume create --label '+q(label+'='+scope.prefix)+' '+q(created)+'; touch '+q(entered),'writer');
+    const writer=shell(g,'printf "%s\\n" "$$" > '+q(g.host+'/writer-pid')+'; c1008_rollout_lock; docker volume create --label '+q(label+'='+scope.prefix)+' '+q(created)+'; touch '+q(entered),'writer');
     try {
       // The lock is a real kernel lock on the production-selected file.
       assert.notEqual(rootRun('flock -n '+q(g.host+'/server/locks/rollout.lock')+' true',true).code,0);
