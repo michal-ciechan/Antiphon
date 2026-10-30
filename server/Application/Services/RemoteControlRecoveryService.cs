@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -359,25 +360,20 @@ public sealed class RemoteControlRecoveryService
         if (HoldDuringIo is not null)
             await HoldDuringIo();
 
+        var custody = await _runtime.ObserveDialogAsync(sessionId, ct);
+        if (ProviderDialogObservationService.Refusal(custody, sessionId, currentGeneration) is { } refusal)
+            return await FinishArmAsync(db, row, MapWriteOutcome(refusal), refusal, ct);
+
         var sequence = observation.LastSequence;
         var bodyWrite = await SendGuardedAsync(
-            sessionId, currentGeneration, sequence, "/remote-control", ct);
+            sessionId, currentGeneration, sequence, "/remote-control", ct, custody);
         if (bodyWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(bodyWrite.Outcome), bodyWrite.Outcome, ct, unconfirmed: bodyWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
-        if (!await WaitComposerAsync(sessionId, "/remote-control", ct))
-            return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "no-composer", ct, unconfirmed: true);
-
-        // Re-observe before the submitting Enter. The composer echo just waited for IS an output
-        // change, so the sequence the body write returned is already stale against a real terminal
-        // and the conditional write is correctly refused -- leaving /remote-control typed and never
-        // submitted, the exact shape this card exists to prevent. Each phase is fenced on its own
-        // fresh observation, taken from the same source the body write used.
-        var beforeEnter = await ObserveAsync(sessionId, currentGeneration, ct);
-        if (!beforeEnter.GenerationProven)
-            return await FinishArmAsync(db, row, RemoteControlArmResult.ArmUnconfirmed, "enter-generation-unproven", ct, unconfirmed: true);
-
-        var enterWrite = await SendGuardedAsync(sessionId, currentGeneration, beforeEnter.LastSequence, "\r", ct);
+        // One successful body write advances input revision exactly once. Only output may change
+        // while waiting for its composer frame; any intervening input ends this arm's authority.
+        var enterWrite = await WaitComposerAndSubmitArmAsync(db, sessionId, currentGeneration,
+            custody! with { InputRevision = custody!.InputRevision + 1 }, ct);
         if (enterWrite.Outcome != ConditionalInputOutcomes.Written)
             return await FinishArmAsync(db, row, MapWriteOutcome(enterWrite.Outcome), enterWrite.Outcome, ct, unconfirmed: enterWrite.Outcome == ConditionalInputOutcomes.Unknown);
 
@@ -617,19 +613,45 @@ public sealed class RemoteControlRecoveryService
         return RemoteControlDismissalResult.EscSentUnverified;
     }
 
-    private async Task<bool> WaitComposerAsync(Guid sessionId, string body, CancellationToken ct)
+    private async Task<RunnerConditionalInputResult> WaitComposerAndSubmitArmAsync(
+        AppDbContext db, Guid sessionId, DateTime generation, ProviderDialogObservation custody,
+        CancellationToken ct)
     {
         var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, _settings.DeliveryVerification.EvidenceTimeoutSeconds));
+        var last = new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.ObservationUnknown);
         while (UtcNow() < deadline)
         {
-            if (_runtime.TryGetLiveSnapshot(sessionId, out var snap)
-                && snap.RenderedScreen.Contains(body, StringComparison.Ordinal))
-                return true;
+            var dialog = await _runtime.ObserveDialogAsync(sessionId, ct);
+            if (dialog is null || !dialog.InputHistoryKnown
+                || dialog.RuntimeEpoch != custody.RuntimeEpoch || dialog.InputRevision != custody.InputRevision)
+                return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
+            if (!SessionGeneration.Equal(dialog.AcceptedStartedAt, generation))
+                return new(sessionId, ConditionalInputOutcomes.GenerationMismatch);
+            if (dialog.State == ProviderDialogState.Blocked)
+                return new(sessionId, ConditionalInputOutcomes.ModalBlocked);
+
+            var snap = await _runtime.TryGetLiveSnapshotAsync(sessionId, ct);
+            if (snap is not null && ClaudeScreen.TryReadComposer(snap.RenderedScreen, out var composer)
+                && composer == "/remote-control")
+            {
+                var beforeEnter = await ObserveAsync(sessionId, generation, ct);
+                if (!beforeEnter.GenerationProven)
+                    return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
+                await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+                if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
+                    return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
+
+                last = await SendGuardedAsync(sessionId, generation, beforeEnter.LastSequence, "\r", ct, custody);
+                // StaleObservation guarantees ZERO backend bytes. Refresh only the output fence,
+                // within the original composer-evidence budget. Written/Unknown and every other
+                // result are terminal: never replay a possibly submitted RC command.
+                if (last.Outcome != ConditionalInputOutcomes.StaleObservation)
+                    return last;
+            }
             await Task.Delay(TimeSpan.FromMilliseconds(50), _timeProvider, ct);
         }
 
-        return _runtime.TryGetLiveSnapshot(sessionId, out var last)
-            && last.RenderedScreen.Contains(body, StringComparison.Ordinal);
+        return last;
     }
 
     private async Task<bool> WaitArmedAsync(Guid sessionId, CancellationToken ct)
@@ -646,13 +668,15 @@ public sealed class RemoteControlRecoveryService
     }
 
     private async Task<RunnerConditionalInputResult> SendGuardedAsync(
-        Guid sessionId, DateTime generation, long sequence, string input, CancellationToken ct)
+        Guid sessionId, DateTime generation, long sequence, string input, CancellationToken ct,
+        ProviderDialogObservation? custody = null)
     {
         try
         {
             return await _runtime.SendConditionalInputAsync(
                 sessionId,
                 new RunnerConditionalInputRequest(generation, sequence, input,
+                    ExpectedInputRevision: custody?.InputRevision, ExpectedRuntimeEpoch: custody?.RuntimeEpoch,
                     DialogIntent: input == "\u001b" ? ClaudeDialogInputIntent.RemoteControlDismiss : ClaudeDialogInputIntent.None),
                 ct);
         }
