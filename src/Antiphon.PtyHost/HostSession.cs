@@ -64,6 +64,8 @@ public sealed class HostSession : IAsyncDisposable
     /// <summary>Completes when the host should exit; the result is the reason (for the log).</summary>
     public Task<string> ExitRequested => _exitRequested.Task;
 
+    public ProcessStopIntentStore? StopIntents { get; set; }
+
     public string Status
     {
         get { lock (_gate) return _status; }

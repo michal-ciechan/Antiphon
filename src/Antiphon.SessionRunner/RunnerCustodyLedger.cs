@@ -11,6 +11,7 @@ namespace Antiphon.SessionRunner;
 public sealed class RunnerCustodyLedger
 {
     public VerificationCustodyStore Store { get; }
+    public ProcessStopIntentStore? StopIntents { get; set; }
     private readonly ILinuxCustodyRecovery? _recovery;
 
     public RunnerCustodyLedger(string root, IVerificationCustodyFiles? files = null,
