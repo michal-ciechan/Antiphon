@@ -105,6 +105,29 @@ public class Card1619LinuxStopIntentTests
     [Test]
     public async Task Unobserved_or_failed_kill_retains_stop_debt()
     {
+        await using (var f = await Fixture.StartAsync())
+        await using (var pending = f.NewRuntime())
+        {
+            var settings = new SessionRunnerSettings { SessionLogPath = f.Root, CpuWatchdogEnabled = false };
+            var sidecar = new HerdrPaneSidecar { SessionId = f.Id, WorkspaceKey = "owned", WorkspaceId = "owned",
+                TabId = "owned", PaneId = "owned", ChildPid = f.Child.Id,
+                ChildStartedAtUtc = f.Child.StartTime.ToUniversalTime().AddSeconds(1),
+                LaunchedAtUtc = f.Child.StartTime.ToUniversalTime(), Origin = HerdrPaneOrigins.Launched,
+                AcceptedStartedAt = f.Generation, Cwd = f.Root };
+            var sidecarPath = HerdrPaneSidecar.PathFor(f.Root, f.Id);
+            sidecar.SaveAtomic(sidecarPath);
+            pending.AdoptSessionForTests(SessionRunnerRuntime.RunnerSession.CreatePendingHerdr(sidecar,
+                settings, new SessionRunnerEventHub(), NullLogger.Instance, new SystemProcessLivenessProbe()));
+            var requested = await pending.KillAsync(f.Id, TimeSpan.FromSeconds(5), default);
+            requested.Status.ShouldBe("Starting", "an unobserved/refused PID stop must retain the pending owner");
+            f.Child.HasExited.ShouldBeFalse("wrong creation identity must send nothing");
+            File.Exists(sidecarPath).ShouldBeTrue("unobserved stop debt retains its sidecar");
+            await f.Runtime.KillAsync(f.Id, TimeSpan.FromSeconds(5), default);
+            await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            var observed = await pending.KillAsync(f.Id, TimeSpan.FromSeconds(5), default);
+            observed.Status.ShouldBe("Exited", "only the later real observed death discharges the pending stop");
+            File.Exists(sidecarPath).ShouldBeFalse();
+        }
         await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
         var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
         world.Runtime.CustodyForTests.StopIntents = store;
