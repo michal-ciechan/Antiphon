@@ -651,7 +651,7 @@ public sealed class VolumeRetirementContentTests
               printf 'committer Fixture <fixture@example.invalid> 1000000001 +0000\n'
               printf '\nseed\n'
             } > {{VolumeRetirementFixture.Quote(path)}}/.git/COMMIT_EDITMSG.c1609
-            oid=$(git -C {{VolumeRetirementFixture.Quote(path)}} hash-object -t commit -w --stdin < {{VolumeRetirementFixture.Quote(path)}}/.git/COMMIT_EDITMSG.c1609)
+            oid=$(git -C {{VolumeRetirementFixture.Quote(path)}} hash-object --literally -t commit -w --stdin < {{VolumeRetirementFixture.Quote(path)}}/.git/COMMIT_EDITMSG.c1609)
             rm -rf -- {{VolumeRetirementFixture.Quote(path)}}/.git/logs
             git -C {{VolumeRetirementFixture.Quote(path)}} update-ref refs/heads/main "$oid"
             git -C {{VolumeRetirementFixture.Quote(path)}} symbolic-ref HEAD refs/heads/main

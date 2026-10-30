@@ -144,7 +144,7 @@ const previewRun = () => {
   const tmpVol = vol.replace(/_work$/, '_runner-tmp');
   const mountEnv = envs.filter(e => e === 'C1008_TMP_MOUNT=/runner-tmp');
   const extra = classified.extra;
-  const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))
+  const forwarded = extra.every(e => /^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e) || /^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e) || /^C1609_CONTENT_V2=1$/.test(e))
     && new Set(extra.map(e => e.split('=', 1)[0])).size === extra.length;
   if (!auditMounts.filter(m => m.startsWith('type=volume,')).every(m => m.endsWith(',readonly'))) reason('preview volume mount is writable');
   let tmpMount = '';
@@ -394,7 +394,7 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  const auditMounts=classified.mounts,proofSource=classified.proofSource;
  const mountEnv=envs.filter(e=>e==='C1008_TMP_MOUNT=/runner-tmp');
  const extra=classified.extra;
- const forwarded=extra.every(e=>/^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e)||/^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))&&new Set(extra.map(e=>e.split('=',1)[0])).size===extra.length;
+ const forwarded=extra.every(e=>/^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e)||/^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e)||/^C1609_CONTENT_V2=1$/.test(e))&&new Set(extra.map(e=>e.split('=',1)[0])).size===extra.length;
  if(auditMounts.length===3){if(auditMounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||mountEnv.length!==1||!forwarded)fail();
   Mounts.push({Type:'volume',Name:tmpVol,Source:state.volumes[tmpVol].Mountpoint,Destination:'/runner-tmp'});}
  else if(auditMounts.length!==2||mountEnv.length||!forwarded||state.volumes[tmpVol])fail();

@@ -6855,7 +6855,8 @@ c1008_resolve_audit_cap() {
 }
 
 c1008_git_program() {
-    cat <<'C1008_GIT'
+    local program insert file stub
+    program="$(cat <<'C1008_GIT'
 # CARD-1105 / CARD-1316. One overall budget for the whole audit. A clean standing
 # server2 volume (800 repositories) measured 5225 s, so the default is 10800 s
 # (C1008_AUDIT_TIMEOUT_SECONDS, resolved by c1008_resolve_audit_cap on the host).
@@ -6964,7 +6965,13 @@ refuse_dirty() {
 }
 refuse_unpublished() {
     trap - ERR
-    printf 'audit check=%s status=0 repo=%s%s\n' "${2:-rev-list}" "$(rel_repo "$1")" "${3:+ $3}"
+    local detail="${3:-}" recovery=''
+    case "$detail" in
+        *gone-tracking=[1-9]*|*unadvertised-local=[1-9]*)
+            recovery=' recovery=publish-the-original-commit-to-an-origin-archive-branch-then-preview-again'
+            ;;
+    esac
+    printf 'audit check=%s status=0 repo=%s%s%s\n' "${2:-rev-list}" "$(rel_repo "$1")" "${detail:+ $detail}" "$recovery"
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
@@ -7384,7 +7391,8 @@ consider_gitdir() {
     while IFS= read -r -d '' entry; do
         name="${entry##*/}"
         case "$name" in
-            HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
+            FETCH_HEAD) c1609_consider_fetch_head "$entry" ;;
+            HEAD|ORIG_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
             AUTO_MERGE) consider_auto_merge "$directory" "$entry" ;;
             refs) consider_refs "$entry" ;;
             packed-refs) consider_packed "$entry" ;;
@@ -7896,9 +7904,21 @@ c1008_apply_host_proof() {
     done < "$file"
     [ "$n" -ge 1 ] || fail 128 " reason=proof-parse"
 }
+# C1609_CONTENT_AUDIT_INSERT
+c1609_prepare_common() { c1609_skip_publication=0; }
+c1609_consider_fetch_head() { consider_pseudoref "$1" FETCH_HEAD; }
+c1609_list_offenders() { :; }
+c1609_finish_blocks() { :; }
 # One pass per common directory, shared by every entry that uses it.
 consider_common() {
     local rep="${common_repo[$top]}" oid ref type lines tip admin count hash proof ls_status=0
+    c1609_skip_publication=0
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        c1609_prepare_common || return $?
+        if [ "${c1609_skip_publication:-0}" = 1 ]; then
+            return 0
+        fi
+    fi
     audit_repo="$rep"
     audit_check=bare
     top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
@@ -8070,6 +8090,7 @@ if [ -n "${C1008_TMP_MOUNT:-}" ]; then
 fi
 audit_check=scratch
 scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
+c1609_list_offenders || fail $?
 # Capture enumeration before reading it: process substitution loses find failures.
 audit_check=find-repositories
 find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || fail $?
@@ -8231,6 +8252,7 @@ while IFS= read -r -d '' link; do
     [ "$status" = 0 ] || fail "$status"
     refuse_unknown link-confine 0 "$link"
 done < "$scratch/links"
+c1609_finish_blocks
 printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
 # C1008_AUDIT_END
 C1008_AUDIT_BODY
@@ -8258,6 +8280,22 @@ case "$c1008_audit_status" in
 esac
 exit "$c1008_audit_status"
 C1008_GIT
+)"
+    file="${C1609_CONTENT_AUDIT_FILE:-}"
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        file="$(dirname "$0")/c1008-content-audit.sh"
+    fi
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+        insert="$(cat -- "$file")"
+        case "$insert" in
+            *C1008_AUDIT_BODY*|*C1008_GIT*|*C1609_CONTENT_AUDIT_INSERT*) insert='' ;;
+        esac
+        if [ -n "$insert" ]; then
+            stub=$'# C1609_CONTENT_AUDIT_INSERT\nc1609_prepare_common() { c1609_skip_publication=0; }\nc1609_consider_fetch_head() { consider_pseudoref "$1" FETCH_HEAD; }\nc1609_list_offenders() { :; }\nc1609_finish_blocks() { :; }'
+            program="${program//"$stub"/$insert}"
+        fi
+    fi
+    printf '%s\n' "$program"
 }
 
 # Retirement preserves shared cache identities without inspecting a seed marker,
@@ -8424,6 +8462,9 @@ c1008_audit() {
         return 2
     fi
     mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        mounts+=(--env C1609_CONTENT_V2=1)
+    fi
     # Unset in production. The witness sets it so consider_tips can see a retained payload.
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
@@ -8582,6 +8623,9 @@ c1008_audit_readonly() {
         return 2
     fi
     mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        mounts+=(--env C1609_CONTENT_V2=1)
+    fi
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
@@ -8876,6 +8920,19 @@ c1008_bind_generation() {
     fi
 }
 
+c1609_load_volume_metadata() {
+    local meta_file="${C1609_VOLUME_METADATA_FILE:-}"
+    [ "${c1609_metadata_loaded:-}" = 1 ] && return 0
+    c1609_metadata_loaded=1
+    if [ ! -f "$meta_file" ] || [ -L "$meta_file" ]; then
+        meta_file="$(dirname "$0")/c1008-volume-metadata.sh"
+    fi
+    if [ -f "$meta_file" ] && [ ! -L "$meta_file" ]; then
+        # shellcheck disable=SC1090
+        . "$meta_file"
+    fi
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
@@ -8965,6 +9022,17 @@ c1008_recycle() {
             # Current shell: the helper traps have to see this script's signals.
             c1008_audit_readonly >"$CASE_DIR/preview-audit.out" || code=$?
             audit="$(cat "$CASE_DIR/preview-audit.out" 2>/dev/null || true)"
+            meta=0
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_load_volume_metadata
+                if declare -F c1609_role_metadata >/dev/null 2>&1; then
+                    c1609_role_metadata >"$CASE_DIR/c1609-meta.out" || meta=$?
+                    if [ -s "$CASE_DIR/c1609-meta.out" ]; then
+                        cat "$CASE_DIR/c1609-meta.out"
+                        cat "$CASE_DIR/c1609-meta.out" >> "$CASE_DIR/preview-audit.out"
+                    fi
+                fi
+            fi
             if [ "$code" != 0 ]; then
                 detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
@@ -8973,6 +9041,9 @@ c1008_recycle() {
                     4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
                     *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
                 esac
+            fi
+            if [ "$meta" != 0 ]; then
+                c1008_refuse "RecycleGitAuditUnknown reason=${c1609_meta_reason:-metadata}"
             fi
             if [ "${C1609_HISTORICAL_UNPINNED:-}" != 1 ]; then
                 pending=false

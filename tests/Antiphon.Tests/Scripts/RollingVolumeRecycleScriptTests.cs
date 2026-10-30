@@ -3208,6 +3208,8 @@ internal sealed class C1008HostFixture : IDisposable
         if (sourceTransform is not null) source = sourceTransform(source);
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
+            C1609_CONTENT_AUDIT_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-content-audit.sh'; export C1609_CONTENT_AUDIT_FILE
+            C1609_VOLUME_METADATA_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-volume-metadata.sh'; export C1609_VOLUME_METADATA_FILE
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
             DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'
