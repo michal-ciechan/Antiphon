@@ -15,7 +15,7 @@ The round-2 findings and validation below remain historical evidence.
 | Review defect | Required revision | Status |
 |---|---|---|
 | D-1 | Read-only wrapper preflight before retirement clear; exact blocking journal states and audited closure; W6 ordering witness | Done: D-20, S3/S4, J8/W6 |
-| D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Pending |
+| D-2 | Every affected existing test disposition and checkpoint; reconcile counts and import | Dispositions/16-row roster complete; final import recorded below |
 | D-3 | Reciprocal CARD-1609 before CARD-1615 order and source/docs overlap | Pending |
 | D-4 | Exact seed commit object bytes, no extra headers; sixth adversarial repo witness | Pending |
 | A-1 | First live preview measures unclassified crashed-test repos before apply is enabled | Pending |
@@ -717,7 +717,7 @@ made by this Plan task.
 | S2: inventory and host proof | Keep `c1008_git_program` as the v1-compatible extraction boundary in `scripts/c590-remote.sh`; extract/add `scripts/c1008-content-audit.sh` for the v2 inventory protocol. Refactor the landed `scripts/c1008-host-proof.ps1` at the baseline above, preserving sanitization but adding full origin ancestry/coverage/age. Add the role metadata walker in `scripts/c1008-volume-metadata.sh`. Adapt `scripts/fixtures/c1105-git-audit.cjs` to provide equivalent proof input to v2 without changing its expected classifications. | Finish C1-C14, H1-H7 and R3-R6; D-15 full-roster output. |
 | S3: receipt and delete coordinator | Add `scripts/c1008-retirement.sh`; wire the temp-only branch and FD-8 deploy-temp retained-volume/journal recheck in `scripts/c590-remote.sh`. Implement strict schema, custody, locks, current runtime resolution, all-set proof, exact deletes, partial resume and D-20 blocking/Close state transitions. Change C994's temp retirement preflight to actual topology; bypass old image/Compose/stack requirements. Keep main v1 adapter unchanged. Update legacy tests' provenance expectations and their skip-roster identities in the same commit. | J1-J10, R1/R2 and N2/N3; J8 covers Close. |
 | S4: wrapper and manual entry | Add `scripts/retire-runner-volumes.ps1` including the audited Close parameter set; update `scripts/deploy-server2.ps1` with read-only `Assert-TempRetirementClearable` BEFORE clear/drain/host effects and the single-owner FD-8 handshake. Update `scripts/c590-real.ps1` for versioned typed transport, operation-scoped script staging, host proof exchange, auto-preview/apply, D-19 bounded census protocol and explicit attestation. Update current audit descriptor during supported host tool installation; do not activate or deploy during Code tests. | Add `VolumeRetirementHostProofTests.cs` and `VolumeRetirementWrapperTests.cs`; H1-H6/W1-W6. W6 observes the actual wrapper HTTP and host-call trace. ASCII transport scripts; LF shell files. |
-| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..13; update runbook command examples and refusal recovery. |
+| S5: native qualification and docs | Add `VolumeRetirementDockerTests.cs` and `scripts/fixtures/c1609-retirement-real-cases.mjs` using the existing owned-daemon fixture infrastructure. Update `docs/docker-stack.md` retirement/recycling sections and `docs/orchestration-loop.md` pinned-audit/manual-authority wording together. Document D-20 gate-9 refusal, retained-volume deployment block, and unchanged C849 Retired zero requirement. Keep AGENTS as index unless an actual obsolete mandatory statement needs correction. | N1-N3, exact final CP-3..13 plus CP-15/16; update runbook command examples and refusal recovery. |
 
 Relocate the four old historical-image-specific methods in
 `RollingVolumeRecycleScriptTests` (dry-run binding and three C1594 receipt-image
@@ -739,10 +739,126 @@ new temp v2: replace temp's historical-image/default-network/auth-fallback/no-pr
 sentences with current tooling, offline helpers, all-origin host proof, exact
 volume deletion and complete refusal roster. Retain main's scripted-only rule,
 location/object safeguards and credential omissions. Do not leave obsolete temp
-wording merely to satisfy an old string pin. CP-13 selects both methods.
+wording merely to satisfy an old string pin. CP-13 now selects the whole 16-method class, including both methods.
 Update `RollingVolumeRecycleScriptTests.C1008_Documentation_and_transport_pins_match`
 for the same v1/v2 distinction and run it in CP-8; preserve its transport/custody
 assertions. These doc pins complement behavior tests, not replace them.
+
+### Complete existing-test dispositions (round-3 D-2)
+
+Recounted from `origin/master` at `98fc3ceb6440a17b68cafe3ecc21c76d190b18ca`:
+the actual source has **16** RetiredTempContainerScriptTests methods (not 15),
+**22** RetiredTempContainerHostTests methods (13 more than the old nine-method
+CP-9), and **16** DockerStackDocumentationTests methods. Each is one execution;
+internal vector loops are not additional TUnit results. The host class's
+`RequireNativeLinux` is a setup hook, not a 23rd test. No method below is silently
+dropped. "Unchanged/run" preserves every assertion; fixture wiring may supply
+the new complete protocol without manufacturing PASS. "Rewrite" retains the name
+and all safety counterexamples while updating the specifically named old contract.
+
+All rows in this first table are in
+`tests/Antiphon.Tests/Scripts/RetiredTempContainerScriptTests.cs`, S3/S4,
+**CP-15 (Linux, all 16)**:
+
+| Method | Disposition / invariant |
+|---|---|
+| `C994_Drain_waits_for_exit_and_removes_containers` | Unchanged/run: bounded exit, container-only gate 8, gate 9 separate. |
+| `C994_Drain_uses_one_deadline` | Unchanged/run: one monotonic drain deadline. |
+| `C994_Retire_recovers_exited_and_absent_temp` | Rewrite trace for v2 current proof/auto-preview/apply; preserve exited/absent/null/zero/live refusal and operation linkage. |
+| `C994_Wrapper_retirement_proof_is_typed` | Unchanged/run: full typed status matrix. |
+| `C994_Wrapper_main_admission_is_required` | Unchanged/run: main eligibility and SHA requirement for drain. |
+| `C994_Wrapper_task_and_land_census_is_complete` | Rewrite v2 transient retry expectations only; retain complete matrix, bound-task/land and malformed refusal. |
+| `C994_Strict_volume_admission_remains_independent` | Unchanged/run: retired absent-null exception never weakens shared zero checks. |
+| `C994_Host_strict_volume_admission_remains_independent` | Unchanged/run: host version of the same null/zero matrix. |
+| `C994_Preview_reports_pending_volume_proof` | **Rewrite** obsolete `volumeProof=pending-confirmed-absence auditPending=true` pin: present exited containers yield typed Pending/no Ready; absent containers require actual v2 inventory/host proof before Ready. Both paths have zero target effects and POSTs. Keep name for traceability. |
+| `C994_Resume_never_runs_container_cleanup` | Rewrite to v2 operation journal input; retain no-new-container-cleanup and present-container refusal. |
+| `C994_Host_resume_never_runs_container_cleanup` | Unchanged/run: main v1 reconciliation tuples and no new effects. |
+| `C994_Cleanup_receipt_is_required_before_recycle` | Rewrite to current cleanup intents/results plus current Ready proof; retain missing/mismatched/copy-failed/cleanup-failed/drift stops. Historical cleanup receipt is not required when already absent. |
+| `C994_Verifier_manifest_is_strict` | Rewrite/add v2 context alongside v1 adapter; retain duplicate/type/unknown-field/wrong-lane/resume/operation refusals. |
+| `C994_Bridge_transport_preserves_literal_context` | Rewrite/add typed v2 literal transport; retain all raw-context and timestamp vectors. |
+| `C994_Host_bridge_transport_preserves_literal_context` | Rewrite bridge staging/receipt assertions for operation-scoped current tooling; retain ASCII/LF, UTC normalization, copy-failure and custody assertions. |
+| `C994_Separate_invocations_preserve_audit_identity` | Rewrite historical-image identity into per-operation current-runtime/proof identity; retain separate invocation IDs and deploy refusal before any POST. |
+
+All rows below are in
+`tests/Antiphon.Tests/Scripts/RetiredTempContainerHostTests.cs`, S3,
+**CP-9 (Linux, whole class, 22)**:
+
+| Method | Disposition / invariant |
+|---|---|
+| `C994_Exited_owned_containers_are_removed_without_volumes` | Unchanged/run: exact owned exited IDs only, no volume effects. |
+| `C994_Absent_cleanup_is_idempotent` | Unchanged/run: absence is independently observed; no historical model required. |
+| `C994_Older_retirement_receipt_does_not_block_cleanup` | Rewrite historical image field pin as optional provenance; old Completed cleanup never lends authority to current cleanup. D-20 separately governs unresolved effects before deploy. |
+| `C994_Host_retirement_proof_is_typed` | Unchanged/run: retirement field matrix. |
+| `C994_Host_main_admission_is_required` | Unchanged/run: main eligibility matrix. |
+| `C994_Host_task_and_land_census_is_complete` | Rewrite only v2 retry protocol; retain every scope/bound-work/malformed vector. |
+| `C994_Census_and_inspect_fail_closed` | Unchanged/run: incomplete/duplicate/malformed/unknown Docker observations refuse. |
+| `C994_Container_service_and_state_are_restricted` | Unchanged/run: service, cardinality, project, exited-state restrictions. |
+| `C994_Production_mount_topology_is_proven` | Rewrite old rendered-Compose dependency to current versioned actual-topology roster; keep bind/tmpfs/private-name/token missing/source/RW counterexamples and 15/3 supported mount shapes. Old Compose text changing alone is now harmless; unknown actual topology still refuses. |
+| `C994_Whole_candidate_set_precedes_removal` | Unchanged/run: bad later candidate prevents every removal in either ordering. |
+| `C994_Rollout_lock_covers_final_census` | Unchanged/run: real flock, rollout-before-cache order and final receipt under lock. |
+| `C994_Each_removal_rechecks_live_proofs` | Rewrite historical generation comparison only; preserve changed live image/container identity, mounts/state/ID/retirement/task/land refusals. An image need not be installed, but observed candidate drift is still unsafe. |
+| `C994_Final_absence_is_observed` | Unchanged/run: rm-success with remaining/replaced/unknown container cannot complete. |
+| `C994_Removal_failure_and_crash_retry_preserve_progress` | Unchanged/run: all four durable crash cuts, exact remaining IDs, fresh guards, volumes retained. |
+| `C994_Receipt_write_and_copy_fail_closed` | Unchanged/run: intent/outcome/copy failures stop. |
+| `C994_Host_context_is_strict` | Rewrite/add current schema while preserving strict v1 adapter and malformed context vectors. |
+| `C994_Host_preview_never_mutates` | Rewrite image/provenance output only if needed; preserve zero container/volume mutation and exact preview roster. |
+| `C994_Image_receipt_lookup_is_bound` | Replace with `C1609_Cleanup_does_not_require_historical_image`; preserve unknown topology/ownership refusals, remove only old image equality requirement. |
+| `C994_Audit_image_is_pinned_and_required` | Replace with `C1609_Audit_uses_current_image`; current descriptor/digest/UID required, old image optional, unknown current runtime refused. |
+| `C994_Cleanup_receipts_redact_unapproved_fields` | Unchanged/run: sentinel absent from success/refusal/stdout/host/copy, credential binds untouched. |
+| `C994_Fixture_custody_is_bounded` | Unchanged/run: owned roots/labels, production-name refusal, bounded joined children. |
+| `C1105_Temp_cleanup_uses_previous_generation` | Rewrite old-stack-SHA refusal into supported older actual topology without historical source; retain 14-mount/token-absent shape and reject an altered actual mount. |
+
+The deploy-temp dependency scan finds **15 methods / 23 results** in
+`tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs`, including shared
+block readers and C973's reader harness beyond the review's approximate nine.
+Run this exact roster in **CP-16 (Linux)** after S3/S4. Extend extracted harnesses
+with explicit new preflight/lock protocol inputs; an undefined shell function is
+never expected refusal. Keep the real guard in ordering/refusal tests. Subject-
+unrelated harnesses may stub it with explicit absent-volume/empty-journal fixtures;
+W6/J8 own its behavioral matrix, and those stubs must not mask its own test calls.
+
+| Method | Results | Disposition |
+|---|---:|---|
+| `C0995_Deploy_temp_checks_host_absence_before_checkout` | 1 | Rewrite/add actual volume/journal guard order before checkout; retain existing container/ps-error matrix and positive control. |
+| `C849_Deploy_temp_names_saved_import_when_seed_is_missing` | 1 | Rewrite harness inputs for new preflight; preserve saved-import diagnosis and no checkout. |
+| `C849_Deploy_prepares_and_verifies_before_acceptance` | 1 | Rewrite wrapper/host traces for preflight handshake; retain prepare/smoke/acceptance ordering, cache and failure vectors. |
+| `C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo` | 1 | Rewrite harness inputs; preserve inaccessible mountpoint/UID behavior, sudo boundary and positive control. |
+| `C849_Docker_volume_paths_have_no_bare_host_reads` | 1 | Rewrite scanner to include new metadata/preflight helpers; require `sudo -n` on privileged host metadata reads, no payload reads or broad exemption. |
+| `C849_Seed_publishes_complete_payloads_before_its_marker` | 1 | Rewrite old exact wrapper case-list pin to include the read-only preflight trace before any clear/seed; preserve payload-before-marker and cache seeding assertions. |
+| `Temp_deploy_uses_its_own_project_and_the_inspected_grok_store` | 1 | Unchanged/run: project and inspected store isolation. |
+| `Nested_lane_never_uses_sudo_or_python` | 1 | Rewrite narrow helper allowlist to include new host-only metadata walker, preserving no nested sudo/python. |
+| `C1067_Nested_lane_sudo_guard_is_sensitive` | 4 | Rewrite historical lookup guard control to the current-runtime/metadata host guard; retain all four independently sensitive controls. |
+| `Deploy_parent_creates_the_github_token_directory_without_reading_it` | 1 | Unchanged/run: token directory custody, no reads, ensure-before-checkout/Compose in both deploy blocks. |
+| `C849_Saved_donor_archive_is_checked_and_imported_without_a_container` | 1 | Rewrite extracted deploy harness inputs only; preserve archive safety, import and no-container checks. |
+| `C849_Deploy_ordering_contract_is_pinned` | 1 | Rewrite obsolete `compose_temp down -v` assertions to exact v2 intent/proof/rm ordering; preserve main v1/cache ordering. |
+| `C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads` | 1 | Unchanged/run: both deploy blocks retain cold mount/writability verification. |
+| `C912_Cold_exception_never_weakens_maintenance_or_donor_gates` | 1 | Unchanged/run: jq guard and unchanged maintenance/donor zero/attachment gates. |
+| `C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers` | 6 | Rewrite `scripts/fixtures/c973-marker-reader.sh` inputs for deploy/retire v2; preserve all six reader identities, marker-independent retirement and external-cache identity protection. |
+
+Shared fixture scope in S3/S4 includes `C1008WrapperFixture` and
+`C1008HostFixture`, both declared in
+`tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs`, plus
+`scripts/fixtures/c1008-fake-docker.sh` and `scripts/fixtures/c973-marker-reader.sh`. Preserve old main paths; add complete typed observations
+for v2, not a global audit-success stub. Record exact changed fixture paths in
+the implementation report. Changes to skip identities remain in CP-12.
+
+**CP-13 (Windows, S5)** now runs the whole
+`tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs` class,
+**16 results**. Rewrite `Recycle_census_preflight_is_documented` and
+`Lands_proceed_during_rollout_is_documented` to explicitly distinguish the bounded
+v2 2/5/10-second retry, four attempts/180-second gate and PartialRefused stop from
+main v1. Preserve bound-land wait, off-runner lands/no global freeze and AppHost
+pull wait. Rewrite `Retired_temp_cleanup_and_retirement_gates_match` and
+`Main_volume_recycling_is_scripted_only` as above, adding pre-clear refusal and
+audited Close recovery. Unchanged/run: `Docker_stack_doc_names_the_nested_daemon`,
+`Docs_name_linux_cgroup_backend`, `Orchestration_loop_names_server2_producer`,
+`Credentials_doc_names_the_deploy_key_custody`, `Card_0590_D6_is_annotated_superseded`,
+`Ops_http_names_runner_status_and_runner_id`,
+`Testing_doc_names_the_production_enablement_steps`,
+`Agent_kinds_doc_names_the_raw_allow_list`, `Credentials_doc_names_the_claude_login`,
+`Mount_generation_protocol_is_documented`, `Ops_http_names_provider_auth`, and
+`Fixture_gate_slot_wait_is_outside_the_arrival_window`. Whole-class execution is
+cheap string inspection and guards adjacent owner paragraphs against accidental loss.
 
 Windows Unit admission is part of S1/S3/S5, not deferred cleanup. Update
 `tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs` alongside every source
@@ -798,6 +914,8 @@ over 30 minutes requires a Debug task with the timing evidence before repetition
 | Build | About 4 minutes per isolated build; provisional 10-minute cap | Three builds total: red Linux, final Linux, native Windows. Tool bootstrap if absent is separately declared and leased, never hidden. |
 | Portable fixtures | Usually 1-5 s/test, matrices 10-30 s; provisional per-test 60 s | Immutable tiny public/private-origin Git seeds once per run; clone/copy per-test mutable state. No real network/login. |
 | Existing Git closure rows | CP-5 about 1 min, CP-6 about 3 min, CP-7 about 1.5 min (rounded to 2 in the manifest) | Reuse existing tiny-Git fixtures, share seeds where isolated copies preserve semantics. Measure actual per-argument execution, not internal assertions. |
+| Existing retirement/deploy regressions | CP-9 about 3 min, CP-15 about 3 min, CP-16 about 3 min; provisional row caps 6 min each | Shared immutable Git seeds and assembled harness text once per run; fresh small fault-state copies only. Existing process-heavy matrices may exceed the 60 s portable-test estimate; record per-method duration and enforce a provisional 120 s method cap, pending CARD-1609 samples. No real infrastructure per method. |
+| Documentation closure | CP-13 under 5 s body, rounded to 1 min in manifest | String-only shared source reads; no process or service setup. |
 | Native Docker start/readiness | About 30-60 s per native run; provisional 120 s | One private daemon and current fixture image per run, never production Docker/runner. |
 | Native data preparation/clone | About 15-30 s/run; provisional 60 s | Separate exact volumes per test, small shared origin seed, no provider/AppHost/database setup. |
 | Native body | About 30-90 s/test; provisional 180 s/test | N1-N3 share daemon/image; fresh lifecycle objects are the subject under test. |
@@ -934,12 +1052,14 @@ CP-3 selects the identical H7 method green with the whole content class. H7's
 Native roster entry is added in S1 and checked in CP-12.
 
 Preservation rows: R1 = seven original named RollingVolumeRecycleScriptTests methods in
-CP-8; R6 = the two CARD-1607 methods in CP-8; R2 = nine named retired-container methods in CP-9; R3 = 30 argument results
+CP-8; R6 = the two CARD-1607 methods in CP-8; R2 = all 22 retired-container host methods in CP-9; R3 = 30 argument results
 from four Git recovery/seed/index/object methods in CP-5; R4 = the existing 132
 hidden-location results in CP-6; R5 = 40 evidence-name plus 12 mirror-owner results
 in CP-7. R3-R5 already pass for protected behavior at base; do not fabricate red
 at base. Their regression strength comes from retained assertions and the named
-method-scoped positive controls. New C3-J10/H/N controls run later in the separate
+method-scoped positive controls. R7 = all 16 retired-container script methods in CP-15; R8 = the exact 15-method /
+23-result deploy contract roster in CP-16; R9 = all 16 documentation pins in CP-13.
+New C3-J10/H/N controls run later in the separate
 Mutation stage, scoped to exact methods on a bound pack, never a whole class.
 
 ### Lanes, roster and execution
@@ -947,7 +1067,7 @@ Mutation stage, scoped to exact methods on a bound pack, never a whole class.
 Read `GET /api/runner-defaults` and `GET /api/session-runners` again at dispatch.
 They were read again on 2026-10-30: revision 2; an eligible Linux default
 and an eligible Windows peer were advertised (8/10 and 2/2 occupied respectively). These are
-observations, not permanent placement instructions. CP-1..10 and CP-14 require the native
+observations, not permanent placement instructions. CP-1..10 and CP-14/15/16 require the native
 Linux maintenance lane (CP-4's portable logic is also exercised there); CP-11/12/13
 use the native Windows PowerShell/Git lane (CP-12/13 are portable checks reusing its build). No host is pinned. Omit `-Runner`;
 use `-Platform Linux`/`Windows` only for the rows needing that OS. Plan/Review is
@@ -972,7 +1092,7 @@ than silently omit the check. Code/Review also run `scripts/check-evidence-diff.
 over base..HEAD and preserve source/build attribution.
 
 Use the checkpoint tool's `run --plan <this-file> --rows <row-list>` once per
-committed group: S1 CP-1/2/14; S2-S5 Linux CP-3..10; S2-S5 Windows CP-11/12/13. Run bootstrap
+committed group: S1 CP-1/2/14; S2-S5 Linux CP-3..10 plus CP-15/16; S2-S5 Windows CP-11/12/13. Run bootstrap
 through `scripts/build-slot.ps1` if needed; the checkpoint runner takes build slots
 for its rows. Continue `wait` until terminal exit (75 is running), in foreground
 wait windows no longer than 60 seconds. Preserve exact CHECKPOINT lines with source
@@ -981,14 +1101,14 @@ Remove only task-owned alternate outputs after all runs have joined. CP-11 inten
 
 Import the manifest to ignored YAML to set per-row deadlines explicitly rather
 than inherit the importer's 15-minute/3x floor: provisional execution caps CP-1=10m,
-CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=2m,
-CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m, CP-14=2m. These are roughly 2x the stated estimates, not measured-p95
-claims. The 14-row manifest has 294 planned executions: S1 4 intended assertion
-reds, final Linux 273 green and final Windows 17 green. Estimated charged duration
-is S1 7m, final Linux 18m, final Windows 7m (32m total across three separate runs,
+CP-2=2m, CP-3=10m, CP-4=2m, CP-5=2m, CP-6=6m, CP-7=4m, CP-8=2m, CP-9=6m,
+CP-10=8m, CP-11=10m, CP-12=2m, CP-13=2m, CP-14=2m, CP-15=6m, CP-16=6m. These are roughly 2x the stated estimates, not measured-p95
+claims. The 16-row manifest has 360 planned executions: S1 4 intended assertion
+reds, final Linux 325 green and final Windows 31 green. Estimated charged duration
+is S1 7m, final Linux 26m, final Windows 7m (40m total across three separate runs,
 including one build per run); do not launch the entire manifest as one >30m run.
 Row estimates include the first build in CP-1/3/11; record its duration separately.
-Red-group charged cap 14m, final Linux 36m, Windows 14m; each hard wall
+Red-group charged cap 14m, final Linux 52m, Windows 14m; each hard wall
 adds one finite 45m admission allowance. Reconcile with measured p95 under the
 collection obligation before final qualification. If a group reaches 30m, stop
 repeating it and hand timing evidence to Debug. No full assembly run is authorized.
@@ -1006,11 +1126,13 @@ repeating it and hand timing evidence to Debug. No full assembly run is authoriz
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
 | CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
 | CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Documentation_and_transport_pins_match*)` | R1,R6,doc transport | all 10 methods, 0 failed/skipped | 10 | 1 | true |
-| CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)\|(C994_Whole_candidate_set_precedes_removal*)\|(C994_Each_removal_rechecks_live_proofs*)\|(C994_Receipt_write_and_copy_fail_closed*)\|(C994_Host_context_is_strict*)\|(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)\|(C1105_Temp_cleanup_uses_previous_generation*)` | R2 | all 9 methods, 0 failed/skipped | 9 | 1 | true |
+| CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/*` | R2, complete host topology/census/crash roster | all 22 methods, 0 failed/skipped | 22 | 3 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
 | CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |
 | CP-12 | S2-S5 | CP-11 | windows-unit-roster | `/*/Antiphon.Tests.Scripts/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | Windows roster closure | all 3 methods, 0 failed/skipped | 3 | 1 | true |
-| CP-13 | S2-S5 | CP-11 | windows-doc-pins | `/*/Antiphon.Tests.Infrastructure/DockerStackDocumentationTests/(Retired_temp_cleanup_and_retirement_gates_match*)\|(Main_volume_recycling_is_scripted_only*)` | S5 doc pins | both methods, 0 failed/skipped | 2 | 1 | true |
+| CP-13 | S2-S5 | CP-11 | windows-doc-pins | `/*/Antiphon.Tests.Infrastructure/DockerStackDocumentationTests/*` | R9, all owner-doc pins including census retry | all 16 methods, 0 failed/skipped | 16 | 1 | true |
+| CP-15 | S2-S5 | CP-3 | linux-container-script-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/*` | R7, all wrapper/bridge/preview methods | all 16 methods, 0 failed/skipped | 16 | 3 | true |
+| CP-16 | S2-S5 | CP-3 | linux-deploy-contracts | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)\|(C849_Docker_volume_paths_have_no_bare_host_reads*)\|(C849_Seed_publishes_complete_payloads_before_its_marker*)\|(Temp_deploy_uses_its_own_project_and_the_inspected_grok_store*)\|(Nested_lane_never_uses_sudo_or_python*)\|(C1067_Nested_lane_sudo_guard_is_sensitive*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)\|(C912_Cold_exception_never_weakens_maintenance_or_donor_gates*)\|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*)` | R8, deploy readers/ordering/privileged metadata | all 23 results from 15 methods, 0 failed/skipped | 23 | 3 | true |
 
 ## Rollout and compatibility
 
