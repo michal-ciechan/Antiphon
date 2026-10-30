@@ -11,7 +11,7 @@ This first pushed skeleton records the caller's five decisions. The sections bel
 are being revised in place; until all five entries are complete, the round-2 details
 are historical and this document is not executable Code authority.
 
-1. Review D-1 — pending: classify from server-resolved token ownership; environment
+1. Review D-1 — complete: classify from server-resolved token ownership; environment
    IDs are cross-checks, never authentication. Add the bounded read-only route.
 2. Review D-2 — pending: a canonical active-rollout marker mechanically guards
    AppHost restart; qualify all conflicting activation/autonomy instructions.
@@ -50,7 +50,7 @@ evidence, not a reproduction performed by this Plan task.
 | The long rollout needs the canonical desktop checkout. | `deploy-server2.ps1:44-67` only requires canonical source for `provision-host-jq`. Ordinary phases consume scripts/manifest SHA; `c590-real.ps1:101-109` selects it, and remote `c590-remote.sh:135-150` materializes a separate host deployment checkout. | The ordinary controller can use a pinned task worktree. The remote deployment checkout is separate from the desktop canonical checkout and task mirrors. |
 | Restart can run from the controller tree. | `restart-apphost.ps1:88-94` refuses linked worktrees; `:177-208` binds expected SHA to source HEAD. `docs/orchestration-loop.md:28-37` forbids pulling during a land. | Keep canonical activation separate. No `-AllowWorktree`, restart from the isolated tree, or concurrent canonical checkout move. |
 | Timeout clears the dangerous owner. | `AgentTaskDispatcher.cs:3745-3770` describes a 240-minute role ceiling that fails the task but deliberately leaves its session alive. `AgentTaskReplyService.cs:849-858` refuses refinement after settlement. | Failed is not process exit or checkout release. Do not solve this cycle by waiting for failure, canceling blindly, or increasing the ceiling. CARD-1610 owns terminal/live-session recovery. |
-| A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the actual environment; standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
+| A token always means an AgentTask owner. | `AgentSessionLaunchComposer.cs:43-50` emits token + agent ID without task ID for standing agents. Assigned-agent card launches use that composer (`CardService.cs:1683`, `OrchestratorService.cs:941`). The unassigned-card credential factories at `:1791` and `:976` emit a token alone. | Classify the server-resolved token principal; environment values are cross-checks only. Standing sessions are absent from `FindWriterAsync`'s AgentTasks query. Token-only card sessions need an explicit recovery path, not a false assertion that all card sessions have an agent ID. |
 | A successful canonical restart preserves the rollout SHA. | `restart-apphost.ps1:177-208` defaults expected SHA to the canonical source HEAD; `AgentTaskLandingProtocol.CanonicalAdvanceAsync` can fast-forward that checkout during rc lands. `restart-session-runner.ps1` has no `ExpectedServerSha` parameter. | An X-to-Y canonical advance can turn an ordinary restart into an unintended activation of Y. Name X explicitly at preparation and prohibit AppHost/desktop-runner restarts during the controller lifetime, including between phases. |
 
 Paths above are relative to `server/Application/Services/` unless explicitly named.
@@ -69,7 +69,7 @@ No desktop files or ended native Windows run were inspected.
 | D-4 | **(d) Worktree plus separate canonical activation** is the selected fix. A linked worktree isolates files while existing land admission already permits its independent owner. Keep remote deployment checkout preparation under existing single-rollout ownership. | A separate clone adds credentials/cache/identity handling; a ReadOnly label is false for Git movement, evidence and deployment effects. A Worktree controller that still invokes canonical pull/restart would retain the race: forbid that in its dispatch contract. |
 | D-5 | Require TASK-class mutation phases to prove their own task is Worktree and the invoked script root is its registered checkout. D-7 separately admits standing and interactive callers. Fail before any operator credential read, drain, SSH, Docker action, or 30-minute census wait. | A docs-only correction would allow the same explicit Shared invocation to recur. A new global prohibition on all Deploy/Shared tasks would break legitimate short canonical activation. |
 | D-6 | Gate the five mutating rolling phases and `all`; existing restrictions on `all`, dry-run and resume remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
-| D-7 | Classify TASK first whenever task ID is present; STANDING AGENT only with token + valid agent ID and no task ID; INTERACTIVE only with all three absent. Admit standing agents without inventing a task record or requiring a Worktree DTO. Apply the class-specific rules below. | A token is not a task ID. Requiring a task record from a standing orchestrator breaks its authorized direct rollout path. Partial/invalid identity never falls back to interactive. This is workflow admission using launcher identity, not a sandbox against deliberate environment tampering. |
+| D-7 | Classify from a bounded server-side token-resolution read, task first. Environment IDs are optional consistency checks and never select the principal. Admit authenticated standing sessions without inventing tasks; preserve explicit interactive mode with no identity supplied. | The public task-detail GET never binds its requested ID to the token. Environment-shape admission permits a Shared task to drop its task ID and pose as standing. Unknown tokens and unsupported principals fail closed; operator credentials remain independently required. |
 | D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Freeze **activation**, not land publication: prohibit canonical AppHost and desktop-runner restarts while the controller owns an unfinished rollout, including between phases. Each mutating invocation requires `/api/version.sha == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
 | D-9 | Current role ceilings, parking and session recovery are unchanged. Identity admission is once per phase invocation. A task failed by its ceiling mid-phase leaves the admitted command running to its existing bounded outcome; its Worktree cannot hold unrelated lands. The next invocation refuses its terminal owner. Preserve receipts and join actual children before a replacement owner. | Do not add owner polling inside a phase or mistake Failed for command exit. CARD-1610 owns terminal/live-session recovery. A phase-boundary successor retains X and the restart prohibition until the whole rollout is complete or explicitly handed off from a proven quiescent state. |
 | D-10 | This dispatch requests revised-plan Review, then Code; verification design is therefore included here. Review evaluates the caller/SHA/doc corrections and executable test design; Code collects the bounded provisional timing samples. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
@@ -77,21 +77,39 @@ No desktop files or ended native Windows run were inspected.
 
 ### Caller admission (review D-1)
 
-Presence means a nonempty environment value; whitespace-only supplied values are
-malformed, not absent. Evaluate these cases before reading operator credentials:
+Add `GET /api/agent-tasks/caller-identity` as a literal route before the existing
+`/{id}` mapping. This endpoint has no caller-selected task/session ID. It reads
+`X-Antiphon-Task-Token` only; never accept a token in query/body or echo it.
+Return `Cache-Control: no-store` and a small DTO, never a full task/session entity:
 
-| Caller class | Rule | Own test / refusal evidence |
-|---|---|---|
-| TASK: `ANTIPHON_TASK_ID` present, even when agent ID is also present | Require valid GUID, token, authenticated own-task detail with matching `summary.id`, Worktree, Dispatched/Working status and registered native checkout/branch. Shared refuses `RolloutControllerWorkspaceRequired`; unknown/missing/mismatched/Blocked/terminal owner refuses `RolloutControllerIdentityUnknown`. No fall-through on failure. | `C1615_Shared_controller_refuses_before_side_effects` and `C1615_Unknown_or_terminal_owner_refuses`, including ID + agent + token precedence and missing token. |
-| STANDING AGENT: no task ID; token + valid `ANTIPHON_AGENT_ID` | Admit direct orchestrator execution, with no task-detail request and no synthetic task/Shared claim. Require clean pinned script source in a non-main linked controller checkout; no task registry/assigned-branch proof applies. Record `callerClass=StandingAgent` and agent ID. Retain ordinary authenticated API and operator-token gates. | `C1615_Standing_agent_without_task_id_is_admitted` uses the composer's exact environment shape, asserts admission receipt/class and zero task-detail requests, then reaches the stubbed phase boundary. Malformed agent ID refuses. |
-| INTERACTIVE: no task ID, token or agent ID | Preserve interactive invocation without an owner GET; record `callerClass=Interactive`. Existing operator/phase guards remain. The operating recipe still uses a pinned controller checkout. | `C1615_Interactive_mode_requires_absent_task_identity` asserts explicit receipt classification and phase reachability; lone agent ID/token never becomes interactive. |
+| Server-resolved class | Response and admission |
+|---|---|
+| Task | `callerClass, taskId, sessionId, agentId, workspace, status, worktreePath, branch` from that token's task. Require Worktree, Dispatched/Working and its registered native non-main linked checkout; Shared refuses `RolloutControllerWorkspaceRequired`. Missing facts, Blocked/terminal task or mismatched supplied environment IDs refuse `RolloutControllerIdentityUnknown`. A missing task-ID environment variable changes nothing. |
+| StandingAgent | `callerClass, sessionId, agentId` from a live session with a non-null `StandingAgentId`. No task-detail GET or synthetic task claim. Require clean pinned non-main controller source and existing operator authorization. Provided agent ID must match; any provided task ID refuses. |
+| Interactive | No token header returns only `callerClass=Interactive`. The wrapper admits this class only when token, task ID and agent ID are all absent. Whitespace or partial identity is malformed. Existing operator authorization remains mandatory. |
+| Unsupported / unknown | Unknown, empty supplied or stale credentials return generic 403 with no principal facts. A token-only unassigned card session (no StandingAgentId), a capability principal or ended session returns 403 `RolloutCallerUnsupported`; never infer standing from session existence or interactive from failed authentication. |
 
-Token-only card sessions are a real fourth **incomplete identity shape**, not a
-fourth admitted class. Refuse `RolloutControllerIdentityUnknown` before effects and
-tell that caller to commission a fresh Worktree Deploy or use its assigned standing
-agent's controller. Do not strip environment identity or fabricate an agent/task ID.
-This preserves the standing orchestrator path while making the unassigned-card
-migration explicit. No launch-composer or backend change is required.
+Implement the read-only projection in `AgentTaskService.cs` and its DTO in
+`server/Application/Dtos/RolloutCallerIdentityDto.cs`. Factor the common token
+resolver used by `AuthenticateAsync` so both remain task-first. The projection
+uses no-tracking reads and must not stamp capability `LastUsedAt` or save changes:
+the existing capability arm at lines 220-234 does write. Preserve current
+AuthenticateAsync behavior for its existing callers; reject capabilities in this
+read before its usage-stamp arm. Missing-header Interactive is intentional and
+discloses no data; it is not an authenticated task claim. Reuse the existing
+ForbiddenException response convention; do not use ResolvePollingCallerAsync,
+which deliberately catches bad authentication. Bound cancellation and output;
+never log headers, token hashes, full DTOs or raw exceptions.
+
+The wrapper calls this route once per mutating invocation, before the operator
+credential read. No public `GET /api/agent-tasks/{id}` can satisfy this proof.
+A task token with `ANTIPHON_TASK_ID` dropped still resolves Task and Shared still
+refuses; a forged task or agent ID cannot redirect the lookup. Test task-first
+resolution even when the same fixture hash appears on a session row. A standing
+token admits the composer's normal shape with no task-detail GET. A card session
+without a standing owner must commission a fresh Worktree Deploy. Interactive
+compatibility is not a sandbox against a same-account operator removing every
+credential; neither filesystem markers nor operator-token custody promise that.
 
 ### Activation and phase SHA contract (review D-2)
 
@@ -145,7 +163,7 @@ migration explicit. No launch-composer or backend change is required.
 and `tests/Antiphon.Tests/Application/DeployLandIsolationTests.cs`. Extend the needed
 fixture transport in `scripts/fixtures/c727-fake-http.ps1` and `C1008WrapperFixture`
 in `RollingVolumeRecycleScriptTests.cs`; explicitly clear inherited task identity
-and agent identity in legacy interactive fixtures. Feed owner facts through normal task-detail DTOs,
+and agent identity in legacy interactive fixtures. Feed owner facts through the new token-resolved caller DTO,
 never a test-only workspace bypass. Reuse `LandingSafetyHarness`, `LandingGitFixture`,
 `C1008WrapperFixture` and the production wrapper/host census extraction in
 `tests/Antiphon.Tests/Scripts/C1361CensusProbes.cs`; adapt its helper visibility or
@@ -155,9 +173,8 @@ red outcome before implementing the guard.
 
 **S2 — controller admission.** Add `scripts/lib/rollout-controller.ps1`, called by
 `scripts/deploy-server2.ps1` after pure argument checks but before operator-token
-lookup or operational effects. Classify D-7 first. Only TASK callers GET
-`/api/agent-tasks/{ANTIPHON_TASK_ID}` with existing task authentication.
-Validate `summary.id`, Worktree, live status,
+lookup or operational effects. Classify D-7 with the new caller-identity GET for every mutating invocation.
+Validate server-resolved task identity, Worktree, live status,
 registered `worktreePath`, native filesystem/Git root identity, clean tracked
 source and `HEAD == -Sha`. Reject wrong/unregistered trees and unknown identities;
 require a registered non-main linked worktree and its expected symbolic branch,
@@ -184,8 +201,8 @@ root: phase, caller class, nullable task/agent ID, nullable workspace, source SH
 expected/observed server SHA, identity result, outcome and elapsed
 milliseconds. Never retain token, full DTO, task prose or raw exception. Receipt
 failure refuses with the fixed reason, without effects even when a file cannot
-be saved. Self-read and Git probes have finite deadlines. No new API,
-indefinite retry, modal prompt, land predicate or census exception.
+be saved. Identity read and Git probes have finite deadlines. The bounded identity API is
+the only new HTTP surface; no indefinite retry, modal prompt, land predicate or census exception.
 
 **S3 — operating contract.** Update `docs/docker-stack.md` continuous dispatch and
 phase/source notes, `docs/orchestration-loop.md` Shared activation guidance,
@@ -240,6 +257,23 @@ with the recorded resume context. A Failed-but-live session needs CARD-1610's
 supported ownership/recovery assessment; no automatic cancellation or kill is
 part of this repair. Merely installing this guard does not release an old owner.
 
+### Token-resolution API witnesses
+
+Add `tests/Antiphon.Tests/Application/RolloutCallerIdentityTests.cs`, five
+non-parameterized methods using a shared database template and per-test clones:
+`Task_token_wins_over_session_and_missing_environment_ids`,
+`Task_projection_contains_only_its_own_admission_facts`,
+`Standing_and_unassigned_session_tokens_are_distinguished`,
+`Unknown_partial_and_ended_credentials_fail_closed`, and
+`Identity_read_never_writes_or_exposes_secrets`.
+Exercise the real service resolver and the real endpoint handler/header policy,
+including Interactive, duplicate headers, missing-header versus empty-header,
+capability no-write, cancellation and fixed error output. HTTP tests can use an
+in-process minimal route host once per run, without production Program/runner.
+These five methods are planned for the closed identity checkpoint (CP-5, added
+with the final roster). S1 stages compileable black-box route tests first; absent
+route/response is an intended assertion failure, never a fixture/build error.
+
 ## Verification design
 
 Verification design is included for the explicit Review-then-Code handoff. Scope:
@@ -251,7 +285,7 @@ references to server/infrastructure suffice; no project extraction is justified.
 |---|---|---|
 | V-1 | Shared own-task DTO; invoke real wrapper for each mutating phase and allowed resume/dry-run. Refuse before operator-token access, census sleep or any traced effect. Assert fixed reason and zero effects. Old wrapper reaches an effect/wait or lacks the new reason. | New red/green admission. |
 | V-2 | Real pinned linked worktree, matching live DTO/source/API SHA succeeds. Wrong source SHA, tracked dirt, foreign tree and alias to canonical refuse. Canonical HEAD moving X -> Y with API X still admits controller X; API Y refuses X before credentials/effects. Missing/malformed/API-failure version refuses, including next-phase drift and subsequent `all` subphases. Equivalent native case/separator identity follows host rules. | Red/green negatives with positive native controls. |
-| V-3 | Each D-7 caller class has its own method: task ID takes precedence over agent ID; token + agent/no task is admitted with no task GET; all-absent interactive remains admitted. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, task 401/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
+| V-3 | Each D-7 caller class has its own method: task token takes precedence even with task ID dropped or forged agent ID; a genuine standing token is admitted with no task-detail GET; all-absent interactive remains admitted. Assert new receipt class for both admitted paths (red at base). Invalid/partial identity including token-only card sessions, identity 403/404/timeout, absent workspace/path, mismatched ID, Blocked/Failed owner and receipt failure refuse. Read checks and canonical provision retain outcomes. Sentinels never enter output/receipts. | Red/green plus compatibility. |
 | V-4 | Real `AgentTaskLandService.RunAsync` and Git protocol: Shared Deploy in Dispatched/Working/Blocked holds rc and master requests with holder ID, no publication or extra attempt. Independent Worktree Deploy allows both lands while still Working; its source hash/HEAD remain fixed. | Existing-behavior regression/remedy witness, green at base. |
 | V-5 | Same-source owner/alias and unknown identity still hold. Shared writer appearing while verification releases the repository lease blocks the real resume path. | Existing safety regression; not a pure predicate test. |
 | V-6 | Bind land owner to recycled runner. Prove Shared cycle, then separate Worktree scenario: complete real land and feed production task/list/detail projections into wrapper and host HTTP fixtures. Actual census refuses/waits while pending and clears only after publication/terminal proof, controller still Working. Another genuine writer keeps recycle refused. | Integrated remedy, remote effects stubbed. |
@@ -281,7 +315,7 @@ Red-first: at the pushed S1 tests-only commit, build once into fresh
 lane using a scratch checkpoint manifest. Each filter is
 `/*/Antiphon.Tests.Scripts/DeployRolloutWorkspaceTests/<exact-method>`:
 
-- `C1615_Shared_controller_refuses_before_side_effects` (V-1).
+- `C1615_Shared_controller_refuses_before_side_effects` (V-1, including task-ID removal with unchanged task token).
 - `C1615_Native_checkout_identity` (V-2).
 - `C1615_Phase_requires_rollout_server_sha` (V-2).
 - `C1615_Unknown_or_terminal_owner_refuses` (V-3).
@@ -310,7 +344,7 @@ insufficient because it reports pending counts instead of refusing. Never seed H
 assertion's premise. In the separate Worktree leg assert remote ref publication,
 terminal request proof, controller still Working, unchanged source HEAD, and only
 then the census clearing. V-3 also changes the owner fixture to Failed after the
-first admitted effect: assert one owner read, bounded phase completion, and refusal
+first admitted effect: assert one caller-identity read, bounded phase completion, and refusal
 on the next invocation. Use a barrier in V-5 at the real verification lease
 release/resume boundary, not sleeps or the simplified writer predicate.
 
@@ -417,9 +451,9 @@ Retain ignored TRX, checkpoint source/build receipts and phase JSONL under a uni
 `.antiphon/checkpoints/card-1615/<run>/` root. Join by run/test/group, SHA, OS, host
 and category; record Docker/readiness (not applicable here unless shared DB startup
 requires it), template/migration, clone/seed, Git/filesystem, HTTP, process startup,
-body, teardown and wall remainder. Unknown is null, never zero. Time each owner GET,
+body, teardown and wall remainder. Unknown is null, never zero. Time each caller-identity GET,
 Git probe, census read and process cleanup separately. Provisional admission probes:
-one owner GET and one version GET each capped at 5 seconds, each Git probe at
+one caller-identity GET and one version GET each capped at 5 seconds, each Git probe at
 5 seconds, whole admission 15 seconds (individual deadlines share that remaining
 budget); owned child cleanup has a separate bounded join. Code refines these
 from measurements without widening existing recycle waits. Any selection/batch/run
