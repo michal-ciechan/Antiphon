@@ -14,6 +14,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         ? "Antiphon.PtyHost.exe"
         : "Antiphon.PtyHost";
 
+    public ProcessStopIntentStore? StopIntents { get; set; }
     private readonly object _gate = new();
     private string? _cachedShadowDir;
 

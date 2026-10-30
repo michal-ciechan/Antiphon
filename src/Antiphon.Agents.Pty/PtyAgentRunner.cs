@@ -11,6 +11,7 @@ namespace Antiphon.Agents.Pty;
 public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDisposable
 {
     private IPtySession? _conn;
+    public PtyStopCallback? StopSignal { get; set; }
     private CancellationTokenSource? _readCts;
     private Task? _readTask;
     private readonly PtyUtf8Decoder _decoder = new();

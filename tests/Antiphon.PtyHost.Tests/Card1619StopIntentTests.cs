@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Reflection;
+using Antiphon.Agents.Pty;
+using Antiphon.PtyHost.Client;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -18,8 +21,16 @@ public class Card1619StopIntentTests
     [Test]
     public async Task Signal_precedes_durable_record_when_storage_works()
     {
-        await using var f = await Fixture.StartAsync();
-        var stopped = await f.StopAsync();
+        bool signalReturned = false;
+        Fixture? fixture = null;
+        fixture = await Fixture.StartAsync((intent, ct) => {
+            signalReturned.ShouldBeTrue("writer entry must follow the actual successful signal syscall");
+            var write = typeof(ProcessStopIntentStore).GetMethod("WriteDiagnosticAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            return (Task<bool>)write.Invoke(fixture!.Store, [intent, ct])!;
+        });
+        await using var f = fixture;
+        f.Store.Attempt(f.Request(9), () => { Kill(f.Child.Id, 9).ShouldBe(0); signalReturned = true; return true; });
+        var stopped = await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5));
         stopped.ExitSignal.ShouldBe(9);
         var intent = stopped.ExitStopIntent;
         intent.ShouldNotBeNull();
@@ -35,26 +46,30 @@ public class Card1619StopIntentTests
     [Test]
     public async Task Blocked_record_write_still_signals_within_bound()
     {
-        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var f = await Fixture.StartAsync((_, _) => { entered.TrySetResult(); return pending.Task; });
-        try
+        foreach (var synchronousBlock in new[] { false, true })
         {
-            var timer = Stopwatch.StartNew();
-            var stop = f.Host.KillAsync(TimeSpan.FromSeconds(5));
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
-            (await stop.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
-            timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
-            var exit = await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(1));
-            exit.ExitSignal.ShouldBe(9);
-            exit.ExitStopIntent.ShouldNotBeNull();
-            exit.ExitStopIntent.Provenance.ShouldBe(ProcessStopProvenance.LiveIssuer);
-            (await f.Store.LastRecord.WaitAsync(TimeSpan.FromSeconds(1))).ShouldBeFalse();
-            pending.Task.IsCompleted.ShouldBeFalse("deadline must contain a writer that never finishes");
-            f.Store.Snapshot(f.Id, f.Generation, 9)!.Durable.ShouldBeFalse();
-            f.SignalLatency.ShouldBeLessThan(TimeSpan.FromMilliseconds(250));
+            using var release = new ManualResetEventSlim();
+            var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var f = await Fixture.StartAsync((_, _) => { entered.TrySetResult(); if (synchronousBlock) release.Wait(); return pending.Task; });
+            try
+            {
+                var timer = Stopwatch.StartNew();
+                var stop = f.Host.KillAsync(TimeSpan.FromSeconds(5));
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+                (await stop.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
+                timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+                var exit = await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(1));
+                exit.ExitSignal.ShouldBe(9);
+                exit.ExitStopIntent.ShouldNotBeNull();
+                exit.ExitStopIntent.Provenance.ShouldBe(ProcessStopProvenance.LiveIssuer);
+                (await f.Store.LastRecord.WaitAsync(TimeSpan.FromSeconds(1))).ShouldBeFalse();
+                pending.Task.IsCompleted.ShouldBeFalse("deadline must contain a writer that never finishes");
+                f.Store.Snapshot(f.Id, f.Generation, 9)!.Durable.ShouldBeFalse();
+                f.SignalLatency.ShouldBeLessThan(TimeSpan.FromMilliseconds(250));
+            }
+            finally { release.Set(); pending.TrySetResult(false); }
         }
-        finally { pending.TrySetResult(false); }
     }
 
     [Test]
@@ -116,11 +131,21 @@ public class Card1619StopIntentTests
     public async Task Fallback_records_SIGHUP_separately()
     {
         await using var f = await Fixture.StartAsync();
-        f.Store.Attempt(f.Request(9), () => false).Outcome.ShouldBe(ProcessStopOutcome.Failed);
-        f.Store.Attempt(f.Request(1) with { Path = ProcessStopPath.PortaFallback }, () => Kill(f.Child.Id, 1) == 0);
-        (await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5))).ExitSignal.ShouldBe(1);
+        var runner = (PtyAgentRunner)typeof(HostSession).GetField("_runner", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(f.Host)!;
+        var record = runner.StopSignal;
+        if (record is not null) runner.StopSignal = (pid, signal, path, send) =>
+            record(pid, signal, path, signal == 9 ? () => false : send);
+        (await f.StopAsync()).ExitSignal.ShouldBe(1);
         f.Store.Snapshot(f.Id, f.Generation, 1)!.AttemptedSignal.ShouldBe(1);
         f.Store.Snapshot(f.Id, f.Generation, 9)!.Outcome.ShouldBe(ProcessStopOutcome.Failed);
+        await using var disposal = await Fixture.StartAsync();
+        await disposal.DisposeHostAsync();
+        (await disposal.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5))).ExitSignal.ShouldBe(1);
+        var hangup = disposal.Store.Snapshot(disposal.Id, disposal.Generation, 1);
+        hangup.ShouldNotBeNull();
+        hangup.Path.ShouldBe(ProcessStopPath.Disposal);
+        hangup.Outcome.ShouldBe(ProcessStopOutcome.Requested,
+            "master closure and upstream swallowed SIGHUP cannot prove a successful syscall");
     }
 
     [Test]
@@ -137,10 +162,35 @@ public class Card1619StopIntentTests
     public async Task Host_kill_is_not_child_wait_evidence()
     {
         await using var f = await Fixture.StartAsync();
-        // Same recorder, separately identified host/helper targets cannot become child wait evidence.
-        var attempt = f.Store.Attempt(f.Request(9) with { Target = ProcessStopTarget.Host }, () => true);
-        attempt.Outcome.ShouldBe(ProcessStopOutcome.Issued);
-        attempt.Target.ShouldBe(ProcessStopTarget.Host);
+        var id = Guid.NewGuid();
+        var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(f.Root, "bin")), AppContext.BaseDirectory) { StopIntents = f.Store };
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        try
+        {
+            await Should.ThrowAsync<OperationCanceledException>(() => launcher.LaunchDetachedAsync(id,
+                Path.Combine(f.Root, "launch-manifests"), launchTimeout: TimeSpan.FromSeconds(15), ct: cancel.Token));
+            var attempt = f.Store.Snapshot(id, DateTime.MinValue, 9);
+            attempt.ShouldNotBeNull("actual launch-failure host cleanup must use the recorder");
+            attempt.Outcome.ShouldBe(ProcessStopOutcome.Issued);
+            attempt.Target.ShouldBe(ProcessStopTarget.Host);
+            attempt.Path.ShouldBe(ProcessStopPath.LaunchCleanup);
+        }
+        finally
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (!process.HasExited && process.MainModule?.FileName is { } path && path.StartsWith(launcher.CurrentShadowDir + Path.DirectorySeparatorChar))
+                        { process.Kill(true); await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+                }
+            }
+        }
         f.Host.GetStatus().ExitSignal.ShouldBeNull();
         f.Host.GetStatus().Status.ShouldBe(PtyHostStatus.Running);
         f.Child.HasExited.ShouldBeFalse();
@@ -158,8 +208,11 @@ public class Card1619StopIntentTests
         await f.Host.SendLineAsync("self", default);
         var exit = await f.Exit.Task.WaitAsync(TimeSpan.FromSeconds(5));
         exit.ExitSignal.ShouldBe(9);
-        exit.ExitStopIntent.ShouldNotBeNull();
-        exit.ExitStopIntent.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
+        // The live observer publishes immediately; recovery reads diagnostics separately and
+        // must strip even a planted LiveIssuer claim. CP-11 carries this through actual adoption.
+        var recovered = ProcessStopIntentStore.ReadRecovered(f.RecordRoot, f.Id, f.Generation);
+        recovered.ShouldNotBeNull();
+        recovered.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
     }
 
     private sealed class Fixture : IAsyncDisposable
@@ -173,10 +226,12 @@ public class Card1619StopIntentTests
         public Process Child { get; private set; } = null!;
         public TaskCompletionSource<ExitedMessage> Exit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task? _reader;
+        private bool _hostDisposed;
         private readonly Stopwatch _signalClock = new();
         public TimeSpan SignalLatency { get; private set; }
         public static async Task<Fixture> StartAsync(Func<ProcessStopIntentDto, CancellationToken, Task<bool>>? writer = null, bool unwritable = false)
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-host-stop-readiness");
             var f = new Fixture();
             try
             {
@@ -210,19 +265,27 @@ public class Card1619StopIntentTests
             AttemptedSignal = signal, Path = ProcessStopPath.ProcessTree };
         public async Task<ExitedMessage> StopAsync()
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "card1619-host-stop-exit");
             _signalClock.Restart();
             (await Host.KillAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
             return await Exit.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
+        public async Task DisposeHostAsync()
+        {
+            if (_hostDisposed || Host is null) return;
+            _hostDisposed = true;
+            await Host.DisposeAsync();
+        }
         public async ValueTask DisposeAsync()
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "card1619-host-owned-join");
             if (Child is not null)
             {
                 if (!Child.HasExited) Child.Kill(true);
                 await Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
                 Child.Dispose();
             }
-            if (Host is not null) await Host.DisposeAsync();
+            await DisposeHostAsync();
             if (_reader is not null) await _reader.WaitAsync(TimeSpan.FromSeconds(5));
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }
