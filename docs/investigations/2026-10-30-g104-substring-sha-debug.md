@@ -1,29 +1,187 @@
-# Groups 104/105 Substring / source-identity investigation
+# Corrected qualification failures: groups 104 and 105
 
-Task: `21443bfd`. Date: 2026-10-30. Host: server2 Linux (Debian 12).
-Assigned branch: `feat/card-task-21443bfd`.
-Tested code: `335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f`.
-Reported native candidate: `cde8def41`, qualification `d47848cc`.
+The caller's correction supersedes the original Substring premise: that exception
+came from the caller's extraction script, not a test. The original assertions are
+now available. A concrete Windows encoding-fixture defect has been repaired;
+group 104's underlying refusal remains unconfirmed pending native diagnostics.
+No short-SHA product defect or common cause for all nine tests is claimed.
 
-## Outcome and causal limit
+## Findings against the corrected evidence
 
-Investigation incomplete: the supplied PowerShell exception has no stack or script
-location, and the proposed short Git SHA explanation is not supported by the
-listed tests' execution paths. No product fix or cause-specific failing regression
-test is claimed.
-The reported PowerShell failure has not been reproduced. One C# scheduler
-assertion failed once on the assigned base; its isolation/control outcomes and
-the diagnostic-only change are recorded below. The caller must provide an
-original group-104 or group-105 TRX failure entry (message **and stack**) and its corresponding
-chunk stdout/stderr before a causal repair can be selected.
+| Failure | Shared path and what the assertion establishes | Remaining uncertainty |
+|---|---|---|
+| Six census methods: empty sources/PCs/census or exit 2, missing expected diagnostic | `CoverageCommand.Run` reads fixture files directly through `ConfinedFileReader` -> `CheckpointFileReader`. An input refusal returns an invalid report with `INPUT_INVALID`; an internal exception returns `ANALYSIS_INVALID`. Both bypass the expected census/checklist diagnostics. There is no Git invocation in this path. | The supplied failure messages omit the actual report diagnostics. The new native diagnostic prints the original invalid report before disposal, without re-reading or retrying the file. |
+| Repeat-host method: `trx.Failed == 0` | `TrxReport.Parse` catches `ReceiptFile.ReadText`/XML errors and returns a bad result with default zero counts. The original test inspected `Failed` without first asserting `Ok`. Thus this message does not establish that later repetitions erased the failure. | The original parse error and child output are absent. The test now asserts `Ok` first with the parse error and captured child output. If parsing succeeds, the original count and repetition assertions still apply. |
+| Scheduler method: one green row | Fake builds/runs still write/read real build-binding receipts, ownership stamps and TRX files. A refused receipt/TRX or other row refusal can leave one row nongreen despite correct build serialization. | The original row state was not retained. The assertion now includes state, terminal/slot reason, TRX error, CHECKPOINT line and output. No serialization or count assertion changed. |
+| C1608 encoding script exits 1 at its refusal assertion | The Windows fixture wrote `git.cmd` into PATH, but the production helper starts `git` with `UseShellExecute=false`. Windows CreateProcess appends `.exe` to an extensionless executable name and requires an explicit interpreter for batch files. The shim was not a valid way to select the intended raw-byte producer. | The caller omitted the actual `Reason`/`Exit` values, so the historical process/exit cannot be independently reconstructed. The exception's phrase "invalid UTF-8 accepted" also covers launch/git failures; it alone does not prove successful decoding of invalid bytes. Native confirmation remains owed. |
 
-The brief says seven tests but enumerates **eight**: one repeat-host method, six
-census methods and one scheduler method. All eight were included in the matrix.
-The three named test source files are byte-identical between the native candidate
-and the assigned base (`git diff cde8def41 335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f
--- <the three files>` is empty).
-The shared `CheckpointTestScope.cs` is also unchanged between those commits.
-This does not assert that every production dependency is unchanged.
+The file reader is a genuine common dependency of the eight group-104 methods,
+but that is a hypothesis boundary, not a demonstrated common failure. The one
+Linux scheduler red below lasted **0.7138677 s**, shorter than the reader's
+three-second stall deadline; it cannot be labelled a reproduced three-second
+stall. Native timing (repeat 5.7 s, scheduler 4.6 s and two census methods 12.6/16.5 s)
+is consistent with several possibilities and does not supply the missing reason.
+No timeout was widened, assertion relaxed, retry introduced or test skipped.
+
+Windows executable semantics are documented by Microsoft:
+[CreateProcessW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw)
+and [ProcessStartInfo.UseShellExecute](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.useshellexecute?view=net-10.0).
+This establishes the fixture defect by source/contract comparison; the new Linux
+witness establishes actual executable binding and byte rejection, not native execution.
+
+## Candidate versus rc/master; missing top-ups
+
+Inspected native candidate `cde8def4163829aa5b867df6ec625433be2522cb`, assigned rc
+`335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f`, and fetched master
+`31f990317038635c2f1e652b6a950905fcf07a31`.
+
+| Change | Comparison and applicability |
+|---|---|
+| `26e812ef10c1624abf8893e680836b21629f4365` / `ad79edb0ebfa8cfeb32262ac1acc0dba4dc6b1e8` | Red witness then 8,000-character preflight batching and explicit Win32 start diagnostics. This fixes long write-root command lines. Census never invokes preflight Git; repeat-host parsing never invokes it. Scheduler's tiny fake project roots are not an aggregate solution. Native TEMP location is unknown; roots inside a checkout can still invoke preflight. No native disappearance is claimed. |
+| CARD-1616 `f44e1c75e45608aadc90a7171216fd98f7321060` | Avoids redundant Git driver discovery for the exact index-only query. Other changes retain admission/terminal receipt state. The scheduler change does not change a successful fake run's expected two green rows. Reduced process pressure may help aggregate runs, but that is not proof of a repair for these failures. |
+| Fixture isolation `b3a1971f35b2f4fe29c6759a6bdf9778c85a9a21` | Isolates Git/config/NuGet children in the S-B1 confinement/shape/tracked-baseline fixtures. None of the nine named methods uses the added environment helper. Neither autocrlf isolation nor source checkout shape explains the in-process census directly. |
+| Shared reader and coverage/TRX code | `git diff cde8def41..335b4fbb3` and `cde8def41..origin/master` show no changes in `CheckpointFileReader`, `CheckpointNativeIo`, Coverage, Trx, `BuildConfinement`, or the encoding script. The named original test sources are unchanged too. Reading the later commits therefore does **not** establish that groups 104/105 disappear on rc/master. Linux portability passes below remain Linux evidence. |
+
+An existing unmerged change, `87ba567ec507789050dd728c96f2efd53573916c`
+("keep Windows checkpoint reads on the dedicated IO thread"), replaces Windows
+overlapped/pool completions with the dedicated synchronous stream in compiled and
+embedded readers. It is absent from the compared rc/master; it appears in several
+remote task branches, including `origin/feat/card-task-0a72f317`. It is a relevant
+existing repair candidate for the reader hypothesis, **not** a change validated
+against d47848cc. No duplicate production reader fix was applied here.
+
+CARD-1611 is a different call site: `BuildConfinement.Git` still calls
+`CheckpointProcessRunner.Run`, whose stdout is text decoded by StreamReader.
+C1608 instead calls `Invoke-CheckpointGit` -> `RunBytes` and strict UTF-8 decoding.
+The encoding script does not call `BuildConfinement.Git`. CARD-1611 was neither
+claimed fixed nor widened into this fixture repair.
+
+## Repair and red-first witness
+
+`76090079a1e6a9d2c09f1ece0518d5aff3c88f9b` adds a minimal staged native Git fixture and
+`C1608_invalid_utf8_comes_from_the_configured_executable`. It supplies an explicit
+executable and requires its invocation record after the encoding checks pass.
+Against the old script: **1 executed, 0 passed, 1 failed, 0 skipped**, exit 2;
+failure is precisely `File.Exists(invocationLog)` with the assertion
+"the configured executable must serve the actual git queries". The old Linux
+PATH shim still passed its UTF-8 checks, proving why those checks alone could not
+establish that the configured executable was used. Launch wall: 5.7597808 s.
+This is an assertion red, not zero tests or a build/fixture error.
+
+`0a8d0adccdd6ae41c98633060e09a914ed54554e` removes the platform shell shims. The script requires an existing
+absolute native executable and replaces only `FileName` in its imported production
+function, using a checked one-occurrence seam like its existing legacy-encoding
+seam. Production Git hardening, the config query, process custody, raw capture,
+strict decoding and both refusal assertions remain intact. The native helper
+accepts the hardening prefix, returns an empty config query, and writes byte FF
+only for status/ls-files. The new witness requires the real sequence
+`config, status, config, ls-files` from the helper. Unexpected commands exit 91.
+
+The helper is built once with the parent and staged once per output tree; no
+per-test compilation/restore or app/container/database setup was introduced.
+Parent builds use `UseAppHost=false`; only this small fixture locally requires
+`UseAppHost=true` because selecting a native executable is the behavior being
+tested. Its alternate output has no standing process owner and is cleaned after
+all children exit. Existing process limiting and 120-second child cap are retained.
+The cap is inherited, not a new measured p95 or a widened timeout.
+
+`fed180b9acc837512cd64382db242ba3ce67c81f` adds the group-104 diagnostics above.
+The code under verification is that committed tip. New run results, current graph
+check, cleanup and the explicit native commands are appended after completion.
+
+## Corrected verification and gate status
+
+All commands completed in the foreground. No test or build remains running.
+
+| Context at tested commit `fed180b9acc837512cd64382db242ba3ce67c81f` | Executed / passed / failed / skipped | Launch wall seconds | Sum of TRX body seconds |
+|---|---|---:|---:|
+| Normal assigned worktree (nine original methods, new witness, adjacent legacy tamper control) | 11 / 11 / 0 / 0 | 457.56 | 27.12 |
+| Exact source archive export without .git (nine original methods plus new witness) | 10 / 10 / 0 / 0 | 373.64 | 19.65 |
+
+**New green selection: 21 executed, 21 passed, 0 failed, 0 skipped.** The earlier
+assertion red is 1 executed / 1 expected failure, not credited as a passing test.
+Historical 55/56 plus two diagnostic passes and seven group-105 passes remain
+recorded below; the unexplained base scheduler red has not been erased.
+
+The archive was created from the tested committed source, then received only the
+built entry output and its NuGet evaluation metadata. Both test assembly SHA256s:
+
+`703e4c5cd3250d358dd37e280cf48bfb8b4b14f01fa1adb273532c1c02702fae`.
+
+The export's own Git query returned 128 / not a repository. Exact method filters
+were used individually, sequentially under a lease, with TEMP=/tmp and native
+diagnostics/phase recording enabled. The separate legacy-mode run checks the
+unchanged branch of the modified script. No broad/full suite was rerun.
+
+| Driver | Outcome | Elapsed / held / admission wait seconds |
+|---|---|---|
+| Red build, 76090079a | 0 errors, 1395 warnings | 307.93 / 309 / 30 |
+| Red exact method | Expected assertion red, 1/1 failed | 5.76 launch / 6 / 75 |
+| Green build, fed180b9a | 0 errors, 1395 warnings | 248.63 / 249 / 120 |
+| 21 methods plus graph Check | Tests green; driver exit 1 from graph refusal | 831.19 launches / 849 / 105 |
+
+Per-test launch/body data are in `corrected-durations.json`; phase JSONL is in
+`corrected-timing/`. Unmeasured CLI/discovery/startup/teardown subdivision remains
+unknown/remainder; it is not assigned to the test body. No Docker, AppHost, DB,
+migrations or seed were used. These are single observations, not per-case p95.
+The batch stayed below 30 minutes; no further repetitions were purchased.
+
+The **real** land graph command was run once for the corrected code, in the same
+lease, without -Update:
+
+`pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-g104/Antiphon.LandGraphAudit.dll`
+
+It **refused**, exit 1, before approving evaluation/canary:
+
+```text
+digest=E7C6EDAFA83B544A42E186899267267FD73E6FDD2FB7DD2DF36C233F2C405806 count=69
+manifest does not match the selected graph
+audit refused: land graph pre-check refused
+```
+
+**Definition files changed:** the new fixture csproj and the two staging/reference
+entries in Antiphon.Tests.csproj. The count changed from 68 to 69. No manifest,
+evaluation record, pins, global.json, instruction, test selection policy or schema
+was changed; -Update was not run. The earlier graph passes at count 68 are
+historical and do not clear this refusal. This branch is **not landable** under
+the current gate. A separately authorized build-definition review/audit is needed
+if the caller retains this helper project. The brief explicitly prohibits doing
+that update in this task.
+
+The required fetch/master merge-tree probe also returned 1. It was read-only:
+no merge, rebase or conflict resolution was performed in the assigned branch.
+Against fetched master 31f990317038635c2f1e652b6a950905fcf07a31, conflicts are:
+
+- .antiphon/task-af2b78c8.md
+- docs/investigations/2026-10-25-card-1584-e2e-launch-bounds.md
+- docs/investigations/2026-10-30-card-1618-sf-aggregate-run-debug.md
+- scripts/test-checkpoint-git-encoding.ps1
+- server/Application/Services/CapacityRecoveryService.cs
+- tests/Antiphon.Tests/Application/CapacityLockOrderTests.cs
+- tests/Antiphon.Tests/Checkpoints/CheckpointGitEncodingScriptTests.cs
+
+This task started from rc 335b4fbb3, not master. The caller's landing mechanism
+must port the task slices; this report does not approve a direct master merge.
+
+All **37** corrected-run alternate output roots (36 producer roots and the export
+entry output) were removed by recorded individual literal paths after all runs
+finished. A subsequent read-only walk found no remaining bin-g104 in the assigned
+worktree or any of the four scratch source trees. Receipts, immutable logs,
+source archive, hashes, scripts and cleanup records remain outside Git at
+`/work/evidence/debug-21443bfd/`. Generated JSON/TRX/log evidence was not committed.
+
+Changed source/test files: scripts/test-checkpoint-git-encoding.ps1;
+tests/Antiphon.Checkpoints.GitFixture/{Antiphon.Checkpoints.GitFixture.csproj,Program.cs};
+tests/Antiphon.Tests/Antiphon.Tests.csproj; and the Checkpoints test files
+CheckpointGitEncodingScriptTests.cs, CheckpointRepeatHostTests.cs,
+PlanCoverageCensusTests.cs and RunSchedulerTests.cs. This Markdown is the durable
+report; .antiphon/task-21443bfd.md is its ignored full-report copy.
+
+## Retained earlier evidence and identity-prefix sweep
+
+The following sections preserve results, costs and the sweep from the pre-correction
+reports. Their absent-Substring-stack premise is superseded above; they are not
+a current request to find that nonexistent test exception.
 
 ## Execution-path findings
 
@@ -43,10 +201,9 @@ This does not assert that every production dependency is unchanged.
 - `rg -n 'Substring' tools/Antiphon.Checkpoints src/Antiphon.HostCleanup` returns no
   matches. The selected test methods have no inline PowerShell code either.
 
-A PowerShell `MethodInvocationException` could originate in an outer qualification
-or reporting call. That is an **unconfirmed hypothesis**, not a diagnosed reporting
-bug. An ordinary C# exception does not become proof of a PowerShell call in these
-bodies merely because the qualification driver is PowerShell.
+The initial report treated outer qualification/report processing as an unconfirmed
+hypothesis. The caller subsequently confirmed its own extraction-script failure;
+that correction and the real assertion failures supersede the original premise.
 
 ## Prefix-truncation sweep
 
@@ -89,9 +246,10 @@ and are not called by the selected tests.
 There is no evidenced short identity on a selected execution path to fix. No tests
 were removed, skipped, relaxed, or given longer timeouts. No skip marker was added.
 No arbitrary empty-string `.Substring()` demonstration was substituted for a causal
-regression witness. The requested red-first witness and fix remain **unfulfilled**.
+regression witness. The original short-SHA witness/fix premise was withdrawn by the correction.
+The actual executable-binding red-first witness and repair are recorded above.
 
-## Verification
+## Historical portability verification
 
 The base matrix ran at clean code commit
 `335b4fbb3b1eac700cb8d3c64ea032d9579c6b5f`: **56 executed, 55 passed,
@@ -215,7 +373,7 @@ All test/build commands completed before cleanup. The 35 task-owned worktree
 individual recorded paths; no wildcard deletion or daemon restart was used.
 
 
-## Refinement: group 105 added to the investigation
+## Historical group-105 refinement before the correction
 
 The caller's refinement added qualification group 105 (19:47Z), specifically
 `CheckpointGitEncodingScriptTests.C1608_invalid_utf8_git_output_is_refused`
@@ -284,59 +442,75 @@ again. Raw `refinement-*` and `g105-*` logs, driver, hashes, summary, cleanup re
 TRX and timing shards are retained in `/work/evidence/debug-21443bfd/` alongside
 the original evidence.
 
-## Native row owed and operator evidence
 
-| Host / selection | Status |
-|---|---|
-| Windows: all methods in `CheckpointRepeatHostTests`, `PlanCoverageCensusTests`, `RunSchedulerTests`, plus exact method `CheckpointGitEncodingScriptTests.C1608_invalid_utf8_git_output_is_refused`, one pass after qualification releases its native lock | **Owed, not run.** Linux results do not discharge this row. |
+## Native obligation and next action
 
-No operation was performed against `d47848cc`, `C:\Antiphon`, the desktop checkout,
-any native lock, or any native test host. No tag, publish, rebase, or force push was
-performed. Existing authorization covered the Linux investigation; no new approval
-was required.
+| Row | Exact native selection | State |
+|---|---|---|
+| W-1 | `/*/*/CheckpointRepeatHostTests/*` | Owed after qualification d47848cc releases its native lock. |
+| W-2 | `/*/*/PlanCoverageCensusTests/*` | Owed; retain every `CHECKPOINT_NATIVE census` invalid report. |
+| W-3 | `/*/*/RunSchedulerTests/*` | Owed; retain row state, TRX error, terminal/slot reasons and CHECKPOINT output on red. |
+| W-4 | `/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused` | Owed for the group-105 repair. |
+| W-5 | `/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_comes_from_the_configured_executable` | Owed for the real native executable/byte producer witness. |
 
-Ask the orchestrator to inspect the commissioning script under
-`C:\Antiphon\releases\task-3ec2f72f` and record the checkout creation command and
-its original exit/output. These read-only commands distinguish actual checkout
-state; do not infer it from `.git` presence:
+These commands are for a newly synchronized assigned Windows worktree, **after**
+the native lock is released. They were not executed by this delegate. Do not run
+them in, mutate or replace the live qualification checkout.
+
+```powershell
+Set-Location -LiteralPath 'C:\Antiphon\worktrees\card-task-21443bfd'
+& git rev-parse HEAD # must equal the pushed branch tip in the completion report
+$env:ANTIPHON_CHECKPOINT_NATIVE_DIAGNOSTICS = '1'
+& pwsh -NoProfile -File scripts/build-slot.ps1 -Label g104-native-build -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-g104-native/ --property:UseAppHost=false
+if ($LASTEXITCODE -ne 0) { throw "native build/slot refused: $LASTEXITCODE" }
+$results = '.antiphon/g104-native-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$filters = @(
+  '/*/*/CheckpointRepeatHostTests/*',
+  '/*/*/PlanCoverageCensusTests/*',
+  '/*/*/RunSchedulerTests/*',
+  '/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused',
+  '/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_comes_from_the_configured_executable'
+)
+for ($i = 0; $i -lt $filters.Count; $i++) {
+  & pwsh -NoProfile -File scripts/build-slot.ps1 -Label "g104-native-$i" -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-g104-native/ --property:UseAppHost=false -- --treenode-filter $filters[$i] --report-trx --report-trx-filename run.trx --results-directory "$results/$i"
+  if ($LASTEXITCODE -ne 0) { throw "native row $i refused/failed: $LASTEXITCODE; retain full TRX and stdout/stderr" }
+}
+```
+
+Keep executed/passed/failed/skipped counts and complete failure messages/stacks,
+not the earlier collapsed/truncated extraction. A green targeted rerun does not
+retroactively repair an unidentified aggregate-run failure. A recurrence with
+`read-stalled`, `opened-handle verification` or a different exact error determines
+which product path needs a separate repair; do not widen the existing deadline.
+
+Secondary checkout-provenance checks requested by the original brief remain
+useful, but are no longer a short-SHA causal claim. The operator can inspect the
+commissioning script under `C:\Antiphon\releases\task-3ec2f72f` and record:
 
 ```powershell
 $checkout = 'C:\Antiphon\releases\checkout-3ec2f72f'
 Get-Item -Force -LiteralPath "$checkout\.git" | Select-Object FullName, Attributes
 & git -C $checkout rev-parse --show-toplevel --git-dir --is-shallow-repository
-& git -C $checkout rev-parse HEAD
-$LASTEXITCODE
 & git -C $checkout rev-parse --verify 'HEAD^{commit}'
 $LASTEXITCODE
 & git -C $checkout symbolic-ref -q HEAD
-$LASTEXITCODE # 1 is expected for a detached HEAD
-foreach ($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY')) {
-    [pscustomobject]@{ Name = $name; Value = [Environment]::GetEnvironmentVariable($name) }
-}
+$LASTEXITCODE # 1 means detached HEAD
+[IO.Path]::GetTempPath() # parent commissioning environment; actual test root is in diagnostics
 Get-ChildItem -Force -LiteralPath 'C:\Antiphon\releases\task-3ec2f72f' -Filter '*.ps1'
 ```
 
-Also supply one original `UnitTestResult` with its referenced `TestDefinition`,
-complete `ErrorInfo/Message` and `ErrorInfo/StackTrace`, plus the corresponding raw
-chunk log. Identify whether the reported PowerShell error is a TRX test failure or
-a qualification-processing exception. A standalone `.Substring()` message cannot
-identify a script, the string being sliced, or the originating test.
-
-After native lock release, build once under `scripts/build-slot.ps1` into
-`bin-g104-native/`, then run each of the three exact class filters separately:
-`/*/*/CheckpointRepeatHostTests/*`, `/*/*/PlanCoverageCensusTests/*`, and
-`/*/*/RunSchedulerTests/*`. Add the separate exact filter
-`/*/*/CheckpointGitEncodingScriptTests/C1608_invalid_utf8_git_output_is_refused`
-for the group-105 obligation. Use `dotnet run --project tests/Antiphon.Tests --no-build`
-with the same output properties and fresh TRX directories, all through the gate.
-Record actual executed/passed/failed/skipped counts; stop for investigation on red.
-Do not use the zero-selection compound filter from this investigation.
+This task performed no desktop access, native test, live qualification mutation,
+tag, publish, rebase or force push. The next merge-to-rc step requires ordinary
+review of the fixture repair and all required gates. Group 104 is not marked
+fixed. The brief's explicit prohibition on `-Update` also remains in force; a
+definition-audit refusal must be resolved by the caller's separately commissioned
+review/update work, not waived here.
 
 ## Handoff
 
-The caller must provide the raw native failure entry and chunk log. Continue Debug
-at that exact call site, preserve the first reproducible assertion failure, then
-commit/push a minimal repair and verify the requested matrix. No merge-to-rc repair
-is recommended from this report: it contains an investigation record, not a
-validated fix. The only test change adds failure diagnostics. The owed native row
-stays attached to the qualification handoff.
+Blocked for qualification clearance: group 104 needs native diagnostic evidence,
+and the new build definitions have an explicitly unapproved graph. The encoding
+fixture repair is concrete and green on Linux in both required checkout shapes.
+Review the pushed slices; authorize the definition audit separately before any
+merge to rc, then run the owed native rows when the qualification lock is released.
+Do not call this a common-cause repair or a cleared native qualification.
