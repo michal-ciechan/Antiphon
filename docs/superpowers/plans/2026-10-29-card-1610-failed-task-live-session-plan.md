@@ -306,3 +306,33 @@ refusal before mutation, explicit standalone 240, still-busy preservation, and
 finite overall-deadline guidance. No live Docker rollout is a Plan checkpoint.
 CARD-1615 owns the source-writer/landing circular wait; no amount of extra time
 fixes it. Do not bypass that hold in this card.
+
+## D-5 detail: no late correction can start a second chain
+
+Delete round-1 S4's failure-episode ledger, Failed report admission, recovery
+sweep and Failed-to-Succeeded correction. Failed remains terminal; preserved
+transcripts and pushed commits are evidence, not an automatic new outcome.
+The failure notice explicitly tells the caller and delegate this. Historical
+7ee3b07a and 30f56bd5 require an explicit caller decision about their artifacts;
+do not rewrite old failures, infer a land, or replay their `next=review/code`.
+Any manual correction/triage note defaults to **next=decide**. It identifies all
+newer same-board/card/**role** tasks created after the failure, plus retry or
+replacement lineage and matching source branch. An unresolved overlap means
+superseded/unresolved, never permission to launch a second chain. For uncarded
+work use task-root/branch lineage; unknown lineage requires a decision. This is
+a review procedure using existing task reads, not a new automated correction API.
+
+Also guard the narrower real concurrency risk introduced by holds: a previously
+held task can finish after its caller separately commissioned a replacement.
+Normal settlement may retain its valid report/outcome, but before constructing
+the parent completion/handoff check for a newer task on the same board/card/role
+since HeldAt (any status, including already completed). Under the ordinary
+settlement/admission serialization, record the decision and force next=decide
+with superseding IDs when one exists. A different role alone is not a conflict;
+retry/attempt/session fences still apply independently. Recheck when reserving
+an automatic handoff so a replacement admitted after settlement cannot race
+through; bind the existing PipelineHandoffAction identity to the checked episode.
+The caller must inspect these facts before manual dispatch too. No automatic
+second review/land is inferred from a recovered result. Hold notes always use
+next=decide. Tests cover newer same-role, different-role and no-card lineage,
+including replacement admission between settlement and handoff reservation.
