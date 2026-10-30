@@ -114,6 +114,13 @@ public sealed class RcFullWatchdogTests
         observed.GetProperty("clampedE95").GetDouble().ShouldBeGreaterThanOrEqualTo(1, "p95 below 1 was stored as the error factor");
         observed.GetProperty("ptyPlanRefused").GetBoolean().ShouldBeTrue(text);
         observed.GetProperty("ptyPlanWatchdog").GetDouble().ShouldBe(1200, "a pty-host plan between 1200 and 2400 s was stamped with another suite watchdog");
+        observed.GetProperty("smallPlanWatchdog").GetDouble().ShouldBe(600, "a measured 60 s plan dropped the 600 s floor");
+        observed.GetProperty("smallPlanReason").GetString().ShouldBe("measured");
+        observed.GetProperty("emptyCalibrationWatchdog").GetDouble().ShouldBe(3600, "an empty calibration reduced the cap");
+        observed.GetProperty("emptyCalibrationReason").GetString().ShouldBe("unmeasured-cost");
+        observed.GetProperty("missingFieldWatchdog").GetDouble().ShouldBe(3600, "a calibration missing E95 reduced the cap");
+        observed.GetProperty("missingFieldReason").GetString().ShouldBe("unmeasured-cost");
+        observed.GetProperty("missingCensoredFieldAdmitted").GetBoolean().ShouldBeTrue("a calibration with no Censored field was treated as censored");
     }
 
     [Test]
