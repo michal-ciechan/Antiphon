@@ -114,6 +114,55 @@ public sealed class CustodyNamespaceBootstrapTests
     }
 
     [Test]
+    public async Task C1614_Freeze_failure_kills_nothing()
+    {
+        RequireLinux();
+        var failed = await UnshareAsync(CommonScript(), KillScript(), """
+            set -euo pipefail
+            library=$1
+            kill_helper=$2
+            ns=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            id=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            victim=0
+            fstate=""
+            trap 'if [ "$victim" -ne 0 ]; then kill "$victim" 2>/dev/null || true; wait "$victim" 2>/dev/null || true; fi
+              if [ -n "$fstate" ]; then umount "$fstate" 2>/dev/null || true; fi
+              umount /usr/local 2>/dev/null || true
+              umount /sys/fs/cgroup 2>/dev/null || true
+              umount /run 2>/dev/null || true' EXIT
+            mount -t tmpfs tmpfs /usr/local
+            mount -t tmpfs tmpfs /sys/fs/cgroup
+            mount -t tmpfs tmpfs /run
+            mkdir -p /usr/local/lib /run/antiphon-custody \
+              /sys/fs/cgroup/pids/antiphon-custody \
+              /sys/fs/cgroup/freezer/antiphon-custody
+            cp "$library" /usr/local/lib/antiphon-custody-common.sh
+            printf '%s\n' "$ns" > /run/antiphon-custody/namespace
+            pdir=/sys/fs/cgroup/pids/antiphon-custody/$ns/$id/tree
+            fdir=/sys/fs/cgroup/freezer/antiphon-custody/$ns/$id/tree
+            mkdir -p "$pdir" "$fdir"
+            sleep 30 &
+            victim=$!
+            printf '%s\n' "$victim" > "$pdir/cgroup.procs"
+            printf 'THAWED\n' > "$fdir/freezer.state"
+            fstate=$fdir/freezer.state
+            mount --bind -o ro "$fstate" "$fstate"
+            set +e
+            bash "$kill_helper" "$id"
+            kill_rc=$?
+            set -e
+            if kill -0 "$victim" 2>/dev/null; then echo victim=alive; else echo victim=dead; fi
+            echo "kill_rc=$kill_rc"
+            if kill -0 "$victim" 2>/dev/null && [ "$kill_rc" -ne 0 ]; then
+              exit 0
+            fi
+            exit 1
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("victim=alive");
+    }
+
+    [Test]
     public async Task C1614_Verifiers_count_execution_trees_in_current_namespace()
     {
         RequireLinux();
@@ -200,6 +249,9 @@ public sealed class CustodyNamespaceBootstrapTests
     private static string CommonScript() =>
         Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-common.sh");
 
+    private static string KillScript() =>
+        Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-kill.sh");
+
     private static string? NamespaceOf(string stdout)
     {
         foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -278,6 +330,25 @@ public sealed class CustodyNamespaceBootstrapTests
         psi.ArgumentList.Add("bash");
         psi.ArgumentList.Add(script);
         return StartAsync(psi, "custody_namespace_entrypoint_step");
+    }
+
+    private static Task<ShellResult> UnshareAsync(string library, string killHelper, string body)
+    {
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rmpf");
+        psi.ArgumentList.Add("--mount-proc");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(body);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(library);
+        psi.ArgumentList.Add(killHelper);
+        return StartAsync(psi, "antiphon-custody-kill");
     }
 
     private static async Task<ShellResult> StartAsync(ProcessStartInfo psi, string name)
