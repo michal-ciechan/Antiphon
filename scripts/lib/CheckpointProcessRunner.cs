@@ -62,7 +62,15 @@ namespace Antiphon.Checkpoints
             {
                 if (git)
                 {
+                    // This exact index-only query never reads file contents or invokes
+                    // filter/textconv drivers. Keep its per-entry Git revalidation, without
+                    // starting a second process to discover drivers it cannot invoke.
+                    var arguments = start.ArgumentList;
+                    var indexOnly = arguments.Count >= 6 && arguments[0] == "-C"
+                        && arguments[2] == "ls-files" && arguments[3] == "-z" && arguments[4] == "--";
                     HardenGit(start);
+                    if (indexOnly)
+                        return RunCoreAsync(start, readStdout, deadline.Token, beforeStart).GetAwaiter().GetResult();
                     // Disable named filter/textconv drivers too. Config inspection itself has the
                     // same whole-operation deadline and cannot invoke these drivers.
                     var config = new ProcessStartInfo(start.FileName) { WorkingDirectory = start.WorkingDirectory };

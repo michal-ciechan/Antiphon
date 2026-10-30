@@ -73,6 +73,15 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         File.ReadAllText(tampered).ShouldBe("changed");
         discoveries.ShouldBe(0, "an index-only query cannot invoke named filter/textconv drivers");
         total.ShouldBe(queries, "one hardened child per index query");
+
+        // Unrecognized option shapes still take the original driver-discovery path.
+        starts.Clear();
+        var optioned = runner.Run(new("git", root,
+            ["-C", root, "ls-files", "--stage", "-z", "--", keep], 10_000));
+        optioned.Exit.ShouldBe(0);
+        optioned.Stdout.ShouldContain("keep.txt");
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1);
+        starts.Count.ShouldBe(2);
     }
 
     [Test]
