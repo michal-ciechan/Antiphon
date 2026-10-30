@@ -50,9 +50,23 @@ public sealed class PosixHarnessToolTests
 
     [Test]
     public void Snapshot_cases_complete_without_chmod_or_stat_on_path()
+        => RunSnapshotCases(OperatingSystem.IsWindows());
+
+    [Test]
+    public void Snapshot_windows_selection_runs_link_and_acl_assertions_without_posix_tools()
+    {
+        SnapshotCases(windows: true).ShouldBe(["StagingRefusesLink", "WindowsAclRules"],
+            "Windows must run assertions instead of the script's POSIX-only SKIP cases");
+        RunSnapshotCases(windows: true);
+    }
+
+    private static string[] SnapshotCases(bool windows)
+        => ["StagingRefusesLink", "StagingRefusesForeignRoot", "DrillRefusesIdPrefix"];
+
+    private static void RunSnapshotCases(bool windows)
     {
         using var hidden = HiddenPath.Without("chmod", "stat");
-        foreach (var scenario in new[] { "StagingRefusesLink", "StagingRefusesForeignRoot", "DrillRefusesIdPrefix" })
+        foreach (var scenario in SnapshotCases(windows))
         {
             var result = Run("test-postgres-snapshot.ps1", hidden.DirectoryPath, 90_000, "-Case", scenario);
             result.Exit.ShouldBe(0, scenario + "\n" + result.Stdout + result.Stderr);
