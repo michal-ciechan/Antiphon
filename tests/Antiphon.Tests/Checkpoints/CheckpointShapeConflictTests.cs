@@ -178,9 +178,9 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 return FinishConflict(ConflictText(result, "tracked.txt", output), receipt);
             }
             case "untracked-descendant":
-                return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "user.txt"), "USER-UNTRACKED", "tracked.txt", output), receipt);
+                return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "user.txt"), "USER-UNTRACKED", "tracked.txt", output), receipt));
             case "ignored-descendant":
-                return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "user.dat"), "USER-IGNORED", "tracked.txt", output), receipt);
+                return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "user.dat"), "USER-IGNORED", "tracked.txt", output), receipt));
             case "staged-untracked":
             {
                 var full = Path.Combine(root, "user-keep.txt");
@@ -218,15 +218,22 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                     return "false-preservation-claim";
                 if (output.Contains("buildSource=verified", StringComparison.Ordinal))
                     return "verified";
-                return Receipt(receipt);
+                return WithMutationMarker(root, Receipt(receipt));
             }
             case "deleted-untracked":
             case "changed-untracked":
+            {
                 if (shape == "deleted-untracked" && File.Exists(Path.Combine(root, "user-move.txt"))) return "tool-recreated-user-file";
                 if (shape == "changed-untracked" && File.ReadAllText(Path.Combine(root, "user-move.txt")) != "CHANGED-USER") return "tool-rewrote-user-file";
-                return FinishConflict(ConflictText(result, "user-move.txt", output), receipt);
+                var tracked = Path.Combine(root, "tracked.txt");
+                if (!File.Exists(tracked) || Encoding.ASCII.GetString(File.ReadAllBytes(tracked)) != "MUTATED")
+                    return "tracked-not-mutated";
+                return WithMutationMarker(root, FinishConflict(ConflictText(result, "user-move.txt", output), receipt));
+            }
             case "regular-user-move":
-                return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt"), "USER-MOVED", "tracked.txt", output), receipt);
+                if (File.Exists(Path.Combine(root, "user-move.txt")))
+                    return "move-source-still-present";
+                return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt"), "USER-MOVED", "tracked.txt", output), receipt));
             case "existing-stamp":
             case "compiler-collision":
             case "existing-output-directory":
@@ -297,6 +304,14 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private static string FinishConflict(string note, RunResult? receipt) =>
         note == "ok" ? Receipt(receipt) : note;
+
+    private static string WithMutationMarker(string root, string note)
+    {
+        if (note != "ok") return note;
+        return File.Exists(Path.Combine(root, ".antiphon", "c1199-mutation-reached.txt"))
+            ? "ok"
+            : "mutation-marker-absent";
+    }
 
     // F3 control: removing the emitted receipt must not qualify a negative validation.
     [Test]
@@ -455,8 +470,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private void WriteProject(string root, string command)
     {
-        if (CheckpointShapeWindowsFixture.IsOrdinaryMutation(command))
-            command = CheckpointShapeWindowsFixture.WriteNoOp(root);
+        if (CheckpointShapeWindowsFixture.Use())
+            command = CheckpointShapeWindowsFixture.Write(root, command);
         var xml = """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
