@@ -305,7 +305,8 @@ override, snapshot resolved minutes/provenance at dispatch, include them in task
 DTOs/brief/status, and reset elapsed/hold acknowledgements on a genuine retry.
 Reject zero, negative, overflow and over-cap values before admission; existing
 configured zero/off semantics are not silently redefined for old settings.
-A retry retains an explicitly requested budget but resolves a default afresh.
+A retry retains an explicitly requested initial budget but resolves a default afresh;
+it clears active episodes, next-bound acknowledgements and operator exceptions.
 Ordinary Extend replies use the same **720-minute total elapsed cap**. Continue
 sets next ceiling to min(720, max(current elapsed minutes, current next ceiling)
 + initial resolved ceiling minutes); the initial interval is snapshotted and
@@ -784,6 +785,13 @@ keep real-idle, phase, boot, commit-recovery, receipt and identity guards intact
 | PipelineHandoffPilotTests | 12 | 1 source file(s), Integration | final |
 | AgentTaskDetailBlockedContextTests | 10 | 1 source file(s), Integration | final |
 | AgentTaskDispatcherWiringTests | 1 | 1 source file(s), Integration | final |
+| CheckCompactionContinuationTests | 2 | 1 source file(s), Integration | final |
+| CheckCompactionCrashTests | 9 | 1 source file(s), Integration/Slow | final |
+| CheckCompactionAttentionTests | 1 | 1 source file(s), Integration | final |
+| CheckCompactionWorkerLifetimeTests | 2 | 1 source file(s), Integration/Slow | final |
+| CheckCompactionReceiptTests | 27 | 1 source file(s), Integration | final |
+| CheckCompactionAutomaticRestartTests | 11 | 1 source file(s), Integration | final |
+| CheckCompactionRecoveryPersistenceTests | 2 | 1 source file(s), Integration | final |
 
 S1 full Pool includes all three cap/TTL regressions called out by Review; rename
 only the contradictory full-TTL Working-kill method. Full Overdue covers commit
@@ -918,6 +926,13 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-82 | S2-S4 | CP-15 | server-unit-shard-38 | `/*/Antiphon.Tests.TestHelpers/(TestPhaseSupervisorTests*)\|(TestSchemaCacheTests*)\|(TestTimingLifecycleTests*)\|(TestTimingRecorderTests*)\|(WindowsDeliveryFixtureWitnessTests*)/*` | Final Unit partition | 37 passed; no failed/skipped | 37 | 2 |
 | CP-83 | S2-S4 | CP-15 | server-unit-shard-39 | `/*/Antiphon.TestSupport/TestClassificationGuardTests/*` | Final Unit partition | 1 passed; no failed/skipped | 1 | 2 |
 | CP-84 | S2-S4 | CP-15 | server-unit-method-tag | `/*/Antiphon.Tests.Application/MatrixDefaultComplexityCreateTests/The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` | method-only Unit | 1 passed; Category=Unit; no failed/skipped | 1 | 1 |
+| CP-85 | S2-S4 | CP-15 | server-integration-CheckCompactionContinuationTests | `/*/*/CheckCompactionContinuationTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 2 |
+| CP-86 | S2-S4 | CP-15 | server-integration-CheckCompactionCrashTests | `/*/*/CheckCompactionCrashTests/*` | CARD-0079 full regression | 9 passed; no failed/skipped | 9 | 3 |
+| CP-87 | S2-S4 | CP-15 | server-integration-CheckCompactionAttentionTests | `/*/*/CheckCompactionAttentionTests/*` | CARD-0079 full regression | 1 passed; no failed/skipped | 1 | 1 |
+| CP-88 | S2-S4 | CP-15 | server-integration-CheckCompactionWorkerLifetimeTests | `/*/*/CheckCompactionWorkerLifetimeTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 1 |
+| CP-89 | S2-S4 | CP-15 | server-integration-CheckCompactionReceiptTests | `/*/*/CheckCompactionReceiptTests/*` | CARD-0079 full regression | 27 passed; no failed/skipped | 27 | 5 |
+| CP-90 | S2-S4 | CP-15 | server-integration-CheckCompactionAutomaticRestartTests | `/*/*/CheckCompactionAutomaticRestartTests/*` | CARD-0079 full regression | 11 passed; no failed/skipped | 11 | 3 |
+| CP-91 | S2-S4 | CP-15 | server-integration-CheckCompactionRecoveryPersistenceTests | `/*/*/CheckCompactionRecoveryPersistenceTests/*` | CARD-0079 full regression | 2 passed; no failed/skipped | 2 | 1 |
 
 Run each committed After group once with the checkpoint tool and wait until its
 exit is not 75; use foreground windows at most 45 seconds and own every child.
@@ -931,9 +946,9 @@ exit and total/passed/failed/pending/todo counts.
 
 ### Cost and performance execution contract
 
-**84 rows, 5 producer builds, 319 provisional build/execution minutes**, excluding
-admission. TUnit floors sum to **8,105 executions** (97 red-phase, 8,008 green/
-regression); client adds 3 red and 3 green = **8,111 total**. New cases are 96
+**91 rows, 5 producer builds, 335 provisional build/execution minutes**, excluding
+admission. TUnit floors sum to **8,159 executions** (97 red-phase, 8,062 green/
+regression); client adds 3 red and 3 green = **8,165 total**. New cases are 96
 TUnit plus 3 client; the renamed janitor case is existing. Final Unit covers
 6,265 identities, while guards and S1 classes intentionally repeat on different
 source groups. No full assembly run beyond the specified Unit lane is added.
@@ -943,11 +958,11 @@ source groups. No full assembly run beyond the specified Unit lane is added.
 | S1-red | 2 | 7 | 9 | 14 minutes | 44 minutes |
 | S1 | 7 | 32 | 294 | 64 minutes | 94 minutes |
 | S2-S4-red | 5 | 18 | 88 | 36 minutes | 66 minutes |
-| S2-S4 | 70 | 262 | 7714 | 524 minutes | 554 minutes |
+| S2-S4 | 77 | 278 | 7768 | 556 minutes | 586 minutes |
 
 These are missing-sample scheduling bounds, not measured p95. The hard wall
 allows at most 30 total extra wall minutes for admission/other excluded time;
-each acquisition has a separate 15-minute cap. It does not promise all 70 rows
+each acquisition has a separate 15-minute cap. It does not promise all 77 rows
 can wait 15 minutes each. Exceeding either wall or execution stops the run with
 partial evidence and an incomplete gate, never an automatic budget increase.
 
@@ -959,8 +974,8 @@ runs. This is scheduling/measurement work, not another Plan/TestDesign round.
 No new delegation is launched by this Plan delegate. Debug may recommend shared
 setup repairs or disjoint method partitions covering the same full classes;
 record the change and counts in this plan before running them. No dropped tests.
-The 319-minute estimate is materially higher than round 2's 51 because Final
-coverage was missing. Authoring provision is 180 minutes, making 499 minutes
+The 335-minute estimate is materially higher than round 2's 51 because Final
+coverage was missing. Authoring provision is 180 minutes, making 515 minutes
 before queue waits; the caller must commission within available supervision and
 ordering limits, not assume this feature is already active in the host.
 
