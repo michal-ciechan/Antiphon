@@ -193,6 +193,14 @@ internal static class VolumeRetirementFixture
     internal static string DindMount(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "volumes", "antiphon-runner-temp_dind-data", "_data");
 
+    internal static async Task ReadyPreview(C1008HostFixture fixture, string extra = "")
+    {
+        var preview = await fixture.Run("retire-temp-runner", extra, dryRun: true);
+        preview.Exit.ShouldBe(0, "c1609: a Ready preview precedes apply; " + preview.Output);
+        preview.Output.ShouldContain(ReadyMarker);
+        fixture.Removed.ShouldBeEmpty("c1609: the Ready preview removes nothing");
+    }
+
     internal static async Task<string> AuditText(C1008HostFixture fixture, string hostCase = "retire-temp-runner")
     {
         var path = Path.Combine(fixture.Root, "evidence", hostCase, "preview-audit.out");

@@ -419,6 +419,7 @@ public sealed class RetiredTempContainerHostTests
         lookup.Exit.ShouldBe(0,"c994-image-binding c994-image-retention: "+lookup.Output);
         lookup.Output.Split('\n').Where(x=>x.StartsWith("LOOKUP_CASE ")).Select(x=>x[12..]).ShouldBe(new[]{"matching","retained","fallback","corrupt","symlink","traversal","foreign-operation","foreign-source","foreign-project","foreign-projectid","foreign-stamp","conflicting","unrelated-newest"},"c994-image-binding: exact receipt roster");
         f.ReloadDocker();var file=f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json";var record=JsonNode.Parse(File.ReadAllText(file))!;record["sourceSha"]=new string('b',40);File.WriteAllText(file,record.ToJsonString());
+        await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
         var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
         foreign.Exit.ShouldBe(0,"c994-image-binding: a completed receipt from another SHA still audits; "+foreign.Output);
         foreign.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
@@ -451,6 +452,10 @@ public sealed class RetiredTempContainerHostTests
                 commit=await C994ScriptProcess.Run("git","-C",f.Root+"/work/repo","commit","-qm","unpublished");commit.Exit.ShouldBe(0);
             }
             var before=f.Docker["volumes"]!.ToJsonString();
+            // Published work is the only exit-0 apply. A Ready preview keeps that delete reachable.
+            // Dirty and unpublished must still refuse at the content audit, before this gate.
+            if(work=="published")
+                await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
             f.Trace.Where(a=>a[0]=="create").ShouldNotBeEmpty("c994-image-required: offline audit reached");

@@ -786,7 +786,9 @@ public sealed class RollingVolumeRecycleScriptTests
         using var host = new C1008HostFixture(main: false);
         var operation = request["recycle"]!["operationId"]!.GetValue<string>();
         var stamp = request["tempRetiredAt"]!.GetValue<string>();
-        var retired = await host.Run("retire-temp-runner", $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'");
+        var retiredExtra = $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'";
+        await VolumeRetirementFixture.ReadyPreview(host, retiredExtra);
+        var retired = await host.Run("retire-temp-runner", retiredExtra);
         retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
         host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
             "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
@@ -3210,6 +3212,7 @@ internal sealed class C1008HostFixture : IDisposable
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
             C1609_CONTENT_AUDIT_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-content-audit.sh'; export C1609_CONTENT_AUDIT_FILE
             C1609_VOLUME_METADATA_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-volume-metadata.sh'; export C1609_VOLUME_METADATA_FILE
+            C1609_RETIREMENT_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-retirement.sh'; export C1609_RETIREMENT_FILE
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
             DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'

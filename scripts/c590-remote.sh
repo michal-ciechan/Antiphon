@@ -6627,7 +6627,8 @@ def open_status_move($before;$after;$detail;$runner):
             C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count $drift"
             # Attempts 1 and 2 always retry. Attempt 3 refuses until the journal says
             # the containers are gone, then keeps these rows. Binding and land already ran.
-            if [ "$attempt" -lt 3 ] || ! c1008_tasks_containers_removed; then return 2; fi
+            # v2 volume-delete census never treats removed containers as permission to continue.
+            if [ "${C1609_CENSUS_V2:-}" = 1 ] || [ "$attempt" -lt 3 ] || ! c1008_tasks_containers_removed; then return 2; fi
             C1008_TASK_ERROR=''
         fi
         # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
@@ -6716,6 +6717,10 @@ def open_status_move($before;$after;$detail;$runner):
     done
     C1008_TASK_ERROR=''
     }
+    if [ "${C1609_CENSUS_V2:-}" = 1 ]; then
+        c1609_census_v2_loop || return $?
+        return 0
+    fi
     for attempt in 1 2 3; do
         code=0; c1008_tasks_collect_attempt || code=$?
         if [ "$code" = 0 ] || [[ "$C1008_TASK_ERROR" != 'RecycleTaskCensusUnknown cause=Drift '* ]] || [ "$attempt" = 3 ]; then return "$code"; fi
@@ -8963,10 +8968,24 @@ c1609_load_volume_metadata() {
     fi
 }
 
+c1609_load_retirement() {
+    local file="${C1609_RETIREMENT_FILE:-}"
+    [ "${c1609_retirement_loaded:-}" = 1 ] && return 0
+    c1609_retirement_loaded=1
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        file="$(dirname "$0")/c1008-retirement.sh"
+    fi
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+        # shellcheck disable=SC1090
+        . "$file"
+    fi
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
     require_lane host
+    c1609_load_retirement
     # Inventory is a docker --env only. A shell export must not reach the helper.
     if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
     [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
@@ -9066,6 +9085,9 @@ c1008_recycle() {
             if [ "$code" != 0 ]; then
                 detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+                if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                    c1609_write_refused_preview "$detail" || true
+                fi
                 case "$code" in
                     3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
                     4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
@@ -9083,6 +9105,7 @@ c1008_recycle() {
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
+            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
             printf 'C1609_RETIREMENT state=Ready\n'
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
                 printf 'audit check=origin-present status=0\n'
@@ -9207,7 +9230,11 @@ c1008_recycle() {
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     c1008_audit_checked; after="$C1008_AUDIT"
     [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    # Temp volume deletion uses the v2 census: Drift and Unstable retry here, then stop
+    # before compose down. Main keeps the v1 collector.
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     c1008_status_proof
+    C1609_CENSUS_V2=0
     c1008_references "$C1008_CENSUS" '[]'
     after="$(c1008_disk)" || c1008_refuse RecycleDiskUnknown
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskBefore=$disk|.phase="removing"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
@@ -9216,7 +9243,14 @@ c1008_recycle() {
         c1609_state_credential_scan || c1609_scan=$?
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
         if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
-        compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || c1008_refuse RecycleRemoveFailed
+        # Resume continues a journal that already passed this gate. A fresh apply does not.
+        if [ "${C1008_RESUME:-0}" != 1 ]; then
+            c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+        fi
+        if ! compose_temp down -v >> "$CASE_DIR/command.log" 2>&1; then
+            c1609_mark_partial_refused || true
+            c1008_refuse RecycleRemoveFailed
+        fi
     fi
     for name in "${C1008_TARGETS[@]}"; do
         c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'

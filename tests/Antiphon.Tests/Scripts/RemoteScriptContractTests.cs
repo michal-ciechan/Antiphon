@@ -3117,6 +3117,7 @@ public sealed class RemoteScriptContractTests
         C1008HostFixture.RequireNativeLinux();
         using (var accepted = new C1008HostFixture(main: false))
         {
+            await VolumeRetirementFixture.ReadyPreview(accepted);
             var run = await accepted.Run("retire-temp-runner");
             accepted.Removed.Length.ShouldBe(4, "retire-host-proof: absent/null success removes four; " + run.Output);
         }
@@ -3135,6 +3136,8 @@ public sealed class RemoteScriptContractTests
             using var invalid = new C1008HostFixture(main: false);
             if (fault == "counterpart") invalid.Statuses["server2"]!["acceptingNewWork"] = false;
             else invalid.Docker["fault"] = fault;
+            // down-retains-volume is observed at compose down. A Ready preview keeps that fault reachable.
+            if (fault == "down-retains-volume") await VolumeRetirementFixture.ReadyPreview(invalid);
             var refused = await invalid.Run("retire-temp-runner");
             refused.Exit.ShouldBe(2, "retire-host-proof: checked down/census/counterpart " + fault);
             invalid.Removed.ShouldBeEmpty();
@@ -3157,7 +3160,9 @@ public sealed class RemoteScriptContractTests
     {
         C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture(main: false);
-        var run = await f.Run("retire-temp-runner", "c849_budget_gate() { write_result false CacheDiskLow 2; }");
+        const string diskExtra = "c849_budget_gate() { write_result false CacheDiskLow 2; }";
+        await VolumeRetirementFixture.ReadyPreview(f, diskExtra);
+        var run = await f.Run("retire-temp-runner", diskExtra);
         f.Removed.Length.ShouldBe(4, "recycle-disk-order: reclaim does not need the allocation budget; " + run.Output);
         run.Exit.ShouldBe(0);
     }
@@ -7086,6 +7091,7 @@ public sealed class RemoteScriptContractTests
         }
         using (var retained = new C1008HostFixture(main: false))
         {
+            await VolumeRetirementFixture.ReadyPreview(retained);
             var run = await retained.Run("retire-temp-runner");
             run.Exit.ShouldBe(0, run.Output);
             retained.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",

@@ -203,6 +203,9 @@ public sealed class C1364BoundLandWaitProofTests
         }
         if (resumePhase is not null) await SeedResume(fixture, hostCase, resumePhase);
         if (lateLand) fixture.Docker["fault"] = "late-land";
+        // Temp apply reaches compose down only after a Ready preview. The observed run still owns the proof counter.
+        if (!main && !preview && resumePhase is null && proof >= 4)
+            await VolumeRetirementFixture.ReadyPreview(fixture);
         var removedBefore = fixture.Docker["removed"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
         var mutated = lateLand && Environment.GetEnvironmentVariable("C1364_WAIT_MUTANT") == "post-removal-zero";
         var run = await fixture.Run(hostCase,
