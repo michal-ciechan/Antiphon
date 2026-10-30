@@ -1,7 +1,27 @@
 # CARD-1615: isolate rollout control from canonical activation
 
-Plan only. Base `ade54222543381e2e1b31ad79d8ae33a4035f70b` (rc source),
-branch `feat/card-task-7734ac39`, inspected 2026-10-30. No product edits or rollout.
+Plan only. Round-2 base `f9bf72bd500b30d7dc7fae32971a2c8c83923c69` (rc source
+plus round-1 plan and design review), branch `feat/card-task-28be9547`, inspected
+2026-10-30. No product edits or rollout. Round-1 source base was
+`ade54222543381e2e1b31ad79d8ae33a4035f70b`.
+
+## Round-2 revision ledger
+
+This initial outline is a WIP; the three corrections below will be completed in
+separate pushed slices before another design review:
+
+1. Review D-1: classify task, standing-agent and interactive callers independently;
+   preserve the standing orchestrator's authorized rollout path and test each class.
+2. Review D-2: name rollout SHA X and canonical activation SHA, prohibit canonical
+   restarts during an active controller, and refuse version skew at phase admission.
+3. Review D-3: replace the conflicting queued-land wait, canonical rollout source,
+   broad worktree refusal and stale Shared-default instructions by exact location.
+
+Also settle CARD-1609 landing order, CARD-1610 phase-boundary behavior, receipt
+retention and Windows operational prerequisites; finish verification design in
+this plan so the revised plan goes to Review, then Code. Re-import the checkpoints
+and reconcile roster/counts. Until the ledger is marked complete, later round-1
+wording remains subject to these explicit corrections.
 
 Choose **option (d), an owned Worktree controller**, with an early script admission
 check against accidental Shared execution. Keep canonical pull/restart/provisioning
