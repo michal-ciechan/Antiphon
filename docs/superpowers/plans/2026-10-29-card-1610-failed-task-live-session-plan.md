@@ -4,6 +4,7 @@ Date: 2026-10-30. Round 3 Plan, revising the round-2 design in place.
 Round-3 source/census base: `8e311b52225ea4d16df3b098241ebae23601fe14`.
 Prior round source: `93a21a1fac2ab3965cce5a48503d54fb71132c07`.
 Status: final round-3 design; verification design is folded into this final Plan round.
+Round 4 (S1 test adequacy) raises V-1 to 22 with mixed-cap and zero-row-terminal.
 Implementation handoff will be Code on origin/master after the stated ordering gates.
 No product changes are authorized by this Plan dispatch. The initial skeleton
 and each defect response were committed and pushed during this round.
@@ -639,7 +640,14 @@ returns bool, not an Unknown enum: uncertainty means absent transcript evidence,
 an unfinished session (Created/Stopping) outside liveSessionIds, an unavailable
 fresh runner sample or mismatched generation. These cannot prove idle and are
 also retained. A transcript with no rows is absent evidence and is retained on
-the TTL pass, the cap pass, and the pre-kill recheck. The boundary read is two
+the TTL pass, the cap pass, and the pre-kill recheck. Over the last 14 days,
+1,862 completed delegate sessions had no Succeeded task with a zero-row session;
+all 34 zero-row sessions belonged to Failed or Canceled tasks, so no agent kind
+routinely produces a zero-row session after a completed turn. The pre-kill
+recheck missing-boundary clause is unwitnessed defence in depth: the first pass
+already drops those sessions from the retire set, so on a stable transcript it
+never decides a kill, and zero-row-recheck witnesses the helper
+SessionsWithoutTurnBoundaryAsync rather than that call site. The boundary read is two
 server-side queries that return only session ids: sessions that have any
 transcript row, and sessions that have a boundary row (TurnEnd,
 SessionRestartBoundary, a CompactBoundary whose text contains "(manual)", or a
@@ -692,7 +700,7 @@ landed SHAs at commissioning; a plan observation is not current landing evidence
 
 | Slice | Files and concrete behavior | Tests |
 |---|---|---|
-| S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; FailedTaskSessionOwnership.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (20), changed AgentTaskPoolTests janitor cases, GrokDelegateDispatchTests cap case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
+| S1 visibility/janitor | AgentTaskDispatcher.cs retirement; AttentionService.Seats.cs/Leaks.cs; new FailedTaskSessionFacts.cs; FailedTaskSessionOwnership.cs; AgentTaskDtos.cs; AttentionKind/AgentIncidentKind; client/src/api/agentTasks.ts and attention.ts mirrors; docs/session-runtime-invariants.md | TaskSupervisionVisibilityTests (22), changed AgentTaskPoolTests janitor cases, GrokDelegateDispatchTests cap case, full Pool/Overdue/Attention/SeatOccupancy classes, guards, two runner safety methods |
 | S2 hold/control | TaskDeadlinePolicy.cs; new AgentTaskDispatcher.CeilingHold.cs; AgentTaskDispatcher.cs overdue; AgentTaskReplyService.cs typed AnswerCeilingAsync; AgentTaskService.cs retry; new CeilingHoldFacts.cs; AttentionService hold projection; AgentTask.cs; DTOs; server/Api/Endpoints/AgentTaskEndpoints.cs; EF mapping/migration | TaskCeilingPolicyTests (12), TaskCeilingHoldTests (25), TaskCeilingControlTests (19); full policy/overdue/boot/reply/runtime classes and occupancy witnesses |
 | S2 inspected unchanged | DispatchConcurrencyPolicy.cs; AgentTaskPipelineStatusService.cs; CheckCompactionContinuationService.cs; TaskProgressPolicy.cs; AgentSessionRuntime.cs; SessionRuntimeActionCoordinator.cs; AppDbContext runtime fence; tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs | No broadening of Blocked; Working naturally remains selected. Full relevant regression classes below; CARD-0079 witness is narrowly qualified |
 | S3 notices/triage/fencing | Actual failure saves in D-2 (AgentTaskDispatcher.cs, AgentTaskReplyService.cs and CheckCompactionContinuationService.cs; recovery/landing callers inspected); new TaskSupervisionNotice domain entity/Purpose/State with EF mapping; SessionQueuedMessage purpose identity; SessionMessageQueueService.cs; CompletionNoteWork.cs; Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs; new LateFailedReportForwarder.cs; DelegationReportFormatter.cs; TaskCompletionNotification.cs; PipelineHandoffActionService.cs; AgentTaskService child admission; lifecycle/runtime docs | TaskSupervisionReceiptTests (21); full DelegationDispatchRecoveryBoundaryTests including C1161, full reply/runtime and completion-recovery classes, successor/control witnesses |
@@ -720,10 +728,11 @@ actual base reconcile the committed roster with source discovery and fresh TRX;
 unknown/missing/extra cases refuse Full credit until explained and the manifest
 is amended. Do not silently omit a class or run a broader suite. The following
 new class counts are exact design commitments (96 TUnit + 3 client cases).
+Round 4 raises the V-1 commitment from 20 to 22.
 
 | ID | New class/method | Expanded cases and essential oracle |
 |---|---|---|
-| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 20 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody, reuse, retain-created, retain-stopping, retain-no-generation, retain-remote-pending, absent-transcript, zero-row-ttl, zero-row-cap, zero-row-recheck, reuse-other-agent, later-agent-task, id-only-query. Actual attention plus custody/no-stop assertions |
+| V-1 | TaskSupervisionVisibilityTests.C1610_Visibility_and_pool_safety | 22 Arguments: failed-fresh, failed-unknown, taskless-ttl, taskless-cap, real-idle, restart-resolution, failed-dedup, source-custody, reuse, retain-created, retain-stopping, retain-no-generation, retain-remote-pending, absent-transcript, zero-row-ttl, zero-row-cap, zero-row-recheck, mixed-cap, zero-row-terminal, reuse-other-agent, later-agent-task, id-only-query. Actual attention plus custody/no-stop assertions. zero-row-recheck is a helper witness. mixed-cap retains the oldest zero-row agent and kills the 2-minute TurnEnd agent. zero-row-terminal sweeps a Stopped zero-row row without a process kill |
 | V-2 | TaskCeilingPolicyTests.C1610_Declared_budget_validation; C1610_Phase_dispatch_guards | 8 budget inputs (null,1,720,0,-1,721,overflow,reasonless), 4 guards (phase-wins, boot, heartbeat, uncertain); 12 |
 | V-3 | TaskCeilingHoldTests.C1610_Working_ceiling_holds | Review/Code/Deploy/Plan/Check; 5; Working status and active episode, no terminal save/release |
 | V-4 | TaskCeilingHoldTests.C1610_Phase_beats_ceiling; C1610_Held_task_keeps_phase_supervision | Each ModelWait/LocalExecution; 4; real phase failure wins despite larger ceiling fraction |
@@ -748,7 +757,11 @@ Created, Stopping, a missing generation, or a pending remote inventory is treate
 as idle. Round 3 follows D-10 and makes V-1 20 by adding zero-row-ttl, zero-row-cap,
 zero-row-recheck, reuse-other-agent, later-agent-task and id-only-query. On the
 pre-fix tip the three zero-row arms fail because a transcript with no rows is still
-eligible to kill. reuse-other-agent and later-agent-task pass on that tip and go red
+eligible to kill. Round 4 makes V-1 22 by adding mixed-cap and zero-row-terminal.
+Both pass on the committed tip. Removing the first-pass missing-boundary clause
+leaves the earlier arms green and fails these two: the cap retires nothing, and
+the Stopped zero-row row stays in the retire set so the stale sweep never takes it.
+reuse-other-agent and later-agent-task pass on that tip and go red
 only under their own mutations (any Failed on the session holds; the agent-latest
 clause dropped). A later Canceled never-dispatched task on the agent releases the
 hold (A-1). Generation is proved only by StartedAt != default; there is no
@@ -868,9 +881,9 @@ One build per distinct output per committed After group; no reuse across SHAs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 20 executed; pre-fix red: zero-row-ttl, zero-row-cap, zero-row-recheck; no skipped | 20 | 6 |
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1610-visibility-red/` | server-integration-visibility-red | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 executed; pre-fix red: zero-row-ttl, zero-row-cap, zero-row-recheck; mixed-cap and zero-row-terminal red only with the first-pass clause removed; no skipped | 22 | 6 |
 | CP-2 | S1-red | CP-1 | server-integration-janitor-red | `/*/*/AgentTaskPoolTests/C1610_Janitor_retains_working_after_full_ttl` | S1 | 1 intended assertion red | 1 | 1 |
-| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 20 passed; no failed/skipped | 20 | 6 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1610-visibility/` | server-integration-visibility | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 | 22 passed; no failed/skipped | 22 | 6 |
 | CP-4 | S1 | CP-3 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | S1 full class | 48 passed; no failed/skipped | 48 | 4 |
 | CP-5 | S1 | CP-3 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | S1 full class | 36 passed; no failed/skipped | 36 | 4 |
 | CP-6 | S1 | CP-3 | server-integration-AttentionServiceTests | `/*/*/AttentionServiceTests/*` | S1 full class | 167 passed; no failed/skipped | 167 | 12 |
@@ -887,7 +900,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-16 | S2-S4 | CP-15 | server-integration-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/C1610_*` | V-3..V-10 | 44 passed; no failed/skipped | 44 | 3 |
 | CP-17 | S2-S4 | CP-15 | server-integration-receipts | `/*/*/TaskSupervisionReceiptTests/C1610_*` | V-11..V-12 | 21 passed; no failed/skipped | 21 | 5 |
 | CP-18 | S2-S4 | CP-15 | script-integration-budget | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13 | 11 passed; no failed/skipped | 11 | 3 |
-| CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 20 passed; no failed/skipped | 20 | 2 |
+| CP-19 | S2-S4 | CP-15 | server-integration-visibility-final | `/*/*/TaskSupervisionVisibilityTests/C1610_*` | V-1 final source | 22 passed; no failed/skipped | 22 | 2 |
 | CP-20 | S2-S4 | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-client-green.json` | V-14 | fresh JSON total=3 passed=3 failed/pending/todo=0; all names; exit 0 | n/a | 2 |
 | CP-21 | S2-S4 | CP-15 | server-integration-AgentTaskPoolTests | `/*/*/AgentTaskPoolTests/*` | full affected class | 48 passed; no failed/skipped | 48 | 4 |
 | CP-22 | S2-S4 | CP-15 | server-integration-AgentTaskOverdueDeadlineTests | `/*/*/AgentTaskOverdueDeadlineTests/*` | full affected class | 36 passed; no failed/skipped | 36 | 4 |
