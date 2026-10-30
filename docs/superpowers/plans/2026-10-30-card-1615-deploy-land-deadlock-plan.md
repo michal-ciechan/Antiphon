@@ -15,7 +15,7 @@ are historical and this document is not executable Code authority.
    IDs are cross-checks, never authentication. Add the bounded read-only route.
 2. Review D-2 — complete: a canonical active-rollout marker mechanically guards
    AppHost restart; qualify all conflicting activation/autonomy instructions.
-3. Review D-3 — pending: phase-scoped tasks, at most 30-minute drain slices, durable
+3. Review D-3 — complete: phase-scoped tasks, at most 30-minute drain slices, durable
    journal and explicit successor handover; CARD-1610 is not a dependency.
 4. Review D-4 — pending: detached standing/interactive controller and canonical
    activation HEAD; reject any controller checkout of a landing target.
@@ -63,7 +63,7 @@ No desktop files or ended native Windows run were inspected.
 
 | ID | Decision and reason | Rejected alternative / risk |
 |---|---|---|
-| D-1 | Use existing Worktree mode for the long rollout. Pin its initial source to the reviewed rc SHA, execute scripts from that owned checkout, retain the same owner across explicit phases. | **(a) Target-aware Deploy exemption:** off-target publication can be safe, but role alone proves neither read-only behavior nor a stable canonical HEAD. A checkout switch after admission or during verification can make the later canonical fast-forward conflict with Deploy. Sound implementation needs coordinated checkout ownership, not just a ref comparison. |
+| D-1 | Use existing Worktree mode for the long rollout. Pin its initial source to the reviewed rc SHA, execute scripts from that owned checkout, use a fresh owner per explicit phase or bounded drain slice, joined through the durable rollout journal. | **(a) Target-aware Deploy exemption:** off-target publication can be safe, but role alone proves neither read-only behavior nor a stable canonical HEAD. A checkout switch after admission or during verification can make the later canonical fast-forward conflict with Deploy. Sound implementation needs coordinated checkout ownership, not just a ref comparison. |
 | D-2 | No new source-writer type or backend schema. Keep Shared claims, source-alias exclusions, repository leases, post-verification recheck and fail-closed unknown identity unchanged. | **(b) Typed rollout class:** useful only with enforceable lifetime/checkout-mutation rules, lease acquisition, restart custody and recovery. A descriptive enum that lets lands pass is an unsafe role exemption with more API/DB work. |
 | D-3 | Bound Held/Queued/Running/NeedsResolution lands remain in flight. Add no census exemption. | **(c) Ignore a land held only by this Deploy:** it still cannot run until Deploy ends, so continuous lands remain broken. The holder may settle/fail while a live process survives; the land can become runnable during recycle. Multi-holder and stale-detail cases make an exception unsafe. A fast named refusal is useful; admission supplies it before waiting. |
 | D-4 | **(d) Worktree plus separate canonical activation** is the selected fix. A linked worktree isolates files while existing land admission already permits its independent owner. Keep remote deployment checkout preparation under existing single-rollout ownership. | A separate clone adds credentials/cache/identity handling; a ReadOnly label is false for Git movement, evidence and deployment effects. A Worktree controller that still invokes canonical pull/restart would retain the race: forbid that in its dispatch contract. |
@@ -71,7 +71,7 @@ No desktop files or ended native Windows run were inspected.
 | D-6 | Gate the five mutating rolling phases and `all`; existing restrictions on `all`, dry-run and resume remain. `check-census` and `check-host-jq` remain observational. `provision-host-jq` remains its existing canonical-only, separately commissioned short task. | Applying the Worktree rule to provisioning conflicts with its provenance contract; weakening that guard or allowing a worktree AppHost restart is out of scope. |
 | D-7 | Classify from a bounded server-side token-resolution read, task first. Environment IDs are optional consistency checks and never select the principal. Admit authenticated standing sessions without inventing tasks; preserve explicit interactive mode with no identity supplied. | The public task-detail GET never binds its requested ID to the token. Environment-shape admission permits a Shared task to drop its task ID and pose as standing. Unknown tokens and unsupported principals fail closed; operator credentials remain independently required. |
 | D-8 | Preparation activates a named reviewed rc SHA X before the controller starts. Keep land publication open; a live active-rollout marker mechanically refuses AppHost restart unless the explicit expected SHA is X. Ordinary activation of later rc tips is deferred; same-X recovery requires a quiescent journal. Desktop-runner restart remains a separately enforced operating restriction. Each mutating invocation requires `/api/version.sha == -Sha == X` before effects. Remove the unqualified "later activation" step; after joining/completing X, a separately commissioned preparation may target a newly named reviewed Y. | Rc lands may advance canonical HEAD to Y while X runs; they remain allowed. Default-HEAD restart would silently activate Y, so health alone cannot admit the next phase. A Shared activation never waits for Held/Queued lands; a Running land is already protected by the dispatch repository lease. |
-| D-9 | Current role ceilings, parking and session recovery are unchanged. Identity admission is once per phase invocation. A task failed by its ceiling mid-phase leaves the admitted command running to its existing bounded outcome; its Worktree cannot hold unrelated lands. The next invocation refuses its terminal owner. Preserve receipts and join actual children before a replacement owner. | Do not add owner polling inside a phase or mistake Failed for command exit. CARD-1610 owns terminal/live-session recovery. A phase-boundary successor retains X and the restart prohibition until the whole rollout is complete or explicitly handed off from a proven quiescent state. |
+| D-9 | Phase-scoped controllers: one phase per task, each drain poll slice at most 30 minutes. Preserve X and a durable handover journal; the orchestrator dispatches a fresh Worktree successor only after a receipt proves command exit and joined owned children. The 240-minute task ceiling and 90-minute tool deadline are unchanged. | One task for the whole rollout routinely exceeds its ceiling (drain-old defaults to 480 minutes). No ceiling increase, automatic cancellation, or dependency on unlanded CARD-1610. Its future hold/recovery support may simplify exceptional live-session assessment, but normal handover uses this journal now. |
 | D-10 | This dispatch requests revised-plan Review, then Code; verification design is therefore included here. Review evaluates the caller/SHA/doc corrections and executable test design; Code collects the bounded provisional timing samples. | No separate TestDesign is left as an unstated prerequisite, and no product test execution or deployment authority is claimed by plan approval. |
 | D-11 | Order the overlapping work **CARD-1609 first, CARD-1615 second**. CARD-1609 plan round 2 is task `02c3c411` per this dispatch. Declare `scripts/deploy-server2.ps1` in Code scope and defer overlapping Code; implement this admission hook against the landed CARD-1609 retire-temp layout, recording its exact SHA. | Parallel edits or assuming today's line numbers survive that repair can lose the new retirement safety. This is the required scheduling order, not a claim that the other task has landed or agreed by message. |
 
@@ -222,6 +222,88 @@ a controlled clock and existing process-effect stubs. Assert no restart effects
 on refusal; matching-X and stale controls reach the effect sentinel. Race tests
 use barriers, never sleeps. Native Windows runs cover replacement/file sharing.
 
+### Phase tasks, bounded waits and successor recipe (review D-3)
+
+Keep the current Deploy 240-minute ceiling. Commission **one phase per task**,
+not `all`; TASK-class `-Phase all` refuses `RolloutPhaseScopeRequired` before
+effects. Standing/interactive `all` retains its existing API with SHA recheck at
+every subphase, but the operating recipe does not use it. Apply the same 30-minute
+drain slice cap to all callers; reject explicit larger `-WaitIdleMinutes` as
+`RolloutWaitBudgetExceeded`, and change its rolling default from 480 to 30.
+Maintain overall drain allowances in the journal (old 480 minutes, temp 240);
+successor dispatch never resets them. An exhausted overall allowance requires
+recovery/decision under the existing runbook, not endless automatic new tasks.
+
+The current `Invoke-HostCase` uses a synchronous child without its own deadline
+(`deploy-server2.ps1:1108-1134`). S2b must replace that call with owned child
+start/wait/output-drain/cancellation and joined cleanup, while preserving manifest
+arguments and host proofs. Phase wall budget: 75 minutes including all census
+waits, HTTP calls and host children, with a separate bounded two-minute local
+cleanup/join. The local tool remains below its 90-minute deadline. Every nested
+wait consumes the remaining phase allowance; no reset at each host case. Drain
+polling specifically stops at 30 minutes, with per-read deadlines consuming the
+same remaining slice. These operating bounds are not test performance measurements.
+
+A process deadline may stop/join owned **local** command children but cannot prove
+remote SSH work stopped. If remote exit/outcome is not known from the host's
+operation receipt, journal `RecoveryRequired`, never `ReadyForNext`. No remote
+kill, destructive rollback, or fresh controller with permission to repeat effects
+is inferred from a local timeout. This is the simpler fail-closed choice where
+existing code cannot establish quiescence.
+
+Add `-RolloutId <guid>` for continuity; first deploy-temp creates/prints it, later
+invocations require it. Resolve its journal to canonical
+`logs/rollouts/<rolloutId>/journal.json`; no arbitrary journal-path option.
+It survives task-worktree cleanup. Under the marker gate, persist schema,
+rollout ID/X, current and next phase, sequence, predecessor/current controller
+IDs, caller class, task IDs, start/end UTC, overall drain budget consumed,
+`ResumeRecycle` operation ID, saved-donor context, scoped project ID, source
+receipt paths and hashes, original/retained evidence paths, exit code, joined
+local-child proof, host outcome proof and `ReadyForNext/SlicePending/
+RecoveryRequired/Completed`. Bound/sanitize fields and write atomically.
+Never store tokens or arbitrary task prose. Full phase receipts remain in the
+evidence roots; copy/hash the minimal handover proof into the durable journal
+directory before settlement can remove the predecessor tree.
+
+Successor procedure:
+
+1. The foreground phase records its outcome and joins all owned children and
+   heartbeat runspace. Normal drain exhaustion emits `RolloutSlicePending`
+   (exit 3, explicitly pending, never success), same-phase next action and spent
+   allowance. It does not clear drain routing or redo drain POSTs on resume.
+   Only that identified wait-boundary condition is pending; unrelated errors
+   remain refused/recovery. Other phase completion advances next phase.
+2. The orchestrator reads the full task report and journal, checks hashes, X,
+   generation, command exit and local/remote proof as applicable. Failed task
+   status alone is neither quiescence nor a reason to reject an otherwise fully
+   joined command receipt; a live/unknown command always blocks succession.
+3. Dispatch a fresh `-Role Deploy -Worktree -StartRef X -Platform Windows`
+   with `-ProjectId <proven-project>` where needed, no existing-agent selection.
+   Its brief names rollout ID, exact next/same phase, journal generation/hash,
+   `-WaitIdleMinutes 30` (or remaining smaller budget), preserved
+   `-ResumeRecycle`/`-SavedDonor` only where supported, and receipt roots.
+   No CARD-1610 hold or predecessor Reply is required. Keep dispatching ordinary
+   work through the existing continuous-dispatch rules.
+4. Fresh token identity/source/API admission runs again. Under the gate, compare
+   the expected predecessor/generation and joined proof before assigning the new
+   controller ID and incrementing sequence; a concurrent successor loses and
+   refuses `RolloutHandoverConflict`. A foreign live marker cannot be stolen.
+   A stale marker still requires joined predecessor proof and API X; if a restart
+   activated Y during the expired interval, refuse and commission recovery.
+5. Final joined retire-temp writes Completed to journal/marker. Retain history;
+   later activation Y is a separate short Shared preparation.
+
+The handover witness uses two authenticated Worktree task fixtures with different
+IDs and real local owned children. First drain reaches its bounded pending
+outcome, records no repeated destructive effect and a joined receipt; successor
+at X resumes the same phase, consumes remaining overall allowance, then advances.
+Negative vectors: live predecessor, absent/changed receipt, wrong X/generation,
+duplicate successor, exhausted allowance, unsupported resume, and remote outcome
+unknown all refuse before effects. A terminal predecessor with proven joined
+receipt succeeds, proving no dependency on CARD-1610. Extend the six-method
+ActiveRolloutMarkerTests roster's handover method; use clock advancement and
+barriers, never real 30-minute sleeps.
+
 ## Implementation slices
 
 **S1 — red tests first.** Add `tests/Antiphon.Tests/Scripts/DeployRolloutWorkspaceTests.cs`
@@ -269,16 +351,23 @@ failure refuses with the fixed reason, without effects even when a file cannot
 be saved. Identity read and Git probes have finite deadlines. The bounded identity API is
 the only new HTTP surface; no indefinite retry, modal prompt, land predicate or census exception.
 
+**S2b — marker and phase custody.** Implement the active marker/restart guard,
+phase budget, bounded host-child wrapper and journal in `scripts/lib/active-rollout.ps1`,
+`scripts/lib/rollout-controller.ps1`, `scripts/restart-apphost.ps1` and
+`scripts/deploy-server2.ps1`. Do not edit landing/census classification or weaken
+CARD-1609 retirement proofs. Commit/push after the S1 red evidence.
+
 **S3 — operating contract.** Update `docs/docker-stack.md` continuous dispatch and
 phase/source notes, `docs/orchestration-loop.md` Shared activation guidance,
 `docs/apphost-runbook.md` source notes, `AGENTS.md` and
 `.claude/skills/antiphon-delegate/SKILL.md` and
 `.claude/skills/antiphon-orchestrator/SKILL.md`. Show fresh
 `-Role Deploy -Worktree -StartRef <reviewed-rc-sha> -Platform Windows`; omit `-Runner`,
-`-OnAgent` and `-Agent`. Keep its assigned branch and source frozen through phases;
-commit narrative evidence after operational SHA checks finish. Pass a proven
+`-OnAgent` and `-Agent`. Keep its assigned branch and source frozen for its one phase;
+report retained evidence and the journal's next-phase recipe before settling. Pass a proven
 `-ProjectId` if canonical origin URL cannot resolve the worktree's project. No
-prose-only tests. Use a single rollout owner outside the runner being recycled.
+prose-only tests. Use one active controller generation outside the runner being recycled, with
+successive phase tasks owning successive journal generations.
 
 Canonical-only steps: rc pull/checkout, AppHost build/restart, desktop runner
 restart when needed, and `provision-host-jq`. The controller tree supports
@@ -318,10 +407,11 @@ invent a duplicate prose-only suite.
 Live `GET /api/orchestrator-instructions` on 2026-10-30 returned version
 `fed0edf3`. The generated text has no independent restart/activation instruction;
 it does carry continuous dispatch with `-WaitIdleMinutes 240`. The phase-slice
-recipe must qualify that as an overall drain allowance, never one task's wait.
-Code updates the source generator's continuous-dispatch paragraph (locate the
-exact text in `OrchestratorInstructionsComposer.cs`) and its existing pins; do
-not edit the generated file or live settings. Refresh/read the effective text
+recipe qualifies that as an overall drain allowance, never one task's wait.
+`OrchestratorInstructionsRenderer.cs:239-244` emits these setting-provided standing
+lines; there is no source literal to replace. Keep the live allowance and enforce
+the smaller 30-minute per-task slice in the controller. Do not edit the generated
+file, renderer or live operator settings. Refresh/read the effective text
 before operational dispatch. `server/Bundles/orchestrator.md` delegates restart
 policy to its owner anchor already; preserve that pointer.
 
@@ -337,9 +427,10 @@ before retiring that owned tree. No raw receipt directory is force-added to Git.
 An existing Shared rollout cannot be converted by changing a label. At a proven
 quiescent phase boundary, retain receipts, finish/join its owned command and settle
 the controller; let pending lands finish, then commission the isolated controller
-with the recorded resume context. A Failed-but-live session needs CARD-1610's
-supported ownership/recovery assessment; no automatic cancellation or kill is
-part of this repair. Merely installing this guard does not release an old owner.
+with the recorded resume context. A Failed-but-live predecessor with no joined receipt requires an explicit
+quiescence assessment using existing process/host receipts; fail closed until
+that proof exists. CARD-1610 may simplify this later, but is not a dependency.
+No automatic cancellation or kill is part of this repair. Merely installing this guard does not release an old owner.
 
 ### Token-resolution API witnesses
 
@@ -450,7 +541,7 @@ census is commissioned by this plan.
 
 ### Checkpoints
 
-Run once after S1-S3 are committed. CP-1 builds; CP-2/3 reuse the same output and
+Run once after S1, S2, S2b and S3 are committed. CP-1 builds; CP-2/3 reuse the same output and
 slice group. All rows initially execute in the Linux lane. A separate native
 Windows task executes CP-1 only with its own isolated build for operational
 wrapper/path branches; no prior desktop run counts. Code selects Windows with
