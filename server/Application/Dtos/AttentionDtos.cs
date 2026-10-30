@@ -390,6 +390,20 @@ public enum AttentionKind
     /// does not flush or send.
     /// </summary>
     PendingNotesAged = 61,
+
+    /// <summary>
+    /// CARD-1610: a pooled Working session with no open task is past the pool idle TTL.
+    /// Warning. Detection only — nothing is killed or released. Key
+    /// <c>pooled-working:{sessionId:N}:{generation}</c>.
+    /// </summary>
+    PooledSessionWorkingPastTtl = 62,
+
+    /// <summary>
+    /// CARD-1610: a Failed task whose session is still running, or whose release is not
+    /// confirmed. Warning. Suppresses the duplicate seat-idle and slot-orphan rows for that
+    /// session. Detection only — nothing is stopped, retried, or released.
+    /// </summary>
+    FailedTaskSessionHeld = 63,
 }
 
 /// <summary>
