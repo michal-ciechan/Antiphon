@@ -5,6 +5,19 @@ Date: 2026-10-30. Plan task `42241722`; source base
 The [native investigation](../../investigations/2026-10-30-card-1199-windows-runnable-feasibility.md)
 is measurement evidence, not clean-source qualification.
 
+## S-F implementation addendum (CARD-1618)
+
+The S-F commission adds CP-54, the release-guide closure contract, to both lanes.
+The current table has 54 rows, eight shared test builds and 224 whole-minute
+estimates; the round-3 53-row validation below remains historical. Original
+selectors/counts are unchanged. CP-46 remains the sole command row, uses its own
+fresh evaluator build and requires the exact approved-line/digest assertion.
+Its build explicitly sets UseAppHost=false for this commissioned Linux lane.
+No graph definition or execution-policy delta is needed. The commission requires
+`-Check` only and forbids `-Update`; it supersedes the original author-time
+regeneration proposal. Native verification, aggregate Debug and S-F-cost remain
+separate required work. R-2 stays pending/required.
+
 ## Round-3 amendment status
 
 Plan task `f8a94733`, assigned base
@@ -104,9 +117,9 @@ and then removing them would weaken the existing gate and misstate the change.
   does not execute deliberate production mutants; their method-scoped inventory
   passes to post-land SourceLanding Mutation under the existing pipeline.
 - D-7: no new project, package, build target or definition file is needed. New
-  helper `.cs` files use the existing default compile glob. Perform the requested
-  one final-tree graph audit `-Update` only after all planned source edits; never
-  hand-edit pins or use approval regeneration to conceal a pin refusal.
+  helper `.cs` files use the existing default compile glob. The S-F commission
+  requires a final-tree graph audit `-Check` without `-Update`; never hand-edit
+  pins or use approval regeneration to conceal a pin refusal.
 - D-8: retain R-2 as a distinct unresolved native junction/custody obligation.
   Enabling these 35 is authorized already and does not require another go-ahead.
 - D-9: all six slices are test/qualification fixes for code already on rc, not
@@ -450,24 +463,15 @@ JSON and its policyHash remain unchanged; adding a .cs fixture does not change
 LandVerificationBuildGraph's definition hash. Do not edit
 LandVerificationBuildGraph.pins.txt or invent a definition-file delta.
 
-Build an author-time evaluator independently, under a host slot, to a fresh
-owned `bin-c1199auditupdate/` in the tool and its referenced projects. Run exactly
-one `-Update` on the final definition tree (Linux Code owns this write):
+The original author-time `-Update` proposal is superseded by the S-F commission:
+do not regenerate approval. CP-46 builds its own fresh evaluator under its row's
+host slot and runs the real `-Check` against the committed manifest, evaluation
+record and pins. Retain their hashes before and after the run. A pin refusal
+requires separate authority; never hand-correct it or extend deadlines.
+A later build-definition change invalidates this finalization and needs a fresh
+commission, not a hidden refresh.
 
-```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-audit-update-build -SlotWaitMinutes 10 -- dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditupdate/ -nodeReuse:false
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1199-final-graph -SlotWaitMinutes 10 -- pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditupdate/Antiphon.LandGraphAudit.dll
-```
-
-It writes `server/Application/Services/LandVerificationBuildGraph.manifest.txt`
-and `LandVerificationBuildGraph.evaluation.txt`; commit/push their genuine delta
-only if changed. The latter binds digest, selectable SDK and pins blob. A pin
-refusal requires separate authority; never hand-correct it or extend deadlines.
-Rebuild once for final acceptance if the embedded manifest changed. No second
-Update after verification. A later build-definition change invalidates this
-finalization and needs a fresh commission, not another hidden refresh.
-
-Tests: CP-41..CP-46 once per indicated lane, one shared build per lane on the
+Tests: CP-41..CP-46 and CP-54 once per indicated lane, one shared build per lane on the
 final source. Confirm exactly 35 target cases pass with zero skipped/failed;
 report CP-44's pre-existing Windows sibling separately. Audit is a named,
 necessary authoring action outside checkpoints because it writes source.
@@ -523,8 +527,8 @@ Write-Output ('CP-46 audit-output=approved evaluator-sha256=' + $c1199AuditDiges
 
 Missing/ambiguous output or DLL leaves CP-46 incomplete even if the runner is
 green. This read-only evidence assertion adds no build/test run and fits CP-46's
-existing five-minute estimate. The command-row audit covers all 53 rows: CP-46
-is the only command row; the other 52 are test filters, so no second command
+existing five-minute estimate. The command-row audit covers all 54 rows: CP-46
+is the only command row; the other 53 are test filters, so no second command
 needs the quoting repair. Recheck that census after import.
 
 The scheduler acquires CP-46's host slot before starting its shell. Its explicit
@@ -534,9 +538,8 @@ exit because a command row has `buildSource=notApplicable`, not a test-build
 receipt. Before invoking the row, require all its output roots absent; retain
 an inventory of roots it creates, including referenced projects. Command outputs
 are outside scheduled-build automatic cleanup. Remove only these owned roots
-after terminal `wait`, preserving logs; a rerun builds afresh. The update output
-may be removed after its audit exits and is never reused for CP-46. Author-time
-build plus update budget is 5 minutes per final tree; CP-46 is 5 minutes per lane
+after terminal `wait`, preserving logs; a rerun builds afresh. No author-time
+update output is used or created. CP-46 is 5 minutes per lane
 (2 build + 3 audit), provisional 10-minute row deadline, evaluator clocks unchanged.
 
 ## Verification design
@@ -680,7 +683,7 @@ the explicit per-row deadlines; its selection must be byte-equivalent to import.
 | S-B2 | CP-21..CP-25,CP-40 | CP-21..CP-25 | 5 plus 1 existing Windows sibling |
 | S-C1 | CP-26..CP-32,CP-49,CP-52 | same | 7 new plus 4 collision and 1 staged-untracked requalifications |
 | S-C2 | CP-33..CP-35 | same | 3 per lane |
-| S-F | CP-41..CP-46 | CP-41..CP-43,CP-45,CP-46 | 35 per lane, plus 1 existing Windows sibling |
+| S-F | CP-41..CP-46,CP-54 | CP-41..CP-43,CP-45,CP-46,CP-54 | 35 per lane, plus 1 existing Windows sibling; CP-54 is a support result |
 | S-F-cost | CP-53 | CP-53 | 1 support test per lane; no 35-row re-execution |
 
 Ranges above are descriptive: pass explicit comma-separated IDs to `--rows`.
@@ -739,7 +742,7 @@ zero skipped/failed except the explicitly expected tests-first CP-37 red.
 | CP-43 | S-F | `CP-41` | both-final-confinement | `/*/*/CheckpointOutputConfinementTests/(imported_props_build_preserves_the_tracked_dependency*)\|(directory_build_props_build_preserves_the_tracked_dependency*)\|(conditional_import_build_preserves_the_tracked_dependency*)\|(transitive_import_build_preserves_the_tracked_dependency*)\|(unevaluable_import_is_refused_before_the_build*)` | V-1 V-2 R-1 R-4 | exactly 5 passed; 0 failed/skipped | 5 | 10 | true |
 | CP-44 | S-F | `CP-41` | windows-final-apphost | `/*/*/CheckpointOutputConfinementTests/windows_confined_build_leaves_use_app_host_unset` | R-1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-45 | S-F | `CP-41` | both-final-guards | `/*/*/(CheckpointFixtureGitEnvironmentTests*)\|(ReleaseGatePlatformTests*)\|(CheckpointNamespaceCensusUsageTests*)\|(LandNonCodeSkipTests*)/(fixture_commit_matches_hardened_status_under_hostile_config*)\|(child_environment_isolated_without_changing_parent*)\|(real_driver_keeps_confinement_and_cancellation*)\|(C1199_WindowsRequiredRoster*)\|(LinuxOnlyWindowsExclusionPolicy*)\|(namespace_census_matches_compiled_checkpoint_cases*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 V-3 R-3 | exactly 7 passed; 0 failed/skipped | 7 | 2 | true |
-| CP-46 | S-F | n/a | both-final-audit | `dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll` | R-3 | build and audit exit 0; exact committed graph and unchanged pins; require exactly one whole line `approved` in rows/CP-46/console.log and fresh evaluator SHA-256 via mandatory post-run assertion | n/a | 5 | true |
+| CP-46 | S-F | n/a | both-final-audit | `dotnet build tools/Antiphon.LandGraphAudit -c Release --property:OutputPath=bin-c1199auditcheck/ --property:UseAppHost=false -maxcpucount:1 -nodeReuse:false && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin-c1199auditcheck/Antiphon.LandGraphAudit.dll` | R-3 | build and audit exit 0; exact committed graph and unchanged pins; require exactly one whole line `approved` in rows/CP-46/console.log and fresh evaluator SHA-256 via mandatory post-run assertion | n/a | 5 | true |
 | CP-47 | S-B1 | `CP-13` | both-shared-git-regressions | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/(shape_staged_untracked*)\|(intermediate_output_path_tampering_is_reported*)\|(generated_target_file_tampering_is_reported*)\|(dirty_tracked_tree_is_refused_and_unmodified*)\|(tracked_snapshot_contains_committed_files*)\|(index_added_file_is_kept_and_indexed*)` | V-1 V-2 R-1 | exactly 6 passed; 0 failed/skipped | 6 | 11 | true |
 | CP-48 | S-B1 | `CP-13` | both-git-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-49 | S-C1 | `CP-26` | both-native-collision-sentinels | `/*/*/CheckpointShapeConflictTests/(shape_existing_stamp*)\|(shape_compiler_collision*)\|(shape_existing_output_directory*)\|(shape_existing_output_symlink*)` | V-4 R-1 | exactly 4 passed; 0 failed/skipped | 4 | 3 | true |
@@ -877,7 +880,7 @@ S-F-cost budget: Linux Code 60m (20 authoring + 20 build/check + 10 slot allowan
 One shared test build per lane; CP-53 body estimate 2m, deadline 4m. This is a
 required follow-up, separate from the aggregate-run Debug investigation.
 Its cost JSON and test/harness edits do not change graph definition inputs;
-retain S-F's single `-Update`, with no second refresh. If implementation requires
+retain S-F's checked approval, without running `-Update`. If implementation requires
 a definition-file change, stop this follow-up and commission a revised graph
 approval separately rather than silently expanding D-7.
 
@@ -957,7 +960,7 @@ coverage result.
 Do not run with the importer's automatic 15-minute/3x defaults: import currently
 sets CP-41/CP-42 to **72 minutes** and warns. Produce an ignored YAML from this
 plan, then change ONLY the documented timeout fields (and timing environment
-metadata); verify all 53 IDs, After, build IDs, filters, counts and estimates
+metadata); verify all 54 IDs, After, build IDs, filters, counts and estimates
 are identical to import. This is the executable checkpoint manifest for Code,
 not a policy/schema change. Keep the unedited import alongside it.
 
@@ -978,6 +981,7 @@ not a policy/schema change. Keep the unedited import alongside it.
 | CP-48,CP-50,CP-51,CP-52 | 2 | One small case each, provisional |
 | CP-49 | 6 | 2x 3m collision batch, provisional |
 | CP-53 | 4 | 2x 2m offline cost/admission witness; 10m shared build separate |
+| CP-54 | 2 | One release-guide closure contract, provisional; shared build separate |
 
 Set `timeouts.rowMinutes: 20` for the shared-build floor (approximately 2x the
 9m56s build sample) and `build.slotWaitMinutes: 10` for each acquisition; never
