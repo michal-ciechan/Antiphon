@@ -35,6 +35,8 @@ internal sealed class RunnerTerminalSession
     /// </summary>
     public AgentExitReason? GenerationKillCause { get; private set; }
     public Task<int> Exited { get; private set; } = Task.FromResult(0);
+    private readonly TaskCompletionSource<AgentExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<AgentExitObservation> Completion => _completion.Task;
 
     public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
@@ -349,6 +351,7 @@ internal sealed class RunnerTerminalSession
                     && session.AcceptedStartedAt is { } current
                     && !SessionGeneration.Equal(current, mine))
                 {
+                    _completion.TrySetResult(new(null));
                     return -1;
                 }
 
@@ -358,15 +361,18 @@ internal sealed class RunnerTerminalSession
                         && session.AcceptedStartedAt is { } exitedGen
                         && !SessionGeneration.Equal(exitedGen, expected))
                     {
+                        _completion.TrySetResult(new(null));
                         return -1;
                     }
 
                     ExitReason = session.ExitReason;
+                    _completion.TrySetResult(new(session.ExitCode, session.ExitSignal, session.ExitStopIntent));
                     return session.ExitCode ?? 0;
                 }
             }
             catch
             {
+                _completion.TrySetResult(new(null));
                 return -1;
             }
 
@@ -376,10 +382,12 @@ internal sealed class RunnerTerminalSession
             }
             catch (OperationCanceledException)
             {
+                _completion.TrySetResult(new(null));
                 return -1;
             }
         }
 
+        _completion.TrySetResult(new(null));
         return -1;
     }
 

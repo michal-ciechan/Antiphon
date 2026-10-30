@@ -388,7 +388,7 @@ public sealed class CheckCompactionContinuationService
             session.Status = SessionStatus.Stopped;
             session.EndedAt = UtcNow();
             session.TerminationSource = SessionTerminationSource.CompactionContinuationRecovery;
-            session.ExitCode = 0;
+            session.ExitCode ??= 0;
         }
 
         episode.State = CheckCompactionRecoveryState.Stopped;

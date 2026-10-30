@@ -195,8 +195,29 @@ public sealed class SessionReconciliationService
             ? liveSessionsQuery.Where(s => s.RunnerId == null)
             : liveSessionsQuery.Where(s => s.RunnerId == ownerRunnerId);
         var liveSessions = await liveSessionsQuery.ToListAsync(ct);
+        var exitedById = runnerSessions.Where(s => s.Status == "Exited").ToDictionary(s => s.SessionId);
+        var exitedIds = exitedById.Keys.ToArray();
+        var terminal = await _db.AgentSessions.Where(s => exitedIds.Contains(s.Id)
+            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
+            && s.RunnerId == ownerRunnerId).ToListAsync(ct);
+        foreach (var row in terminal)
+        {
+            var snapshot = exitedById.GetValueOrDefault(row.Id);
+            if (snapshot is null || !SessionGeneration.Equal(snapshot.AcceptedStartedAt, row.StartedAt)) continue;
+            await _db.AgentSessions.FromSqlInterpolated(
+                $"""SELECT * FROM "AgentSessions" WHERE "Id" = {row.Id} FOR UPDATE""").AsNoTracking().SingleAsync(ct);
+            await _db.Entry(row).ReloadAsync(ct);
+            if (row.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
+                || !SessionGeneration.Equal(snapshot.AcceptedStartedAt, row.StartedAt)) continue;
+            if (!SessionExitEvidence.Apply(row, snapshot.ExitCode, snapshot.ExitSignal, snapshot.ExitStopIntent))
+                _logger.LogWarning("Conflicting terminal exit snapshot for session {SessionId}; retaining first evidence", row.Id);
+        }
         if (liveSessions.Count == 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
             return 0;
+        }
 
         var runnerById = runnerSessions.ToDictionary(s => s.SessionId);
         var startingGrace = TimeSpan.FromMilliseconds(Math.Max(0, _settings.StartingGraceMs));
@@ -262,7 +283,11 @@ public sealed class SessionReconciliationService
         }
 
         if (closedSessionIds.Count == 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
             return 0;
+        }
 
         await _db.SaveChangesAsync(ct);
         if (transaction is not null)
@@ -658,6 +683,8 @@ public sealed class SessionReconciliationService
         row.Status = SessionStatus.Running;
         row.EndedAt = null;
         row.ExitCode = null;
+        row.ExitSignal = null;
+        row.ExitStopIntentJson = null;
         row.FailureReason = null;
         row.LastSeenAt = now;
 
@@ -775,7 +802,8 @@ public sealed class SessionReconciliationService
         session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
             ? SessionStatus.Stopped
             : SessionStatus.Failed;
-        session.ExitCode = runnerSession.ExitCode;
+        if (!SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent))
+            _logger.LogWarning("Conflicting exit snapshot for session {SessionId}; retaining first evidence", session.Id);
         if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
         {
             session.FailureReason =

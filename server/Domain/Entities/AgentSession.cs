@@ -63,6 +63,9 @@ public class AgentSession
 
     public DateTime? EndedAt { get; set; }
     public int? ExitCode { get; set; }
+    /// <summary>Null = unavailable; zero = observed without a POSIX signal; positive = actual signal.</summary>
+    public int? ExitSignal { get; set; }
+    public string? ExitStopIntentJson { get; set; }
     public string? FailureReason { get; set; }
 
     /// <summary>

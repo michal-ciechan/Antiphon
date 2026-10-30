@@ -12,18 +12,23 @@ namespace Antiphon.Server.Application.Exceptions;
 public sealed class RemoteLaunchAlreadyExitedException : Exception
 {
     public RemoteLaunchAlreadyExitedException(
-        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason)
+        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason,
+        int? exitSignal = null, Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? exitStopIntent = null)
         : base(Describe(runnerId, sessionId, exitCode, exitReason, runnerExitReason))
     {
         RunnerId = runnerId;
         SessionId = sessionId;
         ExitCode = exitCode;
+        ExitSignal = exitSignal;
+        ExitStopIntent = exitStopIntent;
         ExitReason = exitReason;
     }
 
     public string RunnerId { get; }
     public Guid SessionId { get; }
     public int? ExitCode { get; }
+    public int? ExitSignal { get; }
+    public Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent { get; }
     public AgentExitReason ExitReason { get; }
 
     private static string Describe(

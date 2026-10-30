@@ -36,7 +36,8 @@ public sealed record SessionRunnerSessionDto(
     DateTime? AcceptedStartedAt = null,
     global::Antiphon.SessionRunner.Contracts.HerdrLabelObservation? LabelObservation = null,
     global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
-    int? ExitSignal = null);
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
@@ -63,7 +64,8 @@ public sealed record SessionRunnerExitedEvent(
     AgentExitReason ExitReason,
     long LastSequence,
     DateTime? AcceptedStartedAt = null,
-    int? ExitSignal = null);
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record SessionRunnerTranscriptEvent(
     Guid SessionId,

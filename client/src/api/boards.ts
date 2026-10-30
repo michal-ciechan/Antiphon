@@ -268,6 +268,8 @@ export interface AgentSessionSummaryDto {
   lastSeenAt: string
   endedAt: string | null
   exitCode: number | null
+  exitSignal?: number | null
+  exitStopIntent?: ProcessStopIntentDto | null
   failureReason: string | null
   /**
    * Newest-usage-row fullness (tokens / ceiling), 0.0–1.0+. Null/omitted = unknown: no usage
@@ -1064,4 +1066,24 @@ export function moveCardOptimistically(
   })
 
   return { ...board, columns }
+}
+
+/** Diagnostic intent only; serialized provenance does not establish the sender. */
+export interface ProcessStopIntentDto {
+  requestId: string
+  sessionId: string
+  acceptedStartedAt: string
+  issuerBootId: string
+  hostInstanceId: string
+  requestedAtUtc: string
+  targetPid?: number | null
+  targetStartedAtUtc?: string | null
+  custodyNamespace?: string | null
+  custodyContainer?: string | null
+  target: 'Unknown' | 'Child' | 'Host' | 'Custody' | 'Helper'
+  attemptedSignal?: number | null
+  path: 'Unknown' | 'ProcessTree' | 'PortaFallback' | 'Disposal' | 'OwnerShutdown' | 'CustodyRelease' | 'Recovery' | 'LaunchCleanup'
+  outcome: 'Requested' | 'Issued' | 'Failed'
+  provenance: 'RecoveredUnverified' | 'LiveIssuer'
+  durable: boolean
 }

@@ -38,6 +38,7 @@ public class Card1619ExitPersistenceTests
         await using var lifetime = native;
         var evt = RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited, json)!.Exited!;
         evt.ExitSignal.ShouldBe(signal, "real runner signal survives server event mapping");
+        new RunnerContractMapper().Map(native.Snapshot).ExitSignal.ShouldBe(signal);
         await using var store = await Store.CreateAsync(native.Id, native.Generation);
         (await store.Runtime.ObserveExitAsync(evt, default)).ShouldBe(SessionExitDisposition.Applied);
         await using var db = store.Db();
@@ -56,6 +57,8 @@ public class Card1619ExitPersistenceTests
         var retained = await reloaded.AgentSessions.SingleAsync();
         Signal(retained).ShouldBe(signal);
         retained.ExitCode.ShouldBe(code);
+        using var replay = JsonDocument.Parse(JsonSerializer.Serialize(store.Bus.PublishedEvents.Last(e => e.EventName == "SessionExited").Payload, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        replay.RootElement.GetProperty("exitSignal").GetInt32().ShouldBe(signal);
     }
 
     [Test]
@@ -89,8 +92,12 @@ public class Card1619ExitPersistenceTests
         var (native, json) = await Card1619NativeExitFixture.CaptureAsync(9);
         await using var lifetime = native;
         await using var store = await Store.CreateAsync(native.Id, native.Generation, terminal: true);
-        var evt = RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited, json)!.Exited!;
+        var wire = JsonSerializer.Deserialize<RunnerSessionExitedEvent>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!
+            with { ExitStopIntent = Intent(native) };
+        var evt = RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited,
+            JsonSerializer.Serialize(wire, new JsonSerializerOptions(JsonSerializerDefaults.Web)))!.Exited!;
         await store.Runtime.ObserveExitAsync(evt, default);
+        await store.Runtime.ObserveExitAsync(evt with { ExitStopIntent = null, ExitSignal = null }, default);
         await using var db = store.Db();
         var row = await db.AgentSessions.SingleAsync();
         Signal(row).ShouldBe(9);
@@ -98,6 +105,12 @@ public class Card1619ExitPersistenceTests
         row.Status.ShouldBe(SessionStatus.Stopped);
         row.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
         row.FailureReason.ShouldBe("retained request detail");
+        var storedIntent = SessionExitEvidence.ReadIntent((string?)Property(row, "ExitStopIntentJson"));
+        storedIntent.ShouldBe(evt.ExitStopIntent);
+        var manifestPath = Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(Path.Combine(native.Root, "pty-hosts", "manifests"), native.Id);
+        var manifest = Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath)!;
+        (manifest with { ExitStopIntent = Intent(native) with { Provenance = ProcessStopProvenance.LiveIssuer } }).SaveAtomic(manifestPath);
+        Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(manifestPath)!.ExitStopIntent!.Provenance.ShouldBe(ProcessStopProvenance.RecoveredUnverified);
     }
 
     [Test]
@@ -107,6 +120,7 @@ public class Card1619ExitPersistenceTests
         await using var lifetime = native;
         await using var store = await Store.CreateAsync(native.Id, native.Generation);
         var evt = RunnerContractMapper.ParseEvent(SessionRunnerEventNames.SessionExited, json)!.Exited!;
+        evt = evt with { ExitStopIntent = Intent(native) };
         await store.Runtime.ObserveExitAsync(evt, default);
         var next = SessionGeneration.Next(native.Generation, DateTime.UtcNow);
         // Use production re-adoption's reset path: positive running snapshot, same accepted generation.
@@ -122,6 +136,7 @@ public class Card1619ExitPersistenceTests
             var row = await db.AgentSessions.SingleAsync();
             Signal(row).ShouldBeNull("production re-adoption clears old evidence");
             row.ExitCode.ShouldBeNull();
+            Property(row, "ExitStopIntentJson").ShouldBeNull();
             row.StartedAt = next;
             await db.SaveChangesAsync();
         }
@@ -161,6 +176,13 @@ public class Card1619ExitPersistenceTests
             db.Model.FindEntityType(entity)!.FindProperty("ExitSignal")!.IsNullable.ShouldBeTrue();
         db.Model.FindEntityType(typeof(AgentSession))!.FindProperty("ExitStopIntentJson")!.IsNullable.ShouldBeTrue();
     }
+
+    private static ProcessStopIntentDto Intent(Card1619NativeExitFixture native) => new() {
+        SessionId = native.Id, AcceptedStartedAt = native.Generation, RequestId = Guid.NewGuid(), IssuerBootId = Guid.NewGuid(),
+        HostInstanceId = Guid.NewGuid(), RequestedAtUtc = DateTime.UtcNow, AttemptedSignal = 9,
+        Target = ProcessStopTarget.Child, Path = ProcessStopPath.ProcessTree, Outcome = ProcessStopOutcome.Requested,
+        Provenance = ProcessStopProvenance.RecoveredUnverified,
+    };
 
     private static object? Property(object value, string name)
     {

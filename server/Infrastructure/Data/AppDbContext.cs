@@ -1590,6 +1590,7 @@ public class AppDbContext : DbContext
             entity.Property(s => s.StartedAt).IsRequired();
             entity.Property(s => s.LastSeenAt).IsRequired();
             entity.Property(s => s.FailureReason).HasMaxLength(2000);
+            entity.Property(s => s.ExitStopIntentJson).HasMaxLength(4096);
             // CARD-0256. Unknown (0) on every pre-existing row — a Stopped session is not
             // evidence of an operator action until a later write records one.
             entity.Property(s => s.TerminationSource).IsRequired()
