@@ -40,8 +40,11 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
         var events = _runtime.Subscribe(ct.Token);
         using (TestTiming.BeginPhase(TestPhaseKind.ProcessSpawn, "card1619-native-host-readiness"))
         {
+            var script = planted
+                ? "printf 'card1619-ready\\n'; while [ ! -f release-self ]; do sleep 0.02; done; kill -9 $$"
+                : $"printf 'card1619-ready\\n'; read line; exit {code}";
             var dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
-                ["-c", $"printf 'card1619-ready\\n'; read line; if [ \"$line\" = self ]; then kill -9 $$; fi; exit {code}"],
+                ["-c", script],
                 new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
             _child = Process.GetProcessById(dto.Pid!.Value);
             _host = Process.GetProcessById(dto.HostPid!.Value);
@@ -66,7 +69,17 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
                 Directory.CreateDirectory(dir);
                 File.WriteAllText(Path.Combine(dir, ProcessStopIntentStore.FileNameFor(intent)),
                     JsonSerializer.Serialize(intent, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-                await _runtime.SendInputAsync(Id, "self\n", ct.Token);
+                await _runtime.DisposeAsync();
+                File.WriteAllText(Path.Combine(Root, "release-self"), "release");
+                var manifestPath = PtyHostManifest.PathFor(Path.Combine(Root, "pty-hosts", "manifests"), Id);
+                while (PtyHostManifest.TryLoad(manifestPath)?.ExitedAtUtc is null) await Task.Delay(10, ct.Token);
+                _host!.Kill();
+                await _host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                _runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings {
+                    SessionLogPath = Root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false
+                }), NullLogger<SessionRunnerRuntime>.Instance);
+                events = _runtime.Subscribe(ct.Token);
+                await _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct.Token);
             }
             else if (requested) await _runtime.KillAsync(Id, TimeSpan.FromMilliseconds(5000), ct.Token);
             else if (signal > 0) Kill(_child.Id, signal).ShouldBe(0);
