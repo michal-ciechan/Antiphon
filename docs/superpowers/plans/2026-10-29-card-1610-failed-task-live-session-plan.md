@@ -12,7 +12,7 @@ and each defect response were committed and pushed during this round.
 This is the pushed skeleton; each item is resolved in place before handoff.
 
 - R3-1 resolved: Working + typed fields; exclusive Reply action, separate question projection, four counting/Check witnesses (D-1).
-- R3-2: Continue re-arms through 720 minutes; final hold requires explicit operator Extend.
+- R3-2 resolved: bounded Continue, explicit 720-minute final hold and authenticated bounded operator Extend; no-phase-tail witnesses (D-4).
 - R3-3: preserve docker-stack step-5 stop authority; use ANTIPHON_TASK_TOKEN and foreground-safe resumable slices.
 - R3-4: forward Failed late reports as durable parent triage notes without settlement or handoff.
 - R3-5: include full affected classes and sharded Unit lane; recount and re-import.
@@ -69,6 +69,7 @@ changing global phase deadlines to hide long test or drain commands.
 | Retry cannot stop Failed+live | RequeueCoreAsync calls StopDelegateAsync | Reuse existing authority and controls |
 | Blocked keeps occupancy | DispatchConcurrencyPolicy, dispatcher local cap, pipeline in-flight and CARD-0079 select Dispatched/Working | Keep Status=Working; do not widen these selectors |
 | Reply only accepts Blocked | AnswerAsync also handles a Working open-question tool; it validates nonblank message before routing | Add an exclusive typed ceiling path before ordinary answer logic |
+| Continue always has phase supervision | ClassifyPhase returns no phase clock for compaction/title/queue tails | Re-arm through 720; expose absence of phase deadline; final operator decision |
 | Deploy fits its ceiling | Default drain wait 480 exceeds ceiling 240 | All-role hold plus declared budget and bounded command waits |
 
 ## Slices
@@ -285,9 +286,42 @@ DTOs/brief/status, and reset elapsed/hold acknowledgements on a genuine retry.
 Reject zero, negative, overflow and over-cap values before admission; existing
 configured zero/off semantics are not silently redefined for old settings.
 A retry retains an explicitly requested budget but resolves a default afresh.
-Extend replies use the same 720-minute absolute cap. At cap, Continue is still an
-explicit decision to proceed under unchanged phase/loop supervision; it is not
-a hidden failure timer.
+Ordinary Extend replies use the same **720-minute total elapsed cap**. Continue
+sets next ceiling to min(720, max(current elapsed minutes, current next ceiling)
++ initial resolved ceiling minutes); the initial interval is snapshotted and
+never grows through prior Continues. Ordinary Extend sets min-cap-validated
+max(elapsed, next ceiling)+M; a requested value over 720 refuses, never clips
+silently. Clear the current question only when persisting the new finite bound.
+At/after elapsed 720, Continue and ordinary Extend refuse with ceiling_cap_reached;
+the same final hold stays Working, visible and counted. It never releases or kills.
+
+**Explicit operator Extend is the only way to re-arm beyond 720.** Use the same
+typed Reply with operatorExtend=true, positive M at most 240 and a bounded reason.
+The API verifies OperatorCredential.Require (existing operator credential, never
+AnswerOrigin or a caller-supplied boolean as authority), then passes authenticated
+authority to the service; a task token alone refuses. Set the next absolute hold
+to elapsed+M, retain the original 720 cap/provenance, and record actor/reason/old
+and new bound. The next breach is again a final hold requiring operator Extend;
+Continue cannot piggyback on an operator exception. No unlimited waiver. An
+operator can instead use existing Cancel. CLI explicit operator mode uses the
+existing owner-only token helper; ordinary Reply, Cancel and Retry gain no token
+requirement. Client displays the cap reason and operator action guidance without
+reading a credential. Fail closed when operator authority is unavailable.
+
+The question and ceilingHold DTO always include last transcript kind, age,
+phase kind/limit/deadline (nullable) and next absolute ceiling. For CompactBoundary,
+TurnTitle and Queue* tails, ClassifyPhase returns no phase clock: display plainly
+**"No phase deadline covers this tail; the ceiling is its only deadline."**
+Working is an activity classification, not proof of useful progress. A breached
+real phase always wins even during a hold or after a Continue/Extend.
+
+R3-2 witnesses use injected time: Code compacts at minute 200, holds at 240,
+Continue without input/watermark change re-arms 480, then holds again with no
+phase deadline. Repeat for title and queued-message tails. At 720 Continue and
+ordinary over-cap Extend refuse and the question stays open. An unauthenticated
+operatorExtend refuses; authenticated Extend(60) at 725 re-arms 785, whose breach
+holds again. Replay/stale episode cannot extend twice. Loop detection remains
+active but is never described as a replacement for an absent phase clock.
 
 The brief names Deploy **2e4f7375** as a live ceiling incident involving sanctioned
 rollout waiting; the fresh status/report observation is distinguished in D-7.
