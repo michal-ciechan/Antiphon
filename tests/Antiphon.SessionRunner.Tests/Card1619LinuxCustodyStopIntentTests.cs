@@ -40,8 +40,9 @@ public class Card1619LinuxCustodyStopIntentTests
         Directory.Exists("/proc/" + f.DescendantPid).ShouldBeFalse();
         File.ReadAllText(procs).Trim().ShouldBeEmpty();
         result.Receipt.ShouldNotBeNull();
-        result.Receipt.ActiveProcesses.ShouldBe(0u);
-        result.Receipt.TerminationSucceeded.ShouldBe(true);
+        var receipt = f.Store.ValidateReceipt(result.Receipt, f.Binding, result.Host!);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.TerminationSucceeded.ShouldBe(true);
         // The observed root exited normally before release; helper success cannot rewrite its wait.
         f.Runtime.Get(f.Binding.Generation.SessionId).ExitSignal.ShouldBe(0);
         var dir = Path.Combine(f.RootPath, "logs", "pty-hosts", "stop-intents");
