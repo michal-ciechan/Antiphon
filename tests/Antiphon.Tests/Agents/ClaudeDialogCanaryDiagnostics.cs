@@ -40,7 +40,7 @@ internal sealed class ClaudeDialogCanaryDiagnostics
         Write("composer-screen.txt", screen);
     }
 
-    internal void Observe(SessionRunnerSnapshotDto snapshot, SessionTranscriptDto transcript,
+    internal void Observe(SessionRunnerSnapshotDto snapshot, SessionRunnerTranscriptDto transcript,
         bool blocked, bool submitted, bool called)
     {
         if (_directory is null) return;
