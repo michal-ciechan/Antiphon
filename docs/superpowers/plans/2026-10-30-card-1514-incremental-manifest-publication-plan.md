@@ -2,7 +2,7 @@
 
 Task `bb0b355c`; base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`.
 CARD-1514 names the existing timing workstream; no new card identity is inferred.
-Status: skeleton, investigation and verification design in progress. Product code is unchanged.
+Status: plan complete under the decisions below; independent plan Review is next. Product code is unchanged. Verification design is included; no separate TestDesign dispatch is needed after review accepts it.
 
 ## Decisions
 
@@ -18,25 +18,9 @@ Status: skeleton, investigation and verification design in progress. Product cod
 | Publication is constant per chunk | The executed manifest is cumulative; a 240-chunk prefix with 21,512 outcomes costs 24.147–31.239 seconds to publish, versus 0.020 seconds warm with an empty prefix. |
 | All 114.2 minutes can be saved | Approximately 109.5 minutes is surrounding publication/bookkeeping. Five historical pre-log tails remain unexplained and outside scope. |
 
-## Mechanism and cost
+Evidence read: [native investigation](../../investigations/2026-10-30-post-test-20s-exit-delay.md); the time breakdown from `origin/feat/card-task-2714a65f:docs/investigations/2026-10-29-rc-run-28bbb58e-time-breakdown.md`; and the speed-ups plan from `5599dedda8d468df473f530c5938a749c3078e59:docs/superpowers/plans/2026-10-29-card-1514-rc-full-speedups-plan.md` (absent in this planning base). The native investigation supersedes the breakdown's process-linger inference; historical outcomes stay unchanged.
 
-Read in full: `docs/investigations/2026-10-30-post-test-20s-exit-delay.md`.
-Current-source call graph, consumer inventory, operation model and integration ordering are being checked before choosing the replacement.
-
-## Slices
-
-Pending: bounded writer/recovery design, consumer integration, regression and native replay slices with exact files and test names.
-
-## Performance budget
-
-Apply `docs/testing-and-build.md#performance-standards` and `docs/test-performance-standards.md`.
-This Plan executes no product tests. Checkpoint import will be validated through a slot-gated isolated tool bootstrap. Implementation checkpoints will carry explicit lane, phase/setup ownership, provisional duration provenance, bounded p95 collection and approximately 2x-p95 timeout derivation. Native Windows replay remains OWED; two historical publication observations are not a p95.
-
-## Verification design
-
-Required: deterministic production-path operation/byte-count RED witness independent of wall time, byte-equivalent compatibility artifacts at fixed inputs, kill/recovery/refusal cases, reader/liveness regressions, classification/census/OS inventory and native scale replay. Checkpoint table pending source roster inspection.
-
-## Source findings (completed)
+## Source findings and cost
 
 References below are to base `17a39b9f05781743082c2ad225dbc4f60f2afa7e`; re-anchor on the implementation base after S1 integration.
 
@@ -56,7 +40,7 @@ Native observations: warm empty prefix 0.020 s; 240 prior chunks / 21,512 outcom
 
 The measured opportunity is 6570.297 s = 109.505 min, about 7.95% of 1378.1 min. New total is approximately `1378.1 - 109.5 + new_publication_minutes`, not a promised 114-minute reduction. If journal plus one projection measured <=2 min, the corresponding estimate would be >=107.5 min saved and <=1270.6 min total at identical workload/load. This <=2 min is a target to test, not observed evidence. Do not add the speed-up plan's profile-packing estimate: both remove the same repeated publication. Historical 41.564/30.868/4.573/3.117/3.060 s pre-log tails remain unresolved and get no saving credit.
 
-## Candidate decision (completed)
+## Candidate decision
 
 - D-4: Use immutable, atomic per-publication journal records and materialize the legacy `groups-executed.json` once at finalization or on an explicit snapshot request. This removes historical-row work from each chunk while retaining recoverable evidence and exact final serialization. An ordinary write must touch only the current TRX/result plus constant-size journal metadata.
 - D-5: A single JSONL append is rejected for this slice: an append is not a portable transactional record boundary; a kill can leave a partial tail, and concurrent/read recovery needs a framing/commit protocol. One temp-file-to-final-name rename per record gives the needed process-kill commit boundary with the existing filesystem pattern.
@@ -90,3 +74,35 @@ The in-repo heartbeat `qualification-supervisor-heartbeat.ps1:114-182` consumes 
 - D-13: Integrate reviewed repair onto the commissioned active rc tip and port the same patch to master through the normal Merge workflow, with exact source/patch identities and lane receipts. Do not merge this master-derived planning ancestry wholesale into rc. Never rebase rc, change a sealed attempt, tag, publish or activate from this task. A new Full attempt uses new source/script/assembly/policy identities after integration; a master land alone does not activate rc. Preserve historical failed receipts and S1/group-2 costs.
 
 No input-waiting session behavior is added or changed. Parking/release deadlines are outside this plan.
+
+## Slices
+
+Use M1/M2/M3 to distinguish these slices from the speed-up plan's S1/S2/etc. Each begins with a committed, pushed assertion-RED witness; commit the fix before checkpoint execution. Baseline compilation/fixture failures or zero tests are not RED.
+
+| Slice | Files and result | Tests / closure |
+|---|---|---|
+| M1 journal and reducer | `scripts/lib/test-phase-evidence.ps1`: writer context, immutable records, one-time legacy import, committed-prefix accessor, byte-compatible projection. New `tests/Antiphon.Tests/TestHelpers/RcManifestJournalTests.cs`, `RcManifestRecoveryTests.cs`, `ManifestPublicationFixture.cs` (shared embedded harness/fixture). Initially leave qualification on its old call schedule until M2 integrates lifecycle; do not activate a half-migrated publisher. | V-1 through V-8, CP-1. Temporary internal integration switch is allowed only between commits and removed by M2; no shipped fallback to cumulative publication. |
+| M2 production path and consumers | Same library plus `scripts/lib/nightly-tests-impl.ps1`: initialize/dispose once; preserve S1 observation; use journal writes at actual chunk boundary; project once on terminal paths; update summary accessor and retain Complete-TestPhaseLaunch compatibility. New `RcManifestIntegrationTests.cs`. `scripts/summarize-test-phases.ps1` needs no new public flag unless recovery cannot be exposed through its existing entry point; default remains an explicit summary request. Existing coverage/release libraries are regression subjects, not repair targets. | V-9 through V-14 and R-1 through R-3; CP-2 through CP-5. |
+| M3 native acceptance | New `RcManifestNativeTests.cs` and shared embedded harness additions; `tests/Antiphon.Tests/slow-tests-allowlist.txt` gets the new Slow class with adjacent measured/provisional reason. No project definition edit: existing timing probe is already staged. Portable recovery tests run in M1; M3 exercises actual Windows rename/share/kill semantics and current native owner. | V-15/V-16; CP-6, Windows only, OWED. Retain external supervisor inspection and at-scale evidence. |
+
+No whole-suite run is authorized for this scoped repair. If a release-authority dependency is absent on the commissioned product base, report that inherited limitation and exercise the actual existing validators/fixtures; do not bundle the speed-up plan's S4 authority integration into this repair.
+
+## Performance budget
+
+Apply [performance standards](../../testing-and-build.md#performance-standards). The Plan runs no product tests; the import bootstrap is the sole build for documentation validation. For implementation, estimates below are provisional under CARD-1514/1404, not measured p95s. Historical Windows evidence is n=2 grown-prefix publication calls at the run SHA `4563e52529b23052856cb0f1e0d01b383cf7590f`, eight CPUs, uncontrolled load, PowerShell 7.6.9/.NET 10.0.14 with test runtime .NET 9.0.22; it supplies mechanism and scale, not test budgets. Group-2's comparable Linux Antiphon.Tests isolated build took 255.45 s at `5b9dd4a649bd369d4eb5e9927e4e800a01755323`; budget 5 min/build pending fresh observations. Its existing heartbeat wrapper took 3.23 s; no new-test duration is yet measured.
+
+| Batch / lane | Expected phases and setup | Estimate / provisional ceiling |
+|---|---|---|
+| M1 CP-1 portable | One isolated build 5 min; fixture preparation <=20 s; shared pwsh host/bootstrap <=10 s; eight cases and controlled process restarts <=140 s; teardown <=10 s. No Docker/DB/web host/migrations. | 8 min total; row 16 min. Individual new cases target <=40 s, initial 80 s body deadline; the old-writer RED cost case alone has a labelled 120 s ceiling because the 480-prefix baseline can exceed 40 s. |
+| M2 CP-2..5 portable | One isolated build 5 min reused at the same SHA; shared frozen fixture; production-loop matrices, release fixture, summary cases and census. CP-2 includes <=4 min body/setup; remaining rows 2/1/3 min. Real release fixture uses one git repository per harness process; no remote writes or product services. | 15 min total; per-row 18/4/2/6 min ceilings. New cases target <=40 s, 80 s initial deadline; legacy selected tests retain their current bounds pending measurements. |
+| M3 CP-6 Windows | One isolated build 5 min; one setup/load per harness; native file-sharing/crash cases <=2 min; native owner scale replay, reference writer and projection <=7 min. All descendants joined. | 14 min total; row 28 min. Native scale method 14 min provisional ceiling; atomic/PS5.1 method 4 min. No promise based on Linux timing. |
+
+Ordinary scope totals **37 estimated minutes, six rows, three isolated builds, 26 minimum outer TUnit results**. Portable group is 23 min; native group 14 min. The aggregate exceeds 30 min: commissioner must attach a Debug commission/timing record under CARD-1514 before executing the aggregate, even though each slice is bounded below 30. Any individual case/batch over budget triggers investigation, not timeout inflation or a blind repeat. The earlier native investigation is the mechanism evidence, not a substitute for these new timing records.
+
+Use one shared loaded production PowerShell module/seed fixture per test process, with independent child directories and deterministic record inputs per case. Crash/startup subjects deliberately use fresh owned processes; record those costs separately. The 0/240/480 prefixes are prepared once in scratch with native JSON serialization or literal fixture data, never by running the slow production writer hundreds of times. Final projection occurs once per arm and is measured separately. No snapshot/restore/clone/container/migration phases apply; label these not-applicable, distinguish unknown from zero, retain preparation, host start, body, read/hash/serialize/flush/rename, finalization, teardown and remainder. Record filesystem/CLI spans and finite external-call deadlines; git calls <=30 s, ordinary owned pwsh/probe calls <=80 s initially, lock acquisition fails within 5 s, cleanup <=10 s. Native replay's old-writer diagnostic arm uses 120 s; no production watchdog changes.
+
+Collect 20 candidate publication samples per prefix in CP-6, keeping cold initialization separate; report nearest-rank empirical p95 (small-sample evidence, not a reliability claim), medians/max, payload lengths and operation counts. Once comparable observations exist, replace provisional deadlines with rounded approximately 2x measured p95, recording SHA/runtime/OS/host/load/sample and any exception under CARD-1404/1514. Do not automatically repeat expensive checkpoints to gather statistics: collect cheap publication samples within the one scale witness. Shared setup and ordinary result counts remain separate from internal sample counts.
+
+Retain ignored `.antiphon/manifest-publication/<source-sha>/<run-id>/` evidence: per-test TRX, raw phase/timing records, source and assembly digests, exact group membership/app category, operation/byte counts, crash boundaries, final artifact hashes and importer/OS declarations. Preserve before/after results; wall times cannot stand in for the deterministic operation oracle. No app/category or dependency pruning earns Full credit. Capture the existing Antiphon.Tests evaluated graph (server, SessionRunner, checkpoint/HostCleanup and staged timing probe dependencies); changed runtime surface is execution tooling, with native shared-process ownership as a downstream consumer. No shared recorder/product application change is planned; project extraction is separate CARD-1545/1546 work.
+
+Checkpoint importer defaults (15 min floor / 3x estimate) are not this budget. Import to a fresh ignored manifest, set `build.slotWaitMinutes=10` and row `timeoutMinutes` to CP-1=16, CP-2=18, CP-3=4, CP-4=2, CP-5=6, CP-6=28 before execution. Use explicit selected-group execution totals of 16/30/28 min for M1/M2/M3 and a finite hard-wall cap adding one 10-min admission allowance; report admission separately. Build ceilings must also be recorded and revisited against approximately 2x measured build p95, rather than treating inherited scheduler floors as measurements. Slot exit 4 means not run; never retry unleased.
