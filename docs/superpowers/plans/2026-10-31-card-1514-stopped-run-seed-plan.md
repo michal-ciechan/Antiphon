@@ -1,5 +1,16 @@
 # Stopped-run seed ordering
 
+Post-green witness repair: initial run 20261031-100310-d7e1 at
+be134adf2c33b328a43fa15c4349dc061d9e0f76 passed 8/8 in 9m22s, one isolated build.
+An extra public-wrapper acknowledgement mutant survived: the fixture read ParamBlock
+from FunctionDefinitionAst rather than Body, creating an unbound fake that inherited
+wrapper variables. Require the actual parameter block and use Body.ParamBlock.
+No production code changes. Re-run the closed eight-row selection from one fresh
+bin-f6-seed-green2/ build so final receipts share the repaired harness source.
+The extra cost is explicitly retained (initial actual 9m22s plus final provisional
+15m, not a hidden retry). Two added direct guard diagnostics bind public-wrapper
+forwarding and age rejection, with byte restoration and the same cases green.
+
 Commissioned task f6aabaef extends the failed-first plan at e805b7848ae1cc1fe00c9d6f7ccb6e21b0ababc3.
 Synthetic portable tests only. Never operate the live run or read desktop files.
 
@@ -28,7 +39,7 @@ seeds; the actual prepared-schedule boundary launches every chunk and observes n
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green1/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green2/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
 | CP-2 | S2 | `CP-1` | seed-order | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/FailedFirstMapping` | failed/new/passed mapping | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-3 | S2 | `CP-1` | seed-ack | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/AcknowledgementRequired` | explicit source acknowledgement | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-4 | S2 | `CP-1` | seed-hash | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/HashMustVerify` | tampered payload fallback | exact method | 1 | 1 | true | TEMP=/tmp |
