@@ -964,6 +964,71 @@ public sealed class LandingGitTests
         }
     }
 
+    // Windows Kill(entireProcessTree) terminates the root and only then asks who its children were.
+    // An intermediate that dies with the root (a job object with KILL_ON_JOB_CLOSE, or Linux
+    // PR_SET_PDEATHSIG) is already gone, so its child is never walked. That child inherits the
+    // redirected pipes. The journal then stays after cancellation even though the recorded root
+    // has exited. Native C448 and C1076 left one .git/antiphon/children record in that shape.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C448_ParentDeathGrandchildDoesNotKeepTheJournal(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("PR_SET_PDEATHSIG stand-in for the Windows job-object kill order. The native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c448-pdeath");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "grand.pid");
+        var script = Path.Combine(repo.Path, "pdeath.sh");
+        await File.WriteAllTextAsync(script, ParentDeathGrandchildGit.Script(pidFile), ct);
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var git = new ParentDeathGrandchildGit(script);
+        using var cancel = new CancellationTokenSource();
+        var call = git.RunAsync(repo.Path, ["commit", "--allow-empty", "-m", "owned"], cancel.Token);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var ready = false;
+            while (watch.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                if (File.Exists(pidFile)) { ready = true; break; }
+                if (call.IsCompleted) break;
+                await Task.Delay(50, ct);
+            }
+
+            ready.ShouldBeTrue("the hidden grandchild is alive before cancellation");
+            cancel.Cancel();
+            var thrown = await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            watch.Stop();
+            Console.WriteLine($"C448_PDEATH elapsed={watch.Elapsed} error={thrown.GetType().Name}");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15),
+                "cancellation returns inside the kill grace, not the grandchild sleep");
+            var grand = int.Parse((await File.ReadAllTextAsync(pidFile, ct)).Trim());
+            var died = Stopwatch.StartNew();
+            while (HolderAlive(grand) && died.Elapsed < TimeSpan.FromSeconds(2))
+                await Task.Delay(50, ct);
+            HolderAlive(grand).ShouldBeFalse(
+                "the grandchild is in the descendant set captured before the root is killed");
+            var common = await git.CommonDirectoryAsync(repo.Path, ct);
+            var children = Path.Combine(common, "antiphon", "children");
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0 && cleared.Elapsed < TimeSpan.FromSeconds(4))
+                await Task.Delay(50, ct);
+            JournalFiles(children).ShouldBeEmpty(
+                "once the hidden grandchild exits, the owned journal is removed");
+        }
+        finally
+        {
+            watch.Stop();
+            cancel.Cancel();
+            KillHolder(pidFile);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+        }
+    }
+
     private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
     {
         var hooks = Path.Combine(repository, ".git", "hooks");
@@ -974,6 +1039,46 @@ public sealed class LandingGitTests
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         return hook;
+    }
+
+    /// <summary>A commit stand-in whose intermediate dies with the root and whose grandchild keeps stdout.</summary>
+    private sealed class ParentDeathGrandchildGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile)
+        {
+            var quoted = pidFile.Replace("\\", "/").Replace("'", "");
+            return "#!/bin/sh\n" +
+                "perl -e '\n" +
+                "my $pidfile = shift;\n" +
+                "my $mid = fork();\n" +
+                "exit 1 if !defined $mid;\n" +
+                "if ($mid == 0) {\n" +
+                "  syscall(157, 1, 9) == 0 or exit 1;\n" +
+                "  exit 0 if getppid() == 1;\n" +
+                "  my $grand = fork();\n" +
+                "  exit 1 if !defined $grand;\n" +
+                "  if ($grand == 0) {\n" +
+                "    syscall(157, 1, 0);\n" +
+                "    open my $fh, q(>), $pidfile or exit 1;\n" +
+                "    print $fh \"$$\\n\";\n" +
+                "    close $fh;\n" +
+                "    sleep 30;\n" +
+                "    exit 0;\n" +
+                "  }\n" +
+                "  sleep 30;\n" +
+                "  exit 0;\n" +
+                "}\n" +
+                "waitpid($mid, 0);\n" +
+                "exit 0;\n" +
+                "' '" + quoted + "'\n";
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
+                return base.StartProcess(start);
+            return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
     }
 
     /// <summary>A push stand-in whose grandchild is reparented to init and keeps stdout open.</summary>
