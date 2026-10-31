@@ -125,6 +125,7 @@ internal static class LiveClaudeStartupCases
     internal static async Task WindowAsync()
     {
         const string v="V-20";
+        Fails(() => LiveClaudeStartupEvidence.RequireOff(Experiment, Control, new(Owner, null, TimeSpan.FromSeconds(1), Settings(Owner.Session))), "C1545 startup/window", v, "incomplete-window");
         foreach(var arrival in new[] {8.001,12,14.999,15})
         {
             var elapsed=TimeSpan.Zero;

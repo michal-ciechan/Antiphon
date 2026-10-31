@@ -31,10 +31,15 @@ public class ClaudeRemoteControlAtStartupCanaryTests
         var executable = ClSession.RequireCore(LiveClaudeCore.Control);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        var experiment = Experiment(executable, profile);
-        var startup = SharedStartup();
-        var control = await startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
-        LiveClaudeStartupEvidence.RequireControl(experiment, control);
+        try
+        {
+            var experiment = Experiment(executable, profile);
+            var startup = SharedStartup();
+            var control = await startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
+            LiveClaudeStartupEvidence.RequireControl(experiment, control);
+        }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        { throw new SkipTestException("20 " + setup); }
     }
 
     [Test]
@@ -43,23 +48,28 @@ public class ClaudeRemoteControlAtStartupCanaryTests
         var executable = ClSession.RequireCore(LiveClaudeCore.Off);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        var experiment = Experiment(executable, profile);
-        var startup = SharedStartup();
-        var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
-        using var sandbox = CanarySandbox.Create(profile, "off");
-        await using var runner = new PtyAgentRunner("modern");
-        var launch = BuildProfileLaunch(profile, "off", sandbox.SessionId, sandbox.SettingsPath);
-        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
-            var observation = await ObserveOffAsync(runner, sandbox, control);
-            LiveClaudeStartupEvidence.RequireOff(experiment, control, observation);
-            var token = "RC-OFF-" + Guid.NewGuid().ToString("N")[..8];
-            await runner.WriteAsync(token);
-            (await runner.WaitForScreenAsync(s => ComposerDeliveryEvidence.FragmentIsVisible(s, token), TimeSpan.FromSeconds(8)))
-                .ShouldBeTrue("startup off composer unavailable");
+            var experiment = Experiment(executable, profile);
+            var startup = SharedStartup();
+            var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
+            using var sandbox = CanarySandbox.Create(profile, "off");
+            await using var runner = new PtyAgentRunner("modern");
+            var launch = BuildProfileLaunch(profile, "off", sandbox.SessionId, sandbox.SettingsPath);
+            await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+            try
+            {
+                var observation = await ObserveOffAsync(runner, sandbox, control);
+                LiveClaudeStartupEvidence.RequireOff(experiment, control, observation);
+                var token = "RC-OFF-" + Guid.NewGuid().ToString("N")[..8];
+                await runner.WriteAsync(token);
+                (await runner.WaitForScreenAsync(s => ComposerDeliveryEvidence.FragmentIsVisible(s, token), TimeSpan.FromSeconds(8)))
+                    .ShouldBeTrue("startup off composer unavailable");
+            }
+            finally { await ExitAsync(runner); }
         }
-        finally { await ExitAsync(runner); }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        { throw new SkipTestException("20 " + setup); }
     }
 
     [Test]
@@ -68,22 +78,27 @@ public class ClaudeRemoteControlAtStartupCanaryTests
         var executable = ClSession.RequireCore(LiveClaudeCore.Slash);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        var experiment = Experiment(executable, profile);
-        var startup = SharedStartup();
-        var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
-        using var sandbox = CanarySandbox.Create(profile, "slash");
-        await using var runner = new PtyAgentRunner("modern");
-        var launch = BuildProfileLaunch(profile, "slash", sandbox.SessionId, sandbox.SettingsPath);
-        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
-            var before = await ObserveOffAsync(runner, sandbox, control);
-            LiveClaudeStartupEvidence.RequireOff(experiment, control, before);
-            await SubmitRemoteControlAsync(runner);
-            var after = await WaitForOwnedBridgeAsync(runner, profile, sandbox.SessionId, ArmWait);
-            LiveClaudeStartupEvidence.RequireSlash(experiment, control, before, after);
+            var experiment = Experiment(executable, profile);
+            var startup = SharedStartup();
+            var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
+            using var sandbox = CanarySandbox.Create(profile, "slash");
+            await using var runner = new PtyAgentRunner("modern");
+            var launch = BuildProfileLaunch(profile, "slash", sandbox.SessionId, sandbox.SettingsPath);
+            await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+            try
+            {
+                var before = await ObserveOffAsync(runner, sandbox, control);
+                LiveClaudeStartupEvidence.RequireOff(experiment, control, before);
+                await SubmitRemoteControlAsync(runner);
+                var after = await WaitForOwnedBridgeAsync(runner, profile, sandbox.SessionId, ArmWait);
+                LiveClaudeStartupEvidence.RequireSlash(experiment, control, before, after);
+            }
+            finally { await ExitAsync(runner); }
         }
-        finally { await ExitAsync(runner); }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        { throw new SkipTestException("20 " + setup); }
     }
 
     private static async Task<StartupControl> RunStartupControlAsync(LiveClaudeExecutable executable,
@@ -162,11 +177,8 @@ public class ClaudeRemoteControlAtStartupCanaryTests
 
     private static string MarkerFile(LiveClaudeProfile profile) => Path.Combine(profile.Context.OwnedRoot, "startup-settings.jsonl");
 
-    private static void RequireHookConfiguration(LiveClaudeProfile profile)
+    internal static void RequireHookConfiguration(LiveClaudeProfile profile)
     {
-        var writer = Path.Combine(profile.Context.OwnedRoot, "settings-source-witness.mjs");
-        if (!profile.Context.DeclaredFiles.TryGetValue(writer, out var digest) || LiveClaudeProfile.HashFile(writer) != digest)
-            throw new LiveClaudeRefusal("settings-unobserved");
         var settings = new[] { ("user", Path.Combine(profile.Paths.ConfigDir,"settings.json")),
             ("project",Path.Combine(profile.Paths.Cwd,".claude","settings.json")),
             ("local",Path.Combine(profile.Paths.Cwd,".claude","settings.local.json")) };
@@ -175,10 +187,26 @@ public class ClaudeRemoteControlAtStartupCanaryTests
             using var doc = JsonDocument.Parse(File.ReadAllText(file));
             var root = doc.RootElement;
             var retained = root.GetProperty("model").GetString() ?? throw new LiveClaudeRefusal("settings-unobserved");
-            var command = $"node \"{writer}\" \"{MarkerFile(profile)}\" {source} \"{retained}\"";
-            if (!root.GetProperty("hooks").GetProperty("SessionStart").EnumerateArray()
-                .SelectMany(m => m.GetProperty("hooks").EnumerateArray()).Any(h => h.GetProperty("type").GetString()=="command" && h.GetProperty("command").GetString()==command))
-                throw new LiveClaudeRefusal("settings-unobserved");
+            var matched = false;
+            foreach (var hook in root.GetProperty("hooks").GetProperty("SessionStart").EnumerateArray()
+                .SelectMany(m => m.GetProperty("hooks").EnumerateArray()))
+            {
+                if (hook.GetProperty("type").GetString() != "command") continue;
+                var command = hook.GetProperty("command").GetString() ?? "";
+                string[] tokens;
+                try
+                {
+                    LiveClaudeProfile.RequireHookCommand(command);
+                    tokens = LiveClaudeProfile.HookTokens(command);
+                }
+                catch (LiveClaudeRefusal) { continue; }
+                if (tokens[3] != source || tokens[4] != retained || tokens[2] != MarkerFile(profile)) continue;
+                var writer = tokens[1];
+                if (!profile.Context.DeclaredFiles.TryGetValue(writer, out var digest) || LiveClaudeProfile.HashFile(writer) != digest)
+                    throw new LiveClaudeRefusal("settings-unobserved");
+                matched = true;
+            }
+            if (!matched) throw new LiveClaudeRefusal("settings-unobserved");
         }
     }
 

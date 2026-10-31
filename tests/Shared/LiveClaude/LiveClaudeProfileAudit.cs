@@ -16,6 +16,15 @@ internal static class LiveClaudeProfileAudit
         return methods[0];
     }
     private static void Fail(string name) => throw new InvalidOperationException("C1545 profile-audit/"+name);
+    internal static bool IsSetupSkip(TryStatementSyntax statement)
+    {
+        if (statement.Finally is not null || statement.Catches.Count != 1) return false;
+        var clause = statement.Catches[0];
+        if (clause.Declaration?.Type.ToString() != "LiveClaudeRefusal") return false;
+        if (clause.Filter?.FilterExpression.ToString().Contains("LiveClaudeOutcome.SetupStatus(", StringComparison.Ordinal) != true) return false;
+        return clause.Block.Statements.Count == 1
+            && clause.Block.Statements[0].ToString().Contains("throw new SkipTestException(\"20 \" + setup)", StringComparison.Ordinal);
+    }
     private static void Expression(string source,string method,string expression)
     {
         var m=Method(source,method);
@@ -24,10 +33,17 @@ internal static class LiveClaudeProfileAudit
     private static void Statement(string source,string method,string expected)
     {
         var m=Method(source,method);
+        var body=m.Body ?? throw new InvalidOperationException("C1545 profile-audit/"+method);
         var statement=SyntaxFactory.ParseStatement(expected);
-        if(m.Body?.Statements.Count(s=>SyntaxFactory.AreEquivalent(s,statement))!=1) Fail(method);
-        var actual=m.Body!.Statements.Single(s=>SyntaxFactory.AreEquivalent(s,statement));
-        Reachable(m.Body,actual,method);
+        var skips=body.Statements.OfType<TryStatementSyntax>().Where(IsSetupSkip).ToArray();
+        if(skips.Length>1) Fail(method);
+        var scopes=skips.Length==1 ? new[]{body,skips[0].Block} : new[]{body};
+        var matches=scopes.SelectMany(scope=>scope.Statements.Where(s=>SyntaxFactory.AreEquivalent(s,statement))).ToArray();
+        if(matches.Length!=1) Fail(method);
+        var actual=matches[0];
+        var parent=(BlockSyntax)actual.Parent!;
+        Reachable(parent,actual,method);
+        if(skips.Length==1 && parent==skips[0].Block) Reachable(body,skips[0],method);
     }
     private static void Reachable(BlockSyntax body,StatementSyntax target,string method)
     {

@@ -5,7 +5,7 @@ namespace Antiphon.TestSupport.LiveClaude;
 
 internal sealed record DeliveryBinding(string Session, string Generation, string NativeBinding);
 internal sealed record DeliveryRow(DeliveryBinding Binding, long Sequence, string Kind, string? Text,
-    string Id, string? Parent, string? Api, bool End = false, bool Error = false);
+    string Id, string? Parent, string? Api, bool End = false, bool Error = false, string? ErrorType = null, string? Request = null);
 internal sealed record DeliveryRequest(DeliveryBinding Binding, long Floor, string Body);
 internal sealed record DeliveryBridge(int Pid, string Started, string Session, string? Id, bool Readable = true);
 internal enum DeliveryReadiness { Ready, Busy, Permission, Question, Unknown }
@@ -108,13 +108,14 @@ internal static class LiveClaudeDeliveryEvidence
                 var parent = Get(root, "parentUuid");
                 if (!root.TryGetProperty("message", out var message)) continue;
                 var text = Content(message, "text");
-                if (type == "user") rows.Add(new(binding, sequence, "UserPrompt", text, id, parent, null));
+                if (type == "user") rows.Add(new(binding, sequence, "UserPrompt", text, id, parent, null, Request: id));
                 else if (type == "assistant")
                 {
                     var error = root.TryGetProperty("isApiErrorMessage", out var e) && e.ValueKind == JsonValueKind.True
                         || root.TryGetProperty("error", out var errorValue) && errorValue.ValueKind is not (JsonValueKind.Null or JsonValueKind.False);
+                    var errorType = error ? OutageType(Get(root, "error"), Status(root)) : null;
                     var kind = string.IsNullOrWhiteSpace(text) ? "Thinking" : "AssistantText";
-                    rows.Add(new(binding, sequence, kind, text, id, parent, Get(message, "id"), Get(message, "stop_reason") == "end_turn", error));
+                    rows.Add(new(binding, sequence, kind, text, id, parent, Get(message, "id"), Get(message, "stop_reason") == "end_turn", error, errorType, parent));
                 }
                 else rows.Add(new(binding, sequence, type == "attachment" ? "QueuedUserPrompt" : "Screen", text, id, parent, null));
             }
@@ -123,6 +124,18 @@ internal static class LiveClaudeDeliveryEvidence
         { throw new LiveClaudeRefusal("transcript-unreadable"); }
         return rows;
     }
+
+    internal static string? OutageType(string? error, int? status)
+    {
+        if (error is "Overloaded" or "ServiceUnavailable" or "RateLimited") return error;
+        if (error is "rate_limit" || status == 429) return "RateLimited";
+        if (error is "overloaded" || status == 529) return "Overloaded";
+        if (error is "server_error" or "unavailable" || status == 503) return "ServiceUnavailable";
+        return null;
+    }
+
+    private static int? Status(JsonElement root)
+        => root.TryGetProperty("apiErrorStatus", out var item) && item.TryGetInt32(out var status) ? status : null;
 
     private static string? Get(JsonElement value, string name)
         => value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null;

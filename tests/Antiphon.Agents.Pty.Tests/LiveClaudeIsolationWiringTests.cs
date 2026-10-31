@@ -25,7 +25,48 @@ public class LiveClaudeIsolationWiringTests
         LiveClaudeProfileMutants.Run(v);
     }
     [Test] public void DedicatedConfigOwnsTrustAndEvidence() => Run("V-7");
-    [Test] public void CwdInstructionsCannotLeak() => Run("V-8");
+    [Test]
+    public void CwdInstructionsCannotLeak()
+    {
+        Run("V-8");
+        using var f = new LiveClaudeProfileFixture();
+        var runtime = Path.Combine(f.Root, "owned-node");
+        var writer = Path.Combine(f.Context.ConfigDir!, "hooks", "settings-source-witness.mjs");
+        var marker = Path.Combine(f.Context.OwnedRoot, "startup-settings.jsonl");
+        f.Write(runtime, "inert owned interpreter", false);
+        f.Write(writer, "// inert declared marker writer", false);
+        f.Declared[runtime] = LiveClaudeProfile.HashFile(runtime);
+        f.Declared[writer] = LiveClaudeProfile.HashFile(writer);
+        foreach (var source in new[] { "user", "project", "local" })
+            f.Write(SettingsPath(f, source), HookSettings(LiveClaudeProfile.HookCommand(runtime, writer, marker, source, "retained-model")));
+        using (var profile = new LiveClaudeProfile(f.Context))
+        {
+            ClaudeRemoteControlAtStartupCanaryTests.RequireHookConfiguration(profile);
+            try
+            {
+                foreach (var source in new[] { "user", "project", "local" })
+                    f.Write(SettingsPath(f, source), HookSettings($"node \"{writer}\" \"{marker}\" {source} \"retained-model\""));
+                LiveClaudeProfileCases.Refuses(() => { using var rejected = new LiveClaudeProfile(f.Context); }, "unowned-instructions", "V-8", "bare-node");
+                LiveClaudeProfileCases.Refuses(() => ClaudeRemoteControlAtStartupCanaryTests.RequireHookConfiguration(profile), "settings-unobserved", "V-8", "bare-node-canary");
+            }
+            finally
+            {
+                foreach (var source in new[] { "user", "project", "local" })
+                    f.Write(SettingsPath(f, source), HookSettings(LiveClaudeProfile.HookCommand(runtime, writer, marker, source, "retained-model")));
+            }
+        }
+    }
+
+    private static string SettingsPath(LiveClaudeProfileFixture f, string source) => source switch
+    {
+        "user" => Path.Combine(f.Context.ConfigDir!, "settings.json"),
+        "project" => Path.Combine(f.Context.Cwd, ".claude", "settings.json"),
+        _ => Path.Combine(f.Context.Cwd, ".claude", "settings.local.json")
+    };
+
+    private static string HookSettings(string command) =>
+        "{\"remoteControlAtStartup\":true,\"model\":\"retained-model\",\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":"
+        + System.Text.Json.JsonSerializer.Serialize(command) + "}]}]}}";
     [Test] public void SettingsProjectionDetectsDrift() => Run("V-9");
     [Test] public void UnknownConfigDisablesReuse() => Run("V-10");
     [Test] public void LaunchArgumentsKeepProductionSources() => Run("V-11");

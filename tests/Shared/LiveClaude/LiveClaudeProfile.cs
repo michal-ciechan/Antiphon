@@ -136,12 +136,8 @@ internal sealed class LiveClaudeProfile : IDisposable
                 {
                     // This diagnostic slice admits only the declared benign marker hook shape.
                     // Other shell/MCP command grammars remain unresolved and cannot get admission.
-                    var tokens = System.Text.RegularExpressions.Regex.Matches(command, "\"[^\"]*\"|[^\\s\"]+")
-                        .Select(m => m.Value.Trim('"')).ToArray();
-                    if (tokens.Length != 5 || !Path.IsPathFullyQualified(tokens[0]) || !Path.IsPathFullyQualified(tokens[1])
-                        || Path.GetFileName(tokens[1]) != "settings-source-witness.mjs" || tokens[3] is not ("user" or "project" or "local")
-                        || tokens.Any(t => t.IndexOfAny([';', '|', '&', '`', '$', '\n', '\r']) >= 0))
-                        throw new LiveClaudeRefusal("unowned-instructions");
+                    RequireHookCommand(command);
+                    var tokens = HookTokens(command);
                     LiveClaudeProfilePaths.Owned(tokens[2], Context.OwnedRoot);
                     queue.Enqueue(tokens[0]);
                     queue.Enqueue(tokens[1]);
@@ -158,6 +154,29 @@ internal sealed class LiveClaudeProfile : IDisposable
             }
         }
     }
+    public static string[] HookTokens(string command) => System.Text.RegularExpressions.Regex.Matches(command, "\"[^\"]*\"|[^\\s\"]+")
+        .Select(m => m.Value.Trim('"')).ToArray();
+
+    public static string HookCommand(string interpreter, string writer, string marker, string source, string retained)
+    {
+        if (interpreter is "node" or "node.exe") throw new LiveClaudeRefusal("unowned-instructions");
+        if (!Path.IsPathFullyQualified(interpreter) || !Path.IsPathFullyQualified(writer) || !Path.IsPathFullyQualified(marker))
+            throw new LiveClaudeRefusal("unowned-instructions");
+        if (Path.GetFileName(writer) != "settings-source-witness.mjs") throw new LiveClaudeRefusal("unowned-instructions");
+        if (source is not ("user" or "project" or "local")) throw new LiveClaudeRefusal("unowned-instructions");
+        if (new[] { interpreter, writer, marker, source, retained }.Any(t => t.IndexOfAny([';', '|', '&', '`', '$', '\n', '\r']) >= 0))
+            throw new LiveClaudeRefusal("unowned-instructions");
+        return $"\"{interpreter}\" \"{writer}\" \"{marker}\" {source} \"{retained}\"";
+    }
+
+    public static void RequireHookCommand(string command)
+    {
+        var tokens = HookTokens(command);
+        if (tokens.Length != 5) throw new LiveClaudeRefusal("unowned-instructions");
+        var expected = HookTokens(HookCommand(tokens[0], tokens[1], tokens[2], tokens[3], tokens[4]));
+        if (!tokens.SequenceEqual(expected, StringComparer.Ordinal)) throw new LiveClaudeRefusal("unowned-instructions");
+    }
+
     public static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     public static string HashFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
     public static string InputDigest(string path) => Path.GetExtension(path)==".json" ? LiveClaudeSettingsProjection.InputDigest(path) : HashFile(path);

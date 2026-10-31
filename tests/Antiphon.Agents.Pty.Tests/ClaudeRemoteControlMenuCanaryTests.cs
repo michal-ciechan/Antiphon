@@ -96,6 +96,8 @@ public class ClaudeRemoteControlMenuCanaryTests
         var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
         await runner.StartAsync(app, args, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
         executable.RequireNativeObservation();
+        try
+        {
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)
             throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
@@ -120,5 +122,8 @@ public class ClaudeRemoteControlMenuCanaryTests
             () => delivery.ObserveAsync(request, completion: false), completion: false);
         var afterSubmit = delivery.Bridge();
         LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);
+        }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        { throw new SkipTestException("20 " + setup); }
     }
 }

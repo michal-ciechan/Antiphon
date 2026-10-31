@@ -17,6 +17,12 @@ internal static class LiveClaudeStartupAudit
             throw new InvalidOperationException("C1545 startup-audit/"+name);
         return methods[0];
     }
+    private static BlockSyntax Audited(BlockSyntax body,string name)
+    {
+        var skips=body.Statements.OfType<TryStatementSyntax>().Where(LiveClaudeProfileAudit.IsSetupSkip).ToArray();
+        if(skips.Length>1) throw new InvalidOperationException("C1545 startup-audit/"+name);
+        return skips.Length==1 ? skips[0].Block : body;
+    }
     private static void Require(BlockSyntax body,string statement,string name)
     {
         var target=SyntaxFactory.ParseStatement(statement);
@@ -28,7 +34,7 @@ internal static class LiveClaudeStartupAudit
     }
     internal static void Caller(string source,string method,string role)
     {
-        var body=Method(source,method).Body!;
+        var body=Audited(Method(source,method).Body!,role+"-setup-skip");
         Require(body,"var startup = SharedStartup();",role+"-shared-fixture");
         var ordered=body.Statements.Select((s,i)=>(s,i)).Single(p=>p.s.ToString().Contains("var control = await startup.",StringComparison.Ordinal)).i;
         if(body.Statements.Take(ordered).Any(s=>s.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>c.Expression.ToString() is "LaunchUntilReadyAsync" or "runner.StartAsync" or "CanarySandbox.Create")))
@@ -49,7 +55,7 @@ internal static class LiveClaudeStartupAudit
     }
     internal static void Menu(string source)
     {
-        var body=Method(source,"C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt").Body!;
+        var body=Audited(Method(source,"C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt").Body!,"menu-setup-skip");
         Require(body,"await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);","menu-setup");
         var calls=body.Statements.OfType<ExpressionStatementSyntax>().ToArray();
         var setup=Array.FindIndex(calls,c=>c.ToString().Contains("EnsureMenuBridgeAsync",StringComparison.Ordinal));

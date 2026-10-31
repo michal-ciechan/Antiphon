@@ -153,15 +153,26 @@ internal static class LiveClaudeProfileCases
             var output=Path.Combine(f.Root,"hook-observations.jsonl");
             f.Write(runtime,"inert owned interpreter",false);
             f.Write(writer,"// inert declared marker writer",false);
-            var command=$"\"{runtime}\" \"{writer}\" \"{output}\" user fixture-retained";
+            var command=LiveClaudeProfile.HookCommand(runtime,writer,output,"user","fixture-retained");
             var settings=new JsonObject { ["hooks"]=new JsonObject { ["SessionStart"]=new JsonArray(new JsonObject { ["hooks"]=new JsonArray(new JsonObject { ["type"]="command", ["command"]=command }) }) } };
             f.Write(Path.Combine(f.Context.ConfigDir!,"settings.json"),settings.ToJsonString());
             Refuses(()=>{using var p=new LiveClaudeProfile(f.Context);},"unowned-instructions",v,"undeclared-hook");
             f.Declared[runtime]=LiveClaudeProfile.HashFile(runtime);
             f.Declared[writer]=LiveClaudeProfile.HashFile(writer);
-            using var declaredHook=new LiveClaudeProfile(f.Context);
-            build(declaredHook,"control",f.Session,null);
-            Assert(declaredHook.Project([]).ReuseEligible,v,"declared-hook","a fully declared benign hook is admissible over owned inert files");
+            using (var declaredHook=new LiveClaudeProfile(f.Context))
+            {
+                build(declaredHook,"control",f.Session,null);
+                Assert(declaredHook.Project([]).ReuseEligible,v,"declared-hook","a fully declared benign hook is admissible over owned inert files");
+            }
+            var wrong=Path.Combine(f.Context.ConfigDir!,"hooks","other-witness.mjs");
+            f.Write(wrong,"// inert other writer",false);
+            f.Declared[wrong]=LiveClaudeProfile.HashFile(wrong);
+            var bad=$"\"{runtime}\" \"{wrong}\" \"{output}\" user fixture-retained";
+            f.Write(Path.Combine(f.Context.ConfigDir!,"settings.json"),new JsonObject{["hooks"]=new JsonObject{["SessionStart"]=new JsonArray(new JsonObject{["hooks"]=new JsonArray(new JsonObject{["type"]="command",["command"]=bad})})}}.ToJsonString());
+            Refuses(()=>{using var rejected=new LiveClaudeProfile(f.Context);},"unowned-instructions",v,"hook-script-name");
+            var bare=$"node \"{writer}\" \"{output}\" user fixture-retained";
+            f.Write(Path.Combine(f.Context.ConfigDir!,"settings.json"),new JsonObject{["hooks"]=new JsonObject{["SessionStart"]=new JsonArray(new JsonObject{["hooks"]=new JsonArray(new JsonObject{["type"]="command",["command"]=bare})})}}.ToJsonString());
+            Refuses(()=>{using var rejected=new LiveClaudeProfile(f.Context);},"unowned-instructions",v,"bare-node");
         }
     }
     private static void Drift(string v, Builder build, Projector project)
@@ -195,6 +206,7 @@ internal static class LiveClaudeProfileCases
             global["projects"]!["sibling"]!["model"] = "changed-sibling";
             File.WriteAllText(p.Paths.GlobalState, global.ToJsonString());
             Assert(project(p, launch.Args).Digest != original.Digest, v, "trust-behavior", "only owned trust is normalized");
+            Refuses(p.Complete, "settings-drift", v, "settings-drift");
         }
         finally
         {

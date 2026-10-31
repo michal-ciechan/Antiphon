@@ -14,8 +14,21 @@ internal static class LiveClaudeDeliveryAudit
     ];
     internal static void Check(string source, string method, string verdict)
     {
-        var body = LiveClaudeStartupAudit.Method(source, method).Body
+        var methodBody = LiveClaudeStartupAudit.Method(source, method).Body
             ?? throw new InvalidOperationException("C1545 delivery-audit/no-body");
+        var skips = methodBody.Statements.OfType<TryStatementSyntax>().Where(LiveClaudeProfileAudit.IsSetupSkip).ToArray();
+        if (skips.Length > 1) throw new InvalidOperationException("C1545 delivery-audit/outside-catch");
+        var body = skips.Length == 1 ? skips[0].Block : methodBody;
+        if (skips.Length == 1)
+        {
+            foreach (var statement in methodBody.Statements.TakeWhile(s => s != skips[0]))
+                if (statement is not (LocalDeclarationStatementSyntax or ExpressionStatementSyntax)
+                    && statement is not IfStatementSyntax { Statement: ThrowStatementSyntax, Else: null })
+                    throw new InvalidOperationException("C1545 delivery-audit/reachability");
+            foreach (var after in methodBody.Statements.SkipWhile(s => s != skips[0]).Skip(1))
+                if (after is not ReturnStatementSyntax && !after.ToString().Contains("CleanupAsync", StringComparison.Ordinal))
+                    throw new InvalidOperationException("C1545 delivery-audit/after-verdict");
+        }
         var target = SyntaxFactory.ParseStatement(verdict);
         var matches = body.DescendantNodes().OfType<ExpressionStatementSyntax>()
             .Where(s => SyntaxFactory.AreEquivalent(s, target)).ToArray();
@@ -56,7 +69,9 @@ internal static class LiveClaudeDeliveryAudit
             var completion = caller.Method == "SubmitClaudeAsync" ? "true" : "false";
             RequireStatement(caller, $"var rows = await LiveClaudeDeliveryEvidence.SubmitOnceAsync(request, () => delivery.SendAsync(body), () => delivery.ObserveAsync(request, completion: {completion}), completion: {completion});");
         }
-        var menu = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(Callers[1].Path), Callers[1].Method).Body!;
+        var menuMethod = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(Callers[1].Path), Callers[1].Method).Body!;
+        var menuSkips = menuMethod.Statements.OfType<TryStatementSyntax>().Where(LiveClaudeProfileAudit.IsSetupSkip).ToArray();
+        var menu = menuSkips.Length == 1 ? menuSkips[0].Block : menuMethod;
         var phaseStatements = new[] {
             "var bridge = delivery.Bridge() ?? throw new LiveClaudeRefusal(\"bridge-unestablished\");",
             "await delivery.SendAsync(\"/remote-control\");",
@@ -80,7 +95,11 @@ internal static class LiveClaudeDeliveryAudit
     private static void RequireStatement((string Path, string Method, string Verdict) caller, string statement)
     {
         var method = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(caller.Path), caller.Method);
-        if (method.Body!.Statements.Count(s => SyntaxFactory.AreEquivalent(s, SyntaxFactory.ParseStatement(statement))) != 1)
+        var body = method.Body!;
+        var skips = body.Statements.OfType<TryStatementSyntax>().Where(LiveClaudeProfileAudit.IsSetupSkip).ToArray();
+        var expected = SyntaxFactory.ParseStatement(statement);
+        var scopes = skips.Length == 1 ? new[] { body, skips[0].Block } : new[] { body };
+        if (scopes.Sum(scope => scope.Statements.Count(s => SyntaxFactory.AreEquivalent(s, expected))) != 1)
             throw new InvalidOperationException("C1545 delivery-audit/bound-reader-path");
     }
     internal static void Controls()
