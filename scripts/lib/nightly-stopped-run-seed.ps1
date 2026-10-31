@@ -51,7 +51,7 @@ function Read-NightlyStoppedRunSeed {
     $content|Add-Member -NotePropertyName createdAtUtc -NotePropertyValue $envelope.createdAtUtc -Force
     Assert-NightlyStoppedSeedContent $content
     # S1's resolver remains the single class -> new-plan chunk mapper.
-    $members=@(foreach($group in @($content.failedTests|Group-Object suite,className)){
+    $members=@(foreach($group in @($content.failedTests|Group-Object suite,className -CaseSensitive)){
         $first=$group.Group[0]
         [pscustomobject]@{suite=$first.suite;className=$first.className;reasons=@('stopped-run-failure');observations=@($group.Group|ForEach-Object {[pscustomobject]@{chunk=$_.chunk}})}
     })
