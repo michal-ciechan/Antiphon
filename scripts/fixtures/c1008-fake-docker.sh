@@ -315,6 +315,14 @@ const previewRun = () => {
     'mount --bind /lib "$C1008_SIM_STAGE/lib"',
     'mount --bind /lib64 "$C1008_SIM_STAGE/lib64"',
     'mount --bind /usr/bin "$C1008_SIM_STAGE/usr/bin"',
+    // Debian's awk is /usr/bin/awk -> /etc/alternatives/awk -> /usr/bin/mawk.
+    // Keep executable alternatives resolvable in the same namespace as /usr/bin;
+    // otherwise the real bundle comparison fails after a successful unbundle.
+    'if [ -d /etc/alternatives ]; then',
+    '  mkdir -p "$C1008_SIM_STAGE/etc/alternatives"',
+    '  mount --bind /etc/alternatives "$C1008_SIM_STAGE/etc/alternatives"',
+    '  mount -o remount,bind,ro "$C1008_SIM_STAGE/etc/alternatives"',
+    'fi',
     'mount --bind /usr/local "$C1008_SIM_STAGE/usr/local"',
     'mount --bind /proc "$C1008_SIM_STAGE/proc"',
     'touch "$C1008_SIM_STAGE/dev/null" "$C1008_SIM_STAGE/dev/urandom" "$C1008_SIM_STAGE/dev/zero"',
