@@ -20,7 +20,7 @@ make the target fit. Existing prerequisite, startup-probe and release gates stil
 These directions override the cited standing rules in
 `docs/orchestration-loop.md` for this rc qualification workflow:
 
-- **2026-10-23**: "rc fixes direct to rc, no review"; **2026-10-27**:
+- **2026-10-23**: "rc fixes direct to rc, no review"; **2026-10-30**:
   "RC is the quick-merge line: keep testing minimal". Test-only and other Debug
   repairs follow this direction instead of standing rule 9's reviewed cherry-pick.
   Product/dispatcher/watchdog changes still require the Review in step 4.
