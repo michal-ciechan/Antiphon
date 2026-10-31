@@ -10,6 +10,70 @@ $ErrorActionPreference = 'Stop'
 $lib = Join-Path $PSScriptRoot 'lib/live-lane-evidence.ps1'
 if (-not (Test-Path -LiteralPath $lib)) { throw 'missing evidence library' }
 
+function Invoke-EvidenceCheckpoint {
+    param(
+        [Parameter(Mandatory)][string]$Rows,
+        [Parameter(Mandatory)][int]$TotalMinutes,
+        [Parameter(Mandatory)][int]$HardMinutes
+    )
+    $root = Join-Path $repo '.antiphon/checkpoints'
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root | Out-Null }
+    $before = @{}
+    foreach ($dir in [IO.Directory]::GetDirectories($root)) { $before[$dir] = $true }
+    $proc = Start-Process -FilePath 'dotnet' -ArgumentList @(
+        $CheckpointToolPath, 'start', $manifestPath, '--rows', $Rows,
+        '--expected-source-sha', $source, '--serial',
+        '--total-timeout', ($TotalMinutes.ToString() + 'm'),
+        '--hard-wall-timeout', ($HardMinutes.ToString() + 'm'),
+        '--keep-outputs'
+    ) -WorkingDirectory $repo -PassThru -NoNewWindow
+    $deadline = [DateTime]::UtcNow.AddMinutes(3)
+    while (-not $proc.HasExited) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'checkpoint start did not return' }
+        Start-Sleep -Milliseconds 200
+    }
+    [Console]::Out.WriteLine('start-exit=' + $proc.ExitCode + ' rows=' + $Rows)
+    if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
+    $run = ''
+    foreach ($attempt in 1..25) {
+        $created = @()
+        foreach ($dir in [IO.Directory]::GetDirectories($root)) {
+            if (-not $before.ContainsKey($dir)) { $created += $dir }
+        }
+        if ($created.Count -gt 1) { throw ('checkpoint run identity count=' + $created.Count) }
+        if ($created.Count -eq 1) {
+            $run = [IO.Path]::GetFileName($created[0].TrimEnd('\', '/'))
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    if ([string]::IsNullOrWhiteSpace($run)) { throw 'Missing checkpoint run identity' }
+    $statePath = Join-Path (Join-Path $root $run) 'state.json'
+    $stateText = ''
+    foreach ($attempt in 1..25) {
+        if (Test-Path -LiteralPath $statePath) {
+            $stateText = [IO.File]::ReadAllText($statePath)
+            if ($stateText.Contains('"runId"')) { break }
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    $state = $stateText | ConvertFrom-Json
+    if ([string]$state.runId -ne $run) { throw 'checkpoint run id mismatch' }
+    return $run
+}
+
+function Wait-EvidenceCheckpoint {
+    param([Parameter(Mandatory)][string]$RunId)
+    do {
+        $log = Join-Path $owned ('wait-' + $RunId + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+        & dotnet $CheckpointToolPath wait --run $RunId --max-wait 50s --expected-source-sha $source > $log 2>&1
+        $code = $LASTEXITCODE
+        if (Test-Path -LiteralPath $log) { [Console]::Out.WriteLine([IO.File]::ReadAllText($log)) }
+        [Console]::Out.WriteLine('wait-exit=' + $code + ' run=' + $RunId)
+    } while ($code -eq 75)
+    return $code
+}
+
 if ($Case -eq 'RunPortableRows') {
     if ([string]::IsNullOrWhiteSpace($CheckpointToolPath) -or -not (Test-Path -LiteralPath $CheckpointToolPath -PathType Leaf)) {
         Write-Output 'INVALID/evidence-sanitization reason=context-absent'
@@ -69,21 +133,23 @@ if ($Case -eq 'RunPortableRows') {
         $env:TEMP = '/tmp'
         $env:TMPDIR = '/tmp'
         $env:ANTIPHON_LIVE_EVIDENCE_CONTEXT = $contextPath
-        $started = & dotnet $CheckpointToolPath start $manifestPath --rows 'CP-20,CP-26,CP-29' --expected-source-sha $source --serial --total-timeout 70m --hard-wall-timeout 90m --keep-outputs 2>&1
-        $started | ForEach-Object { Write-Output $_ }
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        $match = [regex]::Match(($started -join "`n"), 'RUN ([^ ]+) started')
-        if (-not $match.Success) { throw 'Missing checkpoint run identity' }
-        $run = $match.Groups[1].Value
+        # Start returns before the executor finishes. Do not capture its stdout:
+        # the detached executor inherits that pipe and the call operator waits
+        # for the whole run. Command rows are admitted before test builds, and
+        # CP-29's 15 minute deadline cannot cover those builds, so the scan
+        # starts only after CP-20 and CP-26 are green.
+        $testsRun = Invoke-EvidenceCheckpoint -Rows 'CP-20,CP-26' -TotalMinutes 70 -HardMinutes 90
+        [Console]::Out.WriteLine('tests-run=' + $testsRun)
         $raw = [IO.File]::ReadAllText($contextPath)
-        $updated = $raw.Replace('"checkpointRun": ""', ('"checkpointRun": "' + $run + '"'))
+        $updated = $raw.Replace('"checkpointRun": ""', ('"checkpointRun": "' + $testsRun + '"'))
         if ($updated -eq $raw) { throw 'context checkpointRun was not bound' }
         [IO.File]::WriteAllText($contextPath, $updated)
-        do {
-            & dotnet $CheckpointToolPath wait --run $run --max-wait 50s --expected-source-sha $source
-            $code = $LASTEXITCODE
-        } while ($code -eq 75)
-        if ($code -ne 0) { exit $code }
+        $testsCode = Wait-EvidenceCheckpoint -RunId $testsRun
+        if ($testsCode -ne 0) { exit $testsCode }
+        $scanRun = Invoke-EvidenceCheckpoint -Rows 'CP-29' -TotalMinutes 20 -HardMinutes 25
+        [Console]::Out.WriteLine('scan-run=' + $scanRun)
+        $scanCode = Wait-EvidenceCheckpoint -RunId $scanRun
+        if ($scanCode -ne 0) { exit $scanCode }
         & pwsh -NoProfile -File $lib -Case OuterPublish -Context $contextPath
         exit $LASTEXITCODE
     } finally {
