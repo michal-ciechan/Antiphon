@@ -27,6 +27,22 @@ $scopeId = '11111111-1111-1111-1111-111111111111'
 try {
     [void][IO.Directory]::CreateDirectory($logs)
     Copy-Item -LiteralPath (Join-Path $root 'tests/Antiphon.Tests/Scripts/Fixtures/orchestration-synthetic.trx') -Destination $trx
+    $watchArgs = @{ LogDir = $logs; StateFile = $qualState; Heartbeat = $heartbeat; Once = $true; MinFileAgeSeconds = 0 }
+    foreach ($outcome in @('Timeout', 'Aborted', 'Error')) {
+        [xml]$failureXml = Get-Content -LiteralPath $trx -Raw
+        $failureXml.SelectSingleNode('//*[local-name()="UnitTestResult"][@outcome="Failed"]').SetAttribute('outcome', $outcome)
+        $failurePath = Join-Path $logs ($outcome + '.trx')
+        try {
+            $failureXml.Save($failurePath)
+            $output = @(& (Join-Path $helpers 'trx-failures.ps1') -Path $failurePath) -join "`n"
+            Assert-Smoke ($output.Contains('TEST Synthetic.WindowsInputFails') -and -not $output.Contains('no failures')) "extractor reports $outcome as a failure"
+            $output = @(& (Join-Path $helpers 'watch-qual.ps1') @watchArgs) -join "`n"
+            Assert-Smoke ($output.Contains("FAILURES ${outcome}.trx: 1 failed")) "qualification reports $outcome as a failure"
+        } finally {
+            if (Test-Path -LiteralPath $failurePath) { Remove-Item -LiteralPath $failurePath }
+            if (Test-Path -LiteralPath $qualState) { Remove-Item -LiteralPath $qualState }
+        }
+    }
     $output = @(& (Join-Path $helpers 'trx-failures.ps1') -Path $trx) -join "`n"
     Assert-Smoke ($output.Contains('TEST Synthetic.WindowsInputFails') -and -not $output.Contains('TEST Synthetic.Passes') -and $output.Contains('DURATION 00:00:01.2500000')) 'extracts failed test and duration only'
     Assert-Smoke ($output.Contains('Expected Windows-shaped input to remain intact.') -and $output.Contains('Synthetic.Third()') -and -not $output.Contains('Synthetic.Fourth()') -and $output.Contains('Synthetic diagnostic output only.')) 'extracts message three frames and stdout'
@@ -72,6 +88,14 @@ try {
     Assert-Smoke ($output.Contains('TASK-FAILED synthetic-task Debug fixture')) 'task rearm emits new failed transition'
     $output = @(& (Join-Path $helpers 'watch-tasks.ps1') @taskArgs) -join "`n"
     Assert-Smoke (-not $output.Contains('TASK-FAILED')) 'task rearm suppresses duplicate transition'
+    foreach ($status in @('Blocked', 'Failed')) {
+        $global:RcQualSmokeReply.items[0].status = 'Working'
+        $working = @(& (Join-Path $helpers 'watch-tasks.ps1') @taskArgs) -join "`n"
+        $global:RcQualSmokeReply.items[0].status = $status
+        $changed = @(& (Join-Path $helpers 'watch-tasks.ps1') @taskArgs) -join "`n"
+        $unchanged = @(& (Join-Path $helpers 'watch-tasks.ps1') @taskArgs) -join "`n"
+        Assert-Smoke (-not $working.Contains('TASK-WORKING') -and $changed.Contains("TASK-$($status.ToUpperInvariant()) synthetic-task") -and -not $unchanged.Contains("TASK-$($status.ToUpperInvariant())")) "task rearm emits re-$status and suppresses unchanged repeat"
+    }
     $global:RcQualSmokeReply = [pscustomobject]@{ invalid = $true }
     $output = @(& (Join-Path $helpers 'watch-tasks.ps1') @taskArgs) -join "`n"
     Assert-Smoke ($output.Contains('TASK-WATCH-ERROR Task list envelope has no items.')) 'task watcher reports invalid envelope'
