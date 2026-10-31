@@ -23,8 +23,10 @@ internal readonly record struct ProcessSnapshot(IReadOnlyList<ProcessTableRow> R
     public static ProcessSnapshot Failure(string reason) => new([], reason);
 }
 
-/// <summary>The ordered kill list, or a block reason and no pids.</summary>
-internal sealed record KillPlan(IReadOnlyList<PlannedKill> Kills, string? BlockReason)
+/// <summary>The ordered kill list, or a block reason and no pids.
+/// <see cref="Truncated"/> means an acceptable descendant past
+/// <see cref="OwnedProcessTree.MaxDescendants"/> was not taken.</summary>
+internal sealed record KillPlan(IReadOnlyList<PlannedKill> Kills, string? BlockReason, bool Truncated = false)
 {
     public static KillPlan Blocked(string reason) => new([], reason);
 }
@@ -37,6 +39,8 @@ internal sealed record KillPlan(IReadOnlyList<PlannedKill> Kills, string? BlockR
 /// before the first signal. Fallback when the table cannot be read: log
 /// <c>snapshot_failed</c> and kill only the owned root handle
 /// (<c>fallback=owned_root_only</c>), never an unguarded pid walk.
+/// The clock is sampled before each snapshot. A row whose start is later
+/// than that sample is unreadable and is not walked.
 /// </summary>
 internal static class OwnedProcessTree
 {
@@ -105,7 +109,7 @@ internal static class OwnedProcessTree
                 if (child.StartTicks is not long childTicks) continue;
                 // Started before its parent: the recorded parent pid is stale.
                 if (childTicks < parentTicks) continue;
-                if (kills.Count >= MaxDescendants) return new KillPlan(kills, null);
+                if (kills.Count >= MaxDescendants) return new KillPlan(kills, null, true);
                 accepted[child.Pid] = childTicks;
                 kills.Add(new PlannedKill(child.Pid, childTicks, "descendant"));
                 pending.Enqueue(child.Pid);
@@ -116,7 +120,10 @@ internal static class OwnedProcessTree
 
     /// <summary>Read the table until it stops growing, then signal that sealed list.
     /// <paramref name="readStartTicks"/> and <paramref name="kill"/> are the executor's
-    /// injected seams. Production opens one process per pid and kills that same object.</summary>
+    /// injected seams. Production opens one process per pid and kills that same object.
+    /// <paramref name="clock"/> is sampled before each snapshot (UTC). A later start is
+    /// unreadable. <paramref name="observeWiredPids"/> sees the server and owner pids
+    /// the caller passed in.</summary>
     internal static void Execute(
         Func<ProcessSnapshot> readTable,
         Func<int, long?> readStartTicks,
@@ -126,8 +133,12 @@ internal static class OwnedProcessTree
         int serverPid,
         int ownerPid,
         bool rootAlreadyExited,
-        Action<string> log)
+        Action<string> log,
+        Func<DateTime>? clock = null,
+        Action<int, int>? observeWiredPids = null)
     {
+        observeWiredPids?.Invoke(serverPid, ownerPid);
+        clock ??= static () => DateTime.UtcNow;
         if (rootAlreadyExited)
         {
             log(KillFailed(root.Pid, "root_gone"));
@@ -136,8 +147,12 @@ internal static class OwnedProcessTree
 
         var accepted = new List<PlannedKill>();
         var seen = new HashSet<int>();
+        var truncated = false;
         for (var pass = 0; pass < MaxSnapshotPasses; pass++)
         {
+            // Before the parent walk and the later start-tick reads. A pid reused
+            // inside this snapshot has a start after this sample and is dropped.
+            var snapshotTicks = UtcTicks(clock());
             var snapshot = readTable();
             if (snapshot.FailureReason is not null)
             {
@@ -146,7 +161,7 @@ internal static class OwnedProcessTree
                 return;
             }
 
-            var plan = Plan(snapshot.Rows, root, serverPid, ownerPid);
+            var plan = Plan(MaskRowsStartedAfter(snapshot.Rows, snapshotTicks), root, serverPid, ownerPid);
             if (plan.BlockReason is not null)
             {
                 log(KillFailed(root.Pid, plan.BlockReason));
@@ -154,11 +169,16 @@ internal static class OwnedProcessTree
                 return;
             }
 
+            if (plan.Truncated) truncated = true;
             var added = 0;
             foreach (var entry in plan.Kills)
             {
                 if (!seen.Add(entry.Pid)) continue;
-                if (accepted.Count >= MaxDescendants) break;
+                if (accepted.Count >= MaxDescendants)
+                {
+                    truncated = true;
+                    break;
+                }
                 accepted.Add(entry);
                 added++;
             }
@@ -195,10 +215,13 @@ internal static class OwnedProcessTree
         var descendants = 0;
         foreach (var entry in accepted)
             if (entry.Pid != root.Pid) descendants++;
-        log($"repository_child_tree_kill root={root.Pid} descendants={descendants} killed={string.Join(',', signalled)}");
+        var outcome = $"repository_child_tree_kill root={root.Pid} descendants={descendants} killed={string.Join(',', signalled)}";
+        if (truncated)
+            outcome += $" truncated=true count={descendants}";
+        log(outcome);
     }
 
-    internal static void Kill(Process root)
+    internal static void Kill(Process root, Func<ProcessSnapshot>? readTable = null, Action<int, int>? observeWiredPids = null)
     {
         int rootId;
         try { rootId = root.Id; }
@@ -224,11 +247,10 @@ internal static class OwnedProcessTree
         Process? held = null;
         var heldPid = 0;
         var disposeHeld = false;
-        long? heldTicks = null;
         try
         {
             Execute(
-                () => ReadSnapshot(rootId),
+                readTable ?? (() => ReadSnapshot(rootId)),
                 ReadHeldTicks,
                 KillHeld,
                 () => KillOwnedHandle(root, rootId, rootTicks),
@@ -236,7 +258,8 @@ internal static class OwnedProcessTree
                 Environment.ProcessId,
                 Environment.ProcessId,
                 rootExited,
-                static line => Console.Error.WriteLine(line));
+                static line => Console.Error.WriteLine(line),
+                observeWiredPids: observeWiredPids);
         }
         finally { ReleaseHeld(); }
 
@@ -254,7 +277,6 @@ internal static class OwnedProcessTree
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
                 {
                     held = null;
-                    heldTicks = null;
                     return null;
                 }
                 disposeHeld = true;
@@ -262,13 +284,11 @@ internal static class OwnedProcessTree
             heldPid = pid;
             try
             {
-                if (held.HasExited) { heldTicks = null; return null; }
-                heldTicks = RepositoryChildJournal.TryStartTicks(held, out var ticks) ? ticks : null;
-                return heldTicks;
+                if (held.HasExited) return null;
+                return RepositoryChildJournal.TryStartTicks(held, out var ticks) ? ticks : null;
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                heldTicks = null;
                 return null;
             }
         }
@@ -277,8 +297,8 @@ internal static class OwnedProcessTree
         {
             if (held is null || heldPid != pid) throw new InvalidOperationException("identity_not_held");
             if (held.HasExited) return;
-            if (!RepositoryChildJournal.TryStartTicks(held, out var live) || live != heldTicks)
-                throw new InvalidOperationException("reused");
+            // StartTime is cached on this Process. A second read compares that cache
+            // with itself. The live check is ReadHeldTicks, which opened this object.
             held.Kill(entireProcessTree: false);
         }
 
@@ -287,23 +307,47 @@ internal static class OwnedProcessTree
             if (disposeHeld) held?.Dispose();
             held = null;
             disposeHeld = false;
-            heldTicks = null;
         }
     }
 
-    private static void KillOwnedHandle(Process root, int rootId, long rootTicks)
+    private static void KillOwnedHandle(Process root, int rootId, long rootTicks) =>
+        KillOwnedHandle(root, rootId, rootTicks, static (process, entireProcessTree) => process.Kill(entireProcessTree: entireProcessTree));
+
+    /// <summary>Snapshot-failure fallback. <paramref name="kill"/> is the owned-handle
+    /// seam: production passes <c>false</c> so only this handle is signalled.</summary>
+    internal static void KillOwnedHandle(Process root, int rootId, long rootTicks, Action<Process, bool> kill)
     {
         try
         {
             if (root.HasExited) return;
-            if (!RepositoryChildJournal.TryStartTicks(root, out var live) || live != rootTicks) return;
-            root.Kill(entireProcessTree: false);
+            // StartTime is cached on the owned handle, so a second read cannot see a
+            // reused pid. HasExited is the guard: the pid stays reserved until the runtime reaps it.
+            kill(root, false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             Console.Error.WriteLine(KillFailed(rootId, ex.GetType().Name));
         }
     }
+
+    /// <summary>A start after the pre-snapshot clock is unreadable. The walk stops at that row.</summary>
+    private static IReadOnlyList<ProcessTableRow> MaskRowsStartedAfter(IReadOnlyList<ProcessTableRow> rows, long snapshotTicks)
+    {
+        ProcessTableRow[]? masked = null;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.StartTicks is long ticks && ticks > snapshotTicks)
+            {
+                masked ??= rows.ToArray();
+                masked[i] = new ProcessTableRow(row.Pid, row.ParentPid, null);
+            }
+        }
+        return masked ?? rows;
+    }
+
+    private static long UtcTicks(DateTime time) =>
+        time.Kind == DateTimeKind.Utc ? time.Ticks : time.ToUniversalTime().Ticks;
 
     private static ProcessSnapshot ReadSnapshot(int rootPid)
     {
