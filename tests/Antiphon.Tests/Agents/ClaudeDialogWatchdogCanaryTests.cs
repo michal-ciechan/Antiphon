@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -18,6 +19,11 @@ namespace Antiphon.Tests.Agents;
 [Category("Integration"), NotInParallel("Headed"), ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeDialogWatchdogCanaryTests
 {
+    internal static LiveClaudeExecutable PrepareExecutable(LiveClaudeLaunchRequest? request = null,
+        LiveClaudeLaunchContext? context = null, Func<string>? legacy = null)
+        => LiveClaudeExecutable.Resolve(LiveClaudeCore.C680, request, context,
+            legacy ?? (() => Resolve(OperatingSystem.IsWindows() ? "claude.exe" : "claude")));
+
     [Test]
     public async Task C680_LiveNudgeRefusesPermissionAndQuestionDialogs()
     {

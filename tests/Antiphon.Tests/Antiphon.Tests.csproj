@@ -217,4 +217,7 @@
     <Copy SourceFiles="$(TargetDir)fake-native-grok/fakegrok"
           DestinationFiles="$(TargetDir)fakegrok/fakegrok" SkipUnchangedFiles="true" />
   </Target>
+  <ItemGroup>
+    <Compile Include="../Shared/LiveClaude/*.cs" Link="TestSupport/LiveClaude/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

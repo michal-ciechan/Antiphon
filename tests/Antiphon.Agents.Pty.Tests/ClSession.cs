@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using System.Runtime.InteropServices;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -6,6 +7,10 @@ namespace Antiphon.Agents.Pty.Tests;
 
 internal static class ClSession
 {
+    public static LiveClaudeExecutable PrepareCore(string uid, LiveClaudeLaunchRequest? request = null,
+        LiveClaudeLaunchContext? context = null, Func<string>? legacy = null)
+        => LiveClaudeExecutable.Resolve(uid, request, context, legacy ?? ResolveOrThrow);
+
     public const string EnvFlag = "ANTIPHON_HEADED_TESTS";
 
     public static void SkipIfNotEligible()

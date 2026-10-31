@@ -101,4 +101,7 @@
   <ItemGroup>
     <EmbeddedResource Include="../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json" LogicalName="Card0449.EffortCaptures.json" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/LiveClaude/*.cs" Link="TestSupport/LiveClaude/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
