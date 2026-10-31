@@ -28,3 +28,6 @@ C1022 detail: the test body completed (ModernConPty host log, conpty hash and bo
 | Test | Project | Before (d47848cc) | After (fc064a68) | Status | Evidence |
 |---|---|---|---|---|---|
 | NativeLinuxPolicyWitnessTests.Policy_rows_require_pinned_attribute | Agents.Pty.Tests (agents-pty g3) | FAIL | PASS (0.84 s) | FIXED | `e960-agentspty-20261031-105650-f90a/run.trx` |
+| RemoteControlRecoveryPtyIntegrationTests.C514_Health_request_reaches_busy_and_idle_recipients | Antiphon.Tests (g48) | FAIL | PASS | FIXED | ``e960-tests-app-20261031-105948-0330/run.trx`` (row exit 0, 22/22) |
+| LandRestartReplayTests.C1379_OldHeldReplaysBeforeConcurrentNewRequest | Antiphon.Tests (g79) | FAIL | PASS | FIXED | ``e960-tests-app-20261031-105948-0330/run.trx`` (row exit 0, 22/22) |
+| AgentReportStoreBudgetTests: all 20 failed cases (Artifact_preservation x2, Budget_diagnostics x4, Caller_cancellation x4, Canceled_fast_path x2, Concurrent_stores, Gate_wait, Io_deadline x2, Preparation_timeout, Unrelated_cancellation x2, Write_stall) | Antiphon.Tests (g80) | FAIL x20 | PASS x20 | FIXED | ``e960-tests-app-20261031-105948-0330/run.trx`` (row exit 0, 22/22) |
