@@ -26,7 +26,7 @@ function New-Fixture {
         'interim-qualification-receipt.json','rc-gate.json','rc-authority.json')) {
         $path = Join-Path $root $name
         [IO.File]::WriteAllText($path, 'seeded-state-' + $name)
-        $F.State[$path] = [IO.File]::ReadAllText($path)
+        $F.State[$path] = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
     }
     $request = @{
         Lane = 'fixture-live'; RunId = 'run-A'; Attempt = 1; Source = ('a' * 40)
@@ -114,7 +114,7 @@ function Run-Fixture($fixture) {
         dbSeconds=$null; httpSeconds=$null; nativeSeconds=$null; result=$result; trace=@($F.Trace)
     } | ConvertTo-Json -Depth 12))
     foreach ($p in $F.State.Keys) {
-        if ([IO.File]::ReadAllText($p) -cne $F.State[$p]) { throw 'legacy state changed' }
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($p)) -cne $F.State[$p]) { throw 'legacy state changed' }
     }
     return $result
 }
@@ -156,7 +156,7 @@ function Test-ProtectedInputs([string]$Overlay = '') {
     if ($LASTEXITCODE -ne 0) { throw 'candidate diff unavailable' }
     $changed += @(& git -C $repo ls-files --others --exclude-standard)
     foreach ($path in $changed) {
-        if ($path -match '\.md$') { continue }
+        if ($path -cmatch '^docs/superpowers/plans/[^/]+\.md$' -or $path -cmatch '^\.antiphon/task-[^/]+\.md$') { continue }
         if ($existing -contains $path -or $allowed -cnotcontains $path) { return $false }
     }
     if ($Overlay) {
