@@ -449,6 +449,7 @@ function Write-FFDiagnostic([string]$Directory, [object[]]$Nodes, [string]$State
 }
 function Invoke-FFPreparedArm {
     param($Fixture, [string]$Name, [object[]]$Members = @(), [string]$Variant = 'pass')
+    $armWatch = [Diagnostics.Stopwatch]::StartNew()
     $RepoRoot = $repo
     $LogRoot = Join-Path $root $Name
     [void][IO.Directory]::CreateDirectory($LogRoot)
@@ -538,6 +539,8 @@ function Invoke-FFPreparedArm {
             $script:FFArmChunks[$s.id+'/'+$g.chunk] = [pscustomobject]@{nodes=$selectedNodes}
         }
     }
+    $armPrepareSeconds=$armWatch.Elapsed.TotalSeconds
+    $armExecuteWatch=[Diagnostics.Stopwatch]::StartNew()
     $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha -InvocationId $invocationId
     if ($publicationContext.Refused) { throw ('context-refused:'+ $publicationContext.Reason) }
     $script:TestPhaseExecutedContext = $publicationContext
@@ -552,13 +555,15 @@ function Invoke-FFPreparedArm {
         Close-TestPhaseExecutedContext -Context $publicationContext
         $script:TestPhaseCommitFault=$null
     }
+    $armExecuteSeconds=$armExecuteWatch.Elapsed.TotalSeconds
     if ($Fixture.PSObject.Properties.Name -notcontains 'replay') { Invoke-TestPhaseRunSummary -RunDirectory $LogRoot }
     $timing = Get-QualificationTimingReport -LogRoot $LogRoot -TimingRoot $TimingRoot
     $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
     $plansStable = $true
     foreach ($s in $Fixture.suites) { if ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))) -cne $plannedBytes[$s.id]) { $plansStable=$false } }
     $output = [pscustomobject]@{Root=$LogRoot;TimingRoot=$TimingRoot;Schedule=$schedule;Launches=$script:FFLaunches.ToArray();Plans=$plannedBytes;PlansStable=$plansStable;Projection=$projection;Rows=$suiteResults;Reasons=$reasons;Coverage=$coverageComplete;Passed=$testsPassed;Error=$errorText;States=$states;Timing=$timing;Context=$publicationContext;NativeMax=$nativeActiveMax}
-    Write-FFJson (Join-Path $LogRoot 'arm-result.json') ([ordered]@{launches=$output.Launches;rows=$suiteResults;reasons=$reasons;coverage=$coverageComplete;passed=$testsPassed;error=$errorText;nativeMax=$nativeActiveMax})
+    $script:FFOperations.Add([ordered]@{kind='IO';operation=$Name;prepareSeconds=$armPrepareSeconds;executeSeconds=$armExecuteSeconds;wallSeconds=$armWatch.Elapsed.TotalSeconds})
+    Write-FFJson (Join-Path $LogRoot 'arm-result.json') ([ordered]@{prepareSeconds=$armPrepareSeconds;executeSeconds=$armExecuteSeconds;wallSeconds=$armWatch.Elapsed.TotalSeconds;launches=$output.Launches;rows=$suiteResults;reasons=$reasons;coverage=$coverageComplete;passed=$testsPassed;error=$errorText;nativeMax=$nativeActiveMax})
     return $output
 }
 function New-FFSmallFixture {
@@ -586,6 +591,7 @@ function Test-FullBytesAndCoverageConserved {
     Assert-FF ((@($a.Launches.key) -join ',') -ceq ($canonical -join ',') -and ($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+$fx.suites[1].chunks[0].id) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
     $anchorKeys=@($fx.anchors|ForEach-Object {'antiphon/'+$_.chunk})
     $observedAnchors=@($actual|Where-Object {$anchorKeys -ccontains $_})
+    Write-FFJson (Join-Path $root 'observed-ordinals.json') @(foreach($anchor in $fx.anchors){[ordered]@{suite='antiphon';chunk=$anchor.chunk;canonicalOrdinal=($anchor.ordinal-1);dispatchOrdinal=[array]::IndexOf($actual,('antiphon/'+$anchor.chunk));className=$anchor.className}})
     Assert-FF (($observedAnchors -join ',') -ceq ($anchorKeys -join ',') -and @($prefix|Where-Object {$anchorKeys -ccontains ($_.suite+'/'+$_.chunk)}).Count -eq 4) 'anchors'
     $samePlans=$true
     foreach($s in $fx.suites){if($a.Plans[$s.id] -cne $b.Plans[$s.id]){$samePlans=$false}}
@@ -716,7 +722,9 @@ function Invoke-FFPreparationArm {
     finally{Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal 'failed-run'|Out-Null;Close-TestPhaseExecutedContext -Context $publicationContext}
     $schedule=$null;$path=Join-Path $LogRoot 'dispatch-schedule.json'
     if([IO.File]::Exists($path)){$schedule=[IO.File]::ReadAllText($path)|ConvertFrom-Json}
-    $answer=[pscustomobject]@{trace=$script:FFPrep.Trace.ToArray();settled=$script:FFPrep.SeenSettlement;coverage=$coverageComplete;rows=$suiteResults;error=$errorText;schedule=$schedule}
+    $errorKind=$errorText
+    if ($errorText -like 'missing diagnostic discovery log in *') { $errorKind='missing diagnostic discovery log' }
+    $answer=[pscustomobject]@{trace=$script:FFPrep.Trace.ToArray();settled=$script:FFPrep.SeenSettlement;coverage=$coverageComplete;rows=$suiteResults;error=$errorText;errorKind=$errorKind;schedule=$schedule}
     Write-FFJson (Join-Path $LogRoot 'preparation-result.json') $answer
     return $answer
 }
@@ -731,7 +739,7 @@ function Test-FFPreparationSequencing {
         if(@($priority.trace|Where-Object {$_ -like 'launch-*'}).Count -ne 0 -or $priority.coverage -or $null -eq $priority.schedule -or $priority.schedule.preparationComplete){$barrier=$false}
         if($failure -ceq 'e2e' -and (@($absent.rows|Where-Object {$_.id -ceq 'e2e' -and $_.detail -ceq 'e2e-prerequisite-failed'}).Count -ne 1 -or $absent.trace -cnotcontains 'launch-agents-pty' -or @($priority.rows|Where-Object {$_.id -ceq 'e2e'}).Count -ne 1)){$e2e=$false}
         $fault=Invoke-FFPreparationArm ('write-fault-'+$failure) 'absent' $failure -WriteFault
-        if(($fault.trace -join ',') -cne ($absent.trace -join ',') -or $fault.coverage -ne $absent.coverage -or $fault.error -cne $absent.error){$io=$false}
+        if(($fault.trace -join ',') -cne ($absent.trace -join ',') -or $fault.coverage -ne $absent.coverage -or $fault.errorKind -cne $absent.errorKind){$io=$false}
     }
     Assert-FF $lazy 'lazyPreparation'
     Assert-FF $barrier 'preparationBarrier'
