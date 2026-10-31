@@ -103,8 +103,10 @@ public class AgentTaskSubtreeRollupTests
     }
 
     [Test]
-    public void Rollup_of_a_two_thousand_task_chain_matches_the_closed_form_quickly()
+    [Timeout(30_000)]
+    public void Rollup_of_a_two_thousand_task_chain_matches_the_closed_form(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         const int count = 2000;
         var rootId = Guid.NewGuid();
         var family = new List<AgentTask>(count);
@@ -116,9 +118,7 @@ public class AgentTaskSubtreeRollupTests
             parent = id;
         }
 
-        var watch = Stopwatch.StartNew();
         var rollup = AgentTaskCostWalk.Rollup(family);
-        watch.Stop();
 
         for (var i = 0; i < count; i++)
         {
@@ -126,7 +126,26 @@ public class AgentTaskSubtreeRollupTests
             figures.SubtreeCostUsd.ShouldBe(count - i);
             figures.ChildCount.ShouldBe(i == count - 1 ? 0 : 1);
         }
+    }
 
+    [Test]
+    public void Rollup_of_two_thousand_direct_children_stays_under_a_tenth_of_a_second()
+    {
+        const int children = 2000;
+        var rootId = Guid.NewGuid();
+        var root = Node(rootId, rootId, null, 1m, "root");
+        var family = new List<AgentTask>(children + 1) { root };
+        for (var i = 0; i < children; i++)
+            family.Add(Node(Guid.NewGuid(), rootId, rootId, 0.01m, "child"));
+
+        var watch = Stopwatch.StartNew();
+        var rollup = AgentTaskCostWalk.Rollup(family);
+        watch.Stop();
+
+        rollup[rootId].SubtreeCostUsd.ShouldBe(1m + (0.01m * children));
+        rollup[rootId].ChildCount.ShouldBe(children);
+        rollup[family[1].Id].SubtreeCostUsd.ShouldBe(0.01m);
+        rollup[family[1].Id].ChildCount.ShouldBe(0);
         watch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
     }
 

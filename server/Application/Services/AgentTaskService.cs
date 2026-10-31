@@ -2632,9 +2632,10 @@ public sealed class AgentTaskService
         var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
         var (items, excluded) = AgentTaskScope.Partition(candidates, labels, scope);
         var models = await LoadEffectiveModelIdsAsync(items, ct);
+        var rollup = AgentTaskCostWalk.Rollup(candidates);
         return new AgentTaskListEnvelopeDto(
             AgentTaskScope.Echo(scope, labels),
-            items.Select(t => ToSummary(t, candidates, labels, RecordedEffectiveModel(t, models))).ToList(),
+            items.Select(t => ToSummary(t, rollup, labels, RecordedEffectiveModel(t, models))).ToList(),
             excluded);
     }
 
@@ -4736,24 +4737,20 @@ public sealed class AgentTaskService
         CancellationToken ct)
     {
         var models = await LoadEffectiveModelIdsAsync([task], ct);
-        return ToSummary(task, family, labels, RecordedEffectiveModel(task, models));
+        return ToSummary(task, AgentTaskCostWalk.Rollup(family), labels, RecordedEffectiveModel(task, models));
     }
 
     private static AgentTaskSummaryDto ToSummary(
         AgentTask task,
-        IReadOnlyList<AgentTask> family,
+        IReadOnlyDictionary<Guid, AgentTaskSubtreeFigures> rollup,
         AgentTaskScopeLabels labels,
         string? effectiveModelId = null)
     {
-        // Walk the parent chain rather than recursing children — the same O(n) pass answers both
-        // "my subtree's cost" and "my child count" for every row in a run.
-        var subtreeCost = AgentTaskCostWalk.Calculate([task], family)[task.Id];
-        var childCount = 0;
-        foreach (var other in family)
-        {
-            if (other.Id == task.Id) continue;
-            if (other.ParentTaskId == task.Id) childCount++;
-        }
+        // ListAsync rolls the whole candidate family up once. A missing id is the task's own cost.
+        if (!rollup.TryGetValue(task.Id, out var figures))
+            figures = new AgentTaskSubtreeFigures(task.CostUsd, 0);
+        var subtreeCost = figures.SubtreeCostUsd;
+        var childCount = figures.ChildCount;
 
         var resolved = AgentTaskScope.Resolve(task, labels);
         return new AgentTaskSummaryDto(
@@ -4850,19 +4847,29 @@ public sealed class AgentTaskService
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board
     /// does — two answers to "what has this run cost" would eventually differ.</summary>
-    internal static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)
+    internal static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family) =>
+        IsDescendantOf(candidate, ancestorId, AgentTaskCostWalk.IndexById(family), family.Count);
+
+    internal static bool IsDescendantOf(
+        AgentTask candidate,
+        Guid ancestorId,
+        IReadOnlyDictionary<Guid, AgentTask> byId,
+        int familyCount)
     {
         var seen = 0;
         var current = candidate;
         while (current.ParentTaskId is { } parentId)
         {
-            if (parentId == ancestorId) return true;
+            if (parentId == ancestorId)
+                return true;
             // A cycle can't happen through the API, but a hand-edited row shouldn't hang the server.
-            if (++seen > family.Count) return false;
-            var next = family.FirstOrDefault(t => t.Id == parentId);
-            if (next is null) return false;
+            if (++seen > familyCount)
+                return false;
+            if (!byId.TryGetValue(parentId, out var next))
+                return false;
             current = next;
         }
+
         return false;
     }
 
