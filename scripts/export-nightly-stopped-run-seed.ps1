@@ -11,6 +11,7 @@ when absent from owner JSON; conflicting planned/owner identity refuses export.
 param([Parameter(Mandatory=$true)][string]$RunDirectory,
       [Parameter(Mandatory=$true)][string]$OutputPath,
       [string]$SourceRunId='', [string]$SourceCandidateId='', [string]$SourceSha='',
+      [string]$TimingRoot='',
       [switch]$PassThru)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'lib/nightly-failure-history.ps1')
