@@ -564,7 +564,8 @@ public sealed class LandingGitTests
         // reparented msys grandchild, so the journal clear follows the holder, not the return.
         var pidFile = Path.Combine(repo.Path, "holder.pid");
         var hook = await InstallExecutableHookAsync(repo.Path, "pre-push",
-            "#!/bin/sh\necho $$ > \"" + pidFile.Replace('\\', '/') + "\"\nsleep 30\nexit 0\n", ct);
+            "#!/bin/sh\npid=$$\nif [ -r \"/proc/$$/winpid\" ]; then pid=$(cat \"/proc/$$/winpid\"); fi\necho \"$pid\" > \""
+            + pidFile.Replace('\\', '/') + "\"\nsleep 30\nexit 0\n", ct);
         var git = new LandingGit();
 
         var watch = Stopwatch.StartNew();
@@ -962,6 +963,21 @@ public sealed class LandingGitTests
             KillHolder(pidFile);
             try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
         }
+    }
+
+    [Test]
+    public async Task C448_DescendantSetKeepsGrandchildrenWhoseParentDiesWithTheRoot()
+    {
+        var parents = new Dictionary<int, int>
+        {
+            [10] = 1,
+            [20] = 10,
+            [30] = 20,
+            [40] = 1,
+        };
+        var found = OwnedProcessTree.Descendants(parents, 10).OrderBy(id => id).ToArray();
+        found.ShouldBe(new[] { 20, 30 });
+        await Task.CompletedTask;
     }
 
     // Windows Kill(entireProcessTree) terminates the root and only then asks who its children were.
