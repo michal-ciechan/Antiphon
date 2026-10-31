@@ -2,7 +2,7 @@
 # Offline, Pester-free smoke checks. Synthetic files and stubbed HTTP/git only.
 # No native qualification tests, locks, processes, or live services are touched.
 [CmdletBinding()]
-param([string]$Case = 'Smoke')
+param([string]$Case = 'Smoke', [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
 $passed = 0
 $failed = 0
