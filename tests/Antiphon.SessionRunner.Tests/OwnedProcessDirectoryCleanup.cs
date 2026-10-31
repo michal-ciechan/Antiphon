@@ -39,8 +39,14 @@ internal static class OwnedProcessDirectoryCleanup
         }
     }
 
+    // Native rerun e960ffeb: after every captured process exited, deleting the staged
+    // Antiphon.Agents.Pty.dll was denied, and the directory was gone about one minute later.
+    // 75s is that hold plus the last backoff step.
+    internal static readonly TimeSpan StagedDeleteBudget = TimeSpan.FromSeconds(75);
+
     internal static async Task RunAsync(Func<Task> body, Func<Task> stop,
-        Func<IReadOnlyList<Process>> capture, Action delete)
+        Func<IReadOnlyList<Process>> capture, Action delete,
+        TimeSpan? deleteBudget = null, Action<string>? deleteTrace = null)
     {
         IReadOnlyList<Process> handles = [];
         var captured = false;
@@ -76,7 +82,11 @@ internal static class OwnedProcessDirectoryCleanup
                             }
                         }
                         if (failures.Count > 0) throw new AggregateException(failures);
-                        if (stopped) delete(); // A cleanup ownership error also retains the directory.
+                        if (!stopped) return; // A cleanup ownership error also retains the directory.
+                        if (deleteBudget is { Ticks: <= 0 })
+                            throw new ArgumentOutOfRangeException(nameof(deleteBudget));
+                        deleteTrace?.Invoke("delete-once");
+                        delete();
                     });
             });
         }
