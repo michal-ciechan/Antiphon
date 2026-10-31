@@ -25,6 +25,7 @@ public class ClaudeRemoteControlMenuCanaryTests
     // Independent of RemoteControlMenuScreen — this is the measurement the matcher is built on.
     private const string DisconnectLiteral = "Disconnect this session";
     private const string FooterLiteral = "Esc to continue";
+    private const string OneEscTest = "One_Esc_dismisses_the_remote_control_management_menu";
     private const string DismissKey = "\u001b";
     private const int SettleMs = 400;
 
@@ -43,45 +44,48 @@ public class ClaudeRemoteControlMenuCanaryTests
             ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
         await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
-        if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
+        if (!ready)
+            throw new SkipTestException(LiveClaudeEvidence.Skip(
+                "menu-ready-skip", OneEscTest, null, runner.SnapshotScreen(), null, null));
 
         await runner.WriteAsync("/remote-control");
         (await runner.WaitForScreenAsync(
             s => ComposerDeliveryEvidence.FragmentIsVisible(s, "/remote-control"),
             TimeSpan.FromSeconds(8)))
-            .ShouldBeTrue("/remote-control must render in the composer before Enter. Screen:\n"
-                + runner.SnapshotScreen());
+            .ShouldBeTrue(LiveClaudeEvidence.Assertion(
+                "menu-composer", OneEscTest, null, runner.SnapshotScreen(), null, null));
         await Task.Delay(800);
         await runner.WriteAsync("\r");
 
         var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(8));
         if (!appeared)
         {
-            throw new SkipTestException(
-                "no management menu appeared — this session was not already bridged, so "
-                + "/remote-control armed instead of opening Disconnect/Continue. Screen:\n"
-                + runner.SnapshotScreen());
+            throw new SkipTestException(LiveClaudeEvidence.Skip(
+                "menu-absent-skip", OneEscTest, null, runner.SnapshotScreen(), null, null));
         }
 
         var menu = runner.SnapshotScreen();
-        Console.WriteLine("RC MENU SCREEN:\n" + menu);
-        menu.ShouldContain(DisconnectLiteral);
-        menu.ShouldContain(FooterLiteral);
+        LiveClaudeEvidence.Success("menu-screen", OneEscTest, null, menu, null, null);
+        menu.Contains(DisconnectLiteral, StringComparison.OrdinalIgnoreCase)
+            .ShouldBeTrue(LiveClaudeEvidence.Assertion("menu-disconnect", OneEscTest, null, menu, null, null));
+        menu.Contains(FooterLiteral, StringComparison.OrdinalIgnoreCase)
+            .ShouldBeTrue(LiveClaudeEvidence.Assertion("menu-footer", OneEscTest, null, menu, null, null));
 
         await runner.WriteAsync(DismissKey);
         await Task.Delay(SettleMs);
 
         var after = runner.SnapshotScreen();
-        Console.WriteLine("AFTER MENU ESC:\n" + after);
-        MenuPresent(after).ShouldBeFalse("one Esc must dismiss the menu. After:\n" + after);
+        LiveClaudeEvidence.Success("menu-after", OneEscTest, null, after, null, null);
+        MenuPresent(after).ShouldBeFalse(LiveClaudeEvidence.Assertion(
+            "menu-dismissed", OneEscTest, null, after, null, null));
 
         var token = "RC-ESC-" + Guid.NewGuid().ToString("N")[..8];
         await runner.WriteAsync(token);
         (await runner.WaitForScreenAsync(
             s => ComposerDeliveryEvidence.FragmentIsVisible(s, token),
             TimeSpan.FromSeconds(8)))
-            .ShouldBeTrue("a body typed after dismissing the menu must render. Screen:\n"
-                + runner.SnapshotScreen());
+            .ShouldBeTrue(LiveClaudeEvidence.Assertion(
+                "menu-body", OneEscTest, null, runner.SnapshotScreen(), null, null));
     }
 
     [Test]
