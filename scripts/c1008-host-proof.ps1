@@ -2,6 +2,7 @@
 # No script-level param: a param block would steal the caller's arguments.
 # Credentials stay in the ambient git environment. This file never prints a URL,
 # a token, or git stderr.
+. (Join-Path $PSScriptRoot 'c1609-host-proof.ps1')
 
 function Get-C1008Sha256 {
     param([Parameter(Mandatory = $true)][string]$Text)
@@ -183,8 +184,15 @@ function Write-C1008HostOriginProof {
         [Parameter(Mandatory = $true)][string]$OperationId,
         [Parameter(Mandatory = $true)][string]$ProofDirectory,
         [Parameter(Mandatory = $true)][long]$CreatedUnix,
-        [Parameter(Mandatory = $true)][string]$LogPath
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [ValidateSet(1,2)][int]$ProofVersion = 1,
+        [string]$PhaseNonce = '', [string]$InventoryDigest = '', [string[]]$ApprovedOrigins = @(),
+        [int]$NetworkBudgetMs = 600000
     )
+    if ($ProofVersion -eq 2) {
+        Write-C1609HostOriginProof -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $NetworkBudgetMs
+        return
+    }
     if ($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $CreatedUnix -lt 0) {
         throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
     }

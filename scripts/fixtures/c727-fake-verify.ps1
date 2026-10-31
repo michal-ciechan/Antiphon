@@ -64,6 +64,12 @@ if ($Case -eq 'temp-project-absent') {
     if ($state.tempContainer) { Write-Output 'fixture-temp-container' }
     exit 0
 }
+if ($Case -eq 'retirement-proof-read') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"proof-read"}'
+    if ($state.retirementProofError) { exit 2 }
+    @{operationId=$request.operationId;digest=('a'*64);state='Ready';mode='scripted'} | ConvertTo-Json -Compress
+    exit 0
+}
 if ($Case -eq 'temp-retirement-clearable') {
     Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"census","name":"temp-retirement-clearable"}'
     if ($state.tempRetirementCensusError) { exit 2 }

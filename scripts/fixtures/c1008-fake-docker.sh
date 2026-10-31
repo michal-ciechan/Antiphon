@@ -42,7 +42,7 @@ function pathWithChroot(base) {
 // Optional host-proof bind and inventory mode. With neither present, mounts and
 // forwarded env stay the production set (timeout, optional scratch quota, runner-tmp).
 const classifyAudit = (mounts, envs) => {
-  const proofEnvs = envs.filter(e => /^(C1008_HOST_PROOF|C1008_OPERATION|C1008_OPERATION_STARTED)=/.test(e));
+  const proofEnvs = envs.filter(e => /^(C1008_HOST_PROOF|C1008_OPERATION|C1008_OPERATION_STARTED|C1609_PROOF_NONCE|C1609_PROOF_INVENTORY)=/.test(e));
   const inventoryEnv = envs.filter(e => e.startsWith('C1008_AUDIT_MODE='));
   let auditMounts = mounts;
   let proofSource = '';
@@ -53,10 +53,12 @@ const classifyAudit = (mounts, envs) => {
       if (mounts.some(m => m.includes('c1008-host-proof'))) return null;
     }
     if (proofEnvs.length) {
-      if (proofEnvs.length !== 3) return null;
+      const v2Proof=envs.includes('C1609_CONTENT_V2=1');
+      if (proofEnvs.length !== (v2Proof?5:3)) return null;
       const keys = new Set(proofEnvs.map(e => e.slice(0, e.indexOf('='))));
-      if (keys.size !== 3) return null;
+      if (keys.size !== (v2Proof?5:3)) return null;
       if (!proofEnvs.includes('C1008_HOST_PROOF=/c1008-host-proof')) return null;
+      if(v2Proof && (!proofEnvs.some(e=>/^C1609_PROOF_NONCE=[0-9a-f]{32}$/.test(e)) || !proofEnvs.some(e=>/^C1609_PROOF_INVENTORY=[0-9a-f]{64}$/.test(e))))return null;
       if (!proofEnvs.some(e => /^C1008_OPERATION=c1008[0-9a-f]{32}$/.test(e))) return null;
       if (!proofEnvs.some(e => /^C1008_OPERATION_STARTED=[0-9]+$/.test(e))) return null;
       const last = mounts[mounts.length - 1] || '';
@@ -82,6 +84,7 @@ function fixtureHostProof(work, tmp, operation) {
   const graphEnv = {...process.env, GIT_CONFIG_SYSTEM:"/dev/null", GIT_CONFIG_GLOBAL:"/dev/null", GIT_TERMINAL_PROMPT:"0", GIT_NO_LAZY_FETCH:"1"};
   const git = a => cp.execFileSync(gitExe, a, {encoding:"utf8",env:graphEnv,timeout:10000,stdio:["ignore","pipe","pipe"]}).trim();
   const origins = new Map();
+  const records=[]; const nonce=crypto.randomBytes(16).toString("hex");
   const visit = (directoryPath, relative) => {
     let entries; try { entries=fs.readdirSync(directoryPath,{withFileTypes:true}); } catch { return; }
     const dot=entries.find(e=>e.name===".git" && e.isDirectory());
@@ -106,8 +109,7 @@ function fixtureHostProof(work, tmp, operation) {
         }
         const originHash=crypto.createHash("sha256").update(origin).digest("hex");
         const name=crypto.createHash("sha256").update(relative+"\n"+origin).digest("hex");
-        fs.writeFileSync(path.join(directory,name),"c1008-host-proof 1\noperation "+operation+"\norigin "+originHash+"\nrepo "+relative+"\ncreated "+started+"\n"+graph.advertisement+"\n",{mode:0o644});
-        fs.copyFileSync(graph.bundle,path.join(directory,name+".bundle"));
+        records.push({relative,origin,originHash,name,graph});
       } catch {}
       return;
     }
@@ -115,7 +117,18 @@ function fixtureHostProof(work, tmp, operation) {
   };
   visit(work,"");
   if(tmp)visit(tmp,"/tmp");
-  return {directory,started};
+  const requests=records.map(r=>'C1008_PRIVATE_ORIGIN repo='+r.relative+' origin='+r.origin+' originHash='+r.originHash+' proofName='+r.name).sort();
+  const inventory=crypto.createHash('sha256').update(requests.length?requests.join("\n")+"\n":"").digest('hex');
+  for(const r of records){
+    fs.copyFileSync(r.graph.bundle,path.join(directory,r.name+'.bundle'));
+    const bundle=crypto.createHash('sha256').update(fs.readFileSync(r.graph.bundle)).digest('hex');
+    const advertisement=r.graph.advertisement+"\n";
+    const advertisementHash=crypto.createHash('sha256').update(advertisement).digest('hex');
+    const body=['c1008-host-proof 2','operation '+operation,'origin '+r.originHash,'repo '+r.relative,'created '+started,
+      'nonce '+nonce,'inventory '+inventory,'bundle '+bundle,'advertisement '+advertisementHash,'count '+r.graph.advertisement.split("\n").length,'completed '+Math.floor(Date.now()/1000)].join("\n")+"\n"+advertisement;
+    fs.writeFileSync(path.join(directory,r.name),body,{mode:0o644});
+  }
+  return {directory,started,nonce,inventory};
 }
 // CARD-1105. Run the pty-host probe against one fixture shape. tmpAssets===false
 // stays a probe exit 1 and is not an absent directory.
@@ -233,7 +246,7 @@ const previewRun = () => {
   if (v2 && !proofSource && !envs.includes("C1008_AUDIT_MODE=inventory")) {
     const host=fixtureHostProof(state.volumes[vol].Mountpoint,tmpMount,previewNameOk[1]);
     proofSource=host.directory;
-    envs.push("C1008_HOST_PROOF=/c1008-host-proof","C1008_OPERATION="+previewNameOk[1],"C1008_OPERATION_STARTED="+host.started);
+    envs.push("C1008_HOST_PROOF=/c1008-host-proof","C1008_OPERATION="+previewNameOk[1],"C1008_OPERATION_STARTED="+host.started,"C1609_PROOF_NONCE="+host.nonce,"C1609_PROOF_INVENTORY="+host.inventory);
   }
   if (fs.existsSync(path.join(root, 'preview-hang'))) {
     const id = crypto.randomBytes(32).toString('hex');

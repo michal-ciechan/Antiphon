@@ -137,12 +137,16 @@ const originURL='https://fixture.invalid/card-1609/native.git';
 function proof(f) {
   const dir=scope.root+'/'+f.stem+'-proof'; fs.mkdirSync(dir);
   const bin=dir+'/bin';fs.mkdirSync(bin);
-  fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git "$'+'{args[@]}"\n',{mode:0o755});
+  fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git -c protocol.file.allow=always "$'+'{args[@]}"\n',{mode:0o755});
   f.proof=dir+'/proof';fs.mkdirSync(f.proof);
+  f.nonce=crypto.randomBytes(16).toString('hex');
+  const originHash=crypto.createHash('sha256').update(originURL).digest('hex');
+  const proofName=crypto.createHash('sha256').update('repos/outer\n'+originURL).digest('hex');
+  f.inventory=crypto.createHash('sha256').update('C1008_PRIVATE_ORIGIN repo=repos/outer origin='+originURL+' originHash='+originHash+' proofName='+proofName+'\n').digest('hex');
   const psi=call('pwsh',['-NoProfile','-NonInteractive','-Command',
     '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+
     '; Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+
-    ' -ProofDirectory '+q(f.proof)+' -CreatedUnix '+Math.floor(Date.now()/1000)+' -LogPath '+q(dir+'/proof.log')]);
+    ' -ProofVersion 2 -PhaseNonce '+q(f.nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(f.proof)+' -CreatedUnix '+Math.floor(Date.now()/1000)+' -LogPath '+q(dir+'/proof.log')]);
   assert.equal(psi.code,0);
   f.started=Math.floor(Date.now()/1000)-5;
 }
@@ -176,7 +180,7 @@ function shell(f, body, suffix='run') {
     'c1008_status_proof() { C1008_CENSUS="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown; }',
     'export PATH='+q(scope.root+'/bin')+':"$PATH"',
     'export C1609_CUT_PID=$$',
-    f.proof?'C1008_HOST_PROOF='+q(f.proof)+'; C1008_OPERATION_STARTED='+f.started:'',
+    f.proof?'C1008_HOST_PROOF='+q(f.proof)+'; C1008_OPERATION_STARTED='+f.started+'; C1609_PROOF_NONCE='+f.nonce+'; C1609_PROOF_INVENTORY='+f.inventory:'',
     'export C1609_NATIVE_HIDE_CID='+(suffix==='cancel'?'1':'0'),
     body,'exit 0'
   ].join('\n');

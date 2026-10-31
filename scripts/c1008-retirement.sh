@@ -210,6 +210,55 @@ c1609_target_snapshot() {
     printf '%s' "$result" | jq -cS .
 }
 
+# Trusted control-host configuration, never an audited volume's origin list.
+c1609_export_trusted_origins() {
+    local requests="$1" destination="$2" registry="$SERVER2_ROOT/retirement-origins.json"
+    [ -s "$requests" ] || return 0
+    c1609_read_canonical "$registry" >/dev/null || return 1
+    jq -e --arg project "$C1008_PROJECT_ID" '
+      keys==["projects","schema"] and .schema==1 and (.projects|type)=="object" and
+      all(.projects|to_entries[]; (.key|test("^[0-9a-f-]{36}$")) and
+        (.value|keys)==["origins"] and (.value.origins|type)=="array" and
+        (.value.origins|length)==(.value.origins|unique|length) and
+        all(.value.origins[];type=="string" and length>0)) and .projects[$project]!=null
+      ' "$registry" >/dev/null || return 1
+    jq -Rse --arg project "$C1008_PROJECT_ID" --slurpfile registry "$registry" '
+      split("\n")|map(select(length>0))|all(.[];
+        capture("^C1008_PRIVATE_ORIGIN repo=[A-Za-z0-9._/-]+ origin=(?<origin>[^ ]+) originHash=[0-9a-f]{64} proofName=[0-9a-f]{64}$").origin as $origin |
+        $registry[0].projects[$project].origins|index($origin)!=null)
+      ' "$requests" >/dev/null || return 1
+    jq -cS --arg project "$C1008_PROJECT_ID" '{schema:1,projectId:$project,origins:.projects[$project].origins}' "$registry" |
+        c1609_persist "$destination"
+}
+
+# A long audit or census wait may age the host observation. Until a renewed
+# exchange is available, stop before Ready/intent rather than reuse old proof.
+c1609_publication_fresh() {
+    local proof="${C1008_HOST_PROOF:-}" file name completed now count=0
+    [ -n "$proof" ] || return 0
+    c1609_custody "$proof" dir || return 1
+    now="$(date -u +%s)" || return 1
+    for file in "$proof"/*; do
+        [ -e "$file" ] && [ ! -L "$file" ] || return 1
+        name="${file##*/}"
+        if [[ "$name" =~ ^[0-9a-f]{64}\.bundle$ ]]; then
+            c1609_custody "$file" file || return 1
+            continue
+        fi
+        [[ "$name" =~ ^[0-9a-f]{64}$ ]] || return 1
+        c1609_custody "$file" file || return 1
+        [ "$(sed -n '1p' "$file")" = 'c1008-host-proof 2' ] &&
+          [ "$(sed -n '2p' "$file")" = "operation $C1008_OPERATION" ] &&
+          [ "$(sed -n '6p' "$file")" = "nonce ${C1609_PROOF_NONCE:-}" ] &&
+          [ "$(sed -n '7p' "$file")" = "inventory ${C1609_PROOF_INVENTORY:-}" ] || return 1
+        completed="$(sed -n '11s/^completed //p' "$file")" || return 1
+        [[ "$completed" =~ ^(0|[1-9][0-9]{0,11})$ ]] &&
+          [ "$((now-completed))" -ge -60 ] && [ "$((now-completed))" -le 900 ] || return 1
+        count=$((count+1))
+    done
+    [ "$count" -gt 0 ]
+}
+
 # The credential-capable manual entry commissions a short-lived, owner-protected
 # host grant after operator authentication. Neither a task token, an actor string
 # nor an inventory-authored document is a grant. The operator credential itself

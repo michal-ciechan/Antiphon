@@ -208,11 +208,17 @@ public sealed class VolumeRetirementContentTests
         proofText.ShouldContain(seeded.B + "\trefs/heads/main");
         (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("ls-remote");
         (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("fetch");
-        var proofDir = Directory.EnumerateDirectories(evidence).Single(path => Path.GetFileName(path).StartsWith("c1008-proof-", StringComparison.Ordinal));
+        var localProofDir = Directory.EnumerateDirectories(evidence).Single(path => Path.GetFileName(path).StartsWith("c1008-proof-", StringComparison.Ordinal));
+        var proofDir = Path.Combine(root,"remote-root",Path.GetFileName(localProofDir));
+        var proofFile = Directory.GetFiles(proofDir).Single(path => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), "^[0-9a-f]{64}$"));
+        var headers = File.ReadAllLines(proofFile);
+        headers[0].ShouldBe("c1008-host-proof 2", "H7 actual bridge produces current v2 authority");
+        var v2Bindings = "\nexport C1609_PROOF_NONCE=" + headers[5]["nonce ".Length..] +
+            "\nexport C1609_PROOF_INVENTORY=" + headers[6]["inventory ".Length..] + "\n";
 
         var preview = await fixture.Run("retire-temp-runner",
             bound + "\nexport C1008_HOST_PROOF=" + VolumeRetirementFixture.Quote(proofDir) +
-            "\nexport C1008_OPERATION_STARTED=1700000000\n" + probe, dryRun: true);
+            "\nexport C1008_OPERATION_STARTED=1700000000\n" + v2Bindings + probe, dryRun: true);
         File.Exists(helperTrace).ShouldBeFalse("c1609-h7: admission consumes host ancestry without a helper remote lookup");
         fixture.Removed.ShouldBeEmpty();
         var admitted = preview.Exit == 0 &&
@@ -225,6 +231,46 @@ public sealed class VolumeRetirementContentTests
             "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " cat-file -e " +
             VolumeRetirementFixture.Quote(seeded.B + "^{commit}") + " 2>/dev/null");
         unchanged.Exit.ShouldNotBe(0, "H7 host bundle must not populate the target volume with B");
+        var originalProof = await File.ReadAllTextAsync(proofFile);
+        var originalBundle = await File.ReadAllBytesAsync(proofFile+".bundle");
+        var readyFile = Path.Combine(root,"server/retirement",VolumeRetirementFixture.Operation,"receipt.json");
+        var readyBytes = await File.ReadAllBytesAsync(readyFile);
+        foreach (var vector in new[] {"nonce","inventory","coverage","expired","future","duplicate","bundle"})
+        {
+            var changed = File.ReadAllLines(proofFile);
+            var binding = v2Bindings;
+            switch(vector)
+            {
+                case "nonce": changed[5]="nonce "+new string('0',32); break;
+                case "inventory": changed[6]="inventory "+new string('0',64); break;
+                case "coverage":
+                    changed[6]="inventory "+new string('0',64);
+                    binding+="export C1609_PROOF_INVENTORY="+new string('0',64)+"\n";
+                    break;
+                case "expired":
+                    changed[4]="created "+DateTimeOffset.UtcNow.AddSeconds(-1000).ToUnixTimeSeconds();
+                    changed[10]="completed "+DateTimeOffset.UtcNow.AddSeconds(-901).ToUnixTimeSeconds(); break;
+                case "future":
+                    changed[4]="created "+DateTimeOffset.UtcNow.AddSeconds(121).ToUnixTimeSeconds();
+                    changed[10]="completed "+DateTimeOffset.UtcNow.AddSeconds(122).ToUnixTimeSeconds(); break;
+                case "duplicate": changed=changed.Concat(new[]{changed[11]}).ToArray(); break;
+                case "bundle":
+                    var damaged=originalBundle.ToArray(); damaged[^1]^=1;
+                    await File.WriteAllBytesAsync(proofFile+".bundle",damaged);
+                    changed[7]="bundle "+Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(damaged)).ToLowerInvariant();
+                    break;
+            }
+            await File.WriteAllTextAsync(proofFile,string.Join('\n',changed)+"\n");
+            var rejected = await fixture.Run("retire-temp-runner",bound+"\nexport C1008_HOST_PROOF="+
+                VolumeRetirementFixture.Quote(proofDir)+"\nexport C1008_OPERATION_STARTED=1700000000\n"+binding+probe,dryRun:true);
+            rejected.Exit.ShouldBe(2,"H7 v2 "+vector+" must refuse: "+rejected.Output);
+            rejected.Output.ShouldContain("RecycleGitAuditUnknown");
+            rejected.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            (await File.ReadAllBytesAsync(readyFile)).ShouldBe(readyBytes,"H7 refused proof cannot replace or consume Ready");
+            fixture.Removed.ShouldBeEmpty();
+            await File.WriteAllTextAsync(proofFile,originalProof);
+            await File.WriteAllBytesAsync(proofFile+".bundle",originalBundle);
+        }
     }
 
     [Test]

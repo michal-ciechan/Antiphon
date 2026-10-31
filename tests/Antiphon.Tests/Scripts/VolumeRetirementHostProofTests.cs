@@ -252,7 +252,7 @@ public sealed class VolumeRetirementHostProofTests
             "$extra=@{ProofVersion=2;PhaseNonce=('b'*32);InventoryDigest=('c'*64);ApprovedOrigins=@($url)}; " +
             "$original=${function:Invoke-C1609HostGit}; " +
             "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='') " +
-            "$mapped=@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
+            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
             "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory } }; " +
             "Write-C1008HostOriginProof -OriginUrl $url -RepoRelative '" + Repo + "' -OperationId '" + Operation +
             "' -ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @extra";

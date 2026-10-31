@@ -61,6 +61,12 @@ public sealed class VolumeRetirementWrapperTests
         priorCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
         priorCalls[0]["recycle"]!["operationId"]!.GetValue<string>().ShouldBe(Operation);
         priorCalls[0]["recycle"]!["expectedProofDigest"]!.GetValue<string>().ShouldBe(new string('a',64));
+        using var missingPrior = new C1008WrapperFixture();
+        missingPrior.State["retirementProofError"] = true;
+        var refusedPrior = await missingPrior.Run("retire-temp", "-RetirementProof", Operation);
+        refusedPrior.Exit.ShouldBe(2,refusedPrior.Output);
+        refusedPrior.Trace.Any(row=>row["kind"]?.GetValue<string>()=="case").ShouldBeFalse(
+            "W1 unknown prior proof cannot start cleanup, Preview or Apply");
 
         using var deploy = new C1008WrapperFixture();
         deploy.State["allowClear"] = true;

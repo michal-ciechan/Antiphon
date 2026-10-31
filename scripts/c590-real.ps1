@@ -355,7 +355,8 @@ function Get-C1008RetireProofExports {
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$Run,
         [Parameter(Mandatory = $true)][string]$RecycleOperation,
-        [Parameter(Mandatory = $true)][string]$InventoryRemote
+        [Parameter(Mandatory = $true)][string]$InventoryRemote,
+        [string]$ProjectId = ''
     )
     if ($Run -cnotmatch '^[a-z0-9]+$' -or $RecycleOperation -cnotmatch '^c1008[0-9a-f]{32}$') {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
@@ -388,12 +389,24 @@ function Get-C1008RetireProofExports {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
     if ($rows.Count -eq 0) { return @() }
+    try {
+        $allowPath = Join-Path $inventoryDir 'trusted-origins.json'
+        $allowText = [IO.File]::ReadAllText($allowPath)
+        Assert-C994RawManifest $allowText
+        $allow = $allowText | ConvertFrom-Json
+        if ($allow.schema -ne 1 -or $allow.projectId -cne $ProjectId -or $ProjectId -cnotmatch '^[0-9a-f-]{36}$' -or $allow.origins -isnot [array] -or
+            (($allow.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'origins,projectId,schema') { throw 'registry' }
+        $requestLines = [string[]]@($rows | ForEach-Object { 'C1008_PRIVATE_ORIGIN repo='+$_.Repo+' origin='+$_.Origin+' originHash='+$_.OriginHash+' proofName='+$_.ProofName })
+        [Array]::Sort($requestLines,[StringComparer]::Ordinal)
+        $requestDigest = Get-C1008Sha256 (($requestLines -join [char]10)+[char]10)
+    } catch { Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2 }
+    $phaseNonce = [guid]::NewGuid().ToString('N')
     $started = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $startedText = $started.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $remoteName = 'c1008-proof-' + $RecycleOperation + '-' + $startedText
+    $remoteName = 'c1008-proof-' + $RecycleOperation + '-' + $startedText + '-' + $phaseNonce
     $remoteDir = '/home/mc/antiphon-c590/' + $remoteName
-    if ($remoteName -cnotmatch '^c1008-proof-c1008[0-9a-f]{32}-[0-9]+$' -or
-        $remoteDir -cnotmatch '^/home/mc/antiphon-c590/c1008-proof-c1008[0-9a-f]{32}-[0-9]+$') {
+    if ($remoteName -cnotmatch '^c1008-proof-c1008[0-9a-f]{32}-[0-9]+-[0-9a-f]{32}$' -or
+        $remoteDir -cnotmatch '^/home/mc/antiphon-c590/c1008-proof-c1008[0-9a-f]{32}-[0-9]+-[0-9a-f]{32}$') {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
     $localDir = Join-Path $EvidenceRoot $remoteName
@@ -406,9 +419,17 @@ function Get-C1008RetireProofExports {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
     $logPath = Join-Path $localDir 'host-proof.log'
+    $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
+    $graphs = @{}
     foreach ($row in $rows) {
         try {
-            Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath
+            if ($graphs.ContainsKey($row.OriginHash)) {
+                Copy-C1609HostOriginProof -Directory $localDir -SourceName $graphs[$row.OriginHash] -Repo $row.Repo -Origin $row.Origin
+            } else {
+                $remaining = 600000 - [int]$phaseWatch.ElapsedMilliseconds
+                Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath -ProofVersion 2 -PhaseNonce $phaseNonce -InventoryDigest $requestDigest -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining
+                $graphs[$row.OriginHash] = $row.ProofName
+            }
         }
         catch {
             $msg = [string]$_.Exception.Message
@@ -446,7 +467,9 @@ function Get-C1008RetireProofExports {
     }
     return @(
         ("export C1008_HOST_PROOF='" + $remoteDir + "'"),
-        ("export C1008_OPERATION_STARTED='" + $startedText + "'")
+        ("export C1008_OPERATION_STARTED='" + $startedText + "'"),
+        ("export C1609_PROOF_NONCE='" + $phaseNonce + "'"),
+        ("export C1609_PROOF_INVENTORY='" + $requestDigest + "'")
     )
 }
 
@@ -702,7 +725,7 @@ mkdir -- '{0}'
             })
             if ($recycleDryRun -ceq '1') { $inventoryExports += "export C1008_INVENTORY_ALLOW_PREVIEW='1'" }
             $inventoryRemote = ($inventoryExports + @($remoteEntry)) -join '; '
-            $retireProofExports = @(Get-C1008RetireProofExports -EvidenceRoot $root -Run $run -RecycleOperation $recycleOperation -InventoryRemote $inventoryRemote)
+            $retireProofExports = @(Get-C1008RetireProofExports -EvidenceRoot $root -Run $run -RecycleOperation $recycleOperation -InventoryRemote $inventoryRemote -ProjectId $recycleProjectId)
         }
         $remote = ($bridgeExports + $retireProofExports + @($remoteEntry)) -join '; '
         $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')

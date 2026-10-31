@@ -108,7 +108,7 @@ internal static class VolumeRetirementFixture
             "  exit 128\nfi\nargs=()\nfor arg in \"$@\"; do\n" +
             "  if [ \"$arg\" = " + Quote(OriginUrl) + " ]; then args+=(\"$H7_BARE\"); else args+=(\"$arg\"); fi\ndone\n" +
             "export PATH=\"${PATH#*:}\"\n" +
-            "exec git \"${args[@]}\"\n");
+            "exec git -c protocol.file.allow=always \"${args[@]}\"\n");
         await File.WriteAllTextAsync(Path.Combine(bin, "ssh"),
             "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$H7_SSH_LOG\"\nexit 0\n");
         await File.WriteAllTextAsync(Path.Combine(bin, "scp"),
@@ -140,7 +140,7 @@ internal static class VolumeRetirementFixture
             "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(repoRoot, "scripts/c590-command.ps1")) +
             "; . " + Quote(Path.Combine(repoRoot, "scripts/c590-real.ps1")) +
             "; $exports = @(Get-C1008RetireProofExports -EvidenceRoot $env:H7_EVIDENCE -Run 'h7fixture' " +
-            "-RecycleOperation '" + Operation + "' -InventoryRemote 'true'); " +
+            "-RecycleOperation '" + Operation + "' -InventoryRemote 'true' -ProjectId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'); " +
             "$exports | ForEach-Object { Write-Output $_ }");
         psi.Environment["PATH"] = bin + ":" + Environment.GetEnvironmentVariable("PATH");
         psi.Environment["H7_EVIDENCE"] = evidence;

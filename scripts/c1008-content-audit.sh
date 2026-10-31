@@ -2,6 +2,66 @@
 # C1609_CONTENT_V2 is unset. This file must not contain the audit delimiters.
 # A repo is disposable only when its raw commit bytes match the card-1605 seed.
 
+# V2 binds the complete repository/origin request roster and fetched graph.
+c1609_apply_host_proof() {
+    local rel url name file bundle line actual wanted created completed started now n=0 ref
+    local ref_re=$'^[0-9a-f]{40}\trefs/(heads|tags)/[^[:space:]]+$'
+    local -a headers=()
+    local -A seen=()
+    rel="$(rel_repo "$audit_repo")"; c1008_rel_safe "$rel" || fail 128 ' reason=proof-repo'
+    path_of git --git-dir="$top" remote get-url origin 2>/dev/null || fail 128
+    url="$path_out"; c1008_scrub_origin "$url" || fail 128 ' reason=proof-origin'
+    [ "$url" = "$c1008_scrubbed" ] || fail 128 ' reason=proof-origin'
+    name="$(c1008_proof_name "$rel" "$url")"
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || fail 128 ' reason=proof-parse'
+    file="${C1008_HOST_PROOF:-}/$name"; bundle="$file.bundle"
+    [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] &&
+      [ -f "$bundle" ] && [ ! -L "$bundle" ] && [ -r "$bundle" ] || fail 128 ' reason=proof-missing'
+    [ "$(stat -c %s -- "$file")" -le 16777216 ] || fail 128 ' reason=proof-parse'
+    grep -q $'\r' "$file" && fail 128 ' reason=proof-parse'
+    {
+        for ((n=0;n<11;n++)); do IFS= read -r line || fail 128 ' reason=proof-parse'; headers+=("$line"); done
+    } < "$file"
+    [ "${headers[0]}" = 'c1008-host-proof 2' ] &&
+      [ "${headers[1]}" = "operation ${C1008_OPERATION:-}" ] &&
+      [ "${headers[2]}" = "origin $(c1008_sha256 "$url")" ] &&
+      [ "${headers[3]}" = "repo $rel" ] || fail 128 ' reason=proof-binding'
+    [[ "${C1609_PROOF_NONCE:-}" =~ ^[0-9a-f]{32}$ ]] &&
+      [[ "${C1609_PROOF_INVENTORY:-}" =~ ^[0-9a-f]{64}$ ]] &&
+      [ "${headers[5]}" = "nonce $C1609_PROOF_NONCE" ] &&
+      [ "${headers[6]}" = "inventory $C1609_PROOF_INVENTORY" ] || fail 128 ' reason=proof-binding'
+    created="${headers[4]#created }"; completed="${headers[10]#completed }"; started="${C1008_OPERATION_STARTED:-}"
+    [[ "$created" =~ ^(0|[1-9][0-9]{0,11})$ && "$completed" =~ ^(0|[1-9][0-9]{0,11})$ && "$started" =~ ^(0|[1-9][0-9]{0,11})$ ]] || fail 128 ' reason=proof-stale'
+    [ "${headers[4]}" = "created $created" ] && [ "${headers[10]}" = "completed $completed" ] || fail 128 ' reason=proof-parse'
+    now="$(date -u +%s)" || fail 128 ' reason=proof-stale'
+    [ "$created" -ge "$started" ] && [ "$completed" -ge "$created" ] &&
+      [ "$((completed-created))" -le 600 ] && [ "$((now-completed))" -ge -60 ] &&
+      [ "$((now-completed))" -le 900 ] || fail 128 ' reason=proof-stale'
+    wanted="${headers[7]#bundle }"; [[ "$wanted" =~ ^[0-9a-f]{64}$ ]] &&
+      [ "${headers[7]}" = "bundle $wanted" ] && [ "$(sha256sum "$bundle" | cut -d' ' -f1)" = "$wanted" ] || fail 128 ' reason=proof-bundle'
+    actual="${headers[9]#count }"; [[ "$actual" =~ ^[1-9][0-9]{0,7}$ ]] &&
+      [ "${headers[9]}" = "count $actual" ] || fail 128 ' reason=proof-parse'
+    : > "$scratch/origin"; n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n+1)); [ "$n" -gt 11 ] || continue
+        [[ "$line" =~ $ref_re ]] || fail 128 ' reason=proof-parse'
+        ref="${line#*$'\t'}"; [ -z "${seen[$ref]+x}" ] || fail 128 ' reason=proof-parse'; seen[$ref]=1
+        case "${line,,}" in *ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*|*token*|*password*|*secret*) fail 128 ' reason=proof-parse' ;; esac
+        printf '%s\n' "$line" >> "$scratch/origin" || fail 128 ' reason=proof-parse'
+    done < "$file"
+    [ "$((n-11))" = "$actual" ] || fail 128 ' reason=proof-coverage'
+    wanted="${headers[8]#advertisement }"; [[ "$wanted" =~ ^[0-9a-f]{64}$ ]] &&
+      [ "${headers[8]}" = "advertisement $wanted" ] && [ "$(sha256sum "$scratch/origin" | cut -d' ' -f1)" = "$wanted" ] || fail 128 ' reason=proof-coverage'
+    printf 'C1008_PRIVATE_ORIGIN repo=%s origin=%s originHash=%s proofName=%s\n' "$rel" "$url" "$(c1008_sha256 "$url")" "$name" >> "$scratch/c1609-proof-requests"
+}
+
+c1609_verify_host_coverage() {
+    [ -n "${C1008_HOST_PROOF:-}" ] || return 0
+    [ -f "$scratch/c1609-proof-requests" ] || : > "$scratch/c1609-proof-requests"
+    LC_ALL=C sort "$scratch/c1609-proof-requests" > "$scratch/c1609-proof-sorted" || fail 128 ' reason=proof-coverage'
+    [ "$(sha256sum "$scratch/c1609-proof-sorted" | cut -d' ' -f1)" = "${C1609_PROOF_INVENTORY:-}" ] || fail 128 ' reason=proof-coverage'
+}
+
 c1609_refuse_reason() {
     printf 'audit check=content status=0 repo=%s reason=%s\n' "$(rel_repo "$2")" "$1"
     printf 'RecycleGitAuditUnknown\n'
@@ -397,6 +457,7 @@ c1609_list_offenders() {
 
 c1609_finish_blocks() {
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 0
+    c1609_verify_host_coverage
     [ -n "${c1609_block_reason:-}" ] || return 0
     printf 'audit check=content status=0 repo=. reason=%s\n' "$c1609_block_reason"
     printf 'RecycleGitAuditUnknown\n'

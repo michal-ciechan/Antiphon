@@ -7774,6 +7774,11 @@ c1609_unbundle_host_proof() {
     [ -f "$bundle" ] && [ ! -L "$bundle" ] && [ -r "$bundle" ] || return 1
     git --git-dir="$proof" bundle unbundle "$bundle" > "$proof.bundle-refs" 2>/dev/null || return 1
     [ -s "$proof.bundle-refs" ] || return 1
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        awk '$2!="HEAD" {print $1 "\t" $2}' "$proof.bundle-refs" | LC_ALL=C sort > "$proof.bundle-sorted" || return 1
+        sed '/\^{}$/d' "$scratch/origin" | LC_ALL=C sort > "$proof.advertised-sorted" || return 1
+        cmp -s -- "$proof.bundle-sorted" "$proof.advertised-sorted" || return 1
+    fi
     : > "$proof.bundle-updates" || return 1
     while read -r oid ref || [ -n "${oid:-}${ref:-}" ]; do
         [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || return 1
@@ -7940,6 +7945,7 @@ c1008_ls_remote_status() {
 # with no reason, the same text as an unauthenticated ls-remote. A supplied
 # directory whose file is missing, empty, or not a regular file names proof-missing.
 c1008_apply_host_proof() {
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then c1609_apply_host_proof; return; fi
     local rel url file name line1 line2 line3 line4 line5 op oh rp created started expect n=0 lower skip line ref_re
     rel="$(rel_repo "$audit_repo")"
     if [ -z "${C1008_HOST_PROOF:-}" ]; then
@@ -8552,6 +8558,11 @@ c1008_forward_host_proof() {
     _mounts+=(--env C1008_HOST_PROOF=/c1008-host-proof)
     _mounts+=(--env "C1008_OPERATION=$C1008_OPERATION")
     _mounts+=(--env "C1008_OPERATION_STARTED=$started")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        [[ "${C1609_PROOF_NONCE:-}" =~ ^[0-9a-f]{32}$ ]] && [[ "${C1609_PROOF_INVENTORY:-}" =~ ^[0-9a-f]{64}$ ]] \
+            || { printf 'audit check=host-proof status=2 repo=.\n'; return 2; }
+        _mounts+=(--env "C1609_PROOF_NONCE=$C1609_PROOF_NONCE" --env "C1609_PROOF_INVENTORY=$C1609_PROOF_INVENTORY")
+    fi
 }
 
 c1008_audit() {
@@ -9242,6 +9253,7 @@ c1008_recycle() {
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
+            c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
             printf 'C1609_RETIREMENT state=Ready\n'
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
@@ -9397,6 +9409,7 @@ c1008_recycle() {
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
         if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
         # Resume continues a journal that already passed this gate. A fresh apply does not.
+        c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
         if [ "${C1008_RESUME:-0}" != 1 ]; then
             c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         fi
@@ -9409,6 +9422,7 @@ c1008_recycle() {
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
                 || c1008_refuse RecycleResumeMismatch
             if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
                 c1609_recheck_target "$name" || c1008_refuse RecycleResumeMismatch
                 c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
             fi
@@ -10153,6 +10167,8 @@ case_retire_temp_inventory() {
         esac
     fi
     printf '%s\n' "$out" | grep '^C1008_PRIVATE_ORIGIN ' > "$CASE_DIR/private-origins.txt" || true
+    c1609_export_trusted_origins "$CASE_DIR/private-origins.txt" "$CASE_DIR/trusted-origins.json" \
+        || write_result false 'RecycleGitAuditUnknown reason=unapproved-origin' 2
     printf '%s\n' "$out"
     write_result true '' 0
 }
