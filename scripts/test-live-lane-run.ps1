@@ -160,8 +160,9 @@ function Read-Census($root) {
         . "$root/scripts/lib/nightly-common.ps1"
         . "$root/scripts/lib/nightly-policy.ps1"
         . "$root/scripts/lib/nightly-coverage.ps1"
-        $policy = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
-        $discovery = ConvertFrom-NightlyDiagnosticLog -Text ([IO.File]::ReadAllText("$root/scripts/fixtures/nightly/c487-probe/discovery.diag")) -Mode discovery
+        $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
+        $policy = $policyRead.Object
+        $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
         $nodes = @($discovery.Nodes)
         $nodes += @(
             @{ Uid='sentinel-c680'; ClassName='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; Method='C680_LiveNudgeRefusesPermissionAndQuestionDialogs'; Categories=@('Integration') },
@@ -170,7 +171,7 @@ function Read-Census($root) {
         )
         $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy -Profile rc -SuiteId antiphon -Platform linux)
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
-        return @{ Hash=$policy.policyHash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
+        return @{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
     } $root
 }
 function Test-WrapperOnlyPaidManifest {
