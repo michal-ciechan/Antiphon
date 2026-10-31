@@ -1210,6 +1210,11 @@ its full current-row p95 remains unknown. Keep all 25 methods and every other
 filter/floor. Use a 30-minute charged group bound, preserve the 3/2 Close repair
 run as red, and retain exact source/build receipts for the remaining rows.
 
+2026-10-31 round 13 amends the CP-8 table row only: `C1008_Retired_absent_null_is_accepted`
+shares `GetRetirementRequestAsync` with the wrapper row and was selected by no
+checkpoint filter. Floor and expect move from 10 to 11. No other row's filter
+or floor changes here.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
@@ -1220,7 +1225,7 @@ run as red, and retain exact source/build receipts for the remaining rows.
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
 | CP-7 | S2-S5 | CP-3 | linux-evidence-shapes | `/*/Antiphon.Tests.Scripts/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1594_Antiphon_evidence_gitdir*)\|(C1335_Mirror_owner_stamp_in_linked_admin*)` | R5 | all 52 argument results, 0 failed/skipped | 52 | 2 | true |
-| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Documentation_and_transport_pins_match*)` | R1,R6,doc transport | all 10 methods, 0 failed/skipped | 10 | 9 | true |
+| CP-8 | S2-S5 | CP-3 | linux-recycle-guards | `/*/Antiphon.Tests.Scripts/RollingVolumeRecycleScriptTests/(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Preview_helper_removal_is_owned*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)\|(C1008_Retired_absent_null_is_accepted*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Documentation_and_transport_pins_match*)` | R1,R6,doc transport, unrostered retired-absent sibling | all 11 methods, 0 failed/skipped | 11 | 9 | true |
 | CP-9 | S2-S5 | CP-3 | linux-container-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerHostTests/*` | R2, complete host topology/census/crash roster | all 22 methods, 0 failed/skipped | 22 | 15 | true |
 | CP-10 | S2-S5 | CP-3 | linux-real-docker | `/*/Antiphon.Tests.Scripts/VolumeRetirementDockerTests/*` | N1-N3 | all 3 methods and owned cleanup, 0 failed/skipped | 3 | 4 | true |
 | CP-11 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-windows/` | windows-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 native Windows | all 12 methods, 0 failed/skipped | 12 | 5 | true |

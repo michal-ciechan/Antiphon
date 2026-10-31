@@ -2670,17 +2670,24 @@ public sealed class RollingVolumeRecycleScriptTests
         cancellationToken.ThrowIfCancellationRequested();
         using var fixture = new C1008WrapperFixture();
         var run = await fixture.Run("retire-temp");
-        run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case" &&
-            x["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeTrue(
-                "retire-absent-null-accepted: the retired absent/null row must reach the retirement host case; " + run.Output);
         run.Exit.ShouldBe(0);
         run.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse(
             "retire-absent-null-accepted: retirement must remain stamped");
         JsonNode.Parse(File.ReadAllText(fixture.StatePath))!["statuses"]!["server2-temp"]!["retiredAt"]!
             .GetValue<string>().ShouldBe("2026-10-03T09:30:00Z");
-        var request = run.Trace.Single(x => x["kind"]?.GetValue<string>() == "case" &&
-            x["name"]?.GetValue<string>() == "retire-temp-runner");
-        request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
+        // deploy-server2 retire-temp runs Preview, then Apply, under one operation id.
+        var requests = run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case" &&
+            x["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        requests.Length.ShouldBe(2,
+            "retire-absent-null-accepted: the retired absent/null row must preview then apply; " + run.Output);
+        requests[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue(
+            "retire-absent-null-accepted: the first host case is Preview");
+        var request = requests[1];
+        request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse(
+            "retire-absent-null-accepted: the second host case is Apply");
+        request["recycle"]!["operationId"]!.GetValue<string>().ShouldBe(
+            requests[0]["recycle"]!["operationId"]!.GetValue<string>(),
+            "retire-absent-null-accepted: Preview and Apply share one operation id");
         request["recycle"]!["project"]!.GetValue<string>().ShouldBe("antiphon-runner-temp");
         var operation = request["recycle"]!["operationId"]!.GetValue<string>();
         Regex.IsMatch(operation, "^c1008[0-9a-f]{32}$").ShouldBeTrue();
