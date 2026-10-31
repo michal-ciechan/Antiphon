@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "runId": "synthetic-stopped",
+  "attempt": "1",
+  "suite": "antiphon",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "groups": [
+    {
+      "chunk": "all-group-1",
+      "classes": [
+        "Synthetic.antiphon.Passed"
+      ],
+      "plannedTestIds": [
+        "pass"
+      ]
+    },
+    {
+      "chunk": "all-group-2",
+      "classes": [
+        "Synthetic.antiphon.Red"
+      ],
+      "plannedTestIds": [
+        "red",
+        "red-expansion"
+      ]
+    },
+    {
+      "chunk": "all-group-3",
+      "classes": [
+        "Synthetic.antiphon.Never"
+      ],
+      "plannedTestIds": [
+        "never"
+      ]
+    },
+    {
+      "chunk": "profile-4",
+      "classes": [],
+      "plannedTestIds": [
+        "torn",
+        "missing"
+      ]
+    }
+  ]
+}

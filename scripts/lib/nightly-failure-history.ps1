@@ -3,19 +3,173 @@
 # ASCII-only. No network or live-run operations; current policy is read-only.
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'nightly-stopped-run-seed.ps1')
+
+$script:NightlyHistoryLinkCache = $null
+
+function Reset-NightlyHistoryLinkCache {
+    $script:NightlyHistoryLinkCache = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+}
+
+function Initialize-NightlyHistoryIdentity {
+    if ('Antiphon.NightlyHistory.SummaryPrefix' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace Antiphon.NightlyHistory {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LinuxStat {
+        public ulong Dev;
+        public ulong Ino;
+        public ulong Nlink;
+        public uint Mode;
+        public uint Uid;
+        public uint Gid;
+        public int Pad0;
+        public ulong Rdev;
+        public long Size;
+        public ulong A; public ulong B; public ulong C; public ulong D;
+        public ulong E; public ulong F; public ulong G; public ulong H;
+        public ulong I; public ulong J; public ulong K; public ulong L;
+    }
+    public static class NodeIdentity {
+        [DllImport("libc", EntryPoint="lstat", SetLastError=true)]
+        public static extern int LStat(string path, out LinuxStat stat);
+    }
+    public static class SummaryPrefix {
+        public static int CutBeforeBulk(byte[] data) {
+            int depth = 0;
+            bool inString = false, escape = false, wantKey = false, readingKey = false;
+            int keyStart = -1;
+            var key = new List<byte>();
+            for (int i = 0; i < data.Length; i++) {
+                byte b = data[i];
+                if (inString) {
+                    if (escape) { escape = false; if (readingKey) key.Add(b); continue; }
+                    if (b == (byte)'\\') { escape = true; continue; }
+                    if (b == (byte)'"') {
+                        inString = false;
+                        if (readingKey) {
+                            readingKey = false;
+                            string text = Encoding.UTF8.GetString(key.ToArray());
+                            if (depth == 1 && (text == "timingChunks" || text == "suiteTimeline" || text == "suites")) return keyStart;
+                            key.Clear();
+                        }
+                        continue;
+                    }
+                    if (readingKey) key.Add(b);
+                    continue;
+                }
+                if (b == (byte)'"') {
+                    inString = true;
+                    if (depth == 1 && wantKey) { readingKey = true; keyStart = i; key.Clear(); wantKey = false; }
+                    continue;
+                }
+                if (b == (byte)'{' || b == (byte)'[') {
+                    depth++;
+                    if (b == (byte)'{' && depth == 1) wantKey = true;
+                    continue;
+                }
+                if (b == (byte)'}' || b == (byte)']') { depth--; continue; }
+                if (b == (byte)',' && depth == 1) { wantKey = true; }
+            }
+            return -1;
+        }
+    }
+}
+'@
+}
+
+function ConvertTo-NightlyHistoryFull {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $root.Length) { $full = $full.TrimEnd('\','/') }
+    return $full
+}
+
+function Get-NightlyHistoryNodeIdentity {
+    param([string]$Path)
+    Initialize-NightlyHistoryIdentity
+    $missing = [pscustomobject]@{ Missing = $true; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $false }
+    $windows = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
+    if ($windows) {
+        try { $attrs = [IO.File]::GetAttributes($Path) }
+        catch [IO.FileNotFoundException] { return $missing }
+        catch [IO.DirectoryNotFoundException] { return $missing }
+        catch { return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true } }
+        $linked = (($attrs -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        $dir = (($attrs -band [IO.FileAttributes]::Directory) -ne 0)
+        if (-not $linked -and -not $dir) {
+            $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+            if ($null -ne $item -and $item.LinkType) { $linked = $true }
+        }
+        $ino = [uint64]0
+        if ($linked) { $ino = [uint64]1 }
+        return [pscustomobject]@{ Missing = $false; Linked = $linked; Directory = $dir; Dev = [uint64]0; Ino = $ino; Unreadable = $false }
+    }
+    $stat = New-Object Antiphon.NightlyHistory.LinuxStat
+    $code = [Antiphon.NightlyHistory.NodeIdentity]::LStat($Path, [ref]$stat)
+    if ($code -ne 0) {
+        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($err -eq 2) { return $missing }
+        return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true }
+    }
+    $kind = ([uint32]$stat.Mode) -band 61440
+    $linked = ($kind -eq 40960)
+    $dir = ($kind -eq 16384)
+    # A directory nlink counts subdirectories. A file nlink above 1 is a hard link.
+    if (-not $linked -and -not $dir -and [uint64]$stat.Nlink -gt 1) { $linked = $true }
+    return [pscustomobject]@{
+        Missing = $false
+        Linked = $linked
+        Directory = $dir
+        Dev = [uint64]$stat.Dev
+        Ino = [uint64]$stat.Ino
+        Unreadable = $false
+    }
+}
 
 function Assert-NightlyHistoryNoLink {
     param([string]$Path)
-    $part = [IO.Path]::GetFullPath($Path)
+    # Ancestors above the parent are classified once and cached. The path itself
+    # and its immediate parent are lstat'd on every call. Only directories are
+    # cached: replacing one changes its inode (or sets S_IFLNK / ReparsePoint).
+    # Rewriting a regular file also changes that file's inode and is not a link.
+    if ($null -eq $script:NightlyHistoryLinkCache) { Reset-NightlyHistoryLinkCache }
+    $full = ConvertTo-NightlyHistoryFull $Path
+    $chain = [Collections.Generic.List[string]]::new()
+    $part = $full
     while ($part) {
-        $item = Get-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-        if ($null -ne $item) {
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.LinkType) { throw 'evidence-link' }
-        }
+        $chain.Add($part)
         $parent = [IO.Path]::GetDirectoryName($part)
-        if ($parent -ceq $part) { break }
+        if ([string]::IsNullOrEmpty($parent) -or $parent -ceq $part) { break }
         $part = $parent
     }
+    for ($i = $chain.Count - 1; $i -ge 0; $i--) {
+        $node = $chain[$i]
+        $recheck = ($i -le 1)
+        if (-not $recheck -and $script:NightlyHistoryLinkCache.ContainsKey($node)) { continue }
+        $id = Get-NightlyHistoryNodeIdentity $node
+        if ($id.Missing) { continue }
+        if ($id.Unreadable) { throw 'evidence-unreadable' }
+        if ($id.Linked) { throw 'evidence-link' }
+        if ($script:NightlyHistoryLinkCache.ContainsKey($node)) {
+            $prior = $script:NightlyHistoryLinkCache[$node]
+            if ($prior.Directory -or $id.Directory) {
+                if ($prior.Linked -or $prior.Directory -ne $id.Directory -or $prior.Dev -ne $id.Dev -or $prior.Ino -ne $id.Ino) { throw 'evidence-link' }
+            }
+        } elseif ($id.Directory) {
+            $script:NightlyHistoryLinkCache[$node] = $id
+        }
+    }
+}
+
+function Assert-NightlyHistoryFileStable {
+    param([string]$Path)
+    [void](Assert-NightlyHistoryNoLink $Path)
 }
 
 function Test-NightlyHistoryUnderRoot {
@@ -472,12 +626,26 @@ function Read-NightlyPriorFailures {
 }
 
 function Initialize-NightlyDispatchHistory {
-    param([string]$Path, [string]$ExpectedDigest = '', [string]$OwnedDirectory = '', [string]$CandidateSha = '')
+    param([string]$Path, [string]$ExpectedDigest = '', [string]$OwnedDirectory = '', [string]$CandidateSha = '', [switch]$AcceptCrossCandidateSeed, [string]$SeedSourceCandidateId = '')
     $fallback='history-not-requested'
     try {
         if(-not $Path){throw $fallback}
         $fallback='history-unavailable'
         $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
+        Assert-NightlyHistoryNoLink $Path
+        $probe=[IO.File]::ReadAllText($Path)|ConvertFrom-Json
+        $isSeed=($probe.PSObject.Properties.Name -ccontains 'seedKind')
+        if($isSeed){
+            if(-not $AcceptCrossCandidateSeed){throw 'seed-acknowledgement-required'}
+            $history=Read-NightlyStoppedRunSeed @read
+            if(-not $SeedSourceCandidateId -or $history.sourceCandidateId -cne $SeedSourceCandidateId){throw 'seed-source-candidate-mismatch'}
+            $now=Get-NightlyUtcNow
+            foreach($time in @($history.createdAtUtc,$history.sourceObservedAtUtc)){
+                $stamp=ConvertTo-NightlySeedUtc $time
+                if($null -eq $stamp -or $stamp.UtcDateTime -lt $now.AddDays(-14) -or $stamp.UtcDateTime -gt $now.AddMinutes(5)){throw 'seed-stale'}
+            }
+            $previous=$history
+        }else{
         $history=Read-NightlyPriorFailures @read
         $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
@@ -488,6 +656,9 @@ function Initialize-NightlyDispatchHistory {
         elseif(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
         $now=Get-NightlyUtcNow
         if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
+        $previous=$null
+        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
+        }
         $digest=Get-NightlyHistoryDigest $Path
         $copy=$Path
         if($OwnedDirectory){
@@ -500,8 +671,6 @@ function Initialize-NightlyDispatchHistory {
             }
             if((Get-NightlyHistoryDigest $copy) -cne $digest){throw 'history-digest-mismatch'}
         }
-        $previous=$null
-        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
         return [pscustomobject]@{History=$history;PreviousRun=$previous;Digest=$digest;Path=$copy;FallbackReason=''}
     } catch {
         $reason=$_.Exception.Message
@@ -530,7 +699,10 @@ function Resolve-NightlyPriorFailures {
             }
         }
     }
-    Assert-NightlyHistorySchema $History
+    if($History.seedKind -ceq 'operator-seed-from-stopped-run'){
+        if($QualificationMode -cne 'Full'){throw 'seed-ordering-only'}
+        Assert-NightlyStoppedSeedContent $History
+    }else{Assert-NightlyHistorySchema $History}
     $excludedUids=[Collections.Generic.List[object]]::new()
     $unresolved=[Collections.Generic.List[object]]::new()
     foreach ($u in @($History.unresolved)) { $unresolved.Add($u) }

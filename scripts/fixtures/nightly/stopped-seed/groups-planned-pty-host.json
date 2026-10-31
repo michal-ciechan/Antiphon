@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "runId": "synthetic-stopped",
+  "attempt": "1",
+  "suite": "pty-host",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "groups": [
+    {
+      "chunk": "all-group-1",
+      "classes": [
+        "Synthetic.pty_host.Passed"
+      ],
+      "plannedTestIds": [
+        "pass"
+      ]
+    },
+    {
+      "chunk": "all-group-2",
+      "classes": [
+        "Synthetic.pty_host.Red"
+      ],
+      "plannedTestIds": [
+        "red"
+      ]
+    },
+    {
+      "chunk": "all-group-3",
+      "classes": [
+        "Synthetic.pty_host.Never"
+      ],
+      "plannedTestIds": [
+        "never"
+      ]
+    },
+    {
+      "chunk": "profile-4",
+      "classes": [
+        "Synthetic.pty_host.Torn"
+      ],
+      "plannedTestIds": [
+        "torn",
+        "missing"
+      ]
+    }
+  ]
+}

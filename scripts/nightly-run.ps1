@@ -103,6 +103,8 @@ param(
     [int]$Attempt = 1,
     [string]$PriorFailuresPath = '',
     [string]$PriorFailuresDigest = '',
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId = '',
     [string]$SeamsPath = '',
     [string]$Trigger = 'scheduled',
     [string]$Profile = 'nightly',
@@ -152,6 +154,8 @@ $invoke = @{
     Attempt = $Attempt
     PriorFailuresPath = $PriorFailuresPath
     PriorFailuresDigest = $PriorFailuresDigest
+    AcceptCrossCandidateSeed = $AcceptCrossCandidateSeed
+    SeedSourceCandidateId = $SeedSourceCandidateId
     SeamsPath = $SeamsPath
     Trigger = $Trigger
     Profile = $Profile

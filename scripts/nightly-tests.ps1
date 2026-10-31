@@ -51,6 +51,8 @@ param(
     [int]$Attempt = 1,
     [string]$PriorFailuresPath = '',
     [string]$PriorFailuresDigest = '',
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId = '',
     [string]$SeamsPath = '',
     [string]$PolicyPath = '',
     [switch]$AllowSharedTree,
@@ -97,6 +99,8 @@ $invoke = @{
     Attempt = $Attempt
     PriorFailuresPath = $PriorFailuresPath
     PriorFailuresDigest = $PriorFailuresDigest
+    AcceptCrossCandidateSeed = $AcceptCrossCandidateSeed
+    SeedSourceCandidateId = $SeedSourceCandidateId
     ReleaseRoot = $ReleaseRoot
     CandidateId = $CandidateId
     SeamsPath = $SeamsPath

@@ -1,0 +1,8 @@
+{
+  "suite": "e2e",
+  "chunk": "all-split-1",
+  "startedAt": "2026-10-30T08:30:00Z",
+  "completedAt": "2026-10-30T08:30:00Z",
+  "lastPhaseUtc": "2026-10-30T08:30:00Z",
+  "trx": "e2e-all-split-1.trx"
+}

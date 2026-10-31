@@ -1,0 +1,1 @@
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><TestDefinitions><UnitTest id="torn"><TestMethod className="Synthetic.pty_host.Torn" name="Run" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="torn" outcome="Passed" /></Results></TestRun>

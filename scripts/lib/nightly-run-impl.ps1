@@ -131,6 +131,8 @@ function Invoke-AntiphonNightlyRunCore {
         [int]$Attempt = 1,
         [string]$PriorFailuresPath = '',
         [string]$PriorFailuresDigest = '',
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
         [string]$Profile = 'nightly',
@@ -391,7 +393,7 @@ function Invoke-AntiphonNightlyRunCore {
             $historyRoot=Join-Path (Join-Path $StateRoot 'history') $RunId
             if(Test-NightlyPathContained -Inner $historyRoot -Outer $CheckoutRoot){Write-Warning 'failed-first fallback: history-copy-inside-checkout'}
             else {
-                $historyInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -OwnedDirectory $historyRoot
+                $historyInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -OwnedDirectory $historyRoot
                 if($historyInput.History){$PriorFailuresPath=$historyInput.Path;$PriorFailuresDigest=$historyInput.Digest}
             }
         }
@@ -502,6 +504,8 @@ function Invoke-AntiphonNightlyRunCore {
                     }
                     if ($NoReport) { $pwshArgs += '-NoReport' }
                     if($PriorFailuresPath){$pwshArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+                    if($AcceptCrossCandidateSeed){$pwshArgs += '-AcceptCrossCandidateSeed'}
+                    if($SeedSourceCandidateId){$pwshArgs += @('-SeedSourceCandidateId',$SeedSourceCandidateId)}
                     if($pwshArgs -notcontains '-Attempt'){$pwshArgs += @('-Attempt',[string]$Attempt)}
                     # D-2/D-3: profile, pinned sha and candidate identity must survive the hop.
                     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) { $pwshArgs += '-ExpectedSha'; $pwshArgs += $ExpectedSha }
@@ -629,6 +633,8 @@ function Invoke-AntiphonNightlyRunCore {
         }
         Write-NightlyRunLine ('running {0}' -f $testsScript)
         if($PriorFailuresPath){$testArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+        if($AcceptCrossCandidateSeed){$testArgs += '-AcceptCrossCandidateSeed'}
+        if($SeedSourceCandidateId){$testArgs += @('-SeedSourceCandidateId',$SeedSourceCandidateId)}
         if($testArgs -notcontains '-Attempt'){$testArgs += @('-Attempt',[string]$Attempt)}
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
         $testExit = [int]$testRun.ExitCode
@@ -879,6 +885,8 @@ function Invoke-AntiphonNightlyRun {
         [int]$Attempt = 1,
         [string]$PriorFailuresPath = '',
         [string]$PriorFailuresDigest = '',
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
         [string]$Profile = 'nightly',

@@ -135,10 +135,7 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             foreach (var path in Directory.EnumerateDirectories("/proc"))
             {
                 if (!int.TryParse(Path.GetFileName(path), out var pid)) continue;
-                LinuxIdentity identity;
-                try { identity = (_faults?.IdentityReader ?? ReadIdentity)(pid); }
-                catch (FileNotFoundException) { continue; }
-                catch (DirectoryNotFoundException) { continue; }
+                if (!TryReadProcIdentity(pid, _faults?.IdentityReader ?? ReadIdentity, out var identity)) continue;
                 if (identity.Group == _pgid && identity.Session == _sid && IsExecutingState(identity.State))
                     executing.Add(pid);
             }
@@ -275,6 +272,28 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             !int.TryParse(exitFrame[4], out var exitCode) || exitPid != rootPid || exitStart != rootStart)
             throw new InvalidDataException("Linux ScriptHarness root exit receipt did not match root identity.");
         return exitCode;
+    }
+
+    internal static bool IsVanishedProc(Exception exception)
+    {
+        if (exception is FileNotFoundException or DirectoryNotFoundException) return true;
+        return exception is IOException io && (
+            io.Message.Contains("No such process", StringComparison.Ordinal) ||
+            io.Message.Contains("No such file", StringComparison.Ordinal));
+    }
+
+    internal static bool TryReadProcIdentity(int pid, Func<int, LinuxIdentity> read, out LinuxIdentity identity)
+    {
+        try
+        {
+            identity = read(pid);
+            return true;
+        }
+        catch (Exception exception) when (IsVanishedProc(exception))
+        {
+            identity = default;
+            return false;
+        }
     }
 
     internal static LinuxIdentity ReadIdentity(int pid)
