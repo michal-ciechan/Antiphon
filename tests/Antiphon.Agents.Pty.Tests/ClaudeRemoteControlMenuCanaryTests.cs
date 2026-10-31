@@ -100,6 +100,7 @@ public class ClaudeRemoteControlMenuCanaryTests
         if (!ready)
             throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
 
+        await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);
         await EchoGatedSubmit.SendAsync(runner, "/remote-control");
         var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(12));
         if (!appeared)

@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Antiphon.Agents.Pty.Tests;
 
 [Category("Unit"), Timeout(30_000)]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class LiveClaudeStartupWiringTests
 {
     private static async Task RunAsync(string witness)

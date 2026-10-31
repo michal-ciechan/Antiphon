@@ -98,6 +98,8 @@ internal sealed class LiveClaudeExecutable
             && string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b),
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
+    public LiveClaudeLaunchContext RequireContext() { Recheck(); return context!; }
+
     public string RequirePath() { Recheck(); return Path; }
     public LiveClaudeProfileContext RequireProfileContext()
     {

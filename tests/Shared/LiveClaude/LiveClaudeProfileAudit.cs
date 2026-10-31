@@ -55,13 +55,14 @@ internal static class LiveClaudeProfileAudit
         var trust=Method(source,"Trust");
         var expected=SyntaxFactory.ParseStatement("if (!ClaudeProjectTrust.IsTrusted(profile.Paths.Cwd, profile.Paths.GlobalState)) throw new LiveClaudeRefusal(\"trust-unavailable\");");
         if(trust.Body?.Statements.Count!=1 || !SyntaxFactory.AreEquivalent(trust.Body.Statements[0],expected)) Fail("Trust");
-        var snapshot=Method(source,"SnapshotEvidence");
-        if(!snapshot.Body!.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>SyntaxFactory.AreEquivalent(c,SyntaxFactory.ParseExpression("ReadSessionFile(sandbox.Profile.Paths, sandbox.SessionId, sandbox.Dir)")))
-            || !snapshot.Body.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>SyntaxFactory.AreEquivalent(c,SyntaxFactory.ParseExpression("FindSessionJsonl(sandbox.Profile.Paths, sandbox.SessionId)")))) Fail("SnapshotEvidence");
+        var snapshot=Method(source,"ReadOwnedBridge");
+        if(!snapshot.Body!.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>SyntaxFactory.AreEquivalent(c,SyntaxFactory.ParseExpression("ReadSessionFile(profile.Paths, session, profile.Paths.Cwd)")))
+            || !snapshot.Body.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>SyntaxFactory.AreEquivalent(c,SyntaxFactory.ParseExpression("FindSessionJsonl(profile.Paths, session)")))) Fail("SnapshotEvidence");
     }
     public static void StartupCaller(string source,string method,string role)
     {
         Statement(source,method,"using var profile = ClSession.RequireProfile(executable);");
+        if (role == "control") method = "RunStartupControlAsync";
         Statement(source,method,$"using var sandbox = CanarySandbox.Create(profile, \"{role}\");");
         Statement(source,method,$"var launch = BuildProfileLaunch(profile, \"{role}\", sandbox.SessionId, sandbox.SettingsPath);");
         Statement(source,method,"await LaunchUntilReadyAsync(executable, runner, sandbox, launch);");

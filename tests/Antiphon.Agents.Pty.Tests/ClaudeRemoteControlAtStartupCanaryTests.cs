@@ -1,5 +1,6 @@
-using Antiphon.TestSupport.LiveClaude;
+using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -7,492 +8,264 @@ using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-/// <summary>
-/// CARD-0306 S0: prove against the real interactive Claude TUI that a per-launch
-/// <c>--settings</c> file with <c>remoteControlAtStartup: false</c> beats the org/unset
-/// auto-connect default, and that <c>/remote-control</c> still arms afterwards.
-///
-/// Interactive TUI, not <c>claude -p</c>. Isolated cwd + <c>--session-id</c> +
-/// <c>--dangerously-skip-permissions</c>. Does not write <c>~/.claude/settings.json</c>
-/// and does not submit a model turn. Headed, opt-in (<c>ANTIPHON_HEADED_TESTS=1</c>),
-/// <c>[Explicit]</c>. S1 is blocked on case 2 of this canary.
-///
-/// Bridge evidence is the live trio Claude actually writes: the footer <c>/rc</c> badge,
-/// <c>~/.claude/sessions/&lt;pid&gt;.json</c> <c>bridgeSessionId</c> (CARD-0292's probe),
-/// and the JSONL <c>type==bridge-session</c> record when the file has been flushed.
-/// A throwaway cwd does not always flush JSONL before the first user turn (measured
-/// 2026-09-01); the badge and per-pid file are the launch-time signals.
-/// </summary>
+/// <summary>Diagnostic startup experiment. No native admission or release credit is supplied here.</summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
 [Category("OptIn")]
 [Category("HeadedCanary")]
 [Explicit]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class ClaudeRemoteControlAtStartupCanaryTests
+[ClassDataSource<LiveClaudeStartupFixture>(Shared = SharedType.PerTestSession)]
+public class ClaudeRemoteControlAtStartupCanaryTests(LiveClaudeStartupFixture startup)
 {
     private const string OffSettingsJson = "{\"remoteControlAtStartup\":false}";
-    private static readonly TimeSpan OverlayObserve = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan BridgeAppear = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ArmWait = TimeSpan.FromSeconds(45);
 
-    /// <summary>
-    /// Case 1 — control: current Antiphon-like argv, no <c>--settings</c>. Auto-connect must
-    /// still be the default on this machine. If this skips/fails, the card's premise has moved.
-    /// </summary>
     [Test]
     public async Task Control_auto_connects_a_bridge_session_before_the_first_user()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Control);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        using var sandbox = CanarySandbox.Create(profile, "control");
-
-        await using var runner = new PtyAgentRunner("modern");
-        var launch = BuildProfileLaunch(profile, "control", sandbox.SessionId, sandbox.SettingsPath);
-        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
-        try
-        {
-            var evidence = await WaitForBridgeAsync(runner, sandbox, BridgeAppear);
-            LogEvidence("CONTROL", sandbox, evidence);
-
-            if (!evidence.Armed)
-            {
-                throw new SkipTestException(
-                    "control run has no /rc badge, no sessions/*.json bridgeSessionId, and no "
-                    + "JSONL bridge-session — auto-connect is no longer the default on this "
-                    + "machine and CARD-0306's premise has moved. Screen:\n"
-                    + runner.SnapshotScreen());
-            }
-
-            evidence.BridgeId.ShouldNotBeNullOrWhiteSpace(
-                "auto-connect must allocate a real bridgeSessionId (badge-only is logged, not enough)");
-            if (evidence.JsonlPath is not null)
-            {
-                var userIndex = FirstUserIndex(evidence.JsonlPath);
-                if (userIndex >= 0 && evidence.JsonlLineIndex is { } line)
-                    line.ShouldBeLessThan(userIndex, "auto-connect must land before the first user record");
-            }
-        }
-        finally
-        {
-            await ExitAsync(runner);
-        }
+        var experiment = Experiment(executable, profile);
+        var control = await startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
+        LiveClaudeStartupEvidence.RequireControl(experiment, control);
     }
 
-    /// <summary>
-    /// Case 2 + case 4 — same argv plus <c>--settings &lt;off.json&gt;</c>. No bridge for at
-    /// least 8 s after ready. TUI still reaches ready and the composer still accepts input.
-    /// JSONL startup kinds are logged when the file exists; their absence on a throwaway cwd
-    /// is not a fail (case 4: crash or missing composer only).
-    /// </summary>
     [Test]
     public async Task Settings_file_prevents_auto_connect_and_keeps_startup_records()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Off);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
+        var experiment = Experiment(executable, profile);
+        var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
         using var sandbox = CanarySandbox.Create(profile, "off");
-
         await using var runner = new PtyAgentRunner("modern");
         var launch = BuildProfileLaunch(profile, "off", sandbox.SessionId, sandbox.SettingsPath);
         await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
-            var evidence = await ObserveAsync(runner, sandbox, OverlayObserve);
-            LogEvidence("OVERLAY", sandbox, evidence);
-
-            evidence.Armed.ShouldBeFalse(
-                "remoteControlAtStartup:false via --settings <file> must beat auto-connect. "
-                + FormatEvidence(evidence)
-                + "\nScreen:\n" + runner.SnapshotScreen());
-
-            if (evidence.JsonlPath is not null)
-            {
-                var types = ReadTypes(evidence.JsonlPath);
-                Console.WriteLine($"OVERLAY TYPES: {string.Join(",", types)}");
-                types.ShouldContain("permission-mode",
-                    "overlay must not replace user/project settings — control always writes permission-mode");
-                types.ShouldContain("atis-latch",
-                    "overlay must not replace user/project settings — control always writes atis-latch");
-            }
-            else
-            {
-                Console.WriteLine("OVERLAY JSONL: <not flushed — throwaway cwd; composer is the case-4 gate>");
-            }
-
+            var observation = await ObserveOffAsync(runner, sandbox, control);
+            LiveClaudeStartupEvidence.RequireOff(experiment, control, observation);
             var token = "RC-OFF-" + Guid.NewGuid().ToString("N")[..8];
             await runner.WriteAsync(token);
-            (await runner.WaitForScreenAsync(
-                s => ComposerDeliveryEvidence.FragmentIsVisible(s, token),
-                TimeSpan.FromSeconds(8)))
-                .ShouldBeTrue(
-                    "overlay session must still have a working composer. Screen:\n"
-                    + runner.SnapshotScreen());
+            (await runner.WaitForScreenAsync(s => ComposerDeliveryEvidence.FragmentIsVisible(s, token), TimeSpan.FromSeconds(8)))
+                .ShouldBeTrue("startup off composer unavailable");
         }
-        finally
-        {
-            await ExitAsync(runner);
-        }
+        finally { await ExitAsync(runner); }
     }
 
-    /// <summary>
-    /// Case 3 — overlay off, then type <c>/remote-control</c> + Enter. The bridge must appear
-    /// (opt-in still works). Do not assert the management menu — that is the already-armed shape.
-    /// </summary>
     [Test]
     public async Task Remote_control_slash_command_still_arms_after_settings_off()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Slash);
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
+        var experiment = Experiment(executable, profile);
+        var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
         using var sandbox = CanarySandbox.Create(profile, "slash");
-
         await using var runner = new PtyAgentRunner("modern");
         var launch = BuildProfileLaunch(profile, "slash", sandbox.SessionId, sandbox.SettingsPath);
         await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
-            var before = await ObserveAsync(runner, sandbox, OverlayObserve);
-            LogEvidence("ARM-BEFORE", sandbox, before);
-            before.Armed.ShouldBeFalse(
-                "/remote-control arming is only meaningful if auto-connect is already off. "
-                + FormatEvidence(before)
-                + "\nScreen:\n" + runner.SnapshotScreen());
-
+            var before = await ObserveOffAsync(runner, sandbox, control);
+            LiveClaudeStartupEvidence.RequireOff(experiment, control, before);
             await SubmitRemoteControlAsync(runner);
-
-            var after = await WaitForSessionBridgeAsync(runner, sandbox, ArmWait);
-            LogEvidence("ARM-AFTER", sandbox, after);
-            Console.WriteLine("ARM SCREEN:\n" + runner.SnapshotScreen());
-
-            ManagementMenuPresent(runner.SnapshotScreen()).ShouldBeFalse(
-                "management menu means the session was already bridged — /remote-control did not "
-                + "arm, it opened Disconnect/Continue. Screen:\n" + runner.SnapshotScreen());
-
-            after.SessionFileBridgeId.ShouldNotBeNullOrWhiteSpace(
-                "/remote-control after remoteControlAtStartup:false must still allocate a "
-                + "bridgeSessionId in ~/.claude/sessions/<pid>.json. A /rc badge alone is not "
-                + "enough — this repo's /rc-status skill makes the slash autocomplete contain "
-                + "the substring. If this is red, do not ApplyOff on RC-wanted launches. "
-                + FormatEvidence(after));
+            var after = await WaitForOwnedBridgeAsync(runner, profile, sandbox.SessionId, ArmWait);
+            LiveClaudeStartupEvidence.RequireSlash(experiment, control, before, after);
         }
-        finally
+        finally { await ExitAsync(runner); }
+    }
+
+    private static async Task<StartupControl> RunStartupControlAsync(LiveClaudeExecutable executable,
+        LiveClaudeProfile profile, StartupExperiment experiment)
+    {
+        using var sandbox = CanarySandbox.Create(profile, "control");
+        await using var runner = new PtyAgentRunner("modern");
+        var launch = BuildProfileLaunch(profile, "control", sandbox.SessionId, sandbox.SettingsPath);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+        var clock = Stopwatch.StartNew();
+        try
         {
-            await ExitAsync(runner);
+            var bridge = await WaitForOwnedBridgeAsync(runner, profile, sandbox.SessionId, BridgeAppear);
+            var owner = Owner(runner, profile, sandbox.SessionId);
+            if (!LiveClaudeStartupEvidence.OwnedBridge(owner, bridge)) throw new LiveClaudeRefusal("premise-absent");
+            var control = new StartupControl(experiment, owner, bridge, clock.Elapsed, CountUserPrompts(profile, sandbox.SessionId), ReadLoadedSettings(profile, sandbox.SessionId));
+            LiveClaudeStartupEvidence.RequireControl(experiment, control);
+            LiveClaudeStartupEvidence.RequireSettings(control, owner, control.Settings);
+            return control;
+        }
+        finally { await ExitAsync(runner); }
+    }
+
+    private static StartupExperiment Experiment(LiveClaudeExecutable executable, LiveClaudeProfile profile)
+    {
+        var context = executable.RequireContext();
+        var settings = profile.Project(profile.Arguments("control", Guid.Empty.ToString("D"), null));
+        RequireHookConfiguration(profile);
+        return new(context.Binding.Run + ":" + context.Binding.Attempt, context.LockOwner,
+            context.Image.Path + ":" + context.Image.Sha256, context.Binding.Profile, settings.Digest);
+    }
+
+    private static StartupOwner Owner(PtyAgentRunner runner, LiveClaudeProfile profile, string session)
+        => new(runner.Pid ?? throw new LiveClaudeRefusal("bridge-unobserved"), runner.StartedAt.ToString("O"), session, profile.Paths.Cwd);
+
+    private static async Task<StartupObservation> ObserveOffAsync(PtyAgentRunner runner, CanarySandbox sandbox, StartupControl control)
+    {
+        var clock = Stopwatch.StartNew();
+        var owner = Owner(runner, sandbox.Profile, sandbox.SessionId);
+        return await LiveClaudeStartupEvidence.ObserveOffAsync(owner, control, () => clock.Elapsed,
+            () => Task.FromResult(ReadOwnedBridge(runner, sandbox.Profile, sandbox.SessionId)),
+            step => Task.Delay(step), () => ReadLoadedSettings(sandbox.Profile, sandbox.SessionId));
+    }
+
+    internal static async Task<StartupBridge?> EnsureMenuBridgeAsync(PtyAgentRunner runner, LiveClaudeProfile profile, string session)
+    {
+        var bridge = await LiveClaudeStartupEvidence.EstablishBridgeAsync(Owner(runner, profile, session),
+            () => Task.FromResult(ReadOwnedBridge(runner, profile, session)), async () =>
+            {
+                await SubmitRemoteControlAsync(runner);
+                return await WaitForOwnedBridgeAsync(runner, profile, session, ArmWait);
+            });
+        LiveClaudeStartupEvidence.RequireBridge(Owner(runner, profile, session), bridge);
+        return bridge;
+    }
+
+    private static async Task<StartupBridge?> WaitForOwnedBridgeAsync(PtyAgentRunner runner, LiveClaudeProfile profile, string session, TimeSpan timeout)
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            var bridge = ReadOwnedBridge(runner, profile, session);
+            if (LiveClaudeStartupEvidence.OwnedBridge(Owner(runner, profile, session), bridge) || clock.Elapsed >= timeout) return bridge;
+            await Task.Delay(200);
         }
     }
 
-    private static async Task LaunchUntilReadyAsync(
-        LiveClaudeExecutable executable,
-        PtyAgentRunner runner,
-        CanarySandbox sandbox,
-        LiveClaudeProfileSpec launch)
+    private static StartupBridge? ReadOwnedBridge(PtyAgentRunner runner, LiveClaudeProfile profile, string session)
+    {
+        // Existing profile/path seams remain exercised; neither result can establish bridge ownership.
+        _ = ReadSessionFile(profile.Paths, session, profile.Paths.Cwd);
+        _ = FindSessionJsonl(profile.Paths, session);
+        if (runner.Exited.IsCompleted) return new(Owner(runner, profile, session), null, false);
+        return LiveClaudeStartupEvidence.ReadBridge(profile.Paths.ConfigDir, Owner(runner, profile, session));
+    }
+
+    private static string MarkerFile(LiveClaudeProfile profile) => Path.Combine(profile.Context.OwnedRoot, "startup-settings.jsonl");
+
+    private static void RequireHookConfiguration(LiveClaudeProfile profile)
+    {
+        var writer = Path.Combine(profile.Context.OwnedRoot, "settings-source-witness.mjs");
+        if (!profile.Context.DeclaredFiles.TryGetValue(writer, out var digest) || LiveClaudeProfile.HashFile(writer) != digest)
+            throw new LiveClaudeRefusal("settings-unobserved");
+        var settings = new[] { ("user", Path.Combine(profile.Paths.ConfigDir,"settings.json")),
+            ("project",Path.Combine(profile.Paths.Cwd,".claude","settings.json")),
+            ("local",Path.Combine(profile.Paths.Cwd,".claude","settings.local.json")) };
+        foreach (var (source, file) in settings)
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            var root = doc.RootElement;
+            var retained = root.GetProperty("model").GetString() ?? throw new LiveClaudeRefusal("settings-unobserved");
+            var command = $"node \"{writer}\" \"{MarkerFile(profile)}\" {source} \"{retained}\"";
+            if (!root.GetProperty("hooks").GetProperty("SessionStart").EnumerateArray()
+                .SelectMany(m => m.GetProperty("hooks").EnumerateArray()).Any(h => h.GetProperty("type").GetString()=="command" && h.GetProperty("command").GetString()==command))
+                throw new LiveClaudeRefusal("settings-unobserved");
+        }
+    }
+
+    private static StartupSettings ReadLoadedSettings(LiveClaudeProfile profile, string session)
+    {
+        var jsonl = FindSessionJsonl(profile.Paths, session);
+        return LiveClaudeStartupEvidence.ReadSettings(MarkerFile(profile), jsonl is null ? [] : ReadTypes(jsonl));
+    }
+
+    private static int CountUserPrompts(LiveClaudeProfile profile, string session)
+    {
+        var jsonl = FindSessionJsonl(profile.Paths, session);
+        if (jsonl is null) throw new LiveClaudeRefusal("premise-absent");
+        return ReadTypes(jsonl).Count(t => t == "user");
+    }
+
+    private static List<string> ReadTypes(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var types = new List<string>();
+        while (reader.ReadLine() is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            using var doc = JsonDocument.Parse(line);
+            if (doc.RootElement.TryGetProperty("type", out var type) && type.GetString() is { } t) types.Add(t);
+        }
+        return types;
+    }
+
+    private static async Task LaunchUntilReadyAsync(LiveClaudeExecutable executable, PtyAgentRunner runner,
+        CanarySandbox sandbox, LiveClaudeProfileSpec launch)
     {
         var (app, launchArgs) = ClSession.BuildCoreLaunch(executable, launch.Args);
-        await runner.StartAsync(
-            app, launchArgs, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
+        await runner.StartAsync(app, launchArgs, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
         executable.RequireNativeObservation();
-
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
-        if (!ready)
-            throw new SkipTestException("real Claude TUI did not reach a ready state. Screen:\n"
-                + runner.SnapshotScreen());
-
+        if (!ready) throw new LiveClaudeRefusal("tui-unready");
         var blocking = await ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync(
-            _ => Task.FromResult(runner.SnapshotScreen()),
-            async (data, _) => await runner.WriteAsync(data));
-        if (blocking.Outcome == ClaudeStartupBlockOutcome.TrustNotCleared)
-            throw new SkipTestException("trust dialog did not clear. Screen:\n" + runner.SnapshotScreen());
+            _ => Task.FromResult(runner.SnapshotScreen()), async (data, _) => await runner.WriteAsync(data));
+        if (blocking.Outcome == ClaudeStartupBlockOutcome.TrustNotCleared) throw new LiveClaudeRefusal("trust-uncleared");
         if (blocking.Outcome == ClaudeStartupBlockOutcome.TrustCleared)
         {
-            var settled = await new ClaudeReadyDetector
-            {
-                MinTotalWait = TimeSpan.Zero,
-                MaxWait = TimeSpan.FromSeconds(30),
-            }.WaitAsync(runner);
-            if (!settled)
-                throw new SkipTestException("TUI did not settle after answering the trust dialog. Screen:\n"
-                    + runner.SnapshotScreen());
+            var settled = await new ClaudeReadyDetector {MinTotalWait=TimeSpan.Zero,MaxWait=TimeSpan.FromSeconds(30)}.WaitAsync(runner);
+            if (!settled) throw new LiveClaudeRefusal("tui-unready");
         }
+    }
+
+    private static async Task SubmitRemoteControlAsync(PtyAgentRunner runner)
+    {
+        await runner.WriteAsync("/remote-control");
+        (await runner.WaitForScreenAsync(s => ComposerDeliveryEvidence.FragmentIsVisible(s,"/remote-control"),TimeSpan.FromSeconds(8)))
+            .ShouldBeTrue("remote control command not ready for Enter");
+        await Task.Delay(800);
+        await runner.WriteAsync("\r");
+        await Task.Delay(500);
+        if (runner.SnapshotScreen().Contains("/launch-remote",StringComparison.Ordinal)
+            || runner.SnapshotScreen().Contains("/rc-status",StringComparison.Ordinal)
+            || ComposerDeliveryEvidence.FragmentIsVisible(runner.SnapshotScreen(),"/remote-control")) await runner.WriteAsync("\r");
     }
 
     private static async Task ExitAsync(PtyAgentRunner runner)
     {
-        try { await runner.SendLineAsync("/exit"); }
-        catch { /* already dead */ }
-        await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
+        try { await runner.SendLineAsync("/exit"); } catch { }
+        await Task.WhenAny(runner.Exited,Task.Delay(TimeSpan.FromSeconds(5)));
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
-    private static bool ManagementMenuPresent(string screen) =>
-        screen.Contains("Disconnect this session", StringComparison.Ordinal)
-        && screen.Contains("Esc to continue", StringComparison.Ordinal);
-
-    /// <summary>
-    /// Submit <c>/remote-control</c> past the slash-command autocomplete. A single Enter
-    /// often accepts the dropdown instead of executing (same race as
-    /// <c>ClaudeLocalCommandCanaryTests</c>); a second Enter executes the selected item.
-    /// </summary>
-    private static async Task SubmitRemoteControlAsync(PtyAgentRunner runner)
-    {
-        await runner.WriteAsync("/remote-control");
-        (await runner.WaitForScreenAsync(
-            s => ComposerDeliveryEvidence.FragmentIsVisible(s, "/remote-control"),
-            TimeSpan.FromSeconds(8)))
-            .ShouldBeTrue("/remote-control must render in the composer before Enter. Screen:\n"
-                + runner.SnapshotScreen());
-        await Task.Delay(800);
-        await runner.WriteAsync("\r");
-        await Task.Delay(500);
-        if (SlashAutocompleteOpen(runner.SnapshotScreen())
-            || ComposerDeliveryEvidence.FragmentIsVisible(runner.SnapshotScreen(), "/remote-control"))
-        {
-            await runner.WriteAsync("\r");
-        }
-    }
-
-    private static bool SlashAutocompleteOpen(string screen) =>
-        screen.Contains("/launch-remote", StringComparison.Ordinal)
-        || screen.Contains("/rc-status", StringComparison.Ordinal);
-
-    /// <summary>
-    /// Footer badge Claude paints when the bridge is live. Must not match this repo's
-    /// <c>/rc-status</c> slash-command (the autocomplete lists it whenever <c>/r</c> is typed).
-    /// </summary>
-    private static bool RcBadgePresent(string screen)
-    {
-        for (var i = 0; i < screen.Length - 2; i++)
-        {
-            if (screen[i] != '/' || screen[i + 1] != 'r' || screen[i + 2] != 'c')
-                continue;
-            var after = i + 3;
-            if (after < screen.Length && (char.IsLetterOrDigit(screen[after]) || screen[after] == '-'))
-                continue;
-            if (i > 0 && !char.IsWhiteSpace(screen[i - 1]))
-                continue;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static async Task<BridgeEvidence> WaitForBridgeAsync(
-        PtyAgentRunner runner, CanarySandbox sandbox, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        BridgeEvidence last;
-        do
-        {
-            last = SnapshotEvidence(runner, sandbox);
-            if (last.Armed)
-                return last;
-            await Task.Delay(400);
-        } while (DateTime.UtcNow < deadline);
-
-        return last;
-    }
-
-    /// <summary>
-    /// Case 3 must wait for the per-pid <c>bridgeSessionId</c>, not the footer badge.
-    /// <c>/remote-control</c> paints <c>/rc connecting…</c> before the id is written, and
-    /// returning on the badge races the handshake.
-    /// </summary>
-    private static async Task<BridgeEvidence> WaitForSessionBridgeAsync(
-        PtyAgentRunner runner, CanarySandbox sandbox, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        BridgeEvidence last;
-        do
-        {
-            last = SnapshotEvidence(runner, sandbox);
-            if (!string.IsNullOrWhiteSpace(last.SessionFileBridgeId) || last.JsonlBridgeId is not null)
-                return last;
-            await Task.Delay(400);
-        } while (DateTime.UtcNow < deadline);
-
-        return last;
-    }
-
-    private static async Task<BridgeEvidence> ObserveAsync(
-        PtyAgentRunner runner, CanarySandbox sandbox, TimeSpan window)
-    {
-        var deadline = DateTime.UtcNow + window;
-        BridgeEvidence last;
-        do
-        {
-            last = SnapshotEvidence(runner, sandbox);
-            if (last.Armed)
-                return last;
-            await Task.Delay(400);
-        } while (DateTime.UtcNow < deadline);
-
-        return last;
-    }
-
-    private static BridgeEvidence SnapshotEvidence(PtyAgentRunner runner, CanarySandbox sandbox)
-    {
-        var screen = runner.SnapshotScreen();
-        var badge = RcBadgePresent(screen);
-        var session = ReadSessionFile(sandbox.Profile.Paths, sandbox.SessionId, sandbox.Dir);
-        var jsonl = FindSessionJsonl(sandbox.Profile.Paths, sandbox.SessionId);
-        BridgeHit? jsonlBridge = jsonl is null ? null : FindBridge(jsonl);
-        var bridgeId = session.BridgeId ?? jsonlBridge?.Id;
-        var armed = badge
-            || !string.IsNullOrWhiteSpace(session.BridgeId)
-            || jsonlBridge is not null;
-        return new BridgeEvidence(
-            armed,
-            badge,
-            session.Found,
-            session.BridgeId,
-            jsonl,
-            jsonlBridge?.Id,
-            jsonlBridge?.LineIndex,
-            bridgeId);
-    }
-
-    private static void LogEvidence(string label, CanarySandbox sandbox, BridgeEvidence e)
-    {
-        Console.WriteLine(
-            $"{label} session={sandbox.SessionId} cwd={sandbox.Dir} armed={e.Armed} "
-            + $"badge={e.Badge} sessionFile={e.SessionFileFound} sessionBridge={e.SessionFileBridgeId ?? "<none>"} "
-            + $"jsonl={e.JsonlPath ?? "<none>"} jsonlBridge={e.JsonlBridgeId ?? "<none>"}");
-        if (e.JsonlPath is not null)
-            Console.WriteLine($"{label} TYPES: {string.Join(",", ReadTypes(e.JsonlPath))}");
-    }
-
-    private static string FormatEvidence(BridgeEvidence e) =>
-        $"armed={e.Armed} badge={e.Badge} sessionFile={e.SessionFileFound} "
-        + $"sessionBridge={e.SessionFileBridgeId ?? "<none>"} jsonl={e.JsonlPath ?? "<none>"} "
-        + $"jsonlBridge={e.JsonlBridgeId ?? "<none>"}";
-
     internal static LiveClaudeProfileSpec BuildProfileLaunch(LiveClaudeProfile profile, string role, string session, string? overlay = null)
         => ClSession.BuildProfileLaunch(profile, role, session, overlay);
+    internal static string? FindSessionJsonl(LiveClaudeProfilePaths paths, string sessionId) => paths.FindSessionJsonl(sessionId);
+    internal static (bool Found,string? BridgeId) ReadSessionFile(LiveClaudeProfilePaths paths,string sessionId,string cwd) => paths.ReadSessionFile(sessionId,cwd);
 
-    internal static string? FindSessionJsonl(LiveClaudeProfilePaths paths, string sessionId)
-        => paths.FindSessionJsonl(sessionId);
-
-    internal static (bool Found, string? BridgeId) ReadSessionFile(LiveClaudeProfilePaths paths, string sessionId, string cwd)
-        => paths.ReadSessionFile(sessionId, cwd);
-    private static List<string> ReadTypes(string jsonlPath)
-    {
-        var types = new List<string>();
-        foreach (var line in ReadLinesShared(jsonlPath))
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-            JsonDocument doc;
-            try { doc = JsonDocument.Parse(line); }
-            catch (JsonException) { continue; }
-            using (doc)
-            {
-                if (doc.RootElement.TryGetProperty("type", out var type) && type.GetString() is { } t)
-                    types.Add(t);
-            }
-        }
-
-        return types;
-    }
-
-    private static BridgeHit? FindBridge(string jsonlPath)
-    {
-        var index = -1;
-        foreach (var line in ReadLinesShared(jsonlPath))
-        {
-            index++;
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-            JsonDocument doc;
-            try { doc = JsonDocument.Parse(line); }
-            catch (JsonException) { continue; }
-            using (doc)
-            {
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("type", out var type) || type.GetString() != "bridge-session")
-                    continue;
-                var id = root.TryGetProperty("bridgeSessionId", out var bridge)
-                    ? bridge.GetString()
-                    : null;
-                return new BridgeHit(id, index);
-            }
-        }
-
-        return null;
-    }
-
-    private static int FirstUserIndex(string jsonlPath)
-    {
-        var index = -1;
-        foreach (var line in ReadLinesShared(jsonlPath))
-        {
-            index++;
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-            JsonDocument doc;
-            try { doc = JsonDocument.Parse(line); }
-            catch (JsonException) { continue; }
-            using (doc)
-            {
-                if (doc.RootElement.TryGetProperty("type", out var type) && type.GetString() == "user")
-                    return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private static List<string> ReadLinesShared(string jsonlPath)
-    {
-        var lines = new List<string>();
-        using var stream = new FileStream(
-            jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
-        while (reader.ReadLine() is { } line)
-            lines.Add(line);
-        return lines;
-    }
-
-    private sealed record BridgeHit(string? Id, int LineIndex);
-
-    private sealed record BridgeEvidence(
-        bool Armed,
-        bool Badge,
-        bool SessionFileFound,
-        string? SessionFileBridgeId,
-        string? JsonlPath,
-        string? JsonlBridgeId,
-        int? JsonlLineIndex,
-        string? BridgeId);
-
-    /// <summary>
-    /// Throwaway cwd + optional off-settings file. Pre-trusts the directory in
-    /// <c>~/.claude.json</c> (not <c>~/.claude/settings.json</c>) so the trust dialog does not
-    /// confound the auto-connect measurement. Disposed by deleting the directory.
-    /// </summary>
     internal sealed class CanarySandbox : IDisposable
     {
-        public LiveClaudeProfile Profile { get; }
-        public string Role { get; }
+        public LiveClaudeProfile Profile {get;}
         public string Dir => Profile.Paths.Cwd;
-        public string SessionId { get; } = Guid.NewGuid().ToString("D");
-        public string? SettingsPath { get; }
-        private CanarySandbox(LiveClaudeProfile profile, string role)
+        public string SessionId {get;} = Guid.NewGuid().ToString("D");
+        public string? SettingsPath {get;}
+        private CanarySandbox(LiveClaudeProfile profile,string role)
         {
-            Profile = profile;
-            Role = role;
-            if (role is "off" or "slash")
+            Profile=profile;
+            if(role is "off" or "slash")
             {
-                SettingsPath = Path.Combine(profile.Context.OwnedRoot, "remote-control-off.json");
-                File.WriteAllText(SettingsPath, OffSettingsJson);
+                SettingsPath=Path.Combine(profile.Context.OwnedRoot,"remote-control-off.json");
+                File.WriteAllText(SettingsPath,OffSettingsJson);
             }
             Trust(profile);
         }
-        public static CanarySandbox Create(LiveClaudeProfile profile, string role) => new(profile, role);
+        public static CanarySandbox Create(LiveClaudeProfile profile,string role) => new(profile,role);
         private static void Trust(LiveClaudeProfile profile)
         {
-            if (!ClaudeProjectTrust.IsTrusted(profile.Paths.Cwd, profile.Paths.GlobalState))
-                throw new LiveClaudeRefusal("trust-unavailable");
+            if (!ClaudeProjectTrust.IsTrusted(profile.Paths.Cwd, profile.Paths.GlobalState)) throw new LiveClaudeRefusal("trust-unavailable");
         }
         public void Dispose() => Profile.Complete();
     }
