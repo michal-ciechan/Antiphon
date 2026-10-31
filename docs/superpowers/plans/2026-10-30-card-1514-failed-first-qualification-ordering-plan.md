@@ -4,6 +4,30 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
+## S3b completion amendment (8d80dbe9, 2026-10-31)
+
+The commissioned contingency repairs the independently failed liveness acceptance.
+CP-6 now includes thirteen named assertions: real metadata/prefix controls plus
+missing generation/metadata, independently rebound metadata identity/version,
+pointer binding, corruption, gaps, truncation, settlement and terminal/seed refusal.
+Unknown liveness is not proof of death: explicit unknown progress falls back with
+an explanation at both optional-history ingress and the pure ordering function,
+without classifying missing chunks or modifying the previous record. A valid closed
+summary remains usable without a heartbeat-derived assertion of process death.
+Both failed and unfinished partitions rotate each suite after its last passed
+chunk; passed work stays last. A two-suite multiple-failure witness discriminates
+rotation of both partitions, in addition to the inherited full-loop replay.
+
+This contingency incurs one additional isolated build and the same exact CP-6/7/8
+rows, serial, estimated 17 minutes including build; cumulative planned ordinary
+cost is now 95 minutes (historical 78 retained). CP-6/7 bounds remain provisional,
+using the retained S3 receipts; no production/native deadline changes. Use the
+fresh output name in the table, TEMP=/tmp, UseAppHost=false, and S3's amended
+20m row / 40m execution / 60m hard wall bounds with separate bounded admission.
+The checkpoint table remains the closed ordinary selection. Windows CP-15/16
+and private supervisor commissioning remain owed. This repository change affects
+only future candidates; d47848cc and all desktop files remain untouched.
+
 ## S3 implementation and budget amendment (9294cb43, 2026-10-31)
 
 The latest caller brief requires optional missing/malformed/stale/different-candidate
@@ -380,7 +404,7 @@ Portable rows use live default placement with no `-Runner` or `-Platform`; Windo
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-failfirst-s2/` | portable-global-plan | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/GlobalReplayPriority` | D-1..3 | exact method, full replay | 1 | 7 | true |
 | CP-4 | S2 | `CP-3` | portable-conservation | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/FullBytesAndCoverageConserved` | D-2, D-15, D-17, no-op witness | exact method, named field policies | 1 | 9 | true |
 | CP-5 | S2 | `CP-3` | portable-s3 | `/*/Antiphon.Tests.Scripts/RcFullWatchdogTests/CapFitsAdmittedPlannedCost` | D-11 | exact existing method | 1 | 1 | true |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-failfirst-s3/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 12 | true |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-8d80-s3b1/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 12 | true |
 | CP-7 | S3 | `CP-6` | portable-m1-m2 | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/JournalCustodySurvivesInterleaving` | D-12 | exact method, terminal matrix | 1 | 3 | true |
 | CP-8 | S3 | `CP-6` | portable-m1-regression | `/*/Antiphon.Tests.TestHelpers/RcManifestIntegrationTests/LedgerAndReceiptBytesAreUnchanged` | D-12 | exact existing M1/M2 method | 1 | 2 | true |
 | CP-9 | S4a | `tests/Antiphon.Tests -> bin-failfirst-s4a/` | portable-partial-plan | `/*/Antiphon.Tests.Scripts/RcPriorFailureSweepTests/SelectedClassesOnly` | D-3, D-8, D-21 | exact method, selected/excluded UID sets | 1 | 8 | true |
