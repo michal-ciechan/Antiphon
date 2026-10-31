@@ -1110,6 +1110,77 @@ function Test-FFHeartbeatBindings {
         [IO.File]::WriteAllText($planPath,$planText);[IO.File]::WriteAllText($indexPath,$indexText);[IO.File]::WriteAllText($activePath,$activeText)
     }
     Assert-FF $bad 'heartbeatRefusals'
+    Test-FFHeartbeatLiveness $timing
+}
+
+function Test-FFHeartbeatLiveness([string]$BindingDirectory) {
+    $ok=$true
+    foreach($variant in @('valid-empty','valid-prefix','missing-generation','missing-metadata','metadata-digest','metadata-run','metadata-attempt','metadata-source','metadata-version','pointer-root','pointer-version','corrupt','gap','truncated','settled','terminal','seeded')) {
+        $timing=Join-Path $root ('liveness-'+$variant)
+        [void][IO.Directory]::CreateDirectory($timing)
+        foreach($file in @('groups-planned.json','groups-planned-index.json','groups-planned-antiphon.json','active-chunk.json')) {
+            [IO.File]::Copy((Join-Path $BindingDirectory $file),(Join-Path $timing $file),$false)
+        }
+        $context=Open-TestPhaseExecutedContext -LogRoot $timing -TimingRoot $timing -RunId 'heartbeat-run' -Attempt '2' -Suite '' -Source ('a'*40)
+        try {
+            $journal=Join-Path $timing 'groups-executed.journal'
+            $pointerPath=Join-Path $journal 'current.json'
+            $generation=Join-Path $journal $context.Generation
+            $metaPath=Join-Path $generation 'metadata.json'
+            $pointer=[IO.File]::ReadAllText($pointerPath)|ConvertFrom-Json
+            $meta=[IO.File]::ReadAllText($metaPath)|ConvertFrom-Json
+            $recordChunk='other-chunk';if($variant -ceq 'settled'){$recordChunk='all-group-3'}
+            $sequence=1;if($variant -ceq 'gap'){$sequence=2}
+            if($variant -cin @('valid-prefix','gap','settled')) {
+                $envelope=New-TestPhaseEnvelopeText -Kind 'chunk' -Sequence $sequence -PublicationId ([guid]::NewGuid().ToString('n')) -Context $context -Reason '' -Suite 'antiphon' -Chunk $recordChunk -SettledSuite '' -SettledChunk '' -HeaderRun 'heartbeat-run' -HeaderAttempt '2' -HeaderSuite 'antiphon' -FreshJson '{}' -SettledJson ''
+                [IO.File]::WriteAllText((Join-Path $generation ($sequence.ToString('00000000')+'.json')),$envelope)
+            }
+            switch($variant) {
+                'missing-generation'{$pointer.generation='1'*32}
+                'missing-metadata'{[IO.File]::Delete($metaPath)}
+                'metadata-digest'{$pointer.metadataDigest='f'*64}
+                'metadata-run'{$meta.runId='other-run'}
+                'metadata-attempt'{$meta.attempt='3'}
+                'metadata-source'{$meta.source='b'*40}
+                'metadata-version'{$meta.version=2}
+                'pointer-root'{$pointer.timingRoot=Join-Path $root 'other-root'}
+                'pointer-version'{$pointer.version=2}
+                'corrupt'{[IO.File]::WriteAllText((Join-Path $generation '00000001.json'),'{')}
+                'truncated'{Write-FFJson (Join-Path $timing 'groups-executed.state.json') ([ordered]@{version=1;generation=$context.Generation;sequence=1;root=$timing;publicationComplete=$true;unresolved=$false;quality=@()})}
+                'terminal'{Write-FFJson (Join-Path $generation 'seal.json') ([ordered]@{terminal='success'})}
+                'seeded'{$meta.seedDigest='c'*64;$meta.parentGeneration='2'*32}
+            }
+            if($variant -cin @('metadata-run','metadata-attempt','metadata-source','metadata-version','seeded')) {
+                Write-FFJson $metaPath $meta
+                $pointer.metadataDigest=Get-NightlyFileSha256 $metaPath
+            }
+            Write-FFJson $pointerPath $pointer
+            $cost=Get-QualificationGroupPlannedSeconds (Join-Path $timing 'groups-planned.json') 'all-group-3'
+            $expected='unknown';$matches=$null -eq $cost
+            if($variant -cin @('valid-empty','valid-prefix')){$expected='1800';$matches=$cost -eq 1800}
+            elseif((Get-QualificationHeartbeatIdleBudget $cost).source -cne 'default-unknown-group'){$matches=$false}
+            Write-Host ('LIVENESS '+$variant+' expected='+$expected+' actual='+$(if($null -eq $cost){'unknown'}else{[string]$cost}))
+            $script:FFOperations.Add([ordered]@{kind='liveness';variant=$variant;expected=$expected;actual=$cost;passed=$matches})
+            if(-not $matches){$ok=$false}
+        } finally {Close-TestPhaseExecutedContext $context}
+    }
+    # Unknown is not death evidence and cannot classify missing rows as unfinished.
+    $entries=@([pscustomobject]@{suite='A';chunk='1'},[pscustomobject]@{suite='A';chunk='2'})
+    $previous=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';liveness='unknown';suites=@([pscustomobject]@{id='A';chunk='2';result='FAIL';exitCode=1})}
+    $before=$previous|ConvertTo-Json -Depth 10 -Compress
+    $order=Resolve-NightlyPreviousRunOrder $entries $previous ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
+    $orderOk=($order.reason -ceq 'previous-run-liveness-unknown' -and (@($order.entries.chunk)-join ',') -ceq '1,2' -and $order.lanes.Count -eq 0 -and ($previous|ConvertTo-Json -Depth 10 -Compress) -ceq $before)
+    Write-Host ('LIVENESS history-unknown original-order='+$orderOk+' reason='+$order.reason)
+    $history=New-FFLoopHistory (New-FFLoopFixture)
+    $summaryPath=Join-Path $history.History.sourceRoot 'summary.json'
+    $summary=[IO.File]::ReadAllText($summaryPath)|ConvertFrom-Json
+    $summary|Add-Member -NotePropertyName dispatchProgress -NotePropertyValue $previous
+    Write-FFJson $summaryPath $summary
+    $export=Export-NightlyPriorFailures $history.History.sourceRoot (Join-Path $root 'unknown-liveness-history.json') -PassThru
+    $input=Initialize-NightlyDispatchHistory -Path (Join-Path $root 'unknown-liveness-history.json') -CandidateSha ('a'*40)
+    $inputOk=$null -eq $input.History -and $null -eq $input.PreviousRun -and $input.FallbackReason -ceq 'history-liveness-unknown'
+    Write-Host ('LIVENESS history-ingress original-order='+$inputOk+' reason='+$input.FallbackReason)
+    Assert-FF ($ok -and $orderOk -and $inputOk) 'heartbeatLiveness'
 }
 
 function Test-JournalCustodySurvivesInterleaving {
@@ -1152,8 +1223,8 @@ function Test-JournalCustodySurvivesInterleaving {
 }
 
 switch -Exact ($Case) {
-    'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=3 }
-    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=12 }
+    'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
+    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=13 }
     'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
