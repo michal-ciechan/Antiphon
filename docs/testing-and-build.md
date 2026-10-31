@@ -48,6 +48,9 @@ into its private filesystem model and fakes only the `dotnet` restore boundary. 
 requires no user/mount namespace, bind mounts or `pivot_root` under WSL. The
 `C849_Driver_deadline_witness_does_not_require_mount_namespaces` regression refuses
 those tools and checks both the intact deadline and the existing m7 control.
+The group INT witness also records whether its handler returns: ordinary refusal
+or EXIT cleanup after an interrupted poll cannot satisfy the m6 control. Complete
+CID/lease/volume cleanup and the existing accepted exit codes remain required.
 
 ## Performance standards
 
