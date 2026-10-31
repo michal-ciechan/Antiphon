@@ -4412,13 +4412,21 @@ c1192_note_signal_trap() {
     fi
 }
 
+# A returned handler can be followed by ordinary refusal/EXIT cleanup after the
+# group signal interrupts a poll. That cleanup is not proof the handler exited.
+c1192_note_signal_return() {
+    if [ -n "${C1192_TRAP_MARK:-}" ]; then
+        printf 'trap-returned %s %s\n' "$1" "$C1192_TRAP_MARK" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    fi
+}
+
 c1192_signal_witness() {
     local sig="$1" expected="$2" delivery="${3:-pid}"
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
     local prefix="signal-${sig}" traps pid i code=0 present=0 cid_kills=0 volumes=0 released=0
     local child armed monitor=0 foreign="" probe_pid cid name nrestore=0 containers=0 procs=0
     local accepted=0 foreign_ok=0 planted=0 deadline_seconds=0 started=0 elapsed=0
-    local trap_ran=0 bounded=0 name_kills=0
+    local trap_ran=0 handler_returned=0 bounded=0 name_kills=0
     [ "$delivery" = group ] && prefix="signal-${sig}-group"
     traps="$(c1192_fixture_traps)"
     if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
@@ -4435,6 +4443,7 @@ c1192_signal_witness() {
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-bounded" 0
             emit "${prefix}-trap" 0
+            emit "${prefix}-handler-returned" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4471,7 +4480,7 @@ c1192_signal_witness() {
         printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
         c1192_dump_shell_state
         printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")" \
-            "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT' INT"
+            "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT; c1192_note_signal_return INT' INT"
         printf '%s\n' \
             'armed=0' \
             'trap_text=$(trap -p INT)' \
@@ -4524,6 +4533,7 @@ c1192_signal_witness() {
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-bounded" 0
             emit "${prefix}-trap" 0
+            emit "${prefix}-handler-returned" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4618,11 +4628,16 @@ c1192_signal_witness() {
             && grep -Fxq "trap-ran INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
             trap_ran=1
         fi
+        if [ -n "${C1192_TRAP_MARK:-}" ] && [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+            && grep -Fxq "trap-returned INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+            handler_returned=1
+        fi
         # Well under the slot deadline, so the deadline path cannot pass.
         if [ "$deadline_seconds" -gt 0 ] && [ "$elapsed" -lt "$deadline_seconds" ] && [ "$elapsed" -le 10 ]; then
             bounded=1
         fi
-        if [ "$cid_kills" = 1 ] && [ "$name_kills" = 0 ] && [ "$trap_ran" = 1 ] && [ "$bounded" = 1 ]; then
+        if [ "$cid_kills" = 1 ] && [ "$name_kills" = 0 ] && [ "$trap_ran" = 1 ] \
+            && [ "$handler_returned" = 0 ] && [ "$bounded" = 1 ]; then
             case "$code" in
                 2|130) accepted=1 ;;
             esac
@@ -4643,6 +4658,7 @@ c1192_signal_witness() {
         emit "${prefix}-cid-kills" "$cid_kills"
         emit "${prefix}-bounded" "$bounded"
         emit "${prefix}-trap" "$trap_ran"
+        emit "${prefix}-handler-returned" "$handler_returned"
         emit "${prefix}-elapsed" "$elapsed"
     else
         cid_kills=1
@@ -4811,6 +4827,8 @@ c1192_group_contract() {
         val=$(c1192_out_fact "$key" "$text")
         [ "$val" = 1 ] || return 1
     done
+    val=$(c1192_out_fact signal-INT-group-handler-returned "$text")
+    [ "$val" = 0 ] || return 1
     val=$(c1192_out_fact signal-INT-group-exit "$text")
     case "$val" in
         2|130) return 0 ;;
