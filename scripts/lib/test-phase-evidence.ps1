@@ -1259,13 +1259,13 @@ function Write-TestPhasePlannedManifest {
     foreach ($id in @($view.RequiredUids)) {
         if (-not $union.ContainsKey([string]$id)) { $missing += [string]$id }
     }
+    # Preserve PowerShell's existing case-insensitive membership semantics without
+    # scanning the entire discovered roster once for every planned UID.
+    $requiredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($req in @($view.RequiredUids)) { [void]$requiredSet.Add([string]$req) }
     $extra = @()
     foreach ($id in @($union.Keys)) {
-        $found = $false
-        foreach ($req in @($view.RequiredUids)) {
-            if ([string]$req -eq [string]$id) { $found = $true }
-        }
-        if (-not $found) { $extra += [string]$id }
+        if (-not $requiredSet.Contains([string]$id)) { $extra += [string]$id }
     }
     $manifest = [ordered]@{
         version = 1
