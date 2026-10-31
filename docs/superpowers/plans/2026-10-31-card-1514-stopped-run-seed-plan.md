@@ -6,7 +6,7 @@ An extra public-wrapper acknowledgement mutant survived: the fixture read ParamB
 from FunctionDefinitionAst rather than Body, creating an unbound fake that inherited
 wrapper variables. Require the actual parameter block and use Body.ParamBlock.
 No production code changes. Re-run the closed eight-row selection from one fresh
-bin-f6-seed-green4/ build so final receipts share the repaired harness source.
+bin-f6-seed-green5/ build so final receipts share the repaired harness source.
 The extra cost is explicitly retained (initial actual 9m22s plus final provisional
 15m, not a hidden retry). Two added direct guard diagnostics bind public-wrapper
 forwarding and age rejection, with byte restoration and the same cases green.
@@ -33,7 +33,7 @@ five mapped failures. BuilderReadOnly, FailedFirstMapping and TimeoutIsFailure a
 committed RED before the production fix. Second checkpoint group 20261031-101758-8ae1
 at da15833114c7dfdb31c89f6d826485cb5b95bf6f passed 8/8 in 7m25s (one build), closing
 the wrapper-witness repair. That historical cost is retained. The final group uses a
-third fresh output, bin-f6-seed-green4/, one build shared by all eight exact rows.
+third fresh output, bin-f6-seed-green5/, one build shared by all eight exact rows.
 
 Whole-suite refinement: a legitimate plan row can have classes=[]; retain observed
 class membership from its TRX. BuilderReadOnly was committed RED at 753e048d0 and
@@ -50,7 +50,17 @@ Group-Object case-sensitive. Run 20261031-103312-2cff at 3070e34816 was stopped
 through the checkpoint tool during its build, before source edits; no test ran,
 no receipt or green credit is claimed. It had acquired a slot after 15s admission;
 its stopped state retains provisional budget data only. Exact-output process
-census was empty after the stop. Final output is a fresh bin-f6-seed-green4/.
+census was empty after the stop. Final output is a fresh bin-f6-seed-green5/.
+
+Snapshot-witness refinement: the original @((Get-Item),(Get-ChildItem)) builds a
+nested array. Commit BuilderReadOnly's byte-only mutation control RED, then flatten
+the item list so each individual file is hashed. The control changes an existing
+fixture file, restores its mtime, requires snapshot inequality, then restores bytes
+and mtime in finally. Run 20261031-103902-c159 was stopped/joined before source
+edits; its compiler completed with 0 errors / 1425 warnings (4m22.70s), but no
+row ran and no receipt credit is claimed. Admission was 195s. Remove obsolete
+producer outputs only after their last use, preserving inventory/receipts, to avoid
+re-hashing unused compiler trees during the final fresh bin-f6-seed-green5/ build.
 
 ## Verification design
 
@@ -65,7 +75,7 @@ seeds; the actual prepared-schedule boundary launches every chunk and observes n
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green4/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green5/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
 | CP-2 | S2 | `CP-1` | seed-order | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/FailedFirstMapping` | failed/new/passed mapping | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-3 | S2 | `CP-1` | seed-ack | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/AcknowledgementRequired` | explicit source acknowledgement | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-4 | S2 | `CP-1` | seed-hash | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/HashMustVerify` | tampered payload fallback | exact method | 1 | 1 | true | TEMP=/tmp |
