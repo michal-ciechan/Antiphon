@@ -24,7 +24,7 @@ internal sealed class LiveClaudeProfileFixture : IDisposable
         Directory.CreateDirectory(Path.Combine(config, "sessions"));
         File.WriteAllText(Path.Combine(config, ".claude.json"), "{\"numStartups\":1,\"projects\":{\"sibling\":{\"model\":\"sibling-model\"}}}");
         foreach (var p in new[] { Path.Combine(config, "settings.json"), Path.Combine(cwd, ".claude", "settings.json"), Path.Combine(cwd, ".claude", "settings.local.json"), Path.Combine(Root, "managed-settings.json") })
-            Write(p, "{\"remoteControlAtStartup\":true}", declare: p.Contains(Path.Combine(cwd, ".claude")));
+            Write(p, "{\"remoteControlAtStartup\":true}", declare: !p.EndsWith("managed-settings.json"));
         File.WriteAllText(Overlay, "{\"remoteControlAtStartup\":false}");
         Context = new(Root, LiveClaudeExecutableAudit.Root(), config, cwd, Path.Combine(Root, "managed-settings.json"), true,
             mode == "production-default" ? mode : "named", mode == "production-default" ? null : mode,
@@ -34,7 +34,7 @@ internal sealed class LiveClaudeProfileFixture : IDisposable
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
-        if (declare) Declared[path] = LiveClaudeProfile.HashFile(path);
+        if (declare) Declared[path] = LiveClaudeProfile.InputDigest(path);
     }
     public void Dispose() { if (!keep) Directory.Delete(Root, true); }
 }
@@ -73,6 +73,9 @@ internal static class LiveClaudeProfileCases
         {
             using var f = new LiveClaudeProfileFixture();
             var paths = new LiveClaudeProfilePaths(f.Context);
+            Assert(paths.GlobalState==Path.Combine(f.Context.ConfigDir!,".claude.json"),v,"trust","global state is independently rooted in dedicated config");
+            Assert(paths.Projects==Path.Combine(f.Context.ConfigDir!,"projects"),v,"projects","projects are independently rooted in dedicated config");
+            Assert(paths.Sessions==Path.Combine(f.Context.ConfigDir!,"sessions"),v,"sessions","sidecars are independently rooted in dedicated config");
             var key = ClaudeProjectTrust.ProjectKey(paths.Cwd);
             if (preexisting)
             {
@@ -106,6 +109,20 @@ internal static class LiveClaudeProfileCases
             Assert(File.ReadAllText(ambient) == ambientBefore, v, "ambient", "ambient bytes unchanged");
             Refuses(() => _ = new LiveClaudeProfilePaths(f.Context with { ConfigDir = null }), "missing-config", v, "missing-config");
         }
+        using (var f=new LiveClaudeProfileFixture())
+        {
+            var paths=new LiveClaudeProfilePaths(f.Context);
+            var key=ClaudeProjectTrust.ProjectKey(paths.Cwd);
+            using(var profile=new LiveClaudeProfile(f.Context))
+            {
+                var node=JsonNode.Parse(File.ReadAllText(paths.GlobalState))!;
+                node["projects"]![key]!["model"]="independently-added";
+                File.WriteAllText(paths.GlobalState,node.ToJsonString());
+                build(profile,"control",f.Session,null);
+            }
+            var after=JsonNode.Parse(File.ReadAllText(paths.GlobalState))!;
+            Assert(after["projects"]![key]!["model"]?.GetValue<string>()=="independently-added" && after["projects"]![key]!["hasTrustDialogAccepted"] is null,v,"restore-narrow","cleanup removes only its own trust change");
+        }
     }
     private static void Instructions(string v, Builder build, string? variant = null)
     {
@@ -127,6 +144,24 @@ internal static class LiveClaudeProfileCases
             File.WriteAllText(path, "changed-after-admission");
             Refuses(declared.Complete, "instruction-drift", v, "instruction-drift");
             File.WriteAllText(path, name.EndsWith(".json") ? "{}" : "synthetic unowned instructions");
+        }
+        if (variant is null)
+        {
+            using var f=new LiveClaudeProfileFixture();
+            var runtime=Path.Combine(f.Root,"owned-node");
+            var writer=Path.Combine(f.Context.ConfigDir!,"hooks","settings-source-witness.mjs");
+            var output=Path.Combine(f.Root,"hook-observations.jsonl");
+            f.Write(runtime,"inert owned interpreter",false);
+            f.Write(writer,"// inert declared marker writer",false);
+            var command=$"\"{runtime}\" \"{writer}\" \"{output}\" user fixture-retained";
+            var settings=new JsonObject { ["hooks"]=new JsonObject { ["SessionStart"]=new JsonArray(new JsonObject { ["hooks"]=new JsonArray(new JsonObject { ["type"]="command", ["command"]=command }) }) } };
+            f.Write(Path.Combine(f.Context.ConfigDir!,"settings.json"),settings.ToJsonString());
+            Refuses(()=>{using var p=new LiveClaudeProfile(f.Context);},"unowned-instructions",v,"undeclared-hook");
+            f.Declared[runtime]=LiveClaudeProfile.HashFile(runtime);
+            f.Declared[writer]=LiveClaudeProfile.HashFile(writer);
+            using var declaredHook=new LiveClaudeProfile(f.Context);
+            build(declaredHook,"control",f.Session,null);
+            Assert(declaredHook.Project([]).ReuseEligible,v,"declared-hook","a fully declared benign hook is admissible over owned inert files");
         }
     }
     private static void Drift(string v, Builder build, Projector project)
@@ -181,6 +216,8 @@ internal static class LiveClaudeProfileCases
         {
         File.WriteAllText(user, "{\"remoteControlAtStartup\":true,\"newBehavior\":true}");
         Assert(!project(p, launch.Args).ReuseEligible, v, "unknown-key", "unknown behavior disables reuse");
+        File.WriteAllText(user,"{\"permissions\":{\"futurePolicy\":true}}");
+        Assert(!project(p, launch.Args).ReuseEligible,v,"unknown-nested-key","unknown nested behavior disables reuse");
         File.WriteAllText(user, old);
         Assert(!LiveClaudeSettingsProjection.Read(f.Context,p.Paths,launch.Args,effectiveObserved:false).ReuseEligible, v, "unknown-effective", "unknown effective settings disable reuse");
         Assert(!LiveClaudeSettingsProjection.Read(f.Context,p.Paths,launch.Args,additionalSources:["unresolved-server-policy"]).ReuseEligible, v, "unknown-source", "unknown additional source disables reuse");

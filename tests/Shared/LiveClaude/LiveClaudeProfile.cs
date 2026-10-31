@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 
 namespace Antiphon.TestSupport.LiveClaude;
 
-internal sealed record LiveClaudeProfileSpec(string[] Args, Dictionary<string, string> Env, string Cwd);
+internal sealed record LiveClaudeProfileSpec(string[] Args, Dictionary<string, string> Env, string Cwd, int Cols = 120, int Rows = 30);
 internal sealed class LiveClaudeProfile : IDisposable
 {
     public LiveClaudeProfileContext Context { get; }
@@ -53,6 +53,8 @@ internal sealed class LiveClaudeProfile : IDisposable
         env["CLAUDE_CODE_CHILD_SESSION"] = "";
         env["CLAUDE_CODE_SESSION_ID"] = "";
         env["CLAUDE_CODE_BRIDGE_SESSION_ID"] = "";
+        env["CLAUDECODE"] = "";
+        env["CLAUDE_CODE_ENTRYPOINT"] = "";
         env.TryAdd("DISABLE_AUTOUPDATER", "1");
         env.TryAdd("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
         return env;
@@ -61,7 +63,7 @@ internal sealed class LiveClaudeProfile : IDisposable
     {
         var args = Arguments(role, session, overlay);
         Capture(args);
-        return new(args, Environment(), Paths.Cwd);
+        return new(args, Environment(), Paths.Cwd, role == "submit" ? 200 : 120, role == "submit" ? 60 : 30);
     }
     public void Capture(string[] actualArgs)
     {
@@ -102,20 +104,50 @@ internal sealed class LiveClaudeProfile : IDisposable
             if (Directory.Exists(p)) Enumerate(p);
             else if (File.Exists(p)) queue.Enqueue(p);
         }
+        var userSettings = Path.Combine(Paths.ConfigDir, "settings.json");
+        if (File.Exists(userSettings)) queue.Enqueue(userSettings);
         while (queue.TryDequeue(out var path))
         {
             path = Path.GetFullPath(path);
             if (observed.ContainsKey(path)) continue;
             if (!Context.DeclaredFiles.TryGetValue(path, out var declared)) throw new LiveClaudeRefusal("unowned-instructions");
             LiveClaudeProfilePaths.Owned(path, Context.OwnedRoot);
-            var hash = HashFile(path);
+            var hash = InputDigest(path);
             if (hash != declared) throw new LiveClaudeRefusal("instruction-drift");
             observed[path] = hash;
+            if (Path.GetExtension(path) == ".json")
+            {
+                var json = JsonNode.Parse(File.ReadAllText(path));
+                Commands(json);
+            }
             if (Path.GetExtension(path) != ".md") continue;
             foreach (var token in File.ReadAllText(path).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Where(t => t.StartsWith('@')))
                 queue.Enqueue(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, token[1..])));
         }
         return Hash(string.Join("\n", observed.Select(p => p.Key + "=" + p.Value)));
+        void Commands(JsonNode? node)
+        {
+            if (node is JsonArray array) { foreach (var child in array) Commands(child); return; }
+            if (node is not JsonObject obj) return;
+            foreach (var pair in obj)
+            {
+                if (pair.Key == "command" && pair.Value is JsonValue value && value.TryGetValue<string>(out var command))
+                {
+                    // This diagnostic slice admits only the declared benign marker hook shape.
+                    // Other shell/MCP command grammars remain unresolved and cannot get admission.
+                    var tokens = System.Text.RegularExpressions.Regex.Matches(command, "\"[^\"]*\"|[^\\s\"]+")
+                        .Select(m => m.Value.Trim('"')).ToArray();
+                    if (tokens.Length != 5 || !Path.IsPathFullyQualified(tokens[0]) || !Path.IsPathFullyQualified(tokens[1])
+                        || Path.GetFileName(tokens[1]) != "settings-source-witness.mjs" || tokens[3] is not ("user" or "project" or "local")
+                        || tokens.Any(t => t.IndexOfAny([';', '|', '&', '`', '$', '\n', '\r']) >= 0))
+                        throw new LiveClaudeRefusal("unowned-instructions");
+                    LiveClaudeProfilePaths.Owned(tokens[2], Context.OwnedRoot);
+                    queue.Enqueue(tokens[0]);
+                    queue.Enqueue(tokens[1]);
+                }
+                else Commands(pair.Value);
+            }
+        }
         void Enumerate(string dir)
         {
             foreach (var item in Directory.EnumerateFileSystemEntries(dir))
@@ -127,4 +159,5 @@ internal sealed class LiveClaudeProfile : IDisposable
     }
     public static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     public static string HashFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
+    public static string InputDigest(string path) => Path.GetExtension(path)==".json" ? LiveClaudeSettingsProjection.InputDigest(path) : HashFile(path);
 }

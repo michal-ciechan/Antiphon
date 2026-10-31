@@ -8,12 +8,17 @@ namespace Antiphon.TestSupport.LiveClaude;
 
 internal static class LiveClaudeProfileMutants
 {
+    private static readonly Lazy<MetadataReference[]> references = new(() =>
+        ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Append(typeof(Antiphon.Agents.Pty.ClaudeProjectTrust).Assembly.Location).Distinct()
+            .Select(p=>(MetadataReference)MetadataReference.CreateFromFile(p)).ToArray());
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string,byte[]> healthyPayloads = new();
     private sealed record Mutation(string Pc,string V,string File,string From,string To,string Assertion,string? Variant=null);
     private static readonly Mutation[] mutations =
     [
         new("PC-34","V-7","LiveClaudeProfilePaths.cs","if (string.IsNullOrWhiteSpace(context.ConfigDir)) throw new LiveClaudeRefusal(\"missing-config\");","if (string.IsNullOrWhiteSpace(context.ConfigDir)) context = context with { ConfigDir = context.OwnedRoot };","missing-config"),
-        new("PC-35","V-7","LiveClaudeProfilePaths.cs","if (!existed) projects.Remove(key);","if (!existed) { }","restore-owned"),
-        new("PC-36","V-7","LiveClaudeProfilePaths.cs","if (!existed) projects.Remove(key);","if (true) projects.Remove(key);","restore-existing"),
+        new("PC-35","V-7","LiveClaudeProfilePaths.cs","created.Remove(\"hasTrustDialogAccepted\");","/* owned trust restoration omitted */","restore-owned"),
+        new("PC-36","V-7","LiveClaudeProfilePaths.cs","else if (priorFlag is null) projects[key]!.AsObject().Remove(\"hasTrustDialogAccepted\");","else if (true) projects.Remove(key);","restore-existing"),
         new("PC-37","V-7","LiveClaudeProfilePaths.cs","if (root[\"projects\"] is null) root[\"projects\"] = projects;","root[\"projects\"] = projects = new JsonObject();","trust-siblings"),
         new("PC-46","V-8","LiveClaudeProfile.cs","dir = dir.Parent","dir = null","ancestor-"),
         new("PC-47","V-8","LiveClaudeProfile.cs","public void Complete()\n    {\n        if (InstructionDigest() != instructions)","public void Complete()\n    {\n        if (false)","instruction-drift"),
@@ -83,12 +88,12 @@ internal static class LiveClaudeProfileMutants
         if(red is null || !red.Message.StartsWith($"C1545 {m.V}/{m.Assertion}",StringComparison.Ordinal))
             throw new InvalidOperationException($"C1545 {m.Pc} expected assertion-red {m.Assertion}; got {red?.GetType().Name}: {red?.Message}");
         sources[m.File]=source;
-        var green=Execute(sources.Values,m.V,m.Variant,context,captures,expected);
+        var green=Execute(sources.Values,m.V,m.Variant,context,captures,expected,cacheHealthy:true);
         if(green is not null) throw new InvalidOperationException("C1545 "+m.Pc+" restored-green failed",green);
         Console.WriteLine($"C1545 {m.Pc}/{m.Variant??m.Assertion} assertion-red; restored-green source={LiveClaudeProfile.Hash(source)} patch={LiveClaudeProfile.Hash(m.From+"\n"+m.To)}");
     }
     private static Exception? Execute(IEnumerable<string> sources,string v,string? variant,LiveClaudePortableContext? context,
-        LiveClaudeArgvCapture[]? captures,Dictionary<string,string[]>? expected)
+        LiveClaudeArgvCapture[]? captures,Dictionary<string,string[]>? expected,bool cacheHealthy=false)
     {
         const string entry="""
             namespace Antiphon.TestSupport.LiveClaude;
@@ -103,14 +108,22 @@ internal static class LiveClaudeProfileMutants
             }
             """;
         const string usings="global using System; global using System.IO; global using System.Linq; global using System.Collections.Generic;\n";
-        var references=((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(Antiphon.Agents.Pty.ClaudeProjectTrust).Assembly.Location)
-            .Distinct().Select(p=>MetadataReference.CreateFromFile(p));
-        var compilation=CSharpCompilation.Create("ProfileMutant"+Guid.NewGuid().ToString("N"),sources.Append(entry).Select(s=>CSharpSyntaxTree.ParseText(usings+s)),references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,nullableContextOptions:NullableContextOptions.Enable));
-        using var bytes=new MemoryStream(); var emitted=compilation.Emit(bytes);
-        if(!emitted.Success) throw new InvalidOperationException("C1545 mutant compilation: "+string.Join(";",emitted.Diagnostics.Where(d=>d.Severity==DiagnosticSeverity.Error)));
-        bytes.Position=0;
+        var sourceTexts=sources.Append(entry).ToArray();
+        var sourceHash=LiveClaudeProfile.Hash(string.Join("\n",sourceTexts));
+        byte[]? payload=null;
+        if(cacheHealthy) healthyPayloads.TryGetValue(sourceHash,out payload);
+        if(payload is null)
+        {
+            var compilation=CSharpCompilation.Create("ProfileMutant"+Guid.NewGuid().ToString("N"),sourceTexts.Select(s=>CSharpSyntaxTree.ParseText(usings+s)),references.Value,
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,nullableContextOptions:NullableContextOptions.Enable));
+            using var emittedBytes=new MemoryStream(); var emitted=compilation.Emit(emittedBytes);
+            if(!emitted.Success) throw new InvalidOperationException("C1545 mutant compilation: "+string.Join(";",emitted.Diagnostics.Where(d=>d.Severity==DiagnosticSeverity.Error)));
+            payload=emittedBytes.ToArray();
+            if(cacheHealthy) healthyPayloads.TryAdd(sourceHash,payload);
+        }
+        // Only the byte-identical restored source can reuse its compilation. Each invocation
+        // still gets a fresh collectible context and executes the same witness after the red.
+        using var bytes=new MemoryStream(payload);
         var load=new AssemblyLoadContext("c1545-profile-copy",isCollectible:true);
         try
         {

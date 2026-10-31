@@ -100,7 +100,7 @@ internal static class ClaudeSubmitContractHarness
             ClSession.SkipIfNotEligible(executable);
             var launch = ClSession.BuildProfileLaunch(profile, "submit", Guid.NewGuid().ToString("D"));
             var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
-            await runner.StartAsync(app, args, cwd: launch.Cwd, cols: 200, rows: 60, env: launch.Env);
+            await runner.StartAsync(app, args, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
             executable.RequireNativeObservation();
             var ready = await new ClaudeReadyDetector().WaitAsync(runner);
             if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");

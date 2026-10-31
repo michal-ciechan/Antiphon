@@ -37,8 +37,16 @@ internal sealed class LiveClaudeProfilePaths
     {
         if (!Guid.TryParse(sessionId, out _)) throw new LiveClaudeRefusal("invalid-session");
         if (!Directory.Exists(Projects)) return null;
-        return Directory.EnumerateFiles(Projects, sessionId + ".jsonl", SearchOption.AllDirectories)
-            .Select(p => Owned(p, ConfigDir)).SingleOrDefault();
+        return Walk(Projects).Where(p=>Path.GetFileName(p)==sessionId+".jsonl").SingleOrDefault();
+        IEnumerable<string> Walk(string directory)
+        {
+            foreach(var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                Owned(entry,ConfigDir);
+                if(Directory.Exists(entry)) { foreach(var nested in Walk(entry)) yield return nested; }
+                else yield return entry;
+            }
+        }
     }
     public (bool Found, string? BridgeId) ReadSessionFile(string sessionId, string cwd)
     {
@@ -82,7 +90,12 @@ internal sealed class LiveClaudeOwnedTrust : IDisposable
         disposed = true;
         var root = JsonNode.Parse(File.ReadAllText(paths.GlobalState))!.AsObject();
         var projects = root["projects"]!.AsObject();
-        if (!existed) projects.Remove(key);
+        if (!existed)
+        {
+            var created = projects[key]!.AsObject();
+            created.Remove("hasTrustDialogAccepted");
+            if (created.Count == 0) projects.Remove(key);
+        }
         else if (priorFlag is null) projects[key]!.AsObject().Remove("hasTrustDialogAccepted");
         else projects[key]!["hasTrustDialogAccepted"] = priorFlag.DeepClone();
         File.WriteAllText(paths.GlobalState, root.ToJsonString());

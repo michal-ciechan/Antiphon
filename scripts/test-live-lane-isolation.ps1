@@ -75,7 +75,7 @@ if ($Controls) {
 }
 Set-Content -LiteralPath $manifestPath -Value $manifest
 function Invoke-Group([string[]]$Rows) {
-    $start = & dotnet $tool start $manifestPath --rows ($Rows -join ',') --expected-source-sha $source --serial --total-timeout 26m --hard-wall-timeout 29m
+    $start = & dotnet $tool start $manifestPath --rows ($Rows -join ',') --expected-source-sha $source --serial --total-timeout 26m --hard-wall-timeout 29m --keep-outputs
     $start | Write-Output
     if ($LASTEXITCODE -ne 0) { throw "Checkpoint start refused ($LASTEXITCODE)" }
     $match = [regex]::Match(($start -join "`n"), 'RUN ([^ ]+) started')

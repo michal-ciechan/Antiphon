@@ -191,7 +191,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     {
         var (app, launchArgs) = ClSession.BuildCoreLaunch(executable, launch.Args);
         await runner.StartAsync(
-            app, launchArgs, cwd: launch.Cwd, cols: 120, rows: 30, env: launch.Env);
+            app, launchArgs, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
         executable.RequireNativeObservation();
 
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);

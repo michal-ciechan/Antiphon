@@ -39,21 +39,25 @@ public class LiveLaneIsolationTests
         var context=LiveClaudePortableContext.Required();
         // Compute every independent production request BEFORE opening any producer capture.
         var expected=new Dictionary<string,string[]>();
+        var environments=new Dictionary<string,IReadOnlyDictionary<string,string>>();
         foreach(var model in new[]{"named-A","named-B","production-default"})
         {
             var independent=Production(context,model);
-            expected[model+"/control"]=independent;
-            expected[model+"/submit"]=independent;
-            expected[model+"/menu"]=independent;
+            environments[model]=independent.Env;
+            expected[model+"/control"]=independent.Args.ToArray();
+            expected[model+"/submit"]=independent.Args.ToArray();
+            expected[model+"/menu"]=independent.Args.ToArray();
             var off=Path.Combine(context.Root,model,"off.json");
-            expected[model+"/off"]=ClaudeRemoteControlLaunchArgs.ApplyOff(AgentKind.ClaudeCode,independent,off).ToArray();
-            expected[model+"/slash"]=ClaudeRemoteControlLaunchArgs.ApplyOff(AgentKind.ClaudeCode,independent,off).ToArray();
+            expected[model+"/off"]=ClaudeRemoteControlLaunchArgs.ApplyOff(AgentKind.ClaudeCode,independent.Args,off).ToArray();
+            expected[model+"/slash"]=ClaudeRemoteControlLaunchArgs.ApplyOff(AgentKind.ClaudeCode,independent.Args,off).ToArray();
         }
         var captures=LiveClaudeArgvCapture.Load(context);
+        foreach(var capture in captures)
+            LiveClaudeProfileCases.Assert(capture.Env.OrderBy(p=>p.Key).SequenceEqual(environments[capture.Model].OrderBy(p=>p.Key)),"V-17","environment","production defaults and explicit owned config match; only submit geometry differs (200x60 versus 120x30)");
         LiveClaudeParityCases.Run(context,captures,expected);
         LiveClaudeProfileMutants.Parity(context,captures,expected);
     }
-    private static string[] Production(LiveClaudePortableContext context,string model)
+    private static AgentLaunchSpec Production(LiveClaudePortableContext context,string model)
     {
         using var doc=JsonDocument.Parse(LiveClaudeExecutableAudit.Read("server/appsettings.json"));
         var definition=doc.RootElement.GetProperty("Agents").GetProperty("Definitions").GetProperty("claude");
@@ -67,8 +71,9 @@ public class LiveLaneIsolationTests
         };
         var registry=new AgentRegistry(new Monitor(settings));
         var spec=registry.Resolve("claude",new AgentLaunchOptions(Cwd:Path.Combine(context.Root,model,"workspace"),Cols:120,Rows:30,
-            ExtraArgs:["--session-id","15450000-0000-0000-0000-000000000001"],TierModelAlias:model=="production-default"?null:model));
-        return spec.Args.ToArray();
+            ExtraArgs:["--session-id","15450000-0000-0000-0000-000000000001"],
+            ExtraEnv:new Dictionary<string,string>{{"CLAUDE_CONFIG_DIR",Path.Combine(context.Root,model,"profile")}},TierModelAlias:model=="production-default"?null:model));
+        return spec;
     }
     private sealed class Monitor(AgentRegistrySettings value):IOptionsMonitor<AgentRegistrySettings>
     {

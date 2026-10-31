@@ -13,6 +13,28 @@ internal sealed record LiveClaudeSettingsProjection(string Digest, bool ReuseEli
     { "oauthAccount", "accessToken", "refreshToken", "apiKey", "primaryApiKey", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN" };
     private static readonly HashSet<string> volatileKeys = new(StringComparer.Ordinal) { "numStartups", "lastSessionId", "lastCost", "lastDuration" };
 
+    public static string InputDigest(string path)
+    {
+        try
+        {
+            var node=JsonNode.Parse(File.ReadAllText(path));
+            return LiveClaudeProfile.Hash(Scrub(node)?.ToJsonString() ?? "null");
+        }
+        catch(System.Text.Json.JsonException) { return LiveClaudeProfile.Hash("unreadable-json"); }
+        static JsonNode? Scrub(JsonNode? node)
+        {
+            if(node is JsonObject obj)
+            {
+                var copy=new JsonObject();
+                foreach(var pair in obj.OrderBy(p=>p.Key,StringComparer.Ordinal))
+                    if(!credentials.Contains(pair.Key)) copy[pair.Key]=Scrub(pair.Value);
+                return copy;
+            }
+            if(node is JsonArray array) return new JsonArray(array.Select(Scrub).ToArray());
+            return node?.DeepClone();
+        }
+    }
+
     public static LiveClaudeSettingsProjection Read(LiveClaudeProfileContext context, LiveClaudeProfilePaths paths, string[] args,
         Func<string, string>? read = null, string[]? precedence = null, bool effectiveObserved = true, string[]? additionalSources = null)
     {
@@ -98,9 +120,26 @@ internal sealed record LiveClaudeSettingsProjection(string Digest, bool ReuseEli
                 }
                 if (!behavior.Contains(pair.Key)) { eligible = false; continue; }
                 if (ownedProject && pair.Key == "hasTrustDialogAccepted") continue;
+                if (!KnownNested(pair.Key,pair.Value)) { eligible=false; continue; }
                 result[pair.Key] = Clean(pair.Value);
             }
             return result;
+        }
+        bool KnownNested(string kind,JsonNode? value)
+        {
+            if (kind == "permissions" && value is JsonObject permissions)
+                return permissions.All(p=>p.Key is "allow" or "deny" or "ask" or "defaultMode" or "additionalDirectories" or "disableBypassPermissionsMode");
+            if (kind == "env" && value is JsonObject environment)
+                return environment.All(p=>credentials.Contains(p.Key) || p.Key is "DISABLE_AUTOUPDATER" or "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN" or "ANTHROPIC_BASE_URL");
+            if (kind == "hooks") return Hook(value);
+            return true;
+            bool Hook(JsonNode? node)
+            {
+                if(node is JsonArray array) return array.All(Hook);
+                if(node is not JsonObject obj) return true;
+                return obj.All(p=>(p.Key is "SessionStart" or "SessionEnd" or "PreToolUse" or "PostToolUse" or "UserPromptSubmit" or "Stop" or "SubagentStart" or "SubagentStop"
+                    or "Notification" or "PermissionRequest" or "PreCompact" or "PostCompact" or "Setup" or "matcher" or "hooks" or "type" or "command" or "timeout" or "async" or "statusMessage" or "once") && Hook(p.Value));
+            }
         }
         JsonNode? Clean(JsonNode? node)
         {

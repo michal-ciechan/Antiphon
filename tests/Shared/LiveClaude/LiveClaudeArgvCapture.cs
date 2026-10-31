@@ -24,13 +24,13 @@ internal sealed record LiveClaudePortableContext(string Root, string Source, str
 
 internal sealed record LiveClaudeArgvCapture(string Source, string Run, string ProducerBuild, string Uid,
     string Model, string Role, string Session, string[] Args, Dictionary<string,string> Env,
-    string Cwd, string? OverlayJson, bool Complete)
+    string Cwd, string? OverlayJson, bool Complete, int Cols = 120, int Rows = 30)
 {
     public const string ProducerUid = "Antiphon.Agents.Pty.Tests.LiveClaudeIsolationWiringTests.LaunchArgumentsKeepProductionSources";
     public static LiveClaudeArgvCapture Create(LiveClaudePortableContext? portable,string model,string role,string session,LiveClaudeProfileSpec spec,string overlay)
         => new(portable?.Source ?? "local", portable?.Run ?? "local",
             LiveClaudeProfile.HashFile(System.Reflection.Assembly.GetExecutingAssembly().Location), ProducerUid,model,role,session,
-            spec.Args.ToArray(),new(spec.Env),spec.Cwd,role is "off" or "slash" ? File.ReadAllText(overlay):null,true);
+            spec.Args.ToArray(),new(spec.Env),spec.Cwd,role is "off" or "slash" ? File.ReadAllText(overlay):null,true,spec.Cols,spec.Rows);
     public static void Publish(LiveClaudePortableContext context,IReadOnlyList<LiveClaudeArgvCapture> captures)
     {
         if (captures.Count != 15) throw new LiveClaudeRefusal("partial-capture");
@@ -81,6 +81,7 @@ internal sealed record LiveClaudeArgvCapture(string Source, string Run, string P
         if(capture.Cwd!=Path.Combine(expectedRoot,"workspace") || capture.Session!="15450000-0000-0000-0000-000000000001"
             || !capture.Env.TryGetValue("CLAUDE_CONFIG_DIR",out var config) || config!=Path.Combine(expectedRoot,"profile"))
             throw new LiveClaudeRefusal("capture-request");
+        if(capture.Cols!=(role=="submit"?200:120) || capture.Rows!=(role=="submit"?60:30)) throw new LiveClaudeRefusal("capture-request");
     }
     public static void Compare(LiveClaudeArgvCapture actual,string[] production)
     {

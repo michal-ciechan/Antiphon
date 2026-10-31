@@ -26,6 +26,13 @@ internal static class LiveClaudeProfileAudit
         var m=Method(source,method);
         var statement=SyntaxFactory.ParseStatement(expected);
         if(m.Body?.Statements.Count(s=>SyntaxFactory.AreEquivalent(s,statement))!=1) Fail(method);
+        var actual=m.Body!.Statements.Single(s=>SyntaxFactory.AreEquivalent(s,statement));
+        Reachable(m.Body,actual,method);
+    }
+    private static void Reachable(BlockSyntax body,StatementSyntax target,string method)
+    {
+        foreach(var statement in body.Statements.TakeWhile(s=>s!=target))
+            if(statement is not (LocalDeclarationStatementSyntax or ExpressionStatementSyntax or EmptyStatementSyntax)) Fail(method+"-unknown-preamble");
     }
     private static void Start(string source,string method)
     {
@@ -34,7 +41,12 @@ internal static class LiveClaudeProfileAudit
         var start=body.Statements.SelectMany(s=>s.DescendantNodes().OfType<InvocationExpressionSyntax>())
             .SingleOrDefault(c=>c.Expression.ToString()=="runner.StartAsync");
         if(start is null || start.ArgumentList.Arguments.SingleOrDefault(a=>a.NameColon?.Name.Identifier.ValueText=="cwd")?.Expression.ToString()!="launch.Cwd"
-            || start.ArgumentList.Arguments.SingleOrDefault(a=>a.NameColon?.Name.Identifier.ValueText=="env")?.Expression.ToString()!="launch.Env") Fail(method);
+            || start.ArgumentList.Arguments.SingleOrDefault(a=>a.NameColon?.Name.Identifier.ValueText=="env")?.Expression.ToString()!="launch.Env"
+            || start.ArgumentList.Arguments.SingleOrDefault(a=>a.NameColon?.Name.Identifier.ValueText=="cols")?.Expression.ToString()!="launch.Cols"
+            || start.ArgumentList.Arguments.SingleOrDefault(a=>a.NameColon?.Name.Identifier.ValueText=="rows")?.Expression.ToString()!="launch.Rows") Fail(method);
+        var statement=start!.Ancestors().OfType<StatementSyntax>().First();
+        if(statement.Parent!=body) Fail(method+"-conditional-start");
+        Reachable(body,statement,method);
     }
     public static void Paths(string source)
     {

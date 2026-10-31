@@ -94,7 +94,7 @@ public class ClaudeRemoteControlMenuCanaryTests
         await using var runner = new PtyAgentRunner("modern");
         var launch = ClSession.BuildProfileLaunch(profile, "menu", sessionId);
         var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
-        await runner.StartAsync(app, args, cwd: launch.Cwd, cols: 120, rows: 30, env: launch.Env);
+        await runner.StartAsync(app, args, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
         executable.RequireNativeObservation();
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)
