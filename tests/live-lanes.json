@@ -2091,13 +2091,5 @@
       "reason": "live-claude diagnostic gate"
     }
   ],
-  "additiveContract": [
-    {
-      "project": "Antiphon.Tests",
-      "namespace": "Antiphon.Tests.Scripts",
-      "class": "LiveLaneInventoryTests",
-      "method": "EveryLiveGateHasDisposition",
-      "arguments": []
-    }
-  ]
+  "additiveContract": []
 }

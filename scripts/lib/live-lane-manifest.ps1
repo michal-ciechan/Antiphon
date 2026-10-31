@@ -5,7 +5,7 @@
 if ($script:AntiphonLiveLaneManifestLoaded) { return }
 $script:AntiphonLiveLaneManifestLoaded = $true
 
-$script:LiveLanePreS1BaseSha = '1905f840d6c0f1cbb3bc5bc255ce56d3e23f00f9'
+$script:LiveLanePreS1BaseSha = '2e5b78808e2a027bc3bddc00c43d0d9951f781d3'
 $script:LiveLaneFixtureRel = 'tests/fixtures/live-lanes/full-discovery-before.json'
 $script:LiveLaneAllowedSeedPaths = @(
     'tests/live-lanes.json',
