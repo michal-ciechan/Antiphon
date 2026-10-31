@@ -1445,6 +1445,7 @@ function Initialize-LiveLaneCensusEngine {
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 
 public static class LiveLaneCensusEngine
@@ -1792,7 +1793,7 @@ public static class LiveLaneCensusEngine
             CategoryDelta(pair.Value.Cats, other.Cats, out removed, out addedOther, out addedLive);
             if (removed || addedOther) Add(diag, "category-delta");
             else if (addedLive && !IsContract(pair.Value, contract)) Add(diag, "category-delta");
-            if (!string.Equals(pair.Value.ArgKey ?? "", other.ArgKey ?? "", StringComparison.OrdinalIgnoreCase)) Add(diag, "extra-expansion");
+            if (!string.Equals(StableArg(pair.Value.ArgKey), StableArg(other.ArgKey), StringComparison.OrdinalIgnoreCase)) Add(diag, "extra-expansion");
         }
         foreach (var pair in afterMap)
         {
@@ -1867,6 +1868,51 @@ public static class LiveLaneCensusEngine
         }
     }
 
+    static bool IsHex(char c)
+    {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
+    static int HexRun(string value, int start)
+    {
+        int run = 0;
+        while (start + run < value.Length && IsHex(value[start + run])) run++;
+        return run;
+    }
+
+    // C672 discovery calls Guid.NewGuid for one hold sentence. The expansion slot is the UID.
+    static string StableArg(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var sb = new StringBuilder(value.Length);
+        int i = 0;
+        while (i < value.Length)
+        {
+            int run = HexRun(value, i);
+            if (run == 32)
+            {
+                sb.Append("{guid}");
+                i += 32;
+                continue;
+            }
+            if (run == 8 && i + 36 <= value.Length && value[i + 8] == '-' && HexRun(value, i + 9) == 4 && value[i + 13] == '-' && HexRun(value, i + 14) == 4 && value[i + 18] == '-' && HexRun(value, i + 19) == 4 && value[i + 23] == '-' && HexRun(value, i + 24) == 12)
+            {
+                sb.Append("{guid}");
+                i += 36;
+                continue;
+            }
+            if (run > 0)
+            {
+                sb.Append(value, i, run);
+                i += run;
+                continue;
+            }
+            sb.Append(value[i]);
+            i++;
+        }
+        return sb.ToString();
+    }
+
     static bool ExpansionDiffers(Node[] before, Node[] after)
     {
         var left = Expand(before);
@@ -1892,7 +1938,7 @@ public static class LiveLaneCensusEngine
                 set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 map[key] = set;
             }
-            set.Add(n.ArgKey ?? "");
+            set.Add(StableArg(n.ArgKey));
         }
         return map;
     }
