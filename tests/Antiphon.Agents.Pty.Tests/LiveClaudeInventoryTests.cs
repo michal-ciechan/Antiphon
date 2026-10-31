@@ -20,9 +20,13 @@ public sealed class LiveClaudeInventoryTests
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
+    // Hard wall for the roster child. Set from the loaded-host p95 in the D-6 measurement.
+    private const int ChildBudgetMs = 260_000;
+
     private static LiveLaneScriptResult Run()
     {
         var repo = FindRepo();
+        var clock = Stopwatch.StartNew();
         var assembly = typeof(LiveClaudeInventoryTests).Assembly.Location;
         assembly.ShouldNotBeNullOrWhiteSpace("C1545 assembly-location");
         var script = Path.Combine(repo, "scripts", "test-live-lane-manifest.ps1");
@@ -50,7 +54,8 @@ public sealed class LiveClaudeInventoryTests
         using var process = Process.Start(psi)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(150_000))
+        var timedOut = !process.WaitForExit(ChildBudgetMs);
+        if (timedOut)
         {
             try { process.Kill(entireProcessTree: true); } catch { process.Kill(); }
             process.WaitForExit();
@@ -74,7 +79,8 @@ public sealed class LiveClaudeInventoryTests
             parsed = null;
         }
 
-        parsed.ShouldNotBeNull($"C1545 ExactPtyCoreRoster result json exit={process.ExitCode} stderr={Tail(stderr)} stdout={Tail(stdout)}");
+        var phase = ReadPhase(repo);
+        parsed.ShouldNotBeNull($"C1545 ExactPtyCoreRoster result json exit={process.ExitCode} timedOut={timedOut} elapsedMs={clock.ElapsedMilliseconds} phase={phase} stderr={Tail(stderr)} stdout={Tail(stdout)}");
         process.ExitCode.ShouldBe(0, $"C1545 ExactPtyCoreRoster discovery exit stderr={Tail(stderr)} error={parsed!.Error}");
         parsed!.DiscoveryOk.ShouldBeTrue($"C1545 ExactPtyCoreRoster discoveryOk error={parsed.Error} stderr={Tail(stderr)}");
         parsed.Failures ??= [];
@@ -89,6 +95,15 @@ public sealed class LiveClaudeInventoryTests
         if (start < 0)
             return "";
         return stdout[(start + 1)..].Trim();
+    }
+
+    private static string ReadPhase(string repo)
+    {
+        var path = Path.Combine(repo, ".antiphon", "live-lane-capture", "phase.log");
+        if (!File.Exists(path))
+            return "";
+        var text = File.ReadAllText(path).Trim();
+        return text.Length <= 800 ? text : text[^800..];
     }
 
     private static string Tail(string text)

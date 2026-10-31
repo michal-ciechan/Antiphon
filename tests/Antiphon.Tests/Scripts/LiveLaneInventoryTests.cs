@@ -31,9 +31,13 @@ public sealed class LiveLaneInventoryTests
 
     internal static class LiveLaneProcess
     {
+        // Hard wall for the roster child. Set from the loaded-host p95 in the D-6 measurement.
+        public const int ChildBudgetMs = 260_000;
+
         public static async Task<LiveLaneScriptResult> RunAsync(string caseName, string project)
         {
             var repo = FindRepo();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var assembly = typeof(LiveLaneInventoryTests).Assembly.Location;
             assembly.ShouldNotBeNullOrWhiteSpace("C1545 assembly-location");
             var script = Path.Combine(repo, "scripts", "test-live-lane-manifest.ps1");
@@ -61,7 +65,8 @@ public sealed class LiveLaneInventoryTests
             using var process = Process.Start(psi)!;
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(150_000))
+            var timedOut = !process.WaitForExit(ChildBudgetMs);
+            if (timedOut)
             {
                 try { process.Kill(entireProcessTree: true); } catch { process.Kill(); }
                 process.WaitForExit();
@@ -85,7 +90,8 @@ public sealed class LiveLaneInventoryTests
                 parsed = null;
             }
 
-            parsed.ShouldNotBeNull($"C1545 {caseName} result json exit={process.ExitCode} stderr={Tail(stderr)} stdout={Tail(stdout)}");
+            var phase = ReadPhase(repo);
+            parsed.ShouldNotBeNull($"C1545 {caseName} result json exit={process.ExitCode} timedOut={timedOut} elapsedMs={clock.ElapsedMilliseconds} phase={phase} stderr={Tail(stderr)} stdout={Tail(stdout)}");
             process.ExitCode.ShouldBe(0, $"C1545 {caseName} discovery exit stderr={Tail(stderr)} error={parsed!.Error}");
             parsed!.DiscoveryOk.ShouldBeTrue($"C1545 {caseName} discoveryOk error={parsed.Error} stderr={Tail(stderr)}");
             parsed.Failures ??= [];
@@ -102,6 +108,15 @@ public sealed class LiveLaneInventoryTests
             if (start < 0)
                 return "";
             return stdout[(start + 1)..].Trim();
+        }
+
+        private static string ReadPhase(string repo)
+        {
+            var path = Path.Combine(repo, ".antiphon", "live-lane-capture", "phase.log");
+            if (!File.Exists(path))
+                return "";
+            var text = File.ReadAllText(path).Trim();
+            return text.Length <= 800 ? text : text[^800..];
         }
 
         private static string Tail(string text)

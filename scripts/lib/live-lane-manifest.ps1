@@ -21,6 +21,9 @@ $script:LiveLaneProtectedPaths = @(
     'scripts/lib/nightly-policy.ps1',
     'scripts/lib/nightly-coverage.ps1'
 )
+# Discovery child budget. Replaced by the measured 2x p95 before the roster wall is compiled.
+$script:LiveLaneDiscoveryBudgetMs = 180000
+$script:LiveLaneScratchLedger = @()
 
 # Dot-source in this script scope. A dot-source inside Initialize-LiveLaneNightly
 # would define the readers only until that function returned.
@@ -305,7 +308,7 @@ function Invoke-LiveLaneDiscovery {
     $doc = $null
     try {
         $doc = Invoke-NightlyProduceDiscovery -ExePath $dotnet -OutputPath $outPath -DiagnosticDirectory $diagDir `
-            -LogPath $logPath -WorkingDirectory $RepoRoot -TimeoutMilliseconds 110000 `
+            -LogPath $logPath -WorkingDirectory $RepoRoot -TimeoutMilliseconds $script:LiveLaneDiscoveryBudgetMs `
             -ArgumentPrefix @('exec', $assembly) -AssemblyPath $assembly
     } catch {
         $errorText = $_.Exception.Message
@@ -717,6 +720,208 @@ function Copy-LiveLaneExportShell {
     }
 }
 
+function Test-LiveLaneUnderCapture {
+    param([string]$Full)
+    $marker = [System.IO.Path]::DirectorySeparatorChar + '.antiphon' + [System.IO.Path]::DirectorySeparatorChar + 'live-lane-capture' + [System.IO.Path]::DirectorySeparatorChar
+    return ($Full.IndexOf($marker, [System.StringComparison]::Ordinal) -ge 0)
+}
+
+function New-LiveLaneOwnedScratch {
+    param([string]$RepoRoot, [string]$Leaf)
+    if ([string]::IsNullOrWhiteSpace($Leaf) -or $Leaf.IndexOfAny([char[]]@('\', '/', '.')) -ge 0) { throw 'scratch-leaf' }
+    $capture = Join-Path $RepoRoot '.antiphon/live-lane-capture'
+    New-Item -ItemType Directory -Path $capture -Force | Out-Null
+    $captureFull = [System.IO.Path]::GetFullPath($capture)
+    $path = [System.IO.Path]::GetFullPath((Join-Path $captureFull $Leaf))
+    if (-not $path.StartsWith($captureFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal)) { throw 'scratch-escape' }
+    if (-not (Test-LiveLaneUnderCapture $path)) { throw 'scratch-escape' }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+    $script:LiveLaneScratchLedger += @{ Path = $path; Kind = 'dir'; Sha = '' }
+    return $path
+}
+
+function Remove-LiveLaneOwnedScratch {
+    param($Entry)
+    if ($null -eq $Entry) { return }
+    $full = [System.IO.Path]::GetFullPath([string]$Entry.Path)
+    $known = $false
+    foreach ($item in @($script:LiveLaneScratchLedger)) {
+        if ([string]$item.Path -eq $full) { $known = $true }
+    }
+    if (-not $known) { throw 'scratch-not-owned' }
+    if ($Entry.Kind -eq 'file') {
+        $underCapture = Test-LiveLaneUnderCapture $full
+        $objectOk = $false
+        $sha = [string]$Entry.Sha
+        if ($sha -match '^[0-9a-f]{40}$') {
+            $name = [System.IO.Path]::GetFileName($full)
+            $dir = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($full))
+            if ($dir -eq $sha.Substring(0, 2) -and $name -eq $sha.Substring(2)) { $objectOk = $true }
+        }
+        if (-not $underCapture -and -not $objectOk) { throw 'scratch-escape' }
+        if (Test-Path -LiteralPath $full -PathType Leaf) { Remove-Item -LiteralPath $full -Force }
+        return
+    }
+    if (-not (Test-LiveLaneUnderCapture $full)) { throw 'scratch-escape' }
+    if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+}
+
+function Clear-LiveLaneOwnedScratch {
+    $items = @($script:LiveLaneScratchLedger)
+    foreach ($item in $items) { Remove-LiveLaneOwnedScratch -Entry $item }
+    $script:LiveLaneScratchLedger = @()
+    $script:LiveLaneCensusSeed = @{}
+}
+
+function Get-LiveLaneTempResidue {
+    $roots = New-Object System.Collections.Generic.List[string]
+    $temp = [System.IO.Path]::GetTempPath()
+    if (-not [string]::IsNullOrWhiteSpace($temp)) { $roots.Add(([System.IO.Path]::GetFullPath($temp))) }
+    if (Test-Path -LiteralPath '/tmp') {
+        $unix = [System.IO.Path]::GetFullPath('/tmp')
+        $have = $false
+        foreach ($root in @($roots)) {
+            if ($root -eq $unix) { $have = $true }
+        }
+        if (-not $have) { $roots.Add($unix) }
+    }
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($root in @($roots)) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($item in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
+            if ($item.Name.StartsWith('antiphon-live-lane-', [System.StringComparison]::Ordinal)) { $names.Add($item.FullName) }
+        }
+    }
+    return @($names)
+}
+
+function Test-LiveLaneReceiptLine {
+    param([string]$Line, [string]$Id, [string]$Commit)
+    if ([string]::IsNullOrWhiteSpace($Line)) { return $false }
+    if (-not $Line.StartsWith('CHECKPOINT ' + $Id + ' ', [System.StringComparison]::Ordinal)) { return $false }
+    $fields = @{}
+    foreach ($match in [regex]::Matches($Line, '(?:^|\s)([A-Za-z][A-Za-z0-9]*)=([^\s]*)')) {
+        $key = [string]$match.Groups[1].Value
+        if (-not $fields.ContainsKey($key)) { $fields[$key] = [string]$match.Groups[2].Value }
+    }
+    if ($fields['commit'] -ne $Commit) { return $false }
+    if ($fields['source'] -ne $Commit) { return $false }
+    if ($fields['buildSource'] -ne 'verified') { return $false }
+    if ($fields['sourceState'] -ne 'clean') { return $false }
+    if ($fields['dirty'] -ne '0') { return $false }
+    return $true
+}
+
+function Test-LiveLaneProducerReceipt {
+    param($Context, $Mutant)
+    $expected = [string](Get-LiveLaneProp $Context 'sourceSha')
+    $root = [string](Get-LiveLaneProp $Context 'checkpointResults')
+    if ($Mutant -and $Mutant.ContainsKey('receiptRoot')) { $root = [string]$Mutant.receiptRoot }
+    if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root -PathType Container)) {
+        return @{ Accepted = $false; Reason = 'producer-receipt-missing' }
+    }
+    $latest = @{}
+    foreach ($run in @(Get-ChildItem -LiteralPath $root -Directory | Sort-Object -Property Name)) {
+        $statePath = Join-Path $run.FullName 'state.json'
+        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { continue }
+        $state = [System.IO.File]::ReadAllText($statePath) | ConvertFrom-Json
+        $report = $null
+        $reportPath = Join-Path $run.FullName 'report.json'
+        if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+            $report = [System.IO.File]::ReadAllText($reportPath) | ConvertFrom-Json
+        }
+        foreach ($row in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $state 'rows'))) {
+            $id = [string](Get-LiveLaneProp $row 'id')
+            if ($id -ne 'CP-25' -and $id -ne 'CP-1') { continue }
+            $latest[$id] = @{ State = $state; Row = $row; Report = $report }
+        }
+    }
+    foreach ($id in @('CP-25', 'CP-1')) {
+        if (-not $latest.ContainsKey($id)) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
+        $item = $latest[$id]
+        $rowState = [string](Get-LiveLaneProp $item.Row 'state')
+        if ($rowState -ne 'green') { return @{ Accepted = $false; Reason = 'producer-row-not-green' } }
+        $report = $item.Report
+        if ($null -eq $report) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
+        $match = $null
+        foreach ($reportRow in @(ConvertTo-LiveLaneList (Get-LiveLaneProp $report 'rows'))) {
+            if ([string](Get-LiveLaneProp $reportRow 'id') -eq $id) { $match = $reportRow }
+        }
+        if ($null -eq $match) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
+        if ([string](Get-LiveLaneProp $match 'state') -ne 'green') { return @{ Accepted = $false; Reason = 'producer-row-not-green' } }
+        $line = [string](Get-LiveLaneProp $match 'line')
+        if ([string]::IsNullOrWhiteSpace($line)) { return @{ Accepted = $false; Reason = 'producer-receipt-missing' } }
+        $source = Get-LiveLaneProp $item.State 'source'
+        $reportSource = Get-LiveLaneProp $report 'source'
+        $rowSource = Get-LiveLaneProp $match 'source'
+        $build = [string](Get-LiveLaneProp $rowSource 'buildSource')
+        if ([string]::IsNullOrWhiteSpace($build)) { $build = [string](Get-LiveLaneProp $reportSource 'buildSource') }
+        if ([string]::IsNullOrWhiteSpace($build)) { $build = [string](Get-LiveLaneProp $source 'buildSource') }
+        $commit = [string](Get-LiveLaneProp $report 'commit')
+        if ([string]::IsNullOrWhiteSpace($commit)) {
+            $commit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'start') 'commit')
+        }
+        $startCommit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'start') 'commit')
+        $endCommit = [string](Get-LiveLaneProp (Get-LiveLaneProp $source 'end') 'commit')
+        $sourceState = [string](Get-LiveLaneProp $source 'state')
+        if ($commit -ne $expected -or $startCommit -ne $expected -or $endCommit -ne $expected -or $build -ne 'verified' -or $sourceState -ne 'clean' -or -not (Test-LiveLaneReceiptLine -Line $line -Id $id -Commit $expected)) {
+            return @{ Accepted = $false; Reason = 'producer-receipt-foreign' }
+        }
+    }
+    return @{ Accepted = $true; Reason = '' }
+}
+
+function Write-LiveLaneReceiptFixture {
+    param(
+        [string]$Root,
+        [string]$Commit,
+        [string]$RowState,
+        [string]$BuildSource = 'verified',
+        [string]$LineCommit = '',
+        [switch]$OmitReport
+    )
+    if ([string]::IsNullOrWhiteSpace($LineCommit)) { $LineCommit = $Commit }
+    $run = Join-Path $Root 'run-producers'
+    New-Item -ItemType Directory -Path $run -Force | Out-Null
+    $exitCode = $(if ($RowState -eq 'green') { 0 } else { 1 })
+    $rows = @()
+    foreach ($id in @('CP-25', 'CP-1')) {
+        $line = 'CHECKPOINT ' + $id + ' commit=' + $LineCommit + ' build=ok filter=live executed=1 passed=1 failed=0 skipped=0 dirty=0 source=' + $LineCommit + ' sourceState=clean buildSource=' + $BuildSource
+        $rows += [ordered]@{
+            id = $id
+            state = $RowState
+            exitCode = $exitCode
+            source = [ordered]@{ buildSource = $BuildSource; state = 'clean' }
+            line = $line
+        }
+    }
+    $stateRows = @()
+    foreach ($id in @('CP-25', 'CP-1')) {
+        $stateRows += [ordered]@{ id = $id; state = $RowState; exitCode = $exitCode }
+    }
+    $state = [ordered]@{
+        source = [ordered]@{
+            state = 'clean'
+            buildSource = $BuildSource
+            start = [ordered]@{ commit = $Commit; captureStatus = 'known'; dirtyFiles = 0 }
+            end = [ordered]@{ commit = $Commit; captureStatus = 'known'; dirtyFiles = 0 }
+        }
+        rows = $stateRows
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $run 'state.json'), ($state | ConvertTo-Json -Depth 6), $utf8)
+    if (-not $OmitReport) {
+        $report = [ordered]@{
+            commit = $Commit
+            exitCode = $exitCode
+            verdict = $(if ($RowState -eq 'green') { 'GREEN' } else { 'INVALID' })
+            source = $state.source
+            rows = $rows
+        }
+        [System.IO.File]::WriteAllText((Join-Path $run 'report.json'), ($report | ConvertTo-Json -Depth 8), $utf8)
+    }
+}
+
 function Write-LiveLaneExportFile {
     param([string]$Path, [string]$Project, [string]$Cp, [string]$SourceSha, [string]$RunId, [string]$AssemblyHash, [string]$AssemblyPath, [object[]]$Nodes)
     $dir = Split-Path -Parent $Path
@@ -735,10 +940,19 @@ function Write-LiveLaneExportFile {
         runId = $RunId
         assemblyHash = $AssemblyHash
         assemblyPath = $keptPath
-        terminal = $true
+        terminal = $false
         nodes = @($Nodes)
     }
     ($doc | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8
+}
+
+function Complete-LiveLaneExport {
+    param([string]$Path, [bool]$ChecksPassed)
+    if (-not $ChecksPassed) { return }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return }
+    $export = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    $export | Add-Member -NotePropertyName terminal -NotePropertyValue $true -Force
+    ($export | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
 function Initialize-LiveLaneSourceStripper {
@@ -1185,8 +1399,7 @@ function Invoke-LiveLaneGateMatrix {
         if ([string](Get-LiveLaneProp $row 'reason') -ne $expected.Reason) { $failures.Add('C1545 V-3/valid reason'); break }
     }
 
-    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-gate-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+    $scratch = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('gate' + [guid]::NewGuid().ToString('N'))
     try {
         $newFile = Join-Path $scratch 'NewGate.cs'
         [System.IO.File]::WriteAllText($newFile, "namespace Scratch;`n[Explicit]`npublic class NewGate {`n  [Test]`n  public void Injected() { }`n}`n")
@@ -1228,7 +1441,7 @@ function Invoke-LiveLaneGateMatrix {
         $accepted = ($unknownScan.Unresolved -eq 0)
         if ($unknownScan.Unresolved -ne ($scan.Unresolved + 1) -or $accepted) { $failures.Add('C1545 V-3/unknown-shape unresolvedGateCount == 1') }
     } finally {
-        Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-LiveLaneOwnedScratch -Entry @{ Path = $scratch; Kind = 'dir'; Sha = '' }
     }
     return @($failures)
 }
@@ -2110,9 +2323,7 @@ function Get-LiveLaneCensusSeedMaterial {
     $key = $blob + '|' + $FixtureRel + '|' + $Pre + $protectedKey
     if ($null -eq $script:LiveLaneCensusSeed) { $script:LiveLaneCensusSeed = @{} }
     if ($script:LiveLaneCensusSeed.ContainsKey($key)) { return $script:LiveLaneCensusSeed[$key] }
-    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-' + $PID)
-    $before = Join-Path $scratch ('before-' + $blob.Substring(0, 12))
-    New-Item -ItemType Directory -Path $before -Force | Out-Null
+    $before = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('seed' + $blob.Substring(0, 12) + [guid]::NewGuid().ToString('N'))
     $fixtureCopy = Join-Path $before $FixtureRel
     $ok = $true
     try { Copy-LiveLaneGitBlob -RepoRoot $RepoRoot -Spec ($Seed + ':' + $FixtureRel) -Dest $fixtureCopy } catch { $ok = $false }
@@ -2161,6 +2372,8 @@ function Invoke-LiveLaneCensus {
     param($Context, [hashtable]$Mutant = $null)
     $diagnostics = New-Object System.Collections.Generic.List[string]
     if ($null -eq $Context) { return @{ Accepted = $false; Diagnostics = @('context-required') } }
+    $receipt = Test-LiveLaneProducerReceipt -Context $Context -Mutant $Mutant
+    if (-not $receipt.Accepted) { $diagnostics.Add([string]$receipt.Reason) }
     $repo = [string](Get-LiveLaneProp $Context 'candidateRoot')
     if ([string]::IsNullOrWhiteSpace($repo)) { $repo = Get-LiveLaneRepoRoot (Get-Location).Path }
     $seed = [string](Get-LiveLaneProp $Context 'censusBaseSha')
@@ -2408,12 +2621,25 @@ function New-LiveLaneDanglingSeed {
     param([string]$RepoRoot)
     $tree = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD^{tree}')).Text
     $sha = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('commit-tree', $tree, '-m', 'c1545 dangling non-ancestor')).Text
+    if ($sha -notmatch '^[0-9a-f]{40}$') { throw 'dangling-seed' }
+    $rel = 'objects/' + $sha.Substring(0, 2) + '/' + $sha.Substring(2)
+    $gitPath = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', '--git-path', $rel)).Text
+    if ([string]::IsNullOrWhiteSpace($gitPath)) { throw 'dangling-seed-path' }
+    if (-not [System.IO.Path]::IsPathRooted($gitPath)) {
+        $gitPath = Join-Path $RepoRoot $gitPath
+    }
+    $full = [System.IO.Path]::GetFullPath($gitPath)
+    $name = [System.IO.Path]::GetFileName($full)
+    $dir = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($full))
+    if ($dir -ne $sha.Substring(0, 2) -or $name -ne $sha.Substring(2)) { throw 'dangling-seed-path' }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw 'dangling-seed-missing' }
+    $script:LiveLaneScratchLedger += @{ Path = $full; Kind = 'file'; Sha = $sha }
     return $sha
 }
 
 function New-LiveLanePolicyMutant {
     param([string]$RepoRoot, [scriptblock]$Edit)
-    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-policy-' + [guid]::NewGuid().ToString('N'))
+    $scratch = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('policy' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $scratch 'tests') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $scratch 'scripts/lib') -Force | Out-Null
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
@@ -2458,6 +2684,15 @@ function Test-LiveLaneCensusHas {
 }
 
 function Invoke-LiveLaneFullCensus {
+    param([string]$RepoRoot)
+    try {
+        return Invoke-LiveLaneFullCensusBody -RepoRoot $RepoRoot
+    } finally {
+        Clear-LiveLaneOwnedScratch
+    }
+}
+
+function Invoke-LiveLaneFullCensusBody {
     param([string]$RepoRoot)
     $context = Read-LiveLaneContextObject
     if ($null -eq $context) {
@@ -2505,6 +2740,25 @@ function Invoke-LiveLaneFullCensus {
     $pendingCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ terminal = $false; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $pendingCase @('producer-incomplete'))) { $missing.Add('pending-producer') }
 
+    $redRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('receiptred' + [guid]::NewGuid().ToString('N'))
+    Write-LiveLaneReceiptFixture -Root $redRoot -Commit ([string](Get-LiveLaneProp $context 'sourceSha')) -RowState 'red'
+    $redCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ receiptRoot = $redRoot; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $redCase @('producer-row-not-green'))) { $missing.Add('producer-row-red') }
+
+    $timedRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('receipttime' + [guid]::NewGuid().ToString('N'))
+    Write-LiveLaneReceiptFixture -Root $timedRoot -Commit ([string](Get-LiveLaneProp $context 'sourceSha')) -RowState 'running'
+    $timedCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ receiptRoot = $timedRoot; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $timedCase @('producer-row-not-green'))) { $missing.Add('producer-row-timeout') }
+
+    $absentRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('receiptmiss' + [guid]::NewGuid().ToString('N'))
+    $absentCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ receiptRoot = $absentRoot; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $absentCase @('producer-receipt-missing'))) { $missing.Add('producer-receipt-missing') }
+
+    $foreignRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('receiptforeign' + [guid]::NewGuid().ToString('N'))
+    Write-LiveLaneReceiptFixture -Root $foreignRoot -Commit ('b' * 40) -RowState 'green' -BuildSource 'unknown' -LineCommit ('b' * 40)
+    $foreignCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ receiptRoot = $foreignRoot; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $foreignCase @('producer-receipt-foreign'))) { $missing.Add('producer-receipt-foreign') }
+
     $dropCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'drop-first'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $dropCase @('old-membership-changed'))) { $missing.Add('remove-old-uid') }
 
@@ -2523,7 +2777,7 @@ function Invoke-LiveLaneFullCensus {
     $nightCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'add-optin'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $nightCase @('nightly-disposition-changed'))) { $missing.Add('default-disposition') }
 
-    $readerRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-reader-' + [guid]::NewGuid().ToString('N'))
+    $readerRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('reader' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $readerRoot 'scripts/lib') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $readerRoot 'tests') -Force | Out-Null
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
