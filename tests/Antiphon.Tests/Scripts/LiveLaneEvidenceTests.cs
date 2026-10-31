@@ -450,7 +450,8 @@ public class LiveLaneEvidenceTests
             ("PC-42", "LiveClaudeEvidence.AppendDiagnostic", "File.AppendAllText", false),
             ("SM-C1", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Out.WriteLine(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
             ("SM-C2", "LiveClaudeEvidence.Success(\"c680-submit\"", "throw new SkipTestException(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-submit\"", true),
-            ("SM-C1b", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Error.WriteLine(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true)
+            ("SM-C1b", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Error.WriteLine(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            ("NC3", "LiveClaudeEvidence.Success(\"c680-native\"", "throw new InvalidOperationException(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true)
         };
         foreach (var cycle in cycles)
         {
@@ -459,8 +460,8 @@ public class LiveLaneEvidenceTests
                 throw new InvalidOperationException("C1545 " + cycle.Pc + " anchor");
             var mutated = source.Replace(cycle.From, cycle.To, StringComparison.Ordinal);
             var count = cycle.Watch ? RawSinks(diagnostics, mutated) : RawSinks(mutated, watchdog);
-            if (count < 1) throw new InvalidOperationException("C1545 PC-42 did not reach expected assertion");
-            Console.WriteLine("C1545 PC-42 assertion-red; restored-green " + cycle.To);
+            if (count < 1) throw new InvalidOperationException("C1545 " + cycle.Pc + " did not reach expected assertion");
+            Console.WriteLine("C1545 " + cycle.Pc + " assertion-red; restored-green " + cycle.To);
         }
     }
 

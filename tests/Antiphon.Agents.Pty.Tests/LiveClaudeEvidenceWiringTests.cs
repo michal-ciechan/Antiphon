@@ -65,9 +65,8 @@ public class LiveClaudeEvidenceWiringTests
     [Test]
     public void CanarySinksCannotBypassSanitizer()
     {
-        var counts = Count(Callers.Select(caller => (
-            LiveClaudeExecutableAudit.Method(LiveClaudeExecutableAudit.Read(caller.Path), caller.Method).Body!,
-            caller.Method)));
+        var counts = Count(Callers.Select(caller =>
+            LiveClaudeExecutableAudit.Method(LiveClaudeExecutableAudit.Read(caller.Path), caller.Method)));
         if (counts.Console != 0)
             throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
         if (counts.Assertion != 0)
@@ -171,6 +170,9 @@ public class LiveClaudeEvidenceWiringTests
             new Dictionary<string, string> { ["tool"] = dotted }));
         if (bounded.Text.Contains(dotted, StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 V-5/token-bound");
+        if (!LiveClaudeEvidenceSanitizer.IsToken("C680_LiveNudgeRefusesPermissionAndQuestionDialogs")
+            || !LiveClaudeEvidenceSanitizer.IsToken(new string('a', 31)))
+            throw new InvalidOperationException("C1545 V-5/closed-id");
     }
 
     private static void ProveTokenChecks(string source)
@@ -255,6 +257,9 @@ public class LiveClaudeEvidenceWiringTests
         yield return "oauthcode-abcdefghijklmnopqrstuvwxyz";
         yield return "0123456789abcdef0123456789abcdef";
         yield return "qQzZ0123456789qQzZ0123456789qQzZ0123";
+        yield return "Q2xhdWRlU2Vzc2lvblRva2VuMDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3Bx_1";
+        yield return "ac_9FqZ2xYtL0pW4mN8rT1vB6cK3dH7sJ5gE2uA0oQ";
+        yield return new string('b', 32);
     }
 
     private static string Label(string secret) => secret.Length <= 12 ? secret : secret[..12];
@@ -278,7 +283,13 @@ public class LiveClaudeEvidenceWiringTests
             ("SM-Fmt", "Console.WriteLine(string.Format(\"{0}\", runner.SnapshotScreen()));", "raw-console"),
             ("SM-File", "File.WriteAllText(\"x.txt\", runner.SnapshotScreen());", "raw-file"),
             ("SM-Proc", "Process.Start(\"echo\", runner.SnapshotScreen());", "raw-process"),
-            ("SM-Ctx", "TestContext.WriteLine(runner.SnapshotScreen());", "raw-console")
+            ("SM-Ctx", "TestContext.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("N1", "throw new InvalidOperationException(runner.SnapshotScreen());", "raw-skip"),
+            ("N2", "File.WriteAllText(Path.Combine(Path.GetTempPath(), runner.SnapshotScreen()), \"x\");", "raw-file"),
+            ("N3", "Skip.Test(runner.SnapshotScreen());", "raw-skip"),
+            ("N4", "Assert.Fail(\"screen \" + runner.SnapshotScreen());", "raw-assertion"),
+            ("N6", "throw new InvalidOperationException(\"home \" + Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));", "raw-skip"),
+            ("N7", "System.Diagnostics.Trace.WriteLine(runner.SnapshotScreen());", "raw-console")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {
@@ -294,8 +305,8 @@ public class LiveClaudeEvidenceWiringTests
                     continue;
                 var mutatedBody = close[..brace] + insert.Code + close[brace..];
                 var mutated = source.Replace(close, mutatedBody, StringComparison.Ordinal);
-                var parsed = LiveClaudeExecutableAudit.Method(mutated, family.Method).Body!;
-                var found = Count([(parsed, family.Method)]);
+                var parsed = LiveClaudeExecutableAudit.Method(mutated, family.Method);
+                var found = Count([parsed]);
                 var red = insert.Assertion switch
                 {
                     "raw-console" => found.Console > 0,
@@ -309,13 +320,23 @@ public class LiveClaudeEvidenceWiringTests
                 Console.WriteLine("C1545 " + insert.Pc + " assertion-red; restored-green " + family.Method + " " + insert.Assertion);
             }
         }
+        var startup = LiveClaudeExecutableAudit.Read(Callers[0].Path);
+        var helper = LiveClaudeExecutableAudit.Method(startup, "RunStartupControlAsync");
+        var helperBody = helper.Body ?? throw new InvalidOperationException("C1545 N8/no-body");
+        var helperClose = helperBody.ToString();
+        var helperBrace = helperClose.LastIndexOf('}');
+        var helperMutated = startup.Replace(helperClose, helperClose[..helperBrace] + "Console.WriteLine(runner.SnapshotScreen());" + helperClose[helperBrace..], StringComparison.Ordinal);
+        var caller = LiveClaudeExecutableAudit.Method(helperMutated, Callers[0].Method);
+        if (Count([caller]).Console <= 0)
+            throw new InvalidOperationException("C1545 N8 did not reach expected assertion");
+        Console.WriteLine("C1545 N8 assertion-red; restored-green " + Callers[0].Method + " raw-console");
     }
 
     private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0);
 
-    private static SinkCounts Count(IEnumerable<(BlockSyntax Body, string Name)> methods)
+    private static SinkCounts Count(IEnumerable<MethodDeclarationSyntax> methods)
     {
-        var counts = LiveClaudeSinkAudit.Walk(methods.Select(method => (SyntaxNode)method.Body));
+        var counts = LiveClaudeSinkAudit.Walk(methods.SelectMany(LiveClaudeSinkAudit.WithHelpers));
         return new SinkCounts(counts.Recognized, counts.Console, counts.Assertion, counts.Skip, counts.Actual, counts.File, counts.Process);
     }
 

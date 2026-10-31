@@ -39,17 +39,27 @@ internal static class LiveClaudeSinkAudit
                 }
                 if (IsFileSync(name))
                 {
-                    if (LaterArgument(call, expression => !SafeEmit(expression))) file++;
+                    if (ArgumentCarries(call, 0, tainted) || LaterArgument(call, expression => !SafeEmit(expression))) file++;
                     continue;
                 }
                 if (IsFileAsync(name))
                 {
-                    if (LaterArgument(call, expression => Carries(expression, tainted))) file++;
+                    if (ArgumentCarries(call, 0, tainted) || LaterArgument(call, expression => Carries(expression, tainted))) file++;
                     continue;
                 }
                 if (IsProcessStart(name))
                 {
                     if (call.ArgumentList.Arguments.Any(arg => Carries(arg.Expression, tainted))) process++;
+                    continue;
+                }
+                if (IsSkipDotTest(name))
+                {
+                    if (call.ArgumentList.Arguments.Any(arg => MessageCarries(arg.Expression, tainted))) skip++;
+                    continue;
+                }
+                if (IsAssertMessage(name))
+                {
+                    if (call.ArgumentList.Arguments.Any(arg => MessageCarries(arg.Expression, tainted))) assertion++;
                     continue;
                 }
                 if (IsShould(name))
@@ -67,13 +77,17 @@ internal static class LiveClaudeSinkAudit
             foreach (var created in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
             {
                 var type = created.Type.ToString();
-                if (type.EndsWith("SkipTestException", StringComparison.Ordinal)
+                if (type.EndsWith("Exception", StringComparison.Ordinal)
                     && created.ArgumentList?.Arguments.Any(arg => MessageCarries(arg.Expression, tainted)) == true)
                     skip++;
                 else if (type.EndsWith("ProcessStartInfo", StringComparison.Ordinal)
                     && created.ArgumentList?.Arguments.Any(arg => Carries(arg.Expression, tainted)) == true)
                     process++;
             }
+            foreach (var thrown in root.DescendantNodes().OfType<ThrowStatementSyntax>())
+                if (ThrownCarries(thrown.Expression, tainted)) skip++;
+            foreach (var thrown in root.DescendantNodes().OfType<ThrowExpressionSyntax>())
+                if (ThrownCarries(thrown.Expression, tainted)) skip++;
         }
         return new Counts(recognized, console, assertion, skip, actual, file, process);
     }
@@ -113,6 +127,48 @@ internal static class LiveClaudeSinkAudit
         }
         return names;
     }
+
+    internal static IEnumerable<SyntaxNode> WithHelpers(MethodDeclarationSyntax method)
+    {
+        var type = method.Parent as TypeDeclarationSyntax;
+        var methods = type?.Members.OfType<MethodDeclarationSyntax>().ToArray() ?? [];
+        var byName = new Dictionary<string, List<MethodDeclarationSyntax>>(StringComparer.Ordinal);
+        foreach (var candidate in methods)
+        {
+            if (!byName.TryGetValue(candidate.Identifier.ValueText, out var list))
+            {
+                list = new List<MethodDeclarationSyntax>();
+                byName[candidate.Identifier.ValueText] = list;
+            }
+            list.Add(candidate);
+        }
+        var seen = new HashSet<MethodDeclarationSyntax>();
+        var queue = new Queue<MethodDeclarationSyntax>();
+        queue.Enqueue(method);
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!seen.Add(current)) continue;
+            yield return current;
+            foreach (var call in current.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (!byName.TryGetValue(SimpleName(call), out var targets)) continue;
+                foreach (var target in targets)
+                    if (!seen.Contains(target)) queue.Enqueue(target);
+            }
+        }
+    }
+
+    private static bool ThrownCarries(ExpressionSyntax? expression, HashSet<string> tainted)
+    {
+        if (expression is null) return false;
+        expression = Peel(expression);
+        if (expression is ObjectCreationExpressionSyntax) return false;
+        return Carries(expression, tainted);
+    }
+
+    private static bool ArgumentCarries(InvocationExpressionSyntax call, int index, HashSet<string> tainted) =>
+        call.ArgumentList.Arguments.Count > index && Carries(call.ArgumentList.Arguments[index].Expression, tainted);
 
     private static bool LaterArgument(InvocationExpressionSyntax call, Func<ExpressionSyntax, bool> raw)
     {
@@ -157,12 +213,16 @@ internal static class LiveClaudeSinkAudit
         IsDirect(Peel(expression), tainted);
 
     private static bool IsDirect(SyntaxNode node, HashSet<string> tainted) =>
-        node is InvocationExpressionSyntax call && IsScreenCall(call)
-        || node is MemberAccessExpressionSyntax member && member.Name.Identifier.ValueText == "RenderedScreen"
-        || node is IdentifierNameSyntax identifier && tainted.Contains(identifier.Identifier.ValueText);
+        node is InvocationExpressionSyntax call && (IsScreenCall(call) || IsFolderPath(call))
+        || node is MemberAccessExpressionSyntax member && member.Name.Identifier.ValueText is "RenderedScreen" or "UserProfile"
+        || node is IdentifierNameSyntax identifier && (tainted.Contains(identifier.Identifier.ValueText)
+            || identifier.Identifier.ValueText == "UserProfile");
 
     private static bool IsScreenCall(InvocationExpressionSyntax call) =>
         call.Expression.ToString().EndsWith("SnapshotScreen", StringComparison.Ordinal) || IsSecretEnv(call);
+
+    private static bool IsFolderPath(InvocationExpressionSyntax call) =>
+        call.Expression.ToString().EndsWith("GetFolderPath", StringComparison.Ordinal);
 
     private static bool IsSecretEnv(InvocationExpressionSyntax call)
     {
@@ -179,11 +239,22 @@ internal static class LiveClaudeSinkAudit
     {
         var leaf = Leaf(name);
         if (leaf is not ("Write" or "WriteLine" or "WriteAsync" or "WriteLineAsync")) return false;
-        return name.StartsWith("Console", StringComparison.Ordinal)
-            || name.StartsWith("TestContext", StringComparison.Ordinal)
-            || name.Contains(".Console.", StringComparison.Ordinal)
-            || name.Contains(".TestContext.", StringComparison.Ordinal);
+        return IsWriteTarget(name, "Console")
+            || IsWriteTarget(name, "TestContext")
+            || IsWriteTarget(name, "Trace")
+            || IsWriteTarget(name, "Debug");
     }
+
+    private static bool IsWriteTarget(string name, string type) =>
+        name.StartsWith(type + ".", StringComparison.Ordinal)
+        || name.Contains("." + type + ".", StringComparison.Ordinal);
+
+    private static bool IsSkipDotTest(string name) =>
+        Leaf(name) == "Test" && (name == "Skip.Test" || name.EndsWith(".Skip.Test", StringComparison.Ordinal));
+
+    private static bool IsAssertMessage(string name) =>
+        name.StartsWith("Assert.", StringComparison.Ordinal)
+        || name.Contains(".Assert.", StringComparison.Ordinal);
 
     private static bool IsFileSync(string name)
     {
