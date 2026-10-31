@@ -1,5 +1,8 @@
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using System.Reflection;
 using System.Text.Json;
 using Shouldly;
 using TUnit.Core;
@@ -9,6 +12,59 @@ namespace Antiphon.E2E;
 [NotInParallel("C467LandDelivery")]
 public class LandDeliveryFixtureProbeTests
 {
+    [Test]
+    public async Task Polling_attention_accepts_the_actual_collapsed_aged_receipt()
+    {
+        await using var f = new LandDeliveryFixture();
+        var request = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        AttentionItemDto Item(string kind, int age) => new(AttentionKind.LandOutcomeUnconfirmed,
+            AlertSeverity.Error, f.TaskId, null, null, null, "owned task",
+            $"Land {kind} notification: Enqueued; queued; caller busy", "", now.AddSeconds(-age), null, [],
+            LandRequestId: request, LandNotificationId: Guid.NewGuid());
+        var newest = Item("Aged", 301);
+        List<AttentionItemDto> source = [Item("Outcome", 1202), Item("Aged", 901), newest];
+        // Exercise the shipped projection without booting a database, runner or Windows PTY.
+        var collapse = typeof(AttentionService).GetMethod("CollapseLandOutcomeReceipts", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var items = (List<AttentionItemDto>)collapse.Invoke(null, [source])!;
+        items.Count.ShouldBe(1);
+        items[0].Headline.ShouldContain("Land Aged");
+        var selected = await f.PollingAttentionAsync(new(now, false, items), request);
+        selected.LandNotificationId.ShouldBe(newest.LandNotificationId);
+        selected.Severity.ShouldBe(AlertSeverity.Error);
+        selected.Headline.ShouldContain("busy");
+    }
+
+    [Test]
+    public async Task Missing_polling_attention_reports_sequence_and_producer_without_payloads()
+    {
+        await using var f = new LandDeliveryFixture();
+        Directory.CreateDirectory(f.Root);
+        var request = Guid.NewGuid();
+        var otherRequest = Guid.NewGuid();
+        var otherNote = Guid.NewGuid();
+        const string privatePayload = "fixture-private-attention-payload";
+        AttentionItemDto other = new(AttentionKind.LandHeld, AlertSeverity.Warning, f.TaskId,
+            null, null, null, privatePayload, privatePayload, privatePayload, DateTime.UtcNow, null, [],
+            LandRequestId: otherRequest, LandNotificationId: otherNote);
+        try
+        {
+            var error = await Should.ThrowAsync<InvalidOperationException>(() => f.PollingAttentionAsync(
+                new(DateTime.UtcNow, false, [other]), request,
+                _ => Task.FromResult("operation=Published; notification=Enqueued; producer=held")));
+            error.Message.ShouldContain("expected exactly one polling attention item; matches=0");
+            error.Message.ShouldContain("taskId=" + f.TaskId);
+            error.Message.ShouldContain("requestId=" + request);
+            error.Message.ShouldContain(otherRequest.ToString());
+            error.Message.ShouldContain(otherNote.ToString());
+            error.Message.ShouldContain("LandHeld");
+            error.Message.ShouldContain("operation=Published; notification=Enqueued; producer=held");
+            error.Message.ShouldNotContain(privatePayload);
+            File.Exists(Path.Combine(f.Root, "polling-attention-" + request.ToString("N") + ".txt")).ShouldBeTrue();
+        }
+        finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
     [Test]
     public async Task Stalled_receipt_names_identity_last_progress_and_safe_log_tail()
     {

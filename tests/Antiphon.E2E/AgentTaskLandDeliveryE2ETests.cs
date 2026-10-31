@@ -270,7 +270,7 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C467_V32_StatusPollingCannotDischargeUnreceivedOutcome(string state)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: state == "busy", cut: state == "attempt" ? "attempt" : "none");
-        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var requestId = await f.RequestAsync(); await f.ReleaseExecutionAsync();
         await f.UntilProtocolAsync(async () => {
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null)
@@ -283,7 +283,7 @@ public class AgentTaskLandDeliveryE2ETests
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 2;
         }, "outcome warning and error obligations");
         var attention = await f.AttentionAsync();
-        var owed = attention.Items.Single(i => i.TaskId == f.TaskId && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome"));
+        var owed = await f.PollingAttentionAsync(attention, requestId);
         owed.Severity.ShouldBe(AlertSeverity.Error);
         owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
         await using (var db = f.CreateContext())
