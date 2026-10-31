@@ -4,14 +4,14 @@ Closed verification for the child tree-kill fix round. One `tests/Antiphon.Tests
 
 Snapshot failure stays `fallback=owned_root_only` (`entireProcessTree: false`). An unguarded `Kill(entireProcessTree: true)` would walk a reused root pid on Linux.
 
-Linux floors: OwnedProcessTreeTests 10; RepositoryMutationLeaseTests 28 executed (two Windows-only skips); LandingGitTests 65 (32 methods, 44 argument rows, 21 parameterless; the six POSIX `Skip.Test` guards run here); child-journal group 33; RcRosterRepairTests 3 plus C1514 census 5; NativeLinuxPolicyWitnessTests 3 per suite.
+Linux floors: OwnedProcessTreeTests 10; RepositoryMutationLeaseTests 28 executed and 0 skipped (the two Windows-only methods are omitted, because a skip fails receipt validation); LandingGitTests 65 (32 methods, 44 argument rows, 21 parameterless; the six POSIX `Skip.Test` guards run here); child-journal group 33; RcRosterRepairTests 3 plus C1514 census 5; NativeLinuxPolicyWitnessTests 3 per suite.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
 |---|---|---|---|---|---|---|---|---:|---|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-tk8562cp/` | tree-planner | `/*/*/OwnedProcessTreeTests/*` | D-1 D-2 D-3 D-4 planner and executor | all listed, 0 failed | 10 | 8 | `TEMP=/tmp;TMP=/tmp` |
-| CP-2 | all | CP-1 | mutation-lease | `/*/*/RepositoryMutationLeaseTests/*` | repository mutation lease | all listed, 0 failed | 28 | 6 | `TEMP=/tmp;TMP=/tmp` |
+| CP-2 | all | CP-1 | mutation-lease | `/*/*/RepositoryMutationLeaseTests/(C448_C24_UnreadableJournalStateCannotAdmitAWriter*)\|(C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion*)\|(C448_JournalRemovalRetriesTransientDeleteFailuresBeforeRelease*)\|(C448_JournalRemovalFailureKeepsFenceAndRecordsReason*)\|(C448_C24_StandingJournalFencesAdmissionByStartIdentity*)\|(C661_AlreadyExitedChildIsJournalledInsteadOfThrowing*)\|(C661_FastExitingOwnedChildLeavesTheCallersChildStateUnknown*)\|(C661_FastExitingOwnedChildPersistsUnknownIdentityAndRecoveryRefuses*)\|(C448_C24_KilledWorkerLeavesLiveGitChildFenced*)\|(C666_JournaledGitThatCannotStartLeavesNoStandingFence*)\|(C666_AmbiguousGitStartFailureKeepsTheStandingFence*)\|(C448_V13_LeaseUsesCommonRepositoryIdentity*)\|(C1076_LiveTaggedPrepPushChildDoesNotFenceButDeadReusedOrUnknownStillDoes*)` | repository mutation lease, omitting the two Windows-only skips | all listed, 0 failed | 28 | 6 | `TEMP=/tmp;TMP=/tmp` |
 | CP-3 | all | CP-1 | landing-git | `/*/*/LandingGitTests/*` | landing git, parent-death grandchild, detached holder, living root | all listed, 0 failed | 65 | 8 | `TEMP=/tmp;TMP=/tmp` |
 | CP-4 | all | CP-1 | child-journal | `/*/*/(RepositoryMutationLeaseDescribeTests*)\|(RepositoryMutationLeaseOwnerTests*)\|(RepositoryChildJournalInspectorTests*)\|(RepositoryChildRecoveryTests*)\|(RepositoryFenceObserverTests*)/*` | child journal describe, owner, inspector, recovery, fence | all listed, 0 failed | 33 | 6 | `TEMP=/tmp;TMP=/tmp` |
 | CP-5 | all | CP-1 | roster-census | `/*/*/(RcRosterRepairTests*)\|(C1514LandingSplitBudgetTests*)/*` | roster repair, C1404, C1577, C1584, C1410, G2865 | all listed, 0 failed | 8 | 8 | `TEMP=/tmp;TMP=/tmp` |
