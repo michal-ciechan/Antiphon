@@ -142,7 +142,46 @@ public sealed class VolumeRetirementReceiptTests
         await File.WriteAllTextAsync(file, original);
         await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(file)!, "preview.json"), original);
         (await CheckPreview(fixture)).Exit.ShouldBe(0, "J4 current compatible proof is usable");
+
+        // Admission freshness is checked before the first expensive content
+        // observation. Advancing the clock during that observation must not turn
+        // the admitted Preview into an execution deadline.
+        using var longApply = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(longApply);
+        var longReady = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longApply)))!;
+        var admittedAt = DateTimeOffset.Parse(longReady["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds();
+        var longRun = await longApply.Run("retire-temp-runner", LongAuditClock(admittedAt));
+        longRun.Exit.ShouldBe(0, "J4 an unexpired Preview admits a long Apply through the real host entry: " + longRun.Output);
+        longApply.Removed.Length.ShouldBe(4, "J4 admitted long Apply completes all four exact targets");
+        JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longApply)))!["state"]!.GetValue<string>()
+            .ShouldBe("Completed");
+
+        using var expiredEntry = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(expiredEntry);
+        var expiredReady = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(expiredEntry)))!;
+        var expiredAt = DateTimeOffset.Parse(expiredReady["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds() + 901;
+        var marker = Path.Combine(expiredEntry.Root, "audit-entered");
+        var expiredRun = await expiredEntry.Run("retire-temp-runner", $$"""
+            date() { if [ "$*" = '-u +%s' ]; then printf '%s\n' '{{expiredAt}}'; else command date "$@"; fi; }
+            eval "$(declare -f c1008_audit_checked | sed '1s/c1008_audit_checked/c1609_original_audit_checked/')"
+            c1008_audit_checked() { touch {{VolumeRetirementFixture.Quote(marker)}}; c1609_original_audit_checked; }
+            """);
+        expiredRun.Exit.ShouldNotBe(0, "J4 an already expired Preview cannot admit Apply");
+        expiredEntry.Removed.ShouldBeEmpty();
+        File.Exists(marker).ShouldBeFalse("J4 expired admission refuses before any expensive Apply audit");
     }
+
+    private static string LongAuditClock(long admittedAt) => $$"""
+        printf '%s\n' '{{admittedAt}}' > "$C1008_FIXTURE_ROOT/phase-clock"
+        date() {
+            if [ "$*" = '-u +%s' ]; then cat "$C1008_FIXTURE_ROOT/phase-clock"; else command date "$@"; fi
+        }
+        eval "$(declare -f c1008_audit_checked | sed '1s/c1008_audit_checked/c1609_original_audit_checked/')"
+        c1008_audit_checked() {
+            c1609_original_audit_checked
+            printf '%s\n' '{{admittedAt + 901}}' > "$C1008_FIXTURE_ROOT/phase-clock"
+        }
+        """;
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
