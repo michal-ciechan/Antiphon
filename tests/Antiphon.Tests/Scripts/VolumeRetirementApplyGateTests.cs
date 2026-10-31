@@ -129,9 +129,12 @@ public sealed class VolumeRetirementApplyGateTests
         C1008HostFixture.RequireNativeLinux();
         using var fixture = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(fixture);
-        // Stop at the first journal save, before docker stop. A later cut would
-        // hide the resume refusal behind work this apply already did.
-        var interrupted = await fixture.Run("retire-temp-runner", EnabledToken, sourceTransform: CutAfterFirstJournal);
+        // Consume the Ready preview, then stop before any volume removal. The
+        // temp fixture has no containers, so that stop loop records an empty
+        // removal without calling docker stop. Gate-off resume must leave this
+        // journal unchanged and add no stop. The matching token then deletes
+        // the four volumes.
+        var interrupted = await fixture.Run("retire-temp-runner", EnabledToken, sourceTransform: CutAfterPreviewConsume);
         interrupted.Exit.ShouldBe(2, "apply-gate: the journal cut still fails closed; " + interrupted.Output);
         interrupted.Output.ShouldContain("DIAGNOSIS=setup-cut", Case.Sensitive);
         AssertNoVolumeRemoval(fixture, "resume setup");
@@ -321,18 +324,18 @@ public sealed class VolumeRetirementApplyGateTests
     private static string Journal(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server", "recycle", VolumeRetirementFixture.Operation + ".json");
 
-    private static string CutAfterFirstJournal(string source)
+    private static string CutAfterPreviewConsume(string source)
     {
         const string save =
-            "    mkdir -p \"$SERVER2_ROOT/recycle\" || c1008_refuse RecycleReceiptUnavailable\n" +
-            "    c1008_save || c1008_refuse RecycleReceiptUnavailable\n" +
-            "    C1008_ACTIVE=1\n";
+            "        if [ \"${C1008_RESUME:-0}\" != 1 ]; then\n" +
+            "            c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'\n" +
+            "        fi\n";
         const string cut =
-            "    mkdir -p \"$SERVER2_ROOT/recycle\" || c1008_refuse RecycleReceiptUnavailable\n" +
-            "    c1008_save || c1008_refuse RecycleReceiptUnavailable\n" +
-            "    write_result false setup-cut 2\n" +
-            "    C1008_ACTIVE=1\n";
-        source.Contains(save, StringComparison.Ordinal).ShouldBeTrue("apply-gate: the first journal save is the resume cut point");
+            "        if [ \"${C1008_RESUME:-0}\" != 1 ]; then\n" +
+            "            c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'\n" +
+            "            write_result false setup-cut 2\n" +
+            "        fi\n";
+        source.Contains(save, StringComparison.Ordinal).ShouldBeTrue("apply-gate: preview consume is the resume cut point");
         return source.Replace(save, cut, StringComparison.Ordinal);
     }
 
