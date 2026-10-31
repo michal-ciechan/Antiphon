@@ -21,4 +21,8 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(120_000)] public Task ScheduleConservesAllChunks(CancellationToken token) => Run(nameof(ScheduleConservesAllChunks), token);
     [Test, Timeout(120_000)] public Task PublicHopsForwardAcknowledgement(CancellationToken token) => Run(nameof(PublicHopsForwardAcknowledgement), token);
     [Test, Timeout(120_000)] public Task InvalidSeedFallsBack(CancellationToken token) => Run(nameof(InvalidSeedFallsBack), token);
+    [Test, Timeout(180_000)] public Task SiblingTimingFromSummary(CancellationToken token) => Run(nameof(SiblingTimingFromSummary), token);
+    [Test, Timeout(180_000)] public Task StoppedTimingRootAndRefusals(CancellationToken token) => Run(nameof(StoppedTimingRootAndRefusals), token);
+    [Test, Timeout(180_000)] public Task ChunkUnfinishedTolerance(CancellationToken token) => Run(nameof(ChunkUnfinishedTolerance), token);
+    [Test, Timeout(180_000)] public Task LinkCacheRefusesReplacement(CancellationToken token) => Run(nameof(LinkCacheRefusesReplacement), token);
 }
