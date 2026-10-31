@@ -568,7 +568,7 @@ function Test-FullBytesAndCoverageConserved {
     $actual = @($b.Launches.key)
     $prefix = @($b.Schedule.entries | Where-Object priorFailure)
     # This must precede all conservation comparisons and uses actual launches.
-    Assert-FF (($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and $b.Launches[4].suite -cne 'antiphon') 'observedPermutation'
+    Assert-FF (($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+$fx.suites[1].chunks[0].id) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
     $anchorKeys=@($fx.anchors|ForEach-Object {'antiphon/'+$_.chunk})
     $observedAnchors=@($actual|Where-Object {$anchorKeys -ccontains $_})
     Assert-FF (($observedAnchors -join ',') -ceq ($anchorKeys -join ',') -and @($prefix|Where-Object {$anchorKeys -ccontains ($_.suite+'/'+$_.chunk)}).Count -eq 4) 'anchors'
@@ -609,7 +609,7 @@ function Test-FullBytesAndCoverageConserved {
         $seal=[IO.File]::ReadAllText((Join-Path $generation 'seal.json'))|ConvertFrom-Json
         if($seal.projectionDigest -cne (Get-NightlyHistoryDigest (Join-Path $arm.TimingRoot 'groups-executed.json')) -or $seal.sequence -ne $arm.Launches.Count -or -not $arm.Context.Closed){$journalOk=$false}
         $records=@(Get-ChildItem -LiteralPath $generation -File|Where-Object {$_.Name -match '^\d{8}\.json$'}|Sort-Object Name)
-        for($i=0;$i -lt $records.Count;$i++){$record=[IO.File]::ReadAllText($records[$i].FullName)|ConvertFrom-Json;if($record.sequence -ne $i+1 -or $record.freshSuiteKey -cne $arm.Launches[$i].suite -or $record.freshChunkKey -cne $arm.Launches[$i].chunk){$journalOk=$false}}
+        for($i=0;$i -lt $records.Count;$i++){$record=[IO.File]::ReadAllText($records[$i].FullName)|ConvertFrom-Json;if($record.sequence -ne $i+1 -or (ConvertFrom-TestPhaseB64 $record.freshSuiteKey) -cne $arm.Launches[$i].suite -or (ConvertFrom-TestPhaseB64 $record.freshChunkKey) -cne $arm.Launches[$i].chunk){$journalOk=$false}}
     }
     Assert-FF $journalOk 'journalBindings'
     $timelinesOk=$true
@@ -630,6 +630,7 @@ function Test-FullBytesAndCoverageConserved {
     Assert-FF ($a.Schedule.preparationComplete -and $b.Schedule.preparationComplete -and $b.Schedule.historyDigest -ceq ('d'*64) -and $b.Schedule.unresolved.Count -eq 0) 'schedulePolicy'
     Test-FFPreparationSequencing
     Test-FFAuthorityConservation
+    Test-FFPlannedGoldenBytes
 }
 function Invoke-FFPreparationArm {
     param([string]$Name, [string]$HistoryKind, [string]$Failure = 'discovery', [switch]$WriteFault)
@@ -737,6 +738,8 @@ function Test-FFAuthorityConservation {
         $dir=Get-C599AuthorityDir $auth
         $before=@{};foreach($file in @(Get-ChildItem -LiteralPath $dir -File)){$before[$file.Name]=Get-NightlyHistoryDigest $file.FullName}
         $gate=Get-C599AGate $auth
+        $small=New-FFSmallFixture
+        $diagnostic=Invoke-FFPreparedArm $small 'authority-diagnostic' $small.resolved.members
         $after=Get-C599AGate $auth
         $unchanged=$true;foreach($file in @(Get-ChildItem -LiteralPath $dir -File)){if($before[$file.Name] -cne (Get-NightlyHistoryDigest $file.FullName)){$unchanged=$false}}
         Assert-FF ($gate.Ok -and $after.Ok -and $unchanged -and (Test-C599NoRemoteWrite $auth)) 'authorityBytes' (@($gate.Reasons)-join ',')
@@ -745,8 +748,18 @@ function Test-FFAuthorityConservation {
     }finally{Stop-C599CardStub;Clear-C599FixtureReadOnly;$env:ANTIPHON_RELEASE_GATE_TEST_MODE=$oldMode}
 }
 
+function Test-FFPlannedGoldenBytes {
+    $script:QualificationTimingRoot=Join-Path $root 'golden-actual'
+    $nodes=@([pscustomobject]@{Uid='CaseUid';ClassName='Fixture.ManifestTests';Type='ManifestTests';Namespace='Fixture';Method='Run';Categories=@()})
+    $group=[pscustomobject]@{id='one';classes=@('Fixture.ManifestTests');nodes=@([pscustomobject]@{Uid='caseuid'});seconds=12.5;groupFilter='/*/Fixture/ManifestTests/*'}
+    [void](Write-TestPhasePlannedManifest -LogRoot $root -RunId 'golden' -Attempt '1' -Suite 'antiphon' -SourceDigest 'source' -AssemblyDigest 'assembly' -PolicyDigest 'policy' -CostFileDigest 'cost' -AssemblyId 'fixture' -Groups @($group) -DiscoveryNodes $nodes -ProfileExclusions @())
+    $expected=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'fixtures/nightly/c1514-failed-first-planned.json'))
+    $actual=[IO.File]::ReadAllBytes((Join-Path $script:QualificationTimingRoot 'groups-planned-antiphon.json'))
+    Assert-FF ([Convert]::ToBase64String($expected) -ceq [Convert]::ToBase64String($actual)) 'originalManifestBytes'
+}
+
 switch -Exact ($Case) {
-    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=20 }
+    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=21 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
