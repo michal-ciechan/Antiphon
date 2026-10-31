@@ -9,12 +9,14 @@ claim that any later movement contains a particular fix. ASCII-only, PowerShell 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$From,
-    [string]$Repository = (Join-Path $PSScriptRoot '../..'),
+    [string]$Repository,
     [string]$Remote = 'origin',
     [ValidateRange(1, 300)][int]$PollSeconds = 30,
     [ValidateRange(1, 29)][int]$MaxMinutes = 28,
     [switch]$Once)
 $ErrorActionPreference = 'Stop'
+# PS5.1 -File leaves PSScriptRoot empty in advanced-script param defaults.
+if (-not $Repository) { $Repository = Join-Path $PSScriptRoot '../..' }
 $deadline = [datetime]::UtcNow.AddMinutes($MaxMinutes)
 do {
     try {

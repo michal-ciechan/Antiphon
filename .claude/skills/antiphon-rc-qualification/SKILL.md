@@ -74,6 +74,12 @@ These directions override the cited standing rules in
    is a prompt to investigate, not a verdict. Heartbeat stalls are a detection and
    decision state, never automatic stop authority. `watch-master` observes the
    remote master ref with `git ls-remote`, without fetching or changing a checkout.
+   All four helpers are ASCII-only and run unchanged under Windows PowerShell 5.1
+   (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...`) as a fallback. The
+   offline smoke is `scripts/test-orchestration-watchers.ps1` (C487, synthetic files and
+   stubs only); run it under both `pwsh` and `powershell.exe` after editing a helper.
+   Under 5.1 `-File`, `$PSScriptRoot` is empty in an advanced script's param
+   defaults, so resolve it in the script body (C487 rejects it in param defaults).
 
 3. **Dispatch immediately on every `FAILURES` line.** First extract the real failure:
 
