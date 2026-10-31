@@ -59,12 +59,14 @@ public sealed class ScriptHarnessProcessContractTests
                 {
                     removed = true;
                     File.Delete(stat);
-                    throw new IOException("No such process " + stat);
+                    throw new IOException("proces je zmizel " + stat) { HResult = unchecked((int)0x80070003) };
                 }
                 throw new InvalidOperationException("reader called after the vanished read");
             }, out _);
             gone.ShouldBeFalse();
             File.Exists(stat).ShouldBeFalse();
+            LinuxScriptHarnessProcess.IsVanishedProc(new IOException("No such process") { HResult = unchecked((int)0x80070005) }).ShouldBeFalse();
+            LinuxScriptHarnessProcess.IsVanishedProc(new UnauthorizedAccessException("No such process")).ShouldBeFalse();
         }
         finally { Directory.Delete(root, true); }
     }
