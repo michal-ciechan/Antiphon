@@ -51,6 +51,12 @@ those tools and checks both the intact deadline and the existing m7 control.
 The group INT witness also records whether its handler returns: ordinary refusal
 or EXIT cleanup after an interrupted poll cannot satisfy the m6 control. Complete
 CID/lease/volume cleanup and the existing accepted exit codes remain required.
+`C849_Signal_during_exit_finishes_custody_cleanup` holds ordinary EXIT after both
+probe CIDs publish, then delivers TERM or group INT; the actual finalizer must
+remove every admitted volume before the handler exits 143/130. Readiness files
+fix the ordering. Its 10-second synchronization guards are provisional, about
+2x the six loaded full-witness p95 of 5.14 seconds measured by Debug fc629ae4;
+the existing production deadlines and custody assertions remain unchanged.
 
 ## Performance standards
 
