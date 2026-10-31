@@ -6,6 +6,28 @@ function Fail-C1609Manual([string]$Reason) {
     exit 2
 }
 
+function Copy-C1609ManualEvidence([string]$Name, [string]$Destination) {
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'scp'; $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    foreach ($arg in @('-o','BatchMode=yes','-o','ConnectTimeout=15',
+        "mc@server2:/home/mc/antiphon-server2/retirement/$OperationId/$Name",$Destination)) {
+        [void]$psi.ArgumentList.Add($arg)
+    }
+    $proc = [Diagnostics.Process]::new(); $proc.StartInfo = $psi
+    try {
+        [void]$proc.Start()
+        $stdout = $proc.StandardOutput.ReadToEndAsync(); $stderr = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(30000)) { throw 'deadline' }
+        if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout,$stderr)).Wait(2000) -or
+            $proc.ExitCode -ne 0) { throw 'copy' }
+    } catch { Fail-C1609Manual 'ReceiptUnavailable' }
+    finally {
+        if ($proc.Id -and -not $proc.HasExited) { $proc.Kill($true); $proc.WaitForExit() }
+        $proc.Dispose()
+    }
+}
+
 function New-C1609ManualPacket {
     param([string]$Mode, [string]$Actor, [string]$Authority, [string]$Attestation = '')
     $coordinator = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'c1008-retirement.sh'))
@@ -141,7 +163,7 @@ function Invoke-C1609ManualRetirement {
         try {
             $text = [IO.File]::ReadAllText($AttestationFile)
             Assert-C994RawManifest $text
-            $value = $text | ConvertFrom-Json -DateKind String
+            $value = $text | ConvertFrom-Json
             if ($value.actor -cne $auth.Actor -or $value.authorityRef -cne $auth.Authority -or
                 $value.operationId -cne $OperationId -or $value.phase -cne $phase -or $value.mode -cne 'manual' -or
                 [string]::IsNullOrWhiteSpace($value.reason)) { throw 'attestation' }
@@ -157,7 +179,7 @@ function Invoke-C1609ManualRetirement {
     try {
         $response = Invoke-Server2Bash -Script (New-C1609ManualPacket -Mode $phase -Actor $auth.Actor -Authority $auth.Authority -Attestation $encoded) -TimeoutMs 90000
         Assert-C994RawManifest $response
-        $prepared = $response | ConvertFrom-Json -DateKind String
+        $prepared = $response | ConvertFrom-Json
     } catch { Fail-C1609Manual 'HostPreparation' }
     if ($Template) {
         [IO.File]::WriteAllText((Join-Path $root 'attestation-template.json'), $response, [Text.UTF8Encoding]::new($false))
@@ -185,10 +207,19 @@ function Invoke-C1609ManualRetirement {
     [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 20 -Compress), [Text.UTF8Encoding]::new($false))
     & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'verify-docker-stack.ps1') -Case retire-temp-runner -Manifest $manifestPath
     if ($LASTEXITCODE -ne 0) { Fail-C1609Manual 'ContentOrLiveGuard' }
-    & scp -o BatchMode=yes -o ConnectTimeout=15 ("mc@server2:/home/mc/antiphon-server2/retirement/$OperationId/receipt.json") (Join-Path $root 'manifest.json')
-    if ($LASTEXITCODE -ne 0) { Fail-C1609Manual 'ReceiptUnavailable' }
-    & scp -o BatchMode=yes -o ConnectTimeout=15 ("mc@server2:/home/mc/antiphon-server2/retirement/$OperationId/proof.md") (Join-Path $root 'proof.md')
-    if ($LASTEXITCODE -ne 0) { Fail-C1609Manual 'ReceiptUnavailable' }
+    Copy-C1609ManualEvidence 'receipt.json' (Join-Path $root 'manifest.json')
+    Copy-C1609ManualEvidence 'proof.md' (Join-Path $root 'proof.md')
+    try {
+        $text = [IO.File]::ReadAllText((Join-Path $root 'manifest.json'))
+        Assert-C994RawManifest $text
+        $record = $text | ConvertFrom-Json
+        $state = if ($Preview) { 'Ready' } else { 'Completed' }
+        if ($record.schema -ne 2 -or $record.operationId -cne $OperationId -or $record.mode -cne 'manual' -or
+            $record.project -cne 'antiphon-runner-temp' -or $record.state -cne $state -or
+            $record.consumed -isnot [bool] -or $record.consumed -ne [bool]$Apply -or
+            @($record.targets).Count -ne 4 -or
+            (Compare-Object ($targets | Sort-Object) ($record.targets | Sort-Object) -CaseSensitive)) { throw 'receipt' }
+    } catch { Fail-C1609Manual 'ReceiptUnavailable' }
     $digest = (Get-FileHash -LiteralPath (Join-Path $root 'manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Output ("C1609_MANUAL state=" + $(if ($Preview) {'Ready'} else {'Completed'}) + " operation=$OperationId digest=$digest evidence=$root")
     exit 0
