@@ -53,7 +53,13 @@ try {
             $doc=Read-NightlyStoppedRunSeed $seedPath
             $bad=Join-Path $run 'forbidden.json';$refused=$false
             try {Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $bad}catch{$refused=$_.Exception.Message -like '*output-inside-source*'}
-            Check (($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'profile-4' -and @($_.classes) -ccontains 'Synthetic.antiphon.Torn'}).Count -eq 1 -and @($doc.chunks|Where-Object completed).Count -eq 11 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
+            $probePath=Join-Path $run 'owner.json';$probeBytes=[IO.File]::ReadAllBytes($probePath);$probeTime=[IO.File]::GetLastWriteTimeUtc($probePath)
+            $probeBefore=@(Snapshot);$changed=[byte[]]$probeBytes.Clone();$changed[0]=$changed[0] -bxor 1
+            try{
+                [IO.File]::WriteAllBytes($probePath,$changed);[IO.File]::SetLastWriteTimeUtc($probePath,$probeTime)
+                $detectsBytes=($probeBefore -join "`n") -cne (@(Snapshot) -join "`n")
+            }finally{[IO.File]::WriteAllBytes($probePath,$probeBytes);[IO.File]::SetLastWriteTimeUtc($probePath,$probeTime)}
+            Check ($detectsBytes -and ($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'profile-4' -and @($_.classes) -ccontains 'Synthetic.antiphon.Torn'}).Count -eq 1 -and @($doc.chunks|Where-Object completed).Count -eq 11 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
         }
         'FailedFirstMapping' {
             $inputRecord=Ingress -Accept;$schedule=Schedule $inputRecord
