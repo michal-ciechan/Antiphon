@@ -87,7 +87,8 @@ public static class LiveClaudeEvidenceSanitizer
             return true;
         if (HasRun(value, 32, IsHex)) return true;
         // '_' splits a base64url run. The C680 test id is one long letter run after '_' and stays a token.
-        if (!value.Contains('_') && HasRun(value, 40, IsBase64)) return true;
+        // The closed witness is 36 mixed characters. The longest admitted alnum token is shorter than 32.
+        if (!value.Contains('_') && HasRun(value, 32, IsBase64)) return true;
         return false;
     }
 

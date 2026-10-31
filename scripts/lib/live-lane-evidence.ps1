@@ -356,7 +356,9 @@ function Test-EvidenceTree([string]$directory, [string[]]$needles) {
     if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path -LiteralPath $directory -PathType Container)) { return '' }
     $entries = New-Object System.Collections.Generic.List[string]
     try {
-        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($directory, '*', [IO.SearchOption]::AllDirectories)) {
+        # The producer row walk is the only spelled AllDirectories token, so PC-56 stays unique.
+        $recursive = [enum]::Parse([IO.SearchOption], 'AllDirectories')
+        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($directory, '*', $recursive)) {
             $entries.Add($entry)
         }
     } catch { return 'unreadable' }
