@@ -993,6 +993,7 @@ One build per distinct output per committed After group; no reuse across SHAs.
 | CP-102 | S2-S4 | CP-15 | server-integration-M5-restored | `/*/*/TaskCeilingControlTests/C1610_Final_cap_requires_operator_extend` | M5 restored exact method | all passed; no failed/skipped | 3 | 2 |
 | CP-103 | S2-S4 | CP-15 | server-integration-M6-restored | `/*/*/TaskCeilingHoldTests/C1610_Phase_beats_ceiling` | M6 restored exact method | all passed; no failed/skipped | 2 | 2 |
 | CP-104 | S2-S4 | CP-15 | server-integration-M7-restored | `/*/*/TerminalRunnerSeatReleaseTests/Cancellation_reconciles_without_second_stop` | M7 restored exact method | all passed; no failed/skipped | 1 | 2 |
+| CP-105 | S2-S4 | CP-15 | server-integration-pipeline-speed-schema | `/*/*/PipelineSpeedIntegrationTests/*` | B1 rollback/upgrade preserves report bytes, historical outcome, correction constraints and model agreement | 39 passed; no failed/skipped | 39 | 3 |
 
 Debug task 40e35f61 adds CP-92 to close the preceding S3 report's explicit
 retention coverage gap. Six isolated-schema cases exercise source/recipient
