@@ -1,5 +1,10 @@
 #requires -Version 5.1
 # Diagnostic scheduling only. Canonical chunks remain the planner's own objects.
+function Resolve-NightlyPreviousRunOrder {
+    param([object[]]$Entries, $PreviousRun, [string]$CandidateSha, [datetime]$NowUtc)
+    return [pscustomobject]@{entries=@($Entries);reason='original-order';lanes=@()}
+}
+
 function New-NightlyDispatchSchedule {
     param([object[]]$PreparedSuites, [object[]]$PriorityMembers = @(),
         [string]$HistoryDigest = '', [object[]]$Unresolved = @(),
