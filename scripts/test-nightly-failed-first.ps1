@@ -919,7 +919,6 @@ function New-FFLoopHistory($Fixture) {
         })
         Write-C487Trx $trx $failures
         $rows += [ordered]@{id=$suite.id;chunk='old';trx=$trx;exitCode=2;result='FAIL';timedOut=$false}
-        Write-NightlyDiscoveryDocument -Path (Join-Path $dir ($suite.id+'-profile.discovery.json')) -Document (ConvertTo-NightlyDiscoveryDocument -Nodes @($suite.nodes) -AssemblyHash 'fixture')
     }
     Write-FFJson (Join-Path $dir 'summary.json') ([ordered]@{runId='old';attempt='1';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);completedAt=[datetime]::UtcNow.ToString('o');outcome='TESTS';suites=$rows;selectedSuites=@($Fixture.suites.id)})
     $path=Join-Path $root ('history-'+[guid]::NewGuid().ToString('N')+'.json')
@@ -932,7 +931,7 @@ function Invoke-FFActualLoop {
     $dir=Join-Path $root $Name; [void][IO.Directory]::CreateDirectory($dir)
     $p=Read-NightlyExecutionPolicy -RepoRoot $repo
     $p.Object.profiles.rc.requiredSuites=@($Fixture.suites.id)
-    $p.Object.chunks=[pscustomobject]@{}
+    $p.Object | Add-Member -NotePropertyName chunks -NotePropertyValue ([pscustomobject]@{}) -Force
     foreach ($suite in $Fixture.suites) {
         $chunkRows=@(foreach($chunk in $suite.chunks){[pscustomobject]@{id=$chunk.id;classes=@($chunk.classes)}})
         if ($Fixture.PSObject.Properties.Name -contains 'replay') { $chunkRows=@([pscustomobject]@{id='all';classes=@()}) }
