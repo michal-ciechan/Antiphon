@@ -56,7 +56,11 @@ function New-Fixture {
             $F.Trace.Add('probe:'+ $purpose)
             $status=$F.PostStatus; $delay=$F.PostDelay
             if ($purpose -eq 'Preflight') { $F.Pre++; $status=$F.PreStatus; $delay=$F.PreDelay }
-            else { $F.Post++; if ($F.Post -gt 1) { $status='Unavailable' } }
+            else {
+                $F.Post++
+                if ($status -eq 'Throws') { throw 'synthetic transport failure' }
+                if ($F.Post -gt 1) { $status='Unavailable' }
+            }
             # The adapter honours the supplied absolute deadline, with virtual time.
             $available=[Math]::Max(0,[double]$spec.Deadline-$F.Tick)
             $F.Tick += [Math]::Min($delay,$available)
@@ -151,7 +155,7 @@ function Test-HealthyProviderAssertionStaysRed {
     }
     Check 'healthy-red' $ok
     $ok=$true
-    foreach ($unproven in @('Unknown','Timeout','InternetFailure','Screenshot','ModelRefusal')) {
+    foreach ($unproven in @('Unknown','Timeout','InternetFailure','Screenshot','ModelRefusal','Throws')) {
         $q=New-Fixture; $F.Terminal.Rows[0].State='Failed'; $F.PostStatus=$unproven; $r=Run $q
         $ok=$ok -and (Is $r 1)
     }
