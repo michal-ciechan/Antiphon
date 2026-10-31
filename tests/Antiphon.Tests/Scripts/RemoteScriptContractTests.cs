@@ -1177,6 +1177,40 @@ public sealed class RemoteScriptContractTests
         Fact(output, "reap-unowned-survived").ShouldBe("1", output);
     }
 
+    // The generated driver is a shell contract, including when WSL cannot create
+    // user/mount namespaces. The m7 control must still reach ready after losing
+    // its deadline, so a failed launch cannot masquerade as a detected mutation.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Driver_deadline_witness_does_not_require_mount_namespaces(bool withoutDeadline)
+    {
+        RequireLinuxPwsh();
+        var output = LinuxShell($"""
+            set -eu
+            tools=$(mktemp -d)
+            trap 'rm -rf -- "$tools"' EXIT
+            export C849_NAMESPACE_CALLS="$tools/calls"
+            for tool in unshare mount pivot_root; do
+                cat > "$tools/$tool" <<'SH'
+            #!/bin/sh
+            printf '%s\n' "$0" >> "$C849_NAMESPACE_CALLS"
+            printf 'namespace operation refused\n' >&2
+            exit 1
+            SH
+                chmod 700 "$tools/$tool"
+            done
+            export PATH="$tools:$PATH"
+            C1192_MUTATION='{{(withoutDeadline ? "m7" : "")}}' bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" slot-driver-deadline "$repo"
+            [ ! -e "$C849_NAMESPACE_CALLS" ] && printf 'namespace-tools-unused=1\n'
+            """, "repo");
+        Fact(output, "driver-exit4").ShouldBe(withoutDeadline ? "0" : "1", output);
+        Fact(output, "driver-ready").ShouldBe("1", output);
+        Fact(output, "namespace-tools-unused").ShouldBe("1", output);
+        output.ShouldNotContain("C1192_FAIL");
+    }
+
     // CARD-0849 round 3. A cid that arrives after the sibling probe has already
     // refused is still published, killed by that id, and its lease is deleted.
     // The planted same-named container is not that id.
