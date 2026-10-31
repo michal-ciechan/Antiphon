@@ -6,7 +6,7 @@ An extra public-wrapper acknowledgement mutant survived: the fixture read ParamB
 from FunctionDefinitionAst rather than Body, creating an unbound fake that inherited
 wrapper variables. Require the actual parameter block and use Body.ParamBlock.
 No production code changes. Re-run the closed eight-row selection from one fresh
-bin-f6-seed-green2/ build so final receipts share the repaired harness source.
+bin-f6-seed-green3/ build so final receipts share the repaired harness source.
 The extra cost is explicitly retained (initial actual 9m22s plus final provisional
 15m, not a hidden retry). Two added direct guard diagnostics bind public-wrapper
 forwarding and age rejection, with byte restoration and the same cases green.
@@ -26,6 +26,15 @@ Missing acknowledgement, wrong candidate acknowledgement, bad hash, stale data o
 unmappable history restores the complete original order. Resolved failures survive an
 unresolved old class. Unknown timestamps retain canonical order; known timestamps sort oldest first.
 
+Missing-plan-row refinement: a retained antiphon-all-group-105.trx has a real failed
+identity but no matching historical group row. The builder must read it and preserve its
+class identity; the current plan leaves that class unresolved while retaining the other
+five mapped failures. BuilderReadOnly, FailedFirstMapping and TimeoutIsFailure are
+committed RED before the production fix. Second checkpoint group 20261031-101758-8ae1
+at da15833114c7dfdb31c89f6d826485cb5b95bf6f passed 8/8 in 7m25s (one build), closing
+the wrapper-witness repair. That historical cost is retained. The final group uses a
+third fresh output, bin-f6-seed-green3/, one build shared by all eight exact rows.
+
 ## Verification design
 
 Seven guard mutants are separately run and restored against the exact named portable case:
@@ -39,7 +48,7 @@ seeds; the actual prepared-schedule boundary launches every chunk and observes n
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green2/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-f6-seed-green3/` | seed-readonly | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly` | source bytes/mtimes and completion | exact method | 1 | 8 | true | TEMP=/tmp |
 | CP-2 | S2 | `CP-1` | seed-order | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/FailedFirstMapping` | failed/new/passed mapping | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-3 | S2 | `CP-1` | seed-ack | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/AcknowledgementRequired` | explicit source acknowledgement | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-4 | S2 | `CP-1` | seed-hash | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/HashMustVerify` | tampered payload fallback | exact method | 1 | 1 | true | TEMP=/tmp |
