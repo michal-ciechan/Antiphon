@@ -75,7 +75,7 @@ try {
     $output = @(& (Join-Path $helpers 'watch-qual.ps1') @watchArgs) -join "`n"
     Assert-Smoke ($output.Contains('RUN-ENDED') -and [IO.File]::ReadAllText($heartbeat) -eq $before) 'observes completion without writing heartbeat'
     function Invoke-RestMethod {
-        param($Uri, $TimeoutSec)
+        param($Uri, $TimeoutSec, $Headers)
         if ($Uri -ne "http://stub.invalid/api/agent-tasks?projectId=$scopeId") { throw 'Unexpected or unscoped HTTP request.' }
         return $global:RcQualSmokeReply
     }

@@ -15,6 +15,21 @@ These instructions record the operator's 2026-10-31 rc workflow; read live opera
 instructions and scoped effective settings before dispatch. Never change a budget to
 make the target fit. Existing prerequisite, startup-probe and release gates still apply.
 
+### OPERATOR DIRECTION overrides for rc qualification
+
+These directions override the cited standing rules in
+`docs/orchestration-loop.md` for this rc qualification workflow:
+
+- **2026-10-23**: "rc fixes direct to rc, no review"; **2026-10-27**:
+  "RC is the quick-merge line: keep testing minimal". Test-only and other Debug
+  repairs follow this direction instead of standing rule 9's reviewed cherry-pick.
+  Product/dispatcher/watchdog changes still require the Review in step 4.
+- **2026-10-31**: the Debug cap of 4 is a hard create refusal. Custom is the
+  sanctioned workaround for small fixes when Debug is full, instead of raising
+  the cap under standing rules 1/2. Effective host/project limits still apply.
+- **2026-10-31**: stopping the live qualification run is the operator's decision
+  (human-only), overriding standing rule 10's abandoned-run stop autonomy here.
+
 ## Numbered operating procedure
 
 1. **Record and observe the pinned Windows Full run.** Record the full candidate SHA,
@@ -30,13 +45,15 @@ make the target fit. Existing prerequisite, startup-probe and release gates stil
    read-only status when its required identities are available.
 
 2. **Arm three bounded watchers and re-arm about every 30 minutes.** Run each as a
-   Monitor task with `timeout_ms: 1800000`, `persistent: false` in the orchestrator's
+   Monitor task with `timeout_ms: 1800000` in the orchestrator's
    Monitor facility (not a new native test task). Helpers finish before that timeout.
    Monitor is a watcher facility, not a `delegate.ps1 -Role` value. If the current
    client has no Monitor facility, report that limitation rather than starting an
    unowned background process. Keep watcher state in an orchestrator-owned scratch
    directory outside the candidate, qualification state, and supervisor directories.
    Reuse that state when re-arming; never write into the observed live run.
+   The repository watchers below REPLACE any private watcher copies; re-arm
+   these checked-in scripts instead of retaining a divergent private version.
 
    ```powershell
    pwsh -NoProfile -File scripts/orchestration/watch-tasks.ps1 -ProjectId '<project-guid>' -StateFile '<owned-scratch>\tasks.json'
@@ -46,7 +63,9 @@ make the target fit. Existing prerequisite, startup-probe and release gates stil
    ```
 
    `watch-tasks` baselines existing terminal/Blocked tasks on the first successful
-   poll, then reports new transitions across re-arms. `watch-qual` reports
+   poll, then reports status changes across re-arms, including re-Blocked and
+   re-Failed after Working. Legacy seen-pair state gets one explicit fresh baseline.
+   `watch-qual` reports
    `FAILURES` per completed TRX, parse errors, suspected hangs, stale/missing heartbeats
    and run completion. Read each task's full report after an event; a watcher line
    is a prompt to investigate, not a verdict. Heartbeat stalls are a detection and
