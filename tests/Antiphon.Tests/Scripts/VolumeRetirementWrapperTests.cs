@@ -94,6 +94,22 @@ public sealed class VolumeRetirementWrapperTests
         reused.Trace.Any(row => row["kind"]?.GetValue<string>() == "census" &&
             row["name"]?.GetValue<string>() == "temp-retirement-clearable").ShouldBeFalse(
             "c1609-w1: reuse does not clear or census the retirement");
+
+        if (OperatingSystem.IsLinux())
+        {
+            using var native = new C1008HostFixture(main: false);
+            await VolumeRetirementFixture.ReadyPreview(native);
+            var psi = new ProcessStartInfo("node")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                WorkingDirectory = DelegateScriptRunner.RepoRoot
+            };
+            psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-wrapper-v2-cases.mjs"));
+            psi.ArgumentList.Add(native.Root);
+            var real = await Wait(psi, TimeSpan.FromSeconds(180));
+            real.Exit.ShouldBe(0, "W1 real wrapper, private A->B proof, long-scan renewal and locked inventory: " + real.Output);
+            real.Output.ShouldContain("C1609_WRAPPER passed");
+        }
     }
 
     [Test]

@@ -28,7 +28,7 @@ if(m){
  const file=root+'/manual-host-'+process.pid+'.sh';fs.writeFileSync(file,source);
  cmd=cmd.replace(m[0],"bash '"+file+"'");
 }
-fs.appendFileSync(root+'/manual-ssh-trace',JSON.stringify({packet:args.includes('-s'),hostCase:!!m})+'\n');
+fs.appendFileSync(root+'/manual-ssh-trace',JSON.stringify({packet:args.includes('-s'),hostCase:!!m,caseName:cmd.match(/export C590_CASE='([a-z-]+)'/)?.[1]||null})+'\n');
 fs.writeFileSync(root+'/manual-command-'+process.pid+'.sh',cmd,{mode:0o600});
 const r=cp.spawnSync('bash',['-c',cmd],{env:process.env,encoding:'utf8',timeout:45000,maxBuffer:4*1024*1024});
 fs.writeFileSync(root+'/manual-command-'+process.pid+'.log',(r.stdout||'')+(r.stderr||''),{mode:0o600});

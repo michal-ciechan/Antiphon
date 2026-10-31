@@ -150,11 +150,14 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(longApply);
         var longReady = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longApply)))!;
         var admittedAt = DateTimeOffset.Parse(longReady["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds();
+        var beforeAudits = longApply.Trace.Count(args => args.Length > 0 && args[0] == "run" && args.Contains("--entrypoint"));
         var longRun = await longApply.Run("retire-temp-runner", LongAuditClock(admittedAt));
         longRun.Exit.ShouldBe(0, "J4 an unexpired Preview admits a long Apply through the real host entry: " + longRun.Output);
         longApply.Removed.Length.ShouldBe(4, "J4 admitted long Apply completes all four exact targets");
         JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longApply)))!["state"]!.GetValue<string>()
             .ShouldBe("Completed");
+        (longApply.Trace.Count(args => args.Length > 0 && args[0] == "run" && args.Contains("--entrypoint")) - beforeAudits)
+            .ShouldBe(1, "J4 an Apply with no intervening container effects inventories content once under the held lock");
 
         using var expiredEntry = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(expiredEntry);
