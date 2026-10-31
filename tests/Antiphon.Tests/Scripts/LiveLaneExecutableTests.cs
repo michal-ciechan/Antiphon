@@ -2,11 +2,13 @@ using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 [Category("Unit"), Timeout(30_000)]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class LiveLaneExecutableTests
 {
     private static LiveClaudeExecutableCases Fixture()
@@ -53,17 +55,63 @@ public class LiveLaneExecutableTests
             "executable.RequireNativeObservation();", ";", "PC-30");
     }
 
+    // Measured classifier child on this host; the bound is about twice that p95.
+    private const int ClassifierWaitMs = 4_000;
+
+    private static string? TryEmitSetupSkip(string reason)
+    {
+        try { throw new LiveClaudeRefusal(reason); }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        {
+            return "20 " + setup;
+        }
+
+        return null;
+    }
+
+    private static Dictionary<string, object?> EmittedSkip(string reason, string setup)
+    {
+        var emitted = TryEmitSetupSkip(reason) ?? throw new InvalidOperationException("C1545 outcome " + reason + " did not emit a setup skip");
+        if (emitted != "20 " + setup)
+            throw new InvalidOperationException("C1545 outcome " + reason + " emitted " + emitted);
+        return LiveClaudeOutcome.Skipped(emitted[3..]);
+    }
+
     [Test]
     public void S1cOutcomeFeedsS1bClassifier()
     {
+        LiveClaudeProfileAudit.RequireCanarySetupFilters();
+        foreach (var silent in new[]
+        {
+            "provider-error", "transcript-partial", "turn-unconfirmed", "bridge-changed-submit",
+            "trust-unavailable", "menu-unobserved", "menu-not-dismissed", "recipient-blocked"
+        })
+            if (TryEmitSetupSkip(silent) is { } skip)
+                throw new InvalidOperationException("C1545 outcome " + silent + " became " + skip);
         var root = LiveClaudeExecutableAudit.Root();
         var classifier = Path.Combine(root, "scripts", "lib", "live-lane-outcome.ps1");
         var jsonl = "{\"type\":\"user\",\"sessionId\":\"session-s1c\",\"uuid\":\"prompt-1\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"s1c provider probe\"}]}}\n"
             + "{\"type\":\"assistant\",\"sessionId\":\"session-s1c\",\"uuid\":\"error-1\",\"parentUuid\":\"prompt-1\",\"error\":\"rate_limit\",\"isApiErrorMessage\":true,\"message\":{\"id\":\"api-1\",\"content\":[{\"type\":\"text\",\"text\":\"limited\"}]}}\n";
+        var overloaded = jsonl.Replace("\"error\":\"rate_limit\"", "\"error\":\"overloaded\"", StringComparison.Ordinal);
+        var mismatched = jsonl.Replace("\"parentUuid\":\"prompt-1\"", "\"parentUuid\":\"other-parent\"", StringComparison.Ordinal);
+        try
+        {
+            LiveClaudeOutcome.ProviderError(mismatched);
+            throw new InvalidOperationException("C1545 outcome mismatched request was accepted");
+        }
+        catch (InvalidOperationException e) when (e.Message.Contains("request link", StringComparison.Ordinal))
+        {
+        }
         var cases = new (string Name, Dictionary<string, object?> Row, int Exit, string Reason)[]
         {
-            ("premise-absent", LiveClaudeOutcome.PremiseAbsent(), 20, "premise-absent"),
+            ("premise-absent", EmittedSkip("premise-absent", "StartupDefaultAbsent"), 20, "premise-absent"),
+            ("bridge-unestablished", EmittedSkip("bridge-unestablished", "BridgeNotEstablished"), 20, "setup-unclassified"),
+            ("bridge-unobserved", EmittedSkip("bridge-unobserved", "BridgeNotEstablished"), 20, "setup-unclassified"),
+            ("trust-uncleared", EmittedSkip("trust-uncleared", "TrustNotCleared"), 20, "setup-unclassified"),
+            ("tui-unready", EmittedSkip("tui-unready", "ReadyTimeout"), 20, "setup-unclassified"),
+            ("settings-unobserved", EmittedSkip("settings-unobserved", "ReadyTimeout"), 20, "setup-unclassified"),
             ("provider-error", LiveClaudeOutcome.ProviderError(jsonl), 20, "provider-outage"),
+            ("overloaded", LiveClaudeOutcome.ProviderError(overloaded), 20, "provider-outage"),
             ("assertion", LiveClaudeOutcome.AssertionFailure(), 1, "assertion-failed"),
             ("missing-setup", LiveClaudeOutcome.MissingSetup(), 2, "row-invalid")
         };
@@ -123,9 +171,15 @@ public class LiveLaneExecutableTests
             start.Environment["C1545_CLASSIFIER"] = classifier;
             start.Environment["C1545_PAYLOAD"] = payloadPath;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("C1545 outcome classifier did not start");
+            var clock = Stopwatch.StartNew();
+            if (!process.WaitForExit(ClassifierWaitMs))
+            {
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                throw new InvalidOperationException("C1545 outcome classifier exceeded " + ClassifierWaitMs + "ms");
+            }
             var stdout = process.StandardOutput.ReadToEnd();
             var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            Console.WriteLine($"C1545 outcome classifierMs={clock.ElapsedMilliseconds} wait={ClassifierWaitMs}");
             if (process.ExitCode != 0) throw new InvalidOperationException("C1545 outcome classifier exit " + process.ExitCode + " " + stderr);
             var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             foreach (var expected in cases)

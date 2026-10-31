@@ -21,7 +21,7 @@ internal static class LiveClaudeProfileAudit
         if (statement.Finally is not null || statement.Catches.Count != 1) return false;
         var clause = statement.Catches[0];
         if (clause.Declaration?.Type.ToString() != "LiveClaudeRefusal") return false;
-        if (clause.Filter?.FilterExpression.ToString().Contains("LiveClaudeOutcome.SetupStatus(", StringComparison.Ordinal) != true) return false;
+        if (!SyntaxFactory.AreEquivalent(clause.Filter?.FilterExpression, SyntaxFactory.ParseExpression("LiveClaudeOutcome.SetupStatus(e.Reason) is string setup"))) return false;
         return clause.Block.Statements.Count == 1
             && clause.Block.Statements[0].ToString().Contains("throw new SkipTestException(\"20 \" + setup)", StringComparison.Ordinal);
     }
@@ -63,6 +63,24 @@ internal static class LiveClaudeProfileAudit
         var statement=start!.Ancestors().OfType<StatementSyntax>().First();
         if(statement.Parent!=body) Fail(method+"-conditional-start");
         Reachable(body,statement,method);
+    }
+    internal static void RequireCanarySetupFilters()
+    {
+        var startup = LiveClaudeExecutableAudit.Read(Startup);
+        foreach (var name in new[]
+        {
+            "Control_auto_connects_a_bridge_session_before_the_first_user",
+            "Settings_file_prevents_auto_connect_and_keeps_startup_records",
+            "Remote_control_slash_command_still_arms_after_settings_off"
+        }) RequireSetupFilter(startup, name);
+        RequireSetupFilter(LiveClaudeExecutableAudit.Read(Pty + "ClaudeRemoteControlMenuCanaryTests.cs"),
+            "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt");
+    }
+    private static void RequireSetupFilter(string source, string name)
+    {
+        var filters = Method(source, name).DescendantNodes().OfType<CatchFilterClauseSyntax>().ToArray();
+        if (filters.Length != 1 || !SyntaxFactory.AreEquivalent(filters[0].FilterExpression,
+                SyntaxFactory.ParseExpression("LiveClaudeOutcome.SetupStatus(e.Reason) is string setup"))) Fail(name + "-filter");
     }
     public static void Paths(string source)
     {

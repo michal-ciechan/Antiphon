@@ -16,6 +16,8 @@ internal static class LiveClaudeOutcome
 
     public static Dictionary<string, object?> PremiseAbsent() => Row("Skipped", "StartupDefaultAbsent", null);
 
+    public static Dictionary<string, object?> Skipped(string setup) => Row("Skipped", setup, null);
+
     public static Dictionary<string, object?> AssertionFailure() => Row("Failed", "Ready", null);
 
     public static Dictionary<string, object?> MissingSetup()
