@@ -10,20 +10,27 @@ public sealed class PipeTestClient : IAsyncDisposable
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
 
     private readonly NamedPipeClientStream _pipe;
+    private readonly Func<string>? _hostDiagnostics;
 
-    private PipeTestClient(NamedPipeClientStream pipe) => _pipe = pipe;
+    private PipeTestClient(NamedPipeClientStream pipe, Func<string>? hostDiagnostics)
+    {
+        _pipe = pipe;
+        _hostDiagnostics = hostDiagnostics;
+    }
 
-    public static async Task<PipeTestClient> ConnectAsync(string pipeName, TimeSpan? timeout = null)
+    public static async Task<PipeTestClient> ConnectAsync(string pipeName, TimeSpan? timeout = null,
+        Func<string>? hostDiagnostics = null)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         using var cts = new CancellationTokenSource(timeout ?? DefaultTimeout);
         await pipe.ConnectAsync(cts.Token);
-        return new PipeTestClient(pipe);
+        return new PipeTestClient(pipe, hostDiagnostics);
     }
 
     /// <summary>Connect with retries while the host process is still starting its pipe server.</summary>
-    public static async Task<PipeTestClient> ConnectWithRetryAsync(string pipeName, TimeSpan overallTimeout)
+    public static async Task<PipeTestClient> ConnectWithRetryAsync(string pipeName, TimeSpan overallTimeout,
+        Func<string>? hostDiagnostics = null)
     {
         var deadline = DateTime.UtcNow + overallTimeout;
         Exception? last = null;
@@ -31,7 +38,7 @@ public sealed class PipeTestClient : IAsyncDisposable
         {
             try
             {
-                return await ConnectAsync(pipeName, TimeSpan.FromSeconds(2));
+                return await ConnectAsync(pipeName, TimeSpan.FromSeconds(2), hostDiagnostics);
             }
             catch (Exception ex) when (ex is TimeoutException or IOException or OperationCanceledException)
             {
