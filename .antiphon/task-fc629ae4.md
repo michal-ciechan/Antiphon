@@ -49,3 +49,30 @@ R4: real Docker/AppHost/database/migration setup is not used by these filesystem
 At 2e3012060f8ba9a5f450f08fd784f3b380ef2559, the exact new method executed two cases: 0 passed / 2 failed / 0 skipped. Both installed their signal handlers, exited at the existing 143/130 codes, killed only proven CIDs, and released the lease. Both failed only the volume-removal assertion. The INT case also preserved containers/procs/foreign survival/bounded/trap/no-return facts. Full output: /tmp/fc629ae4/red/output.log and red/run.trx. This is an assertion red, not fixture/build failure. Red build: 0 errors, 1403 warnings, 258.77s. The additional warning is TUnit0015 on the new synchronous method under the existing class Timeout (the same pattern as neighboring methods); the fixture retains its bounded shell waits.
 
 The repair calls the existing idempotent finalizer inside the signal handler before exiting. Ownership/identity probes, foreign-object preservation, positive volume-removal proof, lease deletion, 130/143 exits and m1/m5/m6/m7 controls are retained. The native Windows C849 rerun is still owed and was not run here.
+
+## Final verification and remaining gate
+
+Repair source: 4272c9ad42a9449c4d081f402d9af859f431a979. The two new regression cases passed 2/2. Whole C84x selection passed 32/32 (140.117s), and RcRosterRepairTests passed 3/3 (33.095s); zero failures/skips in these green selections. Total: 37 green executions, including the two deterministic cases also present in C84x. The original refused-launch/signal/foreign-container method and all m1/m5/m6/m7 controls passed in C84x.
+
+C1404/C1577/C1584/C1410/G2865 (C1514LandingSplitBudgetTests) were NOT RUN. The continuing driver reached its explicit budget gate before census (exit 91). A separate real build-slot attempt then timed out after one minute, exit 4, position 2; no test launched and no unleased retry occurred. Evidence: /tmp/fc629ae4/census-final-driver.log. The required final 60 sequential + 30 loaded exact-method repetitions were NOT RUN inside the 75-minute budget. These are incomplete acceptance obligations, not green or skipped tests.
+
+The real audit-land-verification-graph.ps1 -Check approved digest E7C6EDAFA83B544A42E186899267267FD73E6FDD2FB7DD2DF36C233F2C405806, count=69, at the repaired source. No -Update ran. It held separate lease 273c1241-4ed4-44bc-b0ee-643c003d2fb5 after a 15-second wait and completed in 36 seconds; it overlapped the C84x process as a read-only graph evaluator, with no second test assembly. Canary was /work/worktrees/antiphon-landgraph-canary-5595f2fbba2e4473963b9683af2be782; Check reported phase=pass2/approved.
+
+Build provenance: red build ran at 2e3012060f8ba9a5f450f08fd784f3b380ef2559. The subsequent 16.04-second build completed with 0 errors / 1 MSB3277 warning while the Bash/docs-only repair was prepared and HEAD still named that red commit. No C# or project input changed. The driver was paused after the observed build exit, then the repair was committed/pushed before any green test began. Each green selection recorded source-sha.txt=4272c9ad42a9449c4d081f402d9af859f431a979; the shell tests read the committed runtime script directly. This is manual Debug evidence, not a checkpoint reviewedSourceClean claim.
+
+Fetched origin master and rc/2026-10-27 without tags. merge-tree against rc passed (tree 5fcc7246e48017d5baae23386b4d78f84bc17494). Master comparison returned 50 conflicts from rc/master divergence; no merge/rebase/reset/force push was performed. check-evidence-diff.ps1 over base..repair passed with zero violations.
+
+All 36 task-created bin-fc629ae4 output directories were removed after every build/test/evaluator exited, using their exact producer-owned paths; cleanup-inventory.json retains the inventory. Generated logs/TRX/JSON remain under /tmp/fc629ae4. No desktop/live qualification/native tests or files under C:\Antiphon were touched.
+
+Pushed implementation/history slices:
+- 368c0a890624c6cfd729ae3ab708f313d9c9d8a4 — scope.
+- 3e637bf28d7f077022921e4459b2339376562fc1 — baseline and deterministic diagnosis.
+- 2e3012060f8ba9a5f450f08fd784f3b380ef2559 — committed failing TERM/INT cases.
+- 4272c9ad42a9449c4d081f402d9af859f431a979 — custody repair and owner documentation.
+
+Work proceeded under the caller’s standing fix/commit authority without an approval pause. Additional execution budget is needed for the five census cases and 60/30 final stress at this repair; the independent TERM exit=2 observation remains unattributed. Native Windows RemoteScriptContractTests C849 rerun is still owed and explicitly outside this task. Merge to rc remains pending these incomplete checks; do not treat this report as full acceptance.
+
+--- next stage ---
+next: debug
+handoff: Complete the five census cases and 60 sequential/30 loaded exact-method runs at the repaired source, investigate any remaining TERM exit mismatch, then merge to rc. Native Windows C849 remains a separate owed rerun.
+artifact: /work/worktrees/task-fc629ae4/.antiphon/task-fc629ae4.md
