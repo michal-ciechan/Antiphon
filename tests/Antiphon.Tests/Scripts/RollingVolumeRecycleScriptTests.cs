@@ -2832,6 +2832,10 @@ public sealed class RollingVolumeRecycleScriptTests
                 "reason=proof-binding", "private-origin: a readable origin still refuses a mismatched proof");
             var restore = await C994ScriptProcess.Run("git", "-C", repo, "remote", "set-url", "origin", "ext::" + origin);
             restore.Exit.ShouldBe(0, "private-origin: restore the private origin; " + restore.Output);
+            // Freshness reads every file in the proof directory. The public
+            // stand-in left a second operation's proof beside this one.
+            foreach (var staleProof in Directory.GetFiles(proofDir))
+                File.Delete(staleProof);
             WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
 
             // Inventory exports only origins named in the control-host registry.
