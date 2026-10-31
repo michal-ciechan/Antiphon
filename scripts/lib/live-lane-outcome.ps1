@@ -37,6 +37,7 @@ function Test-LiveLaneTranscriptOutage($Row, $ErrorSink=$null) {
 function Test-LiveLaneProbeOutage($Row, $Probe) {
     return ($null -ne $Probe -and $Probe.Status -cin @('Unavailable','DependencyUnavailable') -and
         (Test-LiveLaneOutageType $Probe.Error) -and $Probe.Bounded -eq $true -and
+        $Probe.Uid -ceq $Row.Uid -and
         $Probe.Account -ceq $Row.Account -and $Probe.Endpoint -ceq $Row.Endpoint -and
         $Probe.Dependency -ceq $Row.Dependency -and
         -not [string]::IsNullOrWhiteSpace($Row.Account) -and
@@ -69,7 +70,7 @@ function Invoke-LiveLaneProbe {
     $start=[double](& $Boundary.Clock)
     $probe=& $Boundary.Probe $Purpose @{
         Operation='Availability'; PromptCount=0; Deadline=$Deadline
-        Account=$Identity.Account; Endpoint=$Identity.Endpoint; Dependency=$Identity.Dependency
+        Uid=$Identity.Uid; Account=$Identity.Account; Endpoint=$Identity.Endpoint; Dependency=$Identity.Dependency
     }
     $finish=[double](& $Boundary.Clock)
     $bounded=$finish -le $Deadline -and $finish -ge $start
@@ -79,7 +80,7 @@ function Invoke-LiveLaneProbe {
         $probe=@{ Status='Timeout'; Error=''; Account=''; Endpoint=''; Dependency='' }
     }
     return @{
-        Status=$probe.Status; Error=$probe.Error; Account=$probe.Account; Endpoint=$probe.Endpoint
+        Uid=$Identity.Uid; Status=$probe.Status; Error=$probe.Error; Account=$probe.Account; Endpoint=$probe.Endpoint
         Dependency=$probe.Dependency; Bounded=$bounded; Started=$start; Finished=$finish; Phase=$Purpose
     }
 }
@@ -148,9 +149,16 @@ function Get-LiveLaneOutcome {
                 $probeOutage=Test-LiveLaneProbeOutage $row $PostProbe
                 if ($transcriptOutage) { $proof='Transcript'; $phase='PostSubmission' }
                 elseif ($probeOutage) { $proof='Probe'; $phase='PostFailure'; $providerError=$PostProbe.Error }
-                if ($row.Setup -cin @('Ready','AuthMissing','AuthExpired','QuotaExceeded','DependencyUnavailable',
+                if ($row.Keys -ccontains 'Setup' -and $row.Setup -is [string] -and
+                    $row.Setup -cin @('Ready','AuthMissing','AuthExpired','QuotaExceeded','DependencyUnavailable',
                     'StartupDefaultAbsent','ReadyTimeout','TrustNotCleared','BridgeNotEstablished','SetupContractViolation')) { $setup=$row.Setup }
-                if ($row.Setup -cne 'Ready') {
+                if ($setup -ceq 'Unclassified') {
+                    $observation=New-LiveLaneVerdict 2 'row-invalid'; $invalid='row-invalid'
+                } elseif ($row.State -ceq 'Failed' -and $proof -ceq 'None') {
+                    # An executed failure needs this row's outage proof before any
+                    # setup refusal can turn its assertion into INCONCLUSIVE.
+                    $observation=New-LiveLaneVerdict 1 'assertion-failed'
+                } elseif ($row.Setup -cne 'Ready') {
                     $observation=Get-LiveLaneSetupOutcome $row.Setup -Healthy:($row.Healthy -is [bool] -and $row.Healthy) `
                         -Deterministic:($row.Deterministic -is [bool] -and $row.Deterministic) -Outage:($proof -cne 'None')
                 } elseif ($proof -cne 'None') {
