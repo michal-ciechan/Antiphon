@@ -1,5 +1,7 @@
 # CARD-1619 native Linux policy rows
 
+Added six missing policy rows; all four witness suites, the requested census/roster cases and the real land-graph check pass. Ready for merge to rc.
+
 Baseline at untouched assigned source `13565c5a480d8f30a52aa4679a5f1681ef2a8c70`.
 
 | Suite | Passed | Failed | Skipped |
@@ -101,6 +103,69 @@ Get-NightlyPolicyHash from scripts/lib/nightly-common.ps1 and scripts/lib/nightl
 
 Pinned attribute SHA-256 remains 31ca5740f4127fe7b3b0fc18639e75262cdb3ae49c3bc545e62a130b99d68ac4. Pinned legacy digest remains 8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d. The new prefixed rows are witnessed without adding them to the frozen migration roster.
 
-## Pending
+## Final verification
 
-Rebuild and verify all four suites plus the requested census/roster checks and real land-graph -Check.
+Verified production/test source commit: f3854ffe7de4cda2259b16dab6db44e6f57fc3e1 (pushed). The final evidence commit changes only this narrative report. Every listed test count comes from fresh TRX in the evidence directory.
+
+| Suite | Baseline passed/failed/skipped | Repaired passed/failed/skipped |
+|---|---|---|
+| Antiphon.Tests | 15/0/0 | 15/0/0 |
+| Antiphon.SessionRunner.Tests | 1/2/0 | 3/0/0 |
+| Antiphon.Agents.Pty.Tests | 1/2/0 | 3/0/0 |
+| Antiphon.PtyHost.Tests | 1/2/0 | 3/0/0 |
+
+The shared witness is 3/3 in every suite. Antiphon.Tests additionally executes all 12 mutation cases. The exact filter in each project was:
+
+`/*/*/(NativeLinuxPolicyWitnessTests*)|(NativeLinuxPolicyWitnessMutationTests*)/*`
+
+Census/roster selection at the same source passed 8/8, zero skipped: all five C1514LandingSplitBudgetTests cases C1404, C1577, C1584, C1410 and G2865, plus RcRosterRepairTests.Mirror, Explicit and Costs. These exercise the Windows census contracts from Linux. Exact filter:
+
+`/*/*/(RcRosterRepairTests*)|(C1514LandingSplitBudgetTests*)/*`
+
+All eight project builds passed with zero errors; existing warnings remain. No native CARD-1619 test body or native Windows qualification was run. Live qualification d47848cc, C:\Antiphon, tags, release publication and running services were untouched. No timeout or watchdog changed. No extra classes required policy changes.
+
+## Timings and provenance
+
+All drivers were sequential local children, gated by scripts/build-slot.ps1. TEMP=/tmp, UseAppHost=false, OutputPath=bin-d6f880fd/, TUNIT_MAX_PARALLEL_TESTS=1. The narrow selections are the brief's verification scope; no full suite was requested or run.
+
+| Phase/project | Build driver seconds | Test driver seconds |
+|---|---:|---:|
+| red Antiphon.Tests | 157.1 | 69.6 |
+| red Antiphon.SessionRunner.Tests | 22.7 | 53.4 |
+| red Antiphon.Agents.Pty.Tests | 13.6 | 53.4 |
+| red Antiphon.PtyHost.Tests | 14.1 | 51.8 |
+| green Antiphon.Tests | 143.8 | 70.7 |
+| green Antiphon.SessionRunner.Tests | 22.7 | 57.1 |
+| green Antiphon.Agents.Pty.Tests | 12.7 | 88.6 |
+| green Antiphon.PtyHost.Tests | 42.7 | 87.9 |
+
+Census driver: 213.1 seconds; TUnit execution: 124.922 seconds. Green TUnit durations: Antiphon.Tests 17.156 seconds, SessionRunner 2.137 seconds, Pty 2.643 seconds, PtyHost 2.538 seconds. Test/build slot admission reported 0 seconds for all 17 drivers; end-to-end driver time also includes CLI startup and wrapper overhead and must not be mistaken for pure execution. Uninstrumented phase breakdown is unknown. JSON summaries join exact argv, source SHA, exit and timing; final binary SHA-256 values are retained in verified-binary-hashes.json. Every run stayed below 30 minutes; no timeout/retry was widened.
+
+## Land graph and merge checks
+
+The real audit exited 0 and ended approved, with both evaluations and canary comparison, at f3854ffe7de4cda2259b16dab6db44e6f57fc3e1:
+
+`TEMP=/tmp pwsh -NoProfile -File scripts/build-slot.ps1 -Label d6f880fd-land-graph -- scripts/audit-land-verification-graph.ps1 -Check -ToolPath /work/worktrees/task-d6f880fd/tools/Antiphon.LandGraphAudit/bin-d6f880fd/Antiphon.LandGraphAudit.dll`
+
+No -Update was run. Digest E7C6EDAFA83B544A42E186899267267FD73E6FDD2FB7DD2DF36C233F2C405806, count 69; slot wait 15 seconds, held 38 seconds. Full evaluator output is in land-graph.log.
+
+Fetched origin/rc/2026-10-27 = 13565c5a480d8f30a52aa4679a5f1681ef2a8c70 and origin/master = 256b861468518f1f18489798b2f109f48d78e0c8. Real rc merge-tree was clean, tree dfaf700d233d6a7a3c6d6b5f4d8c9056403a9412. Master has 44 conflicts both at the untouched base and repaired tip; this task targets rc. No merge, rebase, branch switch or force push was performed.
+
+The evidence-history guard over assigned base..repair tip passed: two commits, two entries, zero violations. A final guard and remote-tip verification accompany the report receipt.
+
+## Cleanup and rerun
+
+The pre-build output census was empty. After all drivers finished, the 40 producer-created bin-d6f880fd directories were recorded in owned-outputs.json, removed using exact literal paths confined to this scratch checkout, and verified absent. No other task output was deleted. Generated logs, TRX, JSON and inventory remain gitignored under /work/worktrees/task-d6f880fd/.antiphon/evidence/d6f880fd/.
+
+For each of the four projects, rebuild the removed output and run the exact witness filter above:
+
+`TEMP=/tmp pwsh -NoProfile -File scripts/build-slot.ps1 -Label d6f880fd-build -- dotnet build tests/<Project> --property:OutputPath=bin-d6f880fd/ --property:UseAppHost=false --nologo`
+
+`TEMP=/tmp TUNIT_MAX_PARALLEL_TESTS=1 pwsh -NoProfile -File scripts/build-slot.ps1 -Label d6f880fd-tests -- dotnet run --project tests/<Project> --no-build --property:OutputPath=bin-d6f880fd/ --property:UseAppHost=false -- --treenode-filter '/*/*/(NativeLinuxPolicyWitnessTests*)|(NativeLinuxPolicyWitnessMutationTests*)/*' --report-trx --report-trx-filename run.trx --results-directory <fresh-results-directory>`
+
+No approval was needed: the caller explicitly authorized investigation, repair, commit and push.
+
+--- next stage ---
+next: merge to rc
+handoff: Merge feat/card-task-d6f880fd into rc; preserve separate native Windows qualification.
+artifact: /work/worktrees/task-d6f880fd/.antiphon/task-d6f880fd.md
