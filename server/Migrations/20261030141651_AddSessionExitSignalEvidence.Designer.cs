@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261031180000_AddSessionExitSignalEvidence")]
+    [Migration("20261030141651_AddSessionExitSignalEvidence")]
     partial class AddSessionExitSignalEvidence
     {
         /// <inheritdoc />
