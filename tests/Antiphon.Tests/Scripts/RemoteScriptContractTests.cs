@@ -1162,6 +1162,7 @@ public sealed class RemoteScriptContractTests
         Fact(output, "signal-INT-group-cid-kills").ShouldBe("1", output);
         Fact(output, "signal-INT-group-bounded").ShouldBe("1", output);
         Fact(output, "signal-INT-group-trap").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-handler-returned").ShouldBe("0", output);
         Fact(output, "driver-exit4").ShouldBe("1", output);
         Fact(output, "driver-ready").ShouldBe("1", output);
         Fact(output, "red-m1").ShouldBe("1", output);
@@ -1175,6 +1176,38 @@ public sealed class RemoteScriptContractTests
         Fact(output, "reap-owned-escalated").ShouldBe("1", output);
         Fact(output, "reap-unowned-escalated").ShouldBe("0", output);
         Fact(output, "reap-unowned-survived").ShouldBe("1", output);
+    }
+
+    // A group INT can interrupt a foreground poll and take the ordinary refusal
+    // cleanup path after a broken handler returns. Complete cleanup and exit 2
+    // must not hide that return; this fixes the schedule independently of load.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Group_signal_contract_requires_the_handler_to_exit(bool handlerReturned)
+    {
+        RequireLinuxPwsh();
+        var output = LinuxShell($$"""
+            source <(awk '/^c1192_out_fact\(\)|^c1192_group_contract\(\)/ { active=1 } active { print } active && /^}/ { active=0 }' "$repo/scripts/fixtures/c1192-workspace-contract.sh")
+            facts=$(cat <<'FACTS'
+            signal-INT-group-installed=1
+            signal-INT-group-exit=2
+            signal-INT-group-accepted=1
+            signal-INT-group-containers=1
+            signal-INT-group-procs=1
+            signal-INT-group-lease=1
+            signal-INT-group-volumes=1
+            signal-INT-group-foreign=1
+            signal-INT-group-cid-kills=1
+            signal-INT-group-bounded=1
+            signal-INT-group-trap=1
+            signal-INT-group-handler-returned={{(handlerReturned ? "1" : "0")}}
+            FACTS
+            )
+            if c1192_group_contract "$facts"; then printf 'contract=accepted\n'; else printf 'contract=rejected\n'; fi
+            """, "repo");
+        Fact(output, "contract").ShouldBe(handlerReturned ? "rejected" : "accepted", output);
     }
 
     // The generated driver is a shell contract, including when WSL cannot create

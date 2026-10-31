@@ -18,3 +18,11 @@ The first repeat launcher attempted unavailable python3 and ran no tests (exit 1
 ## Twenty isolated repetitions
 
 Frozen source 349f88af68ea602581ec078b44094eee1f38efc1 (only report additions since rc source). Twenty complete slot-round2 harness executions, sequential and with no other task-owned build/test: 18 passed, 2 failed. Run 1 failed red-m6=0; run 7 failed signal-TERM-exit=2 instead of 143 (all TERM custody/lease/volume facts remained 1). Other 18 passed every existing C849 assertion. Execution held the real slot for 794 seconds; per-run wall times are in repeat.log and individual stdout/stderr in repeat-1.log through repeat-20.log. No timeout or assertion was widened. The initial independent baseline also failed red-m6=0.
+
+## Historical comparison and deterministic red
+
+Exact pre-repair snapshot 3fb3c113e8b2554ccd5789e00375dbfd69697981 full harness: driver-ready=0, red-m6=1, red-m7=0. Ten targeted pre-repair m6 group runs all detected the mutation by their deadline (15-21 seconds); earlier repaired branch 6d6788def53bd5f08355f79911cf9f643bd5fa90 also detected it in the sampled group run (19 seconds). No historical random m6 miss was observed in those eleven targeted samples. The group witness itself has identical SHA-256 before and after repair: f3ce5a11cf3768b7a023e519112637d3476d0be177ae33b0d6cdb74c2fa46524. The previous Windows driver-ready failure masks the later assertion.
+
+Added a deterministic witness for the precise blind spot: complete cleanup/exit 2 after a signal handler returns must be rejected, while complete cleanup/exit 2 without a returned handler remains accepted. Added the real group witness's no-return assertion. The current predicate ignores the handler-return observation, so the returned-handler case is expected red before the harness repair. Production remains unchanged.
+
+Fourteen residual fake signal-child processes were matched by their literal /tmp/c1192-parent.../signal-child.sh argv and initial PWD=/work/worktrees/task-b9ee02c4, then stopped; cleanup-baseline.log retains only their ownership keys and PIDs. No foreign process or qualification was touched.
