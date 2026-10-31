@@ -143,7 +143,12 @@ function Test-MidRunOutageAfterReceiptIsInconclusive {
     foreach ($type in @('Overloaded','ServiceUnavailable','RateLimited')) {
         $q=New-Fixture; Outage $F.Terminal.Rows[0]; $F.Terminal.Rows[0].Transcript[1].Error=$type; $r=Run $q
         $ok=$ok -and (Is $r 20 'provider-outage') -and $F.Pre -eq 1 -and $F.Starts -eq 1 -and $r.Rows[0].Reason -ceq 'provider-outage'
+        $saved=Get-Content -LiteralPath (Join-Path $q.Request.ResultsRoot 'diagnostic.json') -Raw | ConvertFrom-Json
+        $ok=$ok -and $saved.Rows[0].ProviderError -ceq $type -and $saved.Rows[0].Phase -ceq 'PostSubmission' -and $saved.Rows[0].OutageCorrelated -eq $true
     }
+    # A passing summary cannot hide a correlated typed outage in its own turn.
+    $q=New-Fixture; Outage $F.Terminal.Rows[0]; $F.Terminal.Rows[0].State='Passed'; $r=Run $q
+    $ok=$ok -and (Is $r 20 'provider-outage') -and $r.RawChildExit -eq 0
     Check 'transcript-positive' $ok
     foreach ($variant in @('prompt-partial','session-foreign','request-foreign','error-before-prompt','untyped-error')) {
         $q=New-Fixture; Outage $F.Terminal.Rows[0]; $t=$F.Terminal.Rows[0].Transcript
@@ -155,7 +160,7 @@ function Test-MidRunOutageAfterReceiptIsInconclusive {
         $r=Run $q; Check $variant ((Is $r 1 'assertion-failed') -and $F.Starts -eq 1)
     }
     $q=New-Fixture; $F.Terminal.Rows[0].State='Failed'; $F.PostStatus='Unavailable'; $r=Run $q
-    Check 'probe-positive' ((Is $r 20 'provider-outage') -and $F.Post -eq 1)
+    Check 'probe-positive' ((Is $r 20 'provider-outage') -and $F.Post -eq 1 -and $r.Rows[0].ProviderError -ceq 'ServiceUnavailable' -and $r.Rows[0].Phase -ceq 'PostFailure')
     foreach ($field in @('Account','Endpoint','Dependency')) {
         $q=New-Fixture; $F.Terminal.Rows[0].State='Failed'; $F.PostStatus='Unavailable'; $F.Foreign=$field; $r=Run $q
         Check ($field.ToLowerInvariant()+'-foreign') ((Is $r 1 'assertion-failed') -and $F.Post -eq 1)
@@ -200,6 +205,7 @@ function Test-TypedSetupOutcomes {
     foreach ($status in $mapping.Keys) {
         $q=New-Fixture; $F.PreStatus=$status; $r=Run $q
         $ok=$ok -and (Is $r 20 $mapping[$status]) -and $F.Starts -eq 0 -and $F.Prompts -eq 0
+        $ok=$ok -and $r.Probes[0].Status -ceq $status
     }
     Check 'external-setup' $ok
     $ok=$true
