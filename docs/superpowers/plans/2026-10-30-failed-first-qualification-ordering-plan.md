@@ -14,7 +14,7 @@ all 156 chunks: first launch 04:36:17 UTC, terminal projection 04:39:49 UTC
 (212 seconds), after approximately 62 seconds of fixture/preparation. Its
 unbounded diagnostic probe was stopped and joined at 448 seconds during the
 large timing-summary serialization; it is not a passing receipt. Earlier
-100/152-second stopped probes and their costs remain retained. The exact
+100/126-second stopped probes and their costs remain retained. The exact
 companion diagnostic matrix at 3507ffd0a took 55 seconds (16/17 assertions;
 one scratch-path comparison was corrected without changing product behavior).
 

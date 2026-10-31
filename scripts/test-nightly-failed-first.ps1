@@ -490,6 +490,9 @@ function Invoke-FFPreparedArm {
                 $terminals += $tn
             }
             if ($special -and $script:FFVariant -ceq 'unknown') { $terminals += [pscustomobject]@{Uid='foreign';Namespace='Foreign';Type='Unknown';Method='Run';Outcome='Passed'} }
+            if ($script:FFVariant -cin @('phase','phase-stale')) {
+                Write-FFPhaseFixture -Directory ([string]$Environment['ANTIPHON_TEST_PHASE_ROOT']) -Suite $suiteKey -Chunk $chunkKey -Nodes $nodes -Stale:($special -and $script:FFVariant -ceq 'phase-stale')
+            }
             $trx = Join-Path (Get-FFArgument $ArgumentList '--results-directory') (Get-FFArgument $ArgumentList '--report-trx-filename')
             if (-not ($special -and $script:FFVariant -ceq 'missing')) { Write-C487Trx -Path $trx -Rows $rows }
             Write-FFDiagnostic (Get-FFArgument $ArgumentList '--diagnostic-output-directory') $terminals
@@ -642,7 +645,7 @@ function Test-FullBytesAndCoverageConserved {
     Assert-FF $journalOk 'journalBindings'
     $timelinesOk=$true
     foreach($arm in @($a,$b)){
-        foreach($timeline in $arm.Timing.Timeline){$chunks=@($arm.Timing.Chunks|Where-Object {$_.suite -ceq $timeline.suite});if($chunks.Count -eq 0 -or $timeline.startedAt -cne @($chunks.startedAt|Sort-Object)[0] -or $timeline.completedAt -cne @($chunks.completedAt|Sort-Object)[-1]){$timelinesOk=$false}}
+        foreach($timeline in $arm.Timing.Timeline){$chunks=@($arm.Timing.Chunks|Where-Object {$_.suite -ceq $timeline.suite});if($chunks.Count -eq 0 -or $timeline.startedAt -cne @($chunks.startedAt|Sort-Object)[0] -or $timeline.completedAt -cne @($chunks.completedAt|Sort-Object)[-1] -or $timeline.lastPhaseUtc -cne @($chunks.lastPhaseUtc|Sort-Object)[-1] -or $timeline.lastPhase -cne @($chunks|Sort-Object lastPhaseUtc)[-1].lastPhase){$timelinesOk=$false}}
         foreach($t in $arm.Timing.Chunks){if($t.buildSlot -cne 'not-used' -or $null -ne $t.buildSlotWaitSeconds -or $null -ne $t.distillationSeconds){$timelinesOk=$false}}
     }
     Assert-FF $timelinesOk 'timelines'
@@ -656,6 +659,7 @@ function Test-FullBytesAndCoverageConserved {
     }
     Assert-FF $summaries 'phaseSummariesAndIndex'
     Assert-FF ($a.Schedule.preparationComplete -and $b.Schedule.preparationComplete -and $b.Schedule.historyDigest -ceq ('d'*64) -and $b.Schedule.unresolved.Count -eq 0) 'schedulePolicy'
+    Test-FFPhaseBindings $small
     Test-FFPreparationSequencing
     Test-FFAuthorityConservation
     Test-FFPlannedGoldenBytes
@@ -833,9 +837,55 @@ function Test-FFArtifactSchemas([object[]]$Arms) {
     Assert-FF $ok 'artifactSchemas'
 }
 
+function Write-FFPhaseFixture([string]$Directory, [string]$Suite, [string]$Chunk, [object[]]$Nodes, [bool]$Stale) {
+    $records=[Collections.Generic.List[string]]::new()
+    $run='conservation-run'; if($Stale){$run='stale-run'}
+    $header=[ordered]@{recordKind='header';version=1;pid=1;nonce='fixture';frequencyHz=10000000;epochUtc='2026-10-23T00:00:00.0000000Z';runId=$run;groupId=$Chunk;attempt='1';suite=$Suite;assembly=$Suite;sourceDigest=('a'*40)}
+    $records.Add(($header|ConvertTo-Json -Depth 12 -Compress))
+    foreach($n in $Nodes){
+        $record=[ordered]@{recordKind='complete';testId=[string]$n.Uid;className=[string]$n.ClassName;method=[string]$n.Method;args=@();startOffsetMs=0;endOffsetMs=100;outcome='Passed';phases=@();processes=@();exclusive=[ordered]@{db=1;host=2;process=3;fs=4;network=5;fixture=6};overlapMs=7;remainderMs=8;childUnionMs=0;droppedPhaseCount=0;shared=$false;incomplete=$false}
+        $records.Add(($record|ConvertTo-Json -Depth 12 -Compress))
+    }
+    if($Suite -ceq 'session-runner' -and $Chunk -ceq 'Priority'){
+        $records.Add((([ordered]@{recordKind='fixture';fixtureId='shared-fixture';exclusive=[ordered]@{db=11;host=12;process=13;fs=14;network=15;fixture=16}})|ConvertTo-Json -Depth 12 -Compress))
+    }
+    [void][IO.Directory]::CreateDirectory($Directory)
+    [IO.File]::WriteAllLines((Join-Path $Directory ('cases-'+$Suite+'-'+$Chunk+'.jsonl')),$records.ToArray(),[Text.UTF8Encoding]::new($false))
+}
+function Test-FFPhaseBindings($Fixture) {
+    $ok=$true
+    foreach($variant in @('phase','phase-stale')){
+        $left=Invoke-FFPreparedArm $Fixture ($variant+'-canonical') @() $variant
+        $right=Invoke-FFPreparedArm $Fixture ($variant+'-priority') $Fixture.resolved.members $variant
+        $summaries=@()
+        foreach($arm in @($left,$right)){
+            $summary=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.json'))|ConvertFrom-Json
+            $summaries += $summary
+            if($summary.tests.Count -ne 4 -or $summary.sharedFixtures.Count -ne 1 -or $summary.sharedFixtures[0].fixtureId -cne 'shared-fixture' -or $summary.sharedFixtures[0].db -ne 11 -or $summary.sharedFixtures[0].fixture -ne 16 -or $summary.tornLines -ne 0 -or $summary.malformedLines -ne 0){$ok=$false}
+            foreach($test in $summary.tests){
+                $isStale=($variant -ceq 'phase-stale' -and $test.testId -ceq 'Fixture.antiphon.Priority.Run')
+                if($isStale){if(-not $test.incomplete -or $test.joined){$ok=$false};continue}
+                if(-not $test.joined -or $test.incomplete -or $test.outcome -cne 'Passed' -or $test.trxOutcome -cne 'Passed' -or $test.phaseOutcome -cne 'Passed' -or $test.db -ne 1 -or $test.host -ne 2 -or $test.process -ne 3 -or $test.fs -ne 4 -or $test.network -ne 5 -or $test.fixture -ne 6 -or $test.overlapMs -ne 7 -or $test.remainderMs -ne 8 -or $test.droppedPhaseCount -ne 0){$ok=$false}
+            }
+            if($variant -ceq 'phase' -and (-not $summary.complete -or $summary.quality.Count -ne 0)){$ok=$false}
+            if($variant -ceq 'phase-stale' -and ($summary.complete -or $summary.quality -cnotcontains 'stale-input-not-joined' -or $summary.quality -cnotcontains 'missing-phase-unknown')){$ok=$false}
+            $bySuite=@{}
+            foreach($s in $Fixture.suites){$bySuite[$s.id]=$true}
+            foreach($file in @(Get-ChildItem -LiteralPath $arm.TimingRoot -Filter 'cases-*.jsonl' -File)){
+                $header=[IO.File]::ReadLines($file.FullName)|Select-Object -First 1|ConvertFrom-Json
+                if(-not $bySuite.ContainsKey($header.suite) -or $header.sourceDigest -cne ('a'*40) -or $header.assembly -cne $header.suite -or $header.attempt -cne '1'){$ok=$false}
+            }
+        }
+        $l=@($summaries[0].tests|Sort-Object testId)|ConvertTo-Json -Depth 12 -Compress
+        $r=@($summaries[1].tests|Sort-Object testId)|ConvertTo-Json -Depth 12 -Compress
+        if($l -cne $r -or [IO.File]::ReadAllText((Join-Path $left.TimingRoot 'tests.csv')) -cne [IO.File]::ReadAllText((Join-Path $right.TimingRoot 'tests.csv')) -or [IO.File]::ReadAllText((Join-Path $left.TimingRoot 'summary.md')) -cne [IO.File]::ReadAllText((Join-Path $right.TimingRoot 'summary.md'))){$ok=$false}
+    }
+    Assert-FF $ok 'phaseBindings'
+}
+
 switch -Exact ($Case) {
-    'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=17 }
-    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=22 }
+    'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
+    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
@@ -867,7 +917,7 @@ foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
     [IO.File]::Copy($file.FullName,$destination,$false)
     $inventory.Add([ordered]@{path=$relative;kind='regular';copied=$true;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()})
 }
-Write-FFJson (Join-Path $archive 'inventory.json') ([ordered]@{source=$sourceSha;case=$Case;testClass='Antiphon.Tests.Scripts.RcFailureHistoryTests';files=$inventory.ToArray()})
+Write-FFJson (Join-Path $archive 'inventory.json') ([ordered]@{source=$sourceSha;case=$Case;testClass=$(if($Case -cin @('EvidenceUnion','RefusesIncompleteEvidence','OrdinaryFailedChunk')){'Antiphon.Tests.Scripts.RcFailureHistoryTests'}else{'Antiphon.Tests.Scripts.RcFailedFirstPlannerTests'});files=$inventory.ToArray()})
 $performancePath=Join-Path $root 'performance.json'
 $performance=[IO.File]::ReadAllText($performancePath) | ConvertFrom-Json
 $performance.phases | Add-Member -NotePropertyName archiveSeconds -NotePropertyValue $archiveWatch.Elapsed.TotalSeconds
