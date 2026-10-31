@@ -53,7 +53,7 @@ do {
                     $detail = ($groups | Select-Object -First 8 | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '
                     "FAILURES $($file.Name): $($failed.Count) failed :: $detail"
                 }
-                Add-Content -LiteralPath $StateFile -Value $file.FullName -Encoding ASCII
+                Add-Content -LiteralPath $StateFile -Value $file.FullName -Encoding UTF8
                 $seen[$file.FullName] = $true
             } catch { "TRX-PARSE-ERROR $($file.Name): $($_.Exception.Message)" }
         }
@@ -67,7 +67,11 @@ do {
         try {
             $beat = Get-Content -LiteralPath $Heartbeat -Raw | ConvertFrom-Json
             if (-not $beat.utc) { throw 'Heartbeat has no utc.' }
-            $utc = [datetimeoffset]::Parse([string]$beat.utc).UtcDateTime
+            # PS7 can deserialize ISO dates as DateTime; PS5.1 leaves strings.
+            # Do not round-trip typed dates through the caller's current culture.
+            if ($beat.utc -is [datetime]) { $utc = $beat.utc.ToUniversalTime() }
+            elseif ($beat.utc -is [datetimeoffset]) { $utc = $beat.utc.UtcDateTime }
+            else { $utc = [datetimeoffset]::Parse([string]$beat.utc, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
             if ($beat.hangSuspected) { "HANG-SUSPECTED heartbeat $($beat.utc) runId=$($beat.runId) idleMinutes=$($beat.idleMinutes)" }
             if (([datetime]::UtcNow - $utc).TotalMinutes -ge $HeartbeatStaleMinutes) { "HEARTBEAT-STALE $($beat.utc) runId=$($beat.runId) supervisorPid=$($beat.supervisorPid) trx=$($beat.trx)" }
         } catch { "HEARTBEAT-ERROR $($_.Exception.Message)" }
