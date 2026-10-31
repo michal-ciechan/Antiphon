@@ -176,27 +176,6 @@ public sealed class VolumeRetirementContentTests
         deniedPreview.Output.ShouldContain("RecycleGitAuditUnknown");
         deniedPreview.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
 
-        File.Delete(Path.Combine(root, "helper-auth-128"));
-        var child = await VolumeRetirementFixture.Bash(
-            "set -euo pipefail\n" +
-            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " remote set-url origin " + VolumeRetirementFixture.Quote(seeded.Bare) + "\n" +
-            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " commit -q --allow-empty -m unpublished\n");
-        child.Exit.ShouldBe(0, "c1609-h7: unpublished child; " + child.Output);
-        var unpublished = await fixture.Run("retire-temp-runner", bound + probe, dryRun: true);
-        unpublished.Exit.ShouldBe(2, "c1609-h7: an unpublished child refuses; " + unpublished.Output);
-        unpublished.Output.ShouldContain("RecycleUnpublishedWork");
-        unpublished.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
-        var restore = await VolumeRetirementFixture.Bash(
-            "set -euo pipefail\n" +
-            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " reset -q --hard " + VolumeRetirementFixture.Quote(seeded.A) + "\n" +
-            "if [ -d " + VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "logs")) + " ]; then find " +
-            VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "logs")) + " -type f -delete; fi\n" +
-            "rm -f -- " + VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "ORIG_HEAD")) + "\n" +
-            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " remote set-url origin " + VolumeRetirementFixture.Quote(VolumeRetirementFixture.OriginUrl) + "\n");
-        restore.Exit.ShouldBe(0, "c1609-h7: restore A; " + restore.Output);
-        await File.WriteAllTextAsync(Path.Combine(root, "helper-auth-128"), "1\n");
-        if (File.Exists(helperTrace)) File.Delete(helperTrace);
-
         var evidence = Path.Combine(root, "host-evidence");
         var proved = await VolumeRetirementFixture.InvokeHostProof(
             evidence, Path.Combine(root, "evidence", "retire-temp-inventory"), seeded.Bare,
@@ -209,12 +188,33 @@ public sealed class VolumeRetirementContentTests
         (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("ls-remote");
         (await File.ReadAllTextAsync(Path.Combine(evidence, "host-git-trace"))).ShouldContain("fetch");
         var localProofDir = Directory.EnumerateDirectories(evidence).Single(path => Path.GetFileName(path).StartsWith("c1008-proof-", StringComparison.Ordinal));
-        var proofDir = Path.Combine(root,"remote-root",Path.GetFileName(localProofDir));
+        var proofDir = Path.Combine(root,"remote-root","home","mc","antiphon-c590",Path.GetFileName(localProofDir));
         var proofFile = Directory.GetFiles(proofDir).Single(path => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), "^[0-9a-f]{64}$"));
         var headers = File.ReadAllLines(proofFile);
         headers[0].ShouldBe("c1008-host-proof 2", "H7 actual bridge produces current v2 authority");
         var v2Bindings = "\nexport C1609_PROOF_NONCE=" + headers[5]["nonce ".Length..] +
             "\nexport C1609_PROOF_INVENTORY=" + headers[6]["inventory ".Length..] + "\n";
+
+        File.Delete(Path.Combine(root, "helper-auth-128"));
+        var child = await VolumeRetirementFixture.Bash(
+            "set -euo pipefail\n" +
+            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " commit -q --allow-empty -m unpublished\n");
+        child.Exit.ShouldBe(0, "c1609-h7: unpublished child; " + child.Output);
+        var unpublished = await fixture.Run("retire-temp-runner", bound + "\nexport C1008_HOST_PROOF=" +
+            VolumeRetirementFixture.Quote(proofDir) + "\nexport C1008_OPERATION_STARTED=1700000000\n" + v2Bindings + probe, dryRun: true);
+        unpublished.Exit.ShouldBe(2, "c1609-h7: an unpublished child refuses; " + unpublished.Output);
+        unpublished.Output.ShouldContain("RecycleUnpublishedWork", Case.Sensitive, "H7 explicit host graph must classify the unpublished child; " + unpublished.Output);
+        unpublished.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        var restore = await VolumeRetirementFixture.Bash(
+            "set -euo pipefail\n" +
+            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " reset -q --hard " + VolumeRetirementFixture.Quote(seeded.A) + "\n" +
+            "if [ -d " + VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "logs")) + " ]; then find " +
+            VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "logs")) + " -type f -delete; fi\n" +
+            "rm -f -- " + VolumeRetirementFixture.Quote(Path.Combine(seeded.Repo, ".git", "ORIG_HEAD")) + "\n" +
+            "git -C " + VolumeRetirementFixture.Quote(seeded.Repo) + " remote set-url origin " + VolumeRetirementFixture.Quote(VolumeRetirementFixture.OriginUrl) + "\n");
+        restore.Exit.ShouldBe(0, "c1609-h7: restore A; " + restore.Output);
+        await File.WriteAllTextAsync(Path.Combine(root, "helper-auth-128"), "1\n");
+        if (File.Exists(helperTrace)) File.Delete(helperTrace);
 
         var preview = await fixture.Run("retire-temp-runner",
             bound + "\nexport C1008_HOST_PROOF=" + VolumeRetirementFixture.Quote(proofDir) +
