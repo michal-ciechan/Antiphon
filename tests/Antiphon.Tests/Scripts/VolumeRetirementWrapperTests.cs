@@ -329,6 +329,20 @@ public sealed class VolumeRetirementWrapperTests
             run.Trace.Any(row => row["method"]?.GetValue<string>() == "POST").ShouldBeFalse();
         }
 
+        using (var late = new C1008WrapperFixture())
+        {
+            late.State["allowClear"] = true;
+            late.State["tempRetirementCensusAfterRead"] = JsonNode.Parse(
+                """{"volumes":["antiphon-runner-temp_work"],"journals":[]}""");
+            var changed = await late.Run("deploy-temp");
+            changed.Exit.ShouldBe(2, "W6 a supported writer between preflight and POST must be observed under the POST lock; " + changed.Output);
+            changed.Output.ShouldContain("TempVolumesRetained");
+            changed.Trace.Any(row => row["method"]?.GetValue<string>() == "POST").ShouldBeFalse(
+                "W6 the late retained volume cannot clear the retirement epoch");
+            changed.Trace.Any(row => row["kind"]?.GetValue<string>() == "case" &&
+                row["name"]?.GetValue<string>() is "runner-cache-seed" or "deploy-temp-runner").ShouldBeFalse();
+        }
+
         if (!OperatingSystem.IsLinux()) return;
         var function = Extract(remote, "c1609_temp_retirement_clearable");
         var probe = function + "\n" + """

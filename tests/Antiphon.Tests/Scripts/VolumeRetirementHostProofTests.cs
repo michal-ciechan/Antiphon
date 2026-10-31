@@ -161,12 +161,12 @@ public sealed class VolumeRetirementHostProofTests
             written.Exit.ShouldBe(0, written.Output);
             var files = Directory.GetFiles(Path.Combine(bound, "proof"));
             var body = await File.ReadAllTextAsync(files.Single(p => !p.EndsWith(".bundle", StringComparison.Ordinal)));
-            body.ShouldStartWith("c1008-host-proof 2\n", "H4 current publication transport requires a typed v2 proof");
+            body.ShouldStartWith("c1008-host-proof 2\n", customMessage: "H4 current publication transport requires a typed v2 proof");
             body.ShouldContain("nonce " + new string('b',32));
             body.ShouldContain("inventory " + new string('c',64));
             var bundle = files.Single(p => p.EndsWith(".bundle", StringComparison.Ordinal));
             body.ShouldContain("bundle " + Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(bundle))).ToLowerInvariant());
-            body.ShouldContain("count 3\n", "head plus original annotated tag and peeled object");
+            body.ShouldContain("count 3\n", customMessage: "head plus original annotated tag and peeled object");
             body.ShouldNotContain("fixture.invalid");
             body.ShouldNotContain(bound);
         }

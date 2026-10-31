@@ -72,6 +72,11 @@ if ($Case -eq 'temp-retirement-clearable') {
     } else {
         Write-Output '{"volumes":[],"journals":[]}'
     }
+    if ($state.tempRetirementCensusAfterRead) {
+        $state | Add-Member -NotePropertyName tempRetirementCensus -NotePropertyValue $state.tempRetirementCensusAfterRead -Force
+        $state.PSObject.Properties.Remove('tempRetirementCensusAfterRead')
+        $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+    }
     exit 0
 }
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
