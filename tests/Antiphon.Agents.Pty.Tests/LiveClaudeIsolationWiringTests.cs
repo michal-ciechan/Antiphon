@@ -54,6 +54,15 @@ public class LiveClaudeIsolationWiringTests
                 foreach (var source in new[] { "user", "project", "local" })
                     f.Write(SettingsPath(f, source), HookSettings(LiveClaudeProfile.HookCommand(runtime, writer, marker, source, "retained-model")));
             }
+            try
+            {
+                f.Write(SettingsPath(f, "user"), HookSettings(LiveClaudeProfile.HookCommand(runtime, writer, marker, "project", "retained-model")));
+                LiveClaudeProfileCases.Refuses(() => ClaudeRemoteControlAtStartupCanaryTests.RequireHookConfiguration(profile), "settings-unobserved", "V-8", "source-token");
+            }
+            finally
+            {
+                f.Write(SettingsPath(f, "user"), HookSettings(LiveClaudeProfile.HookCommand(runtime, writer, marker, "user", "retained-model")));
+            }
         }
     }
 
