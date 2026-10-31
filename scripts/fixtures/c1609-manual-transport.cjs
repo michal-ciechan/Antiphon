@@ -32,7 +32,11 @@ if(m){
  if(!m[1].startsWith(root+'/control/'))throw Error('unowned host script');
  let source=fs.readFileSync(m[1],'utf8');
  const injection=fs.readFileSync(root+'/manual-injection.sh','utf8');
- source=source.replaceAll("trap 'ec=$?;",injection+"\ntrap 'ec=$?;");
+ // Inject once at the host entry, never again inside helper-local EXIT traps.
+ // Reinjecting there resets phase state and can alias an audit wrapper to itself.
+ const entry="\ntrap 'ec=$?;";
+ if(source.split(entry).length!==2)throw Error('host entry trap changed');
+ source=source.replace(entry,'\n'+injection+entry);
  const file=root+'/manual-host-'+process.pid+'.sh';fs.writeFileSync(file,source);
  cmd=cmd.replace(m[0],"bash '"+file+"'");
 }
