@@ -34,7 +34,9 @@ internal static class LiveClaudeStartupCases
             case "V-18": await BridgeAsync(); break;
             case "V-19": await ControlAsync(); break;
             case "V-20": await WindowAsync(); break;
-            case "V-21": LiveClaudeStartupAudit.Run(); break;
+            case "V-21":
+                Assert(ReferenceEquals(ClaudeRemoteControlAtStartupCanaryTests.SharedStartup(),ClaudeRemoteControlAtStartupCanaryTests.SharedStartup()),v,"session-shared-instance");
+                LiveClaudeStartupAudit.Run(); break;
             case "V-22": await SettingsAsync(); break;
             default: throw new InvalidOperationException("Unknown startup witness");
         }

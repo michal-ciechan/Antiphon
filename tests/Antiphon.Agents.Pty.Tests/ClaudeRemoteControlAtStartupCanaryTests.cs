@@ -18,8 +18,8 @@ namespace Antiphon.Agents.Pty.Tests;
 public class ClaudeRemoteControlAtStartupCanaryTests
 {
     // The framework owns this bag for one test session; no process-global cache or UID change.
-    private static LiveClaudeStartupFixture SharedStartup() => (LiveClaudeStartupFixture)
-        TestSessionContext.Current.GlobalStaticPropertyContext.StateBag.GetOrAdd("C1545.StartupControl", _ => new LiveClaudeStartupFixture());
+    internal static LiveClaudeStartupFixture SharedStartup() => (LiveClaudeStartupFixture)
+        TestSessionContext.Current.AllTests.OrderBy(test => test.Id, StringComparer.Ordinal).First().StateBag.Items.GetOrAdd("C1545.StartupControl", _ => new LiveClaudeStartupFixture());
 
     private const string OffSettingsJson = "{\"remoteControlAtStartup\":false}";
     private static readonly TimeSpan BridgeAppear = TimeSpan.FromSeconds(15);

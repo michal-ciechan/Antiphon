@@ -60,7 +60,7 @@ internal static class LiveClaudeStartupAudit
     {
         var source=LiveClaudeExecutableAudit.Read(StartupPath);
         var shared=Method(source,"SharedStartup");
-        if(!SyntaxFactory.AreEquivalent(shared.ExpressionBody?.Expression,SyntaxFactory.ParseExpression("(LiveClaudeStartupFixture)TestSessionContext.Current.GlobalStaticPropertyContext.StateBag.GetOrAdd(\"C1545.StartupControl\", _ => new LiveClaudeStartupFixture())")))
+        if(!SyntaxFactory.AreEquivalent(shared.ExpressionBody?.Expression,SyntaxFactory.ParseExpression("(LiveClaudeStartupFixture)TestSessionContext.Current.AllTests.OrderBy(test => test.Id, StringComparer.Ordinal).First().StateBag.Items.GetOrAdd(\"C1545.StartupControl\", _ => new LiveClaudeStartupFixture())")))
             throw new InvalidOperationException("C1545 startup-audit/session-owned-fixture");
         foreach(var (method,role) in new[]{
             ("Control_auto_connects_a_bridge_session_before_the_first_user","control"),
