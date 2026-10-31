@@ -84,6 +84,35 @@ foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
 }
 $missing = Read-QualificationGraph $graphJson '' $schema
 Check ($healthy.Accepted -and -not $missing.Accepted -and $missing.Reason -ceq 'catalog-required' -and $missing.Path -ceq '/catalog') 'catalog-missing'
+
+# Catalog membership must independently prove the graph's declared selection.
+foreach ($fault in @('wrong-uid', 'missing-uid', 'extra-uid', 'wrong-count', 'wrong-digest')) {
+    $g = Copy-Graph $base
+    $cat = $catalogJson | ConvertFrom-Json
+    switch ($fault) {
+        'wrong-uid' { $cat.uids.'fixture-selection' = @('Fixture.A.0', 'Fixture.WRONG') }
+        'missing-uid' { $cat.uids.'fixture-selection' = @('Fixture.A.0') }
+        'extra-uid' { $cat.uids.'fixture-selection' = @('Fixture.A.0', 'Fixture.A.1', 'Fixture.A.2') }
+        'wrong-count' { $cat.nodes[3].selection.expectedCount = 3; $g.nodes[3].selection.expectedCount = 3 }
+        'wrong-digest' { $cat.nodes[3].selection.uidSetDigest = 'f' * 64; $g.nodes[3].selection.uidSetDigest = 'f' * 64 }
+    }
+    $r = Read-QualificationGraph (Json $g) (Json $cat) $schema
+    Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'identity' -and
+        $r.Path -ceq '/nodes/3/selection' -and $r.Reason -ceq 'catalog-uid-mismatch') ('catalog-uid-mismatch/' + $fault) ($r.Reason + ':' + $r.Path)
+}
+foreach ($phase in @('prepare', 'execute')) {
+    $text = Load ($phase + '.valid.json')
+    $r = Read-QualificationGraph $text $text $schema
+    Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'identity' -and
+        $r.Path -ceq '/catalog' -and $r.Reason -ceq 'catalog-invalid') ('catalog-is-graph/' + $phase) ($r.Reason + ':' + $r.Path)
+}
+$preciseGraph = $graphJson.Replace('"canonicalOrdinal": 0', '"canonicalOrdinal": 1.0000000000000000000001e22')
+$preciseCatalog = $catalogJson.Replace('"canonicalOrdinal": 0', '"canonicalOrdinal": 1e22')
+$r = Read-QualificationGraph $preciseGraph $preciseCatalog $schema
+Check ($healthy.Accepted -and (Test-QualificationGraphSchema $preciseGraph $schema) -and
+    -not $r.Accepted -and $r.Category -ceq 'identity' -and $r.Path -ceq '/nodes/0/canonicalOrdinal' -and
+    $r.Reason -ceq 'catalog-mismatch') 'catalog-number-exact' ($r.Reason + ':' + $r.Path)
+
 $duplicate = Copy-Graph $base
 $duplicate.nodes = @($duplicate.nodes) + @($duplicate.nodes[0])
 $r = Read-QualificationGraph (Json $duplicate) $catalogJson $schema

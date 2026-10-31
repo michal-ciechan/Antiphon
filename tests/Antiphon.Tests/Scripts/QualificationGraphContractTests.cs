@@ -10,7 +10,7 @@ public sealed class QualificationGraphContractTests
     [Test]
     [Timeout(210_000)]
     public Task SchemaAndIdentity() => ScriptHarness.RunHarnessCaseAsync(
-        "test-qualification-graph.ps1", "QGRAPH", "SchemaAndIdentity", 100,
+        "test-qualification-graph.ps1", "QGRAPH", "SchemaAndIdentity", 108,
         [
             "QGRAPH SchemaAndIdentity/production-surface",
             "QGRAPH SchemaAndIdentity/catalog-pin",
@@ -88,6 +88,14 @@ public sealed class QualificationGraphContractTests
             "QGRAPH SchemaAndIdentity/selection/uid",
             "QGRAPH SchemaAndIdentity/selection/count",
             "QGRAPH SchemaAndIdentity/catalog-missing",
+            "QGRAPH SchemaAndIdentity/catalog-uid-mismatch/wrong-uid",
+            "QGRAPH SchemaAndIdentity/catalog-uid-mismatch/missing-uid",
+            "QGRAPH SchemaAndIdentity/catalog-uid-mismatch/extra-uid",
+            "QGRAPH SchemaAndIdentity/catalog-uid-mismatch/wrong-count",
+            "QGRAPH SchemaAndIdentity/catalog-uid-mismatch/wrong-digest",
+            "QGRAPH SchemaAndIdentity/catalog-is-graph/prepare",
+            "QGRAPH SchemaAndIdentity/catalog-is-graph/execute",
+            "QGRAPH SchemaAndIdentity/catalog-number-exact",
             "QGRAPH SchemaAndIdentity/duplicate-node",
             "QGRAPH SchemaAndIdentity/duplicate-key/root",
             "QGRAPH SchemaAndIdentity/duplicate-key/nested",
