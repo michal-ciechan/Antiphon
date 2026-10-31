@@ -4,6 +4,39 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
+## S3 implementation and budget amendment (9294cb43, 2026-10-31)
+
+The latest caller brief requires optional missing/malformed/stale/different-candidate
+run records to fall back to the original complete order with a stated reason.
+S1 strict export/provenance validation stays intact; S3 catches unusable optional
+Full hints at ingress. The new Full ingress conservatively requires the same source
+SHA and a terminal run within seven days; this narrows the older D-6 cross-candidate
+resolver permission, which remains available as a pure resolver and is unchanged.
+A bound summary dispatchProgress snapshot orders failures, unfinished chunks after
+each lane last pass (wrapping earlier holes), then passed chunks. All chunks rerun.
+A changed canonical plan digest falls back; no history supplies execution credit.
+The legacy class-failure format without progress still uses S2 stable priority.
+
+CP-6 includes the complete public entrypoint replay and twelve named assertions;
+its 1080-second harness / 1140-second test bounds are provisional, using S2 measured
+full-replay costs. The initial full prototype was stopped/joined after a 741-second
+lease: 154 TRX outputs existed, but diagnostic finalization had not returned.
+It is incomplete, never green/RED assertion evidence. A short fixture then produced
+4/8 intended assertion failures before behavior wiring. The full fixture now shares
+one UID index; diagnostic summary JSON uses native serialization only, leaving
+canonical authority writers unchanged. Full-scale summary throughput was outside
+S2 acceptance and is now measured by the actual entrypoint witness.
+
+CP-7 retains its public interleaving assertions plus the existing S2 eighteen-check
+D-15/17 matrix, once per case. Its provisional 180-second harness and 240-second test
+bounds cover the measured 55-second S2 matrix plus 13-second public loop; n is too
+small for p95. Collect the next three ordinary receipts, no sample-only runs.
+CP-6 estimate is 12 minutes including its isolated build, CP-7 three and CP-8 two:
+S3 ordinary estimate 17 minutes, whole-plan estimate 78 (historical 72/65 retained).
+S3 uses --row-timeout 20m --total-timeout 40m --hard-wall-timeout 60m, serial rows.
+Admission remains bounded separately by the tool 45-minute slot queue. These are
+pre-run declarations based on observed setup/diagnostic cost, not a retry-only
+relaxation of a failed execution deadline. Native watchdogs are unchanged.
 ## S2 implementation budget amendment (task 9058bae5, 2026-10-31)
 
 The test selections and 16-row/seven-build manifest are unchanged. CP-4's original
@@ -347,8 +380,8 @@ Portable rows use live default placement with no `-Runner` or `-Platform`; Windo
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-failfirst-s2/` | portable-global-plan | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/GlobalReplayPriority` | D-1..3 | exact method, full replay | 1 | 7 | true |
 | CP-4 | S2 | `CP-3` | portable-conservation | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/FullBytesAndCoverageConserved` | D-2, D-15, D-17, no-op witness | exact method, named field policies | 1 | 9 | true |
 | CP-5 | S2 | `CP-3` | portable-s3 | `/*/Antiphon.Tests.Scripts/RcFullWatchdogTests/CapFitsAdmittedPlannedCost` | D-11 | exact existing method | 1 | 1 | true |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-failfirst-s3/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 7 | true |
-| CP-7 | S3 | `CP-6` | portable-m1-m2 | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/JournalCustodySurvivesInterleaving` | D-12 | exact method, terminal matrix | 1 | 2 | true |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-failfirst-s3/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 12 | true |
+| CP-7 | S3 | `CP-6` | portable-m1-m2 | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/JournalCustodySurvivesInterleaving` | D-12 | exact method, terminal matrix | 1 | 3 | true |
 | CP-8 | S3 | `CP-6` | portable-m1-regression | `/*/Antiphon.Tests.TestHelpers/RcManifestIntegrationTests/LedgerAndReceiptBytesAreUnchanged` | D-12 | exact existing M1/M2 method | 1 | 2 | true |
 | CP-9 | S4a | `tests/Antiphon.Tests -> bin-failfirst-s4a/` | portable-partial-plan | `/*/Antiphon.Tests.Scripts/RcPriorFailureSweepTests/SelectedClassesOnly` | D-3, D-8, D-21 | exact method, selected/excluded UID sets | 1 | 8 | true |
 | CP-10 | S4a | `CP-9` | portable-partial-artifacts | `/*/Antiphon.Tests.Scripts/RcPriorFailureSweepTests/AllArtifactsRemainPartial` | D-8..9, D-18..20 | exact method, all artifacts and roots | 1 | 2 | true |
