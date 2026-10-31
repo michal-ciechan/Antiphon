@@ -101,6 +101,8 @@ param(
     [string]$SelectionPath = '',
     [string]$SelectionDigest = '',
     [int]$Attempt = 1,
+    [string]$PriorFailuresPath = '',
+    [string]$PriorFailuresDigest = '',
     [string]$SeamsPath = '',
     [string]$Trigger = 'scheduled',
     [string]$Profile = 'nightly',

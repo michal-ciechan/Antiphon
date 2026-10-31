@@ -1347,6 +1347,8 @@ function Invoke-AntiphonNightlyTests {
         [string]$SelectionPath = '',
         [string]$SelectionDigest = '',
         [int]$Attempt = 1,
+        [string]$PriorFailuresPath = '',
+        [string]$PriorFailuresDigest = '',
         [string]$SeamsPath = '',
         [string]$PolicyPath = '',
         [switch]$AllowSharedTree,
