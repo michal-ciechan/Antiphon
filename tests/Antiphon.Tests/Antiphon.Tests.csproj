@@ -218,6 +218,20 @@
           DestinationFiles="$(TargetDir)fakegrok/fakegrok" SkipUnchangedFiles="true" />
   </Target>
   <ItemGroup>
-    <Compile Include="../Shared/LiveClaude/*.cs" Link="TestSupport/LiveClaude/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeArgvCapture.cs" Link="TestSupport/LiveClaude/LiveClaudeArgvCapture.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeDeliveryEvidence.cs" Link="TestSupport/LiveClaude/LiveClaudeDeliveryEvidence.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeExecutable.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutable.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeExecutableAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutableAudit.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeExecutableCases.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutableCases.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeExecutableMutants.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutableMutants.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeLaunchContext.cs" Link="TestSupport/LiveClaude/LiveClaudeLaunchContext.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeOutcome.cs" Link="TestSupport/LiveClaude/LiveClaudeOutcome.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeParityCases.cs" Link="TestSupport/LiveClaude/LiveClaudeParityCases.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeProfile.cs" Link="TestSupport/LiveClaude/LiveClaudeProfile.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeProfileAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeProfileAudit.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeProfileCases.cs" Link="TestSupport/LiveClaude/LiveClaudeProfileCases.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeProfileMutants.cs" Link="TestSupport/LiveClaude/LiveClaudeProfileMutants.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeProfilePaths.cs" Link="TestSupport/LiveClaude/LiveClaudeProfilePaths.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
   </ItemGroup>
 </Project>
