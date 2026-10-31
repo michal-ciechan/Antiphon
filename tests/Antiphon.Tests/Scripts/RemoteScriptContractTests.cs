@@ -1187,7 +1187,7 @@ public sealed class RemoteScriptContractTests
     public void C849_Driver_deadline_witness_does_not_require_mount_namespaces(bool withoutDeadline)
     {
         RequireLinuxPwsh();
-        var output = LinuxShell($"""
+        var output = LinuxShell($$"""
             set -eu
             tools=$(mktemp -d)
             trap 'rm -rf -- "$tools"' EXIT
