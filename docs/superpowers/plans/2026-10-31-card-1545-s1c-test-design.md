@@ -111,8 +111,9 @@ internal variants, not extra TUnit executions. Classes carry `Category("Unit")`;
 app ownership is Claude runner/shared PTY support. V-17 alone additionally uses
 `[Explicit]`: its cross-project capture context exists only during this commission.
 This preserves the plan's Unit class metadata without creating an ordinary
-nightly test that always fails for missing commission context. Exact CP-24 must
-execute it, proved by its TRX UID/count; no skip is accepted. Default Full discovery
+nightly test that always fails for missing commission context. The isolation wrapper's
+CP-24-PARITY row executes this Explicit method; the class-filter CP-24 row runs the
+other four. No skip is accepted. Default Full discovery
 must exclude this **new** Explicit UID by its existing rule. No existing UID or
 policy changes. This is a fixture-lifetime refinement, not a new policy exemption.
 
@@ -764,7 +765,7 @@ case count. Do not import other companion tables by CP number alone.
 | CP-17 | S1c-executable | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-executable/ | portable-live-pty-executable | /*/Antiphon.Agents.Pty.Tests/LiveClaudeExecutableWiringTests/* | V-1..3, R-1, R-5 | ClSessionUsesAttestedExecutable,CoreCallersRefuseMissingContext,ExecutedImageMismatchRefuses; exactly 3 passed, 0 failed/skipped | 3 | 6 | true |
 | CP-23 | S1c-executable | tests/Antiphon.Tests -> bin-live-executable/ | portable-live-c680-executable | /*/Antiphon.Tests.Scripts/LiveLaneExecutableTests/* | V-4..6, R-1 | C680UsesAttestedExecutable,C680RefusesMissingContext,C680ImageMismatchRefuses,S1cOutcomeFeedsS1bClassifier; exactly 4 passed, 0 failed/skipped | 4 | 10 | true |
 | CP-18 | S1c-profile | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-isolation/ | portable-live-pty-isolation | /*/Antiphon.Agents.Pty.Tests/LiveClaudeIsolationWiringTests/* | V-7..12, R-2, R-5 | DedicatedConfigOwnsTrustAndEvidence,CwdInstructionsCannotLeak,SettingsProjectionDetectsDrift,UnknownConfigDisablesReuse,LaunchArgumentsKeepProductionSources,ModelSelectionComesFromContext; exactly 6 passed, 0 failed/skipped | 6 | 6 | true |
-| CP-24 | S1c-profile | tests/Antiphon.Tests -> bin-live-isolation/ | portable-live-c680-isolation | /*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/* | V-13..17, R-2 | DedicatedConfigOwnsTrustAndEvidence,CwdInstructionsCannotLeak,SettingsProjectionDetectsDrift,UnknownConfigDisablesReuse,StartupArgvMatchesProductionApplyOff; exactly 5 passed incl. Explicit parity method, 0 failed/skipped | 5 | 10 | true |
+| CP-24 | S1c-profile | tests/Antiphon.Tests -> bin-live-isolation/ | portable-live-c680-isolation | /*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/* | V-13..17, R-2 | class filter min 4 (DedicatedConfigOwnsTrustAndEvidence,CwdInstructionsCannotLeak,SettingsProjectionDetectsDrift,UnknownConfigDisablesReuse); StartupArgvMatchesProductionApplyOff is Explicit and is CP-24-PARITY min 1, 0 failed/skipped | 4 | 10 | true |
 | CP-3 | S1c-startup-oracles | tests/Antiphon.Agents.Pty.Tests -> bin-live-fixture/ | portable-live-fixture | /*/Antiphon.Agents.Pty.Tests/LiveClaudeStartupWiringTests/* | V-18..22, R-3 | ExplicitBridgeSetup,ControlRequiredForSettingsOff,ControlWindowBoundsOffObservation,StartupMethodsUseControlOracle,LoadedSettingsSurviveOffOverlay; exactly 5 passed, 0 failed/skipped | 5 | 6 | true |
 | CP-19 | S1c-delivery-oracles | tests/Antiphon.Agents.Pty.Tests -> bin-live-delivery/ | portable-live-delivery | /*/Antiphon.Agents.Pty.Tests/LiveClaudeDeliveryWiringTests/* | V-23..26, R-4, R-5 | PromptReceiptPrecedesVerdict,LostEnterCannotPass,DroppedBridgeCannotPass,LiveMethodsUseTranscriptVerdicts; exactly 4 passed, 0 failed/skipped | 4 | 6 | true |
 
