@@ -25,14 +25,27 @@ public sealed class VolumeRetirementWrapperTests
         var preview = await dry.Run("retire-temp", "-DryRun");
         preview.Exit.ShouldBe(0, "c1609-w1: dry-run is the preview entry; " + preview.Output);
         preview.Output.ShouldNotContain("TempStackMissing");
-        preview.Trace.Any(row => row["kind"]?.GetValue<string>() == "case" &&
-            row["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeFalse("c1609-w1: dry-run does not apply");
+        var previewCalls = preview.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
+            row["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        previewCalls.Length.ShouldBe(1, "W1 DryRun reaches the full content Preview");
+        previewCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue("W1 DryRun cannot apply");
 
         using var apply = new C1008WrapperFixture();
         var retired = await apply.Run("retire-temp");
         retired.Exit.ShouldBe(0, "c1609-w1: retire-temp apply; " + retired.Output);
-        retired.Trace.Any(row => row["kind"]?.GetValue<string>() == "case" &&
-            row["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeTrue("c1609-w1: apply reaches the host case");
+        var volumeCalls = retired.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
+            row["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        volumeCalls.Select(row => row["recycle"]!["dryRun"]!.GetValue<bool>()).ShouldBe(new[] { true, false });
+        volumeCalls[0]["recycle"]!["operationId"]!.GetValue<string>()
+            .ShouldBe(volumeCalls[1]["recycle"]!["operationId"]!.GetValue<string>());
+        using var denied = new C1008WrapperFixture();
+        denied.State["failRetirementPreview"] = true;
+        var stopped = await denied.Run("retire-temp");
+        stopped.Exit.ShouldBe(2, stopped.Output);
+        var deniedCalls = stopped.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
+            row["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        deniedCalls.Length.ShouldBe(1, "W1 a refused Preview cannot enter Apply");
+        deniedCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue();
 
         using var deploy = new C1008WrapperFixture();
         deploy.State["allowClear"] = true;

@@ -114,6 +114,12 @@ if ($Case -eq 'retire-temp-containers') {
 }
 
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress -Depth 20)
+if ($Case -eq 'retire-temp-runner' -and $request.recycle.dryRun -and $state.failRetirementPreview) {
+    $dest = Join-Path $request.evidenceRoot $Case
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    @{ accepted=$false; diagnosis='RecycleGitAuditUnknown'; exit=2 } | ConvertTo-Json | Set-Content (Join-Path $dest 'c590-result.json')
+    exit 2
+}
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
 if ($state.scenario -eq 'c1008' -and $Case -eq 'deploy-parent') {
     if ($state.failDeploy) { exit 2 }
