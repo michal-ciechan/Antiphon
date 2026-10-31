@@ -953,8 +953,8 @@ $NightlySeams=@{
     E2EPrerequisites={return [pscustomobject]@{Ok=$true;Rows=@()}}
     StartProcess={
         param($FilePath,$ArgumentList,$WorkingDirectory,$TimeoutMilliseconds,$Environment)
-        $sid=[string]$Environment['ANTIPHON_TEST_PHASE_SUITE']
-        $cid=[string]$Environment['ANTIPHON_TEST_PHASE_GROUP_ID']
+        $sid='';$cid=''
+        if($Environment){$sid=[string]$Environment['ANTIPHON_TEST_PHASE_SUITE'];$cid=[string]$Environment['ANTIPHON_TEST_PHASE_GROUP_ID']}
         $diag=Get-FFArgument $ArgumentList '--diagnostic-output-directory'
         if($ArgumentList -contains '--list-tests') {
             $sid=(Split-Path -Leaf $diag) -replace '-profile-discovery$','' -replace '-.*-discovery$',''
