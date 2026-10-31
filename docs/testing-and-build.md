@@ -127,6 +127,12 @@ qualification, release gate credit or production timeouts.
   collapses Outcome/Aged receipts to the newest notice. Missing or duplicate matches fail
   immediately with ID/kind-only sequence metadata and the same bounded producer diagnostics,
   persisted as `polling-attention-<request>.txt`; no receipt eligibility or wait budget changes.
+  The C459 busy-caller queued-outcome wait uses the same protocol-git heartbeat and the same
+  60-second quiet window and 600-second cap. A plain wait ignored completed Git commands and
+  could fail while the land was still moving. A silent land still fails one quiet window after
+  the last Git record. Its timeout keeps the original exception and records the recipient hold
+  and release files, the awaited condition, the last Git record and the safe log tail in
+  `queued-outcome-<task>.txt`.
 
 ### Preserved Gotcha #21
 
