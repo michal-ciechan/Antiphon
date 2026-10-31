@@ -44,6 +44,32 @@ public sealed class ScriptHarnessProcessContractTests
     }
 
     [Test]
+    public void Vanished_proc_stat_is_process_gone()
+    {
+        var root = Directory.CreateTempSubdirectory("proc-vanish-").FullName;
+        try
+        {
+            var stat = Path.Combine(root, "77", "stat");
+            Directory.CreateDirectory(Path.GetDirectoryName(stat)!);
+            File.WriteAllText(stat, "77 (gone) R 1 77 77\n");
+            var removed = false;
+            var gone = LinuxScriptHarnessProcess.TryReadProcIdentity(77, _ =>
+            {
+                if (!removed)
+                {
+                    removed = true;
+                    File.Delete(stat);
+                    throw new IOException("No such process " + stat);
+                }
+                throw new InvalidOperationException("reader called after the vanished read");
+            }, out _);
+            gone.ShouldBeFalse();
+            File.Exists(stat).ShouldBeFalse();
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
     public async Task Invalid_execution_budgets_never_spawn()
     {
         foreach (var value in new[] { TimeSpan.Zero, TimeSpan.FromTicks(-1), System.Threading.Timeout.InfiniteTimeSpan })
