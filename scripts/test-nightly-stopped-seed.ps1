@@ -65,7 +65,7 @@ try {
             foreach($row in $inputRecord.History.chunks){if($row.chunk -match '(group|split)-2$'){$row.lastRunAtUtc=$now.AddHours(-$hours[$row.suite]).ToString('o')}}
             $aged=Schedule $inputRecord
             $oldest=(@($aged.entries[0..4].suite) -join ',')
-            Check ($oldest -ceq 'session-runner,agents-pty,e2e,pty-host,antiphon' -and ($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..8] -join ',') -ceq 'new-Never,new-New,new-Never,new-New' -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
+            Check ($oldest -ceq 'session-runner,agents-pty,e2e,pty-host,antiphon' -and ($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..8] -join ',') -ceq 'new-Never,new-New,new-Never,new-New' -and @($inputRecord.History.members).Count -eq 6 -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
         }
         'AcknowledgementRequired' {
             $missing=Ingress;$wrong=Ingress -Accept -Source 'rc-wrong';$accepted=Ingress -Accept
