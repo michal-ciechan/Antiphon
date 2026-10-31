@@ -1,8 +1,30 @@
 #requires -Version 5.1
 # Diagnostic scheduling only. Canonical chunks remain the planner's own objects.
+function Get-NightlyPreviousRunKind {
+    param($Record)
+    # operator-seed is only the builder's content: exact seedKind, chunks and failedTests,
+    # and not a dispatchProgress record. A marker stamped on a normal record stays previous-run.
+    if($null -eq $Record){return 'previous-run'}
+    $names=@($Record.PSObject.Properties.Name)
+    $normal=($names -ccontains 'suites') -or ($names -ccontains 'liveness') -or ($names -ccontains 'schemaVersion')
+    $chunks=$null;$failed=$null
+    if($names -ccontains 'chunks'){$chunks=$Record.chunks}
+    if($names -ccontains 'failedTests'){$failed=$Record.failedTests}
+    $seedShape=(-not $normal) -and ($chunks -is [array]) -and ($failed -is [array]) -and ($chunks.Count -gt 0)
+    if(-not $seedShape){return 'previous-run'}
+    $marker=''
+    if($names -ccontains 'seedKind' -and $null -ne $Record.seedKind){$marker=[string]$Record.seedKind}
+    if([string]::IsNullOrWhiteSpace($marker)){return 'seed-marker-missing'}
+    if($marker -cne 'operator-seed-from-stopped-run'){return 'seed-foreign-kind'}
+    return 'operator-seed'
+}
+
 function Resolve-NightlyPreviousRunOrder {
     param([object[]]$Entries, $PreviousRun, [string]$CandidateSha, [datetime]$NowUtc)
-    if($PreviousRun -and $PreviousRun.seedKind -ceq 'operator-seed-from-stopped-run'){return Resolve-NightlyStoppedSeedOrder $Entries $PreviousRun}
+    $previousKind=Get-NightlyPreviousRunKind $PreviousRun
+    if($previousKind -ceq 'operator-seed'){return Resolve-NightlyStoppedSeedOrder $Entries $PreviousRun}
+    if($previousKind -ceq 'seed-foreign-kind'){return [pscustomobject]@{entries=@($Entries);reason='operator-seed-kind-foreign';lanes=@()}}
+    if($previousKind -ceq 'seed-marker-missing'){return [pscustomobject]@{entries=@($Entries);reason='previous-run-plan-digest-missing';lanes=@()}}
     # This is a preference for a NEW complete attempt, never execution resume.
     # Missing rows are unfinished. Rotate each lane after its last observed pass,
     # wrapping earlier holes back into the unfinished partition.
@@ -102,7 +124,7 @@ function New-NightlyDispatchSchedule {
     $dispatchHash = [Security.Cryptography.SHA256]::Create()
     try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
     finally { $dispatchHash.Dispose() }
-    if($null -ne $PreviousRun){
+    if($null -ne $PreviousRun -and (Get-NightlyPreviousRunKind $PreviousRun) -ceq 'previous-run'){
         $recordedDigest=''
         if($PreviousRun.PSObject.Properties.Name -ccontains 'canonicalPlanDigest' -and $null -ne $PreviousRun.canonicalPlanDigest){$recordedDigest=[string]$PreviousRun.canonicalPlanDigest}
         $digestReason=''
