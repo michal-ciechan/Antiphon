@@ -50,6 +50,10 @@ function Get-QualificationGroupPlannedSeconds {
             if($PSBoundParameters.ContainsKey($name) -and ((Get-Variable $name -ValueOnly) -ceq '' -or (Get-Variable $name -ValueOnly) -cne $active.$field)){throw ('identity-'+$field)}
         }
         if($active.chunk -cne $ChunkId){throw 'identity-chunk'}
+        foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
+            $pattern='^[a-f0-9]{64}$';if($field -ceq 'sourceDigest'){$pattern='^[a-f0-9]{40}$'}
+            if([string]$active.$field -cnotmatch $pattern){throw ('plan-binding-unproven-'+$field)}
+        }
         $index=Read-QualificationPlanJson (Join-Path $dir 'groups-planned-index.json')
         if($index.runId -cne $active.runId -or [string]$index.attempt -cne $active.attempt){throw 'index-identity'}
         $rows=@($index.suites|Where-Object {$_.suite -ceq $active.suite})
@@ -97,6 +101,9 @@ function Read-QualificationActiveChunkIdentity {
         $path=Join-Path $Directory 'active-chunk.json'
         $digest=Get-NightlyFileSha256 $path
         $record=Read-QualificationPlanJson $path
+        foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
+            if($record.PSObject.Properties.Name -cnotcontains $field -or $record.$field -isnot [string]){return $null}
+        }
         if($record.format -cne 'antiphon-qualification-active-chunk-v1' -or $record.state -cnotin @('Active','Idle') -or [long]$record.generation -le 0 -or -not $record.runId -or -not $record.attempt -or $record.suite -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or -not $record.chunk -or $record.planFile -cne ('groups-planned-'+$record.suite+'.json') -or $record.planDigest -cnotmatch '^[a-f0-9]{64}$'){return $null}
         if((Get-NightlyFileSha256 $path) -cne $digest){return $null}
         $record|Add-Member -NotePropertyName identityDigest -NotePropertyValue $digest
