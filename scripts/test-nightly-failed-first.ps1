@@ -1077,6 +1077,20 @@ function Test-FFHeartbeatBindings {
     Write-FFJson (Join-Path $timing 'antiphon-all-group-3.timing.json') ([ordered]@{lastPhase='run'})
     $script:QualificationIdentityReadObserver={param($activePath);[void](Write-QualificationActiveChunkIdentity (Split-Path -Parent $activePath) 'antiphon' 'all-group-3' 'heartbeat-run' '2' Idle)}
     try{$bad=$bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')}finally{$script:QualificationIdentityReadObserver=$null}
+    # Rebind the changed plan hash so each absent field is the discriminating
+    # defect, rather than a stale digest accidentally rejecting the fixture.
+    [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2')
+    $planPath=Join-Path $timing 'groups-planned-antiphon.json';$indexPath=Join-Path $timing 'groups-planned-index.json';$activePath=Join-Path $timing 'active-chunk.json'
+    $planText=[IO.File]::ReadAllText($planPath);$indexText=[IO.File]::ReadAllText($indexPath);$activeText=[IO.File]::ReadAllText($activePath)
+    foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
+        $mutantPlan=$planText|ConvertFrom-Json;$mutantIndex=$indexText|ConvertFrom-Json;$mutantActive=$activeText|ConvertFrom-Json
+        $mutantPlan.PSObject.Properties.Remove($field);$mutantActive.PSObject.Properties.Remove($field)
+        @($mutantIndex.suites|Where-Object {$_.suite -ceq 'antiphon'})[0].PSObject.Properties.Remove($field)
+        Write-FFJson $planPath $mutantPlan;Write-FFJson $indexPath $mutantIndex
+        $mutantActive.planDigest=Get-NightlyHistoryDigest $planPath;Write-FFJson $activePath $mutantActive
+        if($null -ne (Get-QualificationGroupPlannedSeconds $path 'all-group-3')){$bad=$false}
+        [IO.File]::WriteAllText($planPath,$planText);[IO.File]::WriteAllText($indexPath,$indexText);[IO.File]::WriteAllText($activePath,$activeText)
+    }
     Assert-FF $bad 'heartbeatRefusals'
 }
 
