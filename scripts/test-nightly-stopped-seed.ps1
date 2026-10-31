@@ -151,7 +151,9 @@ try {
                 foreach($name in @('nightly-common','nightly-policy','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
                 $function='Invoke-AntiphonNightly'+$(if($kind -eq 'run'){'Run'}else{'Tests'})
                 $command=Get-Command $function
-                $body=$command.ScriptBlock.Ast.ParamBlock.Extent.Text
+                $parameterBlock=$command.ScriptBlock.Ast.Body.ParamBlock
+                if($null -eq $parameterBlock -or $parameterBlock.Extent.Text -notmatch 'switch.*AcceptCrossCandidateSeed'){throw 'wrapper fixture requires a real parameter block'}
+                $body=$parameterBlock.Extent.Text
                 $fake='function '+$function+' { '+$body+'; return [pscustomobject]@{Accepted=[bool]$AcceptCrossCandidateSeed;Source=$SeedSourceCandidateId;Path=$PriorFailuresPath;ExitCode=0} }'
                 [IO.File]::WriteAllText((Join-Path $lib ('nightly-'+$kind+'-impl.ps1')),$fake)
                 $received=& (Join-Path $wrapperRoot ('nightly-'+$kind+'.ps1')) -PriorFailuresPath $seedPath -AcceptCrossCandidateSeed -SeedSourceCandidateId rc-synthetic-old -PassThru
