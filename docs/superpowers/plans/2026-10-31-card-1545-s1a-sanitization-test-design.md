@@ -165,6 +165,17 @@ must be validated/projected before serialization; arbitrary exception/message fi
 cannot leak through an otherwise safe schema. The wrapper stages safe output privately,
 scans before public green, then validates final report/provenance and publishes.
 
+In the commission, V-5 exports its actual sanitized events under the owned CP-20
+result path. V-7 consumes that export only after validating the completed CP-20
+row/source/build/run through the same artifact-admission library exercised by V-8;
+it adds its own C680 events and serializes the combined case roster. Thus CP-29
+can require both PTY and C680 markers in the receipt and summary. With no commission
+context, the permanent V-7 Unit test uses locally generated safe API events to test
+the serializers and never claims cross-row credit. In commission mode the missing
+PTY export refuses; there is no fallback to the local fixture. The actual export,
+TRX testId-to-definition/expanded-UID mapping and serializer symbols are binding
+required after Code. Neither display-name matching nor a marker at run scope suffices.
+
 Call-site audits in V-6/V-7 are bounded, method-aware token/AST checks, not whole-file
 hashes or substring presence. Inspect every selected method and shared reachable helper;
 each print/log/assert/skip/file sink must consume the exercised safe API result.
@@ -248,3 +259,403 @@ source; their internal cases are not TUnit executions.
 | R-6 | Normal console cannot satisfy marker requirement or nested HTML leaks: R3-D-2 | V-8 clean banner-only console passes; V-9 scans every completed-row file for absence, including HTML/timestamp children; TRX has exact-ID presence |
 | R-7 | Artifact success hides prior red or guard never reached: 228e67c0 D-1/2/3 and A-4 | V-8: failed rows with absent/unknown Setup stay non-green; unrelated row facts unchanged; fully passing terminal plus raw nonzero exit refuses; safe CheckpointRunId serialization in V-7. Every guard below has an otherwise-valid negative, no earlier rejection substitutes |
 
+### Guard inventory
+
+Each independently bypassable guard has a distinct PC. Case variants below execute
+with every unrelated prerequisite valid, so an earlier refusal cannot mask a deleted
+guard. Hash/disposition/category checks aggregate diagnostics before refusing: a
+changed hash alone cannot satisfy the required disposition assertion. No guard is
+exempt as redundant. Process custody supplied unchanged by existing helpers is an
+excluded dependency, not newly qualified here.
+
+| Guard | Plan reference / safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | S1a roster: Six unique manifest entries | PC-1 |
+| G-2 | S1a local C680: C680 UID comes from this compiled assembly | PC-2 |
+| G-3 | S1a local PTY: Exactly five locally compiled PTY core UIDs | PC-3 |
+| G-4 | S1a argument expansion: Signatures/expanded arguments equal the frozen roster | PC-4 |
+| G-5 | Baseline discovery: Actual built assembly/hash and real producer output | PC-5 |
+| G-6 | Baseline child completion: Successful complete discovery child required | PC-6 |
+| G-7 | Baseline discovery-only: Transport allows only owned assembly list-tests; no live admission | PC-7 |
+| G-8 | S1a gate coverage: Every detected gate has a disposition | PC-8 |
+| G-9 | S1a gate owner: Disposition has nonempty owner | PC-9 |
+| G-10 | S1a gate reason: Disposition has nonempty reason | PC-10 |
+| G-11 | S1a unique disposition: Exactly one disposition | PC-11 |
+| G-12 | CP-30 context: Owned commission context required | PC-12 |
+| G-13 | CP-30 lineage: Seed is ancestor of reviewed candidate | PC-13 |
+| G-14 | CP-30 Git objects: Every seed object/dependency must exist | PC-14 |
+| G-15 | CP-30 fixture identity: Seed fixture blob matches external context | PC-15 |
+| G-16 | CP-30 producer provenance: Frozen fixture producing source/build SHAs and assembly hashes validated | PC-16 |
+| G-17 | Baseline permitted delta: Seed range contains only inventory support/fixture edits | PC-17 |
+| G-18 | Baseline protected inputs: Seed policy/readers equal commissioned pre-S1 source | PC-18 |
+| G-19 | Candidate source binding: CP-1 rejects cross-source PTY export | PC-19 |
+| G-20 | Candidate build binding: CP-1 rejects wrong-build PTY export | PC-20 |
+| G-21 | Candidate run binding: CP-1 rejects another run's export | PC-21 |
+| G-22 | Candidate completion: CP-1 rejects pending/partial producer export | PC-22 |
+| G-23 | CP-30 actual AFTER: Fresh observed candidate categories, never seed plus expected tags | PC-23 |
+| G-24 | CP-30 policy hash: Independent valid before/after policy hashes equal | PC-24 |
+| G-25 | CP-30 reader bytes: All protected reader/dependency digests equal | PC-25 |
+| G-26 | CP-30 rc membership: Old rc required/excluded UID sets preserved | PC-26 |
+| G-27 | CP-30 nightly membership: Default nightly required/excluded sets preserved | PC-27 |
+| G-28 | CP-30 reasons: Disposition reason is compared, not merely UID sets | PC-28 |
+| G-29 | CP-30 owners: Disposition owner is compared independently | PC-29 |
+| G-30 | CP-30 all categories: Only six observed LiveClaude additions permitted | PC-30 |
+| G-31 | CP-30 old population: No removed/renamed old UID or changed expansion | PC-31 |
+| G-32 | CP-30 additive population: New required contract UIDs are explicitly enumerated | PC-32 |
+| G-33 | PTY remote links: Remote-control links removed before any sink | PC-33 |
+| G-34 | PTY screen content: Arbitrary captured screen/transcript content removed | PC-34 |
+| G-35 | PTY credentials: Credential-shaped values removed before output | PC-35 |
+| G-36 | PTY device codes: Device/authorization codes removed before output | PC-36 |
+| G-37 | PTY non-vacuity: API marker survives every success/assert/skip path | PC-37 |
+| G-38 | PTY success wiring: Live success/log sinks consume safe result | PC-38 |
+| G-39 | PTY assertion wiring: Assertion message sinks consume safe result | PC-39 |
+| G-40 | PTY skip wiring: Skip exception sinks consume safe result | PC-40 |
+| G-41 | PTY implicit rendering: Assertion actual values cannot render raw captured text | PC-41 |
+| G-42 | C680 sink wiring: C680 diagnostics/canary bypasses fail audit | PC-42 |
+| G-43 | C680 projection: Every diagnostic file sanitizes links/content before write | PC-43 |
+| G-44 | C680 non-vacuity: Diagnostic API emits and retains per-path marker | PC-44 |
+| G-45 | Receipt serializer: Receipt cannot copy raw payload fields | PC-45 |
+| G-46 | Summary serializer: Public summary cannot copy raw payload fields | PC-46 |
+| G-47 | Identifier sanitization: Untrusted CheckpointRunId cannot bypass projection | PC-47 |
+| G-48 | Evidence context: Scanner requires owned exact context | PC-48 |
+| G-49 | TRX presence/identity: Each marker must be under its exact case testId/UID | PC-49 |
+| G-50 | Receipt presence: Every expected case appears in actual serialized receipt | PC-50 |
+| G-51 | Summary presence: Every expected case appears in actual serialized public summary | PC-51 |
+| G-52 | Nonempty roster: Empty expected-case roster cannot pass vacuously | PC-52 |
+| G-53 | Required files: Missing required artifact refuses | PC-53 |
+| G-54 | Nonempty artifacts: Empty required artifacts refuse | PC-54 |
+| G-55 | Readable artifacts: Read/enumeration errors cannot mean clean | PC-55 |
+| G-56 | Recursive coverage: All files under completed rows are scanned | PC-56 |
+| G-57 | Decoded coverage: Encoded/ANSI/OSC sentinels cannot evade scan | PC-57 |
+| G-58 | Positive clean artifact: Console/HTML need no presence markers | PC-58 |
+| G-59 | TRX execution roster: Actual exact nonzero UID executions required | PC-59 |
+| G-60 | Console execution: Console requires nonzero execution summary | PC-60 |
+| G-61 | Evidence source binding: Completed artifacts match expected candidate source | PC-61 |
+| G-62 | Evidence build binding: Artifacts match exact verified producing build | PC-62 |
+| G-63 | Evidence run binding: Artifacts/markers match expected run and CP identity | PC-63 |
+| G-64 | Evidence producer completion: No scan credit before both hosts/rows complete | PC-64 |
+| G-65 | Active-run scan boundary: CP-29 excludes itself and does not demand final report early | PC-65 |
+| G-66 | Publication ordering: Scanner validates before GREEN publication | PC-66 |
+| G-67 | Final report binding: Outer wrapper validates full report after tool exit | PC-67 |
+| G-68 | Wait/join identity: 75 waits same run to terminal with no early publish/resubmit | PC-68 |
+| G-69 | Publication recovery: Context/read/serialization/publish failures prevent completed green | PC-69 |
+| G-70 | Earlier child failure: Scanner success cannot erase an executed Failed row | PC-70 |
+| G-71 | Raw child exit: Nonzero child exit cannot be green with all-passed artifacts | PC-71 |
+| G-72 | Real artifact gate wiring: RunPortableRows and live wrapper call same mandatory final scanner | PC-72 |
+| G-73 | S1a source recognition: An unrecognized live-gate source shape refuses inventory credit | PC-73 |
+
+### Positive controls
+
+These are post-land Mutation designs, not executed evidence. Code runs ordinary
+V/R; Review judges ordinary evidence and these controls before land. Every PC must
+run baseline / compiling break / named assertion-red / exact restore / green after
+land. Zero tests, compile/import errors and wrong-fixture refusals are not red.
+**Every payload is binding required after Code**: bind file/symbol/edit/hash, exact
+assertion, source pack and filter before execution. No bound payload is claimed here.
+
+In this table V-1/2/3/5/6/7/8 resolve to the one exact method filter in the V roster;
+therefore each cycle runs one method, never the class. G-n maps only to PC-n.
+For V-4 use only the exact FullCensusUnchanged command with its owned reviewed-source
+context. That command PC retains its independently bound BEFORE and real candidate
+scratch, not a comparator's fabricated expected side. Its refusal/diagnostic is the
+red oracle; command exit 2 is not confused with a TUnit build failure.
+
+| PC / guard | Break by this compiling defect | Exact method/command and case | Required red assertion |
+|---|---|---|---|
+| PC-1 / G-1 | Allow manifest Count=5 | V-1 / five | manifest.count == 6 and exact set equal |
+| PC-2 / G-2 | Accept manifest C680 without local lookup | V-1 / renamed | localC680Matches == 1 |
+| PC-3 / G-3 | Trust manifest PTY names without compiled join | V-2 / wrong-assembly | localPtyCoreSet == expectedFive |
+| PC-4 / G-4 | Collapse nodes by method before comparing | V-2 / extra-argument | expandedUidSet has no extra argument |
+| PC-5 / G-5 | Replace observed assembly hash with expected context value | V-2 / wrong-assembly-hash | observedAssemblyHash == boundBuildAssemblyHash |
+| PC-6 / G-6 | Accept parsed diagnostics despite nonzero child exit | V-2 / nonzero-exit | producerAccepted == false |
+| PC-7 / G-7 | Drop list-tests-only transport check | V-2 / run-not-list | launchCount == 0 |
+| PC-8 / G-8 | Ignore unmatched gate nodes | V-3 / new-gate | unmappedGateCount == 0 |
+| PC-9 / G-9 | Default empty owner as accepted | V-3 / missing-owner | invalidDispositionCount == 1 |
+| PC-10 / G-10 | Drop reason validation | V-3 / missing-reason | invalidDispositionCount == 1 |
+| PC-11 / G-11 | Take the first of two matching rows | V-3 / duplicate-disposition | ambiguousDispositionCount == 1 |
+| PC-12 / G-12 | Fall back to HEAD when context absent | V-4 / context-absent | exit=2 context-required before comparison |
+| PC-13 / G-13 | Skip merge-base ancestor predicate | V-4 / seed-nonancestor | exit=2 seed-not-ancestor |
+| PC-14 / G-14 | Read candidate file when seed object absent | V-4 / object-missing | exit=2 seed-object-missing |
+| PC-15 / G-15 | Trust fixture's self-stated digest | V-4 / fixture-blob | exit=2 fixture-binding |
+| PC-16 / G-16 | Skip producing-build provenance comparison | V-4 / producer-provenance | exit=2 producer-provenance |
+| PC-17 / G-17 | Ignore one unlisted changed file in seed range | V-4 / seed-unlisted-edit | exit=2 seed-range |
+| PC-18 / G-18 | Omit protected-input equality check | V-4 / prebase-drift | exit=2 baseline-drift |
+| PC-19 / G-19 | Ignore producer source SHA | V-1 / wrong-source | exportAccepted == false; reason=source-mismatch |
+| PC-20 / G-20 | Ignore producer assembly/build identity | V-1 / wrong-build | exportAccepted == false; reason=build-mismatch |
+| PC-21 / G-21 | Ignore producer run identity | V-1 / wrong-run | exportAccepted == false; reason=run-mismatch |
+| PC-22 / G-22 | Accept export before terminal producer receipt | V-1 / pending | exportAccepted == false; reason=producer-incomplete |
+| PC-23 / G-23 | Construct AFTER categories from seed plus LiveClaude | V-4 / remove-Integration | exit=2 category-delta |
+| PC-24 / G-24 | Read candidate policy for BEFORE too | V-4 / c680-exclusion | diagnostics contains policy-hash-changed AND C680-required-to-excluded |
+| PC-25 / G-25 | Drop changed reader from digest input list | V-4 / reader-edit | exit=2 reader-input-changed |
+| PC-26 / G-26 | Skip rc disposition comparison but still compute hashes | V-4 / c680-exclusion | diagnostics contains C680-required-to-excluded as well as hash change |
+| PC-27 / G-27 | Skip default-mode census comparison | V-4 / default-disposition | diagnostics contains nightly-disposition-changed |
+| PC-28 / G-28 | Omit reason field in canonical comparison | V-4 / reason-edit | diagnostics contains disposition-reason-changed |
+| PC-29 / G-29 | Omit owner field in canonical comparison | V-4 / owner-edit | diagnostics contains disposition-owner-changed |
+| PC-30 / G-30 | Normalize away all category fields | V-4 / tag-seventh | exit=2 category-delta |
+| PC-31 / G-31 | Intersect populations before comparison | V-4 / remove-old-uid | exit=2 old-membership-changed |
+| PC-32 / G-32 | Allow every candidate-only UID | V-4 / unknown-new-uid | exit=2 undeclared-new-uid |
+| PC-33 / G-33 | Make remote-link projection return raw URL | V-5 / link | payloadHasSentinel == false |
+| PC-34 / G-34 | Copy raw screen into otherwise safe metadata | V-5 / screen | payloadHasScreenSentinel == false |
+| PC-35 / G-35 | Bypass credential redaction for synthetic capture | V-5 / credential | payloadHasCredentialSentinel == false |
+| PC-36 / G-36 | Preserve deviceCode in safe projection | V-5 / device | payloadHasDeviceSentinel == false |
+| PC-37 / G-37 | Return empty event including marker | V-5 / suppress-all | actualSinkHasCaseMarker == true |
+| PC-38 / G-38 | Restore raw SnapshotScreen console interpolation | V-6 / raw-console | unprotectedSuccessSinkCount == 0 |
+| PC-39 / G-39 | Restore raw screen assertion message | V-6 / raw-assertion | unprotectedAssertionSinkCount == 0 |
+| PC-40 / G-40 | Restore raw screen SkipTestException text | V-6 / raw-skip | unprotectedSkipSinkCount == 0 |
+| PC-41 / G-41 | Use raw screen as Shouldly actual with safe custom message | V-6 / raw-actual | rawAssertionOperandCount == 0 |
+| PC-42 / G-42 | Write original value instead of sanitized value at Write | V-7 / raw-file | unprotectedC680SinkCount == 0 and file sentinel absent |
+| PC-43 / G-43 | Make shared sanitizer identity in diagnostics path | V-7 / diagnostics | allDiagnosticFilesSentinelFree == true |
+| PC-44 / G-44 | Suppress C680 diagnostic event/marker entirely | V-7 / suppress-marker | allDiagnosticCasesHaveMarker == true |
+| PC-45 / G-45 | Serialize original event instead of safe projection | V-7 / receipt | receiptSentinelFree == true |
+| PC-46 / G-46 | Build summary from raw input event | V-7 / summary | summarySentinelFree == true |
+| PC-47 / G-47 | Allow arbitrary CheckpointRunId string into serialized field | V-7 / unsafe-run-id | unsafeRunIdRejectedOrProjected == true |
+| PC-48 / G-48 | Default missing context to ambient latest run | V-8 / context-absent | exit=2 evidence-sanitization; publicationCount=0 |
+| PC-49 / G-49 | Search whole TRX text instead of joined result | V-8 / wrong-test-id | exit=2 evidence-sanitization |
+| PC-50 / G-50 | Skip receipt marker validation | V-8 / receipt-marker-missing | exit=2 evidence-sanitization |
+| PC-51 / G-51 | Skip summary marker validation | V-8 / summary-marker-missing | exit=2 evidence-sanitization |
+| PC-52 / G-52 | Remove nonempty case-roster check | V-8 / zero-case | exit=2 evidence-sanitization |
+| PC-53 / G-53 | Continue on missing required TRX | V-8 / missing-trx | exit=2 evidence-sanitization |
+| PC-54 / G-54 | Treat zero-byte required artifact as clean | V-8 / empty-receipt | exit=2 evidence-sanitization |
+| PC-55 / G-55 | Catch read error and continue scanning | V-8 / unreadable-file | exit=2 evidence-sanitization |
+| PC-56 / G-56 | Replace recursive enumeration with top-level filenames | V-8 / nested-sentinel | exit=2 evidence-sanitization |
+| PC-57 / G-57 | Scan only raw text and omit normalization/decoding | V-8 / encoded-sentinel | exit=2 evidence-sanitization |
+| PC-58 / G-58 | Require marker text in Normal console or HTML | V-8 / banner-only | clean fixture exit == 0 |
+| PC-59 / G-59 | Accept summary Passed with zero executed nodes | V-8 / zero-results | exit=2 evidence-sanitization |
+| PC-60 / G-60 | Drop console nonzero-summary check | V-8 / zero-summary | exit=2 evidence-sanitization |
+| PC-61 / G-61 | Ignore source SHA mismatch | V-8 / stale-source | exit=2 evidence-sanitization |
+| PC-62 / G-62 | Ignore build-source stamp mismatch | V-8 / stale-build | exit=2 evidence-sanitization |
+| PC-63 / G-63 | Ignore run/CP identity when accepting artifacts | V-8 / cross-run | exit=2 evidence-sanitization |
+| PC-64 / G-64 | Treat Running row with files as terminal | V-8 / producer-running | exit=2 evidence-sanitization |
+| PC-65 / G-65 | Require overall report.json while CP-29 is running | V-8 / report-not-yet-written | completed producer fixture accepted before overall report exists |
+| PC-66 / G-66 | Publish green before invoking scanner | V-8 / scanner-red | publicationCount == 0 |
+| PC-67 / G-67 | Skip terminal report/source validation | V-8 / final-report-mismatch | greenPublicationCount == 0 |
+| PC-68 / G-68 | Treat first 75 as terminal success | V-8 / wait75 | starts == 1; publicationCountBeforeTerminal == 0 |
+| PC-69 / G-69 | Swallow final write fault and retain green status | V-8 / write-fault | greenPublicationCount == 0; completedGreenFileAbsent |
+| PC-70 / G-70 | Set verdict Green after clean scan regardless of child rows | V-8 / failed-missing-setup | failedRowRetained == true; greenPublicationCount == 0 |
+| PC-71 / G-71 | Ignore raw child exit while accepting terminal Passed | V-8 / nonzero-exit | greenPublicationCount == 0 |
+| PC-72 / G-72 | Remove post-row scanner invocation from wrapper | V-8 / scanner-not-called | scannerCallCount == 1 before any publish |
+| PC-73 / G-73 | Ignore an unrecognized gate construct instead of recording unresolved coverage | V-3 / unknown-shape | unresolvedGateCount == 1; inventoryAccepted == false |
+
+PC-24 and PC-26 additionally execute the main plan's **input mutation** cycle: edit
+an owned actual candidate policy to add a valid C680 rc exclusion, recompute its
+stated policyHash with its actual reader, run the exact command, require BOTH named
+diagnostics, restore policy and require green. PC-23/30 similarly remove actual
+Integration metadata or tag a seventh UID in the candidate scratch input, preserving
+its provenance as an explicitly marked mutant. Do not mutate expected outputs.
+SourceLanding keeps reviewed source/seed objects and metadata in its bound pack;
+these command PCs use that reviewed history, not a later or rebased master checkout.
+No snapshot commits/pushes or policy edits to the real branch occur during Mutation.
+
+PC-33..37 each run V-5 with all startup/submit/C514 success/assertion/skip cases; the
+identity-sanitizer control is PC-33 plus PC-34's required binding variant. They must
+also scan **that exact method's completed** real TRX/console/HTML/files through the
+same CompletedRows library, with a one-method marker roster and its actual serialized
+receipt/summary. No CP-26 or unrelated markers are required in a method-scoped PC.
+PC-43/44 do the same for V-7. The scanner must show sentinel-present or marker-missing;
+a test output suppressed by Normal console never counts as missing TRX evidence.
+These required post-run checks add no test host/build and have their own retained
+exit/scan records. Ordinary CP-29 exercises both complete producer rows.
+
+Variant binding rules: PC-38/39/40 bind at least one real call-site mutation per
+startup, submit and C514 family (three cycles per PC); PC-42 binds C680 Console,
+assertion message, skip message, Write and Append (five cycles). PC-57 binds JSON, XML, ANSI-split and OSC-8 decoding
+separately (four cycles). PC-69 binds context write, artifact read, receipt write,
+summary write and final publication faults separately (five cycles). PC-16 binds
+producing source and producing build mismatches separately (two cycles). PC-71
+binds raw exit 1/2/3/8 as internal ordinary cases; one guard-deletion cycle runs all
+four with completely passing terminal artifacts. All other PCs have one cycle.
+Independent field/sink guards added during Code require additional G/PC rows; do
+not hide them in an uncounted variant. No untested guard is silently accepted.
+
+CP-30's contract driver first checks the actual bound commission, then runs its
+ordinary negative matrix against owned copies through the same comparison library.
+Each negative checks the typed exit/reasons and comparison-stage observation; the
+healthy companion reaches that same stage. The driver succeeds only when the actual
+commission passes and all internal expected refusals occur. A guard-deletion mutant
+therefore makes a named expected-refusal assertion fail (contract-driver exit 1).
+An external candidate-input mutant instead makes the actual comparison refuse
+(exit 2 with the required diagnostics). Keep those two kinds of red distinct.
+Do not stop at the first changed hash: the policy/reader/category/disposition
+diagnostics needed by independent PCs are computed before refusal.
+
+For missing/empty/unreadable artifacts, bind the PC at the artifact validator's
+actual acceptance boundary: the defect marks that artifact verified and bypasses
+its dependent parse/marker checks. Deleting only an early check while a later parse
+still refuses is not an adequate payload for that boundary. The negative case has
+all other files, rows, markers and provenance valid. For individual marker/identity
+PCs, every artifact is present, readable and well-formed. Record which boundary was
+entered and the exact reason; no generic nonzero result is enough.
+
+### Out of scope
+
+- S1b admission/classifier implementation, S1c executable/profile/startup/delivery
+  changes, native CP-4..7/21, S2+ fingerprints/reuse/signing/enforcement and both rot
+  tests. S1c-sanitization integrates the existing wrapper's output boundary only.
+- Full or rc qualification, master readiness, release credit, live prompts and
+  credentials. Historical baseline discovery is not execution evidence. A safe
+  artifact is not proof of delivery, provider availability or a successful test.
+- Native custody qualification and host-death recovery; local test process seams
+  cannot prove them. Production queue paths and their busy/eligible recipients are
+  unchanged, so no real-queue test is substituted by an artifact test.
+- Whole-file hashes as permanent regression tests. CP-30's historical inputs live
+  only in its commission context. Unrelated future master edits are not regressions.
+- A change to checkpoint console verbosity. Normal output is intentionally supported.
+
+### Implementation commissions
+
+Each row is a separate 30–60 minute **authoring** commission, excluding build/slot
+time, required red/green runs and later Review/Mutation. Preserve the main plan's
+order. Commit and push the failing witness before its fix, and every meaningful
+slice before a long run. No source edits while a run is in flight.
+
+| Commission | Authoring estimate | Concrete implementation steps and completion boundary |
+|---|---:|---|
+| S1a-baseline | 45–60 min | Add untagged manifest, manifest library/wrapper and the two local roster methods; bind real row-owned discovery adapter. Commit red witness, capture CP-27/28, bind six actual UIDs, fix and obtain green. Freeze merged expected-input fixture/provenance in a separate seed commit and push; externally bind that SHA. No policy/reader/tag edits. |
+| S1a | 45–60 min | Add EveryLiveGateHasDisposition, exact six LiveClaude method tags and CP-30 command/fixture checks. Commit reachable red witnesses; add context/export validation and independent Git BEFORE/actual AFTER comparison; run CP-25 then CP-1 then CP-30. Retain actual candidate metadata and reviewed seed pack for later Mutation. |
+| S1c-sanitization | 45–60 min | Add shared sanitizer, route existing selected canary/diagnostic sinks, implement the four caller/scanner tests and two script files, integrate actual wrapper serializers/post-run gate. Commit raw-sink/identity/suppress-all red witnesses before fixes. Run only CP-20/26/29 through RunPortableRows; preserve child facts and final report gate. |
+
+The sanitization commission needs the separately owned S1b wrapper and S1c caller
+seams to be present at its assigned source. If absent, retain the design and dispatch
+after those dependencies land; do not reimplement them under this scope. If a seam
+cannot expose the specified sink/recipient evidence, return `next: plan` with that
+exact gap. No operator decision is needed for the provider-free fixtures.
+
+### Performance budget
+
+R1–R9 apply; all new estimates are provisional under CARD-1545/CARD-1404. Nearest
+main-plan Antiphon.Tests build sample is 509.43 s (n=1); it is not a p95. No comparable
+PTY portable sample exists. Collect the first three naturally commissioned runs,
+then calibrate near 2x observed p95 without buying extra runs solely for statistics.
+Keep failed history and rerun costs. Do not label a timeout allowance as a measurement.
+
+Expected build allocations are 8 minutes for Antiphon.Tests and 5 for Pty.Tests.
+Inventory discovery target is <=60 seconds per assembly, one capture per roster
+method invocation, not per matrix case. Other method bodies target <=30 seconds;
+read-only source and fixture setup is shared once per assembly. No DB/container or
+web-host setup. Per-case temp roots are justified only for isolation/corruption
+subjects. Commands target <=60 seconds each, with Git/file/process waits bounded
+individually and cleanup <=15 seconds inside the command deadline.
+
+Checkpoint timeout refinement uses the supported imported YAML, not new tool flags:
+`build.slotWaitMinutes: 5`, `timeouts.rowMinutes: 16`, `parallel.maxRows: 1`,
+TUnit `checkpoints[].timeoutMinutes: 3`, command rows `timeoutMinutes: 1`.
+The existing build deadline floor is 16 minutes; record that as the CARD-1404
+provisional exception for PTY instead of silently pretending the planned 12-minute
+PTY cap is effective. The group total execution limit is 26 minutes, hard wall
+29 minutes; it can truthfully stop a later row before both build maxima are spent.
+The final-green groups estimate 16/17/17 minutes. A slot timeout is not run, never
+permission to bypass the slot. No timeout is widened automatically after red.
+
+Record per-test/variant source, run/CP, host/platform/category, selected/actual UID
+roster, slot wait, restore/build, discovery, Git materialization, process startup,
+exit/drain, file read/write/decode, body, scan/publication and teardown. Keep unknown
+spans null plus remainder; infrastructure not used is N/A. Retain unedited CHECKPOINT
+lines, TRX and phase logs in ignored evidence. No raw fixture text in refusal messages.
+Any measured/expected run or batch >30 minutes requires Debug timing/cost analysis
+with exact filters and evidence before repetition, including combined red+green and
+the PC battery cost below. It does not authorize dropping cases or broad retesting.
+
+### Checkpoints
+
+This is the complete ordinary closed list for this companion. Import this file,
+not similarly numbered rows in another companion. Eight rows, six isolated builds,
+**nine TUnit executions, seven distinct methods, two commands**. Each row has one
+build identity and one exact filter; Min counts executions only. Case loops and
+discovered live UIDs are not executed tests. Both assemblies and all rows are serial.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-27 | S1a-baseline | tests/Antiphon.Tests -> bin-live-inventory-base/ | portable-live-c680-baseline | /*/Antiphon.Tests.Scripts/LiveLaneInventoryTests/ExactCoreRoster | V-1, R-1 | ExactCoreRoster; exactly 1 passed, 0 failed/skipped; actual complete local discovery retained | 1 | 10 | true |
+| CP-28 | S1a-baseline | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-inventory-base/ | portable-live-pty-baseline | /*/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests/ExactPtyCoreRoster | V-2, R-1 | ExactPtyCoreRoster; exactly 1 passed, 0 failed/skipped; actual complete local discovery retained | 1 | 6 | true |
+| CP-25 | S1a | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-inventory/ | portable-live-pty-inventory | /*/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests/ExactPtyCoreRoster | V-2, R-1 | ExactPtyCoreRoster; exactly 1 passed, 0 failed/skipped; bound fresh five-UID export | 1 | 6 | true |
+| CP-1 | S1a | tests/Antiphon.Tests -> bin-live-inventory/ | portable-live-inventory | /*/Antiphon.Tests.Scripts/LiveLaneInventoryTests/* | V-1, V-3, R-1, R-2 | ExactCoreRoster,EveryLiveGateHasDisposition; exactly 2 passed, 0 failed/skipped; completed CP-25 consumed | 2 | 10 | true |
+| CP-30 | S1a | n/a | portable-live-commission-census | pwsh -NoProfile -File scripts/test-live-lane-manifest.ps1 -Case FullCensusUnchanged | V-4, R-2, R-3 | exit 0; actual bound comparison and every named ordinary negative assertion pass; valid C680 exclusion/restated hash and category removal refuse in scratch; no-context refuses | n/a | 1 | true |
+| CP-20 | S1c-sanitization | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-evidence/ | portable-live-pty-evidence | /*/Antiphon.Agents.Pty.Tests/LiveClaudeEvidenceWiringTests/* | V-5, V-6, R-4, R-5 | EvidenceIsSanitized,CanarySinksCannotBypassSanitizer; exactly 2 passed, 0 failed/skipped | 2 | 6 | true |
+| CP-26 | S1c-sanitization | tests/Antiphon.Tests -> bin-live-evidence/ | portable-live-c680-evidence | /*/Antiphon.Tests.Scripts/LiveLaneEvidenceTests/* | V-7, V-8, R-4..7 | C680EvidenceIsSanitized,ArtifactGateRequiresPresence; exactly 2 passed, 0 failed/skipped | 2 | 10 | true |
+| CP-29 | S1c-sanitization | n/a | portable-live-completed-artifacts | pwsh -NoProfile -File scripts/test-live-lane-evidence.ps1 -Case CompletedRows | V-9, R-4..7 | exit 0; completed bound CP-20/26, exact-test TRX and receipt/summary case markers, recursive sentinel absence, nonzero console summaries | n/a | 1 | true |
+
+Bootstrap/import the checkpoint tool through the host build-slot gate; charge it
+separately. Example import (no test execution):
+
+```text
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label s1a-evidence-tool -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-s1a-evidence-tool/ -- import --plan docs/superpowers/plans/2026-10-31-card-1545-s1a-sanitization-test-design.md --out .antiphon/s1a-sanitization-checkpoints.yaml
+```
+
+Record the actual built tool DLL path/hash; subsequent wrapper invocations call that
+DLL directly, without another implicit build or outer held slot. Apply only the
+timeout/scheduling refinements above to the ignored imported manifest; retain its
+digest. The manifest wrapper creates ANTIPHON_LIVE_PORTABLE_CONTEXT and runs just
+S1a-baseline or S1a; the evidence wrapper's RunPortableRows creates
+ANTIPHON_LIVE_EVIDENCE_CONTEXT and runs just S1c-sanitization. Bind expected committed
+SHA, result root, run/row IDs, case roster and output paths, pass context only to the
+child, and wait the same run until terminal (not 75). The wrapper itself takes no slot.
+Use `--after <slice> --expected-source-sha <sha> --serial --total-timeout 26m
+--hard-wall-timeout 29m` on the tool's manifest run. Direct CP-29/30 without context
+refuses; neither can silently omit final validation.
+
+Code must bind exact producer metadata/export paths against real checkpoint receipts,
+not environment guesses. CP-27 precedes CP-28 as in the plan; only the post-group
+merger requires both. CP-25 precedes consuming CP-1. CP-29 reads only completed
+CP-20/26 state/CHECKPOINT/build-source and row files; after tool exit the outer wrapper
+validates complete report/provenance. Keep every ordinary and expected-red receipt;
+no final report is invented while its row is executing. Delete owned bin-* output
+directories after evidence retention; generated TRX/JSON/HTML/logs remain ignored.
+Code/Review run check-evidence-diff.ps1 over their actual base..HEAD.
+
+### Cost
+
+All figures are **estimated**, excluding authoring and unknown slot waits. Ordinary
+V/R floor (Code) = sum of CP EstimatedMinutes = **10+6+6+10+1+6+10+1 = 50 minutes**:
+three Antiphon.Tests builds x8 + three PTY builds x5 = 39 build minutes, plus 11
+execution minutes. Floors per commission: baseline 16, S1a 17, sanitization 17.
+Three tool setup/import allowances x2 = **6 minutes**. Required pre-fix red runs of
+the same closed groups allocate another **50 minutes**, with every rerun charged.
+Code estimated machine total = **6 + 50 red + 50 green = 106 minutes**.
+
+PC floor (Mutation): **73 controls / 96 cycles**, including the explicitly counted
+binding variants and additional input-mutation cycles above. Each TUnit cycle has
+three fresh method-scoped builds/runs (baseline, red, restored green), 1 minute for
+its method, 0.1 minute post-run artifact scan, and 0.7 minute total restore/binding
+bookkeeping. Thus PTY = 3x(5+1+0.1)+0.7 = **19 minutes/cycle**; Antiphon.Tests =
+3x(8+1+0.1)+0.7 = **28 minutes/cycle**. Command cycles have no build/discovery:
+3x1 minute plus 0.5 restore/binding = **3.5 minutes/cycle**. Payload authoring and
+additional Mutation tool setup remain unmeasured extra work, not free execution.
+
+| Exact method filter / command | Cycles | Estimated PC minutes |
+|---|---:|---:|
+| /*/Antiphon.Tests.Scripts/LiveLaneInventoryTests/ExactCoreRoster | 6 | 168 |
+| /*/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests/ExactPtyCoreRoster | 5 | 95 |
+| /*/Antiphon.Tests.Scripts/LiveLaneInventoryTests/EveryLiveGateHasDisposition | 5 | 140 |
+| pwsh -NoProfile -File scripts/test-live-lane-manifest.ps1 -Case FullCensusUnchanged | 22 | 77 |
+| /*/Antiphon.Agents.Pty.Tests/LiveClaudeEvidenceWiringTests/EvidenceIsSanitized | 6 | 114 |
+| /*/Antiphon.Agents.Pty.Tests/LiveClaudeEvidenceWiringTests/CanarySinksCannotBypassSanitizer | 10 | 190 |
+| /*/Antiphon.Tests.Scripts/LiveLaneEvidenceTests/C680EvidenceIsSanitized | 10 | 280 |
+| /*/Antiphon.Tests.Scripts/LiveLaneEvidenceTests/ArtifactGateRequiresPresence | 32 | 896 |
+
+PC floor = **21 PTY cycles x19 + 53 Antiphon.Tests cycles x28 + 22 command cycles
+x3.5 = 1,960 minutes**. Total machine floor including required pre-fix runs =
+**6 setup + 39 ordinary builds + 11 ordinary V/R + 50 red + 1,960 PC = 2,066 minutes**.
+Final-green Code plus Mutation subtotal, excluding pre-fix history, is 2,016 minutes.
+
+**Debug timing/cost analysis is mandatory before commissioning the combined PC
+battery or repeating combined red+green groups over 30 minutes.** Separate 16/17/17
+minute final-green groups remain the Code closed lists. This large PC cost is explicit;
+it cannot be hidden by calling each cycle a different batch. A later qualified timing
+task may establish safe build reuse/batching; this design assumes none. Build reuse
+savings = **0 minutes**, because baseline/tagging/sanitization have distinct source
+identities and both caller assemblies must compile. PC reuse savings = **0 minutes**
+until qualified; no numerical Full-suite savings are claimed without comparable data.
+
+### Completion and handoff
+
+Design audit: **guards=73, mapped=73, missing=0, duplicate PC maps=0**. All 73 PCs
+and all 96 cycles are mandatory in post-land Mutation; **executed here=0**. Payloads,
+actual UIDs, context schemas/paths, seam symbols and assertion bindings remain
+**binding required after Code**, not silently promoted to executable packs. Before
+Mutation handoff closes, all PCs must have break/red/restore/green evidence.
+
+This task performs documentation inspection and static audits only: builds=0,
+tests=0, ordinaryScopeCompleted=None; no execution/source-clean certificate claimed.
+Next is Code: S1a baseline preparation then S1a tagging/comparison, and a separate
+S1c-sanitization commission after its owned caller/wrapper prerequisites. The
+provider-free work is already authorized; provisional operator decisions stay open.
