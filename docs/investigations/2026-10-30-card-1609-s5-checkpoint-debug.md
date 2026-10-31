@@ -396,3 +396,47 @@ Final plan re-import succeeded (16 rows). Its CP-3 57-minute derived-default war
 next: code
 handoff: Finish S5 J7/J8/J10 and N1-N3 from this pushed tip; retain all count floors and requalify the affected rows.
 artifact: /work/worktrees/task-a2935adb/docs/investigations/2026-10-30-card-1609-s5-checkpoint-debug.md
+
+## Continuation cdf3cde4: Close and updated collection budget (2026-10-31)
+
+The new public Close witness preserves the original J8 crash/resume matrix. At
+`1b71ab92db8e6159dbb9b50bbe14c255319af05b`, CLOSE-RED executed 1/0/1/0:
+the actual public command reported Closed while its container census failed.
+Its method took 342.433 s; compiler 383.28 s. This is assertion red, not a
+fixture/build failure. The Close script was unchanged from the assigned base.
+
+At `eaffae9ce630db7d7e7cb46bf96fce485bcadf6f`, CLOSE-GREEN executed 3/2/1/0.
+J8 passed in 474.235 s, including a 71.400 s public-command matrix, 18 refusal
+vectors, actual FD-8 contention, failed-flush recovery, idempotency and older
+operation/delegated closure. The literal-transport method passed in 2.038 s.
+The portable authority method failed in 6.678 s because its nested PowerShell
+`-Command` did not forward `$LASTEXITCODE`; the typed refusal was correct. The
+fixture now forwards that exit, retaining the exact assertion. The historical
+3/2 result remains red. All runs used granted host slots and clean verified builds.
+
+The new Close driver has a provisional 120 s collection bound, separate from
+existing 30 s crash/resume helper bounds. Its first complete measurement was
+71.400 s; individual public-call and Docker CLI timings are retained in
+`.antiphon/cdf-close-green-phases/close-calls-31048.json` (188 CLI calls). Normal
+successful Close calls took 6.007/6.084 s. These small samples do not establish
+population p95. Retain up to five normal S5/Review samples under CARD-1609 and
+CARD-1404/1514; do not replay green rows solely to collect samples.
+
+The strengthened J10 normal method measured 115.490 s versus the predecessor's
+85.875 s. The J8 increment above is 131.802 s; together the measured increments
+are 161.417 s. For the next complete 25-method CP-3 collection, increase its
+provisional cap from 22 to **28 minutes**: 22 plus the rounded-up 2x incremental
+cost (6 minutes). The predecessor's complete CP-3 run charged about 1180.845 s
+outside its producing build, giving an incremental estimate near 1342 s before
+unmeasured common lifecycle overhead. Full current-row p95 remains unknown.
+Keep the original 25 floor/filter, a separate producing-build measurement, and
+a 30-minute charged group cap. Other Debug row caps remain unchanged. This is
+bounded collection justified by new measured work, not an inherited timeout
+relabeled green or a claim of 2x population p95.
+
+N1 alone passed 1/1/0/0 at `38867c76ee570e435b16a89c30929a61ca6039cd`:
+setup 27.052 s, native body 56.909 s, method 83.994 s, test-host wall 86.204 s.
+The native session recorded owned cleanup absent. CP-10 retains its 8-minute
+cap; N1 does not justify raising it. Requalification remains separate from these
+focused measurements. Public manual Preview/Apply and strict v2 publication/
+transport acceptance remain incomplete; production deletes remain disabled.

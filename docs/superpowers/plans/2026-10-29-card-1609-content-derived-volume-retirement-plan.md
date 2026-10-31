@@ -1203,12 +1203,19 @@ normal S5/Review samples under CARD-1609 rather than repeating green groups.
 
 2026-10-30 completed Debug measurement supersedes those collection caps for the next normal run: CP-3=22m, CP-4=5m, CP-8=17m, CP-9=30m. The table estimates below now use observed execution, with the shared build charged to CP-3. These are provisional rounded 2x single-row proxies, adjusted upward by measured replacement-method cost after the final repairs; they are not population p95. CP-3 still measures 22 present methods and must be re-budgeted when J7/J8/J10 are added. Preserve all original filters/floors. Export these caps explicitly after import; importer 3x defaults are not the execution budget. Split future qualification into measured groups below 30 minutes, accounting for each isolated build, and retain this commissioned Debug record before any long selection.
 
+2026-10-31 continuation cdf3cde4 measures the expanded J8 Close matrix and
+strengthened J10. The Debug record above now pins the next CP-3 collection to
+28 minutes, with a provisional 27-minute estimate including its producing build;
+its full current-row p95 remains unknown. Keep all 25 methods and every other
+filter/floor. Use a 30-minute charged group bound, preserve the 3/2 Close repair
+run as red, and retain exact source/build receipts for the remaining rows.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
 | CP-2 | S1 | CP-1 | linux-receipt-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementReceiptTests/Preview_receipt_is_required_and_consumed` | J1 baseline | 1 executed, intended no-deletion assertion failure | 1 | 1 | true |
 | CP-14 | S1 | CP-1 | linux-private-origin-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof` | H7 baseline | 1 executed, intended publication-admission assertion failure; real base path reached | 1 | 1 | true |
-| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C14,J1-J10,H7 | all 25 listed methods, 0 failed/skipped | 25 | 19 | true |
+| CP-3 | S2-S5 | `tests/Antiphon.Tests -> bin-c1609-final/` | linux-content-receipt | `/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)\|(VolumeRetirementReceiptTests*)/*` | C1-C14,J1-J10,H7 | all 25 listed methods, 0 failed/skipped | 25 | 27 | true |
 | CP-4 | S2-S5 | CP-3 | linux-host-wrapper | `/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)/*` | H1-H6,W1-W6 | all 12 listed methods, 0 failed/skipped | 12 | 3 | true |
 | CP-5 | S2-S5 | CP-3 | linux-git-core | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R3 | all 30 argument results, 0 failed/skipped | 30 | 1 | true |
 | CP-6 | S2-S5 | CP-3 | linux-git-locations | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/C1105_Git_audit_hidden_locations` | R4 | all 132 location results, 0 failed/skipped | 132 | 3 | true |
