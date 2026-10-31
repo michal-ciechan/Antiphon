@@ -248,15 +248,19 @@ public sealed partial class PipelineSpeedIntegrationTests
         var foundation = Array.FindIndex(migrations, m => m.EndsWith("_AddPipelineSpeedFoundation"));
         foundation.ShouldBeGreaterThan(0);
         await db.GetService<IMigrator>().MigrateAsync(migrations[foundation - 1]);
-        var owner = await db.AgentTasks.SingleAsync(t => t.Id == w.Owner.Id);
-        owner.Result = "retained report\r\nwith exact bytes";
-        var old = new StageOutcome { Id = Guid.NewGuid(), StageTaskId = owner.Id,
+        var ownerId = w.Owner.Id;
+        const string report = "retained report\r\nwith exact bytes";
+        // The rolled-back schema predates current AgentTask columns. Touch only legacy columns.
+        (await db.AgentTasks.Where(t => t.Id == ownerId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Result, report))).ShouldBe(1);
+        (await db.AgentTasks.Where(t => t.Id == ownerId).Select(t => t.Result).SingleAsync()).ShouldBe(report);
+        var old = new StageOutcome { Id = Guid.NewGuid(), StageTaskId = ownerId,
             Detail = "historical Found", CostUsd = 12.34m, RecordedAt = DateTime.UtcNow };
         db.Add(old);
         await db.SaveChangesAsync();
         await db.GetService<IMigrator>().MigrateAsync();
         db.ChangeTracker.Clear();
-        (await db.AgentTasks.SingleAsync(t => t.Id == owner.Id)).Result.ShouldBe("retained report\r\nwith exact bytes");
+        (await db.AgentTasks.SingleAsync(t => t.Id == ownerId)).Result.ShouldBe("retained report\r\nwith exact bytes");
         var retained = await db.StageOutcomes.SingleAsync(o => o.Id == old.Id);
         retained.Detail.ShouldBe("historical Found"); retained.CostUsd.ShouldBe(12.34m);
         var correction = Populated<ReviewEvidenceCorrection>();
