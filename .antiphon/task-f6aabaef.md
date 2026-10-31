@@ -1,7 +1,7 @@
-Implementation is pushed; final verification is BLOCKED by the wall limit while waiting for a host build slot: five tests passed, CP-6/7/8 did not execute.
+Implemented and verified: the read-only stopped-run seed builder and acknowledged cross-candidate ordering passed all eight checkpoint rows from one fresh build; the complete receipt and every row validate SOURCE VALID. Ready for ordinary Review.
 
 Assigned branch: feat/card-task-f6aabaef. Base: e805b7848ae1cc1fe00c9d6f7ccb6e21b0ababc3.
-Final implementation/build source: 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc. Report publication follows separately.
+Implementation/test source: 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc. Complete reopened checkpoint source: 60318acc795876686caba65e9a3c39ee0bec7899 (only report/plan commits follow the implementation). Report publication follows separately.
 Standing caller authority covered this work; I proceeded without requesting additional approval.
 
 Implementation
@@ -37,7 +37,7 @@ Independent guard controls (each changed only its named guard, ran the named har
 | Drop public run-wrapper acknowledgement splat | PublicHopsForwardAcknowledgement | killed after witness repair |
 | Bypass 14-day age guard | InvalidSeedFallsBack | killed |
 
-These are portable diagnostic mutation controls, not post-land SourceLanding Mutation credit. The first six ran in a 36s gated lease; coordinator control held 24s. The last two ran red then restored green in a 26s lease. Restored cases have historical ordinary coverage; latest-source CP-6/7/8 remain owed.
+These are portable diagnostic mutation controls, not post-land SourceLanding Mutation credit. The first six ran in a 36s gated lease; coordinator control held 24s. The last two ran red then restored green in a 26s lease. At the earlier settlement, restored cases had historical ordinary coverage and latest-source CP-6/7/8 remained owed. The complete reopened run below closes that gap.
 
 Historical checkpoint 20261031-100310-d7e1 at be134adf2c33b328a43fa15c4349dc061d9e0f76: 8 executed / 8 passed / 0 failed / 0 skipped, one isolated bin-f6-seed-green1 build; source validation passed; wall 562.226s, execution 562.217s, admission-only 0.009s; build phase 339.266s. Compiler: 0 errors / 1425 warnings. This is retained historical evidence, superseded for final acceptance below.
 
@@ -54,17 +54,17 @@ Run 20261031-103312-2cff at 3070e34816cad1c826f85fd0545591517a9e41e0 was deliber
 
 Run 20261031-103902-c159 at 5a9073c3dcd2e5eea0a3d9dd24e0ed8bacd04517 was also deliberately stopped and joined before the snapshot-witness repair. Compiler output was 0 errors / 1425 warnings, 4m22.70s; the run never reached a test row or valid receipt. Admission was 195s. Do not credit this as a passing qualification.
 
-Final byte-witness repair: the snapshot's original array expression grouped the file list as one nested array rather than hashing every file independently. 9e296e2d8 committed a negative control that changes existing owner.json bytes while preserving its mtime and then restores both. BuilderReadOnly was assertion RED at that source, after 150s slot wait / 10s held. 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc flattens the item list and hashes every file. Final CP-1 below is the acceptance proof; earlier read-only witness outcomes remain historical.
+Final byte-witness repair: the snapshot's original array expression grouped the file list as one nested array rather than hashing every file independently. 9e296e2d8 committed a negative control that changes existing owner.json bytes while preserving its mtime and then restores both. BuilderReadOnly was assertion RED at that source, after 150s slot wait / 10s held. 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc flattens the item list and hashes every file. CP-1 in the complete reopened run below is the acceptance proof; earlier read-only witness outcomes remain historical.
 
 After all producers/clients for the obsolete bin-f6-seed-green1/2/3/4 roots were stopped or completed, their exact literal paths were inventoried and removed: 8266 hash-verified files / 1411 directories. Inventory is .antiphon/f6-prior-output-cleanup-inventory.json. This avoided scanning unused compiler trees in the last fresh build. No source, live run or foreign output was deleted.
 
-Final run 20261031-105745-2c7c at 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc: 5 tests executed / 5 passed / 0 assertion failures / 0 TUnit skips. CP-1..5 passed (read-only bytes/mtimes, case-distinct mapping, acknowledgement, hash, Timeout). CP-6 never acquired its slot and CP-7/8 never started. Tool rows: 5 green / 1 red admission / 2 skipped-not-run. Terminal exit 5, hard-wall-deadline-exceeded. The fresh bin-f6-seed-green5 build completed with 0 errors / 1425 warnings; build phase 405.286s. Wall 961.387s, execution 521.538s, admission-only 439.849s. CP-6 waited 244s. The final CLI used a 16m hard wall (narrowed to respect the remaining task budget), 24m execution allowance and 12m row/build bounds; the hard wall expired while execution allowance remained. No unleased retry or timeout widening occurred.
+Previously incomplete run 20261031-105745-2c7c at 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc: 5 tests executed / 5 passed / 0 assertion failures / 0 TUnit skips. CP-1..5 passed (read-only bytes/mtimes, case-distinct mapping, acknowledgement, hash, Timeout). CP-6 never acquired its slot and CP-7/8 never started. Tool rows: 5 green / 1 red admission / 2 skipped-not-run. Terminal exit 5, hard-wall-deadline-exceeded. The fresh bin-f6-seed-green5 build completed with 0 errors / 1425 warnings; build phase 405.286s. Wall 961.387s, execution 521.538s, admission-only 439.849s. CP-6 waited 244s. The final CLI used a 16m hard wall (narrowed to respect the remaining task budget), 24m execution allowance and 12m row/build bounds; the hard wall expired while execution allowance remained. No unleased retry or timeout widening occurred.
 
-Qualification remains INCOMPLETE. Tool validation, even explicitly selecting CP-1..5, refused exit 2 with CHECKPOINT SOURCE INVALID reason=report_failed because the overall report failed. Per-row fields show those five clean/verified executions, but the aggregate source/build verdict is unknown and no full source-clean qualification is claimed. Preserve .antiphon/f6-final-source-validation.log and the complete failed report. Earlier 8/8 reports are historical, not substitutes for latest-source acceptance.
+At that earlier settlement qualification was INCOMPLETE. Tool validation, even explicitly selecting CP-1..5, refused exit 2 with CHECKPOINT SOURCE INVALID reason=report_failed because the overall report failed. Per-row fields show those five clean/verified executions, but the aggregate source/build verdict is unknown and no full source-clean qualification is claimed. Preserve .antiphon/f6-final-source-validation.log and the complete failed report. Earlier 8/8 reports are historical, not substitutes for latest-source acceptance.
 
-Required continuation: Code verification needs an admitted slot/time window for CP-6 ScheduleConservesAllChunks, CP-7 InvalidSeedFallsBack and CP-8 PublicHopsForwardAcknowledgement at the final implementation source. The current validator refuses partial failed reports, so obtain a valid complete qualification report (rerun the closed eight-row group if no approved append-only partial-receipt qualification mechanism is available). Use one fresh isolated output name and the committed plan; do not relabel the failed envelope or transfer a source-clean assertion. This follows docs/orchestration-loop.md D-2: missing required execution routes to Code with the gate incomplete, not land or a Review rerun just to relabel it.
+The earlier blocked report requested this continuation (now completed by the reopened run below): Code verification needs an admitted slot/time window for CP-6 ScheduleConservesAllChunks, CP-7 InvalidSeedFallsBack and CP-8 PublicHopsForwardAcknowledgement at the final implementation source. The current validator refuses partial failed reports, so obtain a valid complete qualification report (rerun the closed eight-row group if no approved append-only partial-receipt qualification mechanism is available). Use one fresh isolated output name and the committed plan; do not relabel the failed envelope or transfer a source-clean assertion. This follows docs/orchestration-loop.md D-2: missing required execution routes to Code with the gate incomplete, not land or a Review rerun just to relabel it.
 
-All build/test drivers took host build slots, with TEMP=/tmp, UseAppHost=false and fresh isolated outputs. There was one explicitly listed 15s checkpoint-tool bootstrap build (0 errors / 7 warnings), two historical ordinary builds, two deliberately stopped builds, and the final ordinary build after input-shape/case/snapshot repairs. Each group used one build shared by its selected exact methods; the final group did not complete all eight. The extra historical cost is retained. Direct interpreter runs were listed RED/guard/fixture diagnostics, not ordinary checkpoint substitutes. No native run or full assembly ran. No slot was bypassed.
+Before reopening, all build/test drivers took host build slots, with TEMP=/tmp, UseAppHost=false and fresh isolated outputs. There was one explicitly listed 15s checkpoint-tool bootstrap build (0 errors / 7 warnings), two historical ordinary builds, two deliberately stopped builds, and the final ordinary build after input-shape/case/snapshot repairs. Each group used one build shared by its selected exact methods; the final group did not complete all eight. The extra historical cost is retained. Direct interpreter runs were listed RED/guard/fixture diagnostics, not ordinary checkpoint substitutes. No native run or full assembly ran. No slot was bypassed.
 
 The first manifest import saw only seven rows because a blank separated CP-8 from the table. The plan was fixed; an attempt to overwrite the existing generated manifest was refused, then fresh imports admitted eight rows. An initial run with a mistyped expected SHA refused source_mismatch before any build or test. Neither is assertion RED. Intermittent controller owner-read timeouts were logged by the tool; receipt/source validation, lease and terminal run status are reported independently.
 
@@ -84,9 +84,10 @@ No desktop file was read, no C:\Antiphon file or live d47848cc run was touched, 
 
 Operator commands after the old run stops
 
-After verification closes, ordinary Review and landing this change onto the chosen new RC tip, run from the reviewed desktop task checkout containing these scripts. The public entrypoint below handles the clone sync and normal shared native lock. It does not rely on an uninspected private supervisor to forward the new flags. This example uses the existing rc/2026-10-27 line's NEW tip; change the ref/date together if the operator selects another line.
+After ordinary Review and landing this change onto the chosen new RC tip, run from the reviewed desktop task checkout containing these scripts. The public entrypoint below handles the clone sync and normal shared native lock. It does not rely on an uninspected private supervisor to forward the new flags. This example uses the existing rc/2026-10-27 line's NEW tip; change the ref/date together if the operator selects another line.
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $launcher = 'C:\Antiphon\worktrees\card-task-f6aabaef'
 $releaseRoot = 'C:\Antiphon\releases'
 $seed = Join-Path $releaseRoot 'ordering-seeds\d47848cc.json'
@@ -98,6 +99,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Seed export failed; inspect its reason.' }
 git -C $launcher fetch origin rc/2026-10-27
 if ($LASTEXITCODE -ne 0) { throw 'RC fetch failed.' }
 $newSha = (git -C $launcher rev-parse 'origin/rc/2026-10-27^{commit}').Trim()
+if ($LASTEXITCODE -ne 0) { throw 'RC SHA resolution failed.' }
 $newCandidate = 'rc-2026-10-27-' + $newSha.Substring(0,12)
 $state = Join-Path $releaseRoot ('candidates\' + $newCandidate)
 $seedDigest = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -132,7 +134,7 @@ Pushed implementation/test commits
 - 9e296e2d86759cb289baedb08af35db855c62754 test: require byte snapshots to detect changes with restored mtimes
 - 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc test: hash every source file independently in the read-only snapshot
 
-Essential unedited final checkpoint provenance
+Essential unedited historical incomplete checkpoint provenance
 
 ```text
 --- checkpoint report ---
@@ -168,7 +170,92 @@ verdict: RED exit=5 reason=hard-wall-deadline-exceeded
 CHECKPOINT SOURCE INVALID reason=report_failed
 ```
 
+
+Complete reopened verification
+
+Caller explicitly reopened verification and authorized the complete closed list from one fresh build with --total-timeout 90m. Commit 8bbc5ec3ee9a09d92ccf9e314b5e1165e49cbec8 binds that authority in the plan; 60318acc795876686caba65e9a3c39ee0bec7899 preserves the historical output names. No production or test code changed during this continuation. The earlier report was published at d7a45d2fdf457bacfdbf204dc439126613f8a64d and its failed envelope remains unchanged above. The caller reports the old run now has a closed summary.json; that desktop fact was not inspected here. The explicit stopped-run seed remains usable for the acknowledged cross-candidate ordering flow.
+
+Run 20261031-112435-52a1 at 60318acc795876686caba65e9a3c39ee0bec7899: ONE fresh bin-f6-seed-followup1/ build, eight exact serial rows, 8 executed / 8 passed / 0 failed / 0 skipped. Build compiler: 0 errors / 1425 warnings, elapsed 8m29.95s; checkpoint build phase 563.315s. Complete run wall 775.863s (12m56s), execution 730.847s, admission-only 45.016s. CP-8 waited 45s, other rows and the build reported granted slots with waited=0s. Explicit execution and hard-wall limits were both 5400s (90m); row/build execution bounds stayed 12m. No test failure, row retry, additional guard mutant or source repair occurred during reopening. All nine previously killed guards and their historical costs remain recorded above.
+
+| CP | Exact method | Executed | Passed | Failed | Skipped |
+|---|---|---:|---:|---:|---:|
+| CP-1 | BuilderReadOnly | 1 | 1 | 0 | 0 |
+| CP-2 | FailedFirstMapping | 1 | 1 | 0 | 0 |
+| CP-3 | AcknowledgementRequired | 1 | 1 | 0 | 0 |
+| CP-4 | HashMustVerify | 1 | 1 | 0 | 0 |
+| CP-5 | TimeoutIsFailure | 1 | 1 | 0 | 0 |
+| CP-6 | ScheduleConservesAllChunks | 1 | 1 | 0 | 0 |
+| CP-7 | InvalidSeedFallsBack | 1 | 1 | 0 | 0 |
+| CP-8 | PublicHopsForwardAcknowledgement | 1 | 1 | 0 | 0 |
+
+The complete receipt and every row separately returned CHECKPOINT SOURCE VALID at the exact committed source. This closes the earlier incomplete ordinary verification gate; the old report_failed receipt is retained as failed, without edits or transferred credit. New evidence: /work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/report.json and report.md; validation logs .antiphon/f6-followup-source-validation.log and .antiphon/f6-followup-row-validation.log. The original receipt files remain generated/ignored. Unedited provenance is preserved below.
+
+The reopened checkpoint tool bootstrap was one explicitly planned, gated isolated build to bin-f6-seed-followup-tool1/: 0 errors / 7 warnings, elapsed 32.65s, slot held 34s. Import admitted all eight rows. The exact execution and validation commands (after recreating the fresh bootstrap output) are:
+
+~~~sh
+TEMP=/tmp pwsh -NoProfile -File scripts/build-slot.ps1 -Label f6-seed-followup-tool -- dotnet build tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj --property:OutputPath=bin-f6-seed-followup-tool1/ --property:UseAppHost=false --nologo
+TEMP=/tmp dotnet tools/Antiphon.Checkpoints/bin-f6-seed-followup-tool1/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-31-card-1514-stopped-run-seed-plan.md --out .antiphon/f6-seed-followup-checkpoints1.yaml
+TEMP=/tmp dotnet tools/Antiphon.Checkpoints/bin-f6-seed-followup-tool1/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-31-card-1514-stopped-run-seed-plan.md --expected-source-sha 60318acc795876686caba65e9a3c39ee0bec7899 --row-timeout 12m --total-timeout 90m --hard-wall-timeout 90m --serial --keep-outputs --max-wait 50s
+TEMP=/tmp dotnet tools/Antiphon.Checkpoints/bin-f6-seed-followup-tool1/Antiphon.Checkpoints.dll wait 20261031-112435-52a1 --expected-source-sha 60318acc795876686caba65e9a3c39ee0bec7899 --max-wait 50s
+TEMP=/tmp dotnet tools/Antiphon.Checkpoints/bin-f6-seed-followup-tool1/Antiphon.Checkpoints.dll validate --evidence .antiphon/checkpoints/20261031-112435-52a1/report.json --expected-source-sha 60318acc795876686caba65e9a3c39ee0bec7899 --rows CP-1,CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8
+~~~
+
+These are the recorded commands, not instructions to overwrite existing evidence or reuse a compiler directory. A future ordinary run must use a fresh output name/import path and its committed SHA; wait uses its returned run id. Receipt validation itself needs no new build. No full assembly or native test was added. The retained real land-graph -Check above remains applicable: no definition or audit-tool source changed, and no -Update ran.
+
+Fresh fetched merge simulations at tested source: RC fc064a68247b0186918dfb1f04465e6be0475389 clean, tree abed45f9e97372908df085214b1eb7870642bfd2. Master 2051d327123a5e98524b4bd1ecf31c6e516bdb4e has 48 conflict paths at both the assigned base and tested source, zero added/removed paths. This is readiness for RC Review, not a master-landability claim. Evidence guard at tested source: 18 commits / 1 optional Markdown report entry / 0 violations. Final publication is checked separately. Worktree was clean after all rows; an exact-output/executor process census found zero owned producer matches before cleanup. Cleanup inventories and final publication result follow below.
+
+Essential unedited complete checkpoint provenance
+
+~~~text
+--- checkpoint report ---
+run: 20261031-112435-52a1   manifest: /work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/manifest.resolved.yaml
+commit: 60318acc795876686caba65e9a3c39ee0bec7899  branch: feat/card-task-f6aabaef  worktree: /work/worktrees/task-f6aabaef  host: Debian GNU/Linux 12 (bookworm) cores=24
+source: 60318acc795876686caba65e9a3c39ee0bec7899 state=clean buildSource=verified
+CHECKPOINT CP-1 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=ok filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/BuilderReadOnly executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-1 waited=0s executed=14.966s wall=15.034s
+PHASES CP-1 slotWait=0s build=563.3146775s startup=3.7324966s testsWall=9.5854035s teardown=0.7123098s hostWall=14.0304478s
+CHECKPOINT CP-2 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/FailedFirstMapping executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-2 waited=0s executed=17.286s wall=17.338s
+PHASES CP-2 slotWait=0s build=0s startup=5.0036853s testsWall=10.6813515s teardown=0.7375616s hostWall=16.4225985s
+CHECKPOINT CP-3 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/AcknowledgementRequired executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-3 waited=0s executed=15.553s wall=15.608s
+PHASES CP-3 slotWait=0s build=0s startup=4.4905734s testsWall=9.4809534s teardown=0.7059004s hostWall=14.6774272s
+CHECKPOINT CP-4 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/HashMustVerify executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-4 waited=0s executed=15.362s wall=15.424s
+PHASES CP-4 slotWait=0s build=0s startup=4.119302s testsWall=9.598151s teardown=0.7536032s hostWall=14.4710564s
+CHECKPOINT CP-5 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/TimeoutIsFailure executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-5 waited=0s executed=14.858s wall=14.918s
+PHASES CP-5 slotWait=0s build=0s startup=5.025182s testsWall=8.1822035s teardown=0.7524056s hostWall=13.9597914s
+CHECKPOINT CP-6 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/ScheduleConservesAllChunks executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-6 waited=0s executed=20.546s wall=20.584s
+PHASES CP-6 slotWait=0s build=0s startup=4.7732066s testsWall=14.2887317s teardown=0.7060711s hostWall=19.7680095s
+CHECKPOINT CP-7 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/InvalidSeedFallsBack executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-7 waited=0s executed=15.599s wall=15.661s
+PHASES CP-7 slotWait=0s build=0s startup=4.2275484s testsWall=10.1882799s teardown=0.4813028s hostWall=14.8971672s
+CHECKPOINT CP-8 commit=60318acc795876686caba65e9a3c39ee0bec7899 build=reused filter=/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/PublicHopsForwardAcknowledgement executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/rows/CP-8/run.trx slot=granted waited=45s dirty=0 source=60318acc795876686caba65e9a3c39ee0bec7899 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-8 waited=45s executed=18.635s wall=63.692s
+PHASES CP-8 slotWait=45s build=0s startup=4.1289616s testsWall=13.2789721s teardown=0.4793992s hostWall=17.887333s
+BUDGET wall=775.863s execution=730.847s admissionOnly=45.016s
+unlisted: none (the tool ran no other build or test command)
+wall: 12m56s  sequential-equivalent: 2m58s  builds: 1  max-concurrent-builds: 1  rows: 8 green 0 red 0 skipped
+outputs: refused/kept bin-f6-seed-followup1/
+evidence: /work/worktrees/task-f6aabaef/.antiphon/checkpoints/20261031-112435-52a1/report.md
+verdict: GREEN exit=0
+
+CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=8
+CP-1 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-2 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-3 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-4 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-5 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-6 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-7 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+CP-8 CHECKPOINT SOURCE VALID source=60318acc795876686caba65e9a3c39ee0bec7899 rows=1
+~~~
+
+Reopened cleanup completed after the joined successful run, all receipt validations and the zero-producer census. Exact literal roots: /work/worktrees/task-f6aabaef/src/Antiphon.HostCleanup/bin-f6-seed-followup-tool1; /work/worktrees/task-f6aabaef/tools/Antiphon.Checkpoints/bin-f6-seed-followup-tool1; /work/worktrees/task-f6aabaef/tests/Antiphon.Tests/bin-f6-seed-followup1. Removed 2798 individually hash-checked files / 489 directories / 3 owned roots, with inventory .antiphon/f6-followup-output-cleanup-inventory.json and log .antiphon/f6-followup-cleanup.log. A final exact-name scan found none remaining. No source or foreign output was removed. Generated receipts, TRXs, logs and inventories remain ignored. The report is the sole individually tracked evidence document. No desktop/live/native action occurred in the continuation.
+
 --- next stage ---
-next: code
-handoff: Complete the exact missing latest-source CP-6/7/8 execution and obtain a machine-validated complete receipt at 8b3cbc438f568c6b6c261d63bee4f1df7891e2fc; retain the failed-envelope refusal and all historical outcomes. The implementation and five final passing tests are pushed, but verification is incomplete and ordinary Review/landing are not authorized by this report.
+next: review
+handoff: Review the stopped-run seed builder and acknowledged cross-candidate ordering against the complete source-clean 8/8 receipt at 60318acc795876686caba65e9a3c39ee0bec7899. All nine portable guard mutants were killed and restored; retain their historical outcomes and the earlier failed envelope. Review the exact operator export/launch commands above for the caller-reported closed d47848cc run. RC merge simulation is clean; master conflicts are inherited. No native Windows qualification or activation is claimed.
 artifact: /work/worktrees/task-f6aabaef/.antiphon/task-f6aabaef.md
