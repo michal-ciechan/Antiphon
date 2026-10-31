@@ -41,7 +41,7 @@ internal static class LiveClaudeDeliveryMutants
         new("PC-128", "V-25", "observed.Pid != owner.Pid", "false", "bridge-process"),
         new("PC-129", "V-25", "observed.Started != owner.Started", "false", "bridge-start"),
         new("PC-130", "V-25", "observed.Session != owner.Session", "false", "bridge-session"),
-        new("PC-131", "V-25", "observed is not { Readable: true }", "observed is null", "bridge-read-failure")
+        new("PC-131", "V-25", "if (observed is not { Readable: true }", "if (observed is { Readable: false }) observed = owner;\n        if (observed is not { Readable: true }", "bridge-read-failure")
     ];
 
     public static async Task RunAsync(string v)
@@ -69,6 +69,7 @@ internal static class LiveClaudeDeliveryMutants
             var count = source.Split(m.From, StringSplitOptions.None).Length - 1;
             if (count != (m.All ? 2 : 1)) throw new InvalidOperationException("C1545 " + m.Pc + " mutation site ambiguous: " + count);
             var mutated = source.Replace(m.From, m.To, StringComparison.Ordinal);
+            if (m.Pc == "PC-121") mutated = mutated.Replace("await write(\"\\r\");", "/* Enter joined to body above */", StringComparison.Ordinal);
             if (m.Pc == "PC-118") mutated = mutated.Replace("r.Kind == \"AssistantText\"\n                && r.Api", "r.Kind is \"AssistantText\" or \"Thinking\"\n                && r.Api", StringComparison.Ordinal);
             if (m.Pc == "PC-119") mutated = mutated.Replace("if (end.Error) throw new LiveClaudeRefusal(\"provider-error\");", "/* error end accepted */", StringComparison.Ordinal);
             // Each variant selects its own unchanged negative fixture. Every assertion remains active;
