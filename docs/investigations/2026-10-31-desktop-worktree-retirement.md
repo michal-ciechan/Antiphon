@@ -1,6 +1,6 @@
 # Desktop worktree retirement - 2026-10-31
 
-**Continuation in progress. 500 additional directories retired in this continuation; 749 total across both windows.** Updated `2026-10-31T13:04:39.371635+00:00`. Remaining eligible at this snapshot: **168**. Within the original resumed set of 654: 154 unprocessed and 0 retained after fresh guards.
+**Continuation in progress. 600 additional directories retired in this continuation; 849 total across both windows.** Updated `2026-10-31T13:21:17.973795+00:00`. Remaining eligible at this snapshot: **68**. Within the original resumed set of 654: 54 unprocessed and 0 retained after fresh guards.
 
 The operator authorized a second two-hour window, preserving the original scope and exclusions. Each deletion uses an exact literal `git worktree remove --force` path under `C:\Antiphon\worktrees`, with per-command `core.longpaths=true`; no persistent configuration change. Guards recheck directory/.git/HEAD-log mtimes (strictly older than 24 hours), registration reciprocity, reparse points, locks, current task status, linked sessions and live consumers. Own workspace and `card-task-c490e425` are explicitly excluded. Dirty/unpushed/ignored contents are covered by standing data-loss authority; no additional approval was requested.
 
@@ -8,12 +8,12 @@ Operations are sequential, at most 25 per batch, with 20-second sleeps. Before e
 
 | Measurement | Original start | First window end | Continuation start | Current |
 |---|---:|---:|---:|---:|
-| Registered worktrees | 1,050 | 812 | 813 | 319 |
-| Drive C free, decimal GB | 238.44 | 306.88 | 305.51 | 409.06 |
-| Worktree list, seconds | 11.310 | 3.765 | 2.784 | 0.810 |
+| Registered worktrees | 1,050 | 812 | 813 | 220 |
+| Drive C free, decimal GB | 238.44 | 306.88 | 305.51 | 428.21 |
+| Worktree list, seconds | 11.310 | 3.765 | 2.784 | 0.610 |
 | Detached add, seconds | 40.350 (prior audit) | 13.999 | not repeated | pending final probe |
 
-Net free-space increase: **103.55 GB in the continuation**, **170.62 GB overall**. Retired logical contents were **149.48 GiB** in the original audit. Concurrent host activity, new registrations and changed load/cache limit attribution. The continuation final detached-add probe is pending; the first-window probe added in 13.999s and removed in 5.198s, with no residue.
+Net free-space increase: **122.70 GB in the continuation**, **189.77 GB overall**. Retired logical contents were **165.56 GiB** in the original audit. Concurrent host activity, new registrations and changed load/cache limit attribution. The continuation final detached-add probe is pending; the first-window probe added in 13.999s and removed in 5.198s, with no residue.
 
 Final global classification has not yet been refreshed.
 
@@ -31,6 +31,7 @@ Pushed continuation milestones:
 | 200 | `f1c91bfee083eacc760575bb773eb2058201a641` |
 | 300 | `42b3d43768196c2b2fab9ee900afe1928b92c072` |
 | 400 | `915fc1cfb9fd75e713c57b3b94ce5d0a151835ad` |
+| 500 | `5036370ecbf42834c2c9f974c046a7aaee883bc6` |
 
 Evidence is external under `C:\Users\lndco\AppData\Local\Temp\antiphon-worktree-audit`: removal receipts, round1 snapshots, round2 baseline/progress/publications, live-consumer guards and final inventory/remaining-candidate CSVs. The prior 654-command operator script and its hash are retained as `retirement-round1-script.ps1`; `retire-old-worktrees.ps1` is the guarded fallback script, regenerated from the final candidate CSV. No generated evidence is committed.
 
