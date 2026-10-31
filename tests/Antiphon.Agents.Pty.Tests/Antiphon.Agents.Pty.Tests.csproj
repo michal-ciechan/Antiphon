@@ -105,6 +105,7 @@
   <ItemGroup>
     <Compile Include="../Shared/LiveClaude/LiveClaudeArgvCapture.cs" Link="TestSupport/LiveClaude/LiveClaudeArgvCapture.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeDeliveryEvidence.cs" Link="TestSupport/LiveClaude/LiveClaudeDeliveryEvidence.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs" Link="TestSupport/LiveClaude/LiveClaudeEvidenceSanitizer.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeExecutable.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutable.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeExecutableAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutableAudit.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeExecutableCases.cs" Link="TestSupport/LiveClaude/LiveClaudeExecutableCases.cs" />
@@ -118,5 +119,6 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeProfileMutants.cs" Link="TestSupport/LiveClaude/LiveClaudeProfileMutants.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeProfilePaths.cs" Link="TestSupport/LiveClaude/LiveClaudeProfilePaths.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
+    <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
   </ItemGroup>
 </Project>
