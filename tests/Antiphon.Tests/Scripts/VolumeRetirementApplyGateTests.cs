@@ -102,8 +102,10 @@ public sealed class VolumeRetirementApplyGateTests
         C1008HostFixture.RequireNativeLinux();
         using var fixture = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(fixture);
+        // Load first. A later source of c1008-retirement.sh would replace this
+        // hook with the real intent writer, and the cut would delete.
         var interrupted = await fixture.Run("retire-temp-runner",
-            EnabledToken + "\nc1609_target_intent() { return 1; }");
+            "c1609_load_retirement\n" + EnabledToken + "\nc1609_target_intent() { return 1; }");
         interrupted.Exit.ShouldNotBe(0, "apply-gate: the intent cut still fails closed; " + interrupted.Output);
         AssertNoVolumeRemoval(fixture, "resume setup");
         fixture.ReloadDocker();

@@ -2834,6 +2834,16 @@ public sealed class RollingVolumeRecycleScriptTests
             restore.Exit.ShouldBe(0, "private-origin: restore the private origin; " + restore.Output);
             WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
 
+            // Inventory exports only origins named in the control-host registry.
+            // The helper URL is minted per run, so register that exact string.
+            var registry = Path.Combine(root, "server", "retirement-origins.json");
+            var approve = await C994ScriptProcess.Run("bash", "-c",
+                "jq -ncS --arg origin " + BashSingle(url) +
+                " --arg kept " + BashSingle(VolumeRetirementFixture.OriginUrl) +
+                " '{schema:1,projects:{\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\":{origins:[$kept,$origin]}}}' > " +
+                BashSingle(registry));
+            approve.Exit.ShouldBe(0, "private-origin: register the helper origin; " + approve.Output);
+
             ResetPreviewTrace(fixture);
             var inventory = await fixture.Run("retire-temp-inventory", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + PreviewWitnessProbe);
             inventory.Exit.ShouldBe(0, "private-origin: inventory lists the authentication failure; " + inventory.Output);
