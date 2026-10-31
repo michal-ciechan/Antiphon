@@ -45,6 +45,11 @@ function New-SeedSiblingLayout([string]$Logs,[string]$RunId,[string]$RunName){
     foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/nightly/stopped-seed') -File)){
         Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $runDir $file.Name)
     }
+    $ownerPath=Join-Path $runDir 'owner.json'
+    if([IO.File]::Exists($ownerPath)){
+        $ownerText=[IO.File]::ReadAllText($ownerPath).Replace('"runId": "synthetic-stopped"',('"runId": "'+$RunId+'"'))
+        [IO.File]::WriteAllText($ownerPath,$ownerText)
+    }
     foreach($plan in @(Get-ChildItem -LiteralPath $runDir -Filter 'groups-planned*.json' -File)){
         $text=[IO.File]::ReadAllText($plan.FullName).Replace('"runId": "synthetic-stopped"',('"runId": "'+$RunId+'"'))
         [IO.File]::WriteAllText((Join-Path $timing $plan.Name),$text)
