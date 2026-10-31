@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $ResultsDirectory = New-C487Root $ResultsDirectory
 $method = $Case -replace '^C1545_', ''
-$traceRoot = Join-Path (Split-Path $PSScriptRoot) ('.antiphon/live-lane-outcome-traces/'+[guid]::NewGuid().ToString('N'))
+$traceRoot = Join-Path $ResultsDirectory ('traces-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($traceRoot)
 $script:traceNumber = 0
 function Check([string]$Id, [bool]$Ok) { Assert-C487 $Ok "C1545 $method/$Id" 'synthetic outcome contract mismatch' }
@@ -29,7 +29,7 @@ function New-Fixture {
     $script:F=@{
         Root=$root; Tick=0; Starts=0; Prompts=0; Slots=0; Waits=0; Pre=0; Post=0; ProbePrompts=0
         PreStatus='Ready'; PreDelay=0; PostStatus='Unknown'; PostDelay=0; Foreign=''; Raw=0
-        ReceiptFault=''
+        ReceiptFault=''; ChildRunId='checkpoint-A'
         Trace=[Collections.Generic.List[string]]::new(); ProbeRequests=[Collections.Generic.List[object]]::new()
     }
     $request=@{
@@ -49,7 +49,7 @@ function New-Fixture {
         Candidate={ param($r) @{ Sha=$r.Source; Clean=$true } }; Clock={ $F.Tick }
         Slot={ param($r) $F.Slots++; return $true }
         WriteContext={ param($p,$j) [IO.File]::WriteAllText($p,$j); return $p }
-        Start={ param($c,$s,$m) $F.Starts++; $F.Prompts++; $F.Trace.Add('start'); return @{ RunId='checkpoint-A'; Children=@('owned-child') } }
+        Start={ param($c,$s,$m) $F.Starts++; $F.Prompts++; $F.Trace.Add('start'); return @{ RunId=$F.ChildRunId; Children=@('owned-child') } }
         Wait={ param($id) $F.Waits++; $F.Trace.Add('wait:'+ $id); if ($F.Waits -eq 1) { return 75 }; return $F.Raw }
         ReadTerminal={ param($id) $F.Trace.Add('terminal'); return $F.Terminal }
         Stop={ param($id) $F.Trace.Add('stop') }; Join={ param($id,$budget) $F.Trace.Add('join'); return $true }
@@ -93,7 +93,7 @@ function Run($q) {
         result=$r; trace=@($F.Trace); probeRequests=@($F.ProbeRequests)
     } | ConvertTo-Json -Depth 20
     [IO.File]::WriteAllText((Join-Path $F.Root 'trace.json'),$traceJson)
-    # Retain sanitized observations after ScriptHarness removes its owned scratch.
+    # All observations stay inside the harness-owned scratch.
     $script:traceNumber++
     [IO.File]::WriteAllText((Join-Path $traceRoot ($script:traceNumber.ToString('D4')+'.json')),$traceJson)
     return $r
@@ -112,6 +112,22 @@ function Test-ProviderOutcomeIsDistinct {
         $ok=$ok -and (Is $r 2) -and $r.RawChildExit -eq $raw -and $r.RawChildOutcome -ceq 'Failed' -and $F.Waits -eq 2
     }
     Check 'raw-child' $ok
+    foreach ($raw in @(1,2,3,8)) {
+        $q=New-Fixture; $F.Raw=$raw; $r=Run $q
+        Check ('raw-passing-'+$raw) ((Is $r 2 'checkpoint-inconsistent') -and $r.RawChildExit -eq $raw -and
+            $r.RawChildOutcome -ceq 'Passed' -and $r.Rows[0].ExitCode -eq 0 -and $F.Waits -eq 2)
+    }
+    $idNumber=0
+    foreach ($id in @('../foreign','foreign/child','foreign\child','',('a'*129),"checkpoint-A`n",'.','..')) {
+        $q=New-Fixture; $F.ChildRunId=$id; $r=Run $q
+        Check ('run-id-invalid-'+(++$idNumber)) ((Is $r 2 'checkpoint-run-invalid') -and $null -eq $r.CheckpointRunId -and
+            $F.Waits -eq 0 -and $F.Trace.Contains('stop') -and $F.Trace.Contains('join'))
+    }
+    $idNumber=0
+    foreach ($id in @('checkpoint-A',('a'*128))) {
+        $q=New-Fixture; $F.ChildRunId=$id; $F.Terminal.RunId=$id; $r=Run $q
+        Check ('run-id-valid-'+(++$idNumber)) ((Is $r 0) -and $r.CheckpointRunId -ceq $id)
+    }
     $ok=$true
     foreach ($variant in @('missing','unreadable','incomplete','identity','schema','receipt-partial','receipt-missing')) {
         $q=New-Fixture
@@ -124,7 +140,8 @@ function Test-ProviderOutcomeIsDistinct {
         $r=Run $q; $expected=20; if ($variant -in @('identity','schema')) { $expected=2 }
         $ok=$ok -and (Is $r $expected) -and $F.Starts -eq 1
         if ($variant.StartsWith('receipt-')) {
-            $ok=$ok -and -not $r.TerminalComplete -and -not (Test-Path -LiteralPath (Join-Path $q.Request.ResultsRoot 'diagnostic.json'))
+            $ok=$ok -and -not $r.TerminalComplete -and -not (Test-Path -LiteralPath (Join-Path $q.Request.ResultsRoot 'diagnostic.json')) -and
+                -not (Test-Path -LiteralPath (Join-Path $q.Request.ResultsRoot 'diagnostic.pending.json'))
         }
     }
     Check 'evidence' $ok
@@ -196,6 +213,15 @@ function Test-HealthyProviderAssertionStaysRed {
             $F.Terminal[$field]=$(switch ($field) { 'SchemaVersion' { 1 }; 'Source' { 'a'*40 }; 'Build' { 'Succeeded' }; 'Authority' { 'diagnostic' } })
         }
     }
+    foreach ($reverse in @($false,$true)) {
+        $q=New-Fixture; $q.Request.Uids=@('fixture.A.0','fixture.B.0')
+        $a=Row 'fixture.A.0' 'Failed'; $b=Row 'fixture.B.0' 'Failed'
+        $F.Terminal.Rows=$(if ($reverse) { @($b,$a) } else { @($a,$b) })
+        $F.PostStatus='Unavailable'; $r=Run $q
+        Check ('probe-two-failed-'+$reverse) ((Is $r 1 'assertion-failed') -and $F.Post -eq 1 -and
+            $r.Rows[0].Uid -ceq $F.Terminal.Rows[0].Uid -and $r.Rows[0].ExitCode -eq 20 -and $r.Rows[0].Proof -ceq 'Probe' -and
+            $r.Rows[1].Uid -ceq $F.Terminal.Rows[1].Uid -and $r.Rows[1].ExitCode -eq 1 -and $r.Rows[1].Proof -ceq 'None')
+    }
     Check 'mixed-red' $ok
     Check 'mixed-invalid' $invalid
 }
@@ -229,10 +255,28 @@ function Test-TypedSetupOutcomes {
     }
     Check 'missing-prerequisite' $ok
     $ok=$true
-    foreach ($status in @('LegacySkip','arbitrary','')) { $q=New-Fixture; $F.Terminal.Rows[0].State='Skipped'; $F.Terminal.Rows[0].Setup=$status; $r=Run $q; $ok=$ok -and (Is $r 20 'unclassified-skip') }
+    foreach ($status in @('LegacySkip','arbitrary','')) { $q=New-Fixture; $F.Terminal.Rows[0].State='Skipped'; $F.Terminal.Rows[0].Setup=$status; $r=Run $q; $ok=$ok -and (Is $r 2 'row-invalid') }
     Check 'unknown-skip' $ok
     $q=New-Fixture; $F.PreStatus='AuthMissing'; $r=Run $q
     Check 'setup-no-prompt' ((Is $r 20 'auth-required') -and $F.Prompts -eq 0 -and $F.Starts -eq 0)
+    foreach ($variant in @('missing','empty','LegacySkip','ready','wrong-case-field','AuthMissing','AuthMissing-proof')) {
+        $q=New-Fixture; $row=$F.Terminal.Rows[0]; $row.State='Failed'; $row.Setup=$variant
+        $expected=2; $reason='row-invalid'
+        switch ($variant) {
+            'missing' { $row.Remove('Setup') }
+            'empty' { $row.Setup='' }
+            'wrong-case-field' {
+                # A case-sensitive external-reader dictionary must carry exact Setup.
+                $row=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+                foreach ($key in $F.Terminal.Rows[0].Keys) { if ($key -cne 'Setup') { $row.Add($key,$F.Terminal.Rows[0][$key]) } }
+                $row.Add('setup','Ready'); $F.Terminal.Rows=@($row)
+            }
+            'AuthMissing' { $expected=1; $reason='assertion-failed' }
+            'AuthMissing-proof' { $row.Setup='AuthMissing'; Outage $row; $expected=20; $reason='auth-required' }
+        }
+        $r=Run $q
+        Check ('failed-setup-'+$variant) ((Is $r $expected $reason) -and $F.Starts -eq 1)
+    }
 }
 function Test-SkipAndZeroNeverGreen {
     $q=New-Fixture; $q.Request.Uids=@('fixture.A.0','fixture.B.0'); $F.Terminal.Rows=@((Row),(Row 'fixture.B.0')); $r=Run $q
@@ -249,7 +293,7 @@ function Test-SkipAndZeroNeverGreen {
     $ok=$true
     foreach ($setup in @('Ready','AuthMissing','LegacySkip')) {
         $q=New-Fixture; $q.Request.Uids=@('fixture.A.0','fixture.B.0'); $skip=Row 'fixture.B.0' 'Skipped'; $skip.Setup=$setup; $F.Terminal.Rows=@((Row),$skip)
-        $r=Run $q; $ok=$ok -and (Is $r 20)
+        $r=Run $q; $expected=20; if ($setup -ceq 'LegacySkip') { $expected=2 }; $ok=$ok -and (Is $r $expected)
     }
     # A typed preflight refusal explains why no UID executed.
     $q=New-Fixture; $F.PreStatus='AuthExpired'; $F.Terminal.Rows=@(); $r=Run $q; $ok=$ok -and (Is $r 20 'auth-required')
@@ -292,4 +336,5 @@ try {
         }
     }
 } catch { Write-C487Fail "C1545 $method/harness" ($_.Exception.Message+' line '+$_.InvocationInfo.ScriptLineNumber) }
+finally { if (Test-Path -LiteralPath $traceRoot) { Remove-Item -LiteralPath $traceRoot -Recurse -Force } }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory
