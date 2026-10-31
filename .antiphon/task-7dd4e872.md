@@ -1,6 +1,6 @@
 # CARD-1609 H7 helper graph import Debug
 
-H7 is repaired and its exact official retest is green. Shared-helper qualification is pending. Assigned baseline f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e, branch feat/card-task-7dd4e872.
+H7 is repaired and verified. CP-3 passed25/25 and CP-4 passed12/12. CP-15 exposed one inherited fixture dependency failure (15/16); its exact repaired method now passes1/1. The original CP-15 full-row red remains, and complete S5 qualification remains Code work. Assigned baseline f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e, branch feat/card-task-7dd4e872.
 
 ## Observed cause
 
@@ -18,7 +18,7 @@ Plan authority (H7 recipe): "With v2, the real host writer fetches B's graph in 
 
 ## Verification and remaining scope
 
-Pending official red/green and CP-3/4/15 results. CP-3 is Content+Receipt (25 methods), CP-4 HostProof+Wrapper (12), CP-15 RetiredTempContainerScriptTests (16). The complete final Linux roster, long-scan/manual/v2 acceptance and Windows qualification remain separate Code work. Production deletes remain disabled; first production action stays preview-only.
+All requested rows ran once; exact results and the additional inherited-failure replay/repair are recorded below. CP-3 is Content+Receipt (25 methods), CP-4 HostProof+Wrapper (12), CP-15 RetiredTempContainerScriptTests (16). The complete final Linux roster, long-scan/manual/v2 acceptance and Windows qualification remain separate Code work. Production deletes remain disabled; first production action stays preview-only.
 
 ## Baseline official red
 
@@ -32,7 +32,7 @@ Terminal wait exit1. Output cleanup reported still-present and retained bin-h7-b
 
 ## Committed repair and isolated green
 
-Red evidence was committed/pushed as dffe931e303bd33ef9ed3a052084c5e34d65c1df before the fixture repair 98cde6eabd060bb07bd6f898b428f0cc9e71a8b8. The eight-line fixture change conditionally binds /etc/alternatives read-only beside the existing /usr/bin bind. No production/test assertion/timeout/definition changes. The awk comparison arrived in 85776c1c8e201699aa1318cb2f00d69f85b5e83f; its helper filesystem requirement exposed the pre-existing incomplete chroot.
+Red evidence was committed/pushed as dffe931e303bd33ef9ed3a052084c5e34d65c1df before the fixture repair 98cde6eabd060bb07bd6f898b428f0cc9e71a8b8. The eight-line fixture change conditionally binds /etc/alternatives read-only beside the existing /usr/bin bind. No production code, test assertions, test-level timeouts or build definitions changed. The awk comparison arrived in 85776c1c8e201699aa1318cb2f00d69f85b5e83f; its helper filesystem requirement exposed the pre-existing incomplete chroot.
 
 H7 green: 1/1/0/0 at the repair SHA, including Ready admission, unpublished child, target-B absence, no helper remote lookup and seven malformed-proof refusal controls. Compiler197.99s, scheduler build247.514s; admission105s (build30s,row75s); test94.902s, row99.860s. Total wall478.619s/charged373.626s. Baseline failed early; its shorter duration is not a comparable full-method performance sample. No p95 claim; test-level timeouts are unchanged (focused manifest-budget caveat below).
 
@@ -66,7 +66,7 @@ The focused H7 manifests retained the importer's15m row cap instead of the plan'
 
 ## CP-4 green / CP-15 newly observed fixture failure
 
-Full exact shared rows at5c3edddbcb09620670ef8e81a1fbb6a848f439f5: CP-4=12/12/0/0; CP-15=16/15/1/0. The sole failure is C994_Verifier_manifest_is_strict: its copied verifier dependencies omit c1609-host-proof.ps1, now dot-sourced by c590-real.ps1. Attribution is pending the exact base replay; do not call this row green. No assertion was relaxed. Full CP-15 ran once as commissioned; any repair will receive only its exact method, retaining the failed full-row receipt.
+Full exact shared rows at5c3edddbcb09620670ef8e81a1fbb6a848f439f5: CP-4=12/12/0/0; CP-15=16/15/1/0. The sole failure is C994_Verifier_manifest_is_strict: its copied verifier dependencies omit c1609-host-proof.ps1, now transitively imported through c590-real.ps1. At that boundary attribution awaited the exact base replay; the later replay below confirms it is inherited. Do not call this full row green. No assertion was relaxed. Full CP-15 ran once as commissioned; any repair will receive only its exact method, retaining the failed full-row receipt.
 
 ```text
 CHECKPOINT CP-4 commit=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)|(VolumeRetirementWrapperTests*)/* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-050747-198a/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 sourceState=clean buildSource=verified
@@ -84,3 +84,74 @@ CHECKPOINT CP15-BASE commit=f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e build=ok fi
 ```
 
 Run20261031-052105-7d04 terminal exit1; clean source/build verified, fresh output, granted slots with0s wait. Compiler182.22s, scheduler build221.487s; test2.754s, row17.172s; total260.961s wall. No commits or pushes from this baseline scratch. It remains intact except for final owned-bin cleanup. This narrowly scoped extra run was required to attribute the newly found requested-row failure; no full row was repeated.
+
+## Verifier repair verified
+
+0094b7867fa5272cc91d82808902c5ab527b204a adds only c1609-host-proof.ps1 to the existing verifier fixture copy list. All positive/negative admission vectors, duplicate/raw-manifest checks and complete-roster assertion remain unchanged. Exact method retest:1/1/0/0, including the full existing vector roster; no second full CP-15 run.
+
+```text
+CHECKPOINT CP15-FIX commit=0094b7867fa5272cc91d82808902c5ab527b204a build=ok filter=/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/C994_Verifier_manifest_is_strict executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-052642-0769/rows/CP15-FIX/run.trx slot=granted waited=0s dirty=0 source=0094b7867fa5272cc91d82808902c5ab527b204a sourceState=clean buildSource=verified
+```
+
+Run20261031-052642-0769 terminal exit0; clean source/build verified. Compiler164.32s/zero errors; scheduler build247.497s. No slot wait; method phase wall62.591s, row69.103s, total386.472s. Exact2m row cap,10m charged/14m wall group bounds, fresh bin-h7-cp15-green, TEMP=/tmp and UseAppHost=false. Optional timing root /tmp/h7-cp15-fix-phases.
+
+## Final results and limits
+
+| Selection | Executed / passed / failed / skipped | Meaning |
+|---|---:|---|
+| H7 assigned base |1/0/1/0|Inherited origin-present refusal reproduced|
+| H7 repair alone |1/1/0/0|All existing positive/negative controls reached|
+| CP-3 |25/25/0/0|Complete requested content/receipt row|
+| CP-4 |12/12/0/0|Complete requested host/wrapper row|
+| CP-15 |16/15/1/0|Full row remains historical red; copied dependency omitted|
+| Exact CP-15 method at assigned base |1/0/1/0|Same inherited fixture failure confirmed|
+| Exact CP-15 method after repair |1/1/0/0|Complete existing verifier vector matrix green|
+
+Do not combine15+1 into a fresh full-row16/16. No final-tip whole-roster, S5-complete, landable or activation claim. Next Code completes long-scan phase admission/renewal, remaining manual/v2 acceptance and the entire closed final roster, including fresh CP-15. The predecessor's other documented unfinished acceptance remains unfinished; this Debug did not remove or waive it. Native Windows CP-11/12/13 and real-Docker qualification remain owed; none were run here. Production deletes remain disabled/uncommissioned and first production action remains PREVIEW ONLY.
+
+## Static checks, cleanup and custody
+
+No definition file changed and no -Update ran. Real audit-land-verification-graph.ps1 -Check approved digest20DE49F6B177E5A238F20D4F8C7F33EAEE6B511A9163CDB902D9136EF06DECB6/count66 at the H7 repair; later changes are only reports and the existing test's copy list, with definitions unchanged. The check was leased,105s admission/28s held, and used this task's verified evaluator. Final OS inventory/lint at0094b7867fa5272cc91d82808902c5ab527b204a passed for all3 changed paths, with no production OS selector/startup change or native Windows credit. Bash/embedded Node syntax and git diff --check passed. Final publication/history/merge-simulation checks are reported in the caller-facing completion.
+
+All six checkpoint runs reached terminal wait (historical reds retained). All commands/owned children were joined before source edits and settlement. Every build/test driver used the host slot gate; all selected build/row receipts show granted slots. Generated TRX/JSON/logs/manifests remain ignored. Each actual run used fresh outputs; the two final focused runs were justified only by the newly observed requested-row failure. No whole-roster requalification was started.
+
+After the last run, literal-path, realpath and non-symlink checks preceded removal of these task-owned outputs; no wildcard deletion, volume/state deletion, or shared prune:
+
+- /work/worktrees/task-7dd4e872/tools/Antiphon.Checkpoints/bin-h7-tool
+- /work/worktrees/task-7dd4e872/src/Antiphon.HostCleanup/bin-h7-tool
+- /work/worktrees/task-7dd4e872/tests/Antiphon.Tests/bin-h7-base
+- /work/worktrees/task-7dd4e872/tests/Antiphon.Tests/bin-h7-green
+- /work/worktrees/task-7dd4e872/tests/Antiphon.Tests/bin-h7-cp3
+- /work/worktrees/task-7dd4e872/tests/Antiphon.Tests/bin-h7-cp4-15
+- /work/worktrees/task-7dd4e872/tests/Antiphon.Tests/bin-h7-cp15-green
+- /tmp/c1609-h7-cp15-base/tests/Antiphon.Tests/bin-h7-cp15-base
+
+Standalone and baseline scratch/evidence remain intact. No desktop files, C:\Antiphon, native Windows tests, live qualification d47848cc, AppHost/runner restart, rollout, production Preview/Apply/Close/delete, tag/publish, rc branch mutation, rebase, reset, amend, force push or target merge occurred. Standing caller authority covered these repairs; no approval pause was needed.
+
+## Exact continuation selections
+
+Import the same plan into a new ignored manifest using a newly bootstrapped checkpoint tool through build-slot.ps1, UseAppHost=false and TEMP=/tmp. Retain exact plan filters/floors and use a new alternate output for every run. Run/wait to a terminal result at the full source SHA. Complete acceptance before the requested whole-roster requalification; do not repeat the small green selections merely for timing samples.
+
+- H7 exact filter: `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof`.
+- Repaired verifier exact filter: `/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/C994_Verifier_manifest_is_strict`.
+- Owed fresh CP-15 full filter: `/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/*`, floor16.
+- Plan: `docs/superpowers/plans/2026-10-29-card-1609-content-derived-volume-retirement-plan.md`. Preserve existing Debug caps and measurement caveats rather than importer defaults.
+
+## Pushed slices before final report
+
+```text
+dffe931e303bd33ef9ed3a052084c5e34d65c1df docs: record H7 baseline red and observed missing awk in helper fixture
+98cde6eabd060bb07bd6f898b428f0cc9e71a8b8 fix: preserve executable alternatives in the retirement helper fixture
+5d8115e003e2af498fe9e57372e4a8fce5b567cf docs: record complete H7 green and real land graph approval
+5c3edddbcb09620670ef8e81a1fbb6a848f439f5 docs: preserve full CP-3 green and measured qualification costs
+2ca17b60014bd0dd6beba01d211ff5b2848ecf8e docs: record CP-4 green and CP-15 missing verifier dependency
+d90ea4c2693fc07bf2e3c78b82a05cb096109dfa docs: confirm verifier fixture failure at the assigned base
+0094b7867fa5272cc91d82808902c5ab527b204a test: copy the v2 host proof dependency into the verifier fixture
+```
+
+The final report-only commit follows these slices.
+
+--- next stage ---
+next: code
+handoff: complete long-scan/manual/v2 acceptance and the whole closed Linux/Windows requalification, including fresh full CP-15; preserve production preview-only.
+artifact: /work/worktrees/task-7dd4e872/.antiphon/task-7dd4e872.md
