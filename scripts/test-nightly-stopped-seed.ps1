@@ -25,6 +25,40 @@ function Snapshot {
 }
 function Check([bool]$Ok,[string]$Detail=''){Assert-C487 $Ok ('SS '+$Case+'.contract') $Detail}
 function Write-Seed($Seed,$Path){[IO.File]::WriteAllText($Path,($Seed|ConvertTo-Json -Depth 40))}
+function Snapshot-Tree([string[]]$Roots){
+    $items=New-Object System.Collections.Generic.List[string]
+    foreach($tree in $Roots){
+        $items.Add((Get-Item -LiteralPath $tree).FullName+'|dir')
+        foreach($item in @(Get-ChildItem -LiteralPath $tree -Recurse -Force)){
+            $hash='directory'
+            if(-not $item.PSIsContainer){$hash=(Get-FileHash -LiteralPath $item.FullName).Hash}
+            [void]$items.Add($item.FullName+'|'+$item.LastWriteTimeUtc.Ticks+'|'+$hash)
+        }
+    }
+    return (($items|Sort-Object) -join "`n")
+}
+function New-SeedSiblingLayout([string]$Logs,[string]$RunId,[string]$RunName){
+    $runDir=Join-Path $Logs $RunName
+    $timing=Join-Path $Logs ('timing-'+$RunId)
+    [void][IO.Directory]::CreateDirectory($runDir)
+    [void][IO.Directory]::CreateDirectory($timing)
+    foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/nightly/stopped-seed') -File)){
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $runDir $file.Name)
+    }
+    foreach($plan in @(Get-ChildItem -LiteralPath $runDir -Filter 'groups-planned*.json' -File)){
+        $text=[IO.File]::ReadAllText($plan.FullName).Replace('"runId": "synthetic-stopped"',('"runId": "'+$RunId+'"'))
+        [IO.File]::WriteAllText((Join-Path $timing $plan.Name),$text)
+        Remove-Item -LiteralPath $plan.FullName
+    }
+    [IO.File]::WriteAllText((Join-Path $timing 'groups-planned-index.json'),'{"version":1}')
+    return [pscustomobject]@{Run=$runDir;Timing=$timing;RunId=$RunId}
+}
+function Write-SeedSummary([string]$RunDir,[string]$TimingRoot,[string]$RunId,[string]$Sha){
+    $header=[ordered]@{startedAt='2026-10-30T08:30:00Z';completedAt='2026-10-30T12:30:00Z';sha=$Sha;runId=$RunId;selection=[ordered]@{timingChunks='decoy'};timingRoot=$TimingRoot}
+    $text=($header|ConvertTo-Json -Compress).TrimEnd('}')
+    $text=$text+',"timingChunks": INVALID}'
+    [IO.File]::WriteAllText((Join-Path $RunDir 'summary.json'),$text)
+}
 try {
     $before=@(Snapshot)
     $seedPath=Join-Path $root 'seed.json'
@@ -166,6 +200,170 @@ try {
                 $wrappers=$wrappers -and $received.Accepted -and $received.Source -ceq 'rc-synthetic-old' -and $received.Path -ceq $seedPath
             }
             Check ($selfHop -and $executorHop -and $wrappers -and [IO.Directory]::Exists((Join-Path $state 'history'))) ('sync='+$selfHop+' nosync='+$executorHop+' wrappers='+$wrappers)
+        }
+        'SiblingTimingFromSummary' {
+            $runId='d47848cce896471db1cc8ca346707cad'
+            $sha='a'*40
+            $layout=New-SeedSiblingLayout (Join-Path $root 'logs') $runId '2026-10-30-0824-d47848cc'
+            Write-SeedSummary $layout.Run $layout.Timing $runId $sha
+            $out=Join-Path $root 'sibling-seed.json'
+            $before=Snapshot-Tree @($layout.Run,$layout.Timing)
+            $export=Join-Path $PSScriptRoot 'export-nightly-stopped-run-seed.ps1'
+            & pwsh -NoProfile -File $export -RunDirectory $layout.Run -OutputPath $out -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha
+            $exitOk=($LASTEXITCODE -eq 0 -and [IO.File]::Exists($out))
+            $after=Snapshot-Tree @($layout.Run,$layout.Timing)
+            $doc=$null;$torn=$false
+            if($exitOk){
+                $doc=Read-NightlyStoppedRunSeed $out
+                $torn=(@($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'profile-4' -and @($_.classes) -ccontains 'Synthetic.antiphon.Torn'}).Count -eq 1 -and $doc.sourceRunId -ceq $runId)
+            }
+            $plansInRun=@(Get-ChildItem -LiteralPath $layout.Run -Filter 'groups-planned*.json' -File).Count
+            Check ($exitOk -and $torn -and $plansInRun -eq 0 -and $before -ceq $after) ('operator export from the run directory discovers summary timingRoot; exit='+$LASTEXITCODE)
+        }
+        'StoppedTimingRootAndRefusals' {
+            $runId='d47848cce896471db1cc8ca346707cad'
+            $sha='a'*40
+            $explicit=New-SeedSiblingLayout (Join-Path $root 'explicit-logs') $runId '2026-10-30-0824-d47848cc'
+            Remove-Item -LiteralPath (Join-Path $explicit.Run 'summary.json') -ErrorAction SilentlyContinue
+            $explicitOut=Join-Path $root 'explicit-seed.json'
+            $explicitOk=$false
+            try {
+                [void](Export-NightlyStoppedRunSeed -RunDirectory $explicit.Run -OutputPath $explicitOut -TimingRoot $explicit.Timing -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+                $explicitDoc=Read-NightlyStoppedRunSeed $explicitOut
+                $explicitOk=($explicitDoc.sourceRunId -ceq $runId -and @($explicitDoc.chunks).Count -gt 0)
+            } catch { $explicitOk=$false }
+            $auto=New-SeedSiblingLayout (Join-Path $root 'auto-logs') $runId '2026-10-30-0824-d47848cc'
+            Remove-Item -LiteralPath (Join-Path $auto.Run 'owner.json')
+            $autoOut=Join-Path $root 'auto-seed.json'
+            $autoOk=$false
+            try {
+                [void](Export-NightlyStoppedRunSeed -RunDirectory $auto.Run -OutputPath $autoOut -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+                $autoDoc=Read-NightlyStoppedRunSeed $autoOut
+                $autoOk=($autoDoc.sourceRunId -ceq $runId)
+            } catch { $autoOk=$false }
+            function Refuse-Timing([scriptblock]$Arrange,[string]$Like){
+                $id=[guid]::NewGuid().ToString('N')
+                $lay=New-SeedSiblingLayout (Join-Path $root ('refuse-'+$id)) $runId '2026-10-30-0824-d47848cc'
+                & $Arrange $lay
+                $msg=''
+                try { [void](Export-NightlyStoppedRunSeed -RunDirectory $lay.Run -OutputPath (Join-Path $root ('refuse-'+$id+'.json')) -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru) }
+                catch { $msg=$_.Exception.Message }
+                return ($msg -like $Like)
+            }
+            $outside=Refuse-Timing { param($lay)
+                $elsewhere=Join-Path $root ('outside-timing-'+$lay.RunId)
+                [void][IO.Directory]::CreateDirectory($elsewhere)
+                Write-SeedSummary $lay.Run $elsewhere $lay.RunId $sha
+            } '*seed-timing-outside*'
+            $symlink=Refuse-Timing { param($lay)
+                $real=Join-Path ([IO.Path]::GetDirectoryName($lay.Timing)) ('timing-real-'+$lay.RunId)
+                Move-Item -LiteralPath $lay.Timing -Destination $real
+                New-Item -ItemType SymbolicLink -Path $lay.Timing -Target $real | Out-Null
+                Write-SeedSummary $lay.Run $lay.Timing $lay.RunId $sha
+            } '*evidence-link*'
+            $other=Refuse-Timing { param($lay)
+                $wrong=Join-Path ([IO.Path]::GetDirectoryName($lay.Timing)) 'timing-ffffffffffffffffffffffffffffffff'
+                [void][IO.Directory]::CreateDirectory($wrong)
+                Write-SeedSummary $lay.Run $wrong $lay.RunId $sha
+            } '*seed-timing-run-mismatch*'
+            Check ($explicitOk -and $autoOk -and $outside -and $symlink -and $other) ('explicit='+$explicitOk+' auto='+$autoOk+' outside='+$outside+' symlink='+$symlink+' other='+$other)
+        }
+        'ChunkUnfinishedTolerance' {
+            $sha='a'*40
+            $timing=Join-Path $run 'antiphon-all-group-1.timing.json'
+            $lock=[IO.File]::Open($timing,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+            $lockedOk=$false;$lockedDetail=''
+            try {
+                $lockedOut=Join-Path $root 'locked-seed.json'
+                try {
+                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $lockedOut -PassThru)
+                    $lockedDoc=Read-NightlyStoppedRunSeed $lockedOut
+                    $row=@($lockedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
+                    $lockedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
+                    $lockedDetail=[string]$row.unfinishedReason
+                } catch { $lockedDetail=$_.Exception.Message }
+            } finally { $lock.Dispose() }
+            $trx=Join-Path $run 'antiphon-all-group-2.trx'
+            $trxBytes=[IO.File]::ReadAllBytes($trx)
+            $script:NightlySeedReadBarrier={ param($Path) if($Path -ceq $trx){ [IO.File]::AppendAllText($Path,' ') } }
+            $changedOk=$false;$changedDetail=''
+            try {
+                $changedOut=Join-Path $root 'changed-seed.json'
+                try {
+                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $changedOut -PassThru)
+                    $changedDoc=Read-NightlyStoppedRunSeed $changedOut
+                    $row=@($changedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
+                    $kept=@($changedDoc.failedTests|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'}).Count
+                    $changedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*trx*' -and $kept -eq 0)
+                    $changedDetail=[string]$row.unfinishedReason+' kept='+$kept
+                } catch { $changedDetail=$_.Exception.Message }
+            } finally { $script:NightlySeedReadBarrier=$null; [IO.File]::WriteAllBytes($trx,$trxBytes) }
+            $passed=Join-Path $run 'antiphon-all-group-1.trx'
+            $passedText=[IO.File]::ReadAllText($passed)
+            $open=$passedText.Replace('<ResultSummary outcome="Completed"><Counters total="1" executed="1" /></ResultSummary>','')
+            $openOk=$false;$openDetail=''
+            try {
+                [IO.File]::WriteAllText($passed,$open)
+                $openOut=Join-Path $root 'open-seed.json'
+                [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $openOut -PassThru)
+                $openDoc=Read-NightlyStoppedRunSeed $openOut
+                $row=@($openDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
+                $openOk=(-not $row.completed)
+                $openDetail='completed='+[string]$row.completed
+            } catch { $openDetail=$_.Exception.Message }
+            finally { [IO.File]::WriteAllText($passed,$passedText) }
+            $denied=Join-Path $run 'antiphon-all-group-2.timing.json'
+            $deniedMode=[IO.File]::GetUnixFileMode($denied)
+            $deniedOk=$false;$deniedDetail=''
+            try {
+                [IO.File]::SetUnixFileMode($denied,[IO.UnixFileMode]::None)
+                $deniedOut=Join-Path $root 'denied-seed.json'
+                try {
+                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $deniedOut -PassThru)
+                    $deniedDoc=Read-NightlyStoppedRunSeed $deniedOut
+                    $row=@($deniedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
+                    $deniedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
+                    $deniedDetail=[string]$row.unfinishedReason
+                } catch { $deniedDetail=$_.Exception.Message }
+            } finally { [IO.File]::SetUnixFileMode($denied,$deniedMode) }
+            $tamper=New-SeedSiblingLayout (Join-Path $root 'tamper-logs') 'd47848cce896471db1cc8ca346707cad' '2026-10-30-0824-d47848cc'
+            Write-SeedSummary $tamper.Run $tamper.Timing 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' $sha
+            $tamperMsg=''
+            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $tamper.Run -OutputPath (Join-Path $root 'tamper-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru) }
+            catch { $tamperMsg=$_.Exception.Message }
+            $tamperOk=($tamperMsg -like '*seed-timing-run-mismatch*' -or $tamperMsg -like '*seed-plan-run-mismatch*' -or $tamperMsg -like '*seed-summary*')
+            Check ($lockedOk -and $changedOk -and $openOk -and $deniedOk -and $tamperOk) ('locked='+$lockedDetail+'; changed='+$changedDetail+'; open='+$openDetail+'; denied='+$deniedDetail+'; tamper='+$tamperMsg)
+        }
+        'LinkCacheRefusesReplacement' {
+            $fileLink=Join-Path $run 'linked-file.txt'
+            New-Item -ItemType SymbolicLink -Path $fileLink -Target (Join-Path $run 'owner.json') | Out-Null
+            $fileMsg=''
+            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath (Join-Path $root 'file-link-seed.json') -PassThru) }
+            catch { $fileMsg=$_.Exception.Message }
+            finally { Remove-Item -LiteralPath $fileLink -Force }
+            $parent=Join-Path $root 'link-parent'
+            $real=Join-Path $parent 'real-run'
+            [void][IO.Directory]::CreateDirectory($real)
+            foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/nightly/stopped-seed') -File)){
+                Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $real $file.Name)
+            }
+            $linkedRun=Join-Path $parent 'linked-run'
+            New-Item -ItemType SymbolicLink -Path $linkedRun -Target $real | Out-Null
+            $parentMsg=''
+            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $linkedRun -OutputPath (Join-Path $root 'parent-link-seed.json') -PassThru) }
+            catch { $parentMsg=$_.Exception.Message }
+            $swap=Join-Path $root 'swap-dir'
+            [void][IO.Directory]::CreateDirectory($swap)
+            $leaf=Join-Path $swap 'a.txt'
+            [IO.File]::WriteAllText($leaf,'stable')
+            Assert-NightlyHistoryNoLink $swap
+            $held=Join-Path $root 'swap-real'
+            Move-Item -LiteralPath $swap -Destination $held
+            New-Item -ItemType SymbolicLink -Path $swap -Target $held | Out-Null
+            $swapMsg=''
+            try { Assert-NightlyHistoryFileStable (Join-Path $swap 'a.txt') }
+            catch { $swapMsg=$_.Exception.Message }
+            Check ($fileMsg -like '*evidence-link*' -and $parentMsg -like '*evidence-link*' -and $swapMsg -like '*evidence-link*') ('file='+$fileMsg+'; parent='+$parentMsg+'; swap='+$swapMsg)
         }
         default {throw 'unknown case'}
     }
