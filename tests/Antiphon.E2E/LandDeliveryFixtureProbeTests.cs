@@ -60,7 +60,19 @@ public class LandDeliveryFixtureProbeTests
             error.Message.ShouldContain("LandHeld");
             error.Message.ShouldContain("operation=Published; notification=Enqueued; producer=held");
             error.Message.ShouldNotContain(privatePayload);
+            error.InnerException.ShouldBeOfType<InvalidOperationException>();
             File.Exists(Path.Combine(f.Root, "polling-attention-" + request.ToString("N") + ".txt")).ShouldBeTrue();
+            var matching = other with { Kind = AttentionKind.LandOutcomeUnconfirmed, LandRequestId = request };
+            foreach (var (items, count) in new (AttentionItemDto[], int)[] {
+                ([], 0), ([other with { Kind = AttentionKind.LandOutcomeUnconfirmed }], 0),
+                ([matching, matching with { LandNotificationId = Guid.NewGuid() }], 2) })
+            {
+                var rejected = await Should.ThrowAsync<InvalidOperationException>(() => f.PollingAttentionAsync(
+                    new(DateTime.UtcNow, false, items), request, _ => throw new IOException(privatePayload)));
+                rejected.Message.ShouldContain("matches=" + count);
+                rejected.Message.ShouldContain("producerState=unavailable:IOException");
+                rejected.Message.ShouldNotContain(privatePayload);
+            }
         }
         finally { Directory.Delete(f.Root, recursive: true); }
     }

@@ -289,9 +289,11 @@ public class AgentTaskLandDeliveryE2ETests
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
+            note.RequestId.ShouldBe(requestId);
             note.ConfirmedAt.ShouldBeNull();
             var aged = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged).ToListAsync();
             aged.Count.ShouldBe(2);
+            new[] { note.Id }.Concat(aged.Select(n => n.Id)).ShouldContain(owed.LandNotificationId!.Value);
             foreach (var warning in aged)
             {
                 warning.Body.ShouldContain("\npublication=Landed; cleanup=Complete\n");
