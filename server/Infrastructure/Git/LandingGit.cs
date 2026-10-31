@@ -200,30 +200,77 @@ public class LandingGit : ILandingGit
             }
             catch (OperationCanceledException) { }
 
-            // Read the exit while the handle is still ours. The continuation runs after this method
-            // returns and must not call back into the Process to decide whether the fence can drop.
-            Action? delete = null;
-            if (onStreamsClosed is not null)
-            {
-                try
-                {
-                    if (process.HasExited) delete = onStreamsClosed;
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-                { }
-            }
+            // The exit is read when the streams actually close, not at this grace snapshot.
+            // A root that is still dying here used to leave delete unset, and the continuation
+            // then disposed the handle without removing the journal. The recorded root can exit
+            // a moment later while a pipe holder is still alive; the fence drops only once both
+            // are true. Waiting here would stretch the caller out to that holder's lifetime.
+            Console.Error.WriteLine(
+                $"repository_child_journal_handoff root={SafePid(process)} exited={RootExited(process)}");
+            var closeJournal = onStreamsClosed;
+            var retained = keepUntilClosed;
             ObserveAbandoned(streams, () =>
             {
-                try { delete?.Invoke(); }
+                var waitForRoot = false;
+                try
+                {
+                    if (closeJournal is null) return;
+                    if (RootExited(process))
+                    {
+                        closeJournal();
+                        return;
+                    }
+                    waitForRoot = true;
+                    var pid = SafePid(process);
+                    Console.Error.WriteLine($"repository_child_journal_waiting_for_root pid={pid}");
+                    _ = Task.Run(() =>
+                    {
+                        try
+                        {
+                            try { process.WaitForExit(); }
+                            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                            { }
+                            if (RootExited(process)) closeJournal();
+                            else Console.Error.WriteLine($"repository_child_journal_retained_running_root pid={pid}");
+                        }
+                        catch (IOException)
+                        {
+                            Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+                        }
+                        finally { DisposeAbandoned(process, retained); }
+                    });
+                }
+                catch (IOException)
+                {
+                    Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+                }
                 finally
                 {
-                    TryDispose(process);
-                    try { keepUntilClosed?.Dispose(); }
-                    catch (ObjectDisposedException) { }
+                    if (!waitForRoot) DisposeAbandoned(process, retained);
                 }
             });
             return true;
         }
+    }
+
+    private static void DisposeAbandoned(Process process, IDisposable? keepUntilClosed)
+    {
+        TryDispose(process);
+        try { keepUntilClosed?.Dispose(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private static bool RootExited(Process process)
+    {
+        try { return process.HasExited; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { return false; }
+    }
+
+    private static int SafePid(Process process)
+    {
+        try { return process.Id; }
+        catch (InvalidOperationException) { return 0; }
     }
 
     private static void TryDispose(Process process)
@@ -237,11 +284,21 @@ public class LandingGit : ILandingGit
     {
         try
         {
+            if (entireProcessTree)
+            {
+                // A dead root still has Windows children (parent ids are not rewritten).
+                // Skipping the walk because HasExited is already true leaves those children
+                // holding the pipes and the journal.
+                OwnedProcessTree.Kill(process);
+                return;
+            }
             if (!process.HasExited)
-                process.Kill(entireProcessTree);
+                process.Kill(entireProcessTree: false);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        { }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException)
+        {
+            Console.Error.WriteLine($"repository_child_tree_kill_failed error={ex.GetType().Name}");
+        }
     }
 
     /// <summary>A broken pipe on stdin is git exiting before it reads. Observe that fault so a
