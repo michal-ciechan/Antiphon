@@ -21,12 +21,27 @@ $manifest = $manifest.Replace('properties: {}', "properties:`n    UseAppHost: fa
 $manifest = $manifest.Replace('bin-live-pty-isolation',"bin-$runKey-pty").Replace('bin-live-isolation',"bin-$runKey-c680")
 $manifest = $manifest.Replace('timeoutMinutes: 18','timeoutMinutes: 2').Replace('timeoutMinutes: 30','timeoutMinutes: 4')
 $manifest = $manifest.Replace('environment: {}', "environment:`n    ANTIPHON_LIVE_PORTABLE_CONTEXT: '$contextPath'")
-# An exact-name union selects the commission-scoped Explicit method; a class wildcard omits it.
-$names = 'DedicatedConfigOwnsTrustAndEvidence','CwdInstructionsCannotLeak','SettingsProjectionDetectsDrift','UnknownConfigDisablesReuse','StartupArgvMatchesProductionApplyOff'
-$union = ($names | ForEach-Object { '(' + $_ + ')' }) -join '|'
-$manifest = $manifest.Replace('/*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/*', '/*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/' + $union)
+# TUnit omits Explicit under the class wildcard, while the checkpoint filter grammar
+# refuses an exact-name OR. Materialize CP-24's fifth method as one exact row on its build.
+$manifest = $manifest.Replace("minExecuted: 5`n", "minExecuted: 4`n")
+$manifest += @"
+
+- id: CP-24-PARITY
+  repeat: 1
+  after: [S1c-profile]
+  build: bin-$runKey-c680
+  group: portable-live-c680-isolation
+  filter: /*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/StartupArgvMatchesProductionApplyOff
+  expect: [StartupArgvMatchesProductionApplyOff]
+  minExecuted: 1
+  estimatedMinutes: 1
+  timeoutMinutes: 4
+  serial: true
+  environment:
+    ANTIPHON_LIVE_PORTABLE_CONTEXT: '$contextPath'
+"@
 $producerRows = @('CP-18')
-$consumerRows = @('CP-24')
+$consumerRows = @('CP-24','CP-24-PARITY')
 if ($Controls) {
     $methods = @(
         @(7,'DedicatedConfigOwnsTrustAndEvidence'),@(8,'CwdInstructionsCannotLeak'),@(9,'SettingsProjectionDetectsDrift'),@(10,'UnknownConfigDisablesReuse'),@(11,'LaunchArgumentsKeepProductionSources'),@(12,'ModelSelectionComesFromContext'),
