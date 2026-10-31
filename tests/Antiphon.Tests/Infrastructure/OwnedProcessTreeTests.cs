@@ -103,11 +103,12 @@ public sealed class OwnedProcessTreeTests
                     rows.Add(Row(30, 20, 1_200));
                 return new ProcessSnapshot(rows.ToArray(), null);
             },
-            pid => rows.Single(row => row.Pid == pid).StartTicks,
+            pid => rows.Last(row => row.Pid == pid).StartTicks,
             pid =>
             {
                 killed.Add(pid);
-                rows.Add(Row(99, 10, 1_300));
+                if (rows.All(row => row.Pid != 99))
+                    rows.Add(Row(99, 10, 1_300));
             },
             () => { },
             Root,
