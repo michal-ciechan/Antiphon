@@ -105,7 +105,14 @@ function New-Fixture {
     return @{ Request = $request; Boundary = $boundary }
 }
 function Run-Fixture($fixture) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     $result = & "$PSScriptRoot/run-live-lane.ps1" -Request $fixture.Request -Boundary $fixture.Boundary
+    [IO.File]::WriteAllText((Join-Path $F.Root 'trace.json'), ([ordered]@{
+        method=$method; source=(& git -C $repo rev-parse HEAD); platform=[Environment]::OSVersion.Platform.ToString()
+        dirty=([string]::IsNullOrEmpty((& git -C $repo status --porcelain --untracked-files=no)) -eq $false)
+        hostName=[Environment]::MachineName; category='script-orchestration'; wallSeconds=$timer.Elapsed.TotalSeconds
+        dbSeconds=$null; httpSeconds=$null; nativeSeconds=$null; result=$result; trace=@($F.Trace)
+    } | ConvertTo-Json -Depth 12))
     foreach ($p in $F.State.Keys) {
         if ([IO.File]::ReadAllText($p) -cne $F.State[$p]) { throw 'legacy state changed' }
     }
@@ -138,7 +145,7 @@ function Test-LockBeforeSlot {
         Check $id ($r.ExitCode -eq 2 -and (No-Starts))
     }
 }
-function Test-ProtectedInputs {
+function Test-ProtectedInputs([string]$Overlay = '') {
     # All pre-existing executable/config inputs, including definitions and old tests,
     # are protected. New executable paths are enumerated individually.
     $allowed = @('scripts/run-live-lane.ps1','scripts/lib/live-lane-run.ps1','scripts/test-live-lane-run.ps1',
@@ -152,10 +159,20 @@ function Test-ProtectedInputs {
         if ($path -match '\.md$') { continue }
         if ($existing -contains $path -or $allowed -cnotcontains $path) { return $false }
     }
+    if ($Overlay) {
+        foreach ($path in @('scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
+            'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')) {
+            $expected = & git -C $repo rev-parse "${base}:$path"
+            $actual = & git -C $repo hash-object -- (Join-Path $Overlay $path)
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $expected) { return $false }
+        }
+    }
     return $true
 }
 function Read-Census($root) {
-    return & {
+    # A fresh runspace prevents script-level import guards from making a pinned
+    # reader silently resolve functions from the candidate (or the reverse).
+    $reader = {
         param($root)
         . "$root/scripts/lib/nightly-common.ps1"
         . "$root/scripts/lib/nightly-policy.ps1"
@@ -171,14 +188,21 @@ function Read-Census($root) {
         )
         $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy -Profile rc -SuiteId antiphon -Platform linux)
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
-        return @{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
-    } $root
+        return [ordered]@{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
+    }
+    $ps = [PowerShell]::Create()
+    try {
+        [void]$ps.AddScript($reader.ToString()).AddArgument($root)
+        $output = $ps.Invoke()
+        if ($ps.HadErrors) { throw 'isolated census reader failed' }
+        return [string]$output[0]
+    } finally { $ps.Dispose() }
 }
 function Test-WrapperOnlyPaidManifest {
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'valid-context' ($F.Starts -eq 1 -and $F.Admitted.lane -ceq 'fixture-live' -and $F.Admitted.source -ceq ('a' * 40) -and $F.Admitted.uids[0] -ceq 'fixture.A.0' -and $F.Admitted.owner.runId -ceq 'run-A' -and $F.Admitted.attempt -eq 1 -and $r.TerminalComplete)
     foreach ($id in @('context-missing','context-lane','context-uid','context-source','context-executable','context-profile','context-owner','context-forged')) {
-        $q = New-Fixture; $F.Change = $id; $r = Run-Fixture $q
+        $q = New-Fixture; $q.Request.Inherited.ANTIPHON_HEADED_TESTS = '1'; $F.Change = $id; $r = Run-Fixture $q
         $code = 2; $reason = 'context-mismatch'
         if ($id -eq 'context-missing') { $code = 20; $reason = 'lane-context-required' }
         if ($id -eq 'context-owner') { $reason = 'context-stale' }
@@ -206,11 +230,11 @@ function Test-WrapperOnlyPaidManifest {
     $policy.profiles.rc.exclusions += @{ suite='antiphon'; class='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; reason='fixture'; owner='CARD-1545' }
     $policy.policyHash = Get-NightlyPolicyHash $policy
     [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50))
-    Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after)
+    Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     [IO.File]::WriteAllText($policyPath, $original)
     $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
-    [IO.File]::AppendAllText($reader, "`nfunction Test-NightlyDiscoveryExcluded { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return (`$Node.Uid -eq 'sentinel-c680') }`n")
-    Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after)
+    [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDisposition { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
+    Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'legacy-state' ($F.Starts -eq 1 -and $F.Trace.Contains('receipt'))
 }
@@ -221,6 +245,7 @@ function Test-ChildEnvironmentIsScoped {
     Check 'allowlist' ($start.Environment['PATH'] -ceq 'fixture-path' -and $start.Environment['CLAUDE_CONFIG_DIR'] -ceq 'owned-profile' -and $start.Environment['ANTIPHON_LIVE_LANE_CONTEXT'] -ceq 'owned-context' -and -not $start.Environment.ContainsKey('ANTHROPIC_API_KEY') -and -not $start.Environment.ContainsKey('ANTIPHON_TASK_TOKEN') -and -not $start.Environment.ContainsKey('HOME'))
     $ok = $true
     foreach ($key in @('CLAUDE_CODE_CHILD_SESSION','CLAUDE_CODE_SESSION_ID','CLAUDE_CODE_BRIDGE_SESSION_ID','CLAUDECODE')) {
+        $inherited[$key] = 'hostile-inherited-session'
         foreach ($state in @('absent','empty','value')) {
             $values = $selected.Clone()
             if ($state -ne 'absent') { $values[$key] = $(if ($state -eq 'empty') { '' } else { 'fixture-session' }) }
@@ -248,7 +273,7 @@ function Test-DeadlineJoinsOwnedChildren {
     Check 'wait75' ($F.Starts -eq 1 -and $F.Waits -eq 3 -and @($F.Trace | Where-Object { $_ -eq 'wait:checkpoint-A' }).Count -eq 3 -and $F.Trace.IndexOf('receipt') -gt $F.Trace.IndexOf('terminal:checkpoint-A') -and $r.TerminalComplete)
     $q = New-Fixture; $F.Deadline = $true; $r = Run-Fixture $q
     $trace = $F.Trace -join ','
-    Check 'deadline' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'deadline' -and $trace -match 'stop:child-A,stop:child-B,join:child-A,join:child-B,release' -and -not (Lock-Exists $q))
+    Check 'deadline' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'deadline' -and $trace -match 'stop:child-A,stop:child-B,join:child-A,join:child-B,(?:receipt,)?release' -and -not (Lock-Exists $q))
     $q = New-Fixture; $F.JoinOk = $false; $r = Run-Fixture $q
     Check 'cleanup-unknown' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'cleanup-incomplete' -and (Lock-Exists $q) -and -not $r.TerminalComplete)
     foreach ($fault in @('context-write','launch-failure','wait-failure','terminal-read','receipt-write')) {
