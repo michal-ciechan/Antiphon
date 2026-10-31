@@ -9,10 +9,21 @@ function Resolve-NightlyPreviousRunOrder {
     $lanes=[Collections.Generic.List[object]]::new()
     try {
         if ($null -eq $PreviousRun) { throw $reason }
-        if ($PreviousRun.PSObject.Properties.Name -ccontains 'liveness' -and $PreviousRun.liveness -cne 'closed') { throw 'previous-run-liveness-unknown' }
+        $livenessText=''
+        if ($PreviousRun.PSObject.Properties.Name -ccontains 'liveness' -and $null -ne $PreviousRun.liveness) { $livenessText=[string]$PreviousRun.liveness }
+        if ([string]::IsNullOrWhiteSpace($livenessText)) { throw 'previous-run-liveness-missing' }
+        if ($livenessText -cne 'closed') { throw 'previous-run-liveness-unknown' }
         $reason='previous-run-schema'
-        if ($PreviousRun.suites -isnot [array] -or [string]$PreviousRun.sha -cnotmatch '^[a-f0-9]{40}$') { throw $reason }
-        if ($PreviousRun.sha -cne $CandidateSha) { throw 'previous-run-candidate-mismatch' }
+        $schemaText=''
+        if ($PreviousRun.PSObject.Properties.Name -ccontains 'schemaVersion' -and $null -ne $PreviousRun.schemaVersion) { $schemaText=[string]$PreviousRun.schemaVersion }
+        if ([string]::IsNullOrWhiteSpace($schemaText)) { throw 'previous-run-schema-missing' }
+        if ($schemaText -cne '1') { throw $reason }
+        if ($PreviousRun.suites -isnot [array]) { throw $reason }
+        $shaText=''
+        if ($PreviousRun.PSObject.Properties.Name -ccontains 'sha' -and $null -ne $PreviousRun.sha) { $shaText=[string]$PreviousRun.sha }
+        if ([string]::IsNullOrWhiteSpace($shaText)) { throw 'previous-run-candidate-missing' }
+        if ($shaText -cnotmatch '^[a-f0-9]{40}$') { throw $reason }
+        if ($shaText -cne $CandidateSha) { throw 'previous-run-candidate-mismatch' }
         $completed=[datetimeoffset]::MinValue
         if($PreviousRun.completedAt -is [datetime]){$completed=[datetimeoffset]$PreviousRun.completedAt}
         elseif (-not [datetimeoffset]::TryParse([string]$PreviousRun.completedAt,[ref]$completed)) { throw $reason }
@@ -90,10 +101,18 @@ function New-NightlyDispatchSchedule {
     $dispatchHash = [Security.Cryptography.SHA256]::Create()
     try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
     finally { $dispatchHash.Dispose() }
-    if($PreviousRun -and $PreviousRun.canonicalPlanDigest -and $PreviousRun.canonicalPlanDigest -cne $dispatchDigest){
-        $dispatchOrdered=@($dispatchRows.ToArray())
-        for($i=0;$i -lt $dispatchOrdered.Count;$i++){$dispatchOrdered[$i].dispatchOrdinal=$i}
-        $previousOrder=[pscustomobject]@{reason='previous-run-plan-mismatch';lanes=@()}
+    if($null -ne $PreviousRun){
+        $recordedDigest=''
+        if($PreviousRun.PSObject.Properties.Name -ccontains 'canonicalPlanDigest' -and $null -ne $PreviousRun.canonicalPlanDigest){$recordedDigest=[string]$PreviousRun.canonicalPlanDigest}
+        $digestReason=''
+        if([string]::IsNullOrWhiteSpace($recordedDigest)){$digestReason='previous-run-plan-digest-missing'}
+        elseif($recordedDigest -cnotmatch '^[a-f0-9]{64}$'){$digestReason='previous-run-plan-digest-malformed'}
+        elseif($recordedDigest -cne $dispatchDigest){$digestReason='previous-run-plan-mismatch'}
+        if($digestReason){
+            $dispatchOrdered=@($dispatchRows.ToArray())
+            for($i=0;$i -lt $dispatchOrdered.Count;$i++){$dispatchOrdered[$i].dispatchOrdinal=$i}
+            $previousOrder=[pscustomobject]@{reason=$digestReason;lanes=@()}
+        }
     }
     $schedule=[pscustomobject]@{PreparedSuites=@($PreparedSuites);format='antiphon-nightly-dispatch-v1';runId=$RunId;attempt=$Attempt;historyDigest=$HistoryDigest;canonicalPlanDigest=$dispatchDigest;preparationComplete=$PreparationComplete;unresolved=@($Unresolved);entries=@($dispatchOrdered)}
     if($previousOrder){$schedule|Add-Member -NotePropertyName orderingReason -NotePropertyValue $previousOrder.reason;$schedule|Add-Member -NotePropertyName lanes -NotePropertyValue $previousOrder.lanes}

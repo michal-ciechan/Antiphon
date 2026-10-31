@@ -1783,7 +1783,7 @@ function Invoke-AntiphonNightlyTests {
     # Bound by the exported summary digest. This diagnostic snapshot can order a
     # later complete attempt; it never supplies pass credit or skips a launch.
     if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
-        $summary.dispatchProgress=[ordered]@{sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=@($suiteResults|Where-Object {$_.chunk})}
+        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=@($suiteResults|Where-Object {$_.chunk})}
     }
     try {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
