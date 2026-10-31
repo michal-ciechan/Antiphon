@@ -102,6 +102,10 @@ function Get-NightlyHistoryNodeIdentity {
         catch { return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true } }
         $linked = (($attrs -band [IO.FileAttributes]::ReparsePoint) -ne 0)
         $dir = (($attrs -band [IO.FileAttributes]::Directory) -ne 0)
+        if (-not $linked -and -not $dir) {
+            $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+            if ($null -ne $item -and $item.LinkType) { $linked = $true }
+        }
         $ino = [uint64]0
         if ($linked) { $ino = [uint64]1 }
         return [pscustomobject]@{ Missing = $false; Linked = $linked; Directory = $dir; Dev = [uint64]0; Ino = $ino; Unreadable = $false }
@@ -114,10 +118,14 @@ function Get-NightlyHistoryNodeIdentity {
         return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true }
     }
     $kind = ([uint32]$stat.Mode) -band 61440
+    $linked = ($kind -eq 40960)
+    $dir = ($kind -eq 16384)
+    # A directory nlink counts subdirectories. A file nlink above 1 is a hard link.
+    if (-not $linked -and -not $dir -and [uint64]$stat.Nlink -gt 1) { $linked = $true }
     return [pscustomobject]@{
         Missing = $false
-        Linked = ($kind -eq 40960)
-        Directory = ($kind -eq 16384)
+        Linked = $linked
+        Directory = $dir
         Dev = [uint64]$stat.Dev
         Ino = [uint64]$stat.Ino
         Unreadable = $false
@@ -127,9 +135,9 @@ function Get-NightlyHistoryNodeIdentity {
 function Assert-NightlyHistoryNoLink {
     param([string]$Path)
     # Ancestors above the parent are classified once and cached. The path itself
-    # and its immediate parent are lstat'd on every call. Replacing a directory
-    # with a symlink changes that parent inode (and sets S_IFLNK / ReparsePoint),
-    # so a cached clean verdict cannot authorize a later file open through it.
+    # and its immediate parent are lstat'd on every call. Only directories are
+    # cached: replacing one changes its inode (or sets S_IFLNK / ReparsePoint).
+    # Rewriting a regular file also changes that file's inode and is not a link.
     if ($null -eq $script:NightlyHistoryLinkCache) { Reset-NightlyHistoryLinkCache }
     $full = ConvertTo-NightlyHistoryFull $Path
     $chain = [Collections.Generic.List[string]]::new()
@@ -150,8 +158,10 @@ function Assert-NightlyHistoryNoLink {
         if ($id.Linked) { throw 'evidence-link' }
         if ($script:NightlyHistoryLinkCache.ContainsKey($node)) {
             $prior = $script:NightlyHistoryLinkCache[$node]
-            if ($prior.Linked -or $prior.Dev -ne $id.Dev -or $prior.Ino -ne $id.Ino) { throw 'evidence-link' }
-        } else {
+            if ($prior.Directory -or $id.Directory) {
+                if ($prior.Linked -or $prior.Directory -ne $id.Directory -or $prior.Dev -ne $id.Dev -or $prior.Ino -ne $id.Ino) { throw 'evidence-link' }
+            }
+        } elseif ($id.Directory) {
             $script:NightlyHistoryLinkCache[$node] = $id
         }
     }
