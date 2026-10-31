@@ -87,6 +87,11 @@ function New-NightlyDispatchSchedule {
     $dispatchHash = [Security.Cryptography.SHA256]::Create()
     try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
     finally { $dispatchHash.Dispose() }
+    if($PreviousRun -and $PreviousRun.canonicalPlanDigest -and $PreviousRun.canonicalPlanDigest -cne $dispatchDigest){
+        $dispatchOrdered=@($dispatchRows.ToArray())
+        for($i=0;$i -lt $dispatchOrdered.Count;$i++){$dispatchOrdered[$i].dispatchOrdinal=$i}
+        $previousOrder=[pscustomobject]@{reason='previous-run-plan-mismatch';lanes=@()}
+    }
     $schedule=[pscustomobject]@{PreparedSuites=@($PreparedSuites);format='antiphon-nightly-dispatch-v1';runId=$RunId;attempt=$Attempt;historyDigest=$HistoryDigest;canonicalPlanDigest=$dispatchDigest;preparationComplete=$PreparationComplete;unresolved=@($Unresolved);entries=@($dispatchOrdered)}
     if($previousOrder){$schedule|Add-Member -NotePropertyName orderingReason -NotePropertyValue $previousOrder.reason;$schedule|Add-Member -NotePropertyName lanes -NotePropertyValue $previousOrder.lanes}
     if($HistoryFallbackReason){$schedule|Add-Member -NotePropertyName historyFallbackReason -NotePropertyValue $HistoryFallbackReason}

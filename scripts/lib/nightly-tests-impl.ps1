@@ -7,6 +7,7 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 . (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
+. (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -1111,6 +1112,7 @@ function Invoke-NightlyScheduledChunk {
             throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
         }
         $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
+        [void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt))
         try {
             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
                 -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
@@ -1294,6 +1296,7 @@ function Invoke-NightlyScheduledChunk {
     Update-QualificationChunkTiming @timingUpdate
     $suiteResults += $row
     } finally {
+        if($isNative){[void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -State Idle)}
         foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
             $ExecutionSuiteState.Variables[$executionName] = Get-Variable -Name $executionName -ValueOnly -ErrorAction SilentlyContinue
         }
