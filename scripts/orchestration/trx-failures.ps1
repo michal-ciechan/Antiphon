@@ -5,11 +5,15 @@ Print bounded evidence for failed tests in one or more explicitly selected TRX f
 .DESCRIPTION
 Diagnostic helper, always exits 0, including malformed/missing inputs (reported as
 TRX-READ-ERROR). It grants no test or release credit. ASCII-only, PowerShell 5.1 safe.
+For a shell -File call, give separate positional paths: trx-failures.ps1 a.trx b.trx.
+An in-process caller may also pass -Path @('a.trx', 'b.trx').
 #>
 [CmdletBinding()]
-param([Parameter(Position = 0)][string[]]$Path = @())
+param([Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$Path = @())
 $ErrorActionPreference = 'Stop'
 $count = 0
+$readErrors = 0
+if ($Path.Count -eq 0) { 'TRX-READ-ERROR no input paths supplied.'; $readErrors++ }
 function Get-Prefix([string]$Text, [int]$Limit) {
     return $Text.Substring(0, [Math]::Min($Limit, $Text.Length))
 }
@@ -40,7 +44,7 @@ foreach ($file in $Path) {
             $stdoutText = ''; if ($stdout) { $stdoutText = $stdout.InnerText }
             "STDOUT $(Get-Prefix $stdoutText 2500)"
         }
-    } catch { "TRX-READ-ERROR ${file}: $($_.Exception.Message)" }
+    } catch { $readErrors++; "TRX-READ-ERROR ${file}: $($_.Exception.Message)" }
 }
-if ($count -eq 0) { 'no failures' }
+if ($count -eq 0 -and $readErrors -eq 0) { 'no failures' }
 exit 0

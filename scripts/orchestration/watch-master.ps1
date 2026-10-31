@@ -18,7 +18,13 @@ $ErrorActionPreference = 'Stop'
 $deadline = [datetime]::UtcNow.AddMinutes($MaxMinutes)
 do {
     try {
-        $lines = @(git -C $Repository ls-remote $Remote refs/heads/master 2>&1)
+        # PS5.1 wraps native stderr in ErrorRecord even on exit 0. Judge git by
+        # its exit code and ref, retaining stderr without making warnings fatal.
+        $gitErrorPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $lines = @(git -C $Repository ls-remote $Remote refs/heads/master 2>&1)
+        } finally { $ErrorActionPreference = $gitErrorPreference }
         if ($LASTEXITCODE -ne 0) { throw 'git ls-remote failed.' }
         $sha = $null
         foreach ($line in $lines) {
@@ -28,6 +34,7 @@ do {
         if ($sha -ne $From) { "MASTER MOVED $sha"; break }
     } catch { "MASTER-WATCH-ERROR $($_.Exception.Message)" }
     if ($Once -or [datetime]::UtcNow -ge $deadline) { break }
-    Start-Sleep -Seconds $PollSeconds
+    $remainingMs = [Math]::Max(0, [Math]::Floor(($deadline - [datetime]::UtcNow).TotalMilliseconds))
+    if ($remainingMs -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Min($PollSeconds * 1000, $remainingMs)) }
 } while ([datetime]::UtcNow -lt $deadline)
 'master watch done; re-arm if still waiting'

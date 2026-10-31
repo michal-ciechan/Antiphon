@@ -37,8 +37,11 @@ These directions override the cited standing rules in
    `C:\Antiphon\releases\candidates\rc-<date>-<sha12>\logs\<run>`,
    `C:\Antiphon\releases\state-<id>\last-run.json`, and
    `C:\Antiphon\releases\task-<id>\supervisor-heartbeat.json`.
-   Heartbeat fields include `utc`, `runId`, `supervisorPid`, `trx`, and
-   `hangSuspected`. Windows chunks run strictly serially under one native lock.
+   A private supervisor heartbeat can contain `utc`, `runId`, `supervisorPid`,
+   `trx`, and `hangSuspected`. The repository writer uses `observedAtUtc` instead
+   of `utc` and can omit run/process identities; the watcher accepts either.
+   A transient missing heartbeat can occur during writer replacement; observe
+   the next poll before diagnosing it. Windows chunks run strictly serially under one native lock.
    The run uses its own candidate directory; pushing to rc does not change its
    source. Logs and state are observations, never permission to stop the supervisor
    or clear the lock. Use `scripts/rc-qualification-status.ps1` for a coherent
