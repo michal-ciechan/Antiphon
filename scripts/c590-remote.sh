@@ -8692,7 +8692,7 @@ c1008_preview_on_signal() {
         wait "${c1008_preview_run_pid}" 2>/dev/null || true
         c1008_preview_run_pid=''
     fi
-    c1008_preview_release || true
+    if c1008_preview_release; then c1609_phase_helpers_joined || true; fi
     c1008_preview_restore_traps
     exit 143
 }
