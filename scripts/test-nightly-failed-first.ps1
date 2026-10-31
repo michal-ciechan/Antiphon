@@ -1074,6 +1074,67 @@ function Test-FFPreviousRunChain {
         ($trace -join ',') -ceq ($canonical -join ',') -and
         $trace.Count -eq 4 -and @($trace|Select-Object -Unique).Count -eq 4 -and
         $third.Result.testsPassed -and $third.Result.coverageComplete -and $third.Result.ExitCode -eq 0) 'chainRegrouped'
+    # Otherwise-valid same-candidate record with the digest removed. Original order, stated reason.
+    $digestCopy=Join-Path $root 'chain-no-digest-root'
+    Copy-Item -LiteralPath $first.Root -Destination $digestCopy -Recurse
+    $digestSummaryPath=Join-Path $digestCopy 'summary.json'
+    $digestSummary=[IO.File]::ReadAllText($digestSummaryPath)|ConvertFrom-Json
+    $digestSummary.dispatchProgress.PSObject.Properties.Remove('canonicalPlanDigest')
+    Write-FFJson $digestSummaryPath $digestSummary
+    $digestHistory=Join-Path $root 'chain-history-no-digest.json'
+    Export-NightlyPriorFailures $digestCopy $digestHistory | Out-Null
+    $fourth=Invoke-FFActualLoop $fx 'chain-no-digest' ([pscustomobject]@{Path=$digestHistory}) -NoExclusions
+    $original=@($first.Trace.Launches.key)
+    $trace=@($fourth.Trace.Launches.key)
+    Assert-FF ($fourth.Schedule.orderingReason -ceq 'previous-run-plan-digest-missing' -and
+        ($trace -join ',') -ceq ($original -join ',') -and
+        $trace.Count -eq 4 -and @($trace|Select-Object -Unique).Count -eq 4 -and
+        $fourth.Result.testsPassed -and $fourth.Result.coverageComplete -and $fourth.Result.ExitCode -eq 0) 'chainDigestMissing'
+    $plain=New-NightlyDispatchSchedule -PreparedSuites $first.Prepared -RunId 'ingress' -Attempt '1'
+    $wanted=@($plain.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
+    $base=Copy-FFObject $first.Summary.dispatchProgress
+    if($base.PSObject.Properties.Name -cnotcontains 'liveness'){$base|Add-Member -NotePropertyName liveness -NotePropertyValue 'closed'}else{$base.liveness='closed'}
+    if($base.PSObject.Properties.Name -cnotcontains 'schemaVersion'){$base|Add-Member -NotePropertyName schemaVersion -NotePropertyValue 1}else{$base.schemaVersion=1}
+    $base.canonicalPlanDigest=$plain.canonicalPlanDigest
+    $completed=[datetimeoffset]::MinValue
+    if($base.completedAt -is [datetime]){$completed=[datetimeoffset]$base.completedAt}
+    elseif(-not [datetimeoffset]::TryParse([string]$base.completedAt,[ref]$completed)){$completed=[datetimeoffset]::UtcNow}
+    $nowUtc=$completed.UtcDateTime.AddHours(1)
+    $ingressOk=$true
+    $validBefore=$base|ConvertTo-Json -Depth 30 -Compress
+    $valid=New-NightlyDispatchSchedule -PreparedSuites $first.Prepared -PreviousRun $base -CandidateSha ('a'*40) -NowUtc $nowUtc -RunId 'ingress' -Attempt '1'
+    $validOrder=@($valid.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
+    if($valid.orderingReason -cne 'previous-run-order' -or ($validOrder -join ',') -ceq ($wanted -join ',') -or ($validOrder -join ',') -cne 'antiphon/Priority,antiphon/Ordinary,session-runner/Ordinary,session-runner/Priority' -or ($base|ConvertTo-Json -Depth 30 -Compress) -cne $validBefore){$ingressOk=$false}
+    Write-Host ('INGRESS valid reason='+$valid.orderingReason+' order='+($validOrder -join ','))
+    foreach($name in @('absent','null','empty','whitespace','short','long','nonhex','candidate','candidate-blank','candidate-short','liveness','liveness-blank','schema','schema-blank','schema-foreign')){
+        $record=Copy-FFObject $base
+        $reason='previous-run-plan-digest-missing'
+        switch($name){
+            'absent'{$record.PSObject.Properties.Remove('canonicalPlanDigest')}
+            'null'{$record.canonicalPlanDigest=$null}
+            'empty'{$record.canonicalPlanDigest=''}
+            'whitespace'{$record.canonicalPlanDigest='   '}
+            'short'{$record.canonicalPlanDigest=('a'*63);$reason='previous-run-plan-digest-malformed'}
+            'long'{$record.canonicalPlanDigest=('a'*65);$reason='previous-run-plan-digest-malformed'}
+            'nonhex'{$record.canonicalPlanDigest=('g'*64);$reason='previous-run-plan-digest-malformed'}
+            'candidate'{$record.PSObject.Properties.Remove('sha');$reason='previous-run-candidate-missing'}
+            'candidate-blank'{$record.sha='';$reason='previous-run-candidate-missing'}
+            'candidate-short'{$record.sha='abc';$reason='previous-run-schema'}
+            'liveness'{$record.PSObject.Properties.Remove('liveness');$reason='previous-run-liveness-missing'}
+            'liveness-blank'{$record.liveness='';$reason='previous-run-liveness-missing'}
+            'schema'{$record.PSObject.Properties.Remove('schemaVersion');$reason='previous-run-schema-missing'}
+            'schema-blank'{$record.schemaVersion='';$reason='previous-run-schema-missing'}
+            'schema-foreign'{$record.schemaVersion=2;$reason='previous-run-schema'}
+        }
+        $before=$record|ConvertTo-Json -Depth 30 -Compress
+        $schedule=New-NightlyDispatchSchedule -PreparedSuites $first.Prepared -PreviousRun $record -CandidateSha ('a'*40) -NowUtc $nowUtc -RunId 'ingress' -Attempt '1'
+        $order=@($schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
+        $unchanged=($record|ConvertTo-Json -Depth 30 -Compress) -ceq $before
+        $match=($schedule.orderingReason -ceq $reason -and ($order -join ',') -ceq ($wanted -join ',') -and $order.Count -eq 4 -and @($order|Select-Object -Unique).Count -eq 4 -and $unchanged)
+        Write-Host ('INGRESS '+$name+' expected='+$reason+' actual='+$schedule.orderingReason+' original='+$match)
+        if(-not $match){$ingressOk=$false}
+    }
+    Assert-FF $ingressOk 'chainIngress'
 }
 
 function Test-FFPreviousOrder {
@@ -1276,7 +1337,7 @@ function Test-JournalCustodySurvivesInterleaving {
 switch -Exact ($Case) {
     'PreviousOrder' { Test-FFPreviousOrder; $expected=1 }
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
-    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=16 }
+    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=18 }
     'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
