@@ -515,9 +515,15 @@ function Invoke-FFPreparedArm {
             suiteDiscoverySeconds=0.25;suiteTerminalNodes=@();chunkIndex=0;phaseAssembly=$s.id;phaseAssemblyDigest='fixture';phaseCostDigest='fixture'
         }
         $states += [pscustomobject]@{id=$s.id;nodes=$s.nodes;chunks=$s.chunks;exclusions=$s.exclusions;Variables=$variables;Completed=$false}
-        foreach ($c in $s.chunks) { $script:FFArmChunks[$s.id+'/'+$c.id]=$c }
         [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions)
         $plannedBytes[$s.id] = [IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json')))
+        $plannedDoc = $plannedBytes[$s.id] | ConvertFrom-Json
+        $byUid = @{}
+        foreach ($n in $s.nodes) { $byUid[[string]$n.Uid]=$n }
+        foreach ($g in $plannedDoc.groups) {
+            $selectedNodes = @($g.plannedTestIds | ForEach-Object { $byUid[[string]$_] })
+            $script:FFArmChunks[$s.id+'/'+$g.chunk] = [pscustomobject]@{nodes=$selectedNodes}
+        }
     }
     $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha -InvocationId $invocationId
     if ($publicationContext.Refused) { throw ('context-refused:'+ $publicationContext.Reason) }
@@ -578,7 +584,7 @@ function Test-FullBytesAndCoverageConserved {
     foreach($variant in @('failure','missing','skip','unknown','timeout','publication','teardown')){
         $left=Invoke-FFPreparedArm $small ($variant+'-canonical') @() $variant
         $right=Invoke-FFPreparedArm $small ($variant+'-priority') $small.resolved.members $variant
-        $same=($left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and ($left.Reasons|Sort-Object) -join ',' -ceq (($right.Reasons|Sort-Object) -join ','))
+        $same=($left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and (($left.Reasons|Sort-Object) -join ',') -ceq (($right.Reasons|Sort-Object) -join ','))
         # Teardown aborts the run at its keyed chunk; no subsequent required work is credited.
         if($variant -ceq 'teardown'){$same=(-not $left.Coverage -and -not $right.Coverage -and $left.Error -like '*owned-child*' -and $right.Error -like '*owned-child*')}
         $matrix += [pscustomobject]@{variant=$variant;left=$left;right=$right;same=$same}
