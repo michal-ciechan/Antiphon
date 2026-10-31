@@ -21,7 +21,10 @@ function Assert-Check {
 
 function Invoke-CaptureShellWitness {
     $source = [IO.File]::ReadAllText($PSCommandPath)
-    Assert-Check (-not $source.Contains('$psi.FileName = "/bin/sh"')) 'capture-shell-source-uses-resolver'
+    $hardCodedShell = '$psi.FileName = ' + '"/bin/sh"'
+    $hardCodedHits = ([regex]::Matches($source, [regex]::Escape($hardCodedShell))).Count
+    Assert-Check ($hardCodedHits -eq 1) 'capture-shell-source-uses-resolver'
+    Assert-Check ($source.Contains('SKIP capture-identity shell-absent: no sh.exe on PATH and no Git for Windows sh.exe beside git')) 'capture-shell-absent-reason-present'
     $missing = $false
     if (-not (Get-Command Resolve-QualificationCaptureShell -ErrorAction SilentlyContinue)) {
         Write-Host 'FAIL capture-shell-resolver-missing'
@@ -72,6 +75,7 @@ function Invoke-CaptureShellWitness {
             Write-Host 'SKIP capture-shell-seam-start linux-planted-shell'
             return
         }
+        if (-not $besideOk) { return }
         $seamPath = Join-Path $probeRoot 'seam.ps1'
         New-QualificationCaptureSeam -Path $seamPath -Shell $besideText
         $seamText = [IO.File]::ReadAllText($seamPath)
@@ -82,7 +86,7 @@ function Invoke-CaptureShellWitness {
         $env:QTIMING_FORWARD = '1'
         $env:QTIMING_CAPTURE_SHELL_MARKER = $marker
         . $seamPath
-        & $NightlySeams.StartProcess 'dotnet' @('--report-trx') $probeRoot 10000 @{
+        $null = & $NightlySeams.StartProcess 'dotnet' @('--report-trx') $probeRoot 10000 @{
             ANTIPHON_TEST_PHASE_ROOT = $probeRoot
             QTIMING_CAPTURE_SHELL_MARKER = $marker
         }
@@ -112,6 +116,147 @@ function Invoke-CaptureShellWitness {
         Remove-Variable -Name NightlySeams -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Resolve-QualificationCaptureLink {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    try {
+        $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+        if ($item.LinkType -and $item.Target) {
+            $target = [string]@($item.Target)[0]
+            if (-not [IO.Path]::IsPathRooted($target)) {
+                $target = Join-Path (Split-Path -Parent $full) $target
+            }
+            $resolved = [IO.Path]::GetFullPath($target)
+            if (Test-Path -LiteralPath $resolved -PathType Leaf) { return $resolved }
+        }
+    } catch { }
+    return $full
+}
+
+function Resolve-QualificationCaptureShell {
+    param(
+        [string]$Platform = '',
+        [string]$PathValue = ''
+    )
+    if ([string]::IsNullOrWhiteSpace($Platform)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:QTIMING_CAPTURE_SHELL_PLATFORM)) {
+            $Platform = [string]$env:QTIMING_CAPTURE_SHELL_PLATFORM
+        } elseif (($env:OS -eq 'Windows_NT') -or ($IsWindows -eq $true)) {
+            $Platform = 'windows'
+        } else {
+            $Platform = 'linux'
+        }
+    }
+    $Platform = $Platform.ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:QTIMING_CAPTURE_SHELL_PATH)) {
+            $PathValue = [string]$env:QTIMING_CAPTURE_SHELL_PATH
+        } else {
+            $PathValue = [string]$env:PATH
+        }
+    }
+    # Linux keeps the literal /bin/sh. A Windows-shaped witness sets Platform
+    # to windows and must not select that path.
+    if ($Platform -eq 'linux' -and (Test-Path -LiteralPath '/bin/sh' -PathType Leaf)) {
+        return '/bin/sh'
+    }
+    $separator = [string][IO.Path]::PathSeparator
+    $dirs = @($PathValue -split [regex]::Escape($separator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($dir in $dirs) {
+        $candidate = Join-Path $dir 'sh.exe'
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $full = [IO.Path]::GetFullPath($candidate)
+        if ($Platform -eq 'windows' -and $full -eq '/bin/sh') { continue }
+        return $full
+    }
+    foreach ($dir in $dirs) {
+        foreach ($name in @('git.exe', 'git', 'sh.exe', 'sh')) {
+            $candidate = Join-Path $dir $name
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            $full = [IO.Path]::GetFullPath($candidate)
+            if ($Platform -eq 'windows' -and $full -eq '/bin/sh') { continue }
+            $linked = Resolve-QualificationCaptureLink $full
+            $installation = Split-Path -Parent (Split-Path -Parent $linked)
+            if ([string]::IsNullOrWhiteSpace($installation)) { continue }
+            foreach ($relative in @('usr/bin/sh.exe', 'bin/sh.exe')) {
+                $shell = $installation
+                foreach ($part in ($relative -split '/')) { $shell = Join-Path $shell $part }
+                if (-not (Test-Path -LiteralPath $shell -PathType Leaf)) { continue }
+                $shellFull = [IO.Path]::GetFullPath($shell)
+                if ($Platform -eq 'windows' -and $shellFull -eq '/bin/sh') { continue }
+                return $shellFull
+            }
+        }
+    }
+    if ($Platform -ne 'windows') {
+        foreach ($dir in $dirs) {
+            $candidate = Join-Path $dir 'sh'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return [IO.Path]::GetFullPath($candidate)
+            }
+        }
+    }
+    return $null
+}
+
+function New-QualificationCaptureSeam {
+    param([string]$Path, [string]$Shell)
+    $literal = ([string]$Shell).Replace('"', '`"')
+    $body = @'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $argsText = @($ArgumentList) -join " "
+        if ($argsText -notmatch "--report-trx" -or $argsText -match "--list-tests") {
+            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+        }
+        $dir = [string]$env:QTIMING_CAPTURE_DIR
+        $seqPath = Join-Path $dir "seq"
+        $seq = 0
+        if (Test-Path -LiteralPath $seqPath) { $seq = [int]([IO.File]::ReadAllText($seqPath)) }
+        [IO.File]::WriteAllText($seqPath, ([string]($seq + 1)))
+        $seen = Join-Path $dir ("seen-" + $seq)
+        $code = [int]$env:QTIMING_CHILD_EXIT
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "QUALIFICATION_CAPTURE_SHELL"
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        [void]$psi.ArgumentList.Add("-c")
+        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
+        if ($Environment) {
+            foreach ($key in @($Environment.Keys)) {
+                $name = [string]$key
+                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
+                $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
+            }
+        }
+        $seenForShell = $seen
+        if ($seenForShell -match '^[A-Za-z]:\\') {
+            $drive = $seenForShell.Substring(0, 1).ToLowerInvariant()
+            $tail = $seenForShell.Substring(2) -replace '\\', '/'
+            $seenForShell = '/' + $drive + $tail
+        }
+        $psi.EnvironmentVariables["QTIMING_SEEN"] = $seenForShell
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        [void]$proc.WaitForExit()
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [IO.File]::WriteAllText((Join-Path $dir ("stdout-" + $seq)), $stdout, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("stderr-" + $seq)), $stderr, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("exit-" + $seq)), ([string]$proc.ExitCode))
+        return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = $proc.Id; LogText = ($stdout + $stderr) }
+    }
+}
+'@
+    [IO.File]::WriteAllText($Path, $body.Replace('QUALIFICATION_CAPTURE_SHELL', $literal))
 }
 
 if ($Case -eq 'CaptureShell') {
@@ -1134,55 +1279,16 @@ exit $LASTEXITCODE
 Invoke-CaptureShellWitness
 
 # Stdout, stderr, and the chunk exit stay the same with the phase environment forwarded or stripped.
+$captureShell = Resolve-QualificationCaptureShell
+if ([string]::IsNullOrWhiteSpace([string]$captureShell)) {
+    Write-Host 'SKIP capture-identity shell-absent: no sh.exe on PATH and no Git for Windows sh.exe beside git'
+    Write-Host 'DIAG capture-identity shell-absent'
+} else {
+Write-Host ('DIAG capture-identity shell=' + $captureShell)
 $capRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-cap-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $capRoot -Force | Out-Null
 $capSeam = Join-Path $capRoot 'seam.ps1'
-@'
-$NightlySeams = @{
-    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
-    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-    StartProcess = {
-        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-        $argsText = @($ArgumentList) -join " "
-        if ($argsText -notmatch "--report-trx" -or $argsText -match "--list-tests") {
-            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
-        }
-        $dir = [string]$env:QTIMING_CAPTURE_DIR
-        $seqPath = Join-Path $dir "seq"
-        $seq = 0
-        if (Test-Path -LiteralPath $seqPath) { $seq = [int]([IO.File]::ReadAllText($seqPath)) }
-        [IO.File]::WriteAllText($seqPath, ([string]($seq + 1)))
-        $seen = Join-Path $dir ("seen-" + $seq)
-        $code = [int]$env:QTIMING_CHILD_EXIT
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "/bin/sh"
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        [void]$psi.ArgumentList.Add("-c")
-        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
-        if ($Environment) {
-            foreach ($key in @($Environment.Keys)) {
-                $name = [string]$key
-                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
-                $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
-            }
-        }
-        $psi.EnvironmentVariables["QTIMING_SEEN"] = $seen
-        $proc = New-Object System.Diagnostics.Process
-        $proc.StartInfo = $psi
-        [void]$proc.Start()
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
-        [void]$proc.WaitForExit()
-        $utf8 = New-Object System.Text.UTF8Encoding $false
-        [IO.File]::WriteAllText((Join-Path $dir ("stdout-" + $seq)), $stdout, $utf8)
-        [IO.File]::WriteAllText((Join-Path $dir ("stderr-" + $seq)), $stderr, $utf8)
-        [IO.File]::WriteAllText((Join-Path $dir ("exit-" + $seq)), ([string]$proc.ExitCode))
-        return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = $proc.Id; LogText = ($stdout + $stderr) }
-    }
-}
-'@ | Set-Content -LiteralPath $capSeam -Encoding ascii
+New-QualificationCaptureSeam -Path $capSeam -Shell ([string]$captureShell)
 function Get-QualificationCapturePayload {
     param([string]$Dir)
     $logs = @(Get-ChildItem -LiteralPath $Dir -Recurse -Filter '*-tests.log' -File -ErrorAction SilentlyContinue | Sort-Object FullName)
@@ -1240,13 +1346,14 @@ try {
         Assert-Check $same ('capture-identity-exit-' + $childExit)
     }
 } catch {
-    Write-Host ('FAIL capture-identity ' + $_.Exception.Message)
+    Write-Host ('FAIL capture-identity shell=' + $captureShell + ' ' + $_.Exception.Message)
     $script:failed++
 } finally {
     Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
     Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
     Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $capRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 }
 
 # A several-thousand-result TRX and a JSONL shard past the old 256 KiB / 4000 line
