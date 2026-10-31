@@ -23,7 +23,7 @@ internal static class LiveClaudeProfileAudit
         if (clause.Declaration?.Type.ToString() != "LiveClaudeRefusal") return false;
         if (!SyntaxFactory.AreEquivalent(clause.Filter?.FilterExpression, SyntaxFactory.ParseExpression("LiveClaudeOutcome.SetupStatus(e.Reason) is string setup"))) return false;
         return clause.Block.Statements.Count == 1
-            && clause.Block.Statements[0].ToString().Contains("throw new SkipTestException(\"20 \" + setup)", StringComparison.Ordinal);
+            && clause.Block.Statements[0].ToString().Contains("throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup))", StringComparison.Ordinal);
     }
     private static void Expression(string source,string method,string expression)
     {
@@ -81,6 +81,9 @@ internal static class LiveClaudeProfileAudit
         var filters = Method(source, name).DescendantNodes().OfType<CatchFilterClauseSyntax>().ToArray();
         if (filters.Length != 1 || !SyntaxFactory.AreEquivalent(filters[0].FilterExpression,
                 SyntaxFactory.ParseExpression("LiveClaudeOutcome.SetupStatus(e.Reason) is string setup"))) Fail(name + "-filter");
+        var projected = Method(source, name).DescendantNodes().OfType<ThrowStatementSyntax>()
+            .Count(statement => statement.ToString().Contains("throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup))", StringComparison.Ordinal));
+        if (projected != 1) Fail(name + "-projection");
     }
     public static void Paths(string source)
     {

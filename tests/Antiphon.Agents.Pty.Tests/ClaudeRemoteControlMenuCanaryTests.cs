@@ -129,6 +129,6 @@ public class ClaudeRemoteControlMenuCanaryTests
         LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);
         }
         catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
-        { throw new SkipTestException("20 " + setup); }
+        { throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup)); }
     }
 }

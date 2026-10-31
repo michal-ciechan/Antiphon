@@ -138,6 +138,18 @@ public static class LiveClaudeEvidence
     public static string Skip(string caseId, string testId, string? link, string? screen, string? secret, string? device)
         => Emit(caseId, testId, "skip", null, link, screen, secret, device, null);
 
+    public static string SetupSkip(string setup)
+    {
+        if (setup is not ("StartupDefaultAbsent" or "BridgeNotEstablished" or "TrustNotCleared" or "ReadyTimeout"))
+            throw new InvalidOperationException("C1545 evidence/setup");
+        var projected = LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+            "setup", "S1cSetupSkip", "skip", null, null, null, null, null,
+            new Dictionary<string, string> { ["refused"] = setup }));
+        if (!projected.Text.Contains("refused=" + setup, StringComparison.Ordinal))
+            throw new InvalidOperationException("C1545 evidence/setup");
+        return "20 " + setup;
+    }
+
     public static string Projected(string caseId, string testId, string kind, string? runId, string? link, string? screen,
         string? secret, string? device)
     {

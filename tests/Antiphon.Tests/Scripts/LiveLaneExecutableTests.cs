@@ -63,7 +63,7 @@ public class LiveLaneExecutableTests
         try { throw new LiveClaudeRefusal(reason); }
         catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
         {
-            return "20 " + setup;
+            return LiveClaudeEvidence.SetupSkip(setup);
         }
         catch (LiveClaudeRefusal)
         {

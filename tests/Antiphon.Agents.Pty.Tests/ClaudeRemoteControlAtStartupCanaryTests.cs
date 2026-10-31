@@ -40,7 +40,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
             LiveClaudeStartupEvidence.RequireControl(experiment, control);
         }
         catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
-        { throw new SkipTestException("20 " + setup); }
+        { throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup)); }
     }
 
     [Test]
@@ -71,7 +71,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
             finally { await ExitAsync(runner); }
         }
         catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
-        { throw new SkipTestException("20 " + setup); }
+        { throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup)); }
     }
 
     [Test]
@@ -101,7 +101,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
             finally { await ExitAsync(runner); }
         }
         catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
-        { throw new SkipTestException("20 " + setup); }
+        { throw new SkipTestException(LiveClaudeEvidence.SetupSkip(setup)); }
     }
 
     private static async Task<StartupControl> RunStartupControlAsync(LiveClaudeExecutable executable,
