@@ -24,10 +24,12 @@ if(m){
  if(!m[1].startsWith(root+'/control/'))throw Error('unowned host script');
  let source=fs.readFileSync(m[1],'utf8');
  const injection=fs.readFileSync(root+'/manual-injection.sh','utf8');
- source=source.replace("trap 'ec=$?;",injection+"\ntrap 'ec=$?;");
+ source=source.replaceAll("trap 'ec=$?;",injection+"\ntrap 'ec=$?;");
  const file=root+'/manual-host-'+process.pid+'.sh';fs.writeFileSync(file,source);
  cmd=cmd.replace(m[0],"bash '"+file+"'");
 }
 fs.appendFileSync(root+'/manual-ssh-trace',JSON.stringify({packet:args.includes('-s'),hostCase:!!m})+'\n');
+fs.writeFileSync(root+'/manual-command-'+process.pid+'.sh',cmd,{mode:0o600});
 const r=cp.spawnSync('bash',['-c',cmd],{env:process.env,encoding:'utf8',timeout:45000,maxBuffer:4*1024*1024});
+fs.writeFileSync(root+'/manual-command-'+process.pid+'.log',(r.stdout||'')+(r.stderr||''),{mode:0o600});
 process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
