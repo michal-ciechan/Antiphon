@@ -86,10 +86,48 @@ public static class LiveClaudeEvidenceSanitizer
             || value.Contains("oauth", StringComparison.OrdinalIgnoreCase))
             return true;
         if (HasRun(value, 32, IsHex)) return true;
-        // '_' splits a base64url run. The C680 test id is one long letter run after '_' and stays a token.
-        // The closed witness is 36 mixed characters. The longest admitted alnum token is shorter than 32.
-        if (!value.Contains('_') && HasRun(value, 32, IsBase64)) return true;
+        // A 32-character base64url run is a credential, including '_' and '-'. A closed id
+        // (letter-led lead of at most 31, then PascalCase words) stays a token, so the C680
+        // test id is admitted. A 36-character mixed run with no such shape stays refused.
+        if (HasRun(value, 32, IsBase64Url) && !IsClosedId(value)) return true;
         return false;
+    }
+
+    private static bool IsClosedId(string value)
+    {
+        var parts = value.Split('_');
+        if (parts.Length < 2 || !IsLeadSegment(parts[0])) return false;
+        for (var index = 1; index < parts.Length; index++)
+            if (!IsPascalWords(parts[index])) return false;
+        return true;
+    }
+
+    private static bool IsLeadSegment(string part)
+    {
+        if (part.Length is < 1 or > 31 || !char.IsAsciiLetter(part[0])) return false;
+        for (var index = 1; index < part.Length; index++)
+            if (!char.IsAsciiLetterOrDigit(part[index])) return false;
+        return true;
+    }
+
+    private static bool IsPascalWords(string part)
+    {
+        var index = 0;
+        var words = 0;
+        while (index < part.Length)
+        {
+            if (!char.IsAsciiLetterUpper(part[index])) return false;
+            var lower = 0;
+            index++;
+            while (index < part.Length && char.IsAsciiLetterLower(part[index]))
+            {
+                lower++;
+                index++;
+            }
+            if (lower < 1) return false;
+            words++;
+        }
+        return words >= 1;
     }
 
     private static bool HasRun(string value, int length, Func<char, bool> match)
@@ -111,8 +149,8 @@ public static class LiveClaudeEvidenceSanitizer
     private static bool IsHex(char character) =>
         character is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
 
-    private static bool IsBase64(char character) =>
-        character is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9');
+    private static bool IsBase64Url(char character) =>
+        character is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_';
 
     public static bool ContainsSentinel(string? text)
     {
