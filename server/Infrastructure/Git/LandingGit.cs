@@ -20,6 +20,10 @@ public class LandingGit : ILandingGit
     /// stretch the operation out to that descendant's own lifetime.</summary>
     internal static readonly TimeSpan KillDrainGrace = TimeSpan.FromSeconds(2);
 
+    /// <summary>The abandoned-root handoff waits at most this long for the owned handle to exit.
+    /// Past the bound the journal stays and the pool thread is released.</summary>
+    internal static readonly TimeSpan AbandonedRootExitBound = TimeSpan.FromSeconds(30);
+
     private readonly CardFileBoardLookup? _cardFiles;
 
     public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
@@ -55,7 +59,8 @@ public class LandingGit : ILandingGit
         try
         {
             using var process = Process.GetProcessById(processId);
-            return Task.FromResult<bool?>(!process.HasExited && process.StartTime.ToUniversalTime().Ticks == startTicks);
+            if (process.HasExited) return Task.FromResult<bool?>(false);
+            return Task.FromResult<bool?>(RepositoryChildJournal.TryStartTicks(process, out var ticks) && ticks == startTicks);
         }
         catch (ArgumentException) { return Task.FromResult<bool?>(false); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -174,7 +179,7 @@ public class LandingGit : ILandingGit
     /// continuation runs <paramref name="onStreamsClosed"/> and only then disposes the handle. The
     /// journal deleter does not touch the Process. Disposing earlier closes the read ends and looks
     /// like EOF while a grandchild still holds the pipes. A crash before the streams close leaves the file.</summary>
-    private static async Task<bool> ReleaseChildAsync(Process process, Action? onStreamsClosed, IDisposable? keepUntilClosed, params Task[] streams)
+    private async Task<bool> ReleaseChildAsync(Process process, Action? onStreamsClosed, IDisposable? keepUntilClosed, params Task[] streams)
     {
         TryKill(process, entireProcessTree: true);
         using var grace = new CancellationTokenSource(KillDrainGrace);
@@ -227,11 +232,11 @@ public class LandingGit : ILandingGit
                     {
                         try
                         {
-                            try { process.WaitForExit(); }
+                            try { process.WaitForExit(AbandonedRootExitBound); }
                             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
                             { }
                             if (RootExited(process)) closeJournal();
-                            else Console.Error.WriteLine($"repository_child_journal_retained_running_root pid={pid}");
+                            else Console.Error.WriteLine($"repository_child_journal_retained_running_root pid={pid} reason=exit_wait_bound");
                         }
                         catch (IOException)
                         {
@@ -280,24 +285,32 @@ public class LandingGit : ILandingGit
         { }
     }
 
-    private static void TryKill(Process process, bool entireProcessTree)
+    /// <summary>Test seam. Production kills through <see cref="OwnedProcessTree"/>.</summary>
+    protected virtual void KillOwnedTree(Process process) => OwnedProcessTree.Kill(process);
+
+    /// <summary>Test seam. Production signals the owned root handle and does not walk a pid.</summary>
+    protected virtual void KillOwnedRoot(Process process)
+    {
+        if (!process.HasExited)
+            process.Kill(entireProcessTree: false);
+    }
+
+    private void TryKill(Process process, bool entireProcessTree)
     {
         try
         {
             if (entireProcessTree)
             {
-                // A dead root still has Windows children (parent ids are not rewritten).
-                // Skipping the walk because HasExited is already true leaves those children
-                // holding the pipes and the journal.
-                OwnedProcessTree.Kill(process);
+                // A dead Windows root can still have children (parent ids are not rewritten).
+                // Linux skips that walk once the owned root has exited, inside OwnedProcessTree.
+                KillOwnedTree(process);
                 return;
             }
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: false);
+            KillOwnedRoot(process);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException)
         {
-            Console.Error.WriteLine($"repository_child_tree_kill_failed error={ex.GetType().Name}");
+            Console.Error.WriteLine(OwnedProcessTree.KillFailed(SafePid(process), ex.GetType().Name));
         }
     }
 

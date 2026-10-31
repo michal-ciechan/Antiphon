@@ -968,14 +968,20 @@ public sealed class LandingGitTests
     [Test]
     public async Task C448_DescendantSetKeepsGrandchildrenWhoseParentDiesWithTheRoot()
     {
-        var parents = new Dictionary<int, int>
-        {
-            [10] = 1,
-            [20] = 10,
-            [30] = 20,
-            [40] = 1,
-        };
-        var found = OwnedProcessTree.Descendants(parents, 10).OrderBy(id => id).ToArray();
+        var found = OwnedProcessTree.Plan(
+            [
+                new(10, 1, 1_000),
+                new(20, 10, 2_000),
+                new(30, 20, 3_000),
+                new(40, 1, 4_000),
+            ],
+            new CapturedProcessIdentity(10, 1_000),
+            serverPid: 7,
+            ownerPid: 8).Kills
+            .Where(row => row.Reason == "descendant")
+            .Select(row => row.Pid)
+            .OrderBy(id => id)
+            .ToArray();
         found.ShouldBe(new[] { 20, 30 });
         await Task.CompletedTask;
     }
@@ -1045,6 +1051,72 @@ public sealed class LandingGitTests
         }
     }
 
+    // The handoff must not drop the journal while the owned root is still alive.
+    // Streams may already be at EOF; that is not an exit of the root.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C448_JournalStaysWhileTheRootLives(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("POSIX stand-in for a root that closes its pipes and keeps running. The native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c448-living-root");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "root.pid");
+        var script = Path.Combine(repo.Path, "living.sh");
+        await File.WriteAllTextAsync(script, LivingRootGit.Script(pidFile), ct);
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var git = new LivingRootGit(script);
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        using var cancel = new CancellationTokenSource();
+        var call = git.RunAsync(repo.Path, ["commit", "--allow-empty", "-m", "owned"], cancel.Token);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var ready = false;
+            while (watch.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                if (File.Exists(pidFile) && JournalFiles(children).Length > 0)
+                {
+                    ready = true;
+                    break;
+                }
+                if (call.IsCompleted) break;
+                await Task.Delay(50, ct);
+            }
+
+            ready.ShouldBeTrue("the journal is recorded while the root is still running");
+            var root = int.Parse((await File.ReadAllTextAsync(pidFile, ct)).Trim());
+            HolderAlive(root).ShouldBeTrue("the root is alive before cancellation");
+            cancel.Cancel();
+            var thrown = await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            watch.Stop();
+            Console.WriteLine($"C448_LIVING elapsed={watch.Elapsed} error={thrown.GetType().Name}");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15),
+                "cancellation returns inside the kill grace");
+            HolderAlive(root).ShouldBeTrue("the root is still alive after the handoff");
+            JournalFiles(children).ShouldNotBeEmpty(
+                "the journal stays while the owned root is alive, even though its pipes have closed");
+            KillHolder(pidFile);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0 && cleared.Elapsed < TimeSpan.FromSeconds(5))
+                await Task.Delay(50, ct);
+            JournalFiles(children).ShouldBeEmpty(
+                "once the owned root exits, the handoff removes the journal");
+        }
+        finally
+        {
+            watch.Stop();
+            cancel.Cancel();
+            KillHolder(pidFile);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+        }
+    }
+
     private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
     {
         var hooks = Path.Combine(repository, ".git", "hooks");
@@ -1055,6 +1127,31 @@ public sealed class LandingGitTests
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         return hook;
+    }
+
+    /// <summary>A commit stand-in that closes both pipes and stays alive. The tree kill is suppressed
+    /// so the handoff observes a living root.</summary>
+    private sealed class LivingRootGit(string scriptPath) : LandingGit
+    {
+        public static string Script(string pidFile)
+        {
+            var quoted = pidFile.Replace("\\", "/").Replace("'", "");
+            return "#!/bin/sh\n" +
+                "echo $$ > '" + quoted + "'\n" +
+                "exec >/dev/null 2>/dev/null\n" +
+                "sleep 30\n";
+        }
+
+        protected override void KillOwnedTree(Process process) { }
+
+        protected override void KillOwnedRoot(Process process) { }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
+                return base.StartProcess(start);
+            return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
     }
 
     /// <summary>A commit stand-in whose intermediate dies with the root and whose grandchild keeps stdout.</summary>
