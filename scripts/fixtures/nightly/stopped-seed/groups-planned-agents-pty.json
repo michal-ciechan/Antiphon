@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "runId": "synthetic-stopped",
+  "attempt": "1",
+  "suite": "agents-pty",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "groups": [
+    {
+      "chunk": "all-group-1",
+      "classes": [
+        "Synthetic.agents_pty.Passed"
+      ],
+      "plannedTestIds": [
+        "pass"
+      ]
+    },
+    {
+      "chunk": "all-group-2",
+      "classes": [
+        "Synthetic.agents_pty.Red"
+      ],
+      "plannedTestIds": [
+        "red"
+      ]
+    },
+    {
+      "chunk": "all-group-3",
+      "classes": [
+        "Synthetic.agents_pty.Never"
+      ],
+      "plannedTestIds": [
+        "never"
+      ]
+    },
+    {
+      "chunk": "profile-4",
+      "classes": [
+        "Synthetic.agents_pty.Torn"
+      ],
+      "plannedTestIds": [
+        "torn",
+        "missing"
+      ]
+    }
+  ]
+}

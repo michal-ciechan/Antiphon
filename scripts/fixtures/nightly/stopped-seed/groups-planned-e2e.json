@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "runId": "synthetic-stopped",
+  "attempt": "1",
+  "suite": "e2e",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "groups": [
+    {
+      "chunk": "all-split-1",
+      "classes": [
+        "Synthetic.e2e.Passed"
+      ],
+      "plannedTestIds": [
+        "pass"
+      ]
+    },
+    {
+      "chunk": "all-split-2",
+      "classes": [
+        "Synthetic.e2e.Red"
+      ],
+      "plannedTestIds": [
+        "red"
+      ]
+    },
+    {
+      "chunk": "all-split-3",
+      "classes": [
+        "Synthetic.e2e.Never"
+      ],
+      "plannedTestIds": [
+        "never"
+      ]
+    },
+    {
+      "chunk": "profile-4",
+      "classes": [
+        "Synthetic.e2e.Torn"
+      ],
+      "plannedTestIds": [
+        "torn",
+        "missing"
+      ]
+    }
+  ]
+}
