@@ -99,7 +99,17 @@ try {
             function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;Set-NightlyOutcome 'TESTS'}}
             function Complete-NightlySuiteExecution($CompletionSuiteState){}
             . Invoke-NightlyPreparedSchedule $schedule
-            Check ($ok -and $script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS') '64 random permutations and fresh red on previously unseen work; no inherited green/skip credit'
+            $directOk=($script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS')
+            # Consume the validated ingress through the real coordinator too. Dropping
+            # its PreviousRun argument must lose unfinished/passed order and go red.
+            function Prepare-NightlySuiteExecution($ExecutionSuiteId){return @($suites|Where-Object id -ceq $ExecutionSuiteId)[0]}
+            $npmOk=$true;$dotnetOk=$true;$lintBlocksPipeline=$false
+            $Sha='b'*40;$Attempt=1;$invocationId='synthetic-coordinator';$LogRoot=$root
+            $script:trace=@();$script:reds=0;$script:NightlyTestsOutcome='green'
+            . Invoke-NightlyDispatchCoordinator -DispatchSuites @($suites.id) -DispatchHistory $inputRecord.History -DispatchPreviousRun $inputRecord.PreviousRun
+            $coordinatorOrder=(@($script:trace[0..4]|ForEach-Object {($_ -split '/')[1]}) -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red'
+            $coordinatorOrder=$coordinatorOrder -and (@($script:trace[20..24]|ForEach-Object {($_ -split '/')[1]}) -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed'
+            Check ($ok -and $directOk -and $coordinatorOrder -and $script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS') '64 random permutations and fresh red on previously unseen work; no inherited green/skip credit'
         }
         'InvalidSeedFallsBack' {
             $old=[IO.File]::ReadAllText($seedPath)|ConvertFrom-Json

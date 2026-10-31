@@ -65,7 +65,9 @@ function Export-NightlyStoppedRunSeed {
     [CmdletBinding()]
     param([string]$RunDirectory,[string]$OutputPath,[string]$SourceRunId='',
         [string]$SourceCandidateId='', [string]$SourceSha='', [switch]$PassThru)
+    if([string]::IsNullOrWhiteSpace($RunDirectory) -or [string]::IsNullOrWhiteSpace($OutputPath)){throw 'seed-path-required'}
     $root=[IO.Path]::GetFullPath($RunDirectory).TrimEnd('\','/')
+    if(-not $root -or $root -ceq [IO.Path]::GetPathRoot($root)){throw 'seed-source-root-refused'}
     $output=[IO.Path]::GetFullPath($OutputPath)
     if(Test-NightlyHistoryUnderRoot $output $root){throw 'seed-output-inside-source'}
     Assert-NightlyHistoryNoLink $root
@@ -105,6 +107,7 @@ function Export-NightlyStoppedRunSeed {
     }
     $chunks=[Collections.Generic.List[object]]::new();$failed=[Collections.Generic.List[object]]::new()
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $failedKeys=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($file in $plans){
         $plan=(Read-SeedFile $file.FullName)|ConvertFrom-Json
         if($plan.version -ne 1 -or -not $plan.suite -or $plan.groups -isnot [array]){throw 'seed-plan-schema'}
@@ -145,7 +148,8 @@ function Export-NightlyStoppedRunSeed {
                         $class=Get-NightlyBareClassIdentity $row.ClassName
                         if($classes -cnotcontains $class){throw 'seed-trx-class-unplanned'}
                         if($row.Outcome -cin @('Failed','Error','Timeout','Aborted')){
-                            $failed.Add([ordered]@{suite=$suite;chunk=$chunk;className=$class;method=[string]$row.MethodName;outcome=[string]$row.Outcome})
+                            $failureKey=$key+[char]0+$class+[char]0+[string]$row.MethodName
+                            if($failedKeys.Add($failureKey)){$failed.Add([ordered]@{suite=$suite;chunk=$chunk;className=$class;method=[string]$row.MethodName;outcome=[string]$row.Outcome})}
                         }
                     }
                 }catch{
