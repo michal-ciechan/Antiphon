@@ -79,3 +79,13 @@ The candidate moves private-origin inventory into the same FD8-owning host proce
 Initial inventory, immutable object-roster copies and exchange/control/admission records live under the protected host operation and phase nonce. Host graph files are hash-compared on both sides and flushed before authority advances. Preview manual authority is admitted before the long phase and rechecked byte-for-byte against the same fingerprints at completion; wall/monotonic disagreement still refuses. Fresh invocations and Resume receive no cached authority. Main v1 and all existing exact-name/refusal/delete/partial-resume gates remain. The file-backed SSH adapter now forwards the same interactive protocol without a nested lock. No production rollout or tool activation is performed.
 
 Bash, Node and PowerShell parsing, ASCII transport checks and git diff --check passed before this candidate commit. New code is not yet qualified; intended reds above are preserved. Definition files are unchanged; -Update has not run.
+
+## Renewal candidate verification and syntax correction
+
+Run20261031-071038-170d at7650549b0162404a71ddc8ffece57d9d78c7f2b7 ended RED1,5/3/2/0, clean source/build verified. H1 exact-object matrix passed35.762s; J4 expanded long Apply passed104.532s; J8 complete public Close/Resume passed442.043s. W1 and J10 both failed loading c590-real.ps1 because its new proof-export subexpression lacked a closing parenthesis. This is my introduced syntax defect, not intended assertion red. The earlier statement that PowerShell parsing passed was incorrect: a chained shell command masked its status. The fix is one closing parenthesis; a separate terminating module-load command now passes. No test deadline/assertion was weakened.
+
+```text
+CHECKPOINT RENEW-GREEN commit=7650549b0162404a71ddc8ffece57d9d78c7f2b7 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementReceiptTests*)|(VolumeRetirementWrapperTests*)|(VolumeRetirementHostProofTests*)/(Freshness_and_policy_version_are_rechecked*)|(Manual_attestation_is_exact_and_cannot_waive_findings*)|(Journal_intents_and_partial_resume_are_exact*)|(Retire_temp_uses_current_proof_protocol*)|(Host_proves_complete_origin_ancestry*) executed=5 passed=3 failed=2 skipped=0 trx=/work/worktrees/task-e9fd8902/.antiphon/checkpoints/20261031-071038-170d/rows/RENEW-GREEN/run.trx slot=granted waited=0s dirty=0 source=7650549b0162404a71ddc8ffece57d9d78c7f2b7 sourceState=clean buildSource=verified
+```
+
+Build326.386s,row791.522s,tests781.582s,total1177.061s; build/row slot wait0. No deadline fired. Only the affected W1/J10 methods are rerun after this fix; the three passing methods retain this precise source provenance. The complete acceptance selection is not green from this mixed run.

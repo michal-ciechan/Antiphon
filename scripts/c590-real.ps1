@@ -403,7 +403,7 @@ function Invoke-C1609RetirementCoordinator {
                             $network=[Diagnostics.Stopwatch]::StartNew()
                             $exports=@(Get-C1008RetireProofExports -EvidenceRoot $destination -Run $Run -RecycleOperation $Operation `
                                 -InventoryRemote 'true' -ProjectId $ProjectId -Coordinated -NetworkBudgetMs $remaining `
-                                -PreviousProofDirectory $previousDirectory -RequiredObjectDigest $requiredDigest -RequireObjectCoverage:($kind -ceq 'renew') -InventoryPhaseNonce $phase
+                                -PreviousProofDirectory $previousDirectory -RequiredObjectDigest $requiredDigest -RequireObjectCoverage:($kind -ceq 'renew') -InventoryPhaseNonce $phase)
                             $networkMs += $network.ElapsedMilliseconds;if($networkMs -gt 600000 -or $exports.Count -ne 4){throw 'network-deadline'}
                             $values=@{}
                             foreach($export in $exports){if($export -cnotmatch "^export (C1008_HOST_PROOF|C1008_OPERATION_STARTED|C1609_PROOF_NONCE|C1609_PROOF_INVENTORY)='([A-Za-z0-9._/-]+)'$"){throw 'proof-response'};$values[$Matches[1]]=$Matches[2]}
