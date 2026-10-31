@@ -55,8 +55,8 @@ public class LiveLaneExecutableTests
             "executable.RequireNativeObservation();", ";", "PC-30");
     }
 
-    // Measured classifier child on this host; the bound is about twice that p95.
-    private const int ClassifierWaitMs = 4_000;
+    // Measured classifier child 1219ms on this host (2026-10-31); the bound is about twice that.
+    private const int ClassifierWaitMs = 2_500;
 
     private static string? TryEmitSetupSkip(string reason)
     {
