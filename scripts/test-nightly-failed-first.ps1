@@ -975,7 +975,7 @@ $NightlySeams=@{
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
             $plan=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
-            $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
+            $nodes=@(foreach($uid in $group.plannedTestIds){$node=$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid];if($null -ne $node){$node}})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
             $legacyCost=$null;$qualifiedCost=$null
             if($global:FFLoopBoundaryState.Fixture.PSObject.Properties.Name -notcontains 'replay'){
@@ -1029,10 +1029,50 @@ function Test-ActualLoopFollowsSchedule {
     $bad=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($bad,'{')
     $fallback=Invoke-FFActualLoop (New-FFLoopFixture) 'fallback' ([pscustomobject]@{Path=$bad})
     Assert-FF ($fallback.Result.testsPassed -and $fallback.Schedule.historyFallbackReason -and (@($fallback.Trace.Launches.key)-join ',') -ceq (@($fallback.Schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})-join ',')) 'fallback'
+    Test-FFPreviousRunChain
     Test-FFPreviousOrder
     Test-FFHeartbeatBindings
     $io=Invoke-FFActualLoop (New-FFLoopFixture) 'identity-io' $null -Variant identity-io
     Assert-FF ($io.Result.ExitCode -eq 0 -and $io.Result.testsPassed -and $io.Result.coverageComplete -and $io.Trace.Launches.Count -gt 0 -and @($io.Trace.Launches|Where-Object {$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}).Count -eq 0) 'heartbeatIo'
+}
+
+# Connect the real producer, export/ingress and coordinator in one small fixture.
+# Expected launch traces are independent of the scheduler under test.
+function Test-FFPreviousRunChain {
+    $fx=New-FFLoopFixture
+    $first=Invoke-FFActualLoop $fx 'chain-first' $null -Variant failure -NoExclusions
+    $historyPath=Join-Path $root 'chain-history.json'
+    $export=Export-NightlyPriorFailures $first.Root $historyPath -PassThru
+    $history=[pscustomobject]@{Path=$historyPath}
+    $failed=@($first.Summary.suites|Where-Object {$_.result -ceq 'FAIL'})
+    $resolved=Resolve-NightlyPriorFailures $export.History $first.Prepared Full
+    Assert-FF ($first.Result.ExitCode -ne 0 -and $failed.Count -eq 1 -and
+        $failed[0].id -ceq 'antiphon' -and $failed[0].chunk -ceq 'Priority' -and
+        $first.Summary.dispatchProgress.canonicalPlanDigest -ceq $first.Schedule.canonicalPlanDigest -and
+        $export.History.membershipComplete -and $export.History.unresolved.Count -eq 0 -and
+        $resolved.members.Count -eq 1 -and $resolved.members[0].suite -ceq 'antiphon' -and
+        ($resolved.members[0].chunks -join ',') -ceq 'Priority') 'chainProducer'
+    $second=Invoke-FFActualLoop $fx 'chain-second' $history -NoExclusions
+    $trace=@($second.Trace.Launches.key)
+    $wanted=@('antiphon/Priority','antiphon/Ordinary','session-runner/Ordinary','session-runner/Priority')
+    Assert-FF ($second.Schedule.orderingReason -ceq 'previous-run-order' -and
+        $second.Schedule.canonicalPlanDigest -ceq $first.Schedule.canonicalPlanDigest -and
+        ($trace -join ',') -ceq ($wanted -join ',') -and
+        $trace.Count -eq 4 -and @($trace|Select-Object -Unique).Count -eq 4 -and
+        $second.Result.testsPassed -and $second.Result.coverageComplete -and $second.Result.ExitCode -eq 0) 'chainPreviousOrder'
+    # Preserve every key but swap membership: the roster guard cannot detect it.
+    $regrouped=New-FFLoopFixture
+    $classes=$regrouped.suites[0].chunks[0].classes
+    $regrouped.suites[0].chunks[0].classes=$regrouped.suites[0].chunks[1].classes
+    $regrouped.suites[0].chunks[1].classes=$classes
+    $third=Invoke-FFActualLoop $regrouped 'chain-regrouped' $history -NoExclusions
+    $trace=@($third.Trace.Launches.key)
+    $canonical=@('antiphon/Ordinary','antiphon/Priority','session-runner/Ordinary','session-runner/Priority')
+    Assert-FF ($third.Schedule.orderingReason -ceq 'previous-run-plan-mismatch' -and
+        $third.Schedule.canonicalPlanDigest -cne $first.Schedule.canonicalPlanDigest -and
+        ($trace -join ',') -ceq ($canonical -join ',') -and
+        $trace.Count -eq 4 -and @($trace|Select-Object -Unique).Count -eq 4 -and
+        $third.Result.testsPassed -and $third.Result.coverageComplete -and $third.Result.ExitCode -eq 0) 'chainRegrouped'
 }
 
 function Test-FFPreviousOrder {
@@ -1235,7 +1275,7 @@ function Test-JournalCustodySurvivesInterleaving {
 switch -Exact ($Case) {
     'PreviousOrder' { Test-FFPreviousOrder; $expected=1 }
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
-    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=13 }
+    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=16 }
     'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
