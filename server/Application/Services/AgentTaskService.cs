@@ -4747,9 +4747,11 @@ public sealed class AgentTaskService
         string? effectiveModelId = null)
     {
         // ListAsync rolls the whole candidate family up once. A missing id is the task's own cost.
+        // The caller's row wins when it is a different instance from the family copy, the same
+        // adjustment Calculate applies.
         if (!rollup.TryGetValue(task.Id, out var figures))
-            figures = new AgentTaskSubtreeFigures(task.CostUsd, 0);
-        var subtreeCost = figures.SubtreeCostUsd;
+            figures = new AgentTaskSubtreeFigures(task.CostUsd, 0, task.CostUsd);
+        var subtreeCost = figures.SubtreeCostUsd + (task.CostUsd - figures.StoredCostUsd);
         var childCount = figures.ChildCount;
 
         var resolved = AgentTaskScope.Resolve(task, labels);
