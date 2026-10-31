@@ -1,6 +1,6 @@
 #requires -Version 5.1
 # CARD-1514: hermetic evidence export/resolution through the production planner.
-param([string]$Case = '', [string]$ResultsDirectory = '')
+param([string]$Case = '', [string]$ResultsDirectory = '', [switch]$SmallLoopProbe)
 $ErrorActionPreference = 'Stop'
 foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','nightly-failure-history','c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
@@ -998,7 +998,7 @@ $NightlySeams=@{
 }
 
 function Test-ActualLoopFollowsSchedule {
-    $fx=New-FFLoopFixture -Full
+    $fx=New-FFLoopFixture -Full:(-not $SmallLoopProbe)
     $h=New-FFLoopHistory $fx
     $arm=Invoke-FFActualLoop $fx 'actual-full' $h
     $resolved=Resolve-NightlyPriorFailures $h.History $arm.Prepared Full
@@ -1006,7 +1006,7 @@ function Test-ActualLoopFollowsSchedule {
     $actual=@($arm.Trace.Launches.key);$wanted=@($expected.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
     Assert-FF (($actual -join ',') -ceq ($wanted -join ',') -and $expected.entries[0].priorFailure -and @($expected.entries|Where-Object {-not $_.priorFailure}).Count -gt 0) 'actualTrace'
     $canonical=@(foreach($s in $arm.Prepared){foreach($c in $s.chunks){$s.id+'/'+$c.id}})
-    Assert-FF ($actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and @(Compare-Object $actual $canonical -CaseSensitive).Count -eq 0 -and $arm.Trace.Max -eq 1 -and $fx.replay.nodes.Count -eq 19012) 'permutation'
+    Assert-FF ($actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and @(Compare-Object $actual $canonical -CaseSensitive).Count -eq 0 -and $arm.Trace.Max -eq 1 -and ($SmallLoopProbe -or $fx.replay.nodes.Count -eq 19012)) 'permutation'
     Assert-FF ($arm.Trace.Builds -eq 1 -and $arm.Trace.Discovery.Count -eq $fx.suites.Count -and @($arm.Trace.Discovery|Select-Object -Unique).Count -eq $fx.suites.Count) 'oneBuildDiscovery'
     Assert-FF ($arm.Schedule.historyDigest -ceq (Get-NightlyHistoryDigest $h.Path) -and [IO.File]::Exists((Join-Path $arm.Root 'prior-failures.json'))) 'historyBinding'
     Assert-FF ($arm.Result.testsPassed -and $arm.Result.coverageComplete -and $arm.Result.ExitCode -eq 0 -and $arm.Summary.succeeded) 'allChunksVerdict' ($arm.Summary.reasons -join ',')
@@ -1030,7 +1030,7 @@ function Test-JournalCustodySurvivesInterleaving {
     foreach($row in $a.Projection.chunks){if([bool]$row.testsPassed -ne (-not $seen)){$prefix=$false};if($row.suite -ceq 'antiphon' -and $row.chunk -ceq 'Priority'){$seen=$true}}
     Assert-FF ($prefix -and -not $a.Result.testsPassed -and $a.Result.ExitCode -eq 1 -and -not $a.Summary.succeeded) 'prefixState'
     $journal=Join-Path $a.Root 'timing/groups-executed.journal';$pointer=[IO.File]::ReadAllText((Join-Path $journal 'current.json'))|ConvertFrom-Json
-    $generation=Join-Path $journal $pointer.generation;$records=@(Get-ChildItem -LiteralPath $generation -Filter '????????.json'|Sort-Object Name)
+    $generation=Join-Path $journal $pointer.generation;$records=@(Get-ChildItem -LiteralPath $generation -File|Where-Object {$_.Name -cmatch '^[0-9]{8}\.json$'}|Sort-Object Name)
     Assert-FF ($records.Count -eq 4 -and (@($a.Projection.chunks|ForEach-Object {$_.suite+'/'+$_.chunk}) -join ',') -ceq ($keys -join ',') -and $a.Projection.runId -ceq 'actual-run' -and $a.Projection.attempt -ceq '1') 'journalBindings'
     Assert-FF ([IO.File]::Exists((Join-Path $generation 'seal.json')) -and -not $a.Trace.SettledBeforeReturn -and @(Get-ChildItem -LiteralPath $journal -Directory).Count -eq 1) 'oneContextClose'
     $timeout=Invoke-FFActualLoop $fx 'timeout-priority' $h -Variant timeout
