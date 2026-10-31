@@ -34,7 +34,7 @@ function ConvertFrom-QualificationHeartbeatTime {
 }
 
 function Get-QualificationGroupPlannedSeconds {
-    param([string]$Path, [string]$ChunkId)
+    param([string]$Path, [string]$ChunkId, [string]$SuiteId, [string]$RunId, [string]$Attempt)
     if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($ChunkId)) { return $null }
     if (-not [IO.File]::Exists($Path)) { return $null }
     try {
@@ -51,6 +51,11 @@ function Get-QualificationGroupPlannedSeconds {
         return $null
     }
     return $null
+}
+
+function Write-QualificationActiveChunkIdentity {
+    param([string]$Directory, [string]$SuiteId, [string]$ChunkId, [string]$RunId, [string]$Attempt, [string]$State='Active')
+    return $false
 }
 
 function Get-QualificationHeartbeatIdleBudget {
