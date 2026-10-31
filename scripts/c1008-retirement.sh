@@ -627,15 +627,20 @@ c1609_close_census() {
         raw="$(docker inspect "$id")" || return 1
         raw="$(printf '%s' "$raw" | jq -ceS --arg id "$id" '
           if type=="array" and length==1 and .[0].Id==$id and
-             (.[0].Config.Labels|type)=="object" and (.[0].Mounts|type)=="array" and
+             (.[0].Config.Labels|type)=="object" and all(.[0].Config.Labels[];type=="string") and
+             (.[0].Mounts|type)=="array" and
              (.[0].State.Running|type)=="boolean" and (.[0].State.Status|type)=="string"
-          then .[0]|{Id,Config:{Labels:.Config.Labels},State,Mounts} else error("census") end')" || return 1
+          then .[0]|{Id,Config:{Labels:.Config.Labels},State:{Running:.State.Running,Status:.State.Status},
+            Mounts:(.Mounts|sort_by(.Destination,.Source,.Type))} else error("census") end')" || return 1
         printf '%s' "$raw" | jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" '
           (.Config.Labels["com.docker.compose.project"]!=$project) and
           ((.Config.Labels["io.antiphon.preview-audit"] // "")|startswith($op+":")|not)' >/dev/null || return 1
         printf '%s' "$raw" | jq -e --slurpfile record "$receipt" '
           all(.Mounts[]; (.Type=="bind" or .Type=="volume" or .Type=="tmpfs") and
-            (if .Type=="volume" then .Name as $n | ($record[0].targets|index($n))==null
+            (.Destination|type)=="string" and (.Destination|startswith("/")) and (.RW|type)=="boolean" and
+            (if .Type=="volume" then (.Name|type)=="string" and .Name!="" and
+               (.Source|type)=="string" and (.Source|startswith("/")) and
+               (.Name as $n | ($record[0].targets|index($n))==null)
              elif .Type=="bind" then (.Source|type)=="string" and (.Source|startswith("/")) else true end))' >/dev/null || return 1
         while IFS= read -r source; do
             resolved="$(sudo -n readlink -e -- "$source")" || return 1

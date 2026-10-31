@@ -143,7 +143,7 @@ for(const kind of ['incomplete','unjoined','active','missing','linked']) {
   });
   if(kind==='linked'){fs.unlinkSync(lifecycle);fs.renameSync(lifecycle+'.owned',lifecycle);}
 }
-for(const kind of ['present','replaced','helper','bind']) {
+for(const kind of ['present','replaced','helper','bind','named','malformed']) {
   refused(kind,()=>{
     const s=structuredClone(absent);
     if(kind==='present'||kind==='replaced'){
@@ -153,6 +153,8 @@ for(const kind of ['present','replaced','helper','bind']) {
       const c={Id:'f'.repeat(64),Name:'foreign',Image:'sha256:'+'a'.repeat(64),
         State:{Running:true,Status:'running'},Config:{Labels:{}},Mounts:[],HostConfig:{Tmpfs:{},Mounts:[]}};
       if(kind==='helper')c.Config.Labels['io.antiphon.preview-audit']=op+':'+'f'.repeat(16);
+      else if(kind==='named')c.Mounts.push({Type:'volume',Name:targets[3],Source:original.fingerprints[targets[3]].Mountpoint,Destination:'/foreign',RW:false});
+      else if(kind==='malformed')c.Mounts.push({Type:'volume'});
       else c.Mounts.push({Type:'bind',Source:original.fingerprints[targets[3]].Mountpoint,Destination:'/foreign',RW:false});
       s.containers.push(c);
     }
@@ -204,7 +206,7 @@ try {
   assert.equal(fs.statSync(root+'/docker-trace.jsonl').size,before,'no Docker read before the lock');
   assert(fs.existsSync(pending),'no premature closure activation');
   fs.writeFileSync(release,'release');
-  const code=await done;assert.equal(code,0,'Close resumes after the actual lock: '+text);
+  const code=await done;trace.push({fault:'lock-barrier-recovery',exit:code});assert.equal(code,0,'Close resumes after the actual lock: '+text);
 } finally {
   fs.writeFileSync(release,'release');
   await holderDone;
