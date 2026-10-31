@@ -19,3 +19,17 @@ Tool bootstrap was leased,5 warnings/0 errors,8.85s compiler/10s held. Gated pla
 ## Outstanding ordered scope
 
 Complete long-scan/manual/v2 acceptance (including publication renewal and single-owner exchange), then fresh full CP-15, then the whole closed Linux roster and portable Linux roster/docs checks. Windows CP-11/12/13 and production preview/audit remain owed. Do not add focused passing counts to historical red to claim a fresh row.
+
+## Apply repair and acceptance execution (owner guard refused qualification)
+
+Repair a8c5683698db4cf734fb1ded4967a4c4ffef5cc0 admits exact immutable Ready/authority bytes before the expensive Apply audit, under the existing owning shell/FD8 lifecycle. Consumption still requires matching policy/daemon/incarnations and complete inventory, and per-delete publication/live checks are unchanged. Cached authority is reset at entry, bound to BASHPID and Preview SHA-256, and cannot cross Resume/invocations. UTC elapsed time must agree with monotonic time within60s. An append-only admission record is not Ready and cannot delete. No delete path was added.
+
+The fake long-scan clock now advances wall and monotonic time together. Added controls prove an already expired Preview refuses before the first audit despite caller-supplied cache variables, and an unmatched wall-clock jump refuses without consumption/effects. No prior assertion or timeout was removed/relaxed.
+
+Acceptance run20261031-055353-0c21 executed4/4/0/0, with clean source/build provenance. J4=96.135s,J10=270.073s,J8=476.848s,W1=35.102s. Compiler/build phases are retained; scheduler build292.021s, row883.394s, host testsWall878.264s; no slot wait. Total1206.226s charged/wall. The run is NOT GREEN: owner reads timed out from06:08:29 through06:13:40, latched owner-unverified, terminal exit7. Source validation correctly refused report_failed (exit2). Do not relabel this report or claim qualified acceptance from its passing TRX.
+
+```text
+CHECKPOINT ACCEPT-A commit=a8c5683698db4cf734fb1ded4967a4c4ffef5cc0 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementReceiptTests*)|(VolumeRetirementWrapperTests*)/(Freshness_and_policy_version_are_rechecked*)|(Manual_attestation_is_exact_and_cannot_waive_findings*)|(Journal_intents_and_partial_resume_are_exact*)|(Retire_temp_uses_current_proof_protocol*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-e9fd8902/.antiphon/checkpoints/20261031-055353-0c21/rows/ACCEPT-A/run.trx slot=granted waited=0s dirty=0 source=a8c5683698db4cf734fb1ded4967a4c4ffef5cc0 sourceState=clean buildSource=verified
+```
+
+Fresh direct bounded health/owner GETs recovered200 after terminal completion: same task/session, Dispatched/Running. No owner identity/token/environment was removed, no bypass or receipt rewrite was used. A preliminary mistyped expected SHA was refused before any build/test, zero credit; corrected invocation produced this run. OS inventory/lint passed at this repair for the three changed source paths, with unchanged Linux test gates and no OS selector/startup change.
