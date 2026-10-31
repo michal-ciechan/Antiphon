@@ -38,7 +38,8 @@ do {
                 if ($xml.DocumentElement.LocalName -ne 'TestRun' -or $xml.DocumentElement.NamespaceURI -ne $ns.LookupNamespace('t')) { throw 'Not a supported TRX TestRun.' }
                 # A complete TRX has a ResultSummary; a partially written document is retried.
                 if (-not $xml.SelectSingleNode('/t:TestRun/t:ResultSummary', $ns)) { throw 'TRX has no ResultSummary yet.' }
-                $failed = @($xml.SelectNodes('//t:UnitTestResult[@outcome="Failed"]', $ns))
+                # Same failure set as TrxReport and run-checkpoint.ps1.
+                $failed = @($xml.SelectNodes('//t:UnitTestResult[@outcome="Failed" or @outcome="Error" or @outcome="Timeout" or @outcome="Aborted"]', $ns))
                 if ($failed.Count -gt 0) {
                     $classes = @{}
                     foreach ($test in $xml.SelectNodes('//t:UnitTest', $ns)) {
