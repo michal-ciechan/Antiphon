@@ -98,7 +98,7 @@ write_result() {
     if [ "$WROTE" = 1 ]; then
         exit "$code"
     fi
-    if [ -n "${C1609_PHASE_ROOT:-}" ] && ! c1609_phase_end; then
+    if [ -n "${C1609_PHASE_ROOT:-}" ] && [ "$BASHPID" = "${C1609_PHASE_PID:-}" ] && ! c1609_phase_end; then
         accepted=false; diagnosis=RecycleReceiptUnavailable; code=2
     fi
     WROTE=1

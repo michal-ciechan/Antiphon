@@ -281,10 +281,15 @@ public sealed class VolumeRetirementReceiptTests
         await WriteAttestation(unsafeAttestation, unsafeIntent);
         var dirtyApply = await unsafeFixture.Run("retire-temp-runner", unsafeContext);
         dirtyApply.Exit.ShouldNotBe(0, "J10 exact Apply attestation cannot waive dirty content; " + dirtyApply.Output);
-        dirtyApply.Output.ShouldContain("RecycleWorktreeDirty");
+        dirtyApply.Output.ShouldContain("RecycleWorktreeDirty", customMessage: dirtyApply.Output);
         unsafeFixture.Removed.ShouldBeEmpty();
         JsonNode.Parse(await File.ReadAllTextAsync(unsafeReceipt))!["consumed"]!.GetValue<bool>()
             .ShouldBeFalse("J10 content refusal cannot consume Ready");
+        var lifecycle = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(
+            Path.GetDirectoryName(unsafeReceipt)!, "lifecycle.json")))!;
+        lifecycle["active"]!.GetValue<bool>().ShouldBeFalse("J10 owning shell finishes its refusing phase");
+        lifecycle["complete"]!.GetValue<bool>().ShouldBeTrue();
+        lifecycle["children"]!.AsArray().All(child => child!["joined"]!.GetValue<bool>()).ShouldBeTrue();
     }
 
     private static Task WriteAttestation(string path, JsonNode value)
