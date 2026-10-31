@@ -113,6 +113,10 @@ qualification, release gate credit or production timeouts.
   Server, child and isolated-runner log paths include timestamp/level tails with fixed categories;
   payloads, Git arguments, raw errors and credentials are omitted. Producer-state collection has a
   separate five-second diagnostic bound. A Git count is completed commands, not a delivery verdict:
+  The C488/C467 polling witness selects attention by task, request and kind because the feed
+  collapses Outcome/Aged receipts to the newest notice. Missing or duplicate matches fail
+  immediately with ID/kind-only sequence metadata and the same bounded producer diagnostics,
+  persisted as `polling-attention-<request>.txt`; no receipt eligibility or wait budget changes.
   verification, build-slot admission and native delivery can be silent between Git records.
 
 ### Preserved Gotcha #21

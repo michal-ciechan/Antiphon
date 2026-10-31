@@ -10,14 +10,31 @@ namespace Antiphon.E2E.Fixtures;
 
 public sealed partial class LandDeliveryFixture
 {
-    internal Task<AttentionItemDto> PollingAttentionAsync(AttentionDto attention, Guid requestId,
+    internal async Task<AttentionItemDto> PollingAttentionAsync(AttentionDto attention, Guid requestId,
         Func<CancellationToken, Task<string>>? producerState = null)
-        => Task.FromResult(attention.Items.Single(i => i.TaskId == TaskId
-            && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome")));
+    {
+        // The feed collapses Outcome and Aged notices to the newest unconfirmed receipt per task.
+        // Its headline therefore cannot identify the original Outcome; use the durable request.
+        var matches = attention.Items.Where(i => i.TaskId == TaskId && i.LandRequestId == requestId
+            && i.Kind == AttentionKind.LandOutcomeUnconfirmed).ToList();
+        if (matches.Count == 1) return matches[0];
+        var sequence = JsonSerializer.Serialize(attention.Items.Select(i => new {
+            i.TaskId, i.LandRequestId, i.LandNotificationId, kind = i.Kind.ToString() }));
+        var original = new InvalidOperationException(
+            $"expected exactly one polling attention item; matches={matches.Count}; sequence={sequence}");
+        var diagnostic = await ReceiptFailureDiagnosticAsync(original, LandNotificationKind.Outcome,
+            requestId, null, producerState, "polling-attention");
+        throw new InvalidOperationException(diagnostic, original);
+    }
 
     // Diagnostic collection cannot extend the receipt deadline or replace its failure.
     internal async Task<TimeoutException> ReceiptTimeoutAsync(TimeoutException original, LandNotificationKind kind,
         Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState = null)
+        => new(await ReceiptFailureDiagnosticAsync(original, kind, requestId, notificationId, producerState), original);
+
+    private async Task<string> ReceiptFailureDiagnosticAsync(Exception original, LandNotificationKind kind,
+        Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState,
+        string diagnosticPrefix = "receipt-timeout")
     {
         var text = new StringBuilder(original.Message)
             .Append($" | kind={kind} taskId={TaskId} callerId={CallerId} requestId={requestId?.ToString() ?? "any-for-task"}")
@@ -46,11 +63,11 @@ public sealed partial class LandDeliveryFixture
             }
             catch (Exception ex) { text.Append("\nlogTail=unavailable:").Append(ex.GetType().Name).Append(" directory=").Append(directory); }
         }
-        var path = Path.Combine(Root, "receipt-timeout-" + (notificationId ?? requestId ?? TaskId).ToString("N") + ".txt");
+        var path = Path.Combine(Root, diagnosticPrefix + "-" + (notificationId ?? requestId ?? TaskId).ToString("N") + ".txt");
         text.Append("\ndiagnosticPath=").Append(path);
         try { await File.WriteAllTextAsync(path, text.ToString()); }
         catch (Exception ex) { text.Append("\ndiagnosticWrite=unavailable:").Append(ex.GetType().Name); }
-        return new TimeoutException(text.ToString(), original);
+        return text.ToString();
     }
 
     private async Task<string> CaptureReceiptProducerAsync(LandNotificationKind kind, Guid? requestId, CancellationToken ct)
