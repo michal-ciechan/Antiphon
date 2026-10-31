@@ -10,6 +10,11 @@ import {boundedChild, ownedDaemon} from './c994-real-custody.mjs';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = '/usr/local/bin/docker';
 const label = 'io.antiphon.c1609-real';
+// Production apply is ssh user mc, the same account that writes the proof.
+// The helper nsenter is root; drop to this process, which owns the proof, and keep its groups.
+const applyUid = process.getuid();
+const applyGid = process.getgid();
+const applyGroups = process.getgroups().join(',');
 const q = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const argv = process.argv.slice(2);
@@ -92,6 +97,14 @@ async function prepare() {
     '--label',label+'='+prefix,scope.image,'sleep','infinity');
   save();
   rootRun('umask 077; mkdir ' + q(scope.hostRoot) + '; chmod 0700 ' + q(scope.hostRoot));
+  rootRun('chown ' + applyUid + ':' + applyGid + ' ' + q(scope.hostRoot));
+  // Volume _data is mode 0777 and owned by the applying uid. The data root is
+  // mode 710, so bash access() cannot traverse it. Other-execute is enough;
+  // cleanup restores the recorded mode.
+  scope.dockerRootMode=rootRun('stat -c %a /var/lib/docker').stdout.trim();
+  assert.match(scope.dockerRootMode, /^[0-7]{3,4}$/);
+  rootRun('chmod o+x /var/lib/docker');
+  save();
   fs.mkdirSync(root+'/bin'); fs.mkdirSync(root+'/inspects');
   fs.writeFileSync(root+'/docker-calls.jsonl','');
   fs.writeFileSync(root+'/bin/docker','#!/bin/sh\nexec /usr/local/bin/node '+q(fileURLToPath(import.meta.url))+' --docker-shim --root '+q(root)+' -- "$@"\n',{mode:0o755});
@@ -130,6 +143,7 @@ function fixture(id) {
     f.names.map((n,i)=>'chmod 0777 /v'+i+'; chown 1654:1654 /v'+i+(i===2?'':'; printf '+q(n)+' > /v'+i+'/sentinel')).join('; ') +
     '; mkdir -p /v3/repos; cp -a /seed /v3/repos/outer; chown -R 1654:1654 /v3/repos');
   rootRun('umask 077; mkdir -p '+q(f.host+'/server/retirement')+' '+q(f.host+'/evidence')+'; chmod 0700 '+q(f.host+'/server'));
+  rootRun('chown -R '+applyUid+':'+applyGid+' '+q(f.host));
   f.before=Object.fromEntries(f.kept.map(n=>[n,ownedVolume(n)]));
   return f;
 }
@@ -175,7 +189,7 @@ function shell(f, body, suffix='run') {
     'C1609_VOLUME_METADATA_FILE='+q(repo+'/scripts/c1008-volume-metadata.sh'),
     'source '+q(retirement),
     process.env.C1609_NATIVE_PC==='N3-no-intent' && suffix==='apply' ? 'c1609_target_intent() { :; }' : '',
-    'sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then for last; do :; done; mkdir -p -- "$last"; chmod 0700 "$last"; else "$@"; fi; }',
+    'sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then for last; do :; done; mkdir -p -- "$last"; chmod 0700 "$last"; else docker exec ' + q(scope.helper) + ' nsenter -t 1 -m -u -r -w -- "$@"; fi; }',
     'write_result() { WROTE=1; printf "NATIVE_RESULT %s %s %s\\n" "$1" "$2" "$3"; exit "$3"; }',
     'c1008_status_proof() { C1008_CENSUS="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown; }',
     'export PATH='+q(scope.root+'/bin')+':"$PATH"',
@@ -187,7 +201,12 @@ function shell(f, body, suffix='run') {
   src=src.replace(marker,()=>'\n'+lines+'\n'+marker);
   const filename=scope.root+'/'+f.stem+'-'+suffix+'.sh';
   fs.writeFileSync(filename,'export C590_CASE=retire-temp-runner C590_SHA='+q(scope.source)+' C590_RUN=native C590_REEXEC=1\n'+src,{mode:0o600});
-  return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--','bash',filename],{},180000);
+  // The helper image's HOME is /root. After the uid drop, docker warns on
+  // stdout-merged inspect and jq rejects the warning. Production's home is
+  // the applying account's own directory.
+  return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--',
+    'setpriv','--reuid='+applyUid,'--regid='+applyGid,'--groups',applyGroups,'--inh-caps=-all','--',
+    'env','HOME='+scope.root,'bash',filename],{},180000);
 }
 function receipt(f) {return JSON.parse(rootRead(f.host+'/server/retirement/'+f.op+'/receipt.json'));}
 const auditReady=[
@@ -436,6 +455,7 @@ else {
   load(rootArg());
   if(argv[0]==='--cleanup'){
     scope.phase='teardown';
+    if(scope.dockerRootMode) rootRun('chmod '+q(scope.dockerRootMode)+' /var/lib/docker');
     const ids=d('ps','-aq','--no-trunc','--filter','label='+label+'='+scope.prefix).split('\n').filter(Boolean);
     cleanupObjects([...new Set(scope.volumes)],ids);
     const image=json('image','inspect',scope.image)[0];assert.equal(image.Id,scope.digest);assert.equal(image.Config.Labels[label],scope.prefix);
