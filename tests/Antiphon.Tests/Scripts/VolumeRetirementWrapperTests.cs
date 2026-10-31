@@ -319,13 +319,34 @@ public sealed class VolumeRetirementWrapperTests
         var probe = function + "\n" + """
             root="$(mktemp -d)"
             trap 'rm -rf "$root"' EXIT
+            umask 077
             SERVER2_ROOT="$root/server"
-            docker() { case "${3:-}" in *antiphon-runner-temp_*) [ "$PRESENT" = 1 ] && return 0; return 1 ;; *) return 1 ;; esac; }
-            op="$SERVER2_ROOT/retirement/c100800000000000000000000000000000001"
+            source "$RETIREMENT"
+            c1609_load_retirement() { :; }
+            c1008_volume() { if [ "$PRESENT" = unknown ]; then return 1; elif [ "$PRESENT" = 1 ]; then printf '{}\n'; else printf 'null\n'; fi; }
+            docker() { [ "$1" = info ] && printf 'fixture-daemon\n'; }
+            C1008_OPERATION=c100800000000000000000000000000000001
+            op="$SERVER2_ROOT/retirement/$C1008_OPERATION"
             if [ -n "$STATE" ]; then
                 mkdir -p "$op"
-                printf '%s\n' "$RECEIPT" > "$op/receipt.json"
-                if [ "$CLOSED" = 1 ]; then printf '%s\n' '{"schema":2,"state":"Closed"}' > "$op/closure.json"; fi
+                jq -cnS --arg op "$C1008_OPERATION" '{schema:1,operationId:$op,daemon:"fixture-daemon",nonce:("a"*32),owner:{pid:99999999,startTicks:"0"},active:false,complete:true,readyPublished:true,children:[]}' > "$op/lifecycle.json"
+                jq -cnS --arg op "$C1008_OPERATION" --arg state "$STATE" --argjson effects "$EFFECTS" --argjson intents "$INTENTS" '
+                  ["antiphon-runner-temp_work","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state"] as $targets |
+                  {schema:2,policyVersion:1,operationId:$op,project:"antiphon-runner-temp",mode:"scripted",state:$state,consumed:($state!="Ready"),owner:null,
+                   daemon:"fixture-daemon",image:("sha256:"+("a"*64)),inventoryDigest:("b"*64),phaseNonce:("a"*32),readyAt:"2026-10-31T00:00:00Z",retiredAt:"2026-10-30T00:00:00Z",
+                   targets:$targets,fingerprints:($targets|map({key:.,value:null})|from_entries),
+                   intents:($targets[0:$intents]|map({name:.,intent:"remove",result:"removed"})),
+                   effects:($targets[0:$effects]|map({name:.,result:(if $intents>0 then "removed" else "alreadyAbsent" end)}))}' > "$op/receipt.json"
+                if [ "$CLOSED" = 1 ]; then
+                    prior="$(sha256sum "$op/receipt.json" | cut -d' ' -f1)"
+                    phase="$(sha256sum "$op/lifecycle.json" | cut -d' ' -f1)"
+                    jq -cnS --arg prior "$prior" --arg phase "$phase" --slurpfile r "$op/receipt.json" '
+                      $r[0] as $r|{schema:2,state:"Closed",operationId:$r.operationId,priorDigest:$prior,actor:"operator",authority:"fixture",reason:"observed absent",observedAt:"2026-10-31T00:00:00Z",
+                      daemon:$r.daemon,targets:$r.targets,volumesAbsent:$r.targets,lifecycleDigest:$phase,censusDigest:("c"*64),toolingDigest:("d"*64),
+                      reconciliations:($r.targets|map(. as $n|{name:.,result:(if any($r.intents[]?;.name==$n) then "removed-observed" else "unattributed-absence" end)}))}' > "$op/closure.body"
+                    digest="$(sha256sum "$op/closure.body" | cut -d' ' -f1)"
+                    jq -cS --arg digest "$digest" '.+{digest:$digest}' "$op/closure.body" > "$op/closure.json"
+                fi
             fi
             c1609_clear_reason=
             c1609_temp_retirement_clearable
@@ -333,12 +354,9 @@ public sealed class VolumeRetirementWrapperTests
             """;
         async Task Shell(string present, string state, int effects, int intents, string closed, string expect)
         {
-            var receipt = state.Length == 0 ? "" :
-                "{\"schema\":2,\"state\":\"" + state + "\",\"owner\":null,\"effects\":[" +
-                string.Join(",", Enumerable.Repeat("{\"name\":\"antiphon-runner-temp_work\"}", effects)) +
-                "],\"intents\":[" + string.Join(",", Enumerable.Repeat("{\"name\":\"antiphon-runner-temp_work\"}", intents)) + "]}";
             var output = await Bash(probe,
-                ("PRESENT", present), ("STATE", state), ("RECEIPT", receipt), ("CLOSED", closed));
+                ("PRESENT", present), ("STATE", state), ("EFFECTS", effects.ToString()), ("INTENTS", intents.ToString()),
+                ("RETIREMENT", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")), ("CLOSED", closed));
             output.ShouldContain(expect, customMessage: output);
         }
         await Shell("1", "", 0, 0, "0", "exit=1 reason=TempVolumesRetained");
@@ -346,9 +364,10 @@ public sealed class VolumeRetirementWrapperTests
         await Shell("0", "Ready", 1, 0, "0", "exit=1 reason=TempRetirementUnresolved");
         await Shell("0", "Applying", 1, 1, "0", "exit=1 reason=TempRetirementUnresolved");
         await Shell("0", "Applying", 1, 1, "1", "exit=0 reason=ok");
-        await Shell("0", "Completed", 1, 1, "0", "exit=0 reason=ok");
-        await Shell("1", "Completed", 1, 1, "0", "exit=1 reason=TempVolumesRetained");
+        await Shell("0", "Completed", 4, 4, "0", "exit=0 reason=ok");
+        await Shell("1", "Completed", 4, 4, "0", "exit=1 reason=TempVolumesRetained");
         await Shell("0", "Weird", 0, 0, "0", "exit=1 reason=TempRetirementJournalUnknown");
+        await Shell("unknown", "Refused", 0, 0, "0", "exit=1 reason=TempRetirementJournalUnknown");
     }
 
     private static string Census(string state, int effects, int intents, bool closed) =>
