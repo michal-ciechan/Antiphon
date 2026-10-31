@@ -1222,6 +1222,12 @@ build. No earlier row's filter or floor changes.
 while the class gains the pre-stop, preview-preserve, protected-name, recheck, and
 redeploy-old witnesses. The Expect prose below counts methods rather than the old 4.
 
+2026-10-31 round 15 keeps every earlier filter and floor. CP-3 still floors at 25
+and CP-17 at 4 while VolumeRetirementReceiptTests and VolumeRetirementApplyGateTests
+each gain one method. The proof-directory custody witness and the valid-token
+protected-name witness are those methods. The native fixture applies as the same
+uid that writes the proof.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
