@@ -27,7 +27,7 @@ function Invoke-C1609BoundedProcess {
         foreach($s in $streams){$s.task=$s.reader.ReadAsync($s.buffer,0,$s.buffer.Length)}
         while(-not $inputClosed -or @($streams|Where-Object{-not $_.done}).Count){
             if($watch.ElapsedMilliseconds -ge $TimeoutMs){throw 'deadline'}
-            if(-not $inputClosed -and $stdinTask.IsCompleted){$stdinTask.GetAwaiter().GetResult();$proc.StandardInput.Close();$inputClosed=$true}
+            if(-not $inputClosed -and $stdinTask.IsCompleted){[void]$stdinTask.GetAwaiter().GetResult();$proc.StandardInput.Close();$inputClosed=$true}
             if($proc.HasExited){
                 if($null -eq $exitedAt){$exitedAt=$watch.ElapsedMilliseconds}
                 if($watch.ElapsedMilliseconds-$exitedAt -gt 2000){throw 'drain'}

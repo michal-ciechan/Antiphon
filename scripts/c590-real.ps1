@@ -421,7 +421,7 @@ function Invoke-C1609RetirementCoordinator {
                         } elseif($line.StartsWith('C1609_PROOF_REQUEST') -or $line.StartsWith('C1609_CONTROL_REQUEST')){throw 'protocol'}
                         if($response){
                             if($proc.HasExited){throw 'controller-eof'}
-                            $write=$proc.StandardInput.WriteLineAsync($response);if(-not $write.Wait(10000)){throw 'response-deadline'};$write.GetAwaiter().GetResult();$proc.StandardInput.Flush()
+                            $write=$proc.StandardInput.WriteLineAsync($response);if(-not $write.Wait(10000)){throw 'response-deadline'};[void]$write.GetAwaiter().GetResult();$proc.StandardInput.Flush()
                         }
                     }
                     if($lineBuffer.Length -gt 8192){throw 'line-bound'}
