@@ -2694,8 +2694,9 @@ public sealed class RollingVolumeRecycleScriptTests
         return request.DeepClone().AsObject();
     }
 
-    // Private-origin publication is proved only by a host ref snapshot bound to this
-    // operation. Authentication failure is the only ls-remote result that may read it.
+    // Temp publication is a v2 host snapshot bound to this operation. Every origin
+    // needs that proof. A readable origin does not bypass a mismatch, and v1 text
+    // is not temp authority.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Host_proof_admits_only_an_authenticated_private_origin()
@@ -2728,8 +2729,10 @@ public sealed class RollingVolumeRecycleScriptTests
             var url = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
             var tip = (await C994ScriptProcess.Run("git", "-C", repo, "rev-parse", "HEAD")).Output.Trim();
             var proofDir = Path.Combine(root, "host-proof");
-            var proofEnv = "export C1008_HOST_PROOF=" + BashSingle(proofDir) + "\nexport C1008_OPERATION_STARTED=" + started + "\n";
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var refs = tip + "\trefs/heads/main\n";
+            var proofEnv = "export C1008_HOST_PROOF=" + BashSingle(proofDir) + "\nexport C1008_OPERATION_STARTED=" + started + "\n" +
+                WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs);
 
             ResetPreviewTrace(fixture);
             var admitted = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
@@ -2749,7 +2752,8 @@ public sealed class RollingVolumeRecycleScriptTests
             fixture.Removed.ShouldBeEmpty("private-origin: preview removes nothing");
 
             await AssertPrivateRefusal(fixture, bound, "RecycleGitAuditUnknown",
-                "audit check=ls-remote status=128 repo=" + repoRel, "private-origin: no proof refuses like today");
+                "audit check=ls-remote status=128 repo=" + repoRel + " reason=proof-missing",
+                "private-origin: no proof refuses");
 
             var child = await C994ScriptProcess.Run("bash", "-c",
                 "git -C " + BashSingle(repo) + " commit -q --allow-empty -m unpublished && git -C " + BashSingle(repo) + " rev-parse HEAD");
@@ -2759,36 +2763,42 @@ public sealed class RollingVolumeRecycleScriptTests
             var reset = await C994ScriptProcess.Run("git", "-C", repo, "reset", "--hard", tip);
             reset.Exit.ShouldBe(0, "private-origin: restore the published tip; " + reset.Output);
 
-            WriteBoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", started, tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", now, refs);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-operation", "private-origin: another operation id refuses");
-            WriteBoundProof(proofDir, repoRel, url, operation, started - 1, tip + "\trefs/heads/main\n");
+                "reason=proof-binding", "private-origin: another operation id refuses");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, started - 1, refs);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-stale", "private-origin: a proof older than the operation refuses");
-            WriteProofText(proofDir, repoRel, url,
-                "c1008-host-proof 1\noperation " + operation + "\norigin " + new string('0', 64) +
-                "\nrepo " + repoRel + "\ncreated " + started + "\n" + tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerOrigin: new string('0', 64));
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-origin", "private-origin: a different origin hash refuses");
-            WriteProofText(proofDir, repoRel, url,
-                "c1008-host-proof 1\noperation " + operation + "\norigin " + Sha256Hex(url) +
-                "\nrepo repos/other\ncreated " + started + "\n" + tip + "\trefs/heads/main\n");
+                "reason=proof-binding", "private-origin: a different origin hash refuses");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerRepo: "repos/other");
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-repo", "private-origin: a different repository refuses");
+                "reason=proof-binding", "private-origin: a different repository refuses");
+            WriteV1ShapedProof(proofDir, repoRel, url);
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-binding", "private-origin: a v1 proof is not temp authority");
+            WriteProofText(proofDir, repoRel, url, "c1008-host-proof 2\nnot-a-proof\n");
+            File.WriteAllBytes(Path.Combine(proofDir, ProofFileName(repoRel, url) + ".bundle"), "short"u8.ToArray());
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-parse", "private-origin: a short proof refuses");
             WriteProofText(proofDir, repoRel, url, "");
+            var emptyBundle = Path.Combine(proofDir, ProofFileName(repoRel, url) + ".bundle");
+            if (File.Exists(emptyBundle)) File.Delete(emptyBundle);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-missing", "private-origin: an empty proof refuses");
 
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: repository 'https://github.com/example/missing.git' not found", 128));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a 404 is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a 404 still admits when the v2 proof matches");
+            File.Exists(Path.Combine(root, "host-git")).ShouldBeFalse("private-origin: a 404 does not invoke helper git");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Could not resolve host: github.com", 128));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a DNS failure is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a DNS failure still admits when the v2 proof matches");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Connection timed out", 124));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a timeout is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a timeout still admits when the v2 proof matches");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: could not read Username for 'https://github.com': terminal prompts disabled", 128));
 
             var dirtyFile = Path.Combine(repo, "dirty");
@@ -2807,14 +2817,13 @@ public sealed class RollingVolumeRecycleScriptTests
                 " && git -C " + BashSingle(repo) + " remote set-url origin " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " push -q origin main");
             publish.Exit.ShouldBe(0, "private-origin: public stand-in; " + publish.Output);
-            WriteBoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", started, tip + "\trefs/heads/main\n");
-            ResetPreviewTrace(fixture);
-            var ignored = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
-            ignored.Exit.ShouldBe(0, "private-origin: a successful ls-remote ignores a mismatched proof; " + ignored.Output);
-            ignored.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            var publicUrl = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
+            WriteV2BoundProof(proofDir, repoRel, publicUrl, "c100800000000000000000000000000000002", now, refs);
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-binding", "private-origin: a readable origin still refuses a mismatched proof");
             var restore = await C994ScriptProcess.Run("git", "-C", repo, "remote", "set-url", "origin", "ext::" + origin);
             restore.Exit.ShouldBe(0, "private-origin: restore the private origin; " + restore.Output);
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
 
             ResetPreviewTrace(fixture);
             var inventory = await fixture.Run("retire-temp-inventory", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + PreviewWitnessProbe);
@@ -2956,11 +2965,75 @@ public sealed class RollingVolumeRecycleScriptTests
         File.WriteAllText(Path.Combine(directory, ProofFileName(repo, origin)), text);
     }
 
-    private static void WriteBoundProof(string directory, string repo, string origin, string operation, long created, string refs)
+    // Eleven-line v2 proof plus a dummy bundle. The audit checks the bundle hash
+    // and does not unbundle. Inventory is the one request line the audit will hash.
+    private static string WriteV2BoundProof(string directory, string repo, string origin, string operation, long created, string refs, string? headerOrigin = null, string? headerRepo = null)
     {
-        var body = "c1008-host-proof 1\noperation " + operation + "\norigin " + Sha256Hex(origin) +
-                   "\nrepo " + repo + "\ncreated " + created + "\n" + refs;
-        WriteProofText(directory, repo, origin, body);
+        const string nonce = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var originHash = Sha256Hex(origin);
+        var proofName = ProofFileName(repo, origin);
+        var request = "C1008_PRIVATE_ORIGIN repo=" + repo + " origin=" + origin +
+            " originHash=" + originHash + " proofName=" + proofName + "\n";
+        var inventory = Sha256Hex(request);
+        var completed = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (completed < created) completed = created;
+        var refText = refs.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (!refText.EndsWith('\n')) refText += "\n";
+        var refCount = refText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+        var bundleBytes = "c1609-dummy-bundle\n"u8.ToArray();
+        var bundleHash = Convert.ToHexString(SHA256.HashData(bundleBytes)).ToLowerInvariant();
+        var advertisement = Sha256Hex(refText);
+        var body = string.Join('\n', new[]
+        {
+            "c1008-host-proof 2",
+            "operation " + operation,
+            "origin " + (headerOrigin ?? originHash),
+            "repo " + (headerRepo ?? repo),
+            "created " + created.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "nonce " + nonce,
+            "inventory " + inventory,
+            "bundle " + bundleHash,
+            "advertisement " + advertisement,
+            "count " + refCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "completed " + completed.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        }) + "\n" + refText;
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, proofName);
+        File.WriteAllText(path, body, new UTF8Encoding(false));
+        File.WriteAllBytes(path + ".bundle", bundleBytes);
+        return "export C1609_PROOF_NONCE=" + nonce + "\nexport C1609_PROOF_INVENTORY=" + inventory + "\n";
+    }
+
+    private static void WriteV1ShapedProof(string directory, string repo, string origin)
+    {
+        var lines = new[]
+        {
+            "c1008-host-proof 1",
+            "operation c100800000000000000000000000000000001",
+            "origin " + new string('0', 64),
+            "repo " + repo,
+            "created 1",
+            "nonce " + new string('b', 32),
+            "inventory " + new string('c', 64),
+            "bundle " + new string('d', 64),
+            "advertisement " + new string('e', 64),
+            "count 1",
+            "completed 1"
+        };
+        WriteProofText(directory, repo, origin, string.Join('\n', lines) + "\n" + new string('a', 40) + "\trefs/heads/main\n");
+        File.WriteAllBytes(Path.Combine(directory, ProofFileName(repo, origin) + ".bundle"), "v1"u8.ToArray());
+    }
+
+    private static async Task AssertPrivateAdmission(C1008HostFixture fixture, string extra, string because)
+    {
+        ResetPreviewTrace(fixture);
+        var run = await fixture.Run("retire-temp-runner", extra + "\n" + PreviewWitnessProbe, dryRun: true);
+        run.Exit.ShouldBe(0, because + "; " + run.Output);
+        run.Output.ShouldContain("C1008_PREVIEW", Case.Sensitive, because);
+        run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+        run.Output.ShouldNotContain("RecycleUnpublishedWork");
+        run.Output.ShouldNotContain("RecycleWorktreeDirty");
+        fixture.Removed.ShouldBeEmpty(because);
     }
 
     private static async Task AssertPrivateRefusal(C1008HostFixture fixture, string extra, string diagnosis, string detail, string because)
