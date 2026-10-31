@@ -100,5 +100,6 @@ Subject: `feat/card-task-a584c99e` at `b1c6889fa7fb7ca420e71f0c7ac20a38f49a6477`
 - **Cleanup:** all `bin-rv*`, `bin-land-audit` and `bin/` output and the mutant worktree were removed with literal paths.
 - **Not run:**
   - Windows-only proofs (`Card1619WindowsExitTests`, `DirectoryLinkFixtureWindowsTests`, C1022 modern host, C448 V13/V28, `WorktreeRetirementDeliveryE2ETests`). These stay owed to the new rc's Windows run.
-  - The E2E `LandDeliveryFixtureProbeTests`: no Chromium on server2.
+  - The E2E `LandDeliveryFixtureProbeTests` (worker 6/6) was not re-run.
+  - The whole Unit lane was not run (brief-scoped short review), so `ordinaryScopeCompleted` is Interim.
 - **PCs:** all PCs stay pending for SourceLanding Mutation.
