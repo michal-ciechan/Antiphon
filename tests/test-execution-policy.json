@@ -1,10 +1,6 @@
 {
   "schemaVersion": 4,
-<<<<<<< HEAD
-  "policyHash": "",
-=======
-  "policyHash": "c65a202aa95b6623255f5dca94715843c70261b5fbb9c7add736e80fe3c799cc",
->>>>>>> 9f5d0a61e (feat: implement strict qualification graph schema canonical identity contract)
+  "policyHash": "d364b26b4715553f70e4da620257188fe923de1a255b6a1aa13a6bcfb8c8d538",
   "defaultSuites": [
     "antiphon",
     "session-runner",
