@@ -71,4 +71,98 @@ public partial class C1022BackendLaunchTests
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }
+
+    [Test]
+    public async Task Cleanup_retries_staged_hold_for_five_seconds_then_deletes()
+    {
+        var (root, staged, hold) = StageHeldAssembly();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        var lines = new List<string>();
+        try
+        {
+            var run = OwnedProcessDirectoryCleanup.RunAsync(
+                () => Task.CompletedTask,
+                () => Task.CompletedTask,
+                () => [],
+                () =>
+                {
+                    attempts++;
+                    // Windows refuses the staged image while any handle remains. Linux would
+                    // unlink it, so this witness throws the same UnauthorizedAccessException.
+                    if (!release.Task.IsCompleted)
+                        throw new UnauthorizedAccessException($"Access to the path '{staged}' is denied.");
+                    hold.Dispose();
+                    Directory.Delete(root, true);
+                },
+                deleteTrace: lines.Add);
+            var delay = Task.Delay(TimeSpan.FromSeconds(5));
+            if (await Task.WhenAny(run, delay) != run)
+                release.TrySetResult();
+            await run;
+            attempts.ShouldBeGreaterThan(1, "cleanup must retry while the staged file is held");
+            Directory.Exists(root).ShouldBeFalse();
+            lines.Any(line => line.Contains($"pid={Environment.ProcessId}", StringComparison.Ordinal)
+                    && line.Contains("Antiphon.Agents.Pty.dll", StringComparison.Ordinal))
+                .ShouldBeTrue("held diagnostic names the process and staged assembly");
+            OwnedProcessDirectoryCleanup.StagedDeleteBudget.ShouldBe(TimeSpan.FromSeconds(75));
+            Console.WriteLine($"C1022_HOLD_WITNESS attempts={attempts} pid={Environment.ProcessId} lines={lines.Count}");
+        }
+        finally
+        {
+            hold.Dispose();
+            release.TrySetResult();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
+    public async Task Cleanup_names_holder_and_preserves_original_when_staged_file_stays_open()
+    {
+        OwnedProcessDirectoryCleanup.StagedDeleteBudget.ShouldBe(TimeSpan.FromSeconds(75));
+        var (root, staged, hold) = StageHeldAssembly();
+        var original = new InvalidOperationException("configured body");
+        var lines = new List<string>();
+        Exception? error = null;
+        try
+        {
+            await OwnedProcessDirectoryCleanup.RunAsync(
+                () => Task.FromException(original),
+                () => Task.CompletedTask,
+                () => [],
+                () => throw new UnauthorizedAccessException($"Access to the path '{staged}' is denied."),
+                TimeSpan.FromSeconds(2),
+                lines.Add);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+        finally
+        {
+            hold.Dispose();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+
+        var aggregate = error.ShouldBeOfType<AggregateException>();
+        aggregate.InnerExceptions[0].ShouldBeSameAs(original);
+        var cleanup = aggregate.InnerExceptions[1];
+        cleanup.Message.ShouldContain($"pid={Environment.ProcessId}");
+        cleanup.Message.ShouldContain("Antiphon.Agents.Pty.dll");
+        cleanup.Message.ShouldContain("budgetSeconds=2");
+        cleanup.InnerException.ShouldBeOfType<UnauthorizedAccessException>();
+        lines.Any(line => line.Contains($"pid={Environment.ProcessId}", StringComparison.Ordinal))
+            .ShouldBeTrue("each denied attempt records the holder");
+        Console.WriteLine($"C1022_HOLD_FOREVER pid={Environment.ProcessId} error={cleanup.Message}");
+    }
+
+    private static (string Root, string Staged, FileStream Hold) StageHeldAssembly()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1022-hold-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var staged = Path.Combine(root, "Antiphon.Agents.Pty.dll");
+        File.WriteAllText(staged, "staged-host");
+        var hold = new FileStream(staged, FileMode.Open, FileAccess.Read, FileShare.None);
+        return (root, staged, hold);
+    }
 }
