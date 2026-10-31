@@ -63,3 +63,14 @@ Terminal wait exit0, run20261031-043524-73f4. Timing root /tmp/h7-cp3-phases. Sl
 ## Budget declaration caveat
 
 The focused H7 manifests retained the importer's15m row cap instead of the plan's historical CP-14 provisional2m cap. This is a manifest-budget deviation; neither run approached2m execution (40.705s red,99.860s green), no timeout fired, no test-level timeout or assertion changed, and the unchanged full H7 also passed in CP-3. Original resolved manifests/receipts remain untouched. The requested shared rows use the explicit prior Debug caps28m/5m/6m. Do not copy the focused importer default into later execution.
+
+## CP-4 green / CP-15 newly observed fixture failure
+
+Full exact shared rows at5c3edddbcb09620670ef8e81a1fbb6a848f439f5: CP-4=12/12/0/0; CP-15=16/15/1/0. The sole failure is C994_Verifier_manifest_is_strict: its copied verifier dependencies omit c1609-host-proof.ps1, now dot-sourced by c590-real.ps1. Attribution is pending the exact base replay; do not call this row green. No assertion was relaxed. Full CP-15 ran once as commissioned; any repair will receive only its exact method, retaining the failed full-row receipt.
+
+```text
+CHECKPOINT CP-4 commit=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementHostProofTests*)|(VolumeRetirementWrapperTests*)/* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-050747-198a/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 sourceState=clean buildSource=verified
+CHECKPOINT CP-15 commit=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 build=reused filter=/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/* executed=16 passed=15 failed=1 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-050747-198a/rows/CP-15/run.trx slot=granted waited=0s dirty=0 source=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 sourceState=clean buildSource=verified
+```
+
+Terminal wait exit1, run20261031-050747-198a. Compiler261.27s (1443 warnings/zero errors), scheduler build351.195s; no admission wait. CP-4 tests197.895s/row202.990s; CP-15 tests88.274s/row93.780s; total charged688.499s/wall688.501s. Source clean/build verified. Phase root /tmp/h7-cp4-15-phases. No deadline fired.
