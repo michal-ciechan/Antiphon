@@ -477,11 +477,33 @@ When no host proof is supplied, the preview passes that same environment and not
 
 Production deletes remain disabled pending the complete S5 acceptance. In particular,
 N1 must prove the kernel read-only/offline/nocopy namespace and cancellation contract;
-the manual/Close path and strict v2 publication consumption also require their
-planned acceptance. The wrapper's full content Preview/Apply flow must be qualified;
+the complete Linux/native Windows roster and strict v2 publication consumption
+still require qualification. Public manual entry now uses operator authentication,
+an unsigned exact-fingerprint template and a protected host grant; its small owned
+fixture accepts Preview, Apply and Resume. Long scans can outlive that short grant:
+phase admission/renewal remains a refusal to resolve before production enablement.
+The wrapper's full content Preview/Apply flow must be qualified;
 a census-only DryRun is not a completed content preview. The first live action
 remains a read-only preview after reviewed tooling activation, with findings and
 unknown denominators retained. No apply follows an incomplete or refused preview.
+
+The public manual interface is `scripts/retire-runner-volumes.ps1`. From a
+PowerShell session, supply `-Manual -RetiredRunnerId server2-temp -ProjectId <id>
+-OperationId <c1008-id> -VolumeName $names`, where `$names` contains exactly the
+four temp-private names. `-Preview -Template` writes an unsigned
+`attestation-template.json` and never creates Ready. After explicit human authority,
+fill actor, authority reference, reason and UTC; delegated authority also needs
+`-AuthorityFile` with the exact operation, actor and authority reference. The
+existing operator credential is required for both operator and delegate calls.
+`-Preview -AttestationFile <file>` (or `-DryRun`) runs the full read-only gate.
+For `-Apply`, use an Apply attestation bound to the completed Preview digest and
+pass `-ExpectedProofDigest <sha256>`. `-Apply -Resume` additionally pins the current
+journal digest while its fresh attestation still binds the immutable Preview.
+Results are copied to a distinct ignored
+`.antiphon/rolling-server2/manual-retire-<UTC>-<nonce>/` directory. A failed copy is
+incomplete evidence; the protected host journal remains authoritative. A template,
+an operation id, task token or free-text actor cannot replace operator authority.
+These are interface/recovery instructions, not production enablement.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under
