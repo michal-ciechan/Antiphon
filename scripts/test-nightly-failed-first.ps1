@@ -462,7 +462,7 @@ function Invoke-FFPreparedArm {
     $qualificationBuildSeconds = 1.25
     $coverageComplete = $true; $testsPassed = $true; $overallFailed = $false
     $suiteResults = @(); $reasons = @(); $activeNative = 0; $nativeActiveMax = 0
-    function Set-NightlyOutcome([string]$Class) { }
+    $script:NightlyTestsOutcome = 'green'
     $script:FFLaunches = [Collections.Generic.List[object]]::new()
     $script:FFArmChunks = @{}
     $script:FFVariant = $Variant
@@ -564,9 +564,9 @@ function Invoke-FFPreparedArm {
     $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
     $plansStable = $true
     foreach ($s in $Fixture.suites) { if ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))) -cne $plannedBytes[$s.id]) { $plansStable=$false } }
-    $output = [pscustomobject]@{Root=$LogRoot;TimingRoot=$TimingRoot;Schedule=$schedule;Launches=$script:FFLaunches.ToArray();Plans=$plannedBytes;PlansStable=$plansStable;Projection=$projection;Rows=$suiteResults;Reasons=$reasons;Coverage=$coverageComplete;Passed=$testsPassed;Error=$errorText;States=$states;Timing=$timing;Context=$publicationContext;NativeMax=$nativeActiveMax}
+    $output = [pscustomobject]@{Root=$LogRoot;TimingRoot=$TimingRoot;Schedule=$schedule;Launches=$script:FFLaunches.ToArray();Plans=$plannedBytes;PlansStable=$plansStable;Projection=$projection;Rows=$suiteResults;Reasons=$reasons;Coverage=$coverageComplete;Passed=$testsPassed;Error=$errorText;States=$states;Timing=$timing;Context=$publicationContext;NativeMax=$nativeActiveMax;Outcome=$script:NightlyTestsOutcome;OverallFailed=$overallFailed}
     $script:FFOperations.Add([ordered]@{kind='IO';operation=$Name;prepareSeconds=$armPrepareSeconds;executeSeconds=$armExecuteSeconds;wallSeconds=$armWatch.Elapsed.TotalSeconds})
-    Write-FFJson (Join-Path $LogRoot 'arm-result.json') ([ordered]@{prepareSeconds=$armPrepareSeconds;executeSeconds=$armExecuteSeconds;wallSeconds=$armWatch.Elapsed.TotalSeconds;launches=$output.Launches;rows=$suiteResults;reasons=$reasons;coverage=$coverageComplete;passed=$testsPassed;error=$errorText;nativeMax=$nativeActiveMax})
+    Write-FFJson (Join-Path $LogRoot 'arm-result.json') ([ordered]@{prepareSeconds=$armPrepareSeconds;executeSeconds=$armExecuteSeconds;wallSeconds=$armWatch.Elapsed.TotalSeconds;launches=$output.Launches;rows=$suiteResults;reasons=$reasons;coverage=$coverageComplete;passed=$testsPassed;outcome=$script:NightlyTestsOutcome;overallFailed=$overallFailed;error=$errorText;nativeMax=$nativeActiveMax})
     return $output
 }
 function New-FFSmallFixture {
@@ -599,7 +599,7 @@ function Test-FullBytesAndCoverageConserved {
     $samePlans=$true
     foreach($s in $fx.suites){if($a.Plans[$s.id] -cne $b.Plans[$s.id]){$samePlans=$false}}
     Assert-FF ($samePlans -and $a.PlansStable -and $b.PlansStable -and $before -ceq (ConvertTo-Json -InputObject @($fx.suites.chunks) -Depth 30 -Compress) -and $a.Schedule.canonicalPlanDigest -ceq $b.Schedule.canonicalPlanDigest) 'canonicalBytes'
-    Assert-FF ($a.Coverage -and $a.Passed -and $b.Coverage -and $b.Passed -and $a.NativeMax -eq 1 -and $b.NativeMax -eq 1 -and @($a.States|Where-Object {-not $_.Completed}).Count -eq 0 -and @($b.States|Where-Object {-not $_.Completed}).Count -eq 0) 'coverage'
+    Assert-FF ($a.Coverage -and $a.Passed -and $b.Coverage -and $b.Passed -and $a.Outcome -ceq 'green' -and $b.Outcome -ceq 'green' -and -not $a.OverallFailed -and -not $b.OverallFailed -and $a.NativeMax -eq 1 -and $b.NativeMax -eq 1 -and @($a.States|Where-Object {-not $_.Completed}).Count -eq 0 -and @($b.States|Where-Object {-not $_.Completed}).Count -eq 0) 'coverage'
     $keyed=$true
     foreach($r in $a.Projection.chunks){$other=@($b.Projection.chunks|Where-Object {$_.suite -ceq $r.suite -and $_.chunk -ceq $r.chunk})[0];foreach($f in @('exitCode','trxMissing','passedCount','outcomes','trxDigest','manufacturedPassed')){if((ConvertTo-Json -InputObject $r.$f -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $other.$f -Depth 10 -Compress)){$keyed=$false}}}
     Assert-FF ($keyed -and -not $a.Projection.manufacturedPassed -and -not $b.Projection.manufacturedPassed) 'keyedObservations'
@@ -615,9 +615,13 @@ function Test-FullBytesAndCoverageConserved {
     foreach($variant in @('failure','missing','skip','unknown','timeout','publication','teardown')){
         $left=Invoke-FFPreparedArm $small ($variant+'-canonical') @() $variant
         $right=Invoke-FFPreparedArm $small ($variant+'-priority') $small.resolved.members $variant
-        $same=($left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and (($left.Reasons|Sort-Object) -join ',') -ceq (($right.Reasons|Sort-Object) -join ','))
+        $same=($left.Outcome -ceq $right.Outcome -and $left.OverallFailed -eq $right.OverallFailed -and $left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and (($left.Reasons|Sort-Object) -join ',') -ceq (($right.Reasons|Sort-Object) -join ','))
+        $expectedOutcome = 'TESTS'
+        if ($variant -ceq 'timeout') { $expectedOutcome='TIMEOUT' }
+        if ($variant -cin @('publication','teardown')) { $expectedOutcome='green' }
+        if ($left.Outcome -cne $expectedOutcome -or $right.Outcome -cne $expectedOutcome) { $same=$false }
         # Teardown aborts the run at its keyed chunk; no subsequent required work is credited.
-        if($variant -ceq 'teardown'){$same=(-not $left.Coverage -and -not $right.Coverage -and $left.Error -like '*owned-child*' -and $right.Error -like '*owned-child*')}
+        if($variant -ceq 'teardown'){$same=(-not $left.Coverage -and -not $right.Coverage -and $left.Error -like '*owned-child*' -and $right.Error -like '*owned-child*' -and $left.OverallFailed -and $right.OverallFailed -and $left.Outcome -ceq 'green' -and $right.Outcome -ceq 'green')}
         $matrix += [pscustomobject]@{variant=$variant;left=$left;right=$right;same=$same}
     }
     Assert-FF (@($matrix|Where-Object {-not $_.same}).Count -eq 0) 'terminalMatrix' (($matrix|Where-Object {-not $_.same}).variant -join ',')
@@ -681,7 +685,7 @@ function Invoke-FFPreparationArm {
     $coverageComplete=$true;$testsPassed=$true;$overallFailed=$false;$preflight=[ordered]@{}
     $suiteResults=@();$reasons=@();$activeNative=0;$nativeActiveMax=0
     $npmOk=$true;$lintBlocksPipeline=$false;$dotnetOk=$true
-    function Set-NightlyOutcome([string]$Class) { }
+    $script:NightlyTestsOutcome = 'green'
     $script:FFPrep=[pscustomobject]@{Trace=[Collections.Generic.List[string]]::new();Log=$LogRoot;Nodes=@{};Failure=$Failure;Second=$ids[1];SeenSettlement=$false}
     foreach($id in $ids){$script:FFPrep.Nodes[$id]=@(New-FFNode ('Fixture.'+$id.Replace('-','')+'.Only'))}
     $script:NightlySeams=@{

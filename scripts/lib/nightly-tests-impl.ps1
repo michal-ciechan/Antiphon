@@ -838,6 +838,15 @@ function Get-NightlyNpmLaunch {
 
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
 
+function Set-NightlyOutcome([string]$Class) {
+    $order = @('PREFLIGHT', 'BUILD', 'TESTS', 'TIMEOUT')
+    if ($script:NightlyTestsOutcome -eq 'green') { $script:NightlyTestsOutcome = $Class; return }
+    $curIdx = [array]::IndexOf($order, $script:NightlyTestsOutcome)
+    $newIdx = [array]::IndexOf($order, $Class)
+    if ($newIdx -ge 0 -and ($curIdx -lt 0 -or $newIdx -lt $curIdx)) { $script:NightlyTestsOutcome = $Class }
+}
+
+
 # Dot-source these helpers: keyed suite state survives interleaving; run verdicts,
 # reasons and the publication context remain in the caller's execution scope.
 function Prepare-NightlySuiteExecution {
@@ -1505,13 +1514,6 @@ function Invoke-AntiphonNightlyTests {
         }
     }
 
-    function Set-NightlyOutcome([string]$Class) {
-        $order = @('PREFLIGHT', 'BUILD', 'TESTS', 'TIMEOUT')
-        if ($script:NightlyTestsOutcome -eq 'green') { $script:NightlyTestsOutcome = $Class; return }
-        $curIdx = [array]::IndexOf($order, $script:NightlyTestsOutcome)
-        $newIdx = [array]::IndexOf($order, $Class)
-        if ($newIdx -ge 0 -and ($curIdx -lt 0 -or $newIdx -lt $curIdx)) { $script:NightlyTestsOutcome = $Class }
-    }
 
     $dockerOk = $true
     $diskOk = $true
