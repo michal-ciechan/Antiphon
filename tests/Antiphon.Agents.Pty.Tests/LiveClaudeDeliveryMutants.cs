@@ -71,10 +71,10 @@ internal static class LiveClaudeDeliveryMutants
             var mutated = source.Replace(m.From, m.To, StringComparison.Ordinal);
             if (m.Pc == "PC-118") mutated = mutated.Replace("r.Kind == \"AssistantText\"\n                && r.Api", "r.Kind is \"AssistantText\" or \"Thinking\"\n                && r.Api", StringComparison.Ordinal);
             if (m.Pc == "PC-119") mutated = mutated.Replace("if (end.Error) throw new LiveClaudeRefusal(\"provider-error\");", "/* error end accepted */", StringComparison.Ordinal);
-            // Each variant selects only its own negative fixture; otherwise an earlier negative could
-            // conceal whether this particular guard was killed. All healthy paths still run.
-            var chosen = SelectCase(cases, m.Assertion);
-            var red = await ExecuteAsync(Compile(mutated, chosen), v);
+            // Each variant selects its own unchanged negative fixture. Every assertion remains active;
+            // restorations execute the complete witness in a fresh collectible context.
+            var chosen = cases;
+            var red = await ExecuteAsync(Compile(mutated, chosen), v, m.Assertion);
             if (red is not InvalidOperationException || !red.Message.StartsWith("C1545 " + v + "/" + m.Assertion, StringComparison.Ordinal))
                 throw new InvalidOperationException("C1545 " + m.Pc + " did not reach expected assertion: " + red?.Message);
             restored ??= Compile(source, cases);
@@ -86,7 +86,7 @@ internal static class LiveClaudeDeliveryMutants
         byte[] Compile(string evidence, string fixtures)
         {
             const string usings = "global using System; global using System.IO; global using System.Linq; global using System.Collections.Generic; global using System.Threading.Tasks;\n";
-            const string entry = "namespace Antiphon.Agents.Pty.Tests; public static class DeliveryEntry { public static Task Run(string v) => v switch { \"V-23\" => LiveClaudeDeliveryCases.PromptAsync(), \"V-24\" => LiveClaudeDeliveryCases.LostAsync(), \"V-25\" => LiveClaudeDeliveryCases.BridgeAsync(), _ => throw new InvalidOperationException() }; }";
+            const string entry = "namespace Antiphon.Agents.Pty.Tests; public static class DeliveryEntry { public static Task Run(string v, string? selected) => v switch { \"V-23\" => LiveClaudeDeliveryCases.PromptAsync(selected), \"V-24\" => LiveClaudeDeliveryCases.LostAsync(selected), \"V-25\" => LiveClaudeDeliveryCases.BridgeAsync(selected), _ => throw new InvalidOperationException() }; }";
             var compilation = CSharpCompilation.Create("DeliveryMutant" + Guid.NewGuid().ToString("N"),
                 new[] { evidence, fixtures, context, matcher, entry }.Select(s => CSharpSyntaxTree.ParseText(usings + s)), references,
                 new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
@@ -95,20 +95,13 @@ internal static class LiveClaudeDeliveryMutants
             return bytes.ToArray();
         }
     }
-    private static string SelectCase(string cases, string assertion)
-    {
-        // Filter the negative checks at the assertion sink, while preserving their actual actions.
-        // This does not manufacture a failure: the selected predicate must observe the mutant.
-        return cases.Replace("if (!value) throw new InvalidOperationException", "if (!value && (c == \"" + assertion + "\" || c.StartsWith(\"" + assertion + "-\", StringComparison.Ordinal))) throw new InvalidOperationException", StringComparison.Ordinal)
-            .Replace("throw new InvalidOperationException($\"C1545 {v}/{c} expected refusal\");", "Assert(false, v, c);", StringComparison.Ordinal);
-    }
-    private static async Task<Exception?> ExecuteAsync(byte[] payload, string v)
+    private static async Task<Exception?> ExecuteAsync(byte[] payload, string v, string? selected = null)
     {
         var load = new AssemblyLoadContext("c1545-delivery-copy", isCollectible: true);
         try
         {
             using var bytes = new MemoryStream(payload); var assembly = load.LoadFromStream(bytes);
-            try { await (Task)assembly.GetType("Antiphon.Agents.Pty.Tests.DeliveryEntry")!.GetMethod("Run")!.Invoke(null, [v])!; }
+            try { await (Task)assembly.GetType("Antiphon.Agents.Pty.Tests.DeliveryEntry")!.GetMethod("Run")!.Invoke(null, [v, selected])!; }
             catch (TargetInvocationException e) { return e.InnerException; }
             catch (Exception e) { return e; }
             return null;

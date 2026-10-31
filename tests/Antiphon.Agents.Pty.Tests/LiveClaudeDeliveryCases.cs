@@ -47,9 +47,14 @@ internal static class LiveClaudeDeliveryCases
         Console.WriteLine($"C1545 {v} bodyMs={clock.Elapsed.TotalMilliseconds:F1} fixture=synthetic-jsonl db=N/A http=N/A native=N/A");
     }
 
-    internal static Task PromptAsync()
+    internal static Task PromptAsync(string? selected = null)
     {
         const string v = "V-23";
+        void Reject(Action action, string witness, string name, string? reason = null)
+        {
+            if (selected is null || name == selected || name.StartsWith(selected + "-", StringComparison.Ordinal))
+                Refuses(action, witness, name, reason);
+        }
         var healthy = Rows();
         LiveClaudeDeliveryEvidence.RequireSubmit(Request, healthy);
         Menu(Request, healthy);
@@ -64,24 +69,24 @@ internal static class LiveClaudeDeliveryCases
             ("prompt-native-binding", Request, healthy.Select(r => r with { Binding = r.Binding with { NativeBinding = "foreign" } }).ToArray()),
             ("prompt-floor", Request with { Floor = 11 }, healthy) })
         {
-            Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(request, rows), v, name + "-submit");
-            Refuses(() => Menu(request, rows), v, name + "-menu");
+            Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(request, rows), v, name + "-submit");
+            Reject(() => Menu(request, rows), v, name + "-menu");
         }
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:"")), v, "response-missing");
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant: Assistant(parent:"prior-prompt"))), v, "response-unrelated");
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:"")), v, "response-missing");
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant: Assistant(parent:"prior-prompt"))), v, "response-unrelated");
         var response = healthy[1] with { End = false };
         var unrelatedEnd = healthy[1] with { Sequence = 13, Id = "prior-response", Api = "prior-api", Parent = "prior-prompt" };
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, [healthy[0], response, unrelatedEnd]), v, "completion-turn");
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request,
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, [healthy[0], response, unrelatedEnd]), v, "completion-turn");
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request,
             [healthy[0], healthy[1] with { Sequence = 9 }]), v, "completion-order");
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request,
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request,
             [healthy[0], healthy[0] with { Sequence = 12, Id = "prompt-B", Text = "unrelated" }, healthy[1] with { Sequence = 13 }]), v, "completion-intervening");
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:Assistant(kind:"thinking"))), v, "thinking-end");
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:Assistant(kind:"thinking"))), v, "thinking-end");
         var split = Rows(assistant: Assistant(kind:"thinking", id:"thinking-A") + Assistant(parent:"thinking-A"));
         LiveClaudeDeliveryEvidence.RequireSubmit(Request, split);
-        Refuses(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:Assistant(error:true))), v, "error-turn", "provider-error");
-        Refuses(() => LiveClaudeDeliveryEvidence.ReadJsonl(User(Body).TrimEnd('\n'), Binding), v, "partial-record");
-        Refuses(() => LiveClaudeDeliveryEvidence.ReadJsonl("{broken}\n", Binding), v, "malformed-record");
+        Reject(() => LiveClaudeDeliveryEvidence.RequireSubmit(Request, Rows(assistant:Assistant(error:true))), v, "error-turn", "provider-error");
+        Reject(() => LiveClaudeDeliveryEvidence.ReadJsonl(User(Body).TrimEnd('\n'), Binding), v, "partial-record");
+        Reject(() => LiveClaudeDeliveryEvidence.ReadJsonl("{broken}\n", Binding), v, "malformed-record");
         // Own on-disk substitute: recipient records are scripted independently of input writes.
         var root = Directory.CreateTempSubdirectory("c1545-delivery-").FullName;
         try
@@ -94,7 +99,7 @@ internal static class LiveClaudeDeliveryCases
         return Task.CompletedTask;
     }
 
-    internal static async Task LostAsync()
+    internal static async Task LostAsync(string? selected = null)
     {
         const string v = "V-24";
         // Whole composer and done-like screen exist; the independently scripted recipient has no prompt.
@@ -115,12 +120,17 @@ internal static class LiveClaudeDeliveryCases
             Assert(writes.Count == 0, v, "dialog-" + state);
         }
         var ready = false; var waits = 0; writes.Clear();
-        await LiveClaudeDeliveryEvidence.SendOnceAsync(Body, () => ready ? DeliveryReadiness.Ready : DeliveryReadiness.Busy,
-            () => { Assert(writes.Count == 0, v, "busy-recipient"); ready = true; waits++; return Task.CompletedTask; },
-            s => { writes.Add(s); return Task.CompletedTask; }, _ => Task.FromResult(true));
+        try
+        {
+            await LiveClaudeDeliveryEvidence.SendOnceAsync(Body, () => ready ? DeliveryReadiness.Ready : DeliveryReadiness.Busy,
+                () => { Assert(writes.Count == 0, v, "busy-recipient"); ready = true; waits++; return Task.CompletedTask; },
+                s => { writes.Add(s); return Task.CompletedTask; }, _ => Task.FromResult(true));
+        }
+        catch (LiveClaudeRefusal) { }
         Assert(waits == 1 && writes.Count == 2, v, "busy-recipient");
         foreach (var cut in new[] { "before-body", "between-body-enter", "after-enter", "read", "after-prompt" })
         {
+            if (selected is not null && selected != "no-resend-" + cut) continue;
             var attempts = 0; var readCalls = 0; writes.Clear(); var refused = false;
             async Task Send()
             {
@@ -143,7 +153,7 @@ internal static class LiveClaudeDeliveryCases
         }
     }
 
-    internal static Task BridgeAsync()
+    internal static Task BridgeAsync(string? selected = null)
     {
         const string v = "V-25";
         var rows = Rows(assistant: "");
@@ -151,6 +161,7 @@ internal static class LiveClaudeDeliveryCases
         foreach (var phase in new[] { "before-Esc", "after-Esc", "after-submit" })
         foreach (var variant in new[] { "missing", "changed" })
         {
+            if (selected is not null && selected != phase + "-" + variant) continue;
             var observed = variant == "missing" ? null : Bridge with { Id = "bridge-B" };
             Refuses(() => LiveClaudeDeliveryEvidence.RequireMenu(Request, rows, Bridge,
                 phase == "before-Esc" ? observed : Bridge,
@@ -160,7 +171,7 @@ internal static class LiveClaudeDeliveryCases
         foreach (var (name, observed) in new[] {
             ("bridge-process", Bridge with { Pid = 102 }), ("bridge-start", Bridge with { Started = "start-B" }),
             ("bridge-session", Bridge with { Session = "session-B" }), ("bridge-read-failure", Bridge with { Readable = false }) })
-            Refuses(() => LiveClaudeDeliveryEvidence.RequireMenu(Request, rows, Bridge, Bridge, Bridge, observed), v, name);
+            if (selected is null || selected == name) Refuses(() => LiveClaudeDeliveryEvidence.RequireMenu(Request, rows, Bridge, Bridge, Bridge, observed), v, name);
         return Task.CompletedTask;
     }
 }

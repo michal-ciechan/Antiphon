@@ -94,7 +94,7 @@ internal static class LiveClaudeProfileAudit
             var branch=m.Body!.Statements.OfType<IfStatementSyntax>().Single();
             if(branch.Condition.ToString()!="backend == \"fakeclaude\"" || branch.Else?.Statement is not BlockSyntax live) {Fail("harness");return;}
             var body="class Harness { "+m.WithBody(live).ToFullString()+" }";
-            Statement(body,"LaunchReadyAsync","var launch = ClSession.BuildProfileLaunch(profile, \"submit\", Guid.NewGuid().ToString(\"D\"));");
+            Statement(body,"LaunchReadyAsync","var launch = ClSession.BuildProfileLaunch(profile, \"submit\", coreSession ?? throw new LiveClaudeRefusal(\"missing-session\"));");
             Start(body,"LaunchReadyAsync");
             if(branch.Statement.DescendantNodes().OfType<IdentifierNameSyntax>().Any(n=>n.Identifier.ValueText is "profile" or "coreProfile")) Fail("fake-profile");
         }
@@ -102,7 +102,7 @@ internal static class LiveClaudeProfileAudit
         Reject(Harness,harness,"cwd: launch.Cwd","cwd: null","PC-40");
         var submit=LiveClaudeExecutableAudit.Read(Pty+"ClaudeSubmitContractLiveTests.cs");
         Statement(submit,"Submitting_via_two_writes_completes_a_turn","using var profile = ClSession.RequireProfile(executable);");
-        Statement(submit,"Submitting_via_two_writes_completes_a_turn","await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile);");
+        Statement(submit,"Submitting_via_two_writes_completes_a_turn","await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile, sessionId);");
         var menu=LiveClaudeExecutableAudit.Read(Pty+"ClaudeRemoteControlMenuCanaryTests.cs");
         void Menu(string s)
         {

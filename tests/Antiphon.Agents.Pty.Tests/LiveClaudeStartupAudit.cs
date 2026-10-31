@@ -53,7 +53,7 @@ internal static class LiveClaudeStartupAudit
         Require(body,"await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);","menu-setup");
         var calls=body.Statements.OfType<ExpressionStatementSyntax>().ToArray();
         var setup=Array.FindIndex(calls,c=>c.ToString().Contains("EnsureMenuBridgeAsync",StringComparison.Ordinal));
-        var submit=Array.FindIndex(calls,c=>c.ToString().Contains("EchoGatedSubmit.SendAsync",StringComparison.Ordinal));
+        var submit=Array.FindIndex(calls,c=>c.ToString().Contains("delivery.SendAsync",StringComparison.Ordinal));
         if(setup<0 || setup>=submit) throw new InvalidOperationException("C1545 startup-audit/menu-order");
     }
     public static void Run()

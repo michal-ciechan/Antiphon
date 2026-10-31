@@ -47,11 +47,41 @@ internal static class LiveClaudeDeliveryAudit
     internal static void Run()
     {
         foreach (var (path, method, verdict) in Callers) Check(LiveClaudeExecutableAudit.Read(path), method, verdict);
+        RequireStatement(Callers[0], "var (request, rows) = await ClaudeSubmitContractHarness.SubmitClaudeAsync(runner, profile, sessionId, body);");
+        RequireStatement(Callers[0], "var sessionId = Guid.NewGuid().ToString(\"D\");");
+        foreach (var caller in Callers.Skip(1))
+        {
+            RequireStatement(caller, "var delivery = new LiveClaudeDeliverySession(runner, profile, sessionId);");
+            RequireStatement(caller, "var request = delivery.Capture(body);");
+            var completion = caller.Method == "SubmitClaudeAsync" ? "true" : "false";
+            RequireStatement(caller, $"var rows = await LiveClaudeDeliveryEvidence.SubmitOnceAsync(request, () => delivery.SendAsync(body), () => delivery.ObserveAsync(request, completion: {completion}), completion: {completion});");
+        }
+        var menu = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(Callers[1].Path), Callers[1].Method).Body!;
+        var phaseStatements = new[] {
+            "var bridge = delivery.Bridge() ?? throw new LiveClaudeRefusal(\"bridge-unestablished\");",
+            "await delivery.SendAsync(\"/remote-control\");",
+            "var beforeEsc = delivery.Bridge();", "await runner.WriteAsync(DismissKey);",
+            "var afterEsc = delivery.Bridge();", "var request = delivery.Capture(body);",
+            "var afterSubmit = delivery.Bridge();", Callers[1].Verdict };
+        var last = -1;
+        foreach (var statement in phaseStatements)
+        {
+            var index = menu.Statements.Select((s, i) => (s, i)).Single(p =>
+                SyntaxFactory.AreEquivalent(p.s, SyntaxFactory.ParseStatement(statement))).i;
+            if (index <= last) throw new InvalidOperationException("C1545 delivery-audit/bridge-phase-order");
+            last = index;
+        }
         var fake = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(Callers[2].Path), "Text_and_CR_in_one_write_does_not_submit");
         if (!fake.ToString().Contains("DonePattern.IsMatch", StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 delivery-audit/fake-contract");
         LiveClaudeStartupAudit.Menu(LiveClaudeExecutableAudit.Read(Callers[1].Path));
         LiveClaudeProfileAudit.PtyCallers();
+    }
+    private static void RequireStatement((string Path, string Method, string Verdict) caller, string statement)
+    {
+        var method = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(caller.Path), caller.Method);
+        if (method.Body!.Statements.Count(s => SyntaxFactory.AreEquivalent(s, SyntaxFactory.ParseStatement(statement))) != 1)
+            throw new InvalidOperationException("C1545 delivery-audit/bound-reader-path");
     }
     internal static void Controls()
     {

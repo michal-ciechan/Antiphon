@@ -103,7 +103,7 @@ public class ClaudeRemoteControlMenuCanaryTests
         await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);
         var delivery = new LiveClaudeDeliverySession(runner, profile, sessionId);
         var bridge = delivery.Bridge() ?? throw new LiveClaudeRefusal("bridge-unestablished");
-        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        await delivery.SendAsync("/remote-control");
         var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(12));
         if (!appeared) throw new LiveClaudeRefusal("menu-unobserved");
         var beforeEsc = delivery.Bridge();
