@@ -1040,7 +1040,7 @@ function Test-ActualLoopFollowsSchedule {
 # Expected launch traces are independent of the scheduler under test.
 function Test-FFPreviousRunChain {
     $fx=New-FFLoopFixture
-    $first=Invoke-FFActualLoop $fx 'chain-first' $null -Variant failure
+    $first=Invoke-FFActualLoop $fx 'chain-first' $null -Variant failure -NoExclusions
     $historyPath=Join-Path $root 'chain-history.json'
     $export=Export-NightlyPriorFailures $first.Root $historyPath -PassThru
     $history=[pscustomobject]@{Path=$historyPath}
@@ -1049,10 +1049,11 @@ function Test-FFPreviousRunChain {
     Assert-FF ($first.Result.ExitCode -ne 0 -and $failed.Count -eq 1 -and
         $failed[0].id -ceq 'antiphon' -and $failed[0].chunk -ceq 'Priority' -and
         $first.Summary.dispatchProgress.canonicalPlanDigest -ceq $first.Schedule.canonicalPlanDigest -and
-        $export.History.membershipComplete -and $export.History.unresolved.Count -eq 0 -and
+        $export.History.members.Count -eq 1 -and
+        @($export.History.members[0].observations|Where-Object {$_.kind -ceq 'trx' -and $_.state -ceq 'Failed' -and $_.chunk -ceq 'Priority'}).Count -eq 1 -and
         $resolved.members.Count -eq 1 -and $resolved.members[0].suite -ceq 'antiphon' -and
         ($resolved.members[0].chunks -join ',') -ceq 'Priority') 'chainProducer'
-    $second=Invoke-FFActualLoop $fx 'chain-second' $history
+    $second=Invoke-FFActualLoop $fx 'chain-second' $history -NoExclusions
     $trace=@($second.Trace.Launches.key)
     $wanted=@('antiphon/Priority','antiphon/Ordinary','session-runner/Ordinary','session-runner/Priority')
     Assert-FF ($second.Schedule.orderingReason -ceq 'previous-run-order' -and
@@ -1065,7 +1066,7 @@ function Test-FFPreviousRunChain {
     $classes=$regrouped.suites[0].chunks[0].classes
     $regrouped.suites[0].chunks[0].classes=$regrouped.suites[0].chunks[1].classes
     $regrouped.suites[0].chunks[1].classes=$classes
-    $third=Invoke-FFActualLoop $regrouped 'chain-regrouped' $history
+    $third=Invoke-FFActualLoop $regrouped 'chain-regrouped' $history -NoExclusions
     $trace=@($third.Trace.Launches.key)
     $canonical=@('antiphon/Ordinary','antiphon/Priority','session-runner/Ordinary','session-runner/Priority')
     Assert-FF ($third.Schedule.orderingReason -ceq 'previous-run-plan-mismatch' -and
