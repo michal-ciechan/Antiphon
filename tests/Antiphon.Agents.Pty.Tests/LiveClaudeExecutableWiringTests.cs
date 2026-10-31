@@ -142,7 +142,7 @@ public class LiveClaudeExecutableWiringTests
                     var executable = ClSession.RequireCore(LiveClaudeCore.Control);
                     startup.ControlAsync(experiment, () => {
                         runner.StartAsync("claude", launchArgs);
-                        return RunStartupControlAsync(executable, profile, experiment);
+                        RunStartupControlAsync(executable, profile, experiment);
                     });
                 }
                 void RunStartupControlAsync() {
@@ -155,7 +155,7 @@ public class LiveClaudeExecutableWiringTests
             class Synthetic {
                 void Control_auto_connects_a_bridge_session_before_the_first_user() {
                     var executable = ClSession.RequireCore(LiveClaudeCore.Control);
-                    startup.ControlAsync(experiment, () => RunStartupControlAsync("claude"));
+                    startup.ControlAsync(experiment, () => RunStartupControlAsync(other));
                 }
                 void RunStartupControlAsync() {
                     LaunchUntilReadyAsync(executable, runner, sandbox, launch);
