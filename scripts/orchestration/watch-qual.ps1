@@ -24,6 +24,9 @@ if (Test-Path -LiteralPath $StateFile) {
 }
 $deadline = [datetime]::UtcNow.AddMinutes($MaxMinutes)
 $ended = $false
+$wasStale = $false
+$wasHang = $false
+$lastHeartbeatIssue = ''
 do {
     if (-not (Test-Path -LiteralPath $LogDir -PathType Container)) { "LOG-DIR-MISSING $LogDir" }
     else {
@@ -67,17 +70,30 @@ do {
     if (Test-Path -LiteralPath $Heartbeat) {
         try {
             $beat = Get-Content -LiteralPath $Heartbeat -Raw | ConvertFrom-Json
-            if (-not $beat.utc) { throw 'Heartbeat has no utc.' }
+            $stamp = $beat.utc
+            if (-not $stamp) { $stamp = $beat.observedAtUtc }
+            if (-not $stamp) { throw 'Heartbeat has no utc or observedAtUtc.' }
             # PS7 can deserialize ISO dates as DateTime; PS5.1 leaves strings.
             # Do not round-trip typed dates through the caller's current culture.
-            if ($beat.utc -is [datetime]) { $utc = $beat.utc.ToUniversalTime() }
-            elseif ($beat.utc -is [datetimeoffset]) { $utc = $beat.utc.UtcDateTime }
-            else { $utc = [datetimeoffset]::Parse([string]$beat.utc, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
-            if ($beat.hangSuspected) { "HANG-SUSPECTED heartbeat $($beat.utc) runId=$($beat.runId) idleMinutes=$($beat.idleMinutes)" }
-            if (([datetime]::UtcNow - $utc).TotalMinutes -ge $HeartbeatStaleMinutes) { "HEARTBEAT-STALE $($beat.utc) runId=$($beat.runId) supervisorPid=$($beat.supervisorPid) trx=$($beat.trx)" }
-        } catch { "HEARTBEAT-ERROR $($_.Exception.Message)" }
-    } else { "HEARTBEAT-MISSING $Heartbeat" }
+            if ($stamp -is [datetime]) { $utc = $stamp.ToUniversalTime() }
+            elseif ($stamp -is [datetimeoffset]) { $utc = $stamp.UtcDateTime }
+            else { $utc = [datetimeoffset]::Parse([string]$stamp, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
+            $hang = [bool]$beat.hangSuspected
+            $stale = ([datetime]::UtcNow - $utc).TotalMinutes -ge $HeartbeatStaleMinutes
+            if ($hang -and -not $wasHang) { "HANG-SUSPECTED heartbeat $stamp runId=$($beat.runId) idleMinutes=$($beat.idleMinutes)" }
+            if ($stale -and -not $wasStale) { "HEARTBEAT-STALE $stamp runId=$($beat.runId) supervisorPid=$($beat.supervisorPid) trx=$($beat.trx)" }
+            $wasHang = $hang; $wasStale = $stale; $lastHeartbeatIssue = ''
+        } catch {
+            $issue = "HEARTBEAT-ERROR $($_.Exception.Message)"
+            if ($issue -ne $lastHeartbeatIssue) { $issue }
+            $lastHeartbeatIssue = $issue
+        }
+    } else {
+        if ($lastHeartbeatIssue -ne 'missing') { "HEARTBEAT-MISSING $Heartbeat" }
+        $lastHeartbeatIssue = 'missing'
+    }
     if ($Once -or [datetime]::UtcNow -ge $deadline) { break }
-    Start-Sleep -Seconds $PollSeconds
+    $remainingMs = [Math]::Max(0, [Math]::Floor(($deadline - [datetime]::UtcNow).TotalMilliseconds))
+    if ($remainingMs -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Min($PollSeconds * 1000, $remainingMs)) }
 } while ([datetime]::UtcNow -lt $deadline)
 if (-not $ended) { 'watch-qual window ended; re-arm' }
