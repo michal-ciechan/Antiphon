@@ -1,0 +1,1516 @@
+{
+  "baseSha": "a3365ac69a6212ad133b26359f35274dc8d0fce2",
+  "files": {
+    "scripts/lib/release-gate.ps1": "353ffc3efe2bc326b91961137af3ea695582826740601f11c15a1833efb6f1d1",
+    "scripts/lib/release-authority.ps1": "d4a56ad19a2494f5c8c5d6439e7cde903725dfd174f3c32c8fbc37f9c595db21",
+    "scripts/lib/release-selection.ps1": "c436f4c9f69431428f7385eaeffaf6f95441a57291b52a99c1cda0fed8596f08",
+    "scripts/lib/nightly-run-impl.ps1": "a390dd566386144e5d07023e298d652aeb90e6f575955e6ac1457aac6ef6d21d",
+    "scripts/lib/nightly-tests-impl.ps1": "45895b47b338761a93bf30530a2ed54ad5888a111e52a7cd5d1be3f936e08e31",
+    "scripts/lib/nightly-failure-history.ps1": "8243fbcd27419f064855f5f1640fffef347edcfd844be9c6b4976a76de61a3ed",
+    "scripts/nightly-run.ps1": "cffd621709dd6d99427acf78ef3b4826db7f12f3c3d4c06650c8f43532dae227",
+    "scripts/nightly-tests.ps1": "144b7078a0ffed09c59e7bfb3787f58464231c140d4e401739f5b7b78c01d68b"
+  },
+  "policy": {
+    "schemaVersion": 4,
+    "policyHash": "7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387",
+    "defaultSuites": [
+      "antiphon",
+      "session-runner",
+      "pty-host",
+      "agents-pty",
+      "messaging",
+      "client",
+      "scripts",
+      "observability"
+    ],
+    "profiles": {
+      "nightly": {
+        "requiredSuites": [
+          "antiphon",
+          "session-runner",
+          "pty-host",
+          "agents-pty",
+          "messaging",
+          "client",
+          "scripts",
+          "observability"
+        ],
+        "description": "The unattended suites, including the standalone CARD-1564 observability assembly. E2E stays out; OptIn/Explicit still excludes.",
+        "exclusions": []
+      },
+      "rc": {
+        "requiredSuites": [
+          "antiphon",
+          "session-runner",
+          "pty-host",
+          "agents-pty",
+          "messaging",
+          "client",
+          "scripts",
+          "e2e",
+          "markdown-pdf",
+          "observability"
+        ],
+        "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
+        "exclusions": [
+          {
+            "suite": "e2e",
+            "class": "DelegationPipelineE2ETests",
+            "reason": "real headed provider / distiller approval; owned by its canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "e2e",
+            "class": "DelegationSequencingE2ETests",
+            "reason": "real headed provider / distiller approval; owned by its canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "e2e",
+            "class": "OutputDistillationApplyCanaryTests",
+            "reason": "real headed provider / distiller approval; owned by its canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "Card0168InteractiveProbeTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "ClaudeAdapterIntegrationTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "ClaudeHerdrRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "ClaudeRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexAdapterIntegrationTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexBootWedgeProbeTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexCommandLengthSessionTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexHerdrRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokHerdrRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRealCliStubProxyCanaryTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "SpecialistToolPolicyTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesAutoCompactionCalibrationTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesCompactionAcceptanceTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesDispatchAcceptanceTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesHerdrAcceptanceTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesLiveMappedDispatchTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokRulesNativeReadWireTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "SlashCommandMenuReconciliationTests",
+            "reason": "opt-in real-provider or interactive workflow; needs a live CLI session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "ClaudeEffortPromptCanaryTests",
+            "methods": [
+              "Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer"
+            ],
+            "reason": "body invokes the live gates despite the class lacking OptIn metadata",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "antiphon",
+            "class": "TestDbFixtureLazyInitializationTests",
+            "methods": [
+              "Child_db_free_selection_touches_no_database",
+              "Child_mixed_consumers_initialize_once",
+              "Child_post_start_fault_is_terminal"
+            ],
+            "reason": "child-only case launched and asserted by its parent method",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeAppendSystemPromptCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeCompactionCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeComposerCaptureProbeTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeComposerRenderCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeDangerousTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeHeadedTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeHookAdditionalContextCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeInputProbeCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeInteractionTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeInterruptCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeLocalCommandCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeOverlayCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudePasteLossCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeRemoteControlAtStartupCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeRemoteControlMenuCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeSignalCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeSubmitConfirmCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeSubmitContractLiveTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeTrustPromptCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeTuiModeTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "CodexCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "CodexComposerCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "CodexDoneDetectionCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "CodexMcpBootProbeTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "CodexOverlayCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "FakeVsRealClipParityTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokNativeSessionCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokQuestionPopupCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokSignInCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokSubmitWhileWorkingCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "GrokUsageOverlayCanaryTests",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "PtyInputLossExperiments",
+            "reason": "headed or real-provider experiment owned by its own canary workflow",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "PtyPasteMarkerExperiments",
+            "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites.",
+            "owner": "CARD-1313",
+            "methods": [
+              "Real_claude_by_conpty_backend",
+              "Real_claude_controls_and_size_sweep",
+              "Real_claude_delivery_envelope"
+            ]
+          },
+          {
+            "suite": "agents-pty",
+            "class": "ClaudeVerifiedDeliveryTests",
+            "methods": [
+              "Real_evidence_appears_then_submit_completes_a_turn"
+            ],
+            "reason": "ClSession real Claude TUI gate; fake-native method remains required.",
+            "owner": "CARD-1313"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "OrchestratorWorkspaceLayoutCanaryTests",
+            "methods": [
+              "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
+              "Claude_sibling_import_is_dropped_without_the_forward_slash_approval",
+              "Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root",
+              "Grok_inspect_is_bounded_at_the_nested_checkout_git_root"
+            ],
+            "reason": "Two live Claude TUI methods and two real executable oracles gated by ANTIPHON_PTY_PROVIDER_ORACLES=1; no API in Codex/Grok oracles.",
+            "owner": "CARD-1313"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "Card0490NativeCustodyTests",
+            "reason": "QEMU/native placeholder control",
+            "owner": "CARD-0490"
+          },
+          {
+            "suite": "session-runner",
+            "class": "HerdrGrokNativeSessionLiveTests",
+            "reason": "live desktop session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "session-runner",
+            "class": "HerdrLabelFollowLiveTests",
+            "reason": "live desktop session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "session-runner",
+            "class": "HerdrNamedTabPlacementLiveTests",
+            "reason": "live desktop session",
+            "owner": "CARD-0599"
+          },
+          {
+            "suite": "session-runner",
+            "class": "UnixPtyArgvAdmissionTests",
+            "platform": "windows",
+            "reason": "Native Linux Unix PtyHost argv qualification; remains required on Linux.",
+            "owner": "CARD-0863"
+          },
+          {
+            "suite": "session-runner",
+            "class": "AgentPinPublicationTests",
+            "platform": "windows",
+            "reason": "Native Linux pin publication qualification requires POSIX filesystem primitives; remains required on Linux.",
+            "owner": "CARD-0262"
+          },
+          {
+            "suite": "session-runner",
+            "class": "AgentPinWorkspaceStoreTests",
+            "platform": "windows",
+            "reason": "Native Linux pin inspection qualification requires POSIX paths and mkfifo; remains required on Linux.",
+            "owner": "CARD-0262"
+          },
+          {
+            "suite": "session-runner",
+            "class": "LinuxPhoneHomeRunnerTests",
+            "reason": "Linux-only qualification; this profile is the automated Windows lane",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "pty-host",
+            "class": "LinuxPtyHostLauncherTests",
+            "reason": "Linux-only qualification; this profile is the automated Windows lane",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "pty-host",
+            "class": "ShadowCopyStoreTests",
+            "methods": [
+              "Linux_copy_preserves_execute_mode"
+            ],
+            "reason": "Linux-only qualification; this profile is the automated Windows lane",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "pty-host",
+            "class": "HostCustodyTests",
+            "methods": [
+              "Inbox_is_unsupported_and_never_becomes_no_start_proof",
+              "C1614_Windows_tracked_linger_releases_job"
+            ],
+            "platform": "linux",
+            "reason": "Windows job-object inbox fixture. The method remains required on Windows.",
+            "owner": "CARD-1614"
+          },
+          {
+            "suite": "pty-host",
+            "class": "Card0490NativeHandoffTests",
+            "reason": "QEMU/native placeholder control",
+            "owner": "CARD-0490"
+          },
+          {
+            "suite": "pty-host",
+            "class": "Card0490NativeGuestGuardTests",
+            "reason": "QEMU/native placeholder control",
+            "owner": "CARD-0490"
+          },
+          {
+            "suite": "pty-host",
+            "class": "Card0490NativeExecutionTests",
+            "methods": [
+              "Input_reparse_is_rejected_before_write",
+              "Evidence_reparse_is_rejected_before_write",
+              "Launch_projection_is_direct_and_inherited",
+              "Missing_final_frame_invalidates_complete_prefix",
+              "Canceled_run_waits_for_owned_join"
+            ],
+            "reason": "QEMU/native placeholder control",
+            "owner": "CARD-0490"
+          },
+          {
+            "reason": "ClSession: Windows, ANTIPHON_HEADED_TESTS, real Claude TUI; long live canary.",
+            "suite": "agents-pty",
+            "class": "ClaudeHeadedLongTests",
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "GkSession: Windows, ANTIPHON_HEADED_TESTS, real Grok TUI and model API.",
+            "suite": "agents-pty",
+            "class": "GrokMidTurnInterruptCanaryTests",
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "C861_CAPTURE=1 and installed real Grok/native PTY; no model input.",
+            "suite": "antiphon",
+            "class": "GrokSizeCaptureTests",
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "HerdrLiveSession flag and installed stock Herdr; dummy child, no real provider.",
+            "suite": "session-runner",
+            "class": "HerdrPaneDisposalGuardedLiveTests",
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "Non-Windows filesystem behaviour; does not earn Windows behaviour credit.",
+            "suite": "markdown-pdf",
+            "class": "MarkdownPdfCommandTests",
+            "methods": [
+              "Symlinked_staged_document_is_refused_before_browser_launch"
+            ],
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "Non-Windows shell browser fixture; does not earn Windows behaviour credit.",
+            "suite": "markdown-pdf",
+            "class": "MarkdownPdfRendererTests",
+            "methods": [
+              "Real_browser_exit_zero_requires_a_fresh_nonempty_pdf",
+              "Browser_nonzero_exit_cannot_reuse_a_stale_pdf"
+            ],
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "Linux Docker browser image plus ANTIPHON_HEADED_TESTS=1.",
+            "suite": "markdown-pdf",
+            "class": "MarkdownPdfRealBrowserTests",
+            "owner": "CARD-1313"
+          },
+          {
+            "reason": "F-5 isolated canary skips unless ANTIPHON_HEADED_TESTS, ANTIPHON_BROKER_TESTS and ANTIPHON_CHANNEL_OUTBOUND_ISOLATED are all 1",
+            "suite": "e2e",
+            "class": "ChannelOutboundIsolatedTests",
+            "owner": "CARD-1305"
+          },
+          {
+            "suite": "e2e",
+            "class": "AgentTaskLandDeliveryE2ETests",
+            "platform": "linux",
+            "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+            "owner": "CARD-1323"
+          },
+          {
+            "suite": "e2e",
+            "class": "DispatchBaseWarningDeliveryE2ETests",
+            "platform": "linux",
+            "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+            "owner": "CARD-1323"
+          },
+          {
+            "suite": "e2e",
+            "class": "WorktreeRetirementDeliveryE2ETests",
+            "platform": "linux",
+            "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+            "owner": "CARD-1323"
+          },
+          {
+            "suite": "antiphon",
+            "class": "AgentTaskDispatchBaseGuardTests",
+            "methods": [
+              "C1213_RemoteSourceLandingKeepsLegacyIdentity"
+            ],
+            "platform": "windows",
+            "reason": "Remote snapshot arm: RemoteVerificationWorkspace admits only POSIX runner paths (the remote runner is Linux-only). C1213_SourceLandingKeepsLegacyIdentity keeps the local arm required on Windows.",
+            "owner": "CARD-1415"
+          },
+          {
+            "suite": "antiphon",
+            "class": "AgentTaskDispatchFailureTests",
+            "methods": [
+              "a_git_timeout_fails_one_task_not_the_tick"
+            ],
+            "platform": "windows",
+            "reason": "The #!/bin/sh sleep post-checkout hook does not delay git worktree add under Git for Windows, so the timeout boundary is proven only off Windows.",
+            "owner": "CARD-1415"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CardWorktreeMirrorCleanupTests",
+            "methods": [
+              "C1017_MirrorBehindPushedTip",
+              "C1017_ReopenBetweenEndpoints",
+              "C1017_MultipleMirrorsRemainDistinct",
+              "C1032_AdmissionCurrentEligibility",
+              "C1032_AdmissionArtifactSurvival",
+              "C1032_ReportRecognitionCaseTable",
+              "C1032_ReportAddedAfterProducerInspection",
+              "C1032_ReportAbsentAllowsCleanup",
+              "C1032_AdmissionIntentOrdering",
+              "C1032_AdmissionBoundRebaseProof",
+              "C1017_ReceiptMustMatchOperation",
+              "C1017_ReceiptMustMatchEndpoint",
+              "C1017_ReceiptMustMatchStore",
+              "C1017_ReceiptMustMatchTaskAttempt",
+              "C1017_AckIsNotRemoval",
+              "C1017_UnsupportedNeverFallsBack",
+              "C1032_ReceiptCompleteBoundReceipt",
+              "C1032_WitnessLandingOwnership",
+              "C1032_WitnessLandingCompleteness",
+              "C1032_WitnessPersistedReplayTamper",
+              "C1032_WitnessUnsupportedRemovalAfterInspection",
+              "C1017_MirrorCompletesIndependently",
+              "C1017_LocalProgressSurvivesOffline",
+              "C1017_LostAckReusesOperation",
+              "C1032_RecoveryQueuesBusyAndReady",
+              "C1032_RecoveryCrashHandoffs",
+              "C1032_RecoveryInertServerComposition"
+            ],
+            "platform": "windows",
+            "reason": "Real phone-home recipient fixture requires Linux; these 27 methods remain required in the Linux lane (CARD-1017/CARD-1032). Separate Windows handle qualification remains owed.",
+            "owner": "CARD-1561"
+          },
+          {
+            "suite": "antiphon",
+            "class": "PhoneHomeMirrorJoinTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: CP-21 phone-home join requires Linux FIFOs and Unix file modes. The case remains required on Linux.",
+            "owner": "CARD-1032"
+          },
+          {
+            "suite": "antiphon",
+            "class": "UnixDelegateLaunchArgvTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Unix PTY argv witness. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointBoundedReaderTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointSourceGitBoundsTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux inherited-pipe custody proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointVerifierBoundsTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux inherited-pipe custody proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointFixtureProcessTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "DetachedLauncherTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: setsid proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "SafeDeleteProcessBoundaryTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: FIFO-held monitor and process-group qualification. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GrokSha256PinTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux pin qualification. The case remains required on Linux.",
+            "owner": "CARD-1210"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GithubCredentialHelperTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: the POSIX credential helper runs on Linux. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "GitMinimumVersionGuardTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux git floor. The case remains required on Linux.",
+            "owner": "CARD-1260"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RetiredTempContainerHostTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux host contracts (bash, flock and POSIX filesystem semantics). The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "HostJqPrerequisiteScriptTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: host jq contracts require native Linux (bash, flock, /proc and GNU coreutils). The case remains required on Linux.",
+            "owner": "CARD-1210"
+          },
+          {
+            "suite": "antiphon",
+            "class": "ScriptHarnessLinuxOwnershipTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: procfs, setsid and POSIX signals. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RefreshGithubTokenRemoteCommandTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: POSIX sh executables. The case remains required on Linux.",
+            "owner": "CARD-1245"
+          },
+          {
+            "suite": "antiphon",
+            "class": "NightlyProbeSupervisorTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux process-tree deadline. The case remains required on Linux.",
+            "owner": "CARD-1375"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RetiredTempContainerDockerTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux docker lifecycle. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RollingVolumeRecycleDockerTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux docker comparison. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RollingVolumeRecycleCensusChurnTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux container census. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RollingProductionMountTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux production mount contracts. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointRecoveryLinuxTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux custody proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointFixtureRoutingTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux process identities and FIFO probes. The case remains required on Linux.",
+            "owner": "CARD-1233"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointInheritedFileTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux FIFO admission proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "pty-host",
+            "class": "LinuxCgroupCustodyTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: the linux-cgroup-v1 backend executes on Linux only. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "agents-pty",
+            "class": "UnixPtyArgvTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Unix PTY argv contract requires a Unix PTY and node. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "session-runner",
+            "class": "LinuxRunnerCustodyLifecycleTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux custody lifecycle executes on Linux only. The case remains required on Linux.",
+            "owner": "CARD-1614"
+          },
+          {
+            "suite": "session-runner",
+            "class": "CustodyNamespaceBootstrapTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",
+            "owner": "CARD-1614"
+          },
+          {
+            "suite": "antiphon",
+            "class": "Card1619ExitConsumerTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive the server consumers. The case remains required on Linux.",
+            "owner": "CARD-1619"
+          },
+          {
+            "suite": "antiphon",
+            "class": "Card1619ExitPersistenceTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive committed server storage. The case remains required on Linux.",
+            "owner": "CARD-1619"
+          },
+          {
+            "suite": "antiphon",
+            "class": "Card1619StopAttributionTests",
+            "platform": "windows",
+            "reason": "Linux-only by construction: stop attribution requires actual Linux PTY signals and child identity. The case remains required on Linux.",
+            "owner": "CARD-1619"
+          },
+          {
+            "suite": "antiphon",
+            "class": "PhoneHomeCompletedCardTransportTests",
+            "methods": [
+              "C1032_TransportQueueRecipientReplay"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: real phone-home runner join. The case remains required on Linux.",
+            "owner": "CARD-1032"
+          },
+          {
+            "suite": "antiphon",
+            "class": "LandGraphEvaluationTests",
+            "methods": [
+              "C1483_S1_UnreadableLinkComponentDenies"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Unix mode 000 has no Windows equivalent. The case remains required on Linux.",
+            "owner": "CARD-1483"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointConfinementLedgerTests",
+            "methods": [
+              "unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: the statx stamp (inode and ctime) is read on Linux only. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointReceiptSafetyTests",
+            "methods": [
+              "linux_fifo_receipts_refuse_within_four_seconds"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux FIFO qualification. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "OutputCleanupTests",
+            "methods": [
+              "external_build_payload_is_adopted_at_seal_and_removed_on_green",
+              "file_added_after_seal_is_refused_and_kept",
+              "file_modified_after_seal_is_refused_and_kept",
+              "symlink_in_a_build_output_is_refused_before_and_after_seal",
+              "tracked_file_in_an_adopted_build_output_is_refused_and_kept",
+              "adopted_build_output_over_the_entry_cap_is_unsafe_tree",
+              "hard_linked_build_file_is_not_adopted_and_outside_bytes_stay",
+              "independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it",
+              "seal_without_driver_observed_build_exit_adopts_nothing",
+              "hanging_git_is_refused_and_killed_within_the_bound"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux statx seal and hanging-git proof. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "AnchoredPathDeleteWitnessTests",
+            "methods": [
+              "linux_colon_in_a_file_name_stays_deletable",
+              "hard_link_sibling_survives_anchored_delete",
+              "ancestor_symlink_to_a_different_inode_is_refused"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux file-name, hard-link and ancestor-symlink proofs. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "PlanCoverageHandleTests",
+            "methods": [
+              "hardlinked_selected_file_is_refused",
+              "in_repo_fifo_project_is_refused_within_15_seconds"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux link(2) and mkfifo sentinels. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CodexRootExecContractTests",
+            "methods": [
+              "Entrypoint_heal_chowns_the_tmp_directory_once",
+              "Entrypoint_heal_never_names_a_path_outside_tmp"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux unshare namespaces. The case remains required on Linux.",
+            "owner": "CARD-1210"
+          },
+          {
+            "suite": "antiphon",
+            "class": "FileUseCaptureTests",
+            "methods": [
+              "C1539_linux_holder",
+              "C1539_absent_inputs",
+              "C1539_budget_and_caps",
+              "C1539_redaction_before_sinks",
+              "C1539_persistence_fail_safe",
+              "C1539_generation_and_ownership"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux /proc or the Linux no-follow evidence writer. The case remains required on Linux.",
+            "owner": "CARD-1539"
+          },
+          {
+            "suite": "antiphon",
+            "class": "JqRunnerImageContractTests",
+            "methods": [
+              "Version_row_accepts_only_exact_successful_pin_without_stderr",
+              "C1054_Jq_row_rejects_home_shadow",
+              "C1054_Jq_row_accepts_canonical_file_and_alias",
+              "C1054_Jq_row_rejects_canonical_leaf_symlink",
+              "C1054_Jq_row_records_found_and_resolved_paths"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux jq image contract. The case remains required on Linux.",
+            "owner": "CARD-1210"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RollingVolumeRecycleScriptTests",
+            "methods": [
+              "C1008_Option_manifest_is_strict",
+              "C1008_Documentation_and_transport_pins_match",
+              "C1008_Refusal_receipts_do_not_leak_secrets",
+              "C1008_Retired_absent_null_is_accepted",
+              "C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt",
+              "C1594_Cross_sha_cleanup_image_binds_the_retired_temp",
+              "C1594_Older_retirement_receipt_is_ignored",
+              "C1594_Disagreeing_cross_sha_images_refuse",
+              "C1594_Antiphon_evidence_gitdir",
+              "C1008_Preview_helper_removal_is_owned"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux recycle host contracts. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RetiredTempContainerScriptTests",
+            "methods": [
+              "C994_Host_strict_volume_admission_remains_independent",
+              "C994_Host_resume_never_runs_container_cleanup",
+              "C994_Host_bridge_transport_preserves_literal_context"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux retire-temp host contracts. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "BuildSlotScriptTests",
+            "methods": [
+              "C800_WrapperInterruptKillsChildAndReleasesLease"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux SIGINT behavior. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "C1364BoundLandWaitProofTests",
+            "methods": [
+              "C1364_Host_recycle_admission_reports_waited",
+              "C1364_Host_recycle_post_removal_reports_waited",
+              "C1364_Host_cleanup_reports_waited"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux recycle wait proof. The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RemoteScriptContractTests",
+            "methods": [
+              "C1374_Host_census_recovers_transient_reads",
+              "C1087_Host_census_filters_and_names_cause",
+              "C1008_Recycle_exact_default_volumes",
+              "C1008_Recycle_refuses_references_and_unknown_census",
+              "C1008_Recycle_audits_work_as_1654",
+              "C1008_Recycle_refuses_unpublished_and_dirty_work",
+              "C1008_Recycle_refuses_uninspectable_git",
+              "C1008_Recycle_reaps_dirty_scratch",
+              "C1008_Recycle_audits_promisor_checkout",
+              "C1105_Git_audit_volume_scale",
+              "C1105_Jq_argv_limit",
+              "C1008_Recycle_preserves_tmp_copyup",
+              "C1105_Verify_tmp_accepts_an_absent_pty_host",
+              "C1008_Recycle_resume_requires_matching_receipt",
+              "C1008_Recycle_receipt_records_disk_and_partial_failure",
+              "C1008_Retire_temp_rechecks_absence_and_retirement",
+              "C1008_Retire_temp_reclaims_below_cache_disk_gate",
+              "C1008_Recycle_dry_run_never_mutates",
+              "C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes",
+              "C1105_Redeploy_accepts_previous_generation_and_requires_new_bind",
+              "C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout",
+              "C1105_V218_dry_run_reaches_the_generation_line",
+              "C1105_Relative_dry_run_refuses_before_removal",
+              "C1105_Generation_identity_refuses_mismatch",
+              "C1105_Main_state_init_without_session_runner_refuses",
+              "C1105_Compose_cmp_refuses_before_removal",
+              "C1105_Resume_identity_refusals",
+              "C1105_Resume_state_init_image_follows_the_journal",
+              "C1105_Resume_foreign_leftover_is_not_an_image_mismatch",
+              "C1105_Resume_digest_pins_previous_sha12",
+              "C1105_Resume_post_removal_census_tracks_open_work",
+              "C849_Deploy_prepares_and_verifies_before_acceptance",
+              "C1105_Git_audit_recovery_tips",
+              "C1105_Git_audit_seed_content",
+              "C1105_Git_audit_index_content",
+              "C1105_Git_audit_object_completeness",
+              "C1105_Git_audit_overall_timeout",
+              "C1105_Git_audit_resume_preserves_proof",
+              "C1105_Git_audit_hidden_locations",
+              "C1335_Mirror_owner_stamp_in_linked_admin"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: native Linux host contracts (bash, flock and POSIX filesystem semantics). The case remains required on Linux.",
+            "owner": "CARD-1050"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointStampSafetyTests",
+            "methods": [
+              "tracked_stamp_shapes_are_bounded_and_leave_results_in_place"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux source-shape qualification. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "CheckpointTempRootSweepTests",
+            "methods": [
+              "fifo_or_socket_root_is_reclaimed"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: a FIFO is the stand-in for a Linux dotnet-diagnostic socket. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "PlanCoverageCommandTests",
+            "methods": [
+              "outside_project_fifo_is_refused_without_opening"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: outside-project FIFO read sentinel requires Linux mkfifo. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "session-runner",
+            "class": "CompletedCardWorkspaceRemovalTests",
+            "methods": [
+              "C1032_InspectionR3Mode",
+              "C1032_RemovalLinuxIgnoredFifoRefuses"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Unix executable-bit witness and Linux named-pipe inventory. The case remains required on Linux.",
+            "owner": "CARD-1032"
+          },
+          {
+            "suite": "session-runner",
+            "class": "HostStatsProbeLiveTests",
+            "methods": [
+              "Linux_probe_reads_live_proc"
+            ],
+            "platform": "windows",
+            "reason": "Linux-only by construction: Linux /proc probe. The case remains required on Linux.",
+            "owner": "CARD-0590"
+          },
+          {
+            "suite": "antiphon",
+            "class": "RunnerGrokAdapterReadyTestsPty",
+            "methods": [
+              "C1011_real_fresh_worktree_ready_and_one_turn"
+            ],
+            "reason": "Explicit live-provider WQ-3 manual obligation; requires a separately commissioned headed real-provider run (CARD-1011), never unattended qualification.",
+            "owner": "CARD-1566"
+          }
+        ]
+      }
+    },
+    "projects": [
+      "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+      "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+      "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
+      "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+      "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+      "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+      "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj"
+    ],
+    "suites": {
+      "antiphon": {
+        "name": "Antiphon.Tests",
+        "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+        "assembly": "Antiphon.Tests",
+        "mode": "unattended",
+        "processGroup": "native-dotnet",
+        "slowRegistry": "tests/Antiphon.Tests/slow-tests-allowlist.txt"
+      },
+      "session-runner": {
+        "name": "Antiphon.SessionRunner.Tests",
+        "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+        "assembly": "Antiphon.SessionRunner.Tests",
+        "mode": "unattended",
+        "processGroup": "native-dotnet",
+        "slowRegistry": "tests/Antiphon.SessionRunner.Tests/slow-tests-allowlist.txt"
+      },
+      "pty-host": {
+        "name": "Antiphon.PtyHost.Tests",
+        "project": "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+        "assembly": "Antiphon.PtyHost.Tests",
+        "mode": "unattended",
+        "processGroup": "native-dotnet",
+        "slowRegistry": "tests/Antiphon.PtyHost.Tests/slow-tests-allowlist.txt"
+      },
+      "agents-pty": {
+        "name": "Antiphon.Agents.Pty.Tests",
+        "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+        "assembly": "Antiphon.Agents.Pty.Tests",
+        "mode": "unattended",
+        "processGroup": "native-dotnet",
+        "slowRegistry": "tests/Antiphon.Agents.Pty.Tests/slow-tests-allowlist.txt"
+      },
+      "messaging": {
+        "name": "Antiphon.Messaging.Tests",
+        "project": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
+        "assembly": "Antiphon.Messaging.Tests",
+        "mode": "unattended",
+        "processGroup": "native-dotnet",
+        "slowRegistry": "tests/Antiphon.Messaging.Tests/slow-tests-allowlist.txt",
+        "broker": "disposable-container"
+      },
+      "client": {
+        "name": "client",
+        "command": "scripts/test-client.ps1",
+        "mode": "unattended",
+        "processGroup": "client",
+        "requires": [
+          "client-build",
+          "client-lint"
+        ]
+      },
+      "scripts": {
+        "name": "scripts",
+        "mode": "unattended",
+        "processGroup": "scripts"
+      },
+      "e2e": {
+        "name": "Antiphon.E2E",
+        "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+        "assembly": "Antiphon.E2E",
+        "mode": "manual",
+        "processGroup": "e2e",
+        "slowRegistry": "tests/Antiphon.E2E/slow-tests-allowlist.txt",
+        "reason": "requires fresh client/dist and isolated random runner"
+      },
+      "markdown-pdf": {
+        "processGroup": "native-dotnet",
+        "name": "Antiphon.MarkdownPdf.Tests",
+        "mode": "unattended",
+        "assembly": "Antiphon.MarkdownPdf.Tests",
+        "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+      },
+      "observability": {
+        "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+        "name": "Antiphon.Observability.Tests",
+        "processGroup": "native-dotnet",
+        "assembly": "Antiphon.Observability.Tests",
+        "mode": "unattended"
+      }
+    },
+    "safeEnvironment": {
+      "clear": [
+        "ANTIPHON_HEADED_TESTS",
+        "ANTIPHON_HEADED_LONG_TESTS",
+        "ANTIPHON_DISTILLER_APPLY_CANARY",
+        "ANTIPHON_TG_TEST_TOKEN",
+        "ANTIPHON_CARD0133_RUN_P3",
+        "ANTIPHON_CARD0133_CODEX_EXE"
+      ],
+      "set": {}
+    },
+    "scriptCensus": [
+      {
+        "id": "test-apphost-graceful-stop",
+        "path": "scripts/test-apphost-graceful-stop.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-apphost-lock-age",
+        "path": "scripts/test-apphost-lock-age.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-apphost-main-worktree-guard",
+        "path": "scripts/test-apphost-main-worktree-guard.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-apphost-probe-class",
+        "path": "scripts/test-apphost-probe-class.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-cleanup-claude-sessions",
+        "path": "scripts/test-cleanup-claude-sessions.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-cleanup-codex-test-residue",
+        "path": "scripts/test-cleanup-codex-test-residue.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-client",
+        "path": "scripts/test-client.ps1",
+        "disposition": "wrapper",
+        "wildcard": false
+      },
+      {
+        "id": "test-client-mode",
+        "path": "scripts/test-client-mode.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-deploy-am-service",
+        "path": "scripts/test-deploy-am-service.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-deploy-nightly-watchdog",
+        "path": "scripts/test-deploy-nightly-watchdog.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-duration-tripwire",
+        "path": "scripts/test-duration-tripwire.ps1",
+        "disposition": "argument-consumer",
+        "wildcard": false
+      },
+      {
+        "id": "test-hooks",
+        "path": "scripts/test-hooks.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-nightly-report",
+        "path": "scripts/test-nightly-report.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-reap-zombie-agents",
+        "path": "scripts/test-reap-zombie-agents.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-stage-value-report",
+        "path": "scripts/test-stage-value-report.ps1",
+        "disposition": "unattended",
+        "wildcard": false
+      },
+      {
+        "id": "test-rc-roster-repairs",
+        "path": "scripts/test-rc-roster-repairs.ps1",
+        "disposition": "argument-consumer",
+        "wildcard": false
+      },
+      {
+        "id": "test-nightly-failed-first",
+        "path": "scripts/test-nightly-failed-first.ps1",
+        "disposition": "argument-consumer",
+        "wildcard": false
+      }
+    ],
+    "watchdogs": {
+      "npm-ci": 600000,
+      "npm-build": 600000,
+      "dotnet-build": 1200000,
+      "antiphon": 3600000,
+      "session-runner": 1800000,
+      "pty-host": 1200000,
+      "agents-pty": 1200000,
+      "messaging": 1200000,
+      "client": 1200000,
+      "scripts": 1200000,
+      "e2e": 7200000,
+      "markdown-pdf": 1200000,
+      "observability": 180000
+    },
+    "reducedDispatchPolicy": "inactive",
+    "projectDispositions": [
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      },
+      {
+        "reason": "Primary test assembly; profile defines execution obligations.",
+        "consumers": [],
+        "role": "primary",
+        "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+      },
+      {
+        "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "scripts/fixtures/nightly/c487-probe/Probe.csproj"
+      },
+      {
+        "reason": "Explicit timeout/cancellation capture probe; captured diagnostics are consumed by Antiphon.Tests, not a normal test lane.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "scripts/fixtures/nightly/c1375-probe/Probe.csproj"
+      },
+      {
+        "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.Checkpoints.FilterHost/Antiphon.Checkpoints.FilterHost.csproj"
+      },
+      {
+        "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj"
+      },
+      {
+        "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj"
+      },
+      {
+        "reason": "Standalone CARD-1563 checkpoint host; the same TimeoutAuditTests source is compiled into primary Antiphon.Tests for ordinary qualification.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.TimeoutAudit.Tests/Antiphon.TimeoutAudit.Tests.csproj"
+      },
+      {
+        "reason": "Existing CARD-1514 timing probe is an explicit child host launched by the primary timing lifecycle tests and staged by Antiphon.Tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
+      },
+      {
+        "reason": "CARD-1613 native Linux skip probe is an explicit child host launched by NativeLinuxPolicyExecutionTests and staged by Antiphon.Tests.",
+        "consumers": [
+          "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        ],
+        "role": "child",
+        "project": "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj"
+      },
+      {
+        "role": "primary",
+        "consumers": [],
+        "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+        "reason": "Standalone CARD-1564 test assembly owns live startup and external-call observability qualification; required by nightly and rc profiles. The 180-second watchdog is provisional from the CARD-1564 Linux startup sample (66.992 seconds, n=1, not p95); collect Windows suite timings in the next qualification and replace with measured CARD-1404 costs."
+      }
+    ],
+    "selectionCatalog": {
+      "hash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
+      "path": "tests/test-selection-policy.json"
+    }
+  },
+  "allowedRow": {
+    "id": "test-qualification-graph",
+    "path": "scripts/test-qualification-graph.ps1",
+    "disposition": "argument-consumer",
+    "wildcard": false
+  }
+}
