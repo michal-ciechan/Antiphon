@@ -63,13 +63,13 @@ public class LiveLaneIsolationTests
         const string key = "CLAUDE_CONFIG_DIR";
         var previous = Environment.GetEnvironmentVariable(key);
         Environment.SetEnvironmentVariable(key, decoyConfig);
-        var session = new RunnerSession(sessionId, new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = Path.Combine(root, "logs") },
+        var session = new SessionRunnerRuntime.RunnerSession(sessionId, new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = Path.Combine(root, "logs") },
             new SessionRunnerEventHub(), NullLogger.Instance);
         try
         {
             var request = new RunnerLaunchRequest(sessionId, "claude", Array.Empty<string>(),
                 new Dictionary<string, string> { [key] = launchConfig }, Path.Combine(root, "cwd"), 80, 24, TranscriptEnabled: true);
-            var start = typeof(RunnerSession).GetMethod("StartTailerFor", BindingFlags.Instance | BindingFlags.NonPublic)
+            var start = typeof(SessionRunnerRuntime.RunnerSession).GetMethod("StartTailerFor", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?? throw new InvalidOperationException("C1545 V-13/projects-root StartTailerFor missing");
             start.Invoke(session, new object[] { request, DateTime.UtcNow });
             var deadline = Environment.TickCount64 + 2_000;
