@@ -17,4 +17,18 @@ public sealed class RcFailedFirstPlannerTests
              "FF GlobalReplayPriority.allSplits", "FF GlobalReplayPriority.canonicalDigest",
              "FF GlobalReplayPriority.unresolved", "FF GlobalReplayPriority.duplicate"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
+    [Test, Timeout(300_000)]
+    public Task FullBytesAndCoverageConserved(CancellationToken cancellationToken) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(FullBytesAndCoverageConserved), 20,
+            ["FF FullBytesAndCoverageConserved.observedPermutation", "FF FullBytesAndCoverageConserved.anchors",
+             "FF FullBytesAndCoverageConserved.canonicalBytes", "FF FullBytesAndCoverageConserved.coverage",
+             "FF FullBytesAndCoverageConserved.keyedObservations", "FF FullBytesAndCoverageConserved.terminalMatrix",
+             "FF FullBytesAndCoverageConserved.prefixState", "FF FullBytesAndCoverageConserved.stickyHeader",
+             "FF FullBytesAndCoverageConserved.settlementOrder", "FF FullBytesAndCoverageConserved.reasonSequence",
+             "FF FullBytesAndCoverageConserved.journalBindings", "FF FullBytesAndCoverageConserved.timelines",
+             "FF FullBytesAndCoverageConserved.phaseSummariesAndIndex", "FF FullBytesAndCoverageConserved.schedulePolicy",
+             "FF FullBytesAndCoverageConserved.lazyPreparation", "FF FullBytesAndCoverageConserved.preparationBarrier",
+             "FF FullBytesAndCoverageConserved.e2ePreparation", "FF FullBytesAndCoverageConserved.diagnosticWriteFailure",
+             "FF FullBytesAndCoverageConserved.authorityBytes", "FF FullBytesAndCoverageConserved.authorityBinding"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(240), TimeSpan.FromSeconds(10)), cancellationToken);
 }
