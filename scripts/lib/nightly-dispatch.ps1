@@ -32,7 +32,7 @@ function New-NightlyDispatchSchedule {
     $dispatchHash = [Security.Cryptography.SHA256]::Create()
     try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
     finally { $dispatchHash.Dispose() }
-    return [pscustomobject]@{format='antiphon-nightly-dispatch-v1';runId=$RunId;attempt=$Attempt;historyDigest=$HistoryDigest;canonicalPlanDigest=$dispatchDigest;preparationComplete=$PreparationComplete;unresolved=@($Unresolved);entries=@($dispatchOrdered)}
+    return [pscustomobject]@{PreparedSuites=@($PreparedSuites);format='antiphon-nightly-dispatch-v1';runId=$RunId;attempt=$Attempt;historyDigest=$HistoryDigest;canonicalPlanDigest=$dispatchDigest;preparationComplete=$PreparationComplete;unresolved=@($Unresolved);entries=@($dispatchOrdered)}
 }
 
 function Write-NightlyDispatchSchedule {
@@ -77,10 +77,24 @@ function Invoke-NightlyDispatchCoordinator {
         }
         $dispatchPrepared.Add($dispatchState)
         if (-not $dispatchBarrier) {
-            $dispatchSchedule = New-NightlyDispatchSchedule -PreparedSuites $dispatchPrepared.ToArray() -RunId $invocationId -Attempt ([string]$Attempt)
-            Write-NightlyDispatchSchedule $dispatchSchedule $LogRoot -BestEffort
+            try {
+                $dispatchSchedule = New-NightlyDispatchSchedule -PreparedSuites $dispatchPrepared.ToArray() -RunId $invocationId -Attempt ([string]$Attempt) -PreparationComplete $false
+                Write-NightlyDispatchSchedule $dispatchSchedule $LogRoot -BestEffort
+            } catch {
+                Write-Warning -WarningAction Continue ('dispatch-schedule-write-failed: ' + $_.Exception.Message)
+                try { Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'dispatch-schedule-write-failed' } catch { }
+            }
             foreach ($dispatchChunkRef in @($dispatchState.chunks)) { . Invoke-NightlyScheduledChunk -ExecutionSuiteState $dispatchState -ExecutionChunk $dispatchChunkRef }
             . Complete-NightlySuiteExecution -CompletionSuiteState $dispatchState
+        }
+    }
+    if (-not $dispatchBarrier) {
+        try {
+            $dispatchSchedule = New-NightlyDispatchSchedule -PreparedSuites $dispatchPrepared.ToArray() -RunId $invocationId -Attempt ([string]$Attempt)
+            Write-NightlyDispatchSchedule $dispatchSchedule $LogRoot -BestEffort
+        } catch {
+            Write-Warning -WarningAction Continue ('dispatch-schedule-write-failed: ' + $_.Exception.Message)
+            try { Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'dispatch-schedule-write-failed' } catch { }
         }
     }
     if ($dispatchBarrier) {
@@ -94,6 +108,16 @@ function Invoke-NightlyDispatchCoordinator {
 function Invoke-NightlyPreparedSchedule {
     param($PreparedSchedule)
     if (-not $PreparedSchedule.preparationComplete) { throw 'dispatch-preparation-incomplete' }
+    $dispatchExpected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($dispatchState in $PreparedSchedule.PreparedSuites) {
+        foreach ($dispatchChunk in $dispatchState.chunks) { [void]$dispatchExpected.Add($dispatchState.id + [char]0 + $dispatchChunk.id) }
+    }
+    $dispatchSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($dispatchEntry in $PreparedSchedule.entries) {
+        if (-not $dispatchSeen.Add($dispatchEntry.suite + [char]0 + $dispatchEntry.chunk) -or
+            $dispatchEntry.ChunkRef.id -cne $dispatchEntry.chunk -or $dispatchEntry.SuiteState.id -cne $dispatchEntry.suite) { throw 'dispatch-not-permutation' }
+    }
+    if (-not $dispatchSeen.SetEquals($dispatchExpected)) { throw 'dispatch-not-permutation' }
     $dispatchRemaining = @{}
     foreach ($dispatchEntry in $PreparedSchedule.entries) {
         if (-not $dispatchRemaining.ContainsKey($dispatchEntry.suite)) { $dispatchRemaining[$dispatchEntry.suite] = 0 }
