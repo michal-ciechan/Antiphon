@@ -1361,6 +1361,8 @@ function Invoke-AntiphonNightlyTests {
         [int]$Attempt = 1,
         [string]$PriorFailuresPath = '',
         [string]$PriorFailuresDigest = '',
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId = '',
         [string]$SeamsPath = '',
         [string]$PolicyPath = '',
         [switch]$AllowSharedTree,
@@ -1506,7 +1508,7 @@ function Invoke-AntiphonNightlyTests {
     }
     $LogRoot = ConvertTo-NightlyCanonicalPath -Path $LogRoot
     New-Item -ItemType Directory -Path $LogRoot -Force | Out-Null
-    $dispatchInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -OwnedDirectory $LogRoot -CandidateSha $Sha
+    $dispatchInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -OwnedDirectory $LogRoot -CandidateSha $Sha
     $summaryPath = Join-Path $LogRoot 'summary.json'
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)

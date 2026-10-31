@@ -2,6 +2,7 @@
 # Diagnostic scheduling only. Canonical chunks remain the planner's own objects.
 function Resolve-NightlyPreviousRunOrder {
     param([object[]]$Entries, $PreviousRun, [string]$CandidateSha, [datetime]$NowUtc)
+    if($PreviousRun -and $PreviousRun.seedKind -ceq 'operator-seed-from-stopped-run'){return Resolve-NightlyStoppedSeedOrder $Entries $PreviousRun}
     # This is a preference for a NEW complete attempt, never execution resume.
     # Missing rows are unfinished. Rotate each lane after its last observed pass,
     # wrapping earlier holes back into the unfinished partition.
