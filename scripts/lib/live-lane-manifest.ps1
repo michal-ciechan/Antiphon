@@ -21,8 +21,9 @@ $script:LiveLaneProtectedPaths = @(
     'scripts/lib/nightly-policy.ps1',
     'scripts/lib/nightly-coverage.ps1'
 )
-# Discovery child budget. Replaced by the measured 2x p95 before the roster wall is compiled.
-$script:LiveLaneDiscoveryBudgetMs = 180000
+# Discovery child budget. Loaded-host n=3 discovery 71966, 74696, 79685 ms (p95 = 79685).
+# 160000 ms is about 2x that p95. The parent roster wall is 320000 ms.
+$script:LiveLaneDiscoveryBudgetMs = 160000
 $script:LiveLaneScratchLedger = @()
 
 # Dot-source in this script scope. A dot-source inside Initialize-LiveLaneNightly

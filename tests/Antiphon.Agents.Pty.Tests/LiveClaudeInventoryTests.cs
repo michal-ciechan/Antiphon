@@ -20,8 +20,9 @@ public sealed class LiveClaudeInventoryTests
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
-    // Hard wall for the roster child. Set from the loaded-host p95 in the D-6 measurement.
-    private const int ChildBudgetMs = 260_000;
+    // Hard wall for the roster child. Loaded-host n=3 totals 122603, 159105, 127989 ms
+    // (p95 = 159105). 320000 ms is about 2x that p95. Same wall as the heavier Tests child.
+    private const int ChildBudgetMs = 320_000;
 
     private static LiveLaneScriptResult Run()
     {

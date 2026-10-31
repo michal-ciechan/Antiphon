@@ -31,8 +31,9 @@ public sealed class LiveLaneInventoryTests
 
     internal static class LiveLaneProcess
     {
-        // Hard wall for the roster child. Set from the loaded-host p95 in the D-6 measurement.
-        public const int ChildBudgetMs = 260_000;
+        // Hard wall for the roster child. Loaded-host n=3 totals 122603, 159105, 127989 ms
+        // (p95 = 159105). 320000 ms is about 2x that p95.
+        public const int ChildBudgetMs = 320_000;
 
         public static async Task<LiveLaneScriptResult> RunAsync(string caseName, string project)
         {
