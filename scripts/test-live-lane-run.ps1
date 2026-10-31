@@ -256,16 +256,27 @@ function Test-ChildEnvironmentIsScoped {
     }
     Check 'empty' $ok
     # Presence-aware snapshots are compared without printing values.
-    $before = [Environment]::GetEnvironmentVariables()
-    foreach ($kind in @('success','refusal','throw')) {
-        $q = New-Fixture
-        if ($kind -eq 'refusal') { $q.Request.Commission = '' }
-        if ($kind -eq 'throw') { $F.Fault = 'wait-failure' }
-        $null = Run-Fixture $q
+    $keys = @('CLAUDE_CODE_CHILD_SESSION','CLAUDE_CODE_SESSION_ID','CLAUDE_CODE_BRIDGE_SESSION_ID','CLAUDECODE')
+    $saved = [Environment]::GetEnvironmentVariables()
+    try {
+        foreach ($key in $keys) { [Environment]::SetEnvironmentVariable($key, '') }
+        [Environment]::SetEnvironmentVariable('CLAUDECODE', 'fixture-parent')
+        $before = [Environment]::GetEnvironmentVariables()
+        foreach ($kind in @('success','refusal','throw')) {
+            $q = New-Fixture
+            if ($kind -eq 'refusal') { $q.Request.Commission = '' }
+            if ($kind -eq 'throw') { $F.Fault = 'wait-failure' }
+            $null = Run-Fixture $q
+        }
+        $after = [Environment]::GetEnvironmentVariables()
+        $same = $before.Count -eq $after.Count
+        foreach ($key in $before.Keys) { $same = $same -and $after.Contains($key) -and $after[$key] -ceq $before[$key] }
+    } finally {
+        foreach ($key in $keys) {
+            if ($saved.Contains($key)) { [Environment]::SetEnvironmentVariable($key, [string]$saved[$key]) }
+            else { [Environment]::SetEnvironmentVariable($key, [NullString]::Value) }
+        }
     }
-    $after = [Environment]::GetEnvironmentVariables()
-    $same = $before.Count -eq $after.Count
-    foreach ($key in $before.Keys) { $same = $same -and $after.Contains($key) -and $after[$key] -ceq $before[$key] }
     Check 'parent' $same
 }
 function Test-DeadlineJoinsOwnedChildren {
