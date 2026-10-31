@@ -78,3 +78,11 @@ handoff: Complete the five census cases and 60 sequential/30 loaded exact-method
 artifact: /work/worktrees/task-fc629ae4/.antiphon/task-fc629ae4.md
 
 Final master attribution check: the untouched base has 48 master merge-tree conflicts; the repair has 50. The two additional conflict records are not classified here, so not all 50 are attributed as inherited. The intended rc comparison passed; master landing is not authorized by these results.
+
+## Caller-authorized continuation: census gate
+
+The caller reopened this task with about 60 additional execution minutes, ordered census first, then 60 sequential/30 loaded repetitions (stop at the first failure and diagnose), then at most 20 minutes on the independent TERM exit=2 observation. The preceding incomplete gate is the historical first settlement, not the final continuation outcome.
+
+At clean pushed source f453676a71481d7c0addb00b87cf9eec16dde599, a fresh bin-fc629ae4-cont/ build passed with 0 errors / 1403 warnings in 462.91 seconds. TEMP=/tmp, UseAppHost=false; one MSBuild node conservatively stays within the broker's grant of six. Real lease 762bea17-345a-4c7a-a0ff-36300884d44c was admitted after 90 seconds. The continuing foreground driver pauses between completed selections for this evidence commit, then retains the same lease for sequential repetitions. No source is edited during an active build/test.
+
+C1514LandingSplitBudgetTests passed 5/5, failed 0, skipped 0 (TUnit duration 117.879 seconds): C1404_Group10MeasuredBudget, C1577_Group71MeasuredBudget, C1584_E2EExpandedBudget, C1410_MeasuredCostGroups and G2865_Group28Group65MeasuredBudget. This completes the previously unrun census gate; the old exit-4 admission remains recorded above. Full build log, TRX, output, source SHA and host census: /tmp/fc629ae4-cont/build.log and /tmp/fc629ae4-cont/census-001/. Fresh per-invocation tallies will be /tmp/fc629ae4-cont/runs.jsonl; the driver explicitly stops on any failure, missing TRX or unexpected selection count. Sequential and loaded repetitions have not started at this evidence slice.
