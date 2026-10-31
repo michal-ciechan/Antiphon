@@ -1,6 +1,8 @@
 # CARD-1514 CP-8 verification
 
-**Verification incomplete: portable matrix and five loaded repetitions passed; strict-alone certification remains incomplete.**
+**Verification reporting complete under the caller's shared-host decision: portable matrix 38/38 and loaded repetitions 5/5 passed; strict-alone certification is unverified.**
+
+Caller disposition, 2026-10-31 (reply db57d9b4-f5ff-465b-b298-f058c7ba3acb): keep shared-host activity, stop waiting for a quiet window, report the three qualified alone attempts and three interference-excluded greens exactly as measured, and finish done with next: merge to rc. This supersedes the earlier blocked handoff and the original requirement to complete ten alone runs before advancing. It does not convert excluded results into alone credit or certify the unperformed runs. No further tests were run for this report-only disposition.
 
 Host: 4551c5a7852f, Linux/server2, TEMP=/tmp, UseAppHost=false. Assigned branch: feat/card-task-c171db78. Assigned base: 65beb323fdd6f88d0ea478d390be66ea2f8a67e7. Verified source: **b831ee9e150783f943a32a59f82c12b0cde10ad4**, containing final code 829e7b8c55dc1ac995e8ae5e78b64c681da20822. The source-freeze report commit b831ee9e150783f943a32a59f82c12b0cde10ad4 was pushed before the producing build. Later report-only commits do not relabel these receipts. This task changes only this narrative report; no product/test/plan/policy/schema/definition file changed.
 
@@ -42,7 +44,7 @@ The real importer accepted all eleven plan rows unchanged. The ignored execution
 | CP-8-alone-05 | 1/1/0/0 | 67.827 | 76.113 | individually qualified; arm incomplete |
 | CP-8-alone-06 | 1/1/0/0 | 76.718 | 86.164 | shared host; no alone credit |
 
-Loaded: **5/5 qualifying green**. Alone: **3/10 individually qualifying greens**; latest consecutive streak 0/10; 6 total attempted, all outcomes retained. No all-fifteen-green certification is claimed. A dedicated quiet host window is still required.
+Loaded: **5/5 qualifying green**. Alone: **3/10 individually qualifying greens**; latest consecutive streak 0/10; 6 total attempted, all outcomes retained, including three interference-excluded greens. Alone certification is **unverified**; no all-fifteen-green certification is claimed. The caller explicitly chose to finish with these measurements on the shared host rather than wait for a dedicated quiet window.
 
 Each trial ran the exact CP-8 method in a fresh TUnit process through the checkpoint row tool, reused the fresh verified pack, checked clean source before/after, and retained unchanged assembly/harness/library SHA-256 values before/after. Row names are attempt IDs; an environmentally ineligible green never receives alone credit. No failed test was retried. The controller also tracked a consecutive streak, resetting it on interference; individually qualified results are preserved separately. No ten-run certification is claimed while incomplete.
 
@@ -63,7 +65,7 @@ The first attempted alone run passed but overlapped build:bin-c1610-fix3-red and
 
 TRX method-duration quantiles (nearest rank, small provisional samples): loaded n=5, p50=89.126, p95=120.894, max=120.894 seconds; individually qualified alone n=3, p50=67.827, p95=70.941, max=70.941 seconds. Controller wall includes tool startup, source checks, sampling and teardown. Direct row receipts have unavailable phase subdivisions; these are unknown rather than zero. Matrix CP-8 records startup 10.056 s, test body 81.625 s, teardown 0.740 s, host wall 92.421 s. These script witnesses use no database/container/web-host setup; finer IO/CLI subdivisions remain unknown. No red test/deadline observation justified a source or budget change.
 
-Host-condition observation span: 2026-10-31T01:57:30.904Z through 2026-10-31T03:00:00.869Z. The final quiet-admission cutoff was 03:00 UTC; the controller exited 4 with the host still occupied. This was an environmental admission cutoff, not a failed test or a broker-slot timeout. Last foreign leases: build:bin-r7743-final (7743ab23-676c-4368-ab40-83b5d10cca2e), r7743-mut-build (7743ab23-676c-4368-ab40-83b5d10cca2e), task-7aadc94a-green-build (7aadc94a-fb78-4bb9-b3ea-d7f9f84674d8). A reserved quiet host window is required for completion.
+Host-condition observation span: 2026-10-31T01:57:30.904Z through 2026-10-31T03:00:00.869Z. The final quiet-admission cutoff was 03:00 UTC; the controller exited 4 with the host still occupied. This was an environmental admission cutoff, not a failed test or a broker-slot timeout. Last foreign leases: build:bin-r7743-final (7743ab23-676c-4368-ab40-83b5d10cca2e), r7743-mut-build (7743ab23-676c-4368-ab40-83b5d10cca2e), task-7aadc94a-green-build (7aadc94a-fb78-4bb9-b3ea-d7f9f84674d8). This originally blocked strict-alone completion; the later caller disposition closes the task with alone certification explicitly unverified.
 
 ## Definition audit, evidence and cleanup
 
@@ -121,6 +123,6 @@ c3d6c427727f2da7c2e5eaed7365b177cb4a0f6099e7b05e9f5c7be8be16134d  /work/worktree
 ```
 
 --- next stage ---
-next: debug
-handoff: Finish strict-alone CP-8 ten-run certification on a reserved quiet host window. Three individually qualifying passes are retained; the required certification is incomplete. Preserve the validated matrix/loaded receipts and the 200 ms product deadline. No task test failed; current blocker is host isolation.
+next: merge to rc
+handoff: Caller authorized advancement with the shared host retained: matrix 38/38 and loaded CP-8 5/5 passed; three individually qualified alone passes and three interference-excluded greens are preserved. Strict-alone certification remains unverified. Preserve receipt provenance and the unchanged 200 ms product deadline; this report performs no merge, release or activation.
 artifact: /work/worktrees/task-c171db78/.antiphon/task-c171db78.md
