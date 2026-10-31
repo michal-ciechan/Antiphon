@@ -16,6 +16,13 @@ fixtures are retained for release B and excluded from A's nine-row checkpoint ma
 Typed/paste parity peers explicitly use modern and choose unwrapped/wrapped encoding through
 the shared helper; changing the backend alone does not preserve a typed-input experiment.
 
+C1022 backend-launch teardown retains native handles for the test-owned host, child and
+OpenConsole before requesting stop. It joins those handles even after an assertion or stop
+failure; deletion requires confirmed exit and successful ownership cleanup. Unresolved cleanup
+retains the directory and reports PID, process name and elapsed wait, preserving the original
+failure. `Cleanup_joins_owned_child_even_when_body_or_stop_fails` provides portable held-child
+witnesses for all three launch cases. These witnesses do not replace the Windows ConPTY run.
+
 CARD-1049: `AmServiceDeployReadinessTests` uses native loopback and real curl on
 Windows. The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
 Linux); accepted stalls remain exact 28 and HTTP 503 remains exact 22. Its
