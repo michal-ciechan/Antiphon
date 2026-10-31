@@ -186,14 +186,21 @@ public sealed class VolumeRetirementReceiptTests
             .ShouldBeFalse("J4 uncertain clock leaves the Preview unconsumed");
     }
 
-    private static string LongAuditClock(long admittedAt, bool advanceMonotonic = true) => $$"""
+    private static string LongAuditClock(long admittedAt, bool advanceMonotonic = true, bool preview = false)
+    {
+        var audit = preview ? "c1008_audit_readonly" : "c1008_audit_checked";
+        return $$"""
         printf '%s\n' '{{admittedAt}}' > "$C1008_FIXTURE_ROOT/phase-clock"
         date() {
-            if [ "$*" = '-u +%s' ]; then cat "$C1008_FIXTURE_ROOT/phase-clock"; else command date "$@"; fi
+            case "$*" in
+                '-u +%s') cat "$C1008_FIXTURE_ROOT/phase-clock" ;;
+                '-u +%Y-%m-%dT%H:%M:%SZ') command date -u -d "@$(cat "$C1008_FIXTURE_ROOT/phase-clock")" +%Y-%m-%dT%H:%M:%SZ ;;
+                *) command date "$@" ;;
+            esac
         }
-        eval "$(declare -f c1008_audit_checked | sed '1s/c1008_audit_checked/c1609_original_audit_checked/')"
-        c1008_audit_checked() {
-            c1609_original_audit_checked
+        eval "$(declare -f {{audit}} | sed '1s/{{audit}}/c1609_original_clock_audit/')"
+        {{audit}}() {
+            c1609_original_clock_audit "$@"
             if [ '{{(advanceMonotonic ? "1" : "0")}}' = 1 ] && ! declare -F c1609_real_monotonic_ms >/dev/null; then
                 eval "$(declare -f c1609_monotonic_ms | sed '1s/c1609_monotonic_ms/c1609_real_monotonic_ms/')"
                 c1609_monotonic_ms() { local value; value="$(c1609_real_monotonic_ms)"; printf '%s\n' "$((value + 901000))"; }
@@ -201,6 +208,7 @@ public sealed class VolumeRetirementReceiptTests
             printf '%s\n' '{{admittedAt + 901}}' > "$C1008_FIXTURE_ROOT/phase-clock"
         }
         """;
+    }
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -266,6 +274,32 @@ public sealed class VolumeRetirementReceiptTests
         await VolumeRetirementFixture.ReadyPreview(fixture, context);
         var manual = await File.ReadAllTextAsync(receipt);
         JsonNode.Parse(manual)!["mode"]!.GetValue<string>().ShouldBe("manual", "J10 manual provenance survives the real writer");
+
+        using (var longPreview = new C1008HostFixture(main: false))
+        {
+            await VolumeRetirementFixture.ReadyPreview(longPreview);
+            var longRecord = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longPreview)))!;
+            var longGrant = grant.DeepClone();
+            longGrant["targets"] = longRecord["targets"]!.DeepClone();
+            var longIntent = intent.DeepClone();
+            longIntent["targets"] = longRecord["targets"]!.DeepClone();
+            longIntent["fingerprints"] = longRecord["fingerprints"]!.DeepClone();
+            var longGrantPath = Path.Combine(longPreview.Root, "server", "manual-authority", VolumeRetirementFixture.Operation + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(longGrantPath)!);
+            var longIntentPath = Path.Combine(longPreview.Root, "long-manual.json");
+            await WriteAttestation(longGrantPath, longGrant);
+            await WriteAttestation(longIntentPath, longIntent);
+            var admitted = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var longContext = "C1008_MODE=manual\nC1008_MANUAL_AUTHORITY_FILE=" + VolumeRetirementFixture.Quote(longGrantPath) +
+                "\nC1008_ATTESTATION_FILE=" + VolumeRetirementFixture.Quote(longIntentPath) + "\n" + LongAuditClock(admitted, preview: true);
+            var completed = await longPreview.Run("retire-temp-runner", longContext, dryRun: true);
+            completed.Exit.ShouldBe(0, "J10 manual authority admitted before the long Preview remains bound to that phase: " + completed.Output);
+            var readyAfterLongScan = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(longPreview)))!;
+            readyAfterLongScan["state"]!.GetValue<string>().ShouldBe("Ready");
+            DateTimeOffset.Parse(readyAfterLongScan["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds()
+                .ShouldBeGreaterThanOrEqualTo(admitted + 901, "J10 Preview freshness starts at successful completion");
+            longPreview.Removed.ShouldBeEmpty();
+        }
         var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             await File.ReadAllBytesAsync(receipt))).ToLowerInvariant();
         intent["phase"] = "Apply";

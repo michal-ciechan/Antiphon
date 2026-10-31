@@ -9398,8 +9398,13 @@ c1008_recycle() {
         c1008_save || c1008_refuse RecycleReceiptUnavailable
     done < <(printf '%s' "$owned" | jq -r '.[].Id')
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
-    c1008_audit_checked; after="$C1008_AUDIT"
-    [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    # No supported writer can enter while FD8 is held. When no container was
+    # removed, the first full audit is already this phase's content observation.
+    # Main and temp container effects retain the post-removal audit/comparison.
+    if [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || [ "$(printf '%s' "$owned" | jq length)" != 0 ]; then
+        c1008_audit_checked; after="$C1008_AUDIT"
+        [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    fi
     # Temp keeps the bounded v2 census through every exact-volume effect.
     c1008_status_proof
     c1008_references "$C1008_CENSUS" '[]'

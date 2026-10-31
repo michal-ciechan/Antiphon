@@ -73,6 +73,12 @@ param([string]$Case,[string]$Manifest)
 $ErrorActionPreference='Stop'
 if($Case -in @('retire-temp-runner','retire-temp-containers')) {
   $r=Get-Content -Raw -LiteralPath $Manifest|ConvertFrom-Json
+  $path=[IO.Path]::GetFullPath([string]$r.evidenceRoot)
+  if($path -cnotmatch '/[.]antiphon/rolling-server2/c727[0-9a-f]{12}$'){throw 'unowned wrapper evidence'}
+  $registry=Join-Path $env:C1609_MANUAL_FIXTURE 'wrapper-evidence-roots.json'
+  $roots=@();if(Test-Path -LiteralPath $registry){$roots=@(Get-Content -Raw -LiteralPath $registry|ConvertFrom-Json)}
+  if($roots -cnotcontains $path){$roots+=@($path)}
+  [IO.File]::WriteAllText($registry,(ConvertTo-Json -InputObject @($roots) -Compress))
   @{kind='real-case';name=$Case;recycle=$r.recycle}|ConvertTo-Json -Compress -Depth 20|Add-Content -LiteralPath $env:C727_TEST_TRACE
   & pwsh -NoProfile -NonInteractive -File '${repo}/scripts/verify-docker-stack.ps1' -Case $Case -Manifest $Manifest
   exit $LASTEXITCODE
@@ -97,7 +103,7 @@ const env={...process.env,PATH:bin+':'+process.env.PATH,C1609_MANUAL_FIXTURE:roo
 const calls=[];
 function run(extra=[]){
  const started=performance.now();
- const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',repo+'/scripts/deploy-server2.ps1','-Rolling','-Sha','a'.repeat(40),'-Phase','retire-temp','-ProjectId','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',...extra],
+ const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',repo+'/scripts/deploy-server2.ps1','-Rolling','-Sha','a'.repeat(40),'-Phase','retire-temp',...extra],
  {env,encoding:'utf8',timeout:60000,maxBuffer:4*1024*1024});
  calls.push({extra,exit:r.status,milliseconds:performance.now()-started});
  assert(!r.error,'bounded wrapper child: '+r.error);

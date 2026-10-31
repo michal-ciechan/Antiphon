@@ -9,7 +9,15 @@ if(process.argv[2]==='scp'){
  let src=resolve(v[0]),dst=resolve(v[1]);
  // Local script uploads are read-only. Every destination and remote download
  // source must stay within this exact fixture root.
- if(!dst.startsWith(root+'/'))throw Error('fixture destination escaped');
+ let allowed=dst.startsWith(root+'/');
+ const registry=root+'/wrapper-evidence-roots.json';
+ if(!allowed&&fs.existsSync(registry)){
+  const roots=JSON.parse(fs.readFileSync(registry));
+  if(!Array.isArray(roots))throw Error('fixture evidence registry');
+  allowed=roots.some(dir=>typeof dir==='string'&&/\/\.antiphon\/rolling-server2\/c727[0-9a-f]{12}$/.test(dir)&&
+   fs.realpathSync(dir)===dir&&(dst===dir||dst.startsWith(dir+'/')));
+ }
+ if(!allowed)throw Error('fixture destination escaped');
  if(v[0].startsWith('mc@server2:')&&!src.startsWith(root+'/'))throw Error('fixture source escaped');
  if(fs.existsSync(dst)&&fs.statSync(dst).isDirectory())dst=path.join(dst,path.basename(src));
  fs.cpSync(src,dst,{recursive:true});process.exit(0);
