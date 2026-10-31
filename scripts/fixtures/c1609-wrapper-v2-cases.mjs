@@ -17,7 +17,8 @@ const source=fs.readFileSync(root+'/remote.sh','utf8');
 const begin=source.indexOf("C1008_FIXTURE_ROOT='");
 const end=source.indexOf("\ntrap 'ec=$?;",begin);
 assert(begin>=0&&end>begin);
-let injection=source.slice(begin,end).split('\n').filter(l=>!/^\s*C1008_OPERATION=|^\s*C1008_DRY_RUN=/.test(l)).join('\n');
+let injection=source.slice(begin,end).split('\n').filter(l=>
+ !/^\s*C1008_OPERATION=|^\s*C1008_DRY_RUN=|^\s*C994_VERSION=|^\s*C994_PROJECT_ID=/.test(l)).join('\n');
 
 // Tighten only the final observation age to five seconds in the disposable
 // fixture copy. Production remains 900s. Six seconds of real elapsed time after

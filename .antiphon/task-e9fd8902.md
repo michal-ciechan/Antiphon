@@ -33,3 +33,9 @@ CHECKPOINT ACCEPT-A commit=a8c5683698db4cf734fb1ded4967a4c4ffef5cc0 build=ok fil
 ```
 
 Fresh direct bounded health/owner GETs recovered200 after terminal completion: same task/session, Dispatched/Running. No owner identity/token/environment was removed, no bypass or receipt rewrite was used. A preliminary mistyped expected SHA was refused before any build/test, zero credit; corrected invocation produced this run. OS inventory/lint passed at this repair for the three changed source paths, with unchanged Linux test gates and no OS selector/startup change.
+
+## Pre-test V2 fixture correction
+
+29da3530ee9fbda5575fd6f9850e29d3e3fb5da6 adds real wrapper/bridge/real-Git ancestry and renewal acceptance plus the no-intervening-effects single-inventory witness. The old c1609-wrapper-cases.mjs remains byte-identical; the new driver is c1609-wrapper-v2-cases.mjs. No earlier vector was removed. Only a disposable host fixture copy tightens final publication age900s to5s; a6s real wait after the real audit forces renewal. Production policy is unchanged.
+
+Run20261031-061732-64ec was stopped through the supported tool before tests after inspection found copied C994 cleanup fields would overwrite the wrapper's real operation/DryRun. Stop joined and removed the owned tool copy; terminal wait returned6 because no terminal report was published. No test started and no red/green credit is claimed. No matching executor/build process remains. Its partial fresh output is retained until final literal cleanup. The next fixture excludes those fixed fields, preserving actual bridge exports. This is an execution-efficiency deviation, not a passing/failed assertion receipt.
