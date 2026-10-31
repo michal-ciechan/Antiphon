@@ -36,6 +36,12 @@ LinuxOnlyWindowsExclusionPolicy` checks the shipped rows and census gaps; the ol
 `-Case LinuxOnlyWindowsExclusions` refuses. The native child is
 `tests/Antiphon.NativeLinuxPolicy.Probe`, staged for `NativeLinuxPolicyExecutionTests`.
 
+CARD-0849: the C1192 driver's deadline/go witness projects generated `/fixture` paths
+into its private filesystem model and fakes only the `dotnet` restore boundary. It
+requires no user/mount namespace, bind mounts or `pivot_root` under WSL. The
+`C849_Driver_deadline_witness_does_not_require_mount_namespaces` regression refuses
+those tools and checks both the intact deadline and the existing m7 control.
+
 ## Performance standards
 
 [Test performance standards](test-performance-standards.md) owns the standing engineering rules.
