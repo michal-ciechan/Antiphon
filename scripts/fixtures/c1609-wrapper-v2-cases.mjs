@@ -20,14 +20,12 @@ assert(begin>=0&&end>begin);
 let injection=source.slice(begin,end).split('\n').filter(l=>
  !/^\s*C1008_OPERATION=|^\s*C1008_DRY_RUN=|^\s*C994_VERSION=|^\s*C994_PROJECT_ID=/.test(l)).join('\n');
 
-// Tighten only the final observation age to five seconds in the disposable
-// fixture copy. Production remains 900s. Six seconds of real elapsed time after
-// the real audit makes this a bounded renewal witness without a 15-minute sleep.
+// Production has one 900s publication-age boundary. Renewal is required because
+// the audited object set differs from the empty initial digest.
 const retirement=fs.readFileSync(repo+'/scripts/c1008-retirement.sh','utf8');
 const age='[ "$((now-completed))" -le 900 ]';
 assert.equal(retirement.split(age).length-1,1,'exact final publication-age boundary');
-fs.writeFileSync(root+'/retirement-short-age.sh',retirement.replace(age,'[ "$((now-completed))" -le 5 ]'));
-injection+=`\nC1609_RETIREMENT_FILE=${q(root+'/retirement-short-age.sh')}
+injection+=`\nC1609_RETIREMENT_FILE=${q(repo+'/scripts/c1008-retirement.sh')}
 eval "$(declare -f c1008_audit_readonly | sed '1s/c1008_audit_readonly/c1609_fixture_audit_readonly/')"
 c1008_audit_readonly() {
   if [ "\${1:-}" = inventory ]; then
@@ -36,7 +34,6 @@ c1008_audit_readonly() {
     printf '%s %s %s\\n' "$CASE" "$BASHPID" "$lock" >> "$C1008_FIXTURE_ROOT/wrapper-inventory-locks"
   fi
   c1609_fixture_audit_readonly "$@" || return $?
-  if [ "\${1:-}" != inventory ]; then sleep 6; fi
 }
 `;
 fs.writeFileSync(root+'/manual-injection.sh',injection);
@@ -121,7 +118,7 @@ process.once('exit',code=>{
 const operations=()=>fs.readdirSync(root+'/server/retirement').filter(x=>/^c1008[0-9a-f]{32}$/.test(x));
 const prior=new Set(operations());
 let r=run(['-DryRun']);
-assert.equal(r.code,0,'real v2 wrapper must renew publication after a long content scan: '+r.text);
+assert.equal(r.code,0,'real v2 wrapper must renew publication after the content scan: '+r.text);
 const created=operations().filter(x=>!prior.has(x));assert.equal(created.length,1);
 const previewFile=root+'/server/retirement/'+created[0]+'/receipt.json';
 const preview=fs.readFileSync(previewFile);assert.equal(JSON.parse(preview).state,'Ready');assert.equal(JSON.parse(preview).mode,'scripted');

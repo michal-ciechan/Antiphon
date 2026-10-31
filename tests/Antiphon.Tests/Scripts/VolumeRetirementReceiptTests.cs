@@ -688,8 +688,23 @@ public sealed class VolumeRetirementReceiptTests
         close.Output.ShouldContain("C1609_CLOSE passed");
     }
 
+    // Official run 20261031-173834-a268 cancelled this child at 120s. The loaded
+    // pre-close was about 440s (method 559.732s) and a second sample ended at
+    // 320.105s, so the close budget stays inside the 600s class timeout.
+    // One idle run printed C1609_CLOSE_ELAPSED_SECONDS=69.177 (n=1, provisional).
+    // 150s stays above that sample and beside the loaded pre-close. The loaded
+    // close duration is censored at 120s. Per-spawn pwsh 30s and bash 20s bounds
+    // are unchanged.
+    private const int CloseBudgetSeconds = 150;
+
     private static async Task<(int Exit, string Output)> RunCloseCases(string root)
-        => await RunEntryCases(root, "c1609-close-cases.mjs", 120);
+    {
+        var started = DateTimeOffset.UtcNow;
+        var close = await RunEntryCases(root, "c1609-close-cases.mjs", CloseBudgetSeconds);
+        var elapsed = (DateTimeOffset.UtcNow - started).TotalSeconds;
+        Console.WriteLine("C1609_CLOSE_ELAPSED_SECONDS=" + elapsed.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+        return close;
+    }
 
     private static async Task<(int Exit, string Output)> RunEntryCases(string root, string driver, int seconds)
     {
