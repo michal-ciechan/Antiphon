@@ -1,5 +1,7 @@
 # CARD-1609 continuation 11
 
+Outcome: partial continuation; long Apply, exact-object producer and public Close/Resume passed at7650549b0162404a71ddc8ffece57d9d78c7f2b7. Final coordinator/fixture repairs are pushed at56340382cf49e573328fb5b4b9d045cfc3c9f26e, but full acceptance is still RED at its last qualified run. The 150-minute budget prevents another fresh acceptance build, full CP-15 or whole-roster qualification. S5 is incomplete; next: code. Production deletes remain disabled.
+
 Assigned baseline 8e1dea3e6931ef96b98c88ceb8e9a3b8bdda4f53; branch feat/card-task-e9fd8902. S5 remains incomplete. Production deletes remain disabled; first production action is preview-only.
 
 ## Long-Apply admission red
@@ -99,3 +101,93 @@ CHECKPOINT RENEW-FIX commit=902a4446569992a4e31e9141aa6694753779863a build=ok fi
 ```
 
 Build624.365s,compiler494.39s,row295.673s,tests283.747s,total1023.852s. No slot wait or deadline fired. Host compiler contention was observed; p95 remains unknown. Full CP-15/roster are still unrun, ordered behind acceptance.
+
+## Final diagnosis, repair, and qualification boundary
+
+The gated smoke probe passed with an ordinary local SSH child. The extra gated one-method diagnostic reused the902a4446569992a4e31e9141aa6694753779863a assembly while consuming current bf6064a78c2994b17b10eaa0a19e69cfc9958048 scripts; it executed1/0/1/0,78.152s method,79.114s test host,slot wait15s/held81s. It is diagnostic only, not a fresh qualified build. Its failure-line=0 established a remote exit rather than a caught client exception. This unlisted diagnostic was necessary to locate the introduced transport error; no final-row credit is claimed.
+
+The fixture had injected setup before every EXIT trap, including helper-local traps. On the second audit it reset phase state and recursively aliased the audit wrapper.4a382faf66fadd5a957ac34a02c5d2baf40da979 changes that to one exact global host-entry injection, with an exact-one-marker guard. This does not alter the product or remove any protective assertion.
+
+Fresh ENTRY-FIX20261031-075303-659f at4a382faf66fadd5a957ac34a02c5d2baf40da979 ended RED1,2/0/2/0, source clean/build verified. W1=114.127s, J10about259s. Build304.176s,compiler184.10s,row384.958s,tests374.036s,total808.221s wall/793.232s charged; build slot15s,row0. No deadline fired. The14m charged/16m wall task-allocation cap was not a raised row deadline; row remained10m.
+
+```text
+CHECKPOINT ENTRY-FIX commit=4a382faf66fadd5a957ac34a02c5d2baf40da979 build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementReceiptTests*)|(VolumeRetirementWrapperTests*)/(Manual_attestation_is_exact_and_cannot_waive_findings*)|(Retire_temp_uses_current_proof_protocol*) executed=2 passed=0 failed=2 skipped=0 trx=/work/worktrees/task-e9fd8902/.antiphon/checkpoints/20261031-075303-659f/rows/ENTRY-FIX/run.trx slot=granted waited=0s dirty=0 source=4a382faf66fadd5a957ac34a02c5d2baf40da979 sourceState=clean buildSource=verified
+```
+
+The W1 host trace now proves an initial v2 proof, complete real audit, exact-object renewed origin proof, matching controller confirmation, immutable Ready, transport-exit=0/failure-line=0 and zero deletes. The public bridge still falsely refused. A separate gated scalar-return probe at4a382faf66fadd5a957ac34a02c5d2baf40da979 reproduced assertion red: output-count=2, types System.Threading.Tasks.VoidTaskResult and System.Int32. PowerShell emitted the async completion object into the exit-code return.56340382cf49e573328fb5b4b9d045cfc3c9f26e casts the coordinator and bounded-process stdin completion results to void. The identical gated probe then passed: output-count=1, System.Int32,0. Both probes waited30s; red held3s and green1s. This is a narrow red/green repair witness, NOT a green full W1/J10 selection. No fresh build followed this final source repair; acceptance must be rerun first. The withdrawn-origin and subsequent wrapper Apply controls in the new driver remain unqualified because W1 stopped at its first assertion.
+
+No test method was removed/skipped, assertion relaxed, floor lowered, production policy deadline changed or deletion path added without its retained refusal assertions. The original c1609-wrapper-cases.mjs is byte-identical to baseline. No credential entered a helper. All fake SSH/Docker/Git operations used local inherited owned children. No desktop files, live d47848cc qualification, production volumes, tags, deploy, rc rebase or activation were touched. Standing authority covered these repairs; no new approval was requested.
+
+## Final closed-list status (this continuation)
+
+| Row | Fresh whole-row result | Required floor | Row cap for next run |
+|---|---|---:|---:|
+| CP-3 |not run; owed|25|28m|
+| CP-4 |not run; owed|12|5m|
+| CP-5 |not run; owed|30|2m|
+| CP-6 |not run; owed|132|6m|
+| CP-7 |not run; owed|52|4m|
+| CP-8 |not run; owed|10|17m|
+| CP-9 |not run; full22 owed|22|30m|
+| CP-10 |not run; real-Docker cleanup owed|3|8m|
+| CP-15 |not run; fresh full16 first after acceptance|16|6m|
+| CP-16 |not run; owed|23|6m|
+| CP-11 |native Windows owed|12|10m|
+| CP-12 |native Windows owed; fresh Linux C1210 also owed|3|2m|
+| CP-13 |native Windows owed; fresh Linux docs also owed|16|2m|
+
+CP-1/2/14 are historical intentional-red plan rows, not fresh final green rows. Do not add focused passes to prior partial/historical rows. CP-15 was not attempted because acceptance never reached a fresh green boundary and the bounded task budget was consumed by red-first repairs and verified builds. No full-row p95 is established; method/build samples above are not p95. Inherited S5 gaps remain: H6 pipe-holding descendant cleanup after the root exits; planned recursive state/dind persistence and observation-error closure; lock/reservation/dependency/historical-container matrices; strict envelope completeness. Current J8 matrix green does not close those separate gaps. Final Opus Review is premature.
+
+## Static checks and remaining commands
+
+Definition files did not change; -Update never ran. The REAL land graph -Check passed at4a382faf66fadd5a957ac34a02c5d2baf40da979 using the leased evaluator from the7650549b0162404a71ddc8ffece57d9d78c7f2b7 producing build. Digest20DE49F6B177E5A238F20D4F8C7F33EAEE6B511A9163CDB902D9136EF06DECB6,count66,phase=pass2,approved; slot waited15s/held39s. The final void casts do not change definitions. Module load and PowerShell/Bash/Node syntax passed after the closing-parenthesis fix; transport scripts remain ASCII. OS witness inventory passed at4a382faf66fadd5a957ac34a02c5d2baf40da979:10 source paths, test-only OS candidates, no production selector/startup changes. Final report-only-tip checks are recorded below.
+
+Fetched origin/master and merge-tree --write-tree at final code56340382cf49e573328fb5b4b9d045cfc3c9f26e passed without conflicts, tree bbc6983bd24b8e57e403e6b70ddb3ca734279e2d. No target merge was performed. This does not establish landability while acceptance remains red.
+
+Next owner: bootstrap a NEW output, import the plan, set UseAppHost=false,TEMP=/tmp and fresh phase variables, use the corrected caps in the table, then run the exact acceptance selection first (J4/J10/J8/W1/H1 as appropriate to the final repairs). Run/wait until terminal; validate the structured report. Only after acceptance green: fresh full CP-15, then the entire closed Linux list CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-15,CP-16 serial, then Linux portable C1210/docs. Use a fresh output every run and preserve owner/source checks. No bypass/retry unleased after exit4.
+
+Native Windows commands remain owed, only on its separately assigned native host:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1609-windows-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1609-windows-tool/ --property:UseAppHost=false
+dotnet tools/Antiphon.Checkpoints/bin-c1609-windows-tool/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-29-card-1609-content-derived-volume-retirement-plan.md --out .antiphon/c1609-windows.yaml
+# Pin UseAppHost=false, CP-11=10m, CP-12/13=2m; fresh output and phase variables.
+dotnet tools/Antiphon.Checkpoints/bin-c1609-windows-tool/Antiphon.Checkpoints.dll run .antiphon/c1609-windows.yaml --rows CP-11,CP-12,CP-13 --serial --expected-source-sha <full-source-sha> --max-wait 30s
+dotnet tools/Antiphon.Checkpoints/bin-c1609-windows-tool/Antiphon.Checkpoints.dll wait --run <id> --max-wait 30s
+```
+
+Production preview/audit remains OWED after S5 and independent final Opus review, reviewed rc port after topup38/before CARD-1615, and installed tool/image UID/protocol/registry/endpoint verification. First production action is PREVIEW ONLY:
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <reviewed-rc-tool-sha> -Phase retire-temp -DryRun -ProjectId <real-project-id>
+```
+
+Inspect complete findings/proof/refusal denominators. No production Apply or Close is authorized by this report. Production deletes remain DISABLED.
+
+## Pushed slices
+
+```text
+445a22abe88002218c8c9f870b39621fdac563ff test: require Apply admission before long content audits
+f4118d17d2cb32b86839473f59340e8336efd6e3 docs: retain intended long Apply admission red and measured costs
+a8c5683698db4cf734fb1ded4967a4c4ffef5cc0 fix: bind Ready admission before the long Apply audit
+10d7c11538dfe339eb0a8c91f77614cd10e524a1 docs: preserve four acceptance passes and latched owner guard failure
+29da3530ee9fbda5575fd6f9850e29d3e3fb5da6 test: require locked v2 wrapper proof renewal and one audit without container effects
+e70b39e1ada13d31fa104b958a137dd6a744b43e test: preserve real cleanup context in the wrapper transport fixture
+88ab37c77aed90118a98862d3e5835b167af0735 fix: avoid a duplicate audit without container effects and strengthen long manual Preview acceptance
+0c22785c48aeb37a5b84e2cd80d4026296fcd466 test: require exact audited object coverage from renewed origin proofs
+63173fe1a658b2d3ec34671a3e4e25e3f9b1d084 docs: retain required-object producer assertion red
+7650549b0162404a71ddc8ffece57d9d78c7f2b7 feat: renew exact publication proofs through the locked retirement coordinator
+902a4446569992a4e31e9141aa6694753779863a fix: close the coordinator proof-export expression and retain mixed acceptance receipts
+bf6064a78c2994b17b10eaa0a19e69cfc9958048 fix: retain numeric coordinator failure location without child output
+4a382faf66fadd5a957ac34a02c5d2baf40da979 test: inject fixture state once at the host entry rather than helper traps
+56340382cf49e573328fb5b4b9d045cfc3c9f26e fix: suppress async completion objects from retirement exit-code returns
+```
+
+The final evidence-only commit follows these code commits. All checkpoint executors and direct probes were awaited to terminal. Generated JSON/TRX/logs remain ignored; essential unchanged CHECKPOINT lines are retained here. Cleanup removes only the eleven literal alternate build output paths recorded in .antiphon/c1609-11-cleanup.txt after the last run; no checkpoint evidence, fixture volume or state directory is deleted.
+
+--- next stage ---
+next: code
+handoff: rerun repaired acceptance with fresh source/build provenance; then full CP-15 and whole closed Linux roster; preserve all S5/Windows/production owed work above
+artifact: .antiphon/task-e9fd8902.md
+
+Final static/cleanup: module load, diff whitespace and OS witness inventory passed at final code56340382cf49e573328fb5b4b9d045cfc3c9f26e. All eleven literal alternate outputs above were removed after every owned run joined. Checkpoint evidence and retained fixture state were preserved.
