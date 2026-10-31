@@ -54,7 +54,7 @@ internal static class LiveClaudeProfileMutants
         new("PC-80","V-17","LiveClaudeArgvCapture.cs","if (capture.ProducerBuild != context.ProducerBuild)","if (false)","capture-build"),
         new("PC-81","V-17","LiveClaudeArgvCapture.cs","if (capture.Uid != ProducerUid)","if (false)","capture-uid"),
         new("PC-82","V-17","LiveClaudeArgvCapture.cs","capture.Model != model || capture.Role != role ||","capture.Role != role ||","capture-request"),
-        new("PC-83","V-17","LiveClaudeArgvCapture.cs","throw new LiveClaudeRefusal(\"producer-incomplete\");\n        if (LiveClaudeProfile.HashFile(context.ProducerReceipt)","return;\n        if (LiveClaudeProfile.HashFile(context.ProducerReceipt)","producer-incomplete"),
+        new("PC-83","V-17","LiveClaudeArgvCapture.cs","throw new LiveClaudeRefusal(\"producer-incomplete\");\n        if (LiveClaudeProfile.HashFile(context.ProducerReceipt)","return \"\";\n        if (LiveClaudeProfile.HashFile(context.ProducerReceipt)","producer-incomplete"),
         new("PC-84","V-17","LiveClaudeArgvCapture.cs","if (!capture.Complete || capture.Args.Length==0)","if (capture.Args.Length==0)","capture-cut"),
         new("PC-84","V-17","LiveClaudeArgvCapture.cs","if (!capture.Complete || capture.Args.Length==0)","if (!capture.Complete)","capture-cut")
     ];
@@ -90,7 +90,8 @@ internal static class LiveClaudeProfileMutants
         sources[m.File]=source;
         var green=Execute(sources.Values,m.V,m.Variant,context,captures,expected,cacheHealthy:true);
         if(green is not null) throw new InvalidOperationException("C1545 "+m.Pc+" restored-green failed",green);
-        Console.WriteLine($"C1545 {m.Pc}/{m.Variant??m.Assertion} assertion-red; restored-green source={LiveClaudeProfile.Hash(source)} patch={LiveClaudeProfile.Hash(m.From+"\n"+m.To)}");
+        var line=source[..site].Count(c=>c=='\n')+1;
+        Console.WriteLine($"C1545 {m.Pc}/{m.Variant??m.Assertion} assertion-red; restored-green file={m.File} line={line} source={LiveClaudeProfile.Hash(source)} patch={LiveClaudeProfile.Hash(m.From+"\n"+m.To)}");
     }
     private static Exception? Execute(IEnumerable<string> sources,string v,string? variant,LiveClaudePortableContext? context,
         LiveClaudeArgvCapture[]? captures,Dictionary<string,string[]>? expected,bool cacheHealthy=false)

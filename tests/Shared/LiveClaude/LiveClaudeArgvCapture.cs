@@ -37,18 +37,27 @@ internal sealed record LiveClaudeArgvCapture(string Source, string Run, string P
         var path=Path.Combine(context.Root,"captures.json");
         File.WriteAllText(path+".partial",JsonSerializer.Serialize(captures,LiveClaudePortableContext.Json));
         File.Move(path+".partial",path); // no ambient latest file, no overwrite
+        Console.WriteLine($"C1545 CAPTURE source={context.Source} run={context.Run} producerBuild={captures[0].ProducerBuild} sha256={LiveClaudeProfile.HashFile(path)} count=15");
     }
     public static LiveClaudeArgvCapture[] Load(LiveClaudePortableContext context)
     {
-        RequireProducer(context);
-        var captures=JsonSerializer.Deserialize<LiveClaudeArgvCapture[]>(File.ReadAllText(Path.Combine(context.Root,"captures.json")),LiveClaudePortableContext.Json)
-            ?? throw new LiveClaudeRefusal("partial-capture");
+        var digest=RequireProducer(context);
+        string payload;
+        try {payload=File.ReadAllText(Path.Combine(context.Root,"captures.json"));}
+        catch(IOException) {throw new LiveClaudeRefusal("partial-capture");}
+        var captures=ReadPayload(payload,digest);
         if (captures.Length != 15 || captures.Select(c=>c.Model+"/"+c.Role).Distinct().Count()!=15)
             throw new LiveClaudeRefusal("partial-capture");
         foreach (var capture in captures) Validate(context,capture,capture.Model,capture.Role);
         return captures;
     }
-    public static void RequireProducer(LiveClaudePortableContext context)
+    public static LiveClaudeArgvCapture[] ReadPayload(string? payload,string digest)
+    {
+        if(payload is null || LiveClaudeProfile.Hash(payload)!=digest) throw new LiveClaudeRefusal("partial-capture");
+        try {return JsonSerializer.Deserialize<LiveClaudeArgvCapture[]>(payload,LiveClaudePortableContext.Json) ?? throw new LiveClaudeRefusal("partial-capture");}
+        catch(JsonException) {throw new LiveClaudeRefusal("partial-capture");}
+    }
+    public static string RequireProducer(LiveClaudePortableContext context)
     {
         if (context.ProducerReceipt is null || context.ProducerBuild is null || context.ProducerReceiptHash is null)
             throw new LiveClaudeRefusal("producer-incomplete");
@@ -67,6 +76,11 @@ internal sealed record LiveClaudeArgvCapture(string Source, string Run, string P
         XNamespace ns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
         var result=trx.Descendants(ns+"UnitTestResult").Single(r=>r.Attribute("testName")?.Value=="LaunchArgumentsKeepProductionSources");
         if(result.Attribute("outcome")?.Value!="Passed") throw new LiveClaudeRefusal("producer-incomplete");
+        var marker=System.Text.RegularExpressions.Regex.Match(result.Element(ns+"Output")?.Element(ns+"StdOut")?.Value ?? "",
+            @"C1545 CAPTURE source=([0-9a-f]{40}) run=(\S+) producerBuild=([0-9A-F]{64}) sha256=([0-9A-F]{64}) count=15");
+        if(!marker.Success || marker.Groups[1].Value!=context.Source || marker.Groups[2].Value!=context.Run
+            || marker.Groups[3].Value!=context.ProducerBuild) throw new LiveClaudeRefusal("producer-incomplete");
+        return marker.Groups[4].Value;
     }
     public static void Validate(LiveClaudePortableContext context,LiveClaudeArgvCapture capture,string model,string role)
     {

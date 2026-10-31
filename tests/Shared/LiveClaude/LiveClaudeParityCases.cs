@@ -24,5 +24,9 @@ internal static class LiveClaudeParityCases
                 LiveClaudeProfileCases.Refuses(()=>LiveClaudeArgvCapture.Validate(context,changed,capture.Model,capture.Role),"partial-capture","V-17","capture-cut");
         }
         LiveClaudeProfileCases.Refuses(()=>LiveClaudeArgvCapture.RequireProducer(context with {ProducerReceipt=null}),"producer-incomplete","V-17","producer-incomplete");
+        var digest=LiveClaudeArgvCapture.RequireProducer(context);
+        var payload=File.ReadAllText(Path.Combine(context.Root,"captures.json"));
+        foreach(var cut in new[]{null,payload[..(payload.Length/2)],payload.Replace("--session-id","--altered-id",StringComparison.Ordinal)})
+            LiveClaudeProfileCases.Refuses(()=>LiveClaudeArgvCapture.ReadPayload(cut,digest),"partial-capture","V-17","publication-cut");
     }
 }

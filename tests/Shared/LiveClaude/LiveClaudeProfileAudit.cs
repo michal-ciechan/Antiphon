@@ -132,18 +132,54 @@ internal static class LiveClaudeProfileAudit
         Statement(source,"BuildProfileLaunch","var spec = profile.Build(role, session, overlay);");
         Expression(source,"ProjectProfile","profile.Project(args)");
     }
-    public static void C680Callers()
+    public static void C680Callers(LiveClaudeProfileCases.Builder? build = null, LiveClaudeProfileCases.Projector? project = null)
     {
         var source=LiveClaudeExecutableAudit.Read("tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs");
         C680(source);
         Reject(C680,source,"launch.Env, launch.Cwd","new Dictionary<string, string>(), launch.Cwd","PC-38");
-        Reject(C680,source,"using var profile = new LiveClaudeProfile","var profile = new LiveClaudeProfile","PC-39");
+        var selected=Environment.GetEnvironmentVariable("C1545_PROFILE_CONTROLS");
+        if(selected=="V-13") foreach(var branch in new[]{"permission","question"})
+        {
+            using var f=new LiveClaudeProfileFixture();
+            var cwd=Directory.CreateDirectory(Path.Combine(f.Context.Cwd,branch)).FullName;
+            using(var profile=new LiveClaudeProfile(f.Context with {Cwd=cwd}))
+                build!(profile,"control",f.Session,null);
+            LiveClaudeProfileCases.Assert(!Antiphon.Agents.Pty.ClaudeProjectTrust.IsTrusted(cwd,Path.Combine(f.Context.ConfigDir!,".claude.json")),"V-13","restore-"+branch,"each probe cwd restores its owned trust");
+            Reject(C680,source,"using var profile = new LiveClaudeProfile","var profile = new LiveClaudeProfile","PC-39",branch);
+        }
         Reject(C680,source,"profileContext with { Cwd = cwd }","profileContext with { Cwd = Environment.CurrentDirectory }","PC-45");
-        Reject(C680,source,"var spec = profile.Build(role, session, overlay);","var spec = profile.Build(role, session, overlay) with { Args = new[] { \"--model\", \"haiku\" } };","PC-56");
-        Reject(C680,source,"profile.Capture(args);","profile.Capture(new[] { \"--setting-sources\", \"\" });","PC-73");
+        if(selected=="V-15")
+        {
+            foreach(var mode in new[]{"named-B","production-default"})
+            {
+                using var f=new LiveClaudeProfileFixture(mode:mode);
+                using var profile=new LiveClaudeProfile(f.Context);
+                var spec=build!(profile,"control",f.Session,null);
+                var i=Array.IndexOf(spec.Args,"--model");
+                LiveClaudeProfileCases.Assert(mode=="production-default" ? i<0 : i>=0 && spec.Args[i+1]==mode,"V-15",mode,"actual C680 builder consumes this model context");
+                Reject(C680,source,"var spec = profile.Build(role, session, overlay);","var spec = profile.Build(role, session, overlay) with { Args = new[] { \"--model\", \"haiku\" } };","PC-56",mode);
+            }
+            foreach(var kind in new[]{"managed","global"})
+            {
+                using var f=new LiveClaudeProfileFixture();
+                using var profile=new LiveClaudeProfile(f.Context);
+                var spec=build!(profile,"control",f.Session,null);
+                var before=project!(profile,spec.Args);
+                var file=before.Sources.Single(s=>s.Kind==kind).Path;
+                var original=File.ReadAllText(file);
+                try
+                {
+                    var json=System.Text.Json.Nodes.JsonNode.Parse(original)!; json["model"]="changed-c680";
+                    File.WriteAllText(file,json.ToJsonString());
+                    LiveClaudeProfileCases.Assert(project(profile,spec.Args).Digest!=before.Digest,"V-15","drift-"+kind,"C680 caller measures this loaded source");
+                }
+                finally {File.WriteAllText(file,original);}
+                Reject(C680,source,"profile.Capture(args);","profile.Capture(new[] { \"--setting-sources\", \"\" });","PC-73",kind);
+            }
+        }
         Reject(C680,source,"=> profile.Project(args);","=> profile.Project(args) with { ReuseEligible = true };","PC-74");
     }
-    private static void Reject(Action<string> audit,string healthy,string from,string to,string pc)
+    private static void Reject(Action<string> audit,string healthy,string from,string to,string pc,string? variant=null)
     {
         var selected=Environment.GetEnvironmentVariable("C1545_PROFILE_CONTROLS");
         var witness=pc switch { "PC-31" or "PC-32" or "PC-33" => "V-7", "PC-40" or "PC-41" or "PC-42" or "PC-43" or "PC-44"=>"V-8",
@@ -152,7 +188,17 @@ internal static class LiveClaudeProfileAudit
         if(!healthy.Contains(from,StringComparison.Ordinal)) Fail(pc+"-site");
         try {audit(healthy.Replace(from,to,StringComparison.Ordinal));}
         catch(InvalidOperationException e) when(e.Message.StartsWith("C1545 profile-audit/"))
-        { audit(healthy); Console.WriteLine($"C1545 {pc} assertion-red; restored-green (owned syntax copy)"); return; }
+        {
+            audit(healthy);
+            var path=pc switch {"PC-40"=>Pty+"ClaudeSubmitContractTests.cs","PC-44"=>Pty+"ClaudeRemoteControlMenuCanaryTests.cs",
+                "PC-38" or "PC-39" or "PC-45" or "PC-56" or "PC-73" or "PC-74"=>"tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs",_=>Startup};
+            var raw=LiveClaudeExecutableAudit.Read(path);
+            var site=raw.IndexOf(from,StringComparison.Ordinal);
+            if(site<0) Fail(pc+"-binding");
+            var line=raw[..site].Count(c=>c=='\n')+1;
+            Console.WriteLine($"C1545 {pc}/{variant??"caller"} assertion-red; restored-green file={path} line={line} source={LiveClaudeProfile.Hash(raw)} patch={LiveClaudeProfile.Hash(from+"\n"+to)} (owned syntax copy)");
+            return;
+        }
         Fail(pc+"-survived");
     }
 }

@@ -25,7 +25,7 @@ public class LiveLaneIsolationTests
     private static void Run(string v)
     {
         LiveClaudeProfileCases.Run(v,Build,project:ClaudeDialogWatchdogCanaryTests.ProjectProfile);
-        LiveClaudeProfileAudit.C680Callers();
+        LiveClaudeProfileAudit.C680Callers(Build,ClaudeDialogWatchdogCanaryTests.ProjectProfile);
         LiveClaudeProfileMutants.Run(v);
     }
     [Test] public void DedicatedConfigOwnsTrustAndEvidence() => Run("V-13");

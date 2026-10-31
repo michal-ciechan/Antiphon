@@ -94,6 +94,7 @@ internal sealed class LiveClaudeProfile : IDisposable
             { var file = Path.Combine(dir.FullName, name); if (File.Exists(file)) queue.Enqueue(file); }
             var dot = Path.Combine(dir.FullName, ".claude");
             if (!Directory.Exists(dot)) continue;
+            LiveClaudeProfilePaths.Owned(dot, Context.OwnedRoot);
             if ((File.GetAttributes(dot) & FileAttributes.ReparsePoint) != 0) throw new LiveClaudeRefusal("linked-instructions");
             Enumerate(dot);
         }
