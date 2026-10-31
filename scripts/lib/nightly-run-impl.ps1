@@ -9,6 +9,7 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # itself rather than relying on every caller to remember. A caller that dot-sources
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
+. (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside
 # Invoke-AntiphonNightlyRunCore kept the function only for that call and left
@@ -128,6 +129,8 @@ function Invoke-AntiphonNightlyRunCore {
         [string]$SelectionPath = '',
         [string]$SelectionDigest = '',
         [int]$Attempt = 1,
+        [string]$PriorFailuresPath = '',
+        [string]$PriorFailuresDigest = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
         [string]$Profile = 'nightly',
@@ -382,6 +385,16 @@ function Invoke-AntiphonNightlyRunCore {
             return [pscustomobject]$result
         }
 
+        # Retain the optional input OUTSIDE the checkout before git clean/sync.
+        # Receiving implementations independently verify the copied bytes.
+        if($PriorFailuresPath){
+            $historyRoot=Join-Path (Join-Path $StateRoot 'history') $RunId
+            if(Test-NightlyPathContained -Inner $historyRoot -Outer $CheckoutRoot){Write-Warning 'failed-first fallback: history-copy-inside-checkout'}
+            else {
+                $historyInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -OwnedDirectory $historyRoot
+                if($historyInput.History){$PriorFailuresPath=$historyInput.Path;$PriorFailuresDigest=$historyInput.Digest}
+            }
+        }
         if (-not $NoSync) {
             $phase = 'fetch'
             $stateObj.phase = $phase
@@ -488,6 +501,8 @@ function Invoke-AntiphonNightlyRunCore {
                         $pwshArgs += '-Attempt'; $pwshArgs += [string]$Attempt
                     }
                     if ($NoReport) { $pwshArgs += '-NoReport' }
+                    if($PriorFailuresPath){$pwshArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+                    if($pwshArgs -notcontains '-Attempt'){$pwshArgs += @('-Attempt',[string]$Attempt)}
                     # D-2/D-3: profile, pinned sha and candidate identity must survive the hop.
                     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) { $pwshArgs += '-ExpectedSha'; $pwshArgs += $ExpectedSha }
                     if (-not [string]::IsNullOrWhiteSpace($CandidateId)) { $pwshArgs += '-CandidateId'; $pwshArgs += $CandidateId }
@@ -613,6 +628,8 @@ function Invoke-AntiphonNightlyRunCore {
             $testArgs += $SeamsPath
         }
         Write-NightlyRunLine ('running {0}' -f $testsScript)
+        if($PriorFailuresPath){$testArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+        if($testArgs -notcontains '-Attempt'){$testArgs += @('-Attempt',[string]$Attempt)}
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
         $testExit = [int]$testRun.ExitCode
         if ($null -eq $testExit) { $testExit = 1 }
@@ -860,6 +877,8 @@ function Invoke-AntiphonNightlyRun {
         [string]$SelectionPath = '',
         [string]$SelectionDigest = '',
         [int]$Attempt = 1,
+        [string]$PriorFailuresPath = '',
+        [string]$PriorFailuresDigest = '',
         [string]$SeamsPath = '',
         [string]$Trigger = 'scheduled',
         [string]$Profile = 'nightly',

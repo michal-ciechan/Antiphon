@@ -471,6 +471,45 @@ function Read-NightlyPriorFailures {
     return $history
 }
 
+function Initialize-NightlyDispatchHistory {
+    param([string]$Path, [string]$ExpectedDigest = '', [string]$OwnedDirectory = '', [string]$CandidateSha = '')
+    $fallback='history-not-requested'
+    try {
+        if(-not $Path){throw $fallback}
+        $fallback='history-unavailable'
+        $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
+        $history=Read-NightlyPriorFailures @read
+        $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
+        if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
+        if($summary.dispatchProgress -and $summary.dispatchProgress.PSObject.Properties.Name -ccontains 'liveness' -and $summary.dispatchProgress.liveness -cne 'closed'){throw 'history-liveness-unknown'}
+        if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
+        $completed=[datetimeoffset]::MinValue
+        if($summary.completedAt -is [datetime]){$completed=[datetimeoffset]$summary.completedAt}
+        elseif(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
+        $now=Get-NightlyUtcNow
+        if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
+        $digest=Get-NightlyHistoryDigest $Path
+        $copy=$Path
+        if($OwnedDirectory){
+            Assert-NightlyHistoryNoLink $OwnedDirectory
+            [void][IO.Directory]::CreateDirectory($OwnedDirectory)
+            $copy=Join-Path $OwnedDirectory 'prior-failures.json'
+            if([IO.Path]::GetFullPath($Path) -cne [IO.Path]::GetFullPath($copy)){
+                if([IO.File]::Exists($copy)){if((Get-NightlyHistoryDigest $copy) -cne $digest){throw 'history-owned-copy-mismatch'}}
+                else{[IO.File]::Copy($Path,$copy,$false)}
+            }
+            if((Get-NightlyHistoryDigest $copy) -cne $digest){throw 'history-digest-mismatch'}
+        }
+        $previous=$null
+        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
+        return [pscustomobject]@{History=$history;PreviousRun=$previous;Digest=$digest;Path=$copy;FallbackReason=''}
+    } catch {
+        $reason=$_.Exception.Message
+        if($reason -cne 'history-not-requested'){Write-Warning -WarningAction Continue ('failed-first fallback: '+$reason)}
+        return [pscustomobject]@{History=$null;PreviousRun=$null;Digest='';Path=$Path;FallbackReason=$reason}
+    }
+}
+
 function Resolve-NightlyPriorFailures {
     [CmdletBinding()]
     param($History, [object[]]$Suites, [ValidateSet('Full','PriorFailureSweep')][string]$QualificationMode = 'Full', $ExclusionContext = $null)

@@ -4,6 +4,98 @@ Plan task `38d5d544`, 2026-10-30; inspected base `2991d96bb301f6de5177c45bd18c51
 
 This plan is filed under the existing CARD-1514 qualification workstream, not a newly inferred card. The caller-requested filename and `2026-10-30-card-1514-failed-first-qualification-ordering-plan.md` contain identical text; update both together. Read the investigation at `docs/investigations/2026-10-30-failed-first-qualification-run.md` for historical evidence and its limitations.
 
+## S3b completion amendment (8d80dbe9, 2026-10-31)
+
+The commissioned contingency repairs the independently failed liveness acceptance.
+CP-6 now includes thirteen named assertions: real metadata/prefix controls plus
+missing generation/metadata, independently rebound metadata identity/version,
+pointer binding, corruption, gaps, truncation, settlement and terminal/seed refusal.
+Unknown liveness is not proof of death: explicit unknown progress falls back with
+an explanation at both optional-history ingress and the pure ordering function,
+without classifying missing chunks or modifying the previous record. A valid closed
+summary remains usable without a heartbeat-derived assertion of process death.
+Both failed and unfinished partitions rotate each suite after its last passed
+chunk; passed work stays last. A two-suite multiple-failure witness discriminates
+rotation of both partitions, in addition to the inherited full-loop replay.
+
+This contingency incurs one additional isolated build and the same exact CP-6/7/8
+rows, serial, estimated 17 minutes including build; cumulative planned ordinary
+cost is now 95 minutes (historical 78 retained). CP-6/7 bounds remain provisional,
+using the retained S3 receipts; no production/native deadline changes. Use the
+fresh output name in the table, TEMP=/tmp, UseAppHost=false, and S3's amended
+20m row / 40m execution / 60m hard wall bounds with separate bounded admission.
+The checkpoint table remains the closed ordinary selection. Windows CP-15/16
+and private supervisor commissioning remain owed. This repository change affects
+only future candidates; d47848cc and all desktop files remain untouched.
+
+## S3 implementation and budget amendment (9294cb43, 2026-10-31)
+
+The latest caller brief requires optional missing/malformed/stale/different-candidate
+run records to fall back to the original complete order with a stated reason.
+S1 strict export/provenance validation stays intact; S3 catches unusable optional
+Full hints at ingress. The new Full ingress conservatively requires the same source
+SHA and a terminal run within seven days; this narrows the older D-6 cross-candidate
+resolver permission, which remains available as a pure resolver and is unchanged.
+A bound summary dispatchProgress snapshot orders failures, unfinished chunks after
+each lane last pass (wrapping earlier holes), then passed chunks. All chunks rerun.
+A changed canonical plan digest falls back; no history supplies execution credit.
+The legacy class-failure format without progress still uses S2 stable priority.
+
+CP-6 includes the complete public entrypoint replay and twelve named assertions;
+its 1080-second harness / 1140-second test bounds are provisional, using S2 measured
+full-replay costs. The initial full prototype was stopped/joined after a 741-second
+lease: 154 TRX outputs existed, but diagnostic finalization had not returned.
+It is incomplete, never green/RED assertion evidence. A short fixture then produced
+4/8 intended assertion failures before behavior wiring. The full fixture now shares
+one UID index; diagnostic summary JSON uses native serialization only, leaving
+canonical authority writers unchanged. Full-scale summary throughput was outside
+S2 acceptance and is now measured by the actual entrypoint witness.
+
+CP-7 retains its public interleaving assertions plus the existing S2 eighteen-check
+D-15/17 matrix, once per case. Its provisional 180-second harness and 240-second test
+bounds cover the measured 55-second S2 matrix plus 13-second public loop; n is too
+small for p95. Collect the next three ordinary receipts, no sample-only runs.
+CP-6 estimate is 12 minutes including its isolated build, CP-7 three and CP-8 two:
+S3 ordinary estimate 17 minutes, whole-plan estimate 78 (historical 72/65 retained).
+S3 uses --row-timeout 20m --total-timeout 40m --hard-wall-timeout 60m, serial rows.
+Admission remains bounded separately by the tool 45-minute slot queue. These are
+pre-run declarations based on observed setup/diagnostic cost, not a retry-only
+relaxation of a failed execution deadline. Native watchdogs are unchanged.
+## S2 implementation budget amendment (task 9058bae5, 2026-10-31)
+
+The test selections and 16-row/seven-build manifest are unchanged. CP-4's original
+120-second harness estimate did not include the cost of observing two real
+156-chunk executions (312 owned-process seam calls) and the diagnostic matrix.
+At committed source 3dc42495a on server2/Linux, the retained canonical arm ran
+all 156 chunks: first launch 04:36:17 UTC, terminal projection 04:39:49 UTC
+(212 seconds), after approximately 62 seconds of fixture/preparation. Its
+unbounded diagnostic probe was stopped and joined at 448 seconds during the
+large timing-summary serialization; it is not a passing receipt. Earlier
+100/126-second stopped probes and their costs remain retained. The exact
+companion diagnostic matrix at 3507ffd0a took 55 seconds (16/17 assertions;
+one scratch-path comparison was corrected without changing product behavior).
+
+Code removed the quadratic planned-UID lookup, reused the existing discovery
+index/census, and shares immutable fixture setup once per case. CP-4 retains
+both full 19,012-node/150-antiphon-chunk executions plus six companion chunks;
+its timing-summary field matrix uses the companion fixture, including real
+summary/CSV/Markdown writers. No test, UID, production chunk or assertion is
+omitted from its stated responsibility. Full-scale summary throughput is not
+claimed by CP-4. The production manifest optimization is checked against exact
+original-writer bytes generated from start ref 3fb3c113e8b2554ccd5789e00375dbfd69697981.
+
+CP-4 is now estimated at 9 minutes, with an 18-minute owned harness deadline,
+19-minute outer test deadline and 20-minute checkpoint execution bound: about
+2x the measured one-arm cost extrapolated to both arms plus the 55-second
+matrix. This is explicitly **provisional, n=1, not measured p95** (CARD-1404/
+CARD-1514). Collect the next three ordinary CP-4 receipts with phase timings
+before recalibrating; do not add verification runs solely to collect samples.
+Admission stays separate (host slot wait 45 minutes, hard wall 60 minutes for
+the S2 group); no timeout or watchdog on production/native qualification changed.
+S2 ordinary estimate is 17 minutes; the current total is 72 minutes. Historical
+65-minute plan observations below are preserved. Use the S2-specific command
+below; all other slice commands and budgets remain unchanged.
+
 ## Round-4 amendment status
 
 Task `af154d25`, base `abf60b0e37612b50bbb63e489b94c2d978e3024a`; review `a0aad3d0` read in full. The one remaining defect is addressed by D-21: Partial derives exclusions from the validated history profile and forces the exclusion pass at every consumer. A-1 through A-4 are incorporated below. The confirmed rc Partial ingress refusal, active identity/legacy heartbeat contract, seven-slice budget and checkpoint totals are retained. Both plan copies remain byte-identical. Verification design is complete; **next: code**. No further Plan/TestDesign or pre-Code review round is needed; ordinary Code Final Review and the existing M1/M2 integration prerequisite still apply. No product source or live run is changed.
@@ -310,10 +402,10 @@ Portable rows use live default placement with no `-Runner` or `-Platform`; Windo
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-failfirst-s1/` | portable-history | `/*/Antiphon.Tests.Scripts/RcFailureHistoryTests/EvidenceUnion` | D-3..6, evidence union | exact method, 36+7+1 observations | 1 | 6 | true |
 | CP-2 | S1 | `CP-1` | portable-refusal | `/*/Antiphon.Tests.Scripts/RcFailureHistoryTests/RefusesIncompleteEvidence` | D-4..6, D-21 | exact method, all named refusals | 1 | 2 | true |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-failfirst-s2/` | portable-global-plan | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/GlobalReplayPriority` | D-1..3 | exact method, full replay | 1 | 7 | true |
-| CP-4 | S2 | `CP-3` | portable-conservation | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/FullBytesAndCoverageConserved` | D-2, D-15, D-17, no-op witness | exact method, named field policies | 1 | 2 | true |
+| CP-4 | S2 | `CP-3` | portable-conservation | `/*/Antiphon.Tests.Scripts/RcFailedFirstPlannerTests/FullBytesAndCoverageConserved` | D-2, D-15, D-17, no-op witness | exact method, named field policies | 1 | 9 | true |
 | CP-5 | S2 | `CP-3` | portable-s3 | `/*/Antiphon.Tests.Scripts/RcFullWatchdogTests/CapFitsAdmittedPlannedCost` | D-11 | exact existing method | 1 | 1 | true |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-failfirst-s3/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 7 | true |
-| CP-7 | S3 | `CP-6` | portable-m1-m2 | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/JournalCustodySurvivesInterleaving` | D-12 | exact method, terminal matrix | 1 | 2 | true |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-8d80-s3b1/` | portable-actual-loop | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/ActualLoopFollowsSchedule` | D-1, D-10, D-16..17 | exact method, launch and cost trace | 1 | 12 | true |
+| CP-7 | S3 | `CP-6` | portable-m1-m2 | `/*/Antiphon.Tests.Scripts/RcFailedFirstExecutionTests/JournalCustodySurvivesInterleaving` | D-12 | exact method, terminal matrix | 1 | 3 | true |
 | CP-8 | S3 | `CP-6` | portable-m1-regression | `/*/Antiphon.Tests.TestHelpers/RcManifestIntegrationTests/LedgerAndReceiptBytesAreUnchanged` | D-12 | exact existing M1/M2 method | 1 | 2 | true |
 | CP-9 | S4a | `tests/Antiphon.Tests -> bin-failfirst-s4a/` | portable-partial-plan | `/*/Antiphon.Tests.Scripts/RcPriorFailureSweepTests/SelectedClassesOnly` | D-3, D-8, D-21 | exact method, selected/excluded UID sets | 1 | 8 | true |
 | CP-10 | S4a | `CP-9` | portable-partial-artifacts | `/*/Antiphon.Tests.Scripts/RcPriorFailureSweepTests/AllArtifactsRemainPartial` | D-8..9, D-18..20 | exact method, all artifacts and roots | 1 | 2 | true |
@@ -324,7 +416,7 @@ Portable rows use live default placement with no `-Runner` or `-Platform`; Windo
 | CP-15 | S5-W | `tests/Antiphon.Tests -> bin-failfirst-win/` | windows-native-hop | `/*/Antiphon.Tests.Scripts/RcFailureHistoryNativeTests/WindowsHopAndLock` | D-7, D-10 | exact native method, no skip | 1 | 8 | true |
 | CP-16 | S5-W | `CP-15` | windows-native-journal | `/*/Antiphon.Tests.Scripts/RcFailureHistoryNativeTests/WindowsJournalAndScope` | D-9, D-12 | exact native method, no skip | 1 | 2 | true |
 
-There are **16 rows, 7 isolated builds, 16 outer results minimum, 65 estimated minutes**. Zero outer failures/skips; intentional failing child artifacts are assertions inside the passing outer test. No OR is needed: exact methods avoid suffix widening. Before accepting each built roster, verify the exact method and class from fresh TRX; source census must confirm no accidentally duplicated declaration. If combining rows later, every OR operand must be parenthesized and end in `*`, table pipes escaped as `\|`, and suffix collisions must be checked across the full source/discovery universe. Never substitute an unsafe OR filter for these rows.
+There are **16 rows, 7 isolated builds, 16 outer results minimum, 72 estimated minutes**. Zero outer failures/skips; intentional failing child artifacts are assertions inside the passing outer test. No OR is needed: exact methods avoid suffix widening. Before accepting each built roster, verify the exact method and class from fresh TRX; source census must confirm no accidentally duplicated declaration. If combining rows later, every OR operand must be parenthesized and end in `*`, table pipes escaped as `\|`, and suffix collisions must be checked across the full source/discovery universe. Never substitute an unsafe OR filter for these rows.
 
 ### Exact execution commands
 
@@ -339,7 +431,7 @@ Per-row command is exactly `dotnet tools/Antiphon.Checkpoints/bin-failfirst-tool
 | Task/lane | Exact command suffix after the isolated DLL | Estimate |
 |---|---|---:|
 | S1 / portable | `run --plan $plan --rows CP-1,CP-2 --expected-source-sha $sha --row-timeout 12m --total-timeout 28m --hard-wall-timeout 30m --serial` | 8 min |
-| S2 / portable | `run --plan $plan --rows CP-3,CP-4,CP-5 --expected-source-sha $sha --row-timeout 12m --total-timeout 28m --hard-wall-timeout 30m --serial` | 10 min |
+| S2 / portable | `run --plan $plan --rows CP-3,CP-4,CP-5 --expected-source-sha $sha --row-timeout 20m --total-timeout 40m --hard-wall-timeout 60m --serial` | 17 min |
 | S3 / portable | `run --plan $plan --rows CP-6,CP-7,CP-8 --expected-source-sha $sha --row-timeout 12m --total-timeout 28m --hard-wall-timeout 30m --serial` | 11 min |
 | S4a / portable | `run --plan $plan --rows CP-9,CP-10 --expected-source-sha $sha --row-timeout 12m --total-timeout 28m --hard-wall-timeout 30m --serial` | 10 min |
 | S4b / portable | `run --plan $plan --rows CP-11,CP-12 --expected-source-sha $sha --row-timeout 12m --total-timeout 28m --hard-wall-timeout 30m --serial` | 8 min |

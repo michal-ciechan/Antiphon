@@ -245,6 +245,7 @@ function Read-TestPhaseTrxRows {
     )
     $none = [pscustomobject]@{ Rows = @(); Complete = $false; Refused = $true }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
+    if ($null -eq $Watch -and $null -ne $script:TestPhaseTrxReadWatch) { $Watch = $script:TestPhaseTrxReadWatch }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     $identity = Get-TestPhasePathIdentity -Path $Path
@@ -1187,12 +1188,17 @@ function Write-TestPhasePlannedManifest {
         [string]$AssemblyId,
         $Groups,
         $DiscoveryNodes,
-        $ProfileExclusions
+        $ProfileExclusions,
+        $DiscoveryIndex = $null,
+        [string]$DiscoveryPath = ''
     )
     $entry = [pscustomobject]@{
         Document = [pscustomobject]@{ Nodes = @($DiscoveryNodes) }
         InProgress = @()
         Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    }
+    if ($null -ne $DiscoveryIndex -and -not [string]::IsNullOrWhiteSpace($DiscoveryPath)) {
+        $entry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
     }
     $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $ProfileExclusions -ProfileAware
     $basisMap = Get-TestPhaseClassBasisMap
@@ -1259,13 +1265,13 @@ function Write-TestPhasePlannedManifest {
     foreach ($id in @($view.RequiredUids)) {
         if (-not $union.ContainsKey([string]$id)) { $missing += [string]$id }
     }
+    # Preserve PowerShell's existing case-insensitive membership semantics without
+    # scanning the entire discovered roster once for every planned UID.
+    $requiredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::InvariantCultureIgnoreCase)
+    foreach ($req in @($view.RequiredUids)) { [void]$requiredSet.Add([string]$req) }
     $extra = @()
     foreach ($id in @($union.Keys)) {
-        $found = $false
-        foreach ($req in @($view.RequiredUids)) {
-            if ([string]$req -eq [string]$id) { $found = $true }
-        }
-        if (-not $found) { $extra += [string]$id }
+        if (-not $requiredSet.Contains([string]$id)) { $extra += [string]$id }
     }
     $manifest = [ordered]@{
         version = 1
@@ -3088,7 +3094,10 @@ function Write-TestPhaseSummaryFiles {
         tests = @($orderedTests)
         sharedFixtures = @($Report.Shared)
     }
-    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-TestPhaseJsonText -Value $summary)
+    # Diagnostic summary only: avoid hundreds of thousands of PowerShell
+    # recursive serializer calls for a complete native roster. Authority writers
+    # retain their original canonical serializer and exact bytes.
+    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-Json -InputObject $summary -Depth 50 -Compress)
 
     $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]

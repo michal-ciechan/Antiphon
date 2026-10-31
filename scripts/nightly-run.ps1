@@ -101,6 +101,8 @@ param(
     [string]$SelectionPath = '',
     [string]$SelectionDigest = '',
     [int]$Attempt = 1,
+    [string]$PriorFailuresPath = '',
+    [string]$PriorFailuresDigest = '',
     [string]$SeamsPath = '',
     [string]$Trigger = 'scheduled',
     [string]$Profile = 'nightly',
@@ -148,6 +150,8 @@ $invoke = @{
     SelectionPath = $SelectionPath
     SelectionDigest = $SelectionDigest
     Attempt = $Attempt
+    PriorFailuresPath = $PriorFailuresPath
+    PriorFailuresDigest = $PriorFailuresDigest
     SeamsPath = $SeamsPath
     Trigger = $Trigger
     Profile = $Profile

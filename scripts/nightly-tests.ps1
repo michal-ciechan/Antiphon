@@ -49,6 +49,8 @@ param(
     [string]$SelectionPath = '',
     [string]$SelectionDigest = '',
     [int]$Attempt = 1,
+    [string]$PriorFailuresPath = '',
+    [string]$PriorFailuresDigest = '',
     [string]$SeamsPath = '',
     [string]$PolicyPath = '',
     [switch]$AllowSharedTree,
@@ -93,6 +95,8 @@ $invoke = @{
     SelectionPath = $SelectionPath
     SelectionDigest = $SelectionDigest
     Attempt = $Attempt
+    PriorFailuresPath = $PriorFailuresPath
+    PriorFailuresDigest = $PriorFailuresDigest
     ReleaseRoot = $ReleaseRoot
     CandidateId = $CandidateId
     SeamsPath = $SeamsPath
