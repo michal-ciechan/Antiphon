@@ -57,8 +57,8 @@ internal static class LiveClaudeStartupMutants
         var root=LiveClaudeExecutableAudit.Root();
         var evidence=File.ReadAllText(Path.Combine(root,"tests/Antiphon.Agents.Pty.Tests/LiveClaudeStartupEvidence.cs"));
         var cases=File.ReadAllText(Path.Combine(root,"tests/Antiphon.Agents.Pty.Tests/LiveClaudeStartupCases.cs"));
-        var method=LiveClaudeStartupAudit.Method(cases,"RunAsync");
-        cases=cases.Replace(method.ToFullString(),"",StringComparison.Ordinal);
+        var entryMethod=LiveClaudeStartupAudit.Method(cases,"RunAsync");
+        cases=cases.Replace(entryMethod.ToFullString(),"",StringComparison.Ordinal);
         // The exact witness bodies execute, with only source-location lookup injected.
         cases=cases.Replace("LiveClaudeExecutableAudit.Root()",Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(root,true),StringComparison.Ordinal);
         var context=File.ReadAllText(Path.Combine(root,"tests/Shared/LiveClaude/LiveClaudeLaunchContext.cs"));
