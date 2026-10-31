@@ -1,0 +1,22 @@
+# Task 8562dc2a tree-kill fix checkpoints
+
+Closed verification for the child tree-kill fix round. One `tests/Antiphon.Tests` build is reused by every server-suite row. The three other suites that compile `tests/Shared/NativeLinuxPolicyWitnessTests.cs` each get their own build, because that witness is linked into the suite assembly. The land-graph row is a command: `-Check` only, never `-Update`, and it does not call `scripts/build-slot.ps1` (the checkpoint row already holds the slot).
+
+Snapshot failure stays `fallback=owned_root_only` (`entireProcessTree: false`). An unguarded `Kill(entireProcessTree: true)` would walk a reused root pid on Linux.
+
+Linux floors: OwnedProcessTreeTests 10; RepositoryMutationLeaseTests 28 executed (two Windows-only skips); LandingGitTests 65 (32 methods, 44 argument rows, 21 parameterless; the six POSIX `Skip.Test` guards run here); child-journal group 33; RcRosterRepairTests 3 plus C1514 census 5; NativeLinuxPolicyWitnessTests 3 per suite.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
+|---|---|---|---|---|---|---|---|---:|---|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-tk8562cp/` | tree-planner | `/*/*/OwnedProcessTreeTests/*` | D-1 D-2 D-3 D-4 planner and executor | all listed, 0 failed | 10 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-2 | all | CP-1 | mutation-lease | `/*/*/RepositoryMutationLeaseTests/*` | repository mutation lease | all listed, 0 failed | 28 | 6 | `TEMP=/tmp;TMP=/tmp` |
+| CP-3 | all | CP-1 | landing-git | `/*/*/LandingGitTests/*` | landing git, parent-death grandchild, detached holder, living root | all listed, 0 failed | 65 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-4 | all | CP-1 | child-journal | `/*/*/(RepositoryMutationLeaseDescribeTests*)\|(RepositoryMutationLeaseOwnerTests*)\|(RepositoryChildJournalInspectorTests*)\|(RepositoryChildRecoveryTests*)\|(RepositoryFenceObserverTests*)/*` | child journal describe, owner, inspector, recovery, fence | all listed, 0 failed | 33 | 6 | `TEMP=/tmp;TMP=/tmp` |
+| CP-5 | all | CP-1 | roster-census | `/*/*/(RcRosterRepairTests*)\|(C1514LandingSplitBudgetTests*)/*` | roster repair, C1404, C1577, C1584, C1410, G2865 | all listed, 0 failed | 8 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-6 | all | CP-1 | policy-antiphon | `/*/*/NativeLinuxPolicyWitnessTests/*` | policy witness compiled into Antiphon.Tests | all listed, 0 failed | 3 | 4 | `TEMP=/tmp;TMP=/tmp` |
+| CP-7 | all | `tests/Antiphon.SessionRunner.Tests -> bin-tk8562run/` | policy-runner | `/*/*/NativeLinuxPolicyWitnessTests/*` | policy witness compiled into SessionRunner.Tests | all listed, 0 failed | 3 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-8 | all | `tests/Antiphon.PtyHost.Tests -> bin-tk8562pty/` | policy-pty | `/*/*/NativeLinuxPolicyWitnessTests/*` | policy witness compiled into PtyHost.Tests | all listed, 0 failed | 3 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-9 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-tk8562agt/` | policy-agents | `/*/*/NativeLinuxPolicyWitnessTests/*` | policy witness compiled into Agents.Pty.Tests | all listed, 0 failed | 3 | 8 | `TEMP=/tmp;TMP=/tmp` |
+| CP-10 | all | n/a | land-graph | `dotnet build tools/Antiphon.LandGraphAudit/Antiphon.LandGraphAudit.csproj -c Release --property:OutputPath=bin-tk8562land/ --property:AppendTargetFrameworkToOutputPath=false --property:UseAppHost=false --nologo -v q -maxcpucount:6 && test -f tools/Antiphon.LandGraphAudit/bin-tk8562land/Antiphon.LandGraphAudit.dll && pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath /work/worktrees/task-8562dc2a/tools/Antiphon.LandGraphAudit/bin-tk8562land/Antiphon.LandGraphAudit.dll` | land verification graph check | exit 0, graph approved, no -Update | n/a | 12 | `TEMP=/tmp;TMP=/tmp` |
