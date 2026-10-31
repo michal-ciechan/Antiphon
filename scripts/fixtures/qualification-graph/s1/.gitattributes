@@ -1,0 +1,2 @@
+# The independent catalog pins and canonical goldens bind exact UTF-8/LF bytes.
+* text eol=lf
