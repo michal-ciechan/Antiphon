@@ -40,6 +40,7 @@ function Get-QualificationGroupPlannedSeconds {
     param([string]$Path, [string]$ChunkId, [string]$SuiteId, [string]$RunId, [string]$Attempt)
     try {
         if(-not $Path -or -not $ChunkId){throw 'missing-path-or-chunk'}
+        if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular' -or [IO.Path]::GetFileName($Path) -cnotmatch '^groups-planned(?:-index|-[a-z0-9][a-z0-9-]{0,40})?\.json$'){throw 'supplied-plan-unavailable'}
         $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
         $activePath=Join-Path $dir 'active-chunk.json'
         $active=Read-QualificationActiveChunkIdentity $dir
