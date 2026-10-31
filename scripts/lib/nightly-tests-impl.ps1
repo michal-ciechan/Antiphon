@@ -1289,12 +1289,20 @@ function Complete-NightlySuiteExecution {
         Set-Variable -Name $completionName -Value $CompletionSuiteState.Variables[$completionName]
     }
     if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
-        $unionNodes = @()
-        foreach ($dn in @($suiteDiscoveryNodes)) {
-            if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
-            $unionNodes += $dn
+        $unionNodes = [Collections.Generic.List[object]]::new()
+        if ($null -ne $profileDiscovery -and -not [string]::IsNullOrWhiteSpace($profileDiscoveryPath)) {
+            $unionEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
+            $unionView = Get-NightlyDiscoveryIndexView -Entry $unionEntry -ProfileExclusions $profileExclusions -ProfileAware:$profileAware
+            for ($unionIndex = 0; $unionIndex -lt $unionView.Nodes.Count; $unionIndex++) {
+                if (-not $unionView.Excluded[$unionIndex]) { $unionNodes.Add($unionView.Nodes[$unionIndex]) }
+            }
+        } else {
+            foreach ($dn in @($suiteDiscoveryNodes)) {
+                if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
+                $unionNodes.Add($dn)
+            }
         }
-        $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes -ChunkTerminalNodes $suiteTerminalNodes
+        $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes.ToArray() -ChunkTerminalNodes $suiteTerminalNodes
         if (-not $union.Ok) {
             $coverageComplete = $false
             $overallFailed = $true

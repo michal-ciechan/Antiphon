@@ -19,7 +19,7 @@ public sealed class RcFailedFirstPlannerTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     [Test, Timeout(180_000)]
     public Task FullBytesAndCoverageConserved(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(FullBytesAndCoverageConserved), 21,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(FullBytesAndCoverageConserved), 22,
             ["FF FullBytesAndCoverageConserved.observedPermutation", "FF FullBytesAndCoverageConserved.anchors",
              "FF FullBytesAndCoverageConserved.canonicalBytes", "FF FullBytesAndCoverageConserved.coverage",
              "FF FullBytesAndCoverageConserved.keyedObservations", "FF FullBytesAndCoverageConserved.terminalMatrix",
@@ -29,6 +29,6 @@ public sealed class RcFailedFirstPlannerTests
              "FF FullBytesAndCoverageConserved.phaseSummariesAndIndex", "FF FullBytesAndCoverageConserved.schedulePolicy",
              "FF FullBytesAndCoverageConserved.lazyPreparation", "FF FullBytesAndCoverageConserved.preparationBarrier",
              "FF FullBytesAndCoverageConserved.e2ePreparation", "FF FullBytesAndCoverageConserved.diagnosticWriteFailure",
-             "FF FullBytesAndCoverageConserved.authorityBytes", "FF FullBytesAndCoverageConserved.authorityBinding", "FF FullBytesAndCoverageConserved.originalManifestBytes"],
+             "FF FullBytesAndCoverageConserved.authorityBytes", "FF FullBytesAndCoverageConserved.authorityBinding", "FF FullBytesAndCoverageConserved.originalManifestBytes", "FF FullBytesAndCoverageConserved.artifactSchemas"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
 }

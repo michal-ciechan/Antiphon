@@ -552,7 +552,7 @@ function Invoke-FFPreparedArm {
         Close-TestPhaseExecutedContext -Context $publicationContext
         $script:TestPhaseCommitFault=$null
     }
-    Invoke-TestPhaseRunSummary -RunDirectory $LogRoot
+    if ($Fixture.PSObject.Properties.Name -notcontains 'replay') { Invoke-TestPhaseRunSummary -RunDirectory $LogRoot }
     $timing = Get-QualificationTimingReport -LogRoot $LogRoot -TimingRoot $TimingRoot
     $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
     $plansStable = $true
@@ -573,15 +573,17 @@ function New-FFSmallFixture {
     return [pscustomobject]@{suites=$suites;resolved=[pscustomobject]@{members=@([pscustomobject]@{suite='antiphon';chunks=@('Priority')},[pscustomobject]@{suite='session-runner';chunks=@('Priority')})}}
 }
 function Test-FullBytesAndCoverageConserved {
+    param([switch]$DiagnosticsOnly)
+    if (-not $DiagnosticsOnly) {
     $fx = New-FFGlobalFixture
     $before = ConvertTo-Json -InputObject @($fx.suites.chunks) -Depth 30 -Compress
     $a = Invoke-FFPreparedArm $fx 'canonical'
     $b = Invoke-FFPreparedArm $fx 'priority' $fx.resolved.members
-    $canonical = @($a.Launches.key)
+    $canonical = @(foreach ($s in $fx.suites) { foreach ($c in $s.chunks) { $s.id+'/'+$c.id } })
     $actual = @($b.Launches.key)
     $prefix = @($b.Schedule.entries | Where-Object priorFailure)
     # This must precede all conservation comparisons and uses actual launches.
-    Assert-FF (($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+$fx.suites[1].chunks[0].id) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
+    Assert-FF ((@($a.Launches.key) -join ',') -ceq ($canonical -join ',') -and ($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+$fx.suites[1].chunks[0].id) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
     $anchorKeys=@($fx.anchors|ForEach-Object {'antiphon/'+$_.chunk})
     $observedAnchors=@($actual|Where-Object {$anchorKeys -ccontains $_})
     Assert-FF (($observedAnchors -join ',') -ceq ($anchorKeys -join ',') -and @($prefix|Where-Object {$anchorKeys -ccontains ($_.suite+'/'+$_.chunk)}).Count -eq 4) 'anchors'
@@ -592,7 +594,14 @@ function Test-FullBytesAndCoverageConserved {
     $keyed=$true
     foreach($r in $a.Projection.chunks){$other=@($b.Projection.chunks|Where-Object {$_.suite -ceq $r.suite -and $_.chunk -ceq $r.chunk})[0];foreach($f in @('exitCode','trxMissing','passedCount','outcomes','trxDigest','manufacturedPassed')){if((ConvertTo-Json -InputObject $r.$f -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $other.$f -Depth 10 -Compress)){$keyed=$false}}}
     Assert-FF ($keyed -and -not $a.Projection.manufacturedPassed -and -not $b.Projection.manufacturedPassed) 'keyedObservations'
+    }
     $small=New-FFSmallFixture
+    if ($DiagnosticsOnly) {
+        $fx=$small
+        $a=Invoke-FFPreparedArm $small 'small-canonical'
+        $b=Invoke-FFPreparedArm $small 'small-priority' $small.resolved.members
+        $canonical=@($a.Launches.key); $actual=@($b.Launches.key)
+    }
     $matrix=@()
     foreach($variant in @('failure','missing','skip','unknown','timeout','publication','teardown')){
         $left=Invoke-FFPreparedArm $small ($variant+'-canonical') @() $variant
@@ -632,18 +641,19 @@ function Test-FullBytesAndCoverageConserved {
     }
     Assert-FF $timelinesOk 'timelines'
     $summaries=$true
-    foreach($arm in @($a,$b)){
+    foreach($arm in @($failed.left,$failed.right,$header)){
         foreach($file in @('summary.json','tests.csv','summary.md')){if(-not [IO.File]::Exists((Join-Path $arm.TimingRoot $file))){$summaries=$false}}
         if([IO.File]::Exists((Join-Path $arm.TimingRoot 'summary.json'))){$summary=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.json'))|ConvertFrom-Json;if($summary.version -ne 1){$summaries=$false}}
         $singleton=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-planned.json'))|ConvertFrom-Json
         $index=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-planned-index.json'))|ConvertFrom-Json
-        if($singleton.suite -cne $fx.suites[-1].id -or $index.suites.Count -ne $fx.suites.Count){$summaries=$false}
+        if($singleton.suite -cne $small.suites[-1].id -or $index.suites.Count -ne $small.suites.Count){$summaries=$false}
     }
     Assert-FF $summaries 'phaseSummariesAndIndex'
     Assert-FF ($a.Schedule.preparationComplete -and $b.Schedule.preparationComplete -and $b.Schedule.historyDigest -ceq ('d'*64) -and $b.Schedule.unresolved.Count -eq 0) 'schedulePolicy'
     Test-FFPreparationSequencing
     Test-FFAuthorityConservation
     Test-FFPlannedGoldenBytes
+    Test-FFArtifactSchemas @($failed.left,$failed.right,$header)
 }
 function Invoke-FFPreparationArm {
     param([string]$Name, [string]$HistoryKind, [string]$Failure = 'discovery', [switch]$WriteFault)
@@ -771,8 +781,53 @@ function Test-FFPlannedGoldenBytes {
     Assert-FF ([Convert]::ToBase64String($expected) -ceq [Convert]::ToBase64String($actual)) 'originalManifestBytes'
 }
 
+function Test-FFSchemaKeys($Value, [string[]]$Names) {
+    $actual=@($Value.PSObject.Properties.Name)
+    return ($actual.Count -eq $Names.Count -and @(Compare-Object $actual $Names -CaseSensitive).Count -eq 0)
+}
+function Test-FFArtifactSchemas([object[]]$Arms) {
+    $ok=$true
+    foreach($arm in $Arms){
+        if(-not (Test-FFSchemaKeys $arm.Projection @('version','runId','attempt','suite','manufacturedPassed','chunks'))){$ok=$false}
+        foreach($chunk in $arm.Projection.chunks){
+            if(-not (Test-FFSchemaKeys $chunk @('chunk','runId','attempt','suite','hostWallSeconds','trxMissing','manufacturedPassed','passedCount','outcomes','trx','trxDigest','exitCode','coverageComplete','testsPassed'))){$ok=$false}
+        }
+        $schedule=[IO.File]::ReadAllText((Join-Path $arm.Root 'dispatch-schedule.json'))|ConvertFrom-Json
+        if(-not (Test-FFSchemaKeys $schedule @('format','runId','attempt','historyDigest','canonicalPlanDigest','preparationComplete','unresolved','entries'))){$ok=$false}
+        foreach($entry in $schedule.entries){if(-not (Test-FFSchemaKeys $entry @('suite','chunk','canonicalOrdinal','dispatchOrdinal','priorFailure'))){$ok=$false}}
+        foreach($planText in $arm.Plans.Values){
+            $plan=$planText|ConvertFrom-Json
+            if(-not (Test-FFSchemaKeys $plan @('version','runId','attempt','suite','sourceDigest','assemblyDigest','policyDigest','costFileDigest','assembly','requiredPartitionExact','missingIds','extraIds','groups'))){$ok=$false}
+            foreach($group in $plan.groups){if(-not (Test-FFSchemaKeys $group @('chunk','classes','filter','plannedTestIds','plannedSeconds','pricingBasis','sharedManifestOrder'))){$ok=$false}}
+        }
+        $pointer=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-executed.journal/current.json'))|ConvertFrom-Json
+        $generation=Join-Path (Join-Path $arm.TimingRoot 'groups-executed.journal') $pointer.generation
+        $meta=[IO.File]::ReadAllText((Join-Path $generation 'metadata.json'))|ConvertFrom-Json
+        $state=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-executed.state.json'))|ConvertFrom-Json
+        $seal=[IO.File]::ReadAllText((Join-Path $generation 'seal.json'))|ConvertFrom-Json
+        if(-not (Test-FFSchemaKeys $pointer @('version','timingRoot','generation','metadataDigest')) -or
+           -not (Test-FFSchemaKeys $meta @('version','generation','runId','attempt','suite','source','invocationId','writerEnvironment','seedDigest','parentGeneration','unresolved','corruptionReason')) -or
+           -not (Test-FFSchemaKeys $state @('version','generation','sequence','root','publicationComplete','unresolved','reason','projectionDigest','quality'))){$ok=$false}
+        if($pointer.metadataDigest -cne (Get-NightlyHistoryDigest (Join-Path $generation 'metadata.json')) -or $seal.stateDigest -cne (Get-NightlyHistoryDigest (Join-Path $arm.TimingRoot 'groups-executed.state.json')) -or $meta.runId -cne 'conservation-run' -or $meta.attempt -cne '1' -or $meta.source -cne ('a'*40) -or $meta.suite -cne '' -or $meta.seedDigest -cne '' -or $meta.invocationId -cne 'conservation-run' -or $meta.unresolved -or -not $state.publicationComplete -or $state.unresolved -or $state.quality.Count -ne 0){$ok=$false}
+        foreach($recordPath in @(Get-ChildItem -LiteralPath $generation -File|Where-Object {$_.Name -match '^\d{8}\.json$'})){
+            $text=[IO.File]::ReadAllText($recordPath.FullName);$record=$text|ConvertFrom-Json
+            if(-not (Test-FFSchemaKeys $record @('version','kind','generation','sequence','publicationId','root','freshSuiteKey','settledSuiteKey','freshChunkKey','settledChunkKey','freshRun','freshAttempt','freshHeaderSuite','digest','rowJson','settledRowJson','writerEnvironment','reason'))){$ok=$false}
+            $blank=$text.Replace(('"digest":"'+$record.digest+'"'),'"digest":""')
+            if((Get-TestPhaseSha256Text $blank) -cne $record.digest -or $record.generation -cne $pointer.generation -or (ConvertFrom-TestPhaseB64 $record.freshRun) -cne 'conservation-run' -or (ConvertFrom-TestPhaseB64 $record.freshAttempt) -cne '1' -or $record.freshSuiteKey -cne $record.settledSuiteKey -or $record.freshChunkKey -cne $record.settledChunkKey -or $record.writerEnvironment -cne $meta.writerEnvironment){$ok=$false}
+        }
+        $summary=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.json'))|ConvertFrom-Json
+        if(-not (Test-FFSchemaKeys $summary @('version','complete','quality','tornLines','malformedLines','summaryAggregationBudgetMilliseconds','summaryAggregationMilliseconds','tests','sharedFixtures')) -or $summary.complete -or $summary.quality -cnotcontains 'missing-phase-unknown' -or $summary.tornLines -ne 0 -or $summary.malformedLines -ne 0 -or $summary.summaryAggregationBudgetMilliseconds -ne 5000 -or $summary.summaryAggregationMilliseconds -lt 0 -or $summary.sharedFixtures.Count -ne 0 -or $summary.tests.Count -ne 4){$ok=$false}
+        $csv=[IO.File]::ReadAllLines((Join-Path $arm.TimingRoot 'tests.csv'))
+        if($csv.Count -ne 5 -or $csv[0] -notlike '*testId*duration*groupId*outcome*trxOutcome*phaseOutcome*joined*incomplete*db*host*process*fs*network*fixture*overlapMs*remainderMs*droppedPhaseCount*'){$ok=$false}
+        $markdown=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.md'))
+        if(-not $markdown.Contains('TRX remains authoritative. Sidecars are private and are not gate inputs.') -or -not $markdown.Contains('Shared fixture rows are separate from per-test totals.')){$ok=$false}
+    }
+    Assert-FF $ok 'artifactSchemas'
+}
+
 switch -Exact ($Case) {
-    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=21 }
+    'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=17 }
+    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=22 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
