@@ -15,6 +15,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Unit"), Timeout(30_000)]
+[NotInParallel]
 public class LiveLaneIsolationTests
 {
     private static LiveClaudeProfileSpec Build(LiveClaudeProfile profile,string role,string session,string? overlay)
@@ -35,6 +36,9 @@ public class LiveLaneIsolationTests
     [Test]
     public void DedicatedConfigOwnsTrustAndEvidence()
     {
+        var marked = typeof(LiveLaneIsolationTests).GetCustomAttributes(inherit: false)
+            .Any(attribute => attribute.GetType().Name == "NotInParallelAttribute");
+        if (!marked) throw new InvalidOperationException("C1545 V-13/config-dir process-wide env needs NotInParallel");
         Run("V-13");
         using var fixture = new LiveClaudeProfileFixture();
         using var profile = new LiveClaudeProfile(fixture.Context);
