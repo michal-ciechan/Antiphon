@@ -26,6 +26,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     private static readonly TimeSpan ArmWait = TimeSpan.FromSeconds(45);
 
     [Test]
+    [Category("LiveClaude")]
     public async Task Control_auto_connects_a_bridge_session_before_the_first_user()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Control);
@@ -43,6 +44,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     }
 
     [Test]
+    [Category("LiveClaude")]
     public async Task Settings_file_prevents_auto_connect_and_keeps_startup_records()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Off);
@@ -73,6 +75,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     }
 
     [Test]
+    [Category("LiveClaude")]
     public async Task Remote_control_slash_command_still_arms_after_settings_off()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Slash);

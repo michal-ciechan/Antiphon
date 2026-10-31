@@ -62,6 +62,7 @@ public class ClaudeDialogWatchdogCanaryTests
     }
 
     [Test]
+    [Category("LiveClaude")]
     public async Task C680_LiveNudgeRefusesPermissionAndQuestionDialogs()
     {
         var executable = RequireExecutable();
