@@ -32,14 +32,15 @@ function Resolve-NightlyPreviousRunOrder {
             $states.Add($key,$state)
         }
         $failed=[Collections.Generic.List[object]]::new();$unfinished=[Collections.Generic.List[object]]::new();$passed=[Collections.Generic.List[object]]::new()
-        foreach($entry in $Entries){$key=$entry.suite+[char]0+$entry.chunk;if($entry.priorFailure -eq $true -or ($states.ContainsKey($key) -and $states[$key] -ceq 'failed')){$failed.Add($entry)}elseif($states.ContainsKey($key) -and $states[$key] -ceq 'passed'){$passed.Add($entry)}}
+        foreach($entry in $Entries){$key=$entry.suite+[char]0+$entry.chunk;if($entry.priorFailure -ne $true -and $states.ContainsKey($key) -and $states[$key] -ceq 'passed'){$passed.Add($entry)}}
         foreach($lane in @($Entries.suite|Select-Object -Unique)){
             $rows=@($Entries|Where-Object {$_.suite -ceq $lane});$last=-1
             if($lastPassed.ContainsKey($lane)){for($i=0;$i -lt $rows.Count;$i++){if($rows[$i].chunk -ceq $lastPassed[$lane]){$last=$i;break}}}
             $lanes.Add([pscustomobject]@{suite=$lane;lastPassedChunk=$(if($last -ge 0){$rows[$last].chunk}else{$null})})
             for($offset=1;$offset -le $rows.Count;$offset++){
                 $entry=$rows[($last+$offset)%$rows.Count];$key=$entry.suite+[char]0+$entry.chunk
-                if($entry.priorFailure -ne $true -and (-not $states.ContainsKey($key) -or $states[$key] -ceq 'unfinished')){$unfinished.Add($entry)}
+                if($entry.priorFailure -eq $true -or ($states.ContainsKey($key) -and $states[$key] -ceq 'failed')){$failed.Add($entry)}
+                elseif(-not $states.ContainsKey($key) -or $states[$key] -ceq 'unfinished'){$unfinished.Add($entry)}
             }
         }
         $ordered=@($failed.ToArray())+@($unfinished.ToArray())+@($passed.ToArray())
