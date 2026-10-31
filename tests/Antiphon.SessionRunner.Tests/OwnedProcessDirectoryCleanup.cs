@@ -20,9 +20,15 @@ internal static class OwnedProcessDirectoryCleanup
                 try { handle = Process.GetProcessById(record.Process.Pid); }
                 catch (ArgumentException) { continue; }
                 handles.Add(handle);
-                _ = handle.SafeHandle;
-                if (handle.StartTime.ToUniversalTime() != record.Process.StartedUtc)
-                    throw new IOException($"owned process generation changed pid={record.Process.Pid}");
+                try { _ = handle.SafeHandle; }
+                catch (InvalidOperationException) when (record.Process.Handle.HasExited) { }
+                // The original pinned handle must still be alive after opening this one.
+                // That proves the PID was not recycled, without comparing converted wall clocks.
+                if (record.Process.Handle.HasExited)
+                {
+                    handles.Remove(handle);
+                    handle.Dispose();
+                }
             }
             return handles;
         }
@@ -37,21 +43,46 @@ internal static class OwnedProcessDirectoryCleanup
         Func<IReadOnlyList<Process>> capture, Action delete)
     {
         IReadOnlyList<Process> handles = [];
+        var captured = false;
+        var stopped = false;
         try
         {
-            try { await body(); }
-            finally
+            await TestOwnedPtyHost.ScopeAsync(body, async () =>
             {
-                handles = capture();
-                await stop();
-            }
-            foreach (var handle in handles)
-                await handle.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                await TestOwnedPtyHost.ScopeAsync(
+                    () => TestOwnedPtyHost.ScopeAsync(() =>
+                    {
+                        handles = capture();
+                        captured = true;
+                        return Task.CompletedTask;
+                    }, async () =>
+                    {
+                        await stop();
+                        stopped = true;
+                    }),
+                    async () =>
+                    {
+                        if (!captured) return; // Unknown ownership retains the directory.
+                        var started = Stopwatch.StartNew();
+                        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var failures = new List<Exception>();
+                        foreach (var handle in handles)
+                        {
+                            try { await handle.WaitForExitAsync(deadline.Token); }
+                            catch (Exception ex)
+                            {
+                                failures.Add(new IOException(
+                                    $"owned process did not exit pid={handle.Id} name={handle.ProcessName} elapsed={started.Elapsed} budget=00:00:10; directory retained", ex));
+                            }
+                        }
+                        if (failures.Count > 0) throw new AggregateException(failures);
+                        if (stopped) delete(); // A cleanup ownership error also retains the directory.
+                    });
+            });
         }
         finally
         {
             foreach (var handle in handles) handle.Dispose();
-            delete();
         }
     }
 }

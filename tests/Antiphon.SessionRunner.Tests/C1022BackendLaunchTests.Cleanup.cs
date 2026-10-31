@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -30,6 +31,9 @@ public partial class C1022BackendLaunchTests
         {
             (await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10))).ShouldBe("READY");
             var original = new InvalidOperationException(sibling + (stopFails ? " stop" : " body"));
+            var identity = TestOwnedPtyHost.CaptureProcess(child.Id);
+            using var identityHandle = identity.Handle!;
+            var owned = new TestOwnedPtyHost.Owned(root, Guid.NewGuid(), "unused", identity, false, true);
             var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var deleted = false;
             var run = OwnedProcessDirectoryCleanup.RunAsync(
@@ -39,12 +43,7 @@ public partial class C1022BackendLaunchTests
                     stopped.SetResult();
                     return stopFails ? Task.FromException(original) : Task.CompletedTask;
                 },
-                () =>
-                {
-                    var handle = Process.GetProcessById(child.Id);
-                    _ = handle.SafeHandle;
-                    return new[] { handle };
-                },
+                () => OwnedProcessDirectoryCleanup.Capture([owned]),
                 () =>
                 {
                     child.HasExited.ShouldBeTrue("directory-delete-requires-owned-process-exit");
@@ -61,9 +60,9 @@ public partial class C1022BackendLaunchTests
             premature.ShouldBeFalse("cleanup-must-join-even-after-" + (stopFails ? "stop" : "body") + "-failure");
             deletedBeforeExit.ShouldBeFalse();
             child.HasExited.ShouldBeTrue("owned-child-physically-exited");
-            deleted.ShouldBeTrue("directory-removed-only-after-exit");
+            deleted.ShouldBe(!stopFails, "stop errors retain the directory; successful stop deletes after exit");
             error.ShouldBeSameAs(original, "original failure is preserved");
-            Console.WriteLine($"C1022_CLEANUP_WITNESS sibling={sibling} stopFails={stopFails} pid={child.Id} exited-before-delete=true");
+            Console.WriteLine($"C1022_CLEANUP_WITNESS sibling={sibling} stopFails={stopFails} pid={child.Id} exited=true deleted={deleted}");
         }
         finally
         {

@@ -42,13 +42,12 @@ public partial class C1022BackendLaunchTests
             PtyHostLingerHours = 0.02,
             PtyBackend = direct ? configured : PtyBackendConfiguration.EffectiveRequest(config[PtyBackendPolicy.ConfigKey], ambient),
         };
-        var handles = new List<Process>();
         Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, ambient);
         var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
         var owned = new TestOwnedPtyHost(settings.ResolvedPtyHostDir);
         try
         {
-            try
+            await OwnedProcessDirectoryCleanup.RunAsync(async () =>
             {
                 var request = new RunnerLaunchRequest(sessionId, Path.Combine(Environment.SystemDirectory, "cmd.exe"),
                     ["/d", "/q", "/k", "@echo C1022-READY"], new Dictionary<string, string>(), root, 100, 25);
@@ -103,27 +102,22 @@ public partial class C1022BackendLaunchTests
                     cap.PtyBackendDeprecated.ShouldBe(false);
                     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(cap));
                 }
-                foreach (var process in owned.Captured) handles.Add(Process.GetProcessById(process.Process.Pid));
                 Console.WriteLine($"C1022_HOST session={sessionId} host={dto.HostPid} child={dto.Pid} console={console.Process.Pid} started={console.Process.StartedUtc:O} path={console.Process.Image} {hashes.Detail}\n{log}");
-            }
-            finally
+            },
+            async () => await owned.DisposeAsync(true,
+                () => owned.Capture(sessionId, SessionBackends.PtyHost, false),
+                async ct => { await runtime.KillAllAsync(TimeSpan.FromSeconds(2), ct); },
+                async () => await runtime.DisposeAsync()),
+            () =>
             {
-                await owned.DisposeAsync(true,
-                    () => owned.Capture(sessionId, SessionBackends.PtyHost, false),
-                    async ct => { await runtime.KillAllAsync(TimeSpan.FromSeconds(2), ct); },
-                    async () => await runtime.DisposeAsync());
-            }
-            foreach (var process in handles)
-            {
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-                process.HasExited.ShouldBeTrue("owned host/child/OpenConsole physically exited");
-            }
+                owned.Capture(sessionId, SessionBackends.PtyHost, false);
+                return OwnedProcessDirectoryCleanup.Capture(owned.Captured);
+            },
+            () => Directory.Delete(root, true));
         }
         finally
         {
-            foreach (var process in handles) process.Dispose();
             Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, previous);
-            Directory.Delete(root, true);
         }
     }
 
