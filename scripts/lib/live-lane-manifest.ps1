@@ -721,6 +721,12 @@ function Write-LiveLaneExportFile {
     param([string]$Path, [string]$Project, [string]$Cp, [string]$SourceSha, [string]$RunId, [string]$AssemblyHash, [string]$AssemblyPath, [object[]]$Nodes)
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    # Green checkpoint cleanup deletes the build output. Keep the hashed assembly beside the export.
+    $keptPath = $AssemblyPath
+    if (-not [string]::IsNullOrWhiteSpace($AssemblyPath) -and (Test-Path -LiteralPath $AssemblyPath)) {
+        $keptPath = Join-Path $dir ($Cp.ToLowerInvariant() + '-assembly.dll')
+        [System.IO.File]::Copy($AssemblyPath, $keptPath, $true)
+    }
     $doc = [ordered]@{
         format = 'antiphon-live-lane-export-v1'
         project = $Project
@@ -728,7 +734,7 @@ function Write-LiveLaneExportFile {
         sourceSha = $SourceSha
         runId = $RunId
         assemblyHash = $AssemblyHash
-        assemblyPath = $AssemblyPath
+        assemblyPath = $keptPath
         terminal = $true
         nodes = @($Nodes)
     }
