@@ -3,6 +3,7 @@
 . (Join-Path $PSScriptRoot 'nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 . (Join-Path $PSScriptRoot 'nightly-owned-process.ps1')
+. (Join-Path $PSScriptRoot 'live-lane-outcome.ps1')
 
 function New-LiveLaneChildStartInfo {
     param([hashtable]$Inherited, [hashtable]$Selected, [string]$WorkingDirectory)
