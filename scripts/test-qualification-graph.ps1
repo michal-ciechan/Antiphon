@@ -129,7 +129,9 @@ $empty = ConvertTo-QualificationCanonicalJson '""'
 Check ($nullJson -ceq 'null' -and $empty -ceq '""' -and (Get-QualificationSha256 $nullJson) -cne (Get-QualificationSha256 $empty)) 'typed-null'
 $number = ConvertTo-QualificationCanonicalJson '1.25'
 $string = ConvertTo-QualificationCanonicalJson '"1.25"'
-Check ($number -ceq '1.25' -and $string -ceq '"1.25"' -and (Get-QualificationSha256 $number) -cne (Get-QualificationSha256 $string)) 'typed-number'
+Check ($number -ceq '1.25' -and $string -ceq '"1.25"' -and (Get-QualificationSha256 $number) -cne (Get-QualificationSha256 $string) -and
+    (ConvertTo-QualificationCanonicalJson '1e-9999') -ceq '1e-9999' -and
+    (ConvertTo-QualificationCanonicalJson '12345678901234567890123456789.1') -ceq '12345678901234567890123456789.1') 'typed-number'
 Check ($healthy.CanonicalJson -ceq $golden -and $healthy.GraphDigest -ceq $expected.graphDigest -and
     $healthy.GraphDigest -ceq (Independent-Hash $golden) -and
     (Get-QualificationSha256 $primitive) -ceq (Independent-Hash $primitiveExpected)) 'utf8-hash'
