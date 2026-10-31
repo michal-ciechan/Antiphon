@@ -4818,34 +4818,45 @@ c1192_group_contract() {
     return 1
 }
 
-# Run the generated driver.sh. No go file: exit 4 before ready. Go present:
-# ready is written. The go path is /fixture/race/go, so that leg runs after
-# pivot_root into a private mount namespace.
+# Project the container's /fixture paths into the same private filesystem model
+# used by run_script. Execute the generated control flow without requiring WSL
+# to support user/mount namespaces, bind mounts or pivot_root. Only dotnet is
+# faked: it must see both markers, and records the actual restore arguments.
+c1192_driver_prepare() {
+    local script="$1" root body
+    root=$(mktemp -d "$C1192_ROOT/driver-root.XXXXXX") || return 1
+    mkdir -p "$root/fixture/race" "$root/proj" "$root/bin"
+    body=$(cat -- "$script") || return 1
+    printf '%s\n' "${body//\/fixture\//$root/fixture/}" > "$root/driver.sh"
+    cat > "$root/bin/dotnet" <<'SH'
+#!/bin/sh
+set -eu
+[ -f slot-held ]
+[ -f ready ]
+printf '%s\n' "$*" > restore-argv
+SH
+    chmod 700 "$root/bin/dotnet"
+    printf '%s\n' "$root"
+}
+
+# A fresh go-present root cannot inherit ready from the no-go leg. Success
+# requires the generated driver to finish and reach restore after both markers.
 c1192_driver_go_leg() {
-    local script="$1" root deadline
-    root=$(mktemp -d "$C1192_ROOT/driver-root.XXXXXX")
-    mkdir -p "$root/fixture/race" "$root/proj" "$root/old" "$root/bin" "$root/lib" "$root/lib64"
-    cp -- "$script" "$root/driver.sh"
+    local root deadline
+    root=$(c1192_driver_prepare "$1") || return 1
     printf '1\n' > "$root/fixture/race/go"
     deadline=$(( $(date +%s) + 30 ))
-    timeout 8 unshare --user --mount --map-root-user bash -c '
-        root=$1
-        deadline=$2
-        mkdir -p "$root/bin" "$root/lib" "$root/lib64" "$root/old"
-        mount --bind "$root" "$root" || exit 23
-        mount --bind /usr/bin "$root/bin" || exit 20
-        mount --bind /usr/lib "$root/lib" || exit 21
-        mount --bind /usr/lib64 "$root/lib64" || exit 22
-        cd "$root" || exit 24
-        pivot_root . old || exit 25
-        exec /bin/sh /driver.sh /proj "$deadline"
-    ' bash "$root" "$deadline" >/dev/null 2>&1 || true
-    [ -f "$root/proj/ready" ]
+    if ! PATH="$root/bin:$PATH" timeout 8 sh "$root/driver.sh" "$root/proj" "$deadline" > "$root/driver.log" 2>&1; then
+        cat -- "$root/driver.log" >&2
+        return 1
+    fi
+    [ -f "$root/proj/slot-held" ] && [ -f "$root/proj/ready" ] && [ -f "$root/proj/restore-argv" ] \
+        && [ "$(cat -- "$root/proj/restore-argv")" = "restore proj.csproj --configfile $root/fixture/race/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1" ]
 }
 
 c1192_driver_deadline_witness() {
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local data script proj nogo_rc=0 exit4=0 ready=0 start
+    local data script driver_root proj nogo_rc=0 exit4=0 ready=0 start
     c1192_slot_plant "$packages" "$scratch"
     c849_fixture_race_materialize "$ADMITTED"
     data=$(volume_data_for_target /fixture) || { emit driver-exit4 0; emit driver-ready 0; return 0; }
@@ -4855,9 +4866,10 @@ c1192_driver_deadline_witness() {
         emit driver-ready 0
         return 0
     fi
-    proj=$(mktemp -d "$C1192_ROOT/driver-proj.XXXXXX")
+    driver_root=$(c1192_driver_prepare "$script")
+    proj="$driver_root/proj"
     start=$(date +%s)
-    timeout 3 sh "$script" "$proj" $((start - 1)) || nogo_rc=$?
+    PATH="$driver_root/bin:$PATH" timeout 3 sh "$driver_root/driver.sh" "$proj" $((start - 1)) || nogo_rc=$?
     if [ "$nogo_rc" = 4 ] && [ ! -e "$proj/ready" ]; then
         exit4=1
     fi
@@ -4879,6 +4891,7 @@ c1192_red_group() {
     if [ "$installed" = 1 ] && ! c1192_group_contract "$out"; then
         emit "red-$id" 1
     else
+        printf 'C1192_RED_CONTROL_UNDETECTED id=%s\n%s\n' "$id" "$out" >&2
         emit "red-$id" 0
     fi
 }
