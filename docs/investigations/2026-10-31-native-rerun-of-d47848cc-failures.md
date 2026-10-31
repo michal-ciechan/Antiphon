@@ -25,3 +25,6 @@ Status: IN PROGRESS (interim; updated after each project).
 
 C1022 detail: the test body completed (ModernConPty host log, conpty hash and both capability JSON lines printed; host pid 390760, child 448268, OpenConsole 111940). All captured owned processes exited inside the 10 s budget (no AggregateException), then the owned delete of `%TEMP%\antiphon-backend-seam-<guid>` (staged copy `pty-hosts\bin\<stamp>\`) was refused on a file of the staged host copy. Checked about 1 minute later: the directory was gone and none of the three pids nor any process imaged from that directory was alive, so the hold was transient after process exit. Only the `Configured` case fails, deterministically; the C1022 `OwnedProcessDirectoryCleanup` repair (join owned handles before delete) does not cover whatever still holds the staged file at delete time (candidates: an uncaptured process in the session tree or a delayed image-section release; not established here).
 
+| Test | Project | Before (d47848cc) | After (fc064a68) | Status | Evidence |
+|---|---|---|---|---|---|
+| NativeLinuxPolicyWitnessTests.Policy_rows_require_pinned_attribute | Agents.Pty.Tests (agents-pty g3) | FAIL | PASS (0.84 s) | FIXED | `e960-agentspty-20261031-105650-f90a/run.trx` |
