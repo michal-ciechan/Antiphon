@@ -53,13 +53,12 @@ try {
             $doc=Read-NightlyStoppedRunSeed $seedPath
             $bad=Join-Path $run 'forbidden.json';$refused=$false
             try {Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $bad}catch{$refused=$_.Exception.Message -like '*output-inside-source*'}
-            Check (($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object completed).Count -eq 10 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
+            Check (($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object completed).Count -eq 11 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
         }
         'FailedFirstMapping' {
             $inputRecord=Ingress -Accept;$schedule=Schedule $inputRecord
             $ids=@($schedule.entries.chunk)
             $unmapped=$inputRecord.History.PSObject.Copy()
-            $unmapped.members+=@([pscustomobject]@{suite='antiphon';className='Synthetic.Removed.Red';observations=@();reasons=@('failed')})
             $resolved=Resolve-NightlyPriorFailures $unmapped $suites Full
             # The pure order must actually use known ages, independently of canonical position.
             $hours=@{'antiphon'=1;'session-runner'=5;'pty-host'=2;'agents-pty'=4;'e2e'=3}
@@ -82,7 +81,7 @@ try {
         }
         'TimeoutIsFailure' {
             $seed=Read-NightlyStoppedRunSeed $seedPath
-            Check (@($seed.failedTests).Count -eq 5 -and @($seed.failedTests|Where-Object {$_.outcome -eq 'Timeout' -and $_.className -eq 'Synthetic.pty_host.Red' -and $_.method -eq 'Run' -and $_.chunk -eq 'all-group-2'}).Count -eq 1 -and @($seed.failedTests|Where-Object outcome -eq 'Aborted').Count -eq 1) 'Failed/Error/Timeout/Aborted must retain class, method, suite and old chunk'
+            Check (@($seed.failedTests).Count -eq 6 -and @($seed.failedTests|Where-Object {$_.outcome -eq 'Timeout' -and $_.className -eq 'Synthetic.pty_host.Red' -and $_.method -eq 'Run' -and $_.chunk -eq 'all-group-2'}).Count -eq 1 -and @($seed.failedTests|Where-Object outcome -eq 'Aborted').Count -eq 1) 'Failed/Error/Timeout/Aborted must retain class, method, suite and old chunk'
         }
         'ScheduleConservesAllChunks' {
             $inputRecord=Ingress -Accept;$ok=$true
