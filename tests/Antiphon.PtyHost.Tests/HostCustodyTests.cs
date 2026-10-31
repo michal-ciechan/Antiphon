@@ -226,15 +226,7 @@ public class HostCustodyTests
         Directory.CreateDirectory(worktree);
         var sessionId = Guid.NewGuid();
         var pipeName = $"antiphon-c1614-linger-{sessionId:N}";
-        var store = new VerificationCustodyStore(custodyRoot);
-        var now = DateTime.UtcNow;
-        var binding = new VerificationExecutionBinding(Guid.NewGuid(),
-            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
-            new(sessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
-            new(root, Path.Combine(root, ".git"), worktree,
-                Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
-            VerificationCustodyBackends.WindowsJob, store.StoreId);
-        store.Reserve(binding);
+        var (store, binding) = ReserveWindowsLingerExecution(root, sessionId);
         var seen = new HashSet<int>();
         foreach (var existing in Process.GetProcessesByName("PING"))
         {
@@ -332,6 +324,38 @@ public class HostCustodyTests
             host?.Dispose();
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    [Test]
+    public void C1614_Linger_fixture_is_admitted_before_native_start()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c1614-admission", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var (store, binding) = ReserveWindowsLingerExecution(root, Guid.NewGuid());
+            var journal = new HostCustodyJournal(store, binding, Guid.NewGuid());
+            journal.Binding.ShouldBe(binding);
+            File.Exists(store.PathFor(binding.ExecutionId, "native-start-intent.json")).ShouldBeFalse();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    private static (VerificationCustodyStore Store, VerificationExecutionBinding Binding)
+        ReserveWindowsLingerExecution(string root, Guid sessionId)
+    {
+        var worktree = Path.Combine(root, "snapshot");
+        var custodyRoot = Path.Combine(root, "custody");
+        Directory.CreateDirectory(worktree);
+        var store = new VerificationCustodyStore(custodyRoot);
+        var now = DateTime.UtcNow;
+        var binding = new VerificationExecutionBinding(Guid.NewGuid(),
+            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+            new(sessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
+            new(root, Path.Combine(root, ".git"), worktree,
+                Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
+            VerificationCustodyBackends.WindowsJob, store.StoreId);
+        store.Reserve(binding);
+        return (store, binding);
     }
 
     [Test]
