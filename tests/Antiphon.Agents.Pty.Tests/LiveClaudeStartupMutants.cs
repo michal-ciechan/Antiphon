@@ -13,7 +13,7 @@ internal static class LiveClaudeStartupMutants
     [
         new("PC-85/badge","V-18","=> bridge is { Readable: true }", "=> bridge is null || bridge is { Readable: true }", "badge"),
         new("PC-85/foreign","V-18","root.GetProperty(\"sessionId\").GetString() != owner.Session", "false", "reader-foreign"),
-        new("PC-86","V-18","RequireBridge(before.Owner, after);", "/* bridge setup omitted */", "slash-setup"),
+        new("PC-86","V-18","if (!OwnedBridge(before.Owner, after)) throw new InvalidOperationException(\"C1545 startup/slash bridge did not arm\");", "/* bridge setup omitted */", "slash-setup"),
         new("PC-88","V-19","return _control ??= CaptureStartAsync(start);", "return start();", "control-once"),
         new("PC-89","V-19","var control = await ControlAsync(experiment, start);", "dependent(); var control = await ControlAsync(experiment, start);", "control-order"),
         new("PC-90","V-19","RequireControl(experiment, control);\n        if (OwnedBridge", "if (control is null) return; RequireControl(experiment, control);\n        if (OwnedBridge", "control-absent"),

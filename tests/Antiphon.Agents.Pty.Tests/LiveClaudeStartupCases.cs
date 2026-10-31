@@ -57,7 +57,7 @@ internal static class LiveClaudeStartupCases
             Refuses(() => LiveClaudeStartupEvidence.RequireBridge(Owner,bridge),"bridge-unestablished",v,name);
         var off = new StartupObservation(Owner,null,TimeSpan.FromSeconds(15),Settings(Owner.Session));
         LiveClaudeStartupEvidence.RequireSlash(Experiment,Control,off,new(Owner,"bridge-new"));
-        Refuses(() => LiveClaudeStartupEvidence.RequireSlash(Experiment,Control,off,null),"bridge-unestablished",v,"slash-setup");
+        Fails(() => LiveClaudeStartupEvidence.RequireSlash(Experiment,Control,off,null),"C1545 startup/slash",v,"slash-setup");
         Refuses(() => LiveClaudeStartupEvidence.RequireControl(Experiment,Control with {ModelPrompts=1}),"premise-absent",v,"zero-prompts");
         var arms=0;
         var established=await LiveClaudeStartupEvidence.EstablishBridgeAsync(Owner,
@@ -178,12 +178,13 @@ internal static class LiveClaudeStartupCases
             LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings);
             foreach(var source in new[]{"user","project","local"})
             {
-                Refuses(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Markers=settings.Markers.Where(m=>m.Source!=source).ToArray()}),"settings-unobserved",v,"marker-"+source);
-                Refuses(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Markers=settings.Markers.Select(m=>m.Source==source?m with {Session="foreign"}:m).ToArray()}),"settings-unobserved",v,"marker-foreign-"+source);
+                Fails(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Markers=settings.Markers.Where(m=>m.Source!=source).ToArray()}),"C1545 startup/marker",v,"marker-"+source);
+                Fails(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Markers=settings.Markers.Select(m=>m.Source==source?m with {Session="foreign"}:m).ToArray()}),"C1545 startup/marker",v,"marker-foreign-"+source);
                 Fails(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Markers=settings.Markers.Select(m=>m.Source==source?m with {Retained="changed"}:m).ToArray()}),"C1545 startup/retained",v,"retained-setting-"+source);
             }
             Fails(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings with {Records=[]}),"C1545 startup/records",v,"startup-records");
-            Refuses(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,new([],[])),"settings-unobserved",v,"no-evidence");
+            Fails(()=>LiveClaudeStartupEvidence.RequireSettings(Control,Owner,new([],[])),"C1545 startup/marker",v,"no-evidence");
+            Refuses(()=>LiveClaudeStartupEvidence.RequireSettings(Control with { Settings = new([], []) },Owner,new([],[])),"settings-unobserved",v,"control-unmarked");
         }
         finally {Directory.Delete(root,true);}
     }
