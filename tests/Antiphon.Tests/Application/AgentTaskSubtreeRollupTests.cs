@@ -13,9 +13,14 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class AgentTaskSubtreeRollupTests
 {
+    // 30s matches the chain test. A missing cycle guard has to fail this test; the body is
+    // milliseconds, and a budget near twice that sample would flake on a loaded host (CARD-1622).
     [Test]
-    public void Rollup_matches_the_parent_chain_walk_for_depth_branches_missing_parents_and_cycles()
+    [Timeout(30_000)]
+    public void Rollup_matches_the_parent_chain_walk_for_depth_branches_missing_parents_and_cycles(
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var rootId = Guid.NewGuid();
         var root = Node(rootId, rootId, null, 10m, "root");
         var a = Node(Guid.NewGuid(), rootId, rootId, 1m, "a");
@@ -103,6 +108,60 @@ public class AgentTaskSubtreeRollupTests
     }
 
     [Test]
+    public void ToSummary_uses_the_caller_row_cost_when_the_family_copy_differs()
+    {
+        // Get reads the caller row and the family in separate queries. The old walk summed
+        // task.CostUsd from the caller plus descendant costs from the family (git 2b471b21c).
+        var rootId = Guid.NewGuid();
+        var stored = Node(rootId, rootId, null, 1m, "stored");
+        var child = Node(Guid.NewGuid(), rootId, rootId, 2m, "child");
+        var family = new List<AgentTask> { stored, child };
+        var caller = Node(rootId, rootId, null, 5m, "caller");
+
+        var summary = AgentTaskService.ToSummary(
+            caller, AgentTaskCostWalk.Rollup(family), AgentTaskScopeLabels.Empty);
+
+        summary.CostUsd.ShouldBe(5m, "the response row keeps the caller's own cost");
+        summary.SubtreeCostUsd.ShouldBe(Legacy(caller, family).Cost);
+        summary.SubtreeCostUsd.ShouldBe(7m, "5 from the caller plus the child's 2, not the stored 1");
+        summary.ChildCount.ShouldBe(1);
+
+        var lower = Node(rootId, rootId, null, 0.25m, "lower-caller");
+        var lowerSummary = AgentTaskService.ToSummary(
+            lower, AgentTaskCostWalk.Rollup(family), AgentTaskScopeLabels.Empty);
+        lowerSummary.SubtreeCostUsd.ShouldBe(Legacy(lower, family).Cost);
+        lowerSummary.SubtreeCostUsd.ShouldBe(2.25m);
+    }
+
+    [Test]
+    public void Rollup_matches_the_parent_chain_walk_when_an_id_is_duplicated()
+    {
+        // The primary key makes this unreachable from a database read. The old scan kept
+        // walking the first stored row when a later row reused its id (CARD-1622 A-1).
+        var shared = Guid.NewGuid();
+        var xId = Guid.NewGuid();
+        var x = Node(xId, xId, null, 100m, "X");
+        var a1 = Node(shared, xId, xId, 1m, "A1");
+        var c = Node(Guid.NewGuid(), xId, shared, 4m, "C");
+        var a2 = Node(shared, xId, c.Id, 2m, "A2");
+
+        AssertDuplicateFamily(new List<AgentTask> { x, a1, a2, c }, x, a1, c);
+        AssertDuplicateFamily(new List<AgentTask> { x, a2, a1, c }, x, a2, c);
+    }
+
+    private static void AssertDuplicateFamily(
+        List<AgentTask> family, params AgentTask[] uniqueRows)
+    {
+        var rollup = AgentTaskCostWalk.Rollup(family);
+        foreach (var task in uniqueRows)
+        {
+            var expected = Legacy(task, family);
+            rollup[task.Id].SubtreeCostUsd.ShouldBe(expected.Cost, task.Title);
+            rollup[task.Id].ChildCount.ShouldBe(expected.Children, task.Title);
+        }
+    }
+
+    [Test]
     [Timeout(30_000)]
     public void Rollup_of_a_two_thousand_task_chain_matches_the_closed_form(CancellationToken cancellationToken)
     {
@@ -129,24 +188,52 @@ public class AgentTaskSubtreeRollupTests
     }
 
     [Test]
-    public void Rollup_of_two_thousand_direct_children_stays_under_a_tenth_of_a_second()
+    [Timeout(30_000)]
+    public void Rollup_of_a_wide_fan_matches_the_closed_form_and_stays_near_linear(
+        CancellationToken cancellationToken)
     {
-        const int children = 2000;
-        var rootId = Guid.NewGuid();
-        var root = Node(rootId, rootId, null, 1m, "root");
-        var family = new List<AgentTask>(children + 1) { root };
-        for (var i = 0; i < children; i++)
-            family.Add(Node(Guid.NewGuid(), rootId, rootId, 0.01m, "child"));
+        cancellationToken.ThrowIfCancellationRequested();
+        // Warm the JIT, then compare two widths of the same shape. The review measured about
+        // 7 ms for 2,000 direct children on a loaded host; an absolute 100 ms cap flakes on a
+        // pause. Four times the nodes must stay under 12x the narrower run, plus a second.
+        // The replaced per-row walk was about 1.9 s at 2,000 and about 170 s at 10,000.
+        RollupFan(256);
 
+        var narrow = TimeFan(2_000);
+        var wide = TimeFan(8_000);
+
+        narrow.Cost.ShouldBe(1m + (0.01m * 2_000));
+        narrow.Children.ShouldBe(2_000);
+        wide.Cost.ShouldBe(1m + (0.01m * 8_000));
+        wide.Children.ShouldBe(8_000);
+        var limitMs = (Math.Max(narrow.Elapsed.TotalMilliseconds, 1) * 12) + 1_000;
+        wide.Elapsed.TotalMilliseconds.ShouldBeLessThan(limitMs);
+    }
+
+    private readonly record struct FanSample(decimal Cost, int Children, TimeSpan Elapsed);
+
+    private static void RollupFan(int children) => _ = AgentTaskCostWalk.Rollup(Fan(children));
+
+    private static FanSample TimeFan(int children)
+    {
+        var family = Fan(children);
         var watch = Stopwatch.StartNew();
         var rollup = AgentTaskCostWalk.Rollup(family);
         watch.Stop();
+        var root = rollup[family[0].Id];
+        return new FanSample(root.SubtreeCostUsd, root.ChildCount, watch.Elapsed);
+    }
 
-        rollup[rootId].SubtreeCostUsd.ShouldBe(1m + (0.01m * children));
-        rollup[rootId].ChildCount.ShouldBe(children);
-        rollup[family[1].Id].SubtreeCostUsd.ShouldBe(0.01m);
-        rollup[family[1].Id].ChildCount.ShouldBe(0);
-        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+    private static List<AgentTask> Fan(int children)
+    {
+        var rootId = Guid.NewGuid();
+        var family = new List<AgentTask>(children + 1)
+        {
+            Node(rootId, rootId, null, 1m, "root"),
+        };
+        for (var i = 0; i < children; i++)
+            family.Add(Node(Guid.NewGuid(), rootId, rootId, 0.01m, "child"));
+        return family;
     }
 
     private static AgentTask Node(Guid id, Guid rootId, Guid? parentId, decimal cost, string title) =>

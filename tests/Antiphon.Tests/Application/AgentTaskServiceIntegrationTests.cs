@@ -882,6 +882,67 @@ public class AgentTaskServiceIntegrationTests
         detail.Summary.ChildCount.ShouldBe(1, "child count is direct children only");
     }
 
+    [Test]
+    public async Task list_subtree_cost_keeps_a_scope_excluded_child_and_drops_filtered_rows()
+    {
+        // ListAsync at 2b471b21c rolled up candidates: the rows left after status, specialist,
+        // since and land-pending. Scope partitioned that set afterwards, so a scope-excluded
+        // child still counted. A child removed by those earlier filters did not.
+        using var workspace = new TempWorkspace();
+        var projectX = Guid.NewGuid();
+        var projectY = Guid.NewGuid();
+        var windowStart = DateTime.UtcNow.AddHours(-1);
+
+        var root = await SeedTaskAsync(AgentTaskKind.Orchestrator, workspace.Path, costUsd: 1.00m);
+        var inScope = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 0.20m, parent: root);
+        var scopeExcluded = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 0.40m, parent: root);
+        var grandchild = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 0.08m, parent: scopeExcluded);
+        var statusExcluded = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 0.80m, parent: root,
+            status: AgentTaskStatus.Failed);
+        var specialist = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 1.60m, parent: root,
+            role: AgentTaskRole.Check);
+        var windowExcluded = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, costUsd: 3.20m, parent: root,
+            status: AgentTaskStatus.Succeeded);
+
+        await using (var db = CreateContext())
+        {
+            var rows = await db.AgentTasks.Where(t => t.RootTaskId == root.Id).ToListAsync();
+            foreach (var row in rows)
+                row.ProjectId = row.Id == scopeExcluded.Id ? projectY : projectX;
+            (await db.AgentTasks.SingleAsync(t => t.Id == statusExcluded.Id)).CompletedAt =
+                windowStart.AddMinutes(10);
+            (await db.AgentTasks.SingleAsync(t => t.Id == windowExcluded.Id)).CompletedAt =
+                windowStart.AddHours(-2);
+            await db.SaveChangesAsync();
+        }
+
+        await using var read = CreateContext();
+        var listed = await CreateService(read).ListAsync(
+            root.Id,
+            statuses: [AgentTaskStatus.Queued, AgentTaskStatus.Working, AgentTaskStatus.Succeeded],
+            includeChecks: false,
+            since: windowStart,
+            scope: new AgentTaskScopeRequest(projectX, null, AgentTaskUnscopedMode.Exclude),
+            ct: CancellationToken.None);
+
+        listed.Items.Select(t => t.Id).OrderBy(id => id).ShouldBe(
+            new[] { root.Id, inScope.Id, grandchild.Id }.OrderBy(id => id));
+        listed.Excluded.Total.ShouldBe(1, "only the other project is withheld after the candidate filters");
+
+        var listedRoot = listed.Items.Single(t => t.Id == root.Id);
+        listedRoot.CostUsd.ShouldBe(1.00m);
+        listedRoot.SubtreeCostUsd.ShouldBe(1.68m, "1.00 + 0.20 + the scope-excluded 0.40 + grandchild 0.08");
+        listedRoot.ChildCount.ShouldBe(2, "the scope-excluded child is a direct child; filtered rows are not");
+        listed.Items.Single(t => t.Id == inScope.Id).SubtreeCostUsd.ShouldBe(0.20m);
+        listed.Items.Single(t => t.Id == grandchild.Id).SubtreeCostUsd.ShouldBe(0.08m);
+    }
+
     // ---- completion-note poll provenance ---------------------------------------------------
 
     [Test]
