@@ -5,7 +5,7 @@ Synthetic portable tests only. Never operate the live run or read desktop files.
 
 S1 commits fixtures and fail-capable tests before implementation. Interpreter RED diagnostics
 are additional listed work, with one narrow case per guard. S2 adds the read-only builder,
-acknowledged source-candidate ingress and mapping to canonical new chunks. S3 verifies seven
+acknowledged source-candidate ingress and mapping to canonical new chunks. S3 verifies eight
 exact methods from one isolated build, plus real land graph -Check, without -Update.
 The existing CP-6 script remains untouched because another commissioned task edits it.
 
@@ -36,10 +36,12 @@ seeds; the actual prepared-schedule boundary launches every chunk and observes n
 | CP-6 | S2 | `CP-1` | seed-permutation | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/ScheduleConservesAllChunks` | permutation and execution | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-7 | S2 | `CP-1` | seed-fallback | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/InvalidSeedFallsBack` | stale/unmapped original order | exact method | 1 | 1 | true | TEMP=/tmp |
 
+| CP-8 | S2 | `CP-1` | seed-hops | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/PublicHopsForwardAcknowledgement` | public wrappers, sync and executor hop | exact method | 1 | 1 | true | TEMP=/tmp |
+
 ## Performance budget
 
-One build (provisional 6-8 minutes from S3 build samples), seven serial tiny fixtures,
-ordinary estimate 14 minutes excluding broker admission (up to 45 minutes per lease).
+One build (provisional 6-8 minutes from S3 build samples), eight serial tiny fixtures,
+ordinary estimate 15 minutes excluding broker admission (up to 45 minutes per lease).
 No setup duplication of a database, host or container: none is used. Each method owns one
 small file fixture. Harness records body wall and unavailable attribution as unknown;
 checkpoint records build, startup, tests, teardown and lease spans. Per-method 90s child /

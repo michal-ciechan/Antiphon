@@ -19,5 +19,6 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(120_000)] public Task HashMustVerify(CancellationToken token) => Run(nameof(HashMustVerify), token);
     [Test, Timeout(120_000)] public Task TimeoutIsFailure(CancellationToken token) => Run(nameof(TimeoutIsFailure), token);
     [Test, Timeout(120_000)] public Task ScheduleConservesAllChunks(CancellationToken token) => Run(nameof(ScheduleConservesAllChunks), token);
+    [Test, Timeout(120_000)] public Task PublicHopsForwardAcknowledgement(CancellationToken token) => Run(nameof(PublicHopsForwardAcknowledgement), token);
     [Test, Timeout(120_000)] public Task InvalidSeedFallsBack(CancellationToken token) => Run(nameof(InvalidSeedFallsBack), token);
 }

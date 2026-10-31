@@ -479,6 +479,7 @@ function Initialize-NightlyDispatchHistory {
         if(-not $Path){throw $fallback}
         $fallback='history-unavailable'
         $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
+        Assert-NightlyHistoryNoLink $Path
         $probe=[IO.File]::ReadAllText($Path)|ConvertFrom-Json
         $isSeed=($probe.PSObject.Properties.Name -ccontains 'seedKind')
         if($isSeed){
