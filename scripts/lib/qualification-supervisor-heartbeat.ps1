@@ -55,6 +55,7 @@ function Get-QualificationGroupPlannedSeconds {
             if([string]$active.$field -cnotmatch $pattern){throw ('plan-binding-unproven-'+$field)}
         }
         $index=Read-QualificationPlanJson (Join-Path $dir 'groups-planned-index.json')
+        if(($index.version -isnot [int] -and $index.version -isnot [long]) -or $index.version -ne 1 -or $index.suites -isnot [array]){throw 'index-schema'}
         if($index.runId -cne $active.runId -or [string]$index.attempt -cne $active.attempt){throw 'index-identity'}
         $rows=@($index.suites|Where-Object {$_.suite -ceq $active.suite})
         if($rows.Count -ne 1){throw 'index-suite'}
@@ -62,6 +63,7 @@ function Get-QualificationGroupPlannedSeconds {
         if($row.file -cne $active.planFile -or $row.runId -cne $active.runId -or [string]$row.attempt -cne $active.attempt){throw 'index-plan'}
         $planPath=Join-Path $dir $active.planFile
         $plan=Read-QualificationPlanJson $planPath
+        if(($plan.version -isnot [int] -and $plan.version -isnot [long]) -or $plan.version -ne 1 -or $plan.groups -isnot [array]){throw 'plan-schema'}
         if((Get-NightlyFileSha256 $planPath) -cne $active.planDigest){throw 'plan-digest'}
         if($plan.suite -cne $active.suite -or $plan.runId -cne $active.runId -or [string]$plan.attempt -cne $active.attempt){throw 'plan-identity'}
         foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$row.$field -cne [string]$active.$field -or [string]$plan.$field -cne [string]$active.$field){throw ('plan-binding-'+$field)}}
@@ -101,9 +103,10 @@ function Read-QualificationActiveChunkIdentity {
         $path=Join-Path $Directory 'active-chunk.json'
         $digest=Get-NightlyFileSha256 $path
         $record=Read-QualificationPlanJson $path
-        foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
+        foreach($field in @('format','state','runId','attempt','suite','chunk','planFile','planDigest','sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
             if($record.PSObject.Properties.Name -cnotcontains $field -or $record.$field -isnot [string]){return $null}
         }
+        if(($record.generation -isnot [int] -and $record.generation -isnot [long]) -or $record.runId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or $record.attempt -cnotmatch '^[1-9][0-9]*$' -or $record.chunk -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'){return $null}
         if($record.format -cne 'antiphon-qualification-active-chunk-v1' -or $record.state -cnotin @('Active','Idle') -or [long]$record.generation -le 0 -or -not $record.runId -or -not $record.attempt -or $record.suite -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or -not $record.chunk -or $record.planFile -cne ('groups-planned-'+$record.suite+'.json') -or $record.planDigest -cnotmatch '^[a-f0-9]{64}$'){return $null}
         if((Get-NightlyFileSha256 $path) -cne $digest){return $null}
         $record|Add-Member -NotePropertyName identityDigest -NotePropertyValue $digest
@@ -114,7 +117,7 @@ function Read-QualificationActiveChunkIdentity {
 function Write-QualificationActiveChunkIdentity {
     param([string]$Directory, [string]$SuiteId, [string]$ChunkId, [string]$RunId, [string]$Attempt, [string]$State='Active')
     try {
-        if($State -cnotin @('Active','Idle') -or $SuiteId -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$'){throw 'active-identity-schema'}
+        if($State -cnotin @('Active','Idle') -or $SuiteId -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or $RunId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or $Attempt -cnotmatch '^[1-9][0-9]*$' -or $ChunkId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'){throw 'active-identity-schema'}
         $file='groups-planned-'+$SuiteId+'.json'
         $path=Join-Path $Directory $file
         $plan=Read-QualificationPlanJson $path
