@@ -15,7 +15,7 @@ function Test-LiveLaneOutageType($ErrorType) {
     return ($ErrorType -is [string] -and $ErrorType -cin @('Overloaded','ServiceUnavailable','RateLimited'))
 }
 function Test-LiveLaneInteger($Value) { return ($Value -is [int] -or $Value -is [long]) }
-function Test-LiveLaneTranscriptOutage($Row) {
+function Test-LiveLaneTranscriptOutage($Row, $ErrorSink=$null) {
     if ([string]::IsNullOrWhiteSpace($Row.Prompt) -or [string]::IsNullOrWhiteSpace($Row.Session) -or
         [string]::IsNullOrWhiteSpace($Row.Request)) { return $false }
     foreach ($prompt in @($Row.Transcript)) {
@@ -26,7 +26,10 @@ function Test-LiveLaneTranscriptOutage($Row) {
             if ($errorRecord -is [Collections.IDictionary] -and $errorRecord.Type -ceq 'ApiError' -and
                 $errorRecord.Session -ceq $Row.Session -and $errorRecord.Request -ceq $Row.Request -and
                 (Test-LiveLaneInteger $errorRecord.Sequence) -and $errorRecord.Sequence -gt $prompt.Sequence -and
-                (Test-LiveLaneOutageType $errorRecord.Error)) { return $true }
+                (Test-LiveLaneOutageType $errorRecord.Error)) {
+                if ($null -ne $ErrorSink) { $ErrorSink.Value=$errorRecord.Error }
+                return $true
+            }
         }
     }
     return $false
@@ -103,6 +106,16 @@ function Invoke-LiveLanePreflight {
     }
     return @{ Verdict=$verdict; Probes=@($probes) }
 }
+function ConvertTo-LiveLaneProbeObservation($Probe) {
+    $status='Unknown'; $providerError=$null
+    if ($Probe.Status -is [string] -and $Probe.Status -cin @('Ready','Unavailable','Timeout','AuthMissing','AuthExpired',
+        'QuotaExceeded','DependencyUnavailable','StartupDefaultAbsent','ReadyTimeout','TrustNotCleared','BridgeNotEstablished')) {
+        $status=$Probe.Status
+    }
+    if ($status -cin @('Unavailable','DependencyUnavailable') -and (Test-LiveLaneOutageType $Probe.Error)) { $providerError=$Probe.Error }
+    return @{ Status=$status; ProviderError=$providerError; Phase=$Probe.Phase
+        Started=$Probe.Started; Finished=$Probe.Finished; Bounded=$Probe.Bounded }
+}
 function Get-LiveLaneOutcome {
     param($Request, $Terminal, [string]$ChildRunId, [int]$RawChildExit, $PostProbe)
     $rows=[Collections.Generic.List[object]]::new()
@@ -123,7 +136,7 @@ function Get-LiveLaneOutcome {
         $exact=@($Request.Uids).Count -gt 0
         $terminalRows=@(); if ($null -ne $Terminal.Rows) { $terminalRows=@($Terminal.Rows) }
         foreach ($row in $terminalRows) {
-            $uid=$null; $state='Invalid'; $setup='Unclassified'; $proof='None'
+            $uid=$null; $state='Invalid'; $setup='Unclassified'; $proof='None'; $providerError=$null; $phase='Terminal'
             if ($row -isnot [Collections.IDictionary] -or $row.Uid -isnot [string] -or
                 [string]::IsNullOrWhiteSpace($row.Uid) -or $row.State -cnotin @('Passed','Failed','Skipped')) {
                 $observation=New-LiveLaneVerdict 2 'row-invalid'; $invalid='terminal-invalid'
@@ -131,26 +144,28 @@ function Get-LiveLaneOutcome {
                 $state=$row.State
                 if (-not $seen.Add($row.Uid)) { $exact=$false }
                 if ($row.Uid -cin @($Request.Uids)) { $uid=$row.Uid } else { $exact=$false }
-                $transcriptOutage=Test-LiveLaneTranscriptOutage $row
+                $transcriptOutage=Test-LiveLaneTranscriptOutage $row ([ref]$providerError)
                 $probeOutage=Test-LiveLaneProbeOutage $row $PostProbe
-                if ($transcriptOutage) { $proof='Transcript' } elseif ($probeOutage) { $proof='Probe' }
+                if ($transcriptOutage) { $proof='Transcript'; $phase='PostSubmission' }
+                elseif ($probeOutage) { $proof='Probe'; $phase='PostFailure'; $providerError=$PostProbe.Error }
                 if ($row.Setup -cin @('Ready','AuthMissing','AuthExpired','QuotaExceeded','DependencyUnavailable',
                     'StartupDefaultAbsent','ReadyTimeout','TrustNotCleared','BridgeNotEstablished','SetupContractViolation')) { $setup=$row.Setup }
                 if ($row.Setup -cne 'Ready') {
                     $observation=Get-LiveLaneSetupOutcome $row.Setup -Healthy:($row.Healthy -is [bool] -and $row.Healthy) `
                         -Deterministic:($row.Deterministic -is [bool] -and $row.Deterministic) -Outage:($proof -cne 'None')
+                } elseif ($proof -cne 'None') {
+                    $observation=New-LiveLaneVerdict 20 'provider-outage'
                 } elseif ($row.State -ceq 'Passed') {
                     $observation=New-LiveLaneVerdict 0 'all-passed'
                 } elseif ($row.State -ceq 'Skipped') {
                     $observation=New-LiveLaneVerdict 20 'unclassified-skip'
-                } elseif ($proof -cne 'None') {
-                    $observation=New-LiveLaneVerdict 20 'provider-outage'
                 } else {
                     $observation=New-LiveLaneVerdict 1 'assertion-failed'
                 }
             }
             $rows.Add([pscustomobject]@{ Uid=$uid; State=$state; Setup=$setup; Proof=$proof
-                ExitCode=$observation.ExitCode; Reason=$observation.Reason })
+                ExitCode=$observation.ExitCode; Reason=$observation.Reason
+                ProviderError=$providerError; Phase=$phase; OutageCorrelated=($proof -cne 'None') })
         }
         if ($seen.Count -ne @($Request.Uids).Count -or $terminalRows.Count -ne @($Request.Uids).Count) { $exact=$false }
         foreach ($uid in @($Request.Uids)) { if (-not $seen.Contains($uid)) { $exact=$false } }

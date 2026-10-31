@@ -143,9 +143,7 @@ function Invoke-LiveLaneRun {
         if ([double](& $Boundary.Clock) -ge $deadline) { $result.Reason = 'deadline'; return $result }
         if ($Boundary.Probe -is [scriptblock]) {
             $preflight = Invoke-LiveLanePreflight $Boundary $Request $deadline
-            $result.Probes = @($preflight.Probes | ForEach-Object {
-                @{ Phase = $_.Phase; Started = $_.Started; Finished = $_.Finished; Bounded = $_.Bounded }
-            })
+            $result.Probes = @($preflight.Probes | ForEach-Object { ConvertTo-LiveLaneProbeObservation $_ })
             if ($preflight.Verdict.ExitCode -ne 0) {
                 $result.ExitCode = $preflight.Verdict.ExitCode; $result.Reason = $preflight.Verdict.Reason
                 return $result
@@ -171,7 +169,7 @@ function Invoke-LiveLaneRun {
                     $probeDeadline = [Math]::Min($deadline, [double](& $Boundary.Clock) + 15)
                     try {
                         $postProbe = Invoke-LiveLaneProbe $Boundary 'PostFailure' $failed[0] $probeDeadline
-                        $result.Probes += @{ Phase = $postProbe.Phase; Started = $postProbe.Started; Finished = $postProbe.Finished; Bounded = $postProbe.Bounded }
+                        $result.Probes += (ConvertTo-LiveLaneProbeObservation $postProbe)
                     } catch {
                         # Transport failure is no outage proof. Keep the original
                         # assertion and all terminal facts for the classifier.
