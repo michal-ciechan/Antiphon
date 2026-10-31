@@ -374,7 +374,64 @@ function Test-RefusesIncompleteEvidence {
     $rel=Export-NightlyPriorFailures $fx.Run (Join-Path $root 'relocated-history.json') -PassThru
     Assert-FF (@($rel.History.evidence | Where-Object { $_.relativePath -ceq $oldTrx }).Count -eq 1 -and @($rel.History.rebindings).Count -ge 1) 'relocation'
 }
+function New-FFGlobalFixture {
+    $replay = New-FFReplay
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $all = [Collections.Generic.List[object]]::new()
+    $all.Add($replay)
+    foreach ($s in @(@('session-runner','Antiphon.SessionRunner.Tests.GrokRulesHttpAcceptanceTests'),@('agents-pty','Antiphon.Agents.Pty.Tests.FakeClaudeContractTests'),@('e2e','Antiphon.E2E.BoardE2ETests'))) {
+        $nodes = @((New-FFNode $s[1]),(New-FFNode ($s[1]+'Ordinary')))
+        $chunks = @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $s[0] -PolicyObject $policy.Object)
+        # Separate companion classes by exact production class filter, preserving
+        # the production planner's prices and watchdog. Supplemental, not replay.
+        if ($chunks.Count -eq 1) {
+            $chunks = @()
+            foreach ($n in $nodes) { $chunks += @(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($n) -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $s[0] -PolicyObject $policy.Object) }
+            $chunks[1].id = 'ordinary'
+        }
+        $all.Add([pscustomobject]@{id=$s[0];nodes=$nodes;chunks=$chunks;exclusions=@()})
+    }
+    $history = [pscustomobject]@{format='antiphon-nightly-prior-failures-v1';sourceRunId='old';sourceAttempt='1';sourceSha=('b'*40);profile='rc';platform='windows';policyHash=('b'*64);createdAtUtc='2026-10-30T00:00:00Z';complete=$true;evidence=@();members=@();fallbackChunks=@();membershipComplete=$true;unresolved=@()}
+    $anchors = @()
+    foreach ($ordinal in @(23,99,101,118)) {
+        $anchor = $replay.chunks[$ordinal-1]
+        $class = Get-NightlyBareClassIdentity ([string]$anchor.classes[0])
+        $anchors += [pscustomobject]@{ordinal=$ordinal;chunk=$anchor.id;className=$class}
+        if (@($history.members | Where-Object {$_.className -ceq $class}).Count -eq 0) { $history.members += [pscustomobject]@{suite='antiphon';className=$class;reasons=@('Failed');observations=@()} }
+    }
+    foreach ($s in @($all.ToArray() | Select-Object -Skip 1)) { $history.members += [pscustomobject]@{suite=$s.id;className=$s.nodes[0].ClassName;reasons=@('Failed');observations=@()} }
+    $resolved = Resolve-NightlyPriorFailures -History $history -Suites $all.ToArray() -QualificationMode Full
+    $schedule = New-NightlyDispatchSchedule -PreparedSuites $all.ToArray() -PriorityMembers $resolved.members -HistoryDigest ('d'*64) -RunId 'new' -Attempt '1'
+    Write-FFJson (Join-Path $root 'anchors.json') $anchors
+    return [pscustomobject]@{suites=$all.ToArray();replay=$replay;history=$history;resolved=$resolved;schedule=$schedule;anchors=$anchors}
+}
+function Test-GlobalReplayPriority {
+    $fx = New-FFGlobalFixture
+    $schedule = $fx.schedule
+    $priority = @($schedule.entries | Where-Object priorFailure)
+    $ordinary = @($schedule.entries | Where-Object {-not $_.priorFailure})
+    Assert-FF ($fx.replay.nodes.Count -eq 19012 -and $fx.replay.chunks.Count -eq 150) 'replay'
+    Assert-FF ($priority.Count -gt 4 -and $ordinary.Count -gt 0 -and ($priority.dispatchOrdinal | Measure-Object -Maximum).Maximum -lt ($ordinary.dispatchOrdinal | Measure-Object -Minimum).Minimum) 'globalPriority'
+    Assert-FF (($priority.canonicalOrdinal -join ',') -ceq ((@($priority.canonicalOrdinal | Sort-Object)) -join ',') -and ($ordinary.canonicalOrdinal -join ',') -ceq ((@($ordinary.canonicalOrdinal | Sort-Object)) -join ',')) 'stable'
+    $keys=@($schedule.entries | ForEach-Object {$_.suite+'/'+$_.chunk})
+    $canonical=@(foreach($s in $fx.suites){foreach($c in $s.chunks){$s.id+'/'+$c.id}})
+    Assert-FF ($keys.Count -eq $canonical.Count -and @($keys | Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $keys $canonical -CaseSensitive).Count) 'permutation'
+    $same=$true
+    foreach($entry in $schedule.entries){$s=@($fx.suites|Where-Object {$_.id -ceq $entry.suite})[0];$c=@($s.chunks|Where-Object {$_.id -ceq $entry.chunk})[0];if(-not [object]::ReferenceEquals($entry.ChunkRef,$c)){$same=$false}}
+    Assert-FF $same 'references'
+    Assert-FF (@($priority|Where-Object {$_.suite -cne 'antiphon' -and $_.dispatchOrdinal -lt $ordinary[0].dispatchOrdinal}).Count -eq 3) 'crossSuite'
+    $splits=$true
+    foreach($m in $fx.resolved.members){foreach($id in $m.chunks){if(@($priority|Where-Object {$_.suite -ceq $m.suite -and $_.chunk -ceq $id}).Count -ne 1){$splits=$false}}}
+    Assert-FF $splits 'allSplits'
+    $plain=New-NightlyDispatchSchedule -PreparedSuites $fx.suites
+    Assert-FF ($plain.canonicalPlanDigest -ceq $schedule.canonicalPlanDigest -and ($plain.entries.canonicalOrdinal -join ',') -ceq ($plain.entries.dispatchOrdinal -join ',')) 'canonicalDigest'
+    $unknown=New-NightlyDispatchSchedule -PreparedSuites $fx.suites -Unresolved @([ordered]@{suite='antiphon';className='Retired.Class';reason='current-class-missing'})
+    Assert-FF ($unknown.unresolved.Count -eq 1 -and $unknown.entries.Count -eq $plain.entries.Count) 'unresolved'
+    Assert-FF (Test-FFRefusal {New-NightlyDispatchSchedule -PreparedSuites @($fx.suites[0],$fx.suites[0])} 'duplicate-canonical-chunk') 'duplicate'
+}
+
 switch -Exact ($Case) {
+    'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
     'OrdinaryFailedChunk' { Test-OrdinaryFailedChunk; $expected=4 }
