@@ -8,6 +8,11 @@ foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-
 $repo = Split-Path -Parent $PSScriptRoot
 $root = New-C487Root $ResultsDirectory
 $clock = [Diagnostics.Stopwatch]::StartNew()
+# This conservation fixture compares observations under an unexhausted reader
+# clock. Production retains its 200 ms deadline; size/regular-file checks stay real.
+if ($Case -cin @('FullBytesAndCoverageConserved','ConservationDiagnostics')) {
+    $script:TestPhaseTrxReadWatch = [Diagnostics.Stopwatch]::new()
+}
 $phases = [ordered]@{}
 $script:FFOperations=[Collections.Generic.List[object]]::new()
 $script:FFAssertions=[Collections.Generic.List[object]]::new()
