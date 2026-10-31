@@ -74,3 +74,13 @@ CHECKPOINT CP-15 commit=5c3edddbcb09620670ef8e81a1fbb6a848f439f5 build=reused fi
 ```
 
 Terminal wait exit1, run20261031-050747-198a. Compiler261.27s (1443 warnings/zero errors), scheduler build351.195s; no admission wait. CP-4 tests197.895s/row202.990s; CP-15 tests88.274s/row93.780s; total charged688.499s/wall688.501s. Source clean/build verified. Phase root /tmp/h7-cp4-15-phases. No deadline fired.
+
+## CP-15 inherited attribution, before repair
+
+The exact unchanged C994_Verifier_manifest_is_strict method failed1/0/1/0 at assigned base f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e in the detached, read-only-source scratch /tmp/c1609-h7-cp15-base. Same valid-manifest assertion and missing c1609-host-proof.ps1 diagnostic. This is inherited fixture incompleteness, not a failure introduced by the H7 mount repair. c590-real.ps1 imports c1008-host-proof.ps1, which transitively imports c1609-host-proof.ps1; the fixture copied only the older list.
+
+```text
+CHECKPOINT CP15-BASE commit=f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e build=ok filter=/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/C994_Verifier_manifest_is_strict executed=1 passed=0 failed=1 skipped=0 trx=/tmp/c1609-h7-cp15-base/.antiphon/checkpoints/20261031-052105-7d04/rows/CP15-BASE/run.trx slot=granted waited=0s dirty=0 source=f5b9e0c4bdbb3953d4e98a37024c38bbe64b370e sourceState=clean buildSource=verified
+```
+
+Run20261031-052105-7d04 terminal exit1; clean source/build verified, fresh output, granted slots with0s wait. Compiler182.22s, scheduler build221.487s; test2.754s, row17.172s; total260.961s wall. No commits or pushes from this baseline scratch. It remains intact except for final owned-bin cleanup. This narrowly scoped extra run was required to attribute the newly found requested-row failure; no full row was repeated.
