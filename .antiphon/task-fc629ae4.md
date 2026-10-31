@@ -3,7 +3,7 @@
 Base: fc064a68247b0186918dfb1f04465e6be0475389. Branch: feat/card-task-fc629ae4.
 Required: 40 baseline sequential / 20 loaded exact-method runs, deterministic ordering witness and repair, 60 sequential / 30 loaded green runs, C84x class, roster/census and real graph Check. Native Windows C849 remains owed; no native or live qualification operations authorized here.
 Evidence root: /tmp/fc629ae4. TEMP=/tmp. All build/test drivers pass build-slot.ps1; private bin-fc629ae4 output. Task-owned runs are sequential unless explicitly collecting loaded samples; other host tasks are observed, not stopped.
-Initial hypothesis: signal delivery can overlap cleanup; inspect readiness and nested-handler scheduling before attributing either observation. No assertions weakened and no product attribution yet.
+Initial scope hypothesis (historical): signal delivery can overlap cleanup; inspect readiness and nested-handler scheduling before attributing either observation. No assertions were weakened. The final diagnosis and continuation outcome follow below.
 
 ## Baseline and deterministic diagnosis
 
@@ -50,7 +50,7 @@ At 2e3012060f8ba9a5f450f08fd784f3b380ef2559, the exact new method executed two c
 
 The repair calls the existing idempotent finalizer inside the signal handler before exiting. Ownership/identity probes, foreign-object preservation, positive volume-removal proof, lease deletion, 130/143 exits and m1/m5/m6/m7 controls are retained. The native Windows C849 rerun is still owed and was not run here.
 
-## Final verification and remaining gate
+## Initial verification and historical incomplete gate
 
 Repair source: 4272c9ad42a9449c4d081f402d9af859f431a979. The two new regression cases passed 2/2. Whole C84x selection passed 32/32 (140.117s), and RcRosterRepairTests passed 3/3 (33.095s); zero failures/skips in these green selections. Total: 37 green executions, including the two deterministic cases also present in C84x. The original refused-launch/signal/foreign-container method and all m1/m5/m6/m7 controls passed in C84x.
 
@@ -70,12 +70,9 @@ Pushed implementation/history slices:
 - 2e3012060f8ba9a5f450f08fd784f3b380ef2559 — committed failing TERM/INT cases.
 - 4272c9ad42a9449c4d081f402d9af859f431a979 — custody repair and owner documentation.
 
-Work proceeded under the caller’s standing fix/commit authority without an approval pause. Additional execution budget is needed for the five census cases and 60/30 final stress at this repair; the independent TERM exit=2 observation remains unattributed. Native Windows RemoteScriptContractTests C849 rerun is still owed and explicitly outside this task. Merge to rc remains pending these incomplete checks; do not treat this report as full acceptance.
+Work proceeded under the caller’s standing fix/commit authority without an approval pause. At the first settlement, additional execution budget was needed for the five census cases and 60/30 final stress at this repair; the independent TERM exit=2 observation remained unattributed. Native Windows RemoteScriptContractTests C849 rerun was still owed and explicitly outside this task. That historical settlement withheld acceptance pending the incomplete checks.
 
---- next stage ---
-next: debug
-handoff: Complete the five census cases and 60 sequential/30 loaded exact-method runs at the repaired source, investigate any remaining TERM exit mismatch, then merge to rc. Native Windows C849 remains a separate owed rerun.
-artifact: /work/worktrees/task-fc629ae4/.antiphon/task-fc629ae4.md
+The initial next stage was Debug; the caller reopened it with the continuation recorded below. The final next-stage block closes this report.
 
 Final master attribution check: the untouched base has 48 master merge-tree conflicts; the repair has 50. The two additional conflict records are not classified here, so not all 50 are attributed as inherited. The intended rc comparison passed; master landing is not authorized by these results.
 
@@ -94,3 +91,40 @@ The previously owed 60 sequential / 30 loaded repetitions are now COMPLETE: 60/6
 Sequential test durations: p50=40.994s, p95=56.339s, min=27.659s, max=57.629s. Sequential wall time including 60 separate dotnet/TUnit startups was 2936.887s (48m57s). The four loaded-phase burners were direct children owned by the continuing Node driver: PIDs 17789, 17792, 17793 and 17795, started 2026-10-31T12:17:45.318Z. All four were stopped through owned child handles and joined before driver exit 0 and lease release. Complete lifetimes, loaded metrics and per-run counts are retained in /tmp/fc629ae4-cont/load.jsonl, summary.json and runs.jsonl. Every invocation retains full output, fresh TRX, source SHA and host census under post-fix-alone-NNN / post-fix-loaded-NNN.
 
 The measured 90-invocation campaign exceeded the caller's approximate additional hour; the exact required sequential selections were completed without shortening waits, weakening assertions or parallelizing the sequential phase. The independent TERM exit=2 observation is the remaining time-boxed investigation; it is not claimed fixed by these 90 passes.
+
+## Final continuation outcome
+
+DONE for the commissioned Linux Debug scope. The real signal-during-EXIT custody defect is repaired red-first; all required Linux selections are complete. The separate historical TERM exit=2 observation remains unreproduced and unclassified, explicitly recorded rather than claimed fixed. Native Windows C849 remains owed and was not run.
+
+| Selection | Passed | Failed | Skipped | Test p50 / p95 / maximum (s) |
+|---|---:|---:|---:|---|
+| Base exact method, sequential | 40 | 0 | 0 | 41.812 / 61.489 / 72.870 |
+| Base exact method, loaded | 20 | 0 | 0 | 54.176 / 71.579 / 72.409 |
+| New deterministic cases, committed red | 0 | 2 | 0 | Assertion red: volume removal only |
+| New deterministic cases, repaired | 2 | 0 | 0 | /tmp/fc629ae4/deterministic-green |
+| Whole C84x selection, repaired | 32 | 0 | 0 | Includes original C849 and m1/m5/m6/m7 |
+| RcRosterRepairTests | 3 | 0 | 0 | 33.095s selection duration |
+| C1404/C1577/C1584/C1410/G2865 census | 5 | 0 | 0 | 117.879s selection duration |
+| Repaired exact method, sequential | 60 | 0 | 0 | 40.994 / 56.339 / 57.629 |
+| Repaired exact method, loaded | 30 | 0 | 0 | 42.359 / 64.987 / 74.611 |
+
+The 90 post-fix invocation wall times total 4464.154s (74m24s), including separate dotnet/TUnit startup for every invocation: 48m57s sequential and 25m27s loaded. The four stress burners were joined at 2026-10-31T12:43:13.584Z, and lease 762bea17-345a-4c7a-a0ff-36300884d44c released after 5089s held (build, census, evidence idle gate and stress). Host-wide inactivity was not reserved; retained per-run censuses show competing host work. The continuation therefore exceeded the approximate additional hour to finish the explicit 90-run acceptance obligation; no evidence rows were silently dropped.
+
+Independent TERM time box: at source 849c38ab74c8855f7c32ffbf35f592a5f24bf23b, 40/40 focused shell probes passed alone and 40/40 passed with four owned CPU burners. These are additional diagnostic shell probes, NOT additional TUnit method repetitions. The scratch copy preserves the original foreign-container witness followed by the original TERM witness, exact 143 exit and all foreign/CID/lease/positive volume-removal facts. It adds only sender/handler/EXIT/result phase logging and fixed-file snapshots; it does not override release decisions or accept exit 2. Every trace observed successful TERM send, handler entry and EXIT 143. No assertion or receipt was relaxed. This does not classify the historical absent failure as either a harness race or a product defect.
+
+The TERM phase used real lease d57991c3-857c-4cc3-840f-19843998522d, waited 30s and held 337s; approximately 6m7s including admission, within the 20-minute cap. Diagnostic full-probe wall p50/p95/max: alone 4.568/7.284/13.183s; loaded 3.371/5.883/7.526s. These include the foreign-container setup and are not measurements of the new deterministic finalizer guard. Its original approximately 2x loaded-preview-p95 guard remains unchanged. The focused load's direct children 9845/9846/9847/9849 were stopped by their handles and joined at 2026-10-31T12:50:04.760Z. Evidence, full per-probe output, diagnostic script and phase snapshots: /tmp/fc629ae4-term/; source-sha.txt, runs.jsonl, summary.json and gate.log record provenance and counts. Instrumentation can alter scheduling, so these samples cannot prove the historical TERM symptom fixed; the 90 unmodified exact-method invocations are the final stress evidence.
+
+An ownership census also found four orphaned fake-model Bash processes carrying this exact task ID and C1192_MUTATION=m1, with scripts/cwds inside deleted private model roots. They are deliberately broken positive-control residue, not evidence of an ordinary product cleanup failure or of the TERM exit mismatch. PID/start-time/task identity was revalidated before each signal; all four and their eight owned descendants exited after TERM, with zero surviving selected processes and no SIGKILL needed. Receipt: /tmp/fc629ae4-term/owned-cleanup-receipt.json. All 36 fresh bin-fc629ae4-cont output directories were then removed by their exact inventoried paths after every build/test process had exited; /tmp/fc629ae4-cont/cleanup-inventory.json records zero remaining paths. No production/foreign process was stopped. All foreground runs were awaited.
+
+Files changed: scripts/c590-remote.sh (finalize before signal exit), scripts/fixtures/c1192-workspace-contract.sh (bounded deterministic EXIT-order hook), tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs (two exact red-first cases), docs/docker-stack.md and docs/testing-and-build.md (owner behavior/evidence), plus this individual report. No production changes beyond the three-line finalizer repair. Existing custody assertions and m1/m5/m6/m7 detection remain exact.
+
+The real graph -Check approval above remains valid for the unchanged implementation; no -Update ran. Refreshed origin rc/2026-10-27 is fc064a68247b0186918dfb1f04465e6be0475389; merge-tree against the final stress-evidence tip 849c38ab74c8855f7c32ffbf35f592a5f24bf23b passes, tree e47958f66792b1295a529812e819601806d8c915. Refreshed master is 2051d327123a5e98524b4bd1ecf31c6e516bdb4e; its comparison remains conflicted and is not the landing target. No target merge/rebase/reset/force push, tags, publish, native run, desktop file access, C:\Antiphon access or live qualification d47848cc operation occurred.
+
+Continuation evidence commits (pushed after each completed step): 4bc23d89ec452d73bc83147e00f9b59f402da92d (census), 849c38ab74c8855f7c32ffbf35f592a5f24bf23b (90-run stress), followed by this final TERM/cleanup report. Previous evidence commits retained: 9d3398b8dd3184fa4437694c1e53547a1cac455b and f453676a71481d7c0addb00b87cf9eec16dde599. Red and repair SHAs are recorded above. Final head and evidence-diff result are supplied with the completion receipt.
+
+To rerun on Linux: acquire a host build slot, build tests/Antiphon.Tests with UseAppHost=false, TEMP=/tmp and a fresh alternate OutputPath; then run dotnet run --project tests/Antiphon.Tests --no-build with the same properties and exact treenode filter /*/*/RemoteScriptContractTests/C849_Refused_launch_keeps_a_foreign_container_and_signals_release_proven_cids under the slot. Retain fresh TRX per invocation and stop on the first failure. The deterministic filter is /*/*/RemoteScriptContractTests/C849_Signal_during_exit_finishes_custody_cleanup. Native Windows RemoteScriptContractTests C849 remains a separate owed rerun, including the previously repaired driver-ready path; no Linux result substitutes for it.
+
+--- next stage ---
+next: merge to rc
+handoff: Land the repaired branch onto rc/2026-10-27. Carry the unreproduced/unclassified historical TERM exit=2 observation as an open limitation; it is not claimed fixed. Native Windows RemoteScriptContractTests C849 remains owed and was not authorized here.
+artifact: /work/worktrees/task-fc629ae4/.antiphon/task-fc629ae4.md
