@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "runId": "synthetic-stopped",
+  "attempt": "1",
+  "suite": "session-runner",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "groups": [
+    {
+      "chunk": "all-group-1",
+      "classes": [
+        "Synthetic.session_runner.Passed"
+      ],
+      "plannedTestIds": [
+        "pass"
+      ]
+    },
+    {
+      "chunk": "all-group-2",
+      "classes": [
+        "Synthetic.session_runner.Red"
+      ],
+      "plannedTestIds": [
+        "red"
+      ]
+    },
+    {
+      "chunk": "all-group-3",
+      "classes": [
+        "Synthetic.session_runner.Never"
+      ],
+      "plannedTestIds": [
+        "never"
+      ]
+    },
+    {
+      "chunk": "profile-4",
+      "classes": [
+        "Synthetic.session_runner.Torn"
+      ],
+      "plannedTestIds": [
+        "torn",
+        "missing"
+      ]
+    }
+  ]
+}

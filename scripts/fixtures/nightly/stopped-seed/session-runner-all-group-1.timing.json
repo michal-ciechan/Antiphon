@@ -1,0 +1,8 @@
+{
+  "suite": "session-runner",
+  "chunk": "all-group-1",
+  "startedAt": "2026-10-30T08:30:00Z",
+  "completedAt": "2026-10-30T08:30:00Z",
+  "lastPhaseUtc": "2026-10-30T08:30:00Z",
+  "trx": "session-runner-all-group-1.trx"
+}
