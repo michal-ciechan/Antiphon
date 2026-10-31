@@ -76,3 +76,5 @@ Work proceeded under the caller’s standing fix/commit authority without an app
 next: debug
 handoff: Complete the five census cases and 60 sequential/30 loaded exact-method runs at the repaired source, investigate any remaining TERM exit mismatch, then merge to rc. Native Windows C849 remains a separate owed rerun.
 artifact: /work/worktrees/task-fc629ae4/.antiphon/task-fc629ae4.md
+
+Final master attribution check: the untouched base has 48 master merge-tree conflicts; the repair has 50. The two additional conflict records are not classified here, so not all 50 are attributed as inherited. The intended rc comparison passed; master landing is not authorized by these results.
