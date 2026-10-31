@@ -142,6 +142,9 @@ internal static class LiveClaudeExecutableAudit
         return false;
     }
 
+    private static bool ContainsForeignProcessLaunch(SyntaxNode node) => node.DescendantNodes().OfType<InvocationExpressionSyntax>()
+        .Any(call => call.Expression.ToString() is "runner.StartAsync" or "Process.Start" or "Process.StartAsync");
+
     private static bool ContainsBareLaunch(SyntaxNode node) => node.DescendantNodes().OfType<InvocationExpressionSyntax>()
         .Any(call => call.ArgumentList.Arguments.Any(argument => argument.Expression is LiteralExpressionSyntax literal
             && literal.IsKind(SyntaxKind.StringLiteralExpression)
@@ -165,7 +168,9 @@ internal static class LiveClaudeExecutableAudit
             {
                 if (IsHidden(call, lambda) || call.ArgumentList.Arguments.All(a => a.Expression.ToString() != argument)) continue;
                 var helper = UniqueCallable(call, SimpleName(call));
-                if (helper is null) continue;
+                // A helper that starts a process itself is not a consumed attested launch.
+                // LaunchUntilReadyAsync is followed only when the lambda calls it directly.
+                if (helper is null || ContainsForeignProcessLaunch(helper)) continue;
                 found.AddRange(UnconditionalCalls(helper, expression, argument, argumentIndex));
             }
         }
