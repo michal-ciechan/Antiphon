@@ -2,6 +2,10 @@
 # Qualification timing retention. ASCII-only.
 # A blank timing root, a nightly chunk, a chunk with no TRX, and a timed-out
 # chunk must all leave a sidecar and a summary table.
+param(
+    [ValidateSet('', 'CaptureShell')]
+    [string]$Case = ''
+)
 $ErrorActionPreference = 'Stop'
 $failed = 0
 
@@ -13,6 +17,111 @@ function Assert-Check {
     }
     Write-Host ('FAIL ' + $Name)
     $script:failed++
+}
+
+function Invoke-CaptureShellWitness {
+    $source = [IO.File]::ReadAllText($PSCommandPath)
+    Assert-Check (-not $source.Contains('$psi.FileName = "/bin/sh"')) 'capture-shell-source-uses-resolver'
+    $missing = $false
+    if (-not (Get-Command Resolve-QualificationCaptureShell -ErrorAction SilentlyContinue)) {
+        Write-Host 'FAIL capture-shell-resolver-missing'
+        $script:failed++
+        $missing = $true
+    }
+    if (-not (Get-Command New-QualificationCaptureSeam -ErrorAction SilentlyContinue)) {
+        Write-Host 'FAIL capture-shell-seam-helper-missing'
+        $script:failed++
+        $missing = $true
+    }
+    if ($missing) { return }
+
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-sh-' + [guid]::NewGuid().ToString('N'))
+    $gitCmd = Join-Path $root 'Program Files/Git/cmd'
+    $gitUsr = Join-Path $root 'Program Files/Git/usr/bin'
+    $direct = Join-Path $root 'direct'
+    $empty = Join-Path $root 'empty'
+    $probeRoot = Join-Path $root 'probe'
+    $probeDir = Join-Path $probeRoot 'cap'
+    New-Item -ItemType Directory -Path $gitCmd, $gitUsr, $direct, $empty, $probeDir -Force | Out-Null
+    $plant = Join-Path $gitUsr 'sh.exe'
+    $plantBody = "#!/bin/sh`nprintf '%s\n' `"`$0`" > `"`$QTIMING_CAPTURE_SHELL_MARKER`"`nexec /bin/sh `"`$@`"`n"
+    [IO.File]::WriteAllText($plant, $plantBody)
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        [IO.File]::SetUnixFileMode($plant, [IO.UnixFileMode]'UserRead,UserWrite,UserExecute,GroupRead,GroupExecute,OtherRead,OtherExecute')
+    }
+    [IO.File]::WriteAllText((Join-Path $gitCmd 'git.exe'), 'git')
+    [IO.File]::WriteAllText((Join-Path $direct 'sh.exe'), 'direct')
+    $marker = Join-Path $root 'marker'
+    try {
+        $beside = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $gitCmd
+        $besideText = [string]$beside
+        $besideOk = (-not [string]::IsNullOrWhiteSpace($besideText)) -and ($besideText -ne '/bin/sh') -and ($besideText.Replace('\', '/') -eq (([IO.Path]::GetFullPath($plant)).Replace('\', '/')))
+        Assert-Check $besideOk 'capture-shell-resolver-windows-shape'
+        $directShell = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $direct
+        $directOk = ([string]$directShell).Replace('\', '/') -eq (([IO.Path]::GetFullPath((Join-Path $direct 'sh.exe'))).Replace('\', '/'))
+        Assert-Check $directOk 'capture-shell-resolver-path-sh-exe'
+        $onlyBin = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue '/bin'
+        $binRejected = [string]::IsNullOrWhiteSpace([string]$onlyBin)
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            $binRejected = $binRejected -and (Test-Path -LiteralPath '/bin/sh' -PathType Leaf)
+        }
+        Assert-Check $binRejected 'capture-shell-resolver-skips-bin-sh'
+        $absent = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $empty
+        Assert-Check ([string]::IsNullOrWhiteSpace([string]$absent)) 'capture-shell-absent-skips'
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            Write-Host 'SKIP capture-shell-seam-start linux-planted-shell'
+            return
+        }
+        $seamPath = Join-Path $probeRoot 'seam.ps1'
+        New-QualificationCaptureSeam -Path $seamPath -Shell $besideText
+        $seamText = [IO.File]::ReadAllText($seamPath)
+        $seamOk = $seamText.Contains($besideText) -and (-not $seamText.Contains('$psi.FileName = "/bin/sh"'))
+        Assert-Check $seamOk 'capture-shell-seam-embeds-resolved-shell'
+        $env:QTIMING_CAPTURE_DIR = $probeDir
+        $env:QTIMING_CHILD_EXIT = '0'
+        $env:QTIMING_FORWARD = '1'
+        $env:QTIMING_CAPTURE_SHELL_MARKER = $marker
+        . $seamPath
+        & $NightlySeams.StartProcess 'dotnet' @('--report-trx') $probeRoot 10000 @{
+            ANTIPHON_TEST_PHASE_ROOT = $probeRoot
+            QTIMING_CAPTURE_SHELL_MARKER = $marker
+        }
+        $markerText = ''
+        if (Test-Path -LiteralPath $marker) { $markerText = ([IO.File]::ReadAllText($marker)).Trim() }
+        $stdoutPath = Join-Path $probeDir 'stdout-0'
+        $stderrPath = Join-Path $probeDir 'stderr-0'
+        $exitPath = Join-Path $probeDir 'exit-0'
+        $stdout = ''
+        $stderr = ''
+        $exitText = ''
+        if (Test-Path -LiteralPath $stdoutPath) { $stdout = [IO.File]::ReadAllText($stdoutPath) }
+        if (Test-Path -LiteralPath $stderrPath) { $stderr = [IO.File]::ReadAllText($stderrPath) }
+        if (Test-Path -LiteralPath $exitPath) { $exitText = ([IO.File]::ReadAllText($exitPath)).Trim() }
+        $seen = @(Get-ChildItem -LiteralPath $probeDir -Filter 'seen-*' -File -ErrorAction SilentlyContinue)
+        $started = ($markerText -eq $besideText) -and ($stdout -eq 'QUAL-OUT') -and ($stderr -eq 'QUAL-ERR') -and ($exitText -eq '0') -and (@($seen).Count -ge 1)
+        Assert-Check $started 'capture-shell-seam-starts-resolved-shell'
+    } catch {
+        Write-Host ('FAIL capture-shell-witness ' + $_.Exception.Message)
+        $script:failed++
+    } finally {
+        Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_CAPTURE_SHELL_MARKER -ErrorAction SilentlyContinue
+        Remove-Variable -Name NightlySeams -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name NightlySeams -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($Case -eq 'CaptureShell') {
+    Invoke-CaptureShellWitness
+    if ($failed -gt 0) {
+        Write-Host ('FAILED ' + $failed)
+        exit 1
+    }
+    Write-Host 'OK'
+    exit 0
 }
 
 function Initialize-HarnessFifo {
@@ -1020,6 +1129,9 @@ exit $LASTEXITCODE
     Remove-Item -LiteralPath $openRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 }
+
+# Windows-shaped capture shell: Git sh.exe through the resolver, never a literal /bin/sh.
+Invoke-CaptureShellWitness
 
 # Stdout, stderr, and the chunk exit stay the same with the phase environment forwarded or stripped.
 $capRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-cap-' + [guid]::NewGuid().ToString('N'))
