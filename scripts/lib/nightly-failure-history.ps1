@@ -480,9 +480,11 @@ function Initialize-NightlyDispatchHistory {
         $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
         $history=Read-NightlyPriorFailures @read
         $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
+        if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
         if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
         $completed=[datetimeoffset]::MinValue
-        if(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
+        if($summary.completedAt -is [datetime]){$completed=[datetimeoffset]$summary.completedAt}
+        elseif(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
         $now=Get-NightlyUtcNow
         if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
         $digest=Get-NightlyHistoryDigest $Path

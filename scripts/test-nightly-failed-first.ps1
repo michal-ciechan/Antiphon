@@ -983,7 +983,8 @@ $NightlySeams=@{
                 $legacyCost=Get-QualificationGroupPlannedSeconds $lookup $cid
                 $qualifiedCost=Get-QualificationGroupPlannedSeconds $lookup $cid $sid 'actual-run' '1'
             }
-            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter');legacyCost=$legacyCost;qualifiedCost=$qualifiedCost;plannedCost=$group.plannedSeconds})
+            $provenBinding=$active -and $active.sourceDigest -cmatch '^[a-f0-9]{40}$' -and $active.policyDigest -cmatch '^[a-f0-9]{64}$' -and $active.costFileDigest -cmatch '^[a-f0-9]{64}$' -and $active.assemblyDigest -cmatch '^[a-f0-9]{64}$'
+            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter');legacyCost=$legacyCost;qualifiedCost=$qualifiedCost;plannedCost=$group.plannedSeconds;provenBinding=$provenBinding})
             $special=($sid -ceq 'antiphon' -and @($group.classes|Where-Object {$_ -clike '*Priority*'}).Count -gt 0)
             $state='Passed';$code=0;$timeout=$false
             if($special -and $global:FFLoopBoundaryState.Variant -ceq 'failure'){$state='Failed';$code=2}
@@ -1088,7 +1089,9 @@ function Test-FFHeartbeatBindings {
         @($mutantIndex.suites|Where-Object {$_.suite -ceq 'antiphon'})[0].PSObject.Properties.Remove($field)
         Write-FFJson $planPath $mutantPlan;Write-FFJson $indexPath $mutantIndex
         $mutantActive.planDigest=Get-NightlyHistoryDigest $planPath;Write-FFJson $activePath $mutantActive
-        if($null -ne (Get-QualificationGroupPlannedSeconds $path 'all-group-3')){$bad=$false}
+        $mutantCost=Get-QualificationGroupPlannedSeconds $path 'all-group-3'
+        $script:FFOperations.Add([ordered]@{kind='heartbeat-schema';field=$field;plannedSeconds=$mutantCost;expected='unknown'})
+        if($null -ne $mutantCost){$bad=$false}
         [IO.File]::WriteAllText($planPath,$planText);[IO.File]::WriteAllText($indexPath,$indexText);[IO.File]::WriteAllText($activePath,$activeText)
     }
     Assert-FF $bad 'heartbeatRefusals'
@@ -1117,10 +1120,16 @@ function Test-JournalCustodySurvivesInterleaving {
     Assert-FF ($read.Refused -or $read.Unresolved -or -not $read.PublicationComplete) 'custody'
     [IO.File]::WriteAllText($first,$bytes)
     Assert-FF ($a.Projection.suite -ceq $a.Trace.Launches[0].suite -and (@($a.Summary.suites|ForEach-Object {$_.id+'/'+$_.chunk})-join ',') -ceq ($keys-join ',') -and $a.Summary.suiteTimeline.Count -eq 2 -and [IO.File]::Exists((Join-Path $a.Root 'timing/summary.json'))) 'fieldPolicies'
-    $identitiesOk=$a.Trace.Identities.Count -eq $a.Trace.Launches.Count
-    for($i=0;$i -lt $a.Trace.Launches.Count;$i++){$identity=$a.Trace.Identities[$i];$launch=$a.Trace.Launches[$i];if($null -eq $identity -or $identity.suite -cne $launch.suite -or $identity.chunk -cne $launch.chunk -or $identity.runId -cne 'actual-run' -or $identity.attempt -cne '1' -or $identity.state -cne 'Active'){$identitiesOk=$false}}
+    $identitiesOk=$true
+    foreach($identityArm in @($a,$plain)){
+        if($identityArm.Trace.Identities.Count -ne $identityArm.Trace.Launches.Count){$identitiesOk=$false}
+        for($i=0;$i -lt $identityArm.Trace.Launches.Count;$i++){$identity=$identityArm.Trace.Identities[$i];$launch=$identityArm.Trace.Launches[$i];if($null -eq $identity -or $identity.suite -cne $launch.suite -or $identity.chunk -cne $launch.chunk -or $identity.runId -cne 'actual-run' -or $identity.attempt -cne '1' -or $identity.state -cne 'Active'){$identitiesOk=$false}}
+    }
     $idle=Read-QualificationActiveChunkIdentity (Join-Path $a.Root 'timing')
-    $pricesOk=@(@($a.Trace.Launches)+@($plain.Trace.Launches)|Where-Object {$_.legacyCost -ne $_.plannedCost -or $_.qualifiedCost -ne $_.plannedCost -or $null -eq $_.legacyCost}).Count -eq 0
+    $pricesOk=@(@($a.Trace.Launches)+@($plain.Trace.Launches)|Where-Object {
+        if($_.provenBinding){$_.legacyCost -ne $_.plannedCost -or $_.qualifiedCost -ne $_.plannedCost -or $null -eq $_.legacyCost}
+        else{$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}
+    }).Count -eq 0
     Assert-FF ($identitiesOk -and $idle.state -ceq 'Idle' -and $pricesOk) 'activeIdentity'
     # Same real helper path used by the public coordinator, with the complete
     # D-15 diagnostic/authority matrix from S2. Share the small immutable setup.

@@ -13,7 +13,8 @@ function Resolve-NightlyPreviousRunOrder {
         if ($PreviousRun.suites -isnot [array] -or [string]$PreviousRun.sha -cnotmatch '^[a-f0-9]{40}$') { throw $reason }
         if ($PreviousRun.sha -cne $CandidateSha) { throw 'previous-run-candidate-mismatch' }
         $completed=[datetimeoffset]::MinValue
-        if (-not [datetimeoffset]::TryParse([string]$PreviousRun.completedAt,[ref]$completed)) { throw $reason }
+        if($PreviousRun.completedAt -is [datetime]){$completed=[datetimeoffset]$PreviousRun.completedAt}
+        elseif (-not [datetimeoffset]::TryParse([string]$PreviousRun.completedAt,[ref]$completed)) { throw $reason }
         if ($completed.UtcDateTime -gt $NowUtc.ToUniversalTime().AddMinutes(5) -or $completed.UtcDateTime -lt $NowUtc.ToUniversalTime().AddDays(-7)) { throw 'previous-run-stale' }
         $known=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($entry in $Entries){if(-not $known.Add($entry.suite+[char]0+$entry.chunk)){throw 'canonical-chunk-duplicate'}}
