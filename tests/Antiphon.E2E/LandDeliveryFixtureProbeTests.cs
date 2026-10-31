@@ -46,6 +46,12 @@ public class LandDeliveryFixtureProbeTests
             error.Message.ShouldContain("build-slot-waiting");
             error.Message.ShouldNotContain(privatePayload);
             File.Exists(Path.Combine(f.Root, "receipt-timeout-" + notification.ToString("N") + ".txt")).ShouldBeTrue();
+            var unavailable = await f.ReceiptTimeoutAsync(original, LandNotificationKind.Outcome, request, notification,
+                _ => throw new IOException(privatePayload));
+            unavailable.InnerException.ShouldBeSameAs(original);
+            unavailable.Message.ShouldContain("producerState=unavailable:IOException");
+            unavailable.Message.ShouldContain("lastProtocolGit=" + git);
+            unavailable.Message.ShouldNotContain(privatePayload);
             producer.Task.IsCompleted.ShouldBeFalse();
         }
         finally
