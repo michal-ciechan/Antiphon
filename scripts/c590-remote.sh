@@ -9149,6 +9149,26 @@ c1609_load_retirement() {
     fi
 }
 
+# CARD-1609. Volume deletion stays off until this shell holds enabled-<operation id>.
+# A fresh retirement mints a new id, so a leftover export cannot authorize it.
+# Resume repeats the same id and needs the same token. write_result exits before
+# any volume rm and does not call c1008_refuse (that would rewrite the journal).
+c1609_apply_gate() {
+    if [[ ! "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] || \
+        [ "${ANTIPHON_VOLUME_RETIREMENT_APPLY:-}" != "enabled-${C1008_OPERATION}" ]; then
+        write_result false 'apply-gate-off' 2
+    fi
+}
+
+c1609_preview_would_delete() {
+    local name facts listed=''
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || facts=null
+        if [ "$facts" != null ]; then listed="${listed:+$listed }$name"; fi
+    done
+    printf 'would delete: %s\n' "$listed"
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
@@ -9263,6 +9283,7 @@ c1008_recycle() {
             C1609_CONTENT_READY=1
         fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
+        c1609_preview_would_delete
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
             c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
@@ -9434,6 +9455,12 @@ c1008_recycle() {
         if [ "${C1008_RESUME:-0}" != 1 ]; then
             c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         fi
+    fi
+    # Temp and host both delete in the loop below. The gate is outside the temp
+    # branch so a host recycle cannot skip it. Apply-active starts only after it
+    # passes; a refusal must not mark PartialRefused for a delete that did not run.
+    c1609_apply_gate
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         C1609_APPLY_ACTIVE=1
     fi
     for name in "${C1008_TARGETS[@]}"; do

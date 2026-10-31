@@ -64,7 +64,9 @@ public sealed class DockerStackDocumentationTests
             "TempContainerExitTimeout", "exited retired temp", "normal shutdown", "pending confirmed absence",
             "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated",
             "Assert-TempRetirementClearable", "before `/drain/clear`", "TempVolumesRetained", "tempPrivateVolumes=0",
-            "-Close -OperationId", "journal transition, not a delete" })
+            "-Close -OperationId", "journal transition, not a delete",
+            "Apply is off by default", "-Phase retire-temp -DryRun", "apply-gate-off", "exit 2",
+            "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "-RetirementProof <operation-id>" })
             text.ShouldContain(expected, Case.Sensitive, "c994-runbook: " + expected);
         text.ShouldNotContain("Current retire-temp guard caveat", Case.Sensitive, "c994-runbook: obsolete null guard caveat");
         text.ShouldNotContain("Until CARD-0994/CARD-1008", Case.Sensitive, "c994-runbook: obsolete implementation caveat");

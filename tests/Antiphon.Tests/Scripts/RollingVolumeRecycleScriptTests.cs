@@ -3353,6 +3353,8 @@ internal sealed class C1008HostFixture : IDisposable
             C1008_LAND_WAIT_SECONDS=1; C1008_LAND_POLL_SECONDS=1
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
+            if [ "${C1609_FIXTURE_APPLY_GATE:-on}" = off ]; then unset ANTIPHON_VOLUME_RETIREMENT_APPLY
+            elif [ -z "${ANTIPHON_VOLUME_RETIREMENT_APPLY:-}" ]; then export ANTIPHON_VOLUME_RETIREMENT_APPLY="enabled-${C1008_OPERATION}"; fi
             """;
         source = source.Replace("trap 'ec=$?;", injection + "\ntrap 'ec=$?;", StringComparison.Ordinal);
         var script = Path.Combine(Root, "remote.sh");

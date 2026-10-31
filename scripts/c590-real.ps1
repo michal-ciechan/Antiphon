@@ -852,6 +852,12 @@ mkdir -- '{0}'
             "export C1008_RESUME='$recycleResume'"
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
         ) + $auditTimeoutExport
+        # Forward only a token bound to one operation id. Unset, 1, true, enabled,
+        # or a previous operation's token stays on the desktop and the remote refuses.
+        $applyGate = [string]$env:ANTIPHON_VOLUME_RETIREMENT_APPLY
+        if ($applyGate -cmatch '^enabled-c1008[0-9a-f]{32}$') {
+            $bridgeExports += "export ANTIPHON_VOLUME_RETIREMENT_APPLY='$applyGate'"
+        }
         if ($Case -ceq 'retire-temp-runner' -and $recycleContext -ceq 'default') {
             $remote = ($bridgeExports + @("export C1609_EXCHANGE='1'","export C1609_EXCHANGE_PROOF_ROOT='/home/mc/antiphon-c590'",$remoteEntry)) -join '; '
             $code = Invoke-C1609RetirementCoordinator -Remote $remote -EvidenceRoot $root -Run $run -Operation $recycleOperation -ProjectId $recycleProjectId -ReceiptPath (Join-Path $root 'remote-output.txt')
