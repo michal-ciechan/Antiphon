@@ -323,6 +323,17 @@ function Assert-C1008BridgeContext {
     if ($null -eq $Context -or $Case -notin @('deploy-parent','retire-temp-runner')) { throw 'RecycleContextInvalid' }
     $keys = @($Context.PSObject.Properties.Name)
     $expected = @('version','project','operationId','dryRun','resume','projectId')
+    if ($keys -ccontains 'mode') {
+        if ($Case -cne 'retire-temp-runner' -or $Context.mode -cne 'manual' -or
+            $Context.attestationId -isnot [string] -or $Context.attestationId -cnotmatch '^[0-9a-f]{64}$') { throw 'RecycleContextInvalid' }
+        $expected += @('mode','attestationId')
+    }
+    if ($keys -ccontains 'expectedProofDigest') {
+        if ($Case -cne 'retire-temp-runner' -or $Context.dryRun -ne $false -or
+            $Context.expectedProofDigest -isnot [string] -or $Context.expectedProofDigest -cnotmatch '^[0-9a-f]{64}$') { throw 'RecycleContextInvalid' }
+        $expected += 'expectedProofDigest'
+    }
+    if ($Context.mode -ceq 'manual' -and -not $Context.dryRun -and $keys -cnotcontains 'expectedProofDigest') { throw 'RecycleContextInvalid' }
     if ($keys -ccontains 'cleanupOperationId') {
         if ($Case -cne 'retire-temp-runner' -or $Context.resume -ne $false -or
             $Context.cleanupOperationId -isnot [string] -or $Context.cleanupOperationId -cnotmatch '^c994[0-9a-f]{32}$') { throw 'RecycleContextInvalid' }
@@ -464,6 +475,7 @@ function Invoke-C590LiveCase {
     $recycleProjectId = ''
     $recycleDryRun = '0'
     $recycleResume = '0'
+    $manualExports = @()
     if ($Manifest.PSObject.Properties.Name -contains 'recycle') {
         Assert-C1008BridgeContext -Context $Manifest.recycle -Case $Case
         if ($Manifest.recycle.PSObject.Properties.Name -ccontains 'cleanupOperationId') { $cleanupOperation = $Manifest.recycle.cleanupOperationId }
@@ -472,6 +484,16 @@ function Invoke-C590LiveCase {
         $recycleProjectId = [string]$Manifest.recycle.projectId
         if ($Manifest.recycle.dryRun) { $recycleDryRun = '1' }
         if ($Manifest.recycle.resume) { $recycleResume = '1' }
+        if ($Manifest.recycle.mode -ceq 'manual') {
+            . (Join-Path $PSScriptRoot 'lib/runner-operator-token.ps1')
+            try { $null = Get-RunnerOperatorToken } catch { throw 'ManualRetirementAuthority' }
+            $manualExports = @("export C1008_MODE='manual'",
+                "export C1008_MANUAL_AUTHORITY_FILE='/home/mc/antiphon-server2/manual-authority/$recycleOperation.json'",
+                "export C1008_ATTESTATION_FILE='/home/mc/antiphon-server2/manual-authority/$recycleOperation.$($Manifest.recycle.attestationId).json'")
+        }
+        if ($Manifest.recycle.PSObject.Properties.Name -ccontains 'expectedProofDigest') {
+            $manualExports += "export C1008_EXPECTED_PROOF_DIGEST='$($Manifest.recycle.expectedProofDigest)'"
+        }
     }
     if ($Case -in @('runner-cache-inventory', 'runner-cache-fixture', 'runner-cache-seed', 'runner-cache-reset',
             'verify-runner-caches', 'verify-runner-caches-retired', 'runner-cache-prune-preview', 'runner-cache-prune')) {
@@ -642,7 +664,7 @@ mkdir -- '{0}'
         if ($Case -eq 'runner-cache-seed') {
             & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c849-import-saved-donor.ps1') mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1
         }
-        $bridgeExports = @($cleanupExports) + @(
+        $bridgeExports = @($cleanupExports) + @($manualExports) + @(
             "export C590_CASE='$Case'"
             "export C590_SHA='$sha'"
             "export C590_RUN='$run'"

@@ -1,11 +1,15 @@
 # CARD-1609. Observation-only audited Close. No volume delete or drain command.
-# Public manual Preview/Apply remain refused until their full gate is implemented.
+# Public manual Preview/Apply use the same protected host gate as retire-temp.
 #requires -Version 7
 [CmdletBinding()]
 param(
     [switch]$Close, [switch]$DryRun, [switch]$Apply, [switch]$Preview, [switch]$Force,
     [string]$OperationId = '', [string]$ExpectedJournalDigest = '', [string]$ReasonFile = '',
-    [string]$AuthorityFile = '', [string]$Sha = ''
+    [string]$AuthorityFile = '', [string]$Sha = '',
+    [switch]$Manual, [switch]$Template, [switch]$Resume,
+    [string]$RetiredRunnerId = '', [string]$ProjectId = '',
+    [string[]]$VolumeName = @(), [string]$ExpectedProofDigest = '',
+    [string]$AttestationFile = '', [string]$EvidenceDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -137,7 +141,12 @@ function Invoke-C1609ManualEntry {
     if ($modeCount -ne 1) { Fail-Close 'ModeExclusive' }
     # Retire the old local-file test bypass as well as the census-only Preview.
     if ($env:C1609_RETIREMENT_ROOT -or $env:C1609_VOLUME_CENSUS_FILE) { Fail-Close 'LocalJournalOverrideRefused' }
-    if (-not $Close) { Fail-Close 'ManualPreviewApplyIncomplete' }
+    if (-not $Close) {
+        . (Join-Path $PSScriptRoot 'c1609-manual.ps1')
+        Invoke-C1609ManualRetirement
+        return
+    }
+    if ($Manual -or $Template -or $Resume) { Fail-Close 'ModeExclusive' }
     if (-not (Test-OperationId $OperationId)) { Fail-Close 'OperationId' }
     if ($ExpectedJournalDigest -cnotmatch '^[0-9a-f]{64}$') { Fail-Close 'Digest' }
     if ([string]::IsNullOrWhiteSpace($ReasonFile) -or -not (Test-Path -LiteralPath $ReasonFile -PathType Leaf) -or

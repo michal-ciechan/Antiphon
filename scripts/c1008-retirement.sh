@@ -391,7 +391,7 @@ c1609_mark_partial_refused() {
 # The immutable preview binds every non-ledger field of the mutable receipt.
 c1609_prepare_resume() {
     local root file preview nonce canonical expected current name original intent
-    local observed=() targets daemon stamp
+    local observed=() targets daemon stamp manual manual_digest
     root="$(c1609_retirement_root)"; file="$root/receipt.json"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
       [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
@@ -403,14 +403,24 @@ c1609_prepare_resume() {
     preview="$root/preview-$nonce.json"
     c1609_custody "$preview" file || return 1
     targets="$(printf '%s\n' "${C1008_TARGETS[@]}" | jq -R . | jq -sc 'sort')" || return 1
-    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --argjson targets "$targets" \
+    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg mode "${C1008_MODE:-scripted}" --argjson targets "$targets" \
       --slurpfile preview "$preview" '
       . as $r | $preview[0] as $p |
-      .schema==2 and .policyVersion==1 and .operationId==$op and .project==$project and
+      .schema==2 and .policyVersion==1 and .operationId==$op and .project==$project and .mode==$mode and
       .consumed==true and .owner==null and
       (.state=="Applying" or .state=="PartialRefused" or .state=="Refused" or .state=="Completed") and
       $p.state=="Ready" and $p.consumed==false and
-      (del(.state,.consumed,.owner,.intents,.effects)==($p|del(.state,.consumed))) and
+      (del(.state,.consumed,.owner,.intents,.effects,.applyAttestation,.applyAuthority)==($p|del(.state,.consumed))) and
+      (if $mode=="manual" then
+        (.applyAttestation|keys)==["actor","authorityRef","fingerprints","mode","operationId","phase","previewDigest","reason","schema","targets","utc"] and
+        .applyAttestation.schema==1 and .applyAttestation.mode=="manual" and .applyAttestation.phase=="Apply" and
+        .applyAttestation.operationId==$op and .applyAttestation.fingerprints==$p.fingerprints and
+        .applyAttestation.targets==$p.targets and .applyAttestation.actor==$p.attestation.actor and
+        .applyAttestation.authorityRef==$p.attestation.authorityRef and
+        (.applyAuthority|keys)==["actor","authorityRef","expiresAt","issuedAt","operationId","schema","targets"] and
+        .applyAuthority.schema==1 and .applyAuthority.operationId==$op and
+        .applyAuthority.actor==$p.attestation.actor and .applyAuthority.authorityRef==$p.attestation.authorityRef
+       else (has("applyAttestation")|not) and (has("applyAuthority")|not) end) and
       (.targets|sort)==$targets and (.fingerprints|keys)==$targets and
       ((.intents // [])|type)=="array" and ((.effects // [])|type)=="array" and
       ((.intents // [])|map(.name)|length)==((.intents // [])|map(.name)|unique|length) and
@@ -427,6 +437,15 @@ c1609_prepare_resume() {
       ' "$file" >/dev/null || return 1
     if [ -n "${C1008_EXPECTED_PROOF_DIGEST:-}" ]; then
         [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$C1008_EXPECTED_PROOF_DIGEST" ] || return 1
+    fi
+    manual="$(c1609_manual_attestation Apply "$(jq -cS .fingerprints "$preview")" "$(sha256sum "$preview" | cut -d' ' -f1)")" || return 1
+    if [ "${C1008_MODE:-scripted}" = manual ]; then
+        manual_digest="$(printf '%s\n' "$manual" | sha256sum | cut -d' ' -f1)" || return 1
+        if [ -e "$root/resume-authority-$manual_digest.json" ] || [ -L "$root/resume-authority-$manual_digest.json" ]; then
+            [ "$(c1609_read_canonical "$root/resume-authority-$manual_digest.json")" = "$manual" ] || return 1
+        else
+            printf '%s\n' "$manual" | c1609_persist "$root/resume-authority-$manual_digest.json" || return 1
+        fi
     fi
     daemon="$(docker info --format '{{.ID}}')" || return 1
     [ "$daemon" = "$(jq -r .daemon "$file")" ] || return 1

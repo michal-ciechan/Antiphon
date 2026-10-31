@@ -108,6 +108,8 @@ Object.assign(unsigned,{actor:'operator',authorityRef:'operator-token',reason:'e
 fs.writeFileSync(signed,JSON.stringify(unsigned));
 r=run({AttestationFile:signed},false);assert.notEqual(r.code,0,'task credential alone cannot authorize manual');
 assert.deepEqual(fs.readFileSync(receipt),prior);
+r=run({Preview:false,DryRun:true,AttestationFile:signed});assert.equal(r.code,0,'authenticated public DryRun reaches full Preview: '+r.text);
+assert.equal(JSON.parse(fs.readFileSync(receipt)).mode,'manual');
 r=run({AttestationFile:signed});assert.equal(r.code,0,'authenticated public Preview: '+r.text);
 const ready=fs.readFileSync(receipt);assert.equal(JSON.parse(ready).mode,'manual');
 assert.equal(JSON.parse(ready).consumed,false);
@@ -120,6 +122,8 @@ r=run({Preview:false,Apply:true,ExpectedProofDigest:hash(ready),AttestationFile:
 assert.equal(r.code,0,'public manual Apply consumes the actual protected Preview: '+r.text);
 const final=JSON.parse(fs.readFileSync(receipt));assert.equal(final.state,'Completed');
 assert.equal(final.applyAttestation.reason,apply.reason);
+r=run({Preview:false,Apply:true,Resume:true,ExpectedProofDigest:hash(fs.readFileSync(receipt)),AttestationFile:signed});
+assert.equal(r.code,0,'public manual Resume reobserves the same durable intents: '+r.text);
 const state=JSON.parse(fs.readFileSync(root+'/docker.json'));assert.equal(state.removed.length,4);
 for(const name of initial.targets)assert(!state.volumes[name]);
 for(const name of ['antiphon-runner_work','antiphon-runner_runner-state','antiphon-runner-cache-npm-content','antiphon-runner-cache-nuget-packages','antiphon-runner-cache-nuget-scratch'])assert(state.volumes[name],name+' survives');

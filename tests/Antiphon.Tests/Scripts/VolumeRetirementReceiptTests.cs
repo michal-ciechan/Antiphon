@@ -243,6 +243,16 @@ public sealed class VolumeRetirementReceiptTests
         JsonNode.Parse(await File.ReadAllTextAsync(receipt))!["applyAttestation"]!["actor"]!
             .GetValue<string>().ShouldBe("commissioned-fixture-delegate");
         fixture.Removed.Count(name => name.StartsWith("antiphon-runner-temp_", StringComparison.Ordinal)).ShouldBe(4);
+        fixture.ReloadDocker();
+        var completedManual = await File.ReadAllTextAsync(receipt);
+        var unauthenticatedResume = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+        unauthenticatedResume.Exit.ShouldNotBe(0, "J10 scripted Resume cannot consume a manual operation; " + unauthenticatedResume.Output);
+        (await File.ReadAllTextAsync(receipt)).ShouldBe(completedManual);
+        fixture.ReloadDocker();
+        var manualResume = await fixture.Run("retire-temp-runner", context + "\nC1008_RESUME=1");
+        manualResume.Exit.ShouldBe(0, "J10 fresh commissioned authority may reobserve completed manual intents; " + manualResume.Output);
+        fixture.ReloadDocker();
+        fixture.Removed.Length.ShouldBe(4, "J10 manual resume never repeats a delete");
         using var unsafeFixture = new C1008HostFixture(main: false);
         var (_, repo) = await VolumeRetirementFixture.SeedPublishedOuter(unsafeFixture);
         await VolumeRetirementFixture.ReadyPreview(unsafeFixture);

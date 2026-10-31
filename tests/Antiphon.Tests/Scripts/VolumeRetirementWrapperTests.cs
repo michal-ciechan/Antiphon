@@ -91,7 +91,7 @@ public sealed class VolumeRetirementWrapperTests
                 (valid.Concat(new[] { "-Force" }).ToArray(), "ForceRefused"),
                 (new[] { "-Close", "-OperationId", Operation, "-ReasonFile", reason }, "Digest"),
                 (new[] { "-Close", "-OperationId", "foreign", "-ExpectedJournalDigest", new string('a',64), "-ReasonFile",reason }, "OperationId"),
-                (new[] { "-Preview" }, "ManualPreviewApplyIncomplete")
+                (new[] { "-Preview" }, "ManualRequired")
             })
             {
                 var refused = await Close(root, args);
