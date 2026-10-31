@@ -182,6 +182,19 @@ try {
         if (@($errors).Count -gt 0 -or @([IO.File]::ReadAllBytes($path) | Where-Object { $_ -gt 127 }).Count -gt 0) { $valid = $false }
     }
     Assert-Smoke $valid 'helpers parse and contain only ASCII'
+    # Windows PowerShell 5.1 leaves PSScriptRoot empty in an advanced script's param
+    # defaults under powershell.exe -File (in-process calls hide it); resolve it in the body.
+    $rootDefaults = @()
+    foreach ($name in @('watch-tasks.ps1', 'watch-qual.ps1', 'watch-master.ps1', 'trx-failures.ps1')) {
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $helpers $name), [ref]$tokens, [ref]$errors)
+        foreach ($parameter in @($ast.ParamBlock.Parameters)) {
+            $usesRoot = $parameter.DefaultValue -and $parameter.DefaultValue.Find({ param($node) $node -is [Management.Automation.Language.VariableExpressionAst] -and $node.VariablePath.UserPath -eq 'PSScriptRoot' }, $true)
+            if ($usesRoot) { $rootDefaults += "$name -$($parameter.Name.VariablePath.UserPath)" }
+        }
+    }
+    if ($rootDefaults.Count -gt 0) { Write-Host "RCQUAL PSScriptRoot in param defaults: $($rootDefaults -join ', ')" }
+    Assert-Smoke ($rootDefaults.Count -eq 0) 'helpers resolve PSScriptRoot outside param defaults for 5.1 -File'
 } catch {
     $failed++
     Write-Host "FAIL RCQUAL $($_.Exception.Message)"
