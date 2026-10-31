@@ -290,6 +290,12 @@ public sealed class VolumeRetirementReceiptTests
         lifecycle["active"]!.GetValue<bool>().ShouldBeFalse("J10 owning shell finishes its refusing phase");
         lifecycle["complete"]!.GetValue<bool>().ShouldBeTrue();
         lifecycle["children"]!.AsArray().All(child => child!["joined"]!.GetValue<bool>()).ShouldBeTrue();
+
+        using var publicManual = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(publicManual);
+        var entry = await RunEntryCases(publicManual.Root, "c1609-manual-cases.mjs", 180);
+        entry.Exit.ShouldBe(0, "J10 public manual template, authenticated Preview/Apply and refusal controls: " + entry.Output);
+        entry.Output.ShouldContain("C1609_MANUAL passed");
     }
 
     private static Task WriteAttestation(string path, JsonNode value)
@@ -483,13 +489,16 @@ public sealed class VolumeRetirementReceiptTests
     }
 
     private static async Task<(int Exit, string Output)> RunCloseCases(string root)
+        => await RunEntryCases(root, "c1609-close-cases.mjs", 120);
+
+    private static async Task<(int Exit, string Output)> RunEntryCases(string root, string driver, int seconds)
     {
         var psi = new System.Diagnostics.ProcessStartInfo("node")
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
             WorkingDirectory = DelegateScriptRunner.RepoRoot
         };
-        psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-close-cases.mjs"));
+        psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures", driver));
         psi.ArgumentList.Add(root);
         using var timing = TestTiming.BeginProcess("node", psi.ArgumentList.Count, "cli");
         using var child = System.Diagnostics.Process.Start(psi)!;
@@ -497,7 +506,7 @@ public sealed class VolumeRetirementReceiptTests
         var stderr = child.StandardError.ReadToEndAsync();
         // New Close matrix: bounded initial collection, not a change to the
         // existing crash/resume drivers' 30s bounds. Per-call phases are retained.
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
         try { await child.WaitForExitAsync(deadline.Token); }
         catch { if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); } throw; }
         return (child.ExitCode, await stdout + await stderr);
