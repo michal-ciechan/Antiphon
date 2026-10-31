@@ -1029,6 +1029,13 @@ function Test-ActualLoopFollowsSchedule {
     $bad=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($bad,'{')
     $fallback=Invoke-FFActualLoop (New-FFLoopFixture) 'fallback' ([pscustomobject]@{Path=$bad})
     Assert-FF ($fallback.Result.testsPassed -and $fallback.Schedule.historyFallbackReason -and (@($fallback.Trace.Launches.key)-join ',') -ceq (@($fallback.Schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})-join ',')) 'fallback'
+    Test-FFPreviousOrder
+    Test-FFHeartbeatBindings
+    $io=Invoke-FFActualLoop (New-FFLoopFixture) 'identity-io' $null -Variant identity-io
+    Assert-FF ($io.Result.ExitCode -eq 0 -and $io.Result.testsPassed -and $io.Result.coverageComplete -and $io.Trace.Launches.Count -gt 0 -and @($io.Trace.Launches|Where-Object {$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}).Count -eq 0) 'heartbeatIo'
+}
+
+function Test-FFPreviousOrder {
     $entries=@(foreach($sid in @('A','B')){foreach($id in 1..5){[pscustomobject]@{suite=$sid;chunk=[string]$id}}})
     $previous=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
     $order=Resolve-NightlyPreviousRunOrder $entries $previous ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
@@ -1039,10 +1046,13 @@ function Test-ActualLoopFollowsSchedule {
         $fallbackOrder=Resolve-NightlyPreviousRunOrder $entries $record ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
         if((@($fallbackOrder.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -cne (@($entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -or -not $fallbackOrder.reason -or $fallbackOrder.reason -ceq 'previous-run-order'){$progressOk=$false}
     }
-    Assert-FF $progressOk 'progressOrder'
-    Test-FFHeartbeatBindings
-    $io=Invoke-FFActualLoop (New-FFLoopFixture) 'identity-io' $null -Variant identity-io
-    Assert-FF ($io.Result.ExitCode -eq 0 -and $io.Result.testsPassed -and $io.Result.coverageComplete -and $io.Trace.Launches.Count -gt 0 -and @($io.Trace.Launches|Where-Object {$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}).Count -eq 0) 'heartbeatIo'
+    $rotated=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@(
+        [pscustomobject]@{id='A';chunk='1';result='FAIL';exitCode=1},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='4';result='FAIL';exitCode=1},
+        [pscustomobject]@{id='B';chunk='1';result='FAIL';exitCode=1},[pscustomobject]@{id='B';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='5';result='FAIL';exitCode=1})}
+    $rotatedOrder=Resolve-NightlyPreviousRunOrder $entries $rotated ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
+    $keys=@($rotatedOrder.entries|ForEach-Object {$_.suite+$_.chunk})-join ','
+    Write-Host ('ORDER failed-and-unfinished-lane-cursors actual='+$keys)
+    Assert-FF ($progressOk -and $keys -ceq 'A4,A1,B5,B1,A5,A2,B4,B2,A3,B3') 'progressOrder'
 }
 
 function Test-FFHeartbeatBindings {
@@ -1223,6 +1233,7 @@ function Test-JournalCustodySurvivesInterleaving {
 }
 
 switch -Exact ($Case) {
+    'PreviousOrder' { Test-FFPreviousOrder; $expected=1 }
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
     'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=13 }
     'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
