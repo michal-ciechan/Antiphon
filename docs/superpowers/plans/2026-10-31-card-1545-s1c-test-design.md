@@ -756,13 +756,13 @@ not assumed to be covered by ProjectReference discovery.
 ### Checkpoints
 
 Closed ordinary list for this companion only. One isolated build and one exact
-filter per row; all rows serial. The union is **26 TUnit executions**, not matrix
+filter per row; all rows serial. The union is **27 TUnit executions**, not matrix
 case count. Do not import other companion tables by CP number alone.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-17 | S1c-executable | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-executable/ | portable-live-pty-executable | /*/Antiphon.Agents.Pty.Tests/LiveClaudeExecutableWiringTests/* | V-1..3, R-1, R-5 | ClSessionUsesAttestedExecutable,CoreCallersRefuseMissingContext,ExecutedImageMismatchRefuses; exactly 3 passed, 0 failed/skipped | 3 | 6 | true |
-| CP-23 | S1c-executable | tests/Antiphon.Tests -> bin-live-executable/ | portable-live-c680-executable | /*/Antiphon.Tests.Scripts/LiveLaneExecutableTests/* | V-4..6, R-1 | C680UsesAttestedExecutable,C680RefusesMissingContext,C680ImageMismatchRefuses; exactly 3 passed, 0 failed/skipped | 3 | 10 | true |
+| CP-23 | S1c-executable | tests/Antiphon.Tests -> bin-live-executable/ | portable-live-c680-executable | /*/Antiphon.Tests.Scripts/LiveLaneExecutableTests/* | V-4..6, R-1 | C680UsesAttestedExecutable,C680RefusesMissingContext,C680ImageMismatchRefuses,S1cOutcomeFeedsS1bClassifier; exactly 4 passed, 0 failed/skipped | 4 | 10 | true |
 | CP-18 | S1c-profile | tests/Antiphon.Agents.Pty.Tests -> bin-live-pty-isolation/ | portable-live-pty-isolation | /*/Antiphon.Agents.Pty.Tests/LiveClaudeIsolationWiringTests/* | V-7..12, R-2, R-5 | DedicatedConfigOwnsTrustAndEvidence,CwdInstructionsCannotLeak,SettingsProjectionDetectsDrift,UnknownConfigDisablesReuse,LaunchArgumentsKeepProductionSources,ModelSelectionComesFromContext; exactly 6 passed, 0 failed/skipped | 6 | 6 | true |
 | CP-24 | S1c-profile | tests/Antiphon.Tests -> bin-live-isolation/ | portable-live-c680-isolation | /*/Antiphon.Tests.Scripts/LiveLaneIsolationTests/* | V-13..17, R-2 | DedicatedConfigOwnsTrustAndEvidence,CwdInstructionsCannotLeak,SettingsProjectionDetectsDrift,UnknownConfigDisablesReuse,StartupArgvMatchesProductionApplyOff; exactly 5 passed incl. Explicit parity method, 0 failed/skipped | 5 | 10 | true |
 | CP-3 | S1c-startup-oracles | tests/Antiphon.Agents.Pty.Tests -> bin-live-fixture/ | portable-live-fixture | /*/Antiphon.Agents.Pty.Tests/LiveClaudeStartupWiringTests/* | V-18..22, R-3 | ExplicitBridgeSetup,ControlRequiredForSettingsOff,ControlWindowBoundsOffObservation,StartupMethodsUseControlOracle,LoadedSettingsSurviveOffOverlay; exactly 5 passed, 0 failed/skipped | 5 | 6 | true |
