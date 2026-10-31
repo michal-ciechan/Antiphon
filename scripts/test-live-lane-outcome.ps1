@@ -6,6 +6,9 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $ResultsDirectory = New-C487Root $ResultsDirectory
 $method = $Case -replace '^C1545_', ''
+$traceRoot = Join-Path (Split-Path $PSScriptRoot) ('.antiphon/live-lane-outcome-traces/'+[guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($traceRoot)
+$script:traceNumber = 0
 function Check([string]$Id, [bool]$Ok) { Assert-C487 $Ok "C1545 $method/$Id" 'synthetic outcome contract mismatch' }
 function Row([string]$Uid = 'fixture.A.0', [string]$State = 'Passed') {
     return @{
@@ -75,12 +78,18 @@ function New-Fixture {
 function Run($q) {
     $clock=[Diagnostics.Stopwatch]::StartNew()
     $r=& "$PSScriptRoot/run-live-lane.ps1" -Request $q.Request -Boundary $q.Boundary
-    [IO.File]::WriteAllText((Join-Path $F.Root 'trace.json'),(@{
+    $traceJson=@{
         method=$method; source=(& git -C (Split-Path $PSScriptRoot) rev-parse HEAD)
         hostName=[Environment]::MachineName; platform=[Environment]::OSVersion.Platform.ToString(); category='script-orchestration'
         wallSeconds=$clock.Elapsed.TotalSeconds; dbSeconds=$null; httpSeconds=$null; nativeSeconds=$null
+        filesystemSeconds=$null; gitSeconds=$null; interpreterStartupSeconds=$null; teardownSeconds=$null
+        virtualProbeSeconds=$F.Tick
         result=$r; trace=@($F.Trace); probeRequests=@($F.ProbeRequests)
-    } | ConvertTo-Json -Depth 20))
+    } | ConvertTo-Json -Depth 20
+    [IO.File]::WriteAllText((Join-Path $F.Root 'trace.json'),$traceJson)
+    # Retain sanitized observations after ScriptHarness removes its owned scratch.
+    $script:traceNumber++
+    [IO.File]::WriteAllText((Join-Path $traceRoot ($script:traceNumber.ToString('D4')+'.json')),$traceJson)
     return $r
 }
 function Is($r,[int]$code,[string]$reason='') {
