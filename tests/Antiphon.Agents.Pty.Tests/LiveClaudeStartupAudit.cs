@@ -29,6 +29,10 @@ internal static class LiveClaudeStartupAudit
     internal static void Caller(string source,string method,string role)
     {
         var body=Method(source,method).Body!;
+        Require(body,"var startup = SharedStartup();",role+"-shared-fixture");
+        var ordered=body.Statements.Select((s,i)=>(s,i)).Single(p=>p.s.ToString().Contains("var control = await startup.",StringComparison.Ordinal)).i;
+        if(body.Statements.Take(ordered).Any(s=>s.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(c=>c.Expression.ToString() is "LaunchUntilReadyAsync" or "runner.StartAsync" or "CanarySandbox.Create")))
+            throw new InvalidOperationException("C1545 startup-audit/"+role+"-early-launch");
         var factory="() => RunStartupControlAsync(executable, profile, experiment)";
         Require(body,role=="control" ? $"var control = await startup.ControlAsync(experiment, {factory});"
             : $"var control = await startup.BeforeDependentAsync(experiment, {factory}, () => {{ }});",role+"-ordered-control");
@@ -55,6 +59,9 @@ internal static class LiveClaudeStartupAudit
     public static void Run()
     {
         var source=LiveClaudeExecutableAudit.Read(StartupPath);
+        var shared=Method(source,"SharedStartup");
+        if(!SyntaxFactory.AreEquivalent(shared.ExpressionBody?.Expression,SyntaxFactory.ParseExpression("(LiveClaudeStartupFixture)TestSessionContext.Current.GlobalStaticPropertyContext.StateBag.GetOrAdd(\"C1545.StartupControl\", _ => new LiveClaudeStartupFixture())")))
+            throw new InvalidOperationException("C1545 startup-audit/session-owned-fixture");
         foreach(var (method,role) in new[]{
             ("Control_auto_connects_a_bridge_session_before_the_first_user","control"),
             ("Settings_file_prevents_auto_connect_and_keeps_startup_records","off"),

@@ -14,7 +14,7 @@ internal static class LiveClaudeStartupMutants
         new("PC-85/badge","V-18","=> bridge is { Readable: true }", "=> bridge is null || bridge is { Readable: true }", "badge"),
         new("PC-85/foreign","V-18","bridge.Owner == owner", "true", "foreign-pid"),
         new("PC-86","V-18","RequireBridge(before.Owner, after);", "/* bridge setup omitted */", "slash-setup"),
-        new("PC-88","V-19","return _control ??= start();", "return start();", "control-once"),
+        new("PC-88","V-19","return _control ??= CaptureStartAsync(start);", "return start();", "control-once"),
         new("PC-89","V-19","var control = await ControlAsync(experiment, start);", "dependent(); var control = await ControlAsync(experiment, start);", "control-order"),
         new("PC-90","V-19","RequireControl(experiment, control);\n        if (OwnedBridge", "if (control is null) return; RequireControl(experiment, control);\n        if (OwnedBridge", "control-absent"),
         new("PC-91","V-19","control.Experiment.Run != experiment.Run || control.Experiment.Epoch != experiment.Epoch", "false", "control-foreign"),

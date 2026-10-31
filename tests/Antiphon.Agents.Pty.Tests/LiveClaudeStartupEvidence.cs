@@ -151,9 +151,11 @@ public sealed class LiveClaudeStartupFixture
         {
             if (_experiment is not null && _experiment != experiment) throw new LiveClaudeRefusal("premise-absent");
             _experiment = experiment;
-            return _control ??= start();
+            return _control ??= CaptureStartAsync(start);
         }
     }
+
+    private static async Task<StartupControl> CaptureStartAsync(Func<Task<StartupControl>> start) => await start();
 
     internal async Task<StartupControl> BeforeDependentAsync(StartupExperiment experiment,
         Func<Task<StartupControl>> start, Action dependent)

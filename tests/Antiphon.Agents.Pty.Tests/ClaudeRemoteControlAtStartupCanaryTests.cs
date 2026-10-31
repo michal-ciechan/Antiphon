@@ -15,9 +15,12 @@ namespace Antiphon.Agents.Pty.Tests;
 [Category("HeadedCanary")]
 [Explicit]
 [ParallelLimiter<ProcessSpawnLimit>]
-[ClassDataSource<LiveClaudeStartupFixture>(Shared = SharedType.PerTestSession)]
-public class ClaudeRemoteControlAtStartupCanaryTests(LiveClaudeStartupFixture startup)
+public class ClaudeRemoteControlAtStartupCanaryTests
 {
+    // The framework owns this bag for one test session; no process-global cache or UID change.
+    private static LiveClaudeStartupFixture SharedStartup() => (LiveClaudeStartupFixture)
+        TestSessionContext.Current.GlobalStaticPropertyContext.StateBag.GetOrAdd("C1545.StartupControl", _ => new LiveClaudeStartupFixture());
+
     private const string OffSettingsJson = "{\"remoteControlAtStartup\":false}";
     private static readonly TimeSpan BridgeAppear = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ArmWait = TimeSpan.FromSeconds(45);
@@ -29,6 +32,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests(LiveClaudeStartupFixture st
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
         var experiment = Experiment(executable, profile);
+        var startup = SharedStartup();
         var control = await startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
         LiveClaudeStartupEvidence.RequireControl(experiment, control);
     }
@@ -40,6 +44,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests(LiveClaudeStartupFixture st
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
         var experiment = Experiment(executable, profile);
+        var startup = SharedStartup();
         var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
         using var sandbox = CanarySandbox.Create(profile, "off");
         await using var runner = new PtyAgentRunner("modern");
@@ -64,6 +69,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests(LiveClaudeStartupFixture st
         using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
         var experiment = Experiment(executable, profile);
+        var startup = SharedStartup();
         var control = await startup.BeforeDependentAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment), () => { });
         using var sandbox = CanarySandbox.Create(profile, "slash");
         await using var runner = new PtyAgentRunner("modern");
