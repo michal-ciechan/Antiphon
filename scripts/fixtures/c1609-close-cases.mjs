@@ -24,6 +24,17 @@ const sort = x => Array.isArray(x) ? x.map(sort) : x && typeof x === 'object'
   ? Object.fromEntries(Object.keys(x).sort().map(k => [k, sort(x[k])])) : x;
 const canonical = x => JSON.stringify(sort(x)) + '\n';
 const write = (p, x) => fs.writeFileSync(p, canonical(x), {mode:0o600});
+// Health telemetry changes independently of mounts/identity. It must not
+// manufacture a reference-census drift on an otherwise safe observation.
+const healthFile=root+'/health-probe.json';
+write(healthFile,{targets:[],fingerprints:{}});
+const healthScript='set -euo pipefail\nsource '+q(repo+'/scripts/c1008-retirement.sh')+'\n'+
+  'C1008_OPERATION='+q(op)+'; C1008_PROJECT=antiphon-runner-temp\n'+
+  'docker() { if [ "$1" = ps ]; then printf "%064d\\n" 1; else jq -cn --arg id "$(printf "%064d" 1)" --arg time "$(date +%s%N)" \'[{Id:$id,Config:{Labels:{}},State:{Running:true,Status:"running",Health:{Log:[$time]}},Mounts:[]}]\'; fi; }\n'+
+  'a="$(c1609_close_census '+q(healthFile)+')"; b="$(c1609_close_census '+q(healthFile)+')"; [ "$a" = "$b" ]\n';
+const health=cp.spawnSync('bash',['-c',healthScript],{encoding:'utf8',timeout:10000});
+assert.equal(health.status,0,'health telemetry must not change the safety census: '+health.stderr);
+if(process.argv.includes('--health-probe')){console.log('C1609_CLOSE health census passed');process.exit(0);}
 for(const [from,to] of [[state,root+'/close-original-docker.json'],[file,root+'/close-original-receipt.json'],[lifecycle,root+'/close-original-lifecycle.json']]){
   if(fs.existsSync(to))fs.copyFileSync(to,from);else if(fs.existsSync(from))fs.copyFileSync(from,to);
 }

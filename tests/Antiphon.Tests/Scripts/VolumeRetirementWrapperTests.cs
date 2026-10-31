@@ -112,7 +112,7 @@ public sealed class VolumeRetirementWrapperTests
             admitted.Output.ShouldNotContain("task-secret-token");
             var noLocalOverride = await Pwsh("-NoProfile", "-NonInteractive", "-Command",
                 "$env:C1609_RETIREMENT_ROOT=" + VolumeRetirementFixture.Quote(root) + "; & " +
-                VolumeRetirementFixture.Quote(script) + " -Close");
+                VolumeRetirementFixture.Quote(script) + " -Close; exit $LASTEXITCODE");
             noLocalOverride.Exit.ShouldBe(2, noLocalOverride.Output);
             noLocalOverride.Output.ShouldContain("LocalJournalOverrideRefused");
         }
