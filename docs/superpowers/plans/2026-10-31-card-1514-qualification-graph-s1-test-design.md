@@ -53,7 +53,9 @@ Bodies read before specifying the cases, at the assigned base unless stated:
   but lacks the S2 file; that mirror observation establishes no live activation.
 - `docs/testing-and-build.md` manifest, runner, mutation and delivery sections;
   `docs/test-performance-standards.md`; orchestration stage progression and D-2
-  -> checkpoint/cost rules. No native, service or live-supervisor inspection.
+  -> checkpoint/cost rules. `PlanTableImporter.ImportMarkdown` header/build/filter/
+  roster parsing was read to check the table shape. No native, service or
+  live-supervisor inspection.
 
 ### Delivery inventory
 
@@ -238,3 +240,315 @@ before any edits; it never auto-updates from the candidate to satisfy a mismatch
 Unrelated legitimate landed changes require a documented rebind before the S1
 commission, retaining old provenance. No Full suite or live run is needed to prove
 this additive slice has no gate/legacy delta. No S1 result grants Full credit.
+
+### Guard inventory
+
+All safety-relevant S1 guards, including compatibility/preservation guards, are
+listed below. Independently bypassable comparisons are separate rows. A repeated
+schema rule has explicitly enumerated location variants rather than an assumed
+one-location mutation covering all locations. There are no intentionally untested
+S1 safety guards. Execution status for every row is pending.
+
+| Guard | Plan reference and invariant | Distinct control |
+|---|---|---|
+| G-1 | V-1/run-plan node platformOfRecord is required | PC-1 |
+| G-2 | V-1/run-plan node coverageRole is required | PC-2 |
+| G-3 | V-1/run-plan root profile is required | PC-3 |
+| G-4 | Run-plan remaining required structure cannot default silently | PC-4 |
+| G-5 | Run-plan closed objects refuse unknown fields | PC-5 |
+| G-6 | Run-plan integer version is exactly 1 | PC-6 |
+| G-7 | Run-plan platformOfRecord domain is closed | PC-7 |
+| G-8 | Run-plan coverageRole domain is closed | PC-8 |
+| G-9 | Run-plan scalar types, domains and bounds are enforced | PC-9 |
+| G-10 | Canonical-input contract rejects duplicate raw JSON keys | PC-10 |
+| G-11 | V-1 node identity is unique | PC-11 |
+| G-12 | Canonical-input contract rejects nonfinite numbers | PC-12 |
+| G-13 | Run-plan SHA-256 digest syntax is strict | PC-13 |
+| G-14 | Run-plan source SHA syntax is strict | PC-14 |
+| G-15 | Run-plan date formats are explicitly checked | PC-15 |
+| G-16 | Re-check S1 scope requires a separate catalog input | PC-16 |
+| G-17 | Profile belongs to the pinned catalog | PC-17 |
+| G-18 | Policy digest belongs to the pinned catalog | PC-18 |
+| G-19 | Roster digest belongs to the pinned catalog | PC-19 |
+| G-20 | D-1 platformOfRecord equals independent policy identity | PC-20 |
+| G-21 | D-1 coverageRole equals independent policy identity | PC-21 |
+| G-22 | Action is registered, not planner command/provider text | PC-22 |
+| G-23 | Project is a registered catalog identity | PC-23 |
+| G-24 | Ambiguous/unregistered path aliases cannot become identity | PC-24 |
+| G-25 | Target is a registered catalog identity, live excluded | PC-25 |
+| G-26 | Graph binding digest matches separately supplied target binding | PC-26 |
+| G-27 | Node kind cannot replace its catalog kind | PC-27 |
+| G-28 | Selection filter cannot change its catalog identity | PC-28 |
+| G-29 | Selection UID digest cannot change its catalog identity | PC-29 |
+| G-30 | Selection count cannot change its catalog identity | PC-30 |
+| G-31 | Canonical key order is ordinal and whitespace-independent | PC-31 |
+| G-32 | Set-valued graph inventories canonicalize ordinally | PC-32 |
+| G-33 | Canonical null differs from empty string | PC-33 |
+| G-34 | Canonical numeric value differs from string value | PC-34 |
+| G-35 | External graph digest binds exact canonical UTF-8 bytes | PC-35 |
+| G-36 | Re-check/R2-D1 prerequisite: binding changes preserve node IDs | PC-36 |
+| G-37 | Re-check/R2-D1 prerequisite: logical target changes preserve node IDs | PC-37 |
+| G-38 | Binding changes change graph digest | PC-38 |
+| G-39 | Logical target changes change graph digest | PC-39 |
+| G-40 | UID membership, not just count, determines uidSetDigest | PC-40 |
+| G-41 | D-10/A-6 v1 liveProvider is null only | PC-41 |
+| G-42 | D-10/A-6 v1 quota is null only | PC-42 |
+| G-43 | D-3/D-6 Full policy obligations are conserved | PC-43 |
+| G-44 | Composition/S1 scope cannot alter gates/legacy callers | PC-44 |
+| G-45 | S1 parse/import creates no execution or release side effect | PC-45 |
+| G-46 | Composition new harness is not an unattended no-argument launch | PC-46 |
+| G-47 | Composition Windows-side scripts remain ASCII | PC-47 |
+| G-48 | V-1 integrated parser actually enforces the schema before identity success | PC-48 |
+| G-49 | Re-check/R2-D1 prerequisite: binding changes preserve uidSetDigest | PC-49 |
+| G-50 | Re-check/R2-D1 prerequisite: logical target changes preserve uidSetDigest | PC-50 |
+
+### Positive controls
+
+**All payloads are binding required after Code.** No production line number or
+executable patch exists yet. For each PC/variant the later binder records exact
+landed source SHA, file/function/JSON pointer, before/after bytes and hashes,
+replacement count, boundary entry, exact assertion and restoration recipe. Review
+checks those bindings before commissioning Mutation. Names below are fixed
+assertion contracts, not fabricated evidence. Mutations change product/schema/
+policy bytes, never expected fixture data or assertion logic. Schema edits must
+remain valid JSON and valid schemas; PowerShell/C# edits must compile/parse.
+
+Every PC uses **only**
+`/*/Antiphon.Tests.Scripts/QualificationGraphContractTests/SchemaAndIdentity`
+in `tests/Antiphon.Tests`, Min=1, with the same complete method. A named internal
+case failing is decisive; zero tests, infrastructure failure, bad fixture or
+unrelated failure is not red. The case column below means exact assertion
+`QGRAPH SchemaAndIdentity/<case>` and specifies its predicate. All healthy control
+and boundary-reached assertions must remain valid. Category: PC-1..42 and PC-48..50 are new
+behavior controls; PC-43/44 protect existing invariants; PC-45..47 protect new
+integration/portability guards.
+
+| PC / guard | Compiling defect recipe; variant(s) | Expected assertion RED / reachability | Cycles |
+|---|---|---|---:|
+| PC-1 / G-1 | Delete platformOfRecord from node.required only | `missing-platform`: direct schema result must be refused; otherwise valid execute golden, no catalog masking | 1 |
+| PC-2 / G-2 | Delete coverageRole from node.required only | `missing-role`: direct schema refuses | 1 |
+| PC-3 / G-3 | Delete profile from root.required only | `missing-profile`: direct schema refuses | 1 |
+| PC-4 / G-4 | Remove the required list at one object shape per cycle, retaining G-1..3 keys where applicable | `missing-other/<shape>`: direct schema refuses one independently frozen remaining required property; shapes root,candidate,planner,history,target,capability,node,selection,estimate,priority,edge | 11 |
+| PC-5 / G-5 | Set additionalProperties=true at one object shape per cycle | `unknown-field/<shape>`: direct schema refuses unknown `fixtureUnexpected`; same eleven shapes as PC-4 | 11 |
+| PC-6 / G-6 | Replace const 1 with permissive number/string type accepting the selected wrong version | `version/0`, `version/2`, `version/string`: direct schema refuses, valid integer-1 companion passes | 3 |
+| PC-7 / G-7 | Add Solaris to platformOfRecord enum | `platform-enum`: direct schema refuses unsupported platform | 1 |
+| PC-8 / G-8 | Add optional to coverageRole enum | `role-enum`: direct schema refuses unsupported role | 1 |
+| PC-9 / G-9 | Relax one domain at a time: expectedCount type, parallelism minimum, phase enum, node kind enum, edge condition enum | `number-type`, `number-range`, `phase-enum`, `kind-enum`, `edge-enum`: direct schema refuses at changed path, positive counterpart accepted | 5 |
+| PC-10 / G-10 | Remove raw duplicate-key rejection at root, then nested-object boundary; retain last value | `duplicate-key/root`, `duplicate-key/nested`: strict decode refuses before object conversion; duplicate values end in otherwise valid data | 2 |
+| PC-11 / G-11 | Remove duplicate-node-ID check; permit overwrite in node index | `duplicate-node`: identity refusal; clone a valid node so no unrelated field differs | 1 |
+| PC-12 / G-12 | At strict numeric decode/finite check, accept the selected nonfinite representation as a normal numeric token | `nonfinite/NaN`, `nonfinite/Infinity`, `nonfinite/overflow`: raw boundary refuses; final variant uses 1e9999, not invalid string syntax | 3 |
+| PC-13 / G-13 | Relax shared digest definition to arbitrary string | `digest`: direct schema refuses 63-character policyDigest; no catalog invocation needed | 1 |
+| PC-14 / G-14 | Relax shared SHA definition to arbitrary string | `sha`: direct schema refuses nonhex sourceSha | 1 |
+| PC-15 / G-15 | Remove explicit date validation (and schema enforcement if it masks that same boundary) | `date-format`: impossible closedAtUtc is refused; no history lookup performed | 1 |
+| PC-16 / G-16 | Default absent separate catalog to graph-derived identity | `catalog-missing`: identity returns catalog-required, not success | 1 |
+| PC-17 / G-17 | Skip profile equality against supplied catalog | `profile-foreign`: valid identifier accepted by schema but identity must refuse | 1 |
+| PC-18 / G-18 | Skip policyDigest equality | `policy-foreign`: well-formed different digest must refuse | 1 |
+| PC-19 / G-19 | Skip rosterDigest equality | `roster-foreign`: well-formed different digest must refuse | 1 |
+| PC-20 / G-20 | Compare platformOfRecord to submitted graph instead of catalog | `platform-forged`: Any must refuse against Windows catalog even with requires.platform=Any | 1 |
+| PC-21 / G-21 | Trust submitted coverageRole in identity projection | `role-flipped/required-to-diagnostic`, `role-flipped/diagnostic-to-required`: identity must refuse, schema passes both | 2 |
+| PC-22 / G-22 | Accept nonempty action string without registered-action equality | `action-unknown`, `live-action`: schema-valid arbitrary action and dedicated live action both refuse identity | 2 |
+| PC-23 / G-23 | Skip project equality/registry lookup | `project-unknown`: different syntactically valid project must refuse | 1 |
+| PC-24 / G-24 | Normalize a parent traversal alias, then use case-insensitive project matching | `path-alias/traversal`, `path-alias/case`: unregistered literal paths must refuse; no filesystem lookup | 2 |
+| PC-25 / G-25 | Auto-register targets found only in submitted graph | `target-unknown`, `live-target`: unknown logical target refuses against unchanged supplied catalog | 2 |
+| PC-26 / G-26 | Trust submitted target.bindingDigest rather than supplied binding | `binding-wrong`: A catalog plus valid-looking B digest refuses; legitimate B/B companion passes | 1 |
+| PC-27 / G-27 | Omit kind from catalog identity comparison | `node-kind`: change chunk to selection (both schema-valid), identity refuses | 1 |
+| PC-28 / G-28 | Omit selection.filter from catalog comparison | `selection/filter`: widened but schema-valid filter refuses | 1 |
+| PC-29 / G-29 | Omit selection.uidSetDigest from catalog comparison | `selection/uid`: valid-looking foreign digest refuses | 1 |
+| PC-30 / G-30 | Omit selection.expectedCount from catalog comparison | `selection/count`: change 2 to 1 while catalog remains 2, identity refuses | 1 |
+| PC-31 / G-31 | Replace ordinal canonical object-key sorting with insertion order | `canonical-keys`: differently ordered/whitespace input equals exact golden bytes; primitive mixed-case/Unicode key control also exercises ordinal behavior | 1 |
+| PC-32 / G-32 | Preserve arrival order for set-valued inventories | `canonical-sets`: reverse targets/nodes/edges/resourceKeys without changing ordinal/rank fields, bytes must equal golden | 1 |
+| PC-33 / G-33 | Serialize null as empty string | `typed-null`: exact literal null/empty bytes and unequal hashes; canonicalizer directly reached | 1 |
+| PC-34 / G-34 | Quote numeric values during canonicalization | `typed-number`: number and string have different exact bytes/hash; direct primitive boundary | 1 |
+| PC-35 / G-35 | Hash UTF-16 instead of canonical UTF-8 bytes | `utf8-hash`: result equals SHA256 of independent no-BOM UTF-8 golden, including escaped/Unicode content | 1 |
+| PC-36 / G-36 | Incorporate bindingDigest into node ID derivation | `binding-node-stable`: exact node IDs equal A constants after legitimate binding-only change | 1 |
+| PC-37 / G-37 | Incorporate targetId into node ID derivation | `target-node-stable`: exact node IDs equal A constants after legitimate target change | 1 |
+| PC-38 / G-38 | Exclude bindingDigest from canonical graph hash input | `binding-graph-changed`: B hash equals B golden and differs from A | 1 |
+| PC-39 / G-39 | Exclude target IDs/references from canonical graph hash input | `target-graph-changed`: renamed target hash equals its golden and differs from A | 1 |
+| PC-40 / G-40 | Compute uidSetDigest from count only | `uid-members-changed`: same count/different UID has the distinct expected digest | 1 |
+| PC-41 / G-41 | Admit Claude in capability.liveProvider schema | `live-provider/target`, `live-provider/node`: direct schema refuses at both references of capability definition | 2 |
+| PC-42 / G-42 | Restore parent's permissive non-null quota object schema | `live-quota`: direct schema refuses otherwise well-formed quota | 1 |
+| PC-43 / G-43 | Remove observability from profiles.rc.requiredSuites and recompute valid policy hash | `full-policy`: complete pre-existing projection equality fails, not merely stale hash; policy remains readable | 1 |
+| PC-44 / G-44 | Relax release-gate.ps1 Full-scope comparison with valid PowerShell | `gate-files`: independent pinned file digest differs, nonempty manifest covers that exact file | 1 |
+| PC-45 / G-45 | Add a write of fabricated completed graph receipt in the owned input directory on successful parse | `no-side-effects`: output inventory/input bytes unchanged; complete valid input reaches added write, no real host path | 1 |
+| PC-46 / G-46 | Change only new harness census disposition to unattended and recompute policy hash | `script-census`: exact new argument-consumer row required; legacy entries still identical | 1 |
+| PC-47 / G-47 | Insert non-ASCII text in a parseable comment in new library | `ascii`: all bytes <=127; parsing/healthy graph still works | 1 |
+| PC-48 / G-48 | Bypass schema invocation in the integrated parse/identity path | `schema-wired`: integrated parser refuses an extra root property while all catalog-owned facts remain valid; direct schema still refuses, healthy integrated companion succeeds | 1 |
+| PC-49 / G-49 | Include bindingDigest in uidSetDigest input | `binding-uid-stable`: exact UID digest equals A constant after legitimate binding-only change | 1 |
+| PC-50 / G-50 | Include targetId in uidSetDigest input | `target-uid-stable`: exact UID digest equals A constant after legitimate target change | 1 |
+
+PC-9 adds the explicitly named `phase-enum`, `kind-enum`, `edge-enum` variants to
+V-3; PC-4 adds V-2's eleven `missing-other` variants. PC-24/21 refine their V-5
+suffixes. PC-48 names V-2's integrated `schema-wired` assertion; PC-49/50 name
+V-7's separate `binding-uid-stable`/`target-uid-stable` assertions. Every named
+variant executes in ordinary CP-1, even though Mutation
+introduces only the selected defect per cycle.
+
+If independent checks mask a mutation, bind a minimal valid multi-site defect
+for **that one guard** and record masking sites. Do not weaken another guard or
+change the assertion to get red. A library-only nonfinite check cannot be claimed
+tested when the JSON engine always rejects first: bind the actual raw decoder
+path or return the unverifiable seam to Plan. The same applies to direct-schema
+integration and catalog identity. Unknown payloads remain binding required after
+Code; no unbound row becomes mechanically executable by labelling it complete.
+
+Code runs ordinary V/R and the required baseline red. Ordinary Review judges
+this inventory and implemented reachability **before land**. After confirmed land,
+SourceLanding Mutation runs every listed cycle: baseline green, break, exact
+assertion red, restore, same method green. Use the unchanged local checkpoint
+driver copied to external evidence, fresh isolated build/results per phase, await
+each phase, restore bytes and timestamps, verify build provenance, and retain
+restoration records externally. All PCs share a method and most share files;
+none is eligible for independent mutation batching. No mutation commits/pushes
+from a SourceLanding snapshot.
+
+Design audit: **guards=50, mapped=50, missing=0, duplicate PC maps=0**.
+Execution audit: **PCs run=0/50**, pending implementation/Review/land; the cycles
+column totals **84**. All 50 PCs/all 84 cycles are required at Mutation completion,
+with restored green evidence. This docs-only handoff does not claim they ran.
+
+### Out of scope
+
+- S2 catalog extraction, complete required UID/set conservation, preparation
+  orchestration and disappearance census; S3 edge/cycle/platform admission and
+  real observed-worker OS; S4+ history/order/executor/transport/recovery/rendering.
+  A pinned tiny S1 catalog is not a Full catalog extraction witness.
+- S9 attempt ledger/rebind reduction R2-D1. Target-independent IDs are a necessary
+  input, not proof of sticky red across graph digests.
+- Native Windows/ConPTY, Linux process-group custody, locks/capacity/concurrency,
+  private supervisor, operational deployment/activation, real queues/providers,
+  credentials and any live spend. No fake target binding proves observed OS.
+- Full RC, gate publication, receipt issuance/reuse, CARD-1545 migration, Q1-Q8
+  choices and unrelated inherited fixture repairs. No test assembly-wide run.
+
+### Implementation steps
+
+1. **Test-first contract, 30-45 minutes including the 11-minute red checkpoint.**
+   Read/re-anchor the named fixtures at the commissioned Code base, freeze the
+   independent catalog/goldens/preservation manifest, add the parameterless wrapper
+   and complete case inventory, then commit/push. Add only the callable minimal
+   surface needed for the `missing-platform` schema defect; commit/push before
+   CP-1 and record its assertion RED. Missing-product evidence alone cannot close
+   this step. Keep this WIP non-landable.
+2. **Complete S1, 45-60 minutes including CP-1 green.** Implement the versioned
+   schema with null-only live placeholders, strict parser, canonical bytes/hash
+   and separate catalog identity. Add the sole harness census row with generated
+   policy hash; bind every oracle/PC candidate and exact named assertion count.
+   Commit/push the fix before CP-1, run that row once, retain counts/provenance,
+   and fix/rerun only that row if needed. Restore/delete owned build outputs and
+   publish the concrete Code report for ordinary Review.
+
+These are ordered pushed boundaries of S1, not S2 authorizations. They refine the
+parent's provisional 45-minute estimate to **75-105 minutes total**, including
+both red and green runs. If a commission cannot fit one 60-minute slice, settle
+at the pushed step boundary and commission the remaining step; keep the same
+single-method checkpoint contract. Do not invent an extra broad verification run.
+No human choice blocks S1. An unverifiable parser/schema/catalog seam returns to
+Plan; questions about future policy remain for their owning later slices.
+
+### Performance budget
+
+All S1 estimates are **provisional, n=0**, not measured p95. The parent reports a
+413.23-second loaded build (n=1) and historical script child p95=12.396 seconds
+for a different witness. Neither is this method's p95. Reasoned targets: seven
+minutes isolated build; at most 90 seconds p95 for one owned PowerShell process
+loading the tiny catalog once and running the in-memory/file matrix. Even with
+84 PC variants the ordinary method runs the cases once, not 84 child processes.
+
+| Component | Reasoned estimate | Explicit bound / evidence |
+|---|---|---|
+| Tool bootstrap/import | 2 minutes once | Gated alternate output; record tool SHA/path/hash and setup time |
+| Isolated Antiphon.Tests build | 7 minutes, provisional p95 target 8 | 16-minute build cap; separate restore/build and slot timing |
+| SchemaAndIdentity | p95 target 90 seconds | ScriptHarness ExecutionBudget=180 seconds, CleanupBudget=10 seconds, PostExitDrainBudget=10 seconds; enclosing TUnit timeout=210 seconds, row cap=4 minutes |
+| CP-1 normal budget | 7 build + 3.5 method/cleanup allowance + 0.5 settlement = 11 minutes | Charged execution cap 20m, hard-wall cap 25m; record actual body separately from allowance |
+| Slot admission | Unknown; cost floor assumes zero wait | 5 minutes per acquisition; exit 4 is not-run, no unleased retry |
+
+Build fixture definitions/import libraries once per harness invocation. Each
+variant gets only a small owned scratch document/canary root; production functions
+are exercised directly in the same PowerShell process. No Docker, DB, migrations,
+web host, provider, HTTP readiness or expensive setup per case. R2 project
+extraction considered: one small method does not justify another project; declare
+all runtime script/schema/data dependencies explicitly instead.
+
+Record exact method/category/variant membership, committed SHA, host/OS/runtime,
+load/concurrency, setup warmth, TRX per-test durations and phase spans for slot,
+build, schema load, fixture IO, parse/identity/hash, process startup/drain/cleanup,
+and remainder in ignored `.antiphon/qualification-graph/<sha>/s1/<run>/`.
+Instrument filesystem/CLI calls separately; unused service phases are not-used,
+unavailable measurements are unknown, not invented zero. Individual operations
+share the 180-second enclosing execution deadline and owned-process cancellation;
+no unbounded waits, sleeps or retry loops. Use the first red/green and ordinary
+Review observations for bounded timing collection under CARD-1514/1404/1531;
+retain censored failures and do not buy repeated tests just to invent a percentile.
+Revise timeouts toward 2x comparable p95 after enough samples. Any expected or
+observed selection/batch/run over 30 minutes requires Debug before repetition.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-qgraph-s1/ | portable-contract | /*/Antiphon.Tests.Scripts/QualificationGraphContractTests/SchemaAndIdentity | V-1..9, R-1..4 | QualificationGraphContractTests.SchemaAndIdentity; exactly 1 passed, 0 failed/skipped | 1 | 11 |
+
+This one build/filter row is the entire ordinary scope. Default portable placement
+currently resolves to server2; omit host/OS pins. No other parent CP is authorized.
+The baseline red uses **this same row at the committed test-first state** with
+one expected named failure; its later green run supplies ordinary acceptance.
+Preserve both outcomes and charge both. Internal assertion counts are not Min.
+
+In Code, first import the **parent** table and confirm all eighteen rows survived
+without executing them, as the re-check requires. Then import this companion to
+get the one-row S1 execution manifest. TestDesign itself performs no tool build or
+test execution. Supported bootstrap command (through the host slot gate):
+
+```text
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label qgraph-s1-import -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-qgraph-tool/ -- import --plan docs/superpowers/plans/2026-10-31-card-1514-qualification-run-graph-plan.md --out .antiphon/qgraph-parent.yaml
+```
+
+Use the emitted tool DLL directly for companion `import --plan <this-file>
+--out .antiphon/qgraph-s1.yaml`; record its actual path/hash, do not trigger another
+implicit build. Set only these scheduling/deadline pins in the ignored imported
+YAML: `build.slotWaitMinutes: 5`, `timeouts.rowMinutes: 16`, CP-1
+`timeoutMinutes: 4`, `parallel.maxRows: 1`. Retain imported/resolved manifest
+digests. The build default floor then allows 16 minutes, and row cap is four;
+the importer's derived 33-minute row is not the performance policy.
+
+Invoke that built tool with `run .antiphon/qgraph-s1.yaml --after S1
+--expected-source-sha <committed-sha> --total-timeout 20m
+--hard-wall-timeout 25m --serial`. It leases its own build/test slots; no enclosing
+held build lease during the scheduler run. Wait the returned run to terminal
+(repeat `wait` after exit 75, never settle a running child). Validate fresh receipts
+against source and exact roster; preserve unedited CHECKPOINT/provenance lines.
+Code/Review run `scripts/check-evidence-diff.ps1` over actual base..HEAD.
+Delete all owned `bin-qgraph-s1/` and `bin-qgraph-tool/` outputs after evidence
+retention, including per-project directories. Generated evidence stays ignored.
+
+### Cost
+
+**Estimated, not measured.** Ordinary V/R floor (Code) is the sum of CP minutes:
+**CP-1 = 11 minutes**, for the sole exact method filter above. Of that, seven is
+build and four is method/cleanup/settlement allowance. Mandatory test-first RED
+of CP-1 costs another **11 minutes**; setup/bootstrap/import costs **2 minutes**.
+Thus planned Code machine time is **24 minutes**, plus unknown admission waits;
+75-105 minutes of step time above already includes those red/green runs rather
+than charging them again. No Full/native run is charged or credited.
+
+PC floor (Mutation): **84 cycles** of the same exact method/filter. Each requires
+three fresh forced builds/runs (baseline, red, restored green): estimate seven
+minutes build + 1.5 minutes method + 0.5 minutes phase settlement = nine minutes
+per phase. Add 0.5 minute apply/restore verification per cycle. Thus each cycle
+costs **27.5 minutes**, and PC floor is **84 x 27.5 = 2,310 minutes**. Pack
+authoring/binding and unknown admission waits are additional, unmeasured work.
+No compiled-build reuse exemption or same-method mutation batching is assumed.
+
+Total planned machine cost = setup 2 + ordinary V/R 11 + baseline RED 11 +
+PC baseline/break/red/restore/green 2,310 = **2,334 minutes**. Ordinary Code
+and later Mutation are separate commissions. This aggregate requires a
+**Debug timing/cost task before a multi-PC battery**, under R1/CARD-1514; individually
+bounded cycles do not waive the aggregate rule. A later qualified optimization
+may reduce that floor through the owner contract; no savings are pre-credited.
+
+Savings: one harness process shares immutable fixture/schema setup across all
+ordinary variants; versus separately building for nine V groups at 11 minutes,
+CP-1 saves **88 estimated minutes** (99 minus 11). Further PC savings are **0**:
+same-method/file controls require separate cycles and fresh build provenance.
+The unchanged Full proof avoids unrelated qualification but claims no numeric
+Full saving without comparable measurements.
