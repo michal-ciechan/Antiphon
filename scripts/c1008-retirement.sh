@@ -276,6 +276,8 @@ c1609_recheck_target() {
 c1609_write_ready_receipt() {
     local root targets digest now daemon nonce snapshot manual
     root="$(c1609_retirement_root)"
+    [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
+      [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
     c1609_custody "$SERVER2_ROOT" dir || return 1
     [ ! -L "$SERVER2_ROOT/retirement" ] && [ ! -L "$root" ] || return 1
     (umask 077; mkdir -p -- "$root") || return 1
@@ -291,6 +293,7 @@ c1609_write_ready_receipt() {
     [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || return 1
     [ ! -e "$root/preview-$nonce.json" ] && [ ! -L "$root/preview-$nonce.json" ] || return 1
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    c1609_phase_preview_issued || return 1
     jq -cn --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg now "$now" \
         --arg digest "$digest" --arg image "${C994_IMAGE:-}" --arg daemon "$daemon" \
         --arg retiredAt "$C1008_RETIRED_AT" --arg nonce "$nonce" --argjson targets "$targets" --argjson fingerprints "$snapshot" \
@@ -318,6 +321,8 @@ c1609_write_refused_preview() {
 c1609_require_ready_preview() {
     local root file tmp canonical now ready age daemon current digest nonce manual
     root="$(c1609_retirement_root)"
+    [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
+      [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
     file="$root/receipt.json"
     c1609_custody "$file" file || { printf 'reason=preview-required\n'; return 1; }
     [ "$(stat -c %s -- "$file")" -le 1048576 ] || return 1
@@ -388,6 +393,8 @@ c1609_prepare_resume() {
     local root file preview nonce canonical expected current name original intent
     local observed=() targets daemon stamp
     root="$(c1609_retirement_root)"; file="$root/receipt.json"
+    [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
+      [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
     c1609_custody "$file" file || return 1
     [ "$(stat -c %s -- "$file")" -le 1048576 ] || return 1
     canonical="$(jq -cS -s 'if length==1 then .[0] else error("envelope") end' "$file")" || return 1
@@ -503,4 +510,311 @@ c1609_mark_completed() {
         all(.intents[]?; .result!="pending") and all(.targets[]; . as $name |
         any($record.effects[]?; .name==$name and (.result=="removed" or .result=="removed-observed" or .result=="alreadyAbsent")))' "$file" >/dev/null || return 1
     jq '.state="Completed" | .consumed=true | .owner=null' "$file" | c1609_persist "$file"
+}
+
+# Canonical protected records are the only inputs to Close. A duplicate key,
+# linked file/ancestor, writable custody or incomplete document is unknown.
+c1609_read_canonical() {
+    local file="$1" body
+    c1609_custody "$file" file || return 1
+    [ "$(stat -c %s -- "$file")" -le 1048576 ] || return 1
+    [ "$(readlink -e -- "$file")" = "$file" ] || return 1
+    body="$(jq -cS -s 'if length==1 then .[0] else error("record") end' "$file")" || return 1
+    [ "$(cat -- "$file")" = "$body" ] || return 1
+    printf '%s\n' "$body"
+}
+
+c1609_lifecycle_valid() {
+    local file="$1"
+    c1609_read_canonical "$file" >/dev/null || return 1
+    jq -e --arg op "$C1008_OPERATION" '
+      keys==["active","children","complete","daemon","nonce","operationId","owner","readyPublished","schema"] and
+      .schema==1 and .operationId==$op and (.active|type)=="boolean" and (.complete|type)=="boolean" and (.readyPublished|type)=="boolean" and
+      (.daemon|type)=="string" and .daemon!="" and (.nonce|test("^[0-9a-f]{32}$")) and
+      (.owner|keys)==["pid","startTicks"] and (.owner.pid|type)=="number" and
+      .owner.pid>0 and .owner.pid==(.owner.pid|floor) and (.owner.startTicks|type)=="string" and
+      (.owner.startTicks|test("^[0-9]+$")) and (.children|type)=="array" and
+      ([.children[].name]|length)==([.children[].name]|unique|length) and
+      all(.children[]; keys==["joined","label","name"] and (.joined|type)=="boolean" and
+        (.label|test("^"+$op+":[0-9a-f]{16}$")) and .name==("c1008-preview-"+(.label|sub(":";"-"))))
+      ' "$file" >/dev/null
+}
+
+c1609_phase_begin() {
+    local root daemon nonce pid ticks previous_pid previous_ticks prior_nonce issued=false
+    root="$(c1609_retirement_root)"
+    c1609_custody "$SERVER2_ROOT" dir || return 1
+    [ ! -L "$SERVER2_ROOT/retirement" ] && [ ! -L "$root" ] || return 1
+    (umask 077; mkdir -p -- "$root") || return 1
+    c1609_custody "$root" dir || return 1
+    [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
+        [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
+    if [ -e "$root/lifecycle.json" ] || [ -L "$root/lifecycle.json" ]; then
+        c1609_lifecycle_valid "$root/lifecycle.json" || return 1
+        jq -e '.complete==true and all(.children[];.joined==true)' "$root/lifecycle.json" >/dev/null || return 1
+        previous_pid="$(jq -r .owner.pid "$root/lifecycle.json")"
+        previous_ticks="$(jq -r .owner.startTicks "$root/lifecycle.json")"
+        if [ -e "/proc/$previous_pid" ]; then
+            [ "$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$previous_pid/stat")" != "$previous_ticks" ] || return 1
+        fi
+        issued="$(jq -r .readyPublished "$root/lifecycle.json")"
+        prior_nonce="$(jq -r .nonce "$root/lifecycle.json")"
+        if [ ! -e "$root/lifecycle-$prior_nonce.json" ]; then
+            cat -- "$root/lifecycle.json" | c1609_persist "$root/lifecycle-$prior_nonce.json" || return 1
+        fi
+    fi
+    [ ! -e "$root/receipt.json" ] && [ ! -L "$root/receipt.json" ] || issued=true
+    daemon="$(docker info --format '{{.ID}}')" || return 1
+    [ -n "$daemon" ] && [[ "$daemon" != *[$'\n\r\t']* ]] || return 1
+    pid="$BASHPID"
+    ticks="$(awk '{ sub(/^.*\) /, ""); print $20 }' "/proc/$pid/stat")" || return 1
+    [[ "$ticks" =~ ^[0-9]+$ ]] || return 1
+    nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || return 1
+    jq -cnS --arg op "$C1008_OPERATION" --arg daemon "$daemon" --arg ticks "$ticks" --arg nonce "$nonce" --argjson pid "$pid" --argjson issued "$issued" \
+      '{schema:1,operationId:$op,daemon:$daemon,nonce:$nonce,owner:{pid:$pid,startTicks:$ticks},active:true,complete:true,readyPublished:$issued,children:[]}' |
+      c1609_persist "$root/lifecycle.json" || return 1
+    C1609_PHASE_ROOT="$root"
+    C1609_PHASE_PID="$pid"
+}
+
+c1609_phase_helper() {
+    [ -n "${C1609_PHASE_ROOT:-}" ] || return 0
+    local name="$1" label="$2" file="$C1609_PHASE_ROOT/lifecycle.json"
+    c1609_lifecycle_valid "$file" || return 1
+    jq --arg name "$name" --arg label "$label" '.children += [{name:$name,label:$label,joined:false}]' "$file" |
+      c1609_persist "$file"
+}
+
+c1609_phase_helpers_joined() {
+    [ -n "${C1609_PHASE_ROOT:-}" ] || return 0
+    local file="$C1609_PHASE_ROOT/lifecycle.json" name raw code
+    c1609_lifecycle_valid "$file" || return 1
+    while IFS= read -r name; do
+        code=0; raw="$(docker inspect "$name" 2>&1)" || code=$?
+        [ "$code" = 1 ] && { [[ "${raw,,}" == *'no such object:'* ]] || [[ "${raw,,}" == *'no such container:'* ]]; } || return 1
+    done < <(jq -r '.children[]|select(.joined==false)|.name' "$file")
+    jq '.children|=map(.joined=true)' "$file" | c1609_persist "$file"
+}
+
+c1609_phase_end() {
+    [ -n "${C1609_PHASE_ROOT:-}" ] || return 0
+    # A command-substitution child cannot publish its still-running parent's join.
+    [ "$BASHPID" = "${C1609_PHASE_PID:-}" ] || return 1
+    local file="$C1609_PHASE_ROOT/lifecycle.json" nonce
+    c1609_lifecycle_valid "$file" || return 1
+    jq -e 'all(.children[];.joined==true)' "$file" >/dev/null || return 1
+    nonce="$(jq -r .nonce "$file")" || return 1
+    [ ! -e "$C1609_PHASE_ROOT/lifecycle-$nonce.json" ] && [ ! -L "$C1609_PHASE_ROOT/lifecycle-$nonce.json" ] || return 1
+    jq '.active=false|.complete=true' "$file" | c1609_persist "$C1609_PHASE_ROOT/lifecycle-$nonce.json" || return 1
+    cat -- "$C1609_PHASE_ROOT/lifecycle-$nonce.json" | c1609_persist "$file"
+}
+
+c1609_close_fail() {
+    printf 'TempRetirementCloseRefused: %s\n' "$1" >&2
+    return 2
+}
+
+# All containers, including exited containers, foreign projects, bind aliases
+# and same-operation helpers. Export only a census digest, never raw labels.
+c1609_close_census() {
+    local receipt="$1" ids id raw snapshot='[]' source mount resolved expected
+    ids="$(docker ps -aq --no-trunc)" || return 1
+    [ "$(printf '%s\n' "$ids" | sed '/^$/d' | LC_ALL=C sort | uniq -d)" = '' ] || return 1
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
+        raw="$(docker inspect "$id")" || return 1
+        raw="$(printf '%s' "$raw" | jq -ceS --arg id "$id" '
+          if type=="array" and length==1 and .[0].Id==$id and
+             (.[0].Config.Labels|type)=="object" and (.[0].Mounts|type)=="array" and
+             (.[0].State.Running|type)=="boolean" and (.[0].State.Status|type)=="string"
+          then .[0]|{Id,Config:{Labels:.Config.Labels},State,Mounts} else error("census") end')" || return 1
+        printf '%s' "$raw" | jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" '
+          (.Config.Labels["com.docker.compose.project"]!=$project) and
+          ((.Config.Labels["io.antiphon.preview-audit"] // "")|startswith($op+":")|not)' >/dev/null || return 1
+        printf '%s' "$raw" | jq -e --slurpfile record "$receipt" '
+          all(.Mounts[]; (.Type=="bind" or .Type=="volume" or .Type=="tmpfs") and
+            (if .Type=="volume" then .Name as $n | ($record[0].targets|index($n))==null
+             elif .Type=="bind" then (.Source|type)=="string" and (.Source|startswith("/")) else true end))' >/dev/null || return 1
+        while IFS= read -r source; do
+            resolved="$(sudo -n readlink -e -- "$source")" || return 1
+            [ -n "$resolved" ] || return 1
+            while IFS= read -r mount; do
+                [ -n "$mount" ] || return 1
+                # The original mount may now be absent. Its protected canonical
+                # absolute name still bounds bind aliases into that former tree.
+                expected="$(sudo -n readlink -m -- "$mount")" || return 1
+                [ "$expected" = "$mount" ] || return 1
+                [[ "$resolved/" != "$mount/"* && "$mount/" != "$resolved/"* ]] || return 1
+            done < <(jq -r '.fingerprints[]|select(.!=null)|.Mountpoint' "$receipt")
+        done < <(printf '%s' "$raw" | jq -r '.Mounts[]|select(.Type=="bind")|.Source')
+        snapshot="$(printf '%s' "$snapshot" | jq -c --argjson item "$raw" '.+[$item]')" || return 1
+    done <<< "$ids"
+    printf '%s' "$snapshot" | jq -cS 'sort_by(.Id)' | sha256sum | cut -d' ' -f1
+}
+
+c1609_closure_valid() {
+    local dir="$1" prior digest daemon
+    local file="$dir/closure.json" C1008_OPERATION="${dir##*/}"
+    [ ! -e "$dir/close-pending.json" ] && [ ! -L "$dir/close-pending.json" ] || return 1
+    c1609_read_canonical "$file" >/dev/null || return 1
+    c1609_read_canonical "$dir/receipt.json" >/dev/null || return 1
+    c1609_lifecycle_valid "$dir/lifecycle.json" || return 1
+    jq -e '.complete==true and all(.children[];.joined==true)' "$dir/lifecycle.json" >/dev/null || return 1
+    prior="$(sha256sum "$dir/receipt.json" | cut -d' ' -f1)" || return 1
+    digest="$(jq -cS 'del(.digest)' "$file" | sha256sum | cut -d' ' -f1)" || return 1
+    daemon="$(docker info --format '{{.ID}}')" || return 1
+    jq -e --arg prior "$prior" --arg digest "$digest" --arg daemon "$daemon" --slurpfile receipt "$dir/receipt.json" '
+      keys==["actor","authority","censusDigest","daemon","digest","lifecycleDigest","observedAt","operationId","priorDigest","reason","reconciliations","schema","state","targets","toolingDigest","volumesAbsent"] and
+      .schema==2 and .state=="Closed" and .priorDigest==$prior and .digest==$digest and
+      .daemon==$daemon and .daemon==$receipt[0].daemon and .operationId==$receipt[0].operationId and
+      .targets==$receipt[0].targets and (.volumesAbsent|sort)==(.targets|sort) and
+      (.actor|test("^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$")) and
+      (.authority|test("^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$")) and
+      (.reason|type)=="string" and (.reason|test("\\S")) and
+      (.toolingDigest|test("^[0-9a-f]{64}$")) and (.censusDigest|test("^[0-9a-f]{64}$")) and (.lifecycleDigest|test("^[0-9a-f]{64}$")) and
+      (.reconciliations|type)=="array" and (.reconciliations|map(.name)|sort)==(.targets|sort) and
+      all(.reconciliations[]; . as $o | keys==["name","result"] and
+        .result==(if any($receipt[0].intents[]?;.name==$o.name) then "removed-observed" else "unattributed-absence" end))' "$file" >/dev/null || return 1
+    [ "$(sha256sum "$dir/lifecycle.json" | cut -d' ' -f1)" = "$(jq -r .lifecycleDigest "$file")" ]
+}
+
+# Caller holds the same FD-8/FD-9 locks as supported writers through every read,
+# fsync and the final reply. This transition has no delete or drain primitive.
+c1609_close_host() {
+    local expected="$1" actor="$2" authority="$3" reason64="$4"
+    local root file phase original preview nonce targets daemon pid ticks observed census again name facts reason body digest entry idempotent=false
+    [[ "$C1008_OPERATION" =~ ^c1008[0-9a-f]{32}$ && "$expected" =~ ^[0-9a-f]{64}$ ]] || { c1609_close_fail Context; return 2; }
+    [ "$C1008_PROJECT" = antiphon-runner-temp ] || { c1609_close_fail Targets; return 2; }
+    [[ "$actor" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$ && "$authority" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$ ]] || { c1609_close_fail Authority; return 2; }
+    reason="$(printf '%s' "$reason64" | base64 -d)" || return 2
+    [ "${#reason}" -le 4096 ] && [[ "$reason" =~ [^[:space:]] ]] || { c1609_close_fail ReasonFile; return 2; }
+    root="$(c1609_retirement_root)"; file="$root/receipt.json"; phase="$root/lifecycle.json"
+    c1609_read_canonical "$file" >/dev/null || { c1609_close_fail JournalUnknown; return 2; }
+    [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$expected" ] || { c1609_close_fail DigestMismatch; return 2; }
+    c1609_close_receipt_valid "$file" || { c1609_close_fail JournalUnknown; return 2; }
+    targets='["antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_work"]'
+    jq -e --arg op "$C1008_OPERATION" --argjson targets "$targets" '
+      .schema==2 and .policyVersion==1 and .operationId==$op and .project=="antiphon-runner-temp" and
+      (.state|IN("Pending","Ready","Applying","Refused","Partial","PartialRefused","Completed")) and
+      (.mode=="scripted" or .mode=="manual") and .owner==null and
+      (.targets|sort)==$targets and (.fingerprints|keys)==$targets and
+      ((.intents // [])|type)=="array" and ((.effects // [])|type)=="array" and
+      ((.intents // [])|map(.name)|unique|length)==((.intents // [])|length) and
+      all(.intents[]?; . as $i | keys==["intent","name","result"] and ($targets|index($i.name))!=null and
+        .intent=="remove" and (.result|IN("pending","removed","removed-observed"))) and
+      all(.effects[]?; . as $e | keys==["name","result"] and ($targets|index($e.name))!=null and
+        (.result|IN("removed","removed-observed","alreadyAbsent")))' "$file" >/dev/null || { c1609_close_fail JournalUnknown; return 2; }
+    nonce="$(jq -er '.phaseNonce|select(test("^[0-9a-f]{32}$"))' "$file")" || return 2
+    preview="$root/preview-$nonce.json"
+    c1609_read_canonical "$preview" >/dev/null || return 2
+    c1609_close_receipt_valid "$preview" || return 2
+    jq -e '.state=="Ready" and .consumed==false' "$preview" >/dev/null || return 2
+    jq -e --slurpfile preview "$preview" '
+      del(.state,.consumed,.owner,.intents,.effects,.applyAttestation,.applyAuthority)==($preview[0]|del(.state,.consumed))' "$file" >/dev/null || return 2
+    daemon="$(docker info --format '{{.ID}}')" || return 2
+    [ "$daemon" = "$(jq -r .daemon "$file")" ] || { c1609_close_fail Daemon; return 2; }
+    c1609_lifecycle_valid "$phase" || { c1609_close_fail ChildrenUnknown; return 2; }
+    jq -e --arg daemon "$daemon" '.daemon==$daemon and .complete==true and all(.children[];.joined==true)' "$phase" >/dev/null || { c1609_close_fail ChildrenUnknown; return 2; }
+    pid="$(jq -r .owner.pid "$phase")"; ticks="$(jq -r .owner.startTicks "$phase")"
+    if [ -e "/proc/$pid" ]; then
+        observed="$(awk '{ sub(/^.*\) /, ""); print $20 }' "/proc/$pid/stat")" || return 2
+        [ "$observed" != "$ticks" ] || { c1609_close_fail OwnerActive; return 2; }
+    fi
+    # Unknown sibling records cannot be hidden by closing a newer operation.
+    for entry in "$SERVER2_ROOT/retirement"/*; do
+        [ -e "$entry" ] || { [ ! -L "$entry" ] || return 2; continue; }
+        [[ "${entry##*/}" =~ ^c1008[0-9a-f]{32}$ ]] && c1609_custody "$entry" dir || return 2
+        c1609_read_canonical "$entry/receipt.json" >/dev/null || return 2
+        (local C1008_OPERATION="${entry##*/}"; c1609_close_receipt_valid "$entry/receipt.json") || return 2
+    done
+    for name in $(printf '%s' "$targets" | jq -r '.[]'); do
+        facts="$(c1008_volume "$name")" || { c1609_close_fail CensusUnknown; return 2; }
+        [ "$facts" = null ] || { c1609_close_fail "TempVolumesRetained $name"; return 2; }
+    done
+    census="$(c1609_close_census "$file")" || { c1609_close_fail CensusUnknown; return 2; }
+    again="$(c1609_close_census "$file")" || return 2
+    [ "$again" = "$census" ] || { c1609_close_fail CensusDrift; return 2; }
+    for name in $(printf '%s' "$targets" | jq -r '.[]'); do
+        [ "$(c1008_volume "$name")" = null ] || { c1609_close_fail CensusUnknown; return 2; }
+    done
+    [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$expected" ] || return 2
+    if [ -e "$root/closure.json" ] || [ -L "$root/closure.json" ]; then
+        # A prior failed fsync keeps close-pending. Re-observe above, validate the
+        # exact pending appendix, flush it again, and finish without overwriting it.
+        [ -e "$root/close-pending.json" ] || idempotent=true
+        c1609_read_canonical "$root/closure.json" >/dev/null || return 2
+        jq -e --arg digest "$expected" --arg actor "$actor" --arg authority "$authority" --arg reason "$reason" \
+          '.priorDigest==$digest and .actor==$actor and .authority==$authority and .reason==$reason' "$root/closure.json" >/dev/null || return 2
+        sync -- "$root/closure.json" && sync -- "$root" || return 2
+    else
+        observed="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 2
+        body="$(jq -cnS --arg op "$C1008_OPERATION" --arg prior "$expected" --arg actor "$actor" --arg authority "$authority" \
+          --arg reason "$reason" --arg observed "$observed" --arg daemon "$daemon" --arg census "$census" \
+          --arg tooling "${C1609_CLOSE_TOOLING_DIGEST:?}" --arg lifecycle "$(sha256sum "$phase" | cut -d' ' -f1)" --slurpfile receipt "$file" \
+          '{schema:2,state:"Closed",operationId:$op,priorDigest:$prior,actor:$actor,authority:$authority,reason:$reason,
+            observedAt:$observed,daemon:$daemon,censusDigest:$census,lifecycleDigest:$lifecycle,toolingDigest:$tooling,
+            targets:$receipt[0].targets,volumesAbsent:$receipt[0].targets,
+            reconciliations:[$receipt[0].targets[] as $n|{name:$n,result:(if any($receipt[0].intents[]?;.name==$n) then "removed-observed" else "unattributed-absence" end)}]}')" || return 2
+        digest="$(printf '%s\n' "$body" | sha256sum | cut -d' ' -f1)" || return 2
+        printf '%s\n' "$body" | c1609_persist "$root/close-pending.json" || return 2
+        printf '%s\n' "$body" | jq --arg digest "$digest" '.+{digest:$digest}' | c1609_persist "$root/closure.json" || return 2
+    fi
+    if [ -e "$root/close-pending.json" ]; then
+        c1609_read_canonical "$root/close-pending.json" >/dev/null || return 2
+        [ "$(jq -cS 'del(.digest)' "$root/closure.json")" = "$(cat -- "$root/close-pending.json")" ] || return 2
+        rm -- "$root/close-pending.json" || return 2
+        if ! sync -- "$root"; then
+            jq 'del(.digest)' "$root/closure.json" | c1609_persist "$root/close-pending.json" || true
+            return 2
+        fi
+    fi
+    c1609_closure_valid "$root" || return 2
+    printf 'TempRetirementClosed operation=%s idempotent=%s\n' "$C1008_OPERATION" "$idempotent"
+}
+
+c1609_close_receipt_valid() {
+    local file="$1"
+    jq -e --arg op "$C1008_OPERATION" '
+      ["consumed","daemon","fingerprints","image","inventoryDigest","mode","operationId","phaseNonce",
+       "policyVersion","project","readyAt","retiredAt","schema","state","targets"] as $base |
+      ["owner","intents","effects","attestation","authority","applyAttestation","applyAuthority"] as $ledger |
+      type=="object" and (($base-keys)|length)==0 and ((keys-($base+$ledger))|length)==0 and
+      .schema==2 and .policyVersion==1 and .operationId==$op and .project=="antiphon-runner-temp" and
+      (.state|IN("Pending","Ready","Applying","Refused","Partial","PartialRefused","Completed")) and
+      (.consumed|type)=="boolean" and (.mode=="scripted" or .mode=="manual") and
+      (.image|test("^sha256:[0-9a-f]{64}$")) and (.inventoryDigest|test("^[0-9a-f]{64}$")) and
+      (.phaseNonce|test("^[0-9a-f]{32}$")) and (.daemon|type)=="string" and .daemon!="" and
+      (.readyAt|type)=="string" and (.retiredAt|type)=="string" and
+      (.targets|sort)==["antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_work"] and
+      (.fingerprints|keys)==(.targets|sort) and
+      all(.fingerprints|to_entries[]; .key as $name | .value==null or
+        (.value|keys)==["CreatedAt","Driver","Labels","Mountpoint","Name","Options","Scope","allLabelsDigest","hostStat","role"] and
+        .value.Name==$name and .value.Driver=="local" and .value.Scope=="local" and
+        (.value.CreatedAt|type)=="string" and .value.CreatedAt!="" and
+        (.value.Mountpoint|type)=="string" and (.value.Mountpoint|startswith("/")) and
+        (.value.allLabelsDigest|test("^[0-9a-f]{64}$")) and (.value.hostStat|test("^[0-9]+:[0-9]+:[0-9]{4}-")) and
+        .value.role==($name|ltrimstr("antiphon-runner-temp_")) and
+        .value.Labels["com.docker.compose.project"]=="antiphon-runner-temp" and
+        .value.Labels["com.docker.compose.volume"]==.value.role and
+        (.value.Options==null or .value.Options=={})) and
+      ((.intents // [])|type)=="array" and ((.effects // [])|type)=="array" and
+      (. as $r | all(.effects[]?; . as $e |
+        if .result=="alreadyAbsent" then $r.fingerprints[$e.name]==null else
+        any($r.intents[]?;.name==$e.name and .result==$e.result) end)) and
+      (. as $r | all(.intents[]?; . as $i |
+        if .result=="pending" then all($r.effects[]?;.name!=$i.name) else
+        any($r.effects[]?;.name==$i.name and .result==$i.result) end)) and
+      (if .state=="Completed" then . as $r | .consumed==true and
+        all(.targets[];. as $n|any($r.effects[]?;.name==$n)) else true end)
+      ' "$file" >/dev/null
+}
+
+# Once an operation may have published Ready, a missing journal is unknown.
+c1609_phase_preview_issued() {
+    [ -n "${C1609_PHASE_ROOT:-}" ] || return 0
+    local file="$C1609_PHASE_ROOT/lifecycle.json"
+    c1609_lifecycle_valid "$file" || return 1
+    jq '.readyPublished=true' "$file" | c1609_persist "$file"
 }

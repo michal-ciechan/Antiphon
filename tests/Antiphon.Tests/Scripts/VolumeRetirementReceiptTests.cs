@@ -469,11 +469,33 @@ public sealed class VolumeRetirementReceiptTests
         }
         failures.ShouldBeEmpty("J8 crash/resume safety; " + string.Join(" | ", failures));
         using var closeFixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(closeFixture,
+            "C1008_OPERATION=c100800000000000000000000000000000002");
         await VolumeRetirementFixture.ReadyPreview(closeFixture);
-        var close = await C994ScriptProcess.Run("node",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-close-cases.mjs"), closeFixture.Root);
+        var close = await RunCloseCases(closeFixture.Root);
         close.Exit.ShouldBe(0, "J8 actual public Close, same host locks and complete census: " + close.Output);
         close.Output.ShouldContain("C1609_CLOSE passed");
+    }
+
+    private static async Task<(int Exit, string Output)> RunCloseCases(string root)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("node")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            WorkingDirectory = DelegateScriptRunner.RepoRoot
+        };
+        psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-close-cases.mjs"));
+        psi.ArgumentList.Add(root);
+        using var timing = TestTiming.BeginProcess("node", psi.ArgumentList.Count, "cli");
+        using var child = System.Diagnostics.Process.Start(psi)!;
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        // New Close matrix: bounded initial collection, not a change to the
+        // existing crash/resume drivers' 30s bounds. Per-call phases are retained.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        try { await child.WaitForExitAsync(deadline.Token); }
+        catch { if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); } throw; }
+        return (child.ExitCode, await stdout + await stderr);
     }
 
     [Test]

@@ -24,6 +24,9 @@ const sort = x => Array.isArray(x) ? x.map(sort) : x && typeof x === 'object'
   ? Object.fromEntries(Object.keys(x).sort().map(k => [k, sort(x[k])])) : x;
 const canonical = x => JSON.stringify(sort(x)) + '\n';
 const write = (p, x) => fs.writeFileSync(p, canonical(x), {mode:0o600});
+for(const [from,to] of [[state,root+'/close-original-docker.json'],[file,root+'/close-original-receipt.json'],[lifecycle,root+'/close-original-lifecycle.json']]){
+  if(fs.existsSync(to))fs.copyFileSync(to,from);else if(fs.existsSync(from))fs.copyFileSync(from,to);
+}
 const originalState = JSON.parse(fs.readFileSync(state));
 const original = JSON.parse(fs.readFileSync(file));
 const targets = original.targets;
@@ -35,10 +38,31 @@ const bytes = fs.readFileSync(file);
 const phaseBytes = fs.existsSync(lifecycle) ? fs.readFileSync(lifecycle) : null;
 const absent = structuredClone(originalState);
 for (const name of targets) delete absent.volumes[name];
-const bin = root + '/close-bin';fs.mkdirSync(bin);
+const bin = root + '/close-bin';fs.mkdirSync(bin,{recursive:true});
 const reason = root + '/close-reason.txt';fs.writeFileSync(reason, 'observed absent after recovery\nquoted "reason" \\ path');
 const token = root + '/operator-token';fs.writeFileSync(token, 'C1609_CLOSE_OPERATOR_SENTINEL', {mode:0o600});
+const sibling=op.slice(0,-1)+'2';
+const siblingDir=root+'/server/retirement/'+sibling;
+const siblingBytes=fs.readFileSync(siblingDir+'/receipt.json');
 const trace = [];
+process.once('exit',code=>{
+  if(process.env.ANTIPHON_TEST_PHASE_ROOT){
+    fs.mkdirSync(process.env.ANTIPHON_TEST_PHASE_ROOT,{recursive:true});
+    if(code!==0){const saved=path.join(process.env.ANTIPHON_TEST_PHASE_ROOT,'close-failure-'+process.pid,path.basename(root));fs.mkdirSync(path.dirname(saved),{recursive:true});fs.cpSync(root,saved,{recursive:true});console.error('C1609_CLOSE_DIAGNOSTIC='+saved);}
+    fs.writeFileSync(path.join(process.env.ANTIPHON_TEST_PHASE_ROOT,'close-calls-'+process.pid+'.json'),JSON.stringify({trace,
+      cli:fs.existsSync(root+'/close-cli.jsonl')?fs.readFileSync(root+'/close-cli.jsonl','utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[]}));
+  }
+});
+fs.writeFileSync(bin+'/docker', `#!/usr/local/bin/node
+const fs=require('node:fs'),cp=require('node:child_process');
+const args=process.argv.slice(2),started=performance.now();
+let r;
+if(process.env.C1609_CLOSE_FIXTURE_FAULT==='volume-inspect-error' && args[0]==='volume' && args[1]==='inspect')r={status:2,stderr:'daemon unavailable'};
+else r=cp.spawnSync('bash',[process.env.C1609_CLOSE_DOCKER,...args],{encoding:'utf8',timeout:10000});
+fs.appendFileSync(process.env.C1609_CLOSE_FIXTURE+'/close-cli.jsonl',JSON.stringify({verb:args.slice(0,2),exit:r.status,milliseconds:performance.now()-started})+String.fromCharCode(10));
+process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
+`,{mode:0o755});
+fs.writeFileSync(bin+'/sudo','#!/bin/bash\n[ "$1" != -n ] || shift\nif [ "$1" = install ]; then mkdir -p -- "${@: -1}"; chmod 0700 "${@: -1}"; else exec "$@"; fi\n',{mode:0o755});
 fs.writeFileSync(bin + '/ssh', `#!/usr/local/bin/node
 import fs from 'node:fs';
 import cp from 'node:child_process';
@@ -46,23 +70,24 @@ const root=process.env.C1609_CLOSE_FIXTURE;
 let script=fs.readFileSync(0,'utf8').replaceAll('/home/mc/antiphon-server2',root+'/server');
 const fault=process.env.C1609_CLOSE_FIXTURE_FAULT||'';
 const prefix='set -euo pipefail\\n'+
-  'docker() { if [ '+JSON.stringify(fault)+' = volume-inspect-error ] && [ "$1 $2" = "volume inspect" ]; then echo "daemon unavailable" >&2; return 2; fi; bash '+JSON.stringify(process.env.C1609_CLOSE_DOCKER)+' "$@"; }\\n'+
-  'sync() { if [ '+JSON.stringify(fault)+' = closure-sync ] && [ -f '+JSON.stringify(root+'/server/retirement/'+process.env.C1609_CLOSE_OP+'/closure.json')+' ]; then return 1; fi; command sync "$@"; }\\n';
+  'sync() { if [ '+JSON.stringify(fault)+' = closure-sync ] && [ -f '+JSON.stringify(root+'/server/retirement/'+process.env.C1609_CLOSE_OP+'/closure.json')+' ]; then return 1; fi; command sync "$@"; }\\nexport -f sync\\n';
 fs.writeFileSync(root+'/close-request.sh',prefix+script,{mode:0o600});
 const r=cp.spawnSync('bash',[root+'/close-request.sh'],{encoding:'utf8',timeout:20000,maxBuffer:2*1024*1024});
 process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
 `, {mode:0o755});
 let vectors = 0;
-function close(fault = '', digest = hash(bytes), authority = true) {
+function close(fault = '', digest = hash(bytes), authority = true, request={}) {
   const env = {...process.env, PATH:bin+':'+process.env.PATH,
-    C1609_CLOSE_FIXTURE:root, C1609_CLOSE_FIXTURE_FAULT:fault, C1609_CLOSE_OP:op,
+    C1609_CLOSE_FIXTURE:root, C1609_CLOSE_FIXTURE_FAULT:fault, C1609_CLOSE_OP:request.op||op,
     C1609_CLOSE_DOCKER:repo+'/scripts/fixtures/c1008-fake-docker.sh', C1008_FIXTURE_ROOT:root,
     ANTIPHON_OPERATOR_TOKEN_FILE:authority?token:root+'/missing-token', ANTIPHON_TASK_TOKEN:''};
   delete env.C1609_RETIREMENT_ROOT;delete env.C1609_VOLUME_CENSUS_FILE;
   const started=performance.now();
-  const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',repo+'/scripts/retire-runner-volumes.ps1',
-    '-Close','-OperationId',op,'-ExpectedJournalDigest',digest,'-ReasonFile',reason],
-    {env,encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024});
+  const args=['-NoProfile','-NonInteractive','-File',repo+'/scripts/retire-runner-volumes.ps1',
+    '-Close','-OperationId',request.op||op,'-ExpectedJournalDigest',digest,'-ReasonFile',reason];
+  if(request.authorityFile)args.push('-AuthorityFile',request.authorityFile);
+  if(request.defer)return cp.spawn('pwsh',args,{env,stdio:['ignore','pipe','pipe']});
+  const r=cp.spawnSync('pwsh',args,{env,encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024});
   trace.push({fault,exit:r.status,milliseconds:performance.now()-started});
   assert(!r.error, 'Close driver/fixture failure: '+r.error);
   assert(!(r.stdout+r.stderr).includes('C1609_CLOSE_OPERATOR_SENTINEL'),'operator credential never transported/logged');
@@ -131,13 +156,49 @@ for(const key of ['daemon','targets','owner']) {
   const b=Buffer.from(canonical(bad));
   refused('receipt '+key,()=>fs.writeFileSync(file,b),'',hash(b));
 }
+// The same production read-only host guard must retain failed/older blockers.
+const remote=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
+function extract(name){const a=remote.indexOf(name+'() {'),b=remote.indexOf('\n}\n',a)+3;assert(a>=0&&b>a);return remote.slice(a,b);}
+function guard() {
+  const script='set -euo pipefail\nSERVER2_ROOT='+q(root+'/server')+'; C1008_FIXTURE_ROOT='+q(root)+'; export C1008_FIXTURE_ROOT\n'+
+    'source '+q(repo+'/scripts/c1008-retirement.sh')+'\n'+extract('c1008_volume')+'\n'+extract('c1609_temp_retirement_clearable')+'\n'+
+    'c1609_load_retirement() { :; }\nc1609_temp_retirement_clearable\n';
+  const r=cp.spawnSync('bash',['-c',script],{env:{...process.env,PATH:bin+':'+process.env.PATH,C1609_CLOSE_FIXTURE:root,
+    C1609_CLOSE_DOCKER:repo+'/scripts/fixtures/c1008-fake-docker.sh'},encoding:'utf8',timeout:20000});
+  assert(!r.error);return r.status;
+}
+reset();
+const hugeReason=fs.readFileSync(reason);fs.writeFileSync(reason,'x'.repeat(4097));
+const tooLong=close();assert.notEqual(tooLong.code,0);assert(!fs.existsSync(closure));fs.writeFileSync(reason,hugeReason);
 reset();
 const failed=close('closure-sync');
 assert.notEqual(failed.code,0,'failed closure persistence refuses');
 assert(fs.existsSync(pending),'failed persistence leaves a deployment blocker');
 assert.deepEqual(fs.readFileSync(file),bytes);
-const recovered=close();
-assert.equal(recovered.code,0,'Close reobserves and durably finishes its own pending appendix: '+recovered.text);
+assert.notEqual(guard(),0,'an unconfirmed closure remains a deployment blocker');
+// Real FD-8 barrier: no Docker read is allowed while a supported writer owns it.
+const held=root+'/close-lock-held',release=root+'/close-lock-release';
+const holder=cp.spawn('bash',['-c','exec 8>'+q(root+'/server/locks/rollout.lock')+'; flock 8; touch '+q(held)+'; while [ ! -e '+q(release)+' ]; do sleep 0.02; done'],{stdio:'ignore'});
+const holderDone=new Promise(resolve=>holder.once('close',resolve));
+let recovery;
+try {
+  for(let n=0;n<100&&!fs.existsSync(held);n++)await new Promise(r=>setTimeout(r,20));
+  assert(fs.existsSync(held),'real Close lock holder started');
+  const before=fs.statSync(root+'/docker-trace.jsonl').size;
+  recovery=close('',hash(bytes),true,{defer:true});
+  let text='';recovery.stdout.on('data',b=>text+=b);recovery.stderr.on('data',b=>text+=b);
+  const done=new Promise(resolve=>recovery.once('close',resolve));
+  await new Promise(r=>setTimeout(r,250));
+  assert.equal(recovery.exitCode,null,'Close waits behind FD 8');
+  assert.equal(fs.statSync(root+'/docker-trace.jsonl').size,before,'no Docker read before the lock');
+  assert(fs.existsSync(pending),'no premature closure activation');
+  fs.writeFileSync(release,'release');
+  const code=await done;assert.equal(code,0,'Close resumes after the actual lock: '+text);
+} finally {
+  fs.writeFileSync(release,'release');
+  await holderDone;
+  if(recovery&&recovery.exitCode===null){recovery.kill('SIGKILL');await new Promise(r=>recovery.once('close',r));}
+}
 const closedBytes=fs.readFileSync(closure);
 const closed=JSON.parse(closedBytes);
 assert.equal(closed.state,'Closed');assert.equal(closed.priorDigest,hash(bytes));
@@ -146,9 +207,23 @@ assert.equal(closed.reconciliations.find(x=>x.name===targets[0]).result,'removed
 assert(closed.reconciliations.filter(x=>x.name!==targets[0]).every(x=>x.result==='unattributed-absence'));
 assert.equal(closed.reason,fs.readFileSync(reason,'utf8').trim());
 assert(!fs.existsSync(pending));
+assert.deepEqual(fs.readFileSync(siblingDir+'/receipt.json'),siblingBytes,'closing one operation never rewrites another');
 assert.deepEqual(fs.readFileSync(file),bytes,'closure preserves exact original journal');
 const again=close();assert.equal(again.code,0,again.text);
 assert.deepEqual(fs.readFileSync(closure),closedBytes,'idempotent closure is append-only');
+assert.equal(guard(),0,'Closed plus inert sibling and current absence admits');
+const old=JSON.parse(siblingBytes);old.state='PartialRefused';old.consumed=true;old.owner=null;
+old.intents=[{name:old.targets[0],intent:'remove',result:'pending'}];old.effects=[];
+write(siblingDir+'/receipt.json',old);
+const oldBytes=fs.readFileSync(siblingDir+'/receipt.json');
+assert.notEqual(guard(),0,'a later Closed operation cannot erase an older unresolved intent');
+const authority=root+'/close-authority.json';
+write(authority,{schema:1,actor:'commissioned-delegate',authorityRef:'fixture-task-J8',operationId:sibling});
+const delegated=close('',hash(oldBytes),true,{op:sibling,authorityFile:authority});
+assert.equal(delegated.code,0,'commissioned delegate uses the same actual Close gate: '+delegated.text);
+assert.deepEqual(fs.readFileSync(siblingDir+'/receipt.json'),oldBytes);
+assert.equal(JSON.parse(fs.readFileSync(siblingDir+'/closure.json')).authority,'fixture-task-J8');
+assert.equal(guard(),0,'only resolving the older operation clears its own blocker');
 const calls=fs.readFileSync(root+'/docker-trace.jsonl','utf8').trim().split('\n').map(JSON.parse);
 assert(!calls.some(a=>['rm','stop','kill'].includes(a[0])||a[0]==='volume'&&['rm','create','prune'].includes(a[1])), 'Close has zero target effects');
 const evidence={schema:1,operation:op,vectors,trace,receiptDigest:hash(bytes),closureDigest:hash(closedBytes)};

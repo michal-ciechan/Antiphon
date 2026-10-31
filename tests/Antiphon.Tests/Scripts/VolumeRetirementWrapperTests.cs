@@ -69,102 +69,52 @@ public sealed class VolumeRetirementWrapperTests
         var root = Directory.CreateTempSubdirectory("c1609-w2-").FullName;
         try
         {
-            var receipt = Receipt(state: "Applying", owner: null, effects: 1);
-            var digest = WriteReceipt(root, Operation, receipt);
-            WriteCensus(root, "[]");
             var reason = WriteReason(root, "observed absent after content recovery");
-            var siblingDir = Path.Combine(root, Sibling);
-            Directory.CreateDirectory(siblingDir);
-            var siblingText = "{\"schema\":2,\"state\":\"Applying\",\"effects\":[{\"name\":\"antiphon-runner-temp_work\"}]}";
-            await File.WriteAllTextAsync(Path.Combine(siblingDir, "receipt.json"), siblingText);
             await File.WriteAllTextAsync(Path.Combine(root, "operator-token"), "operator-secret-token");
-
-            var exclusive = await Close(root, "-Close", "-Apply", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason, "-Sha", Sha);
-            exclusive.Exit.ShouldBe(2, exclusive.Output);
-            exclusive.Output.ShouldContain("ModeExclusive");
-            File.Exists(Path.Combine(root, Operation, "closure.json")).ShouldBeFalse();
-
-            var forced = await Close(root, "-Force", "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason);
-            forced.Exit.ShouldBe(2, forced.Output);
-            forced.Output.ShouldContain("ForceRefused");
-
-            var missing = await Close(root, "-Close", "-OperationId", Operation, "-ReasonFile", reason);
-            missing.Exit.ShouldBe(2, missing.Output);
-            missing.Output.ShouldContain("Digest");
-
-            var wrong = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", new string('0', 64), "-ReasonFile", reason);
-            wrong.Exit.ShouldBe(2, wrong.Output);
-            wrong.Output.ShouldContain("DigestMismatch");
-            File.Exists(Path.Combine(root, Operation, "closure.json")).ShouldBeFalse();
-            File.ReadAllBytes(Path.Combine(root, Operation, "receipt.json")).ShouldBe(receipt);
-
-            WriteCensus(root, "[\"antiphon-runner-temp_work\"]");
-            var present = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason);
-            present.Exit.ShouldBe(2, present.Output);
-            present.Output.ShouldContain("TempVolumesRetained antiphon-runner-temp_work");
-            File.Exists(Path.Combine(root, Operation, "closure.json")).ShouldBeFalse();
-            WriteCensus(root, "[]");
-
-            var owned = Receipt(state: "Applying", owner: "helper-1", effects: 1);
-            var ownedDigest = WriteReceipt(root, Operation, owned);
-            var active = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", ownedDigest, "-ReasonFile", reason);
-            active.Exit.ShouldBe(2, active.Output);
-            active.Output.ShouldContain("TempRetirementOwnerActive");
-            File.Exists(Path.Combine(root, Operation, "closure.json")).ShouldBeFalse();
-            digest = WriteReceipt(root, Operation, receipt);
-
-            var closed = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason);
-            closed.Exit.ShouldBe(0, closed.Output);
-            closed.Output.ShouldContain("idempotent=false");
-            var closurePath = Path.Combine(root, Operation, "closure.json");
-            var closureText = await File.ReadAllTextAsync(closurePath);
-            closureText.ShouldNotContain("operator-secret-token");
-            var closure = JsonNode.Parse(closureText)!.AsObject();
-            closure["schema"]!.GetValue<int>().ShouldBe(2);
-            closure["state"]!.GetValue<string>().ShouldBe("Closed");
-            closure["operationId"]!.GetValue<string>().ShouldBe(Operation);
-            closure["priorDigest"]!.GetValue<string>().ShouldBe(digest);
-            closure["actor"]!.GetValue<string>().ShouldBe("operator");
-            closure["authority"]!.GetValue<string>().ShouldBe("operator-token");
-            closure["volumesAbsent"]!.AsArray().Count.ShouldBe(4);
-            File.ReadAllBytes(Path.Combine(root, Operation, "receipt.json")).ShouldBe(receipt);
-            (await File.ReadAllTextAsync(Path.Combine(siblingDir, "receipt.json"))).ShouldBe(siblingText);
-            var firstBytes = await File.ReadAllBytesAsync(closurePath);
-
-            var again = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason);
-            again.Exit.ShouldBe(0, again.Output);
-            again.Output.ShouldContain("idempotent=true");
-            (await File.ReadAllBytesAsync(closurePath)).ShouldBe(firstBytes);
-
-            File.Delete(Path.Combine(root, "operator-token"));
-            var siblingDigest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(siblingText))).ToLowerInvariant();
-            var unauthenticated = await Close(root, false, null, new[]
+            var valid = new[] { "-Close", "-OperationId", Operation, "-ExpectedJournalDigest", new string('a', 64), "-ReasonFile", reason };
+            foreach (var (args, expected) in new[]
             {
-                "-Close", "-OperationId", Sibling, "-ExpectedJournalDigest", siblingDigest, "-ReasonFile", reason
-            });
-            unauthenticated.Exit.ShouldBe(2, unauthenticated.Output);
-            unauthenticated.Output.ShouldContain("Authority");
-
-            var authority = Path.Combine(root, "authority.txt");
+                (valid.Concat(new[] { "-Apply" }).ToArray(), "ModeExclusive"),
+                (valid.Concat(new[] { "-Force" }).ToArray(), "ForceRefused"),
+                (new[] { "-Close", "-OperationId", Operation, "-ReasonFile", reason }, "Digest"),
+                (new[] { "-Close", "-OperationId", "foreign", "-ExpectedJournalDigest", new string('a',64), "-ReasonFile",reason }, "OperationId"),
+                (new[] { "-Preview" }, "ManualPreviewApplyIncomplete")
+            })
+            {
+                var refused = await Close(root, args);
+                refused.Exit.ShouldBe(2, refused.Output);
+                refused.Output.ShouldContain(expected);
+            }
+            var taskOnly = await Close(root, false, "task-secret-token", valid);
+            taskOnly.Exit.ShouldBe(2, taskOnly.Output);
+            taskOnly.Output.ShouldContain("Authority");
+            var authority = Path.Combine(root, "authority.json");
             await File.WriteAllTextAsync(authority, "delegated for CARD-1609");
-            var delegateDigest = WriteReceipt(root, Sibling, Receipt(state: "PartialRefused", owner: null, effects: 1));
-            var delegated = await Close(root, false, "task-secret-token", new[]
-            {
-                "-Close", "-OperationId", Sibling, "-ExpectedJournalDigest", delegateDigest,
-                "-ReasonFile", reason, "-AuthorityFile", authority
-            });
-            delegated.Exit.ShouldBe(0, delegated.Output);
-            var delegateClosure = await File.ReadAllTextAsync(Path.Combine(siblingDir, "closure.json"));
-            delegateClosure.ShouldNotContain("task-secret-token");
-            JsonNode.Parse(delegateClosure)!["authority"]!.GetValue<string>().ShouldBe("task-token");
-            (await File.ReadAllTextAsync(Path.Combine(siblingDir, "receipt.json"))).ShouldContain("PartialRefused");
+            var malformed = await Close(root, valid.Concat(new[] { "-AuthorityFile", authority }).ToArray());
+            malformed.Exit.ShouldBe(2, malformed.Output);
+            malformed.Output.ShouldContain("Authority");
+            await File.WriteAllTextAsync(authority,
+                "{\"schema\":1,\"actor\":\"commissioned-delegate\",\"authorityRef\":\"fixture-task-J8\",\"operationId\":\"" + Operation + "\"}");
+            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
+            // Portable authority/transport logic remains here. Machine Close
+            // refusals, append-only history, delegation and the real lock/census
+            // now execute through the public command in Linux J8.
+            var admitted = await Pwsh("-NoProfile", "-NonInteractive", "-Command",
+                ". " + VolumeRetirementFixture.Quote(script) + "; $OperationId='" + Operation +
+                "'; $AuthorityFile=" + VolumeRetirementFixture.Quote(authority) +
+                "; $env:ANTIPHON_OPERATOR_TOKEN_FILE=" + VolumeRetirementFixture.Quote(Path.Combine(root,"operator-token")) +
+                "; Get-CloseAuthority | ConvertTo-Json -Compress");
+            admitted.Exit.ShouldBe(0, admitted.Output);
+            var auth = JsonNode.Parse(admitted.Output)!;
+            auth["Actor"]!.GetValue<string>().ShouldBe("commissioned-delegate");
+            auth["Authority"]!.GetValue<string>().ShouldBe("fixture-task-J8");
+            admitted.Output.ShouldNotContain("operator-secret-token");
+            admitted.Output.ShouldNotContain("task-secret-token");
+            var noLocalOverride = await Pwsh("-NoProfile", "-NonInteractive", "-Command",
+                "$env:C1609_RETIREMENT_ROOT=" + VolumeRetirementFixture.Quote(root) + "; & " +
+                VolumeRetirementFixture.Quote(script) + " -Close");
+            noLocalOverride.Exit.ShouldBe(2, noLocalOverride.Output);
+            noLocalOverride.Output.ShouldContain("LocalJournalOverrideRefused");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -173,7 +123,8 @@ public sealed class VolumeRetirementWrapperTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Bridge_validates_and_preserves_receipt_fields()
     {
-        var script = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1"));
+        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
+        var script = await File.ReadAllTextAsync(scriptPath);
         script.Contains('\r').ShouldBeFalse("c1609-w3: close script is LF");
         Encoding.UTF8.GetBytes(script).Any(b => b > 127).ShouldBeFalse("c1609-w3: close script is ASCII");
         var deploy = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
@@ -183,30 +134,25 @@ public sealed class VolumeRetirementWrapperTests
         absent.ShouldBeGreaterThanOrEqualTo(0);
         call.ShouldBeGreaterThan(absent);
         clear.ShouldBeGreaterThan(call);
-
         var root = Directory.CreateTempSubdirectory("c1609-w3-").FullName;
         try
         {
-            var reasonText = "line one\npath C:\\temp\\note \"quoted\"";
-            var receipt = Receipt(state: "Ready", owner: null, effects: 0);
-            var digest = WriteReceipt(root, Operation, receipt);
-            WriteCensus(root, "[]");
-            var reason = WriteReason(root, reasonText);
-            await File.WriteAllTextAsync(Path.Combine(root, "operator-token"), "operator-secret-token");
-            var closed = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", reason);
-            closed.Exit.ShouldBe(0, closed.Output);
-            var stored = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, Operation, "closure.json")))!;
-            stored["reason"]!.GetValue<string>().ShouldBe(reasonText.Trim());
-            File.ReadAllBytes(Path.Combine(root, Operation, "receipt.json")).ShouldBe(receipt);
-
-            var huge = WriteReason(root, new string('x', 4097));
-            File.Delete(Path.Combine(root, Operation, "closure.json"));
+            var reason = WriteReason(root, "line one\npath C:\\temp\\note \"quoted\"");
+            var literal = await Pwsh("-NoProfile", "-NonInteractive", "-Command", ". " +
+                VolumeRetirementFixture.Quote(scriptPath) + "; $reason=[IO.File]::ReadAllText(" + VolumeRetirementFixture.Quote(reason) +
+                "); $wire=New-C1609CloseScript -OperationId '" + Operation + "' -ExpectedProofDigest '" + new string('a',64) +
+                "' -Reason $reason -Actor operator -Authority operator-token; " +
+                "$encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($reason.Trim())); " +
+                "if(-not $wire.Contains($encoded)){throw 'literal reason lost'}; " +
+                "if(-not $wire.Contains('C1609_CLOSE_TOOLING_DIGEST=')){throw 'tooling provenance missing'}; " +
+                "if(-not $wire.Contains('c1008_lock')){throw 'same-lock call missing'}; Write-Output 'PASS literal request'");
+            literal.Exit.ShouldBe(0, literal.Output);
+            literal.Output.ShouldContain("PASS literal request");
+            var huge = WriteReason(root, new string('x',4097));
             var refused = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", digest, "-ReasonFile", huge);
+                "-ExpectedJournalDigest", new string('a',64), "-ReasonFile", huge);
             refused.Exit.ShouldBe(2, refused.Output);
             refused.Output.ShouldContain("ReasonFile");
-            File.Exists(Path.Combine(root, Operation, "closure.json")).ShouldBeFalse();
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -460,9 +406,9 @@ public sealed class VolumeRetirementWrapperTests
             WorkingDirectory = DelegateScriptRunner.RepoRoot
         };
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script }.Concat(args)) psi.ArgumentList.Add(arg);
-        psi.Environment["C1609_RETIREMENT_ROOT"] = root;
-        psi.Environment["C1609_VOLUME_CENSUS_FILE"] = Path.Combine(root, "census.json");
-        psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = token ? Path.Combine(root, "operator-token") : "";
+        psi.Environment["C1609_RETIREMENT_ROOT"] = "";
+        psi.Environment["C1609_VOLUME_CENSUS_FILE"] = "";
+        psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = token ? Path.Combine(root, "operator-token") : Path.Combine(root,"missing-operator-token");
         psi.Environment["ANTIPHON_TASK_TOKEN"] = taskToken ?? "";
         return await Wait(psi, TimeSpan.FromSeconds(30));
     }

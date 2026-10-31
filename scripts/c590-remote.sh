@@ -98,6 +98,9 @@ write_result() {
     if [ "$WROTE" = 1 ]; then
         exit "$code"
     fi
+    if [ -n "${C1609_PHASE_ROOT:-}" ] && ! c1609_phase_end; then
+        accepted=false; diagnosis=RecycleReceiptUnavailable; code=2
+    fi
     WROTE=1
     mkdir -p "$CASE_DIR"
     scrub_file "$CASE_DIR/build.log" || true
@@ -8722,6 +8725,7 @@ c1008_preview_finish() {
     local run_code="$1" release_status=0 output=""
     c1008_preview_release || release_status=$?
     c1008_preview_restore_traps
+    if [ "$release_status" = 0 ]; then c1609_phase_helpers_joined || release_status=1; fi
     if [ "$release_status" != 0 ]; then
         printf 'audit check=preview-helper status=2 repo=.\n'
         return 2
@@ -8815,6 +8819,7 @@ c1008_audit_readonly() {
         return 2
     fi
     program="$(c1008_git_program)"
+    c1609_phase_helper "$name" "$label" || return 2
     c1008_preview_owned_label="$label"
     c1008_preview_cidfile="$cidfile"
     trap 'ec=$?; c1008_preview_release || true; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
@@ -9150,6 +9155,7 @@ c1008_recycle() {
         # Preview holds the same rollout/cache locks as apply. Helper children
         # explicitly drop these descriptors before entering their namespace.
         c1008_lock
+        c1609_phase_begin || c1008_refuse RecycleReceiptUnavailable
     fi
     local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha="" detail pending=true
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
@@ -9627,94 +9633,64 @@ EOF
 # effect, owner, or nonterminal apply is unresolved. A refused preview with no
 # effect does not. Closure is an appendix; it does not delete a volume.
 c1609_temp_retirement_clearable() {
-    local name present=0 root dir file state owner effects intents closed
-    c1609_clear_reason=
+    local name facts root dir file state effects intents C1008_OPERATION
+    c1609_clear_reason=TempRetirementJournalUnknown
+    c1609_load_retirement
+    declare -F c1609_read_canonical >/dev/null || return 1
     for name in antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state; do
-        if docker volume inspect "$name" >/dev/null 2>&1; then
-            printf 'retained=%s\n' "$name"
-            present=1
+        facts="$(c1008_volume "$name")" || return 1
+        if [ "$facts" != null ]; then
+            c1609_clear_reason=TempVolumesRetained
+            printf 'retained=%s\nreason=TempVolumesRetained\n' "$name"
+            return 1
         fi
     done
-    if [ "$present" = 1 ]; then
-        c1609_clear_reason=TempVolumesRetained
-        printf 'reason=TempVolumesRetained\n'
-        return 1
-    fi
-    root="${SERVER2_ROOT:-}/retirement"
-    if [ -L "$root" ]; then
-        c1609_clear_reason=TempRetirementJournalUnknown
-        printf 'reason=TempRetirementJournalUnknown\n'
-        return 1
-    fi
-    [ -d "$root" ] || return 0
+    root="$SERVER2_ROOT/retirement"
+    [ ! -L "$root" ] || return 1
+    [ -d "$root" ] || { [ ! -e "$root" ]; return $?; }
+    c1609_custody "$root" dir || return 1
     for dir in "$root"/*; do
-        [ -e "$dir" ] || continue
-        if [ ! -d "$dir" ] || [ -L "$dir" ]; then
-            c1609_clear_reason=TempRetirementJournalUnknown
-            printf 'reason=TempRetirementJournalUnknown\n'
-            return 1
-        fi
-        closed=0
-        if [ -e "$dir/closure.json" ]; then
-            if [ -L "$dir/closure.json" ] || [ ! -f "$dir/closure.json" ]; then
-                c1609_clear_reason=TempRetirementJournalUnknown
-                printf 'reason=TempRetirementJournalUnknown\n'
-                return 1
-            fi
-            if ! jq -e '.schema==2 and .state=="Closed"' "$dir/closure.json" >/dev/null 2>&1; then
-                c1609_clear_reason=TempRetirementJournalUnknown
-                printf 'reason=TempRetirementJournalUnknown\n'
-                return 1
-            fi
-            closed=1
-        fi
+        [ -e "$dir" ] || { [ ! -L "$dir" ] || return 1; continue; }
+        [[ "${dir##*/}" =~ ^c1008[0-9a-f]{32}$ ]] && c1609_custody "$dir" dir || return 1
+        C1008_OPERATION="${dir##*/}"
         file="$dir/receipt.json"
-        [ -e "$file" ] || continue
-        if [ -L "$file" ] || [ ! -f "$file" ]; then
-            c1609_clear_reason=TempRetirementJournalUnknown
-            printf 'reason=TempRetirementJournalUnknown\n'
-            return 1
+        c1609_lifecycle_valid "$dir/lifecycle.json" || return 1
+        jq -e '.complete==true and all(.children[];.joined==true)' "$dir/lifecycle.json" >/dev/null || return 1
+        local pid ticks current
+        pid="$(jq -r .owner.pid "$dir/lifecycle.json")"; ticks="$(jq -r .owner.startTicks "$dir/lifecycle.json")"
+        if [ -e "/proc/$pid" ]; then
+            current="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$pid/stat")" || return 1
+            if [ "$current" = "$ticks" ]; then c1609_clear_reason=TempRetirementOwnerActive; return 1; fi
         fi
-        if ! jq -e '.schema==2 and (.state|type)=="string"' "$file" >/dev/null 2>&1; then
-            c1609_clear_reason=TempRetirementJournalUnknown
-            printf 'reason=TempRetirementJournalUnknown\n'
-            return 1
+        if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+            jq -e '.readyPublished==false' "$dir/lifecycle.json" >/dev/null || return 1
+            [ ! -e "$dir/closure.json" ] && [ ! -L "$dir/closure.json" ] &&
+                [ ! -e "$dir/close-pending.json" ] && [ ! -L "$dir/close-pending.json" ] || return 1
+            continue
         fi
-        state="$(jq -r '.state' "$file")"
-        owner="$(jq -r 'if .owner == null then "" else (.owner | tostring) end' "$file")"
-        effects="$(jq -r 'if (.effects | type) == "array" then (.effects | length) else 0 end' "$file")"
-        intents="$(jq -r 'if (.intents | type) == "array" then (.intents | length) else 0 end' "$file")"
-        if [ -n "$owner" ]; then
-            c1609_clear_reason=TempRetirementOwnerActive
-            printf 'reason=TempRetirementOwnerActive\n'
-            return 1
+        c1609_read_canonical "$file" >/dev/null && c1609_close_receipt_valid "$file" || return 1
+        if [ -e "$dir/closure.json" ] || [ -L "$dir/closure.json" ]; then
+            c1609_closure_valid "$dir" || return 1
+            continue
         fi
+        if [ -e "$dir/close-pending.json" ] || [ -L "$dir/close-pending.json" ]; then
+            c1609_clear_reason=TempRetirementUnresolved; return 1
+        fi
+        state="$(jq -r .state "$file")"
+        effects="$(jq '(.effects // [])|length' "$file")"
+        intents="$(jq '(.intents // [])|length' "$file")"
         case "$state" in
             Ready|Refused|Pending)
-                if [ "$effects" != 0 ] || [ "$intents" != 0 ]; then
-                    c1609_clear_reason=TempRetirementUnresolved
-                    printf 'reason=TempRetirementUnresolved\n'
-                    return 1
-                fi
+                if [ "$effects" != 0 ] || [ "$intents" != 0 ]; then c1609_clear_reason=TempRetirementUnresolved; return 1; fi
                 ;;
-            Completed|Closed) ;;
-            Applying|Partial|PartialRefused)
-                if [ "$closed" != 1 ]; then
-                    c1609_clear_reason=TempRetirementUnresolved
-                    printf 'reason=TempRetirementUnresolved\n'
-                    return 1
-                fi
-                ;;
-            *)
-                c1609_clear_reason=TempRetirementJournalUnknown
-                printf 'reason=TempRetirementJournalUnknown\n'
-                return 1
-                ;;
+            Completed) ;;
+            Applying|Partial|PartialRefused) c1609_clear_reason=TempRetirementUnresolved; return 1 ;;
+            *) return 1 ;;
         esac
     done
+    c1609_clear_reason=''
     return 0
 }
-
 case_deploy_temp_runner() {
     require_lane host
     c1008_rollout_lock
