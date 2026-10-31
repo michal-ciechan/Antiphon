@@ -1139,7 +1139,7 @@ function Test-FFPreviousRunChain {
 
 function Test-FFPreviousOrder {
     $entries=@(foreach($sid in @('A','B')){foreach($id in 1..5){[pscustomobject]@{suite=$sid;chunk=[string]$id}}})
-    $previous=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
+    $previous=[pscustomobject]@{schemaVersion=1;liveness='closed';sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
     $order=Resolve-NightlyPreviousRunOrder $entries $previous ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
     $progressOk=(@($order.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -ceq 'B2,A4,A5,A2,B1,B3,B4,B5,A1,A3' -and $order.reason -ceq 'previous-run-order'
     foreach($variant in @('missing','stale','candidate','malformed')){
@@ -1148,7 +1148,7 @@ function Test-FFPreviousOrder {
         $fallbackOrder=Resolve-NightlyPreviousRunOrder $entries $record ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
         if((@($fallbackOrder.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -cne (@($entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -or -not $fallbackOrder.reason -or $fallbackOrder.reason -ceq 'previous-run-order'){$progressOk=$false}
     }
-    $rotated=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@(
+    $rotated=[pscustomobject]@{schemaVersion=1;liveness='closed';sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@(
         [pscustomobject]@{id='A';chunk='1';result='FAIL';exitCode=1},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='4';result='FAIL';exitCode=1},
         [pscustomobject]@{id='B';chunk='1';result='FAIL';exitCode=1},[pscustomobject]@{id='B';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='5';result='FAIL';exitCode=1})}
     $rotatedOrder=Resolve-NightlyPreviousRunOrder $entries $rotated ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
