@@ -81,7 +81,8 @@ internal static class LiveClaudeStartupEvidence
         StartupObservation before, StartupBridge? after)
     {
         RequireOff(experiment, control, before);
-        RequireBridge(before.Owner, after);
+        if (!OwnedBridge(before.Owner, after))
+            throw new InvalidOperationException("C1545 startup/slash bridge did not arm");
     }
 
     public static void RequireSettings(StartupControl control, StartupOwner owner, StartupSettings observed)
@@ -90,7 +91,8 @@ internal static class LiveClaudeStartupEvidence
         {
             var expected = control.Settings.Markers.Where(m => m.Source == source && m.Session == control.Owner.Session).ToArray();
             var actual = observed.Markers.Where(m => m.Source == source && m.Session == owner.Session).ToArray();
-            if (expected.Length != 1 || actual.Length != 1) throw new LiveClaudeRefusal("settings-unobserved");
+            if (expected.Length != 1) throw new LiveClaudeRefusal("settings-unobserved");
+            if (actual.Length != 1) throw new InvalidOperationException("C1545 startup/marker observed side lost a control marker");
             if (actual[0].Retained != expected[0].Retained)
                 throw new InvalidOperationException("C1545 startup/retained setting changed");
         }
