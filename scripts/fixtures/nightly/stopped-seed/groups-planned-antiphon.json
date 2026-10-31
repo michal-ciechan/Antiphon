@@ -20,7 +20,8 @@
         "Synthetic.antiphon.Red"
       ],
       "plannedTestIds": [
-        "red"
+        "red",
+        "red-expansion"
       ]
     },
     {
