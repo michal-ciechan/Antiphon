@@ -372,15 +372,22 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength;
 
     /// <summary>
-    /// Historical C459 busy-caller gate: a plain 60 s deadline, no protocol-git heartbeat.
-    /// The witness owns the proof that a still-moving land dies here.
+    /// C459 busy-caller gate. Completed protocol-git records renew the 60 s quiet window, up to the
+    /// 600 s cap. A land that stops emitting them still fails one quiet window later, and the
+    /// timeout names the recipient hold, the last Git record and a safe log tail.
     /// </summary>
     public async Task WaitForBusyCallerQueuedOutcomeAsync(Func<Task<bool>>? queued = null, int quietSeconds = 60,
         TimeProvider? clock = null, Func<CancellationToken, Task<string>>? producerState = null)
     {
-        _ = producerState;
         queued ??= QueuedOutcomeAsync;
-        await UntilAsync(queued, "busy caller has queued outcome", quietSeconds, progress: null, clock: clock);
+        try
+        {
+            await UntilProtocolAsync(queued, "busy caller has queued outcome", quietSeconds, clock);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await ReceiptTimeoutAsync(ex, LandNotificationKind.Outcome, null, null, producerState, "queued-outcome");
+        }
     }
 
     private async Task<bool> QueuedOutcomeAsync()
@@ -390,12 +397,13 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             n.TaskId == TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
     }
 
-    public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60)
+    public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60,
+        TimeProvider? clock = null)
     {
         var started = DateTime.UtcNow;
         var before = ProtocolProgress();
         var outcome = "satisfied";
-        try { await UntilAsync(predicate, evidence, quietSeconds, ProtocolProgress); }
+        try { await UntilAsync(predicate, evidence, quietSeconds, ProtocolProgress, clock: clock); }
         catch (TimeoutException) { outcome = "timeout"; throw; }
         finally
         {

@@ -29,8 +29,9 @@ public sealed partial class LandDeliveryFixture
 
     // Diagnostic collection cannot extend the receipt deadline or replace its failure.
     internal async Task<TimeoutException> ReceiptTimeoutAsync(TimeoutException original, LandNotificationKind kind,
-        Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState = null)
-        => new(await ReceiptFailureDiagnosticAsync(original, kind, requestId, notificationId, producerState), original);
+        Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState = null,
+        string diagnosticPrefix = "receipt-timeout")
+        => new(await ReceiptFailureDiagnosticAsync(original, kind, requestId, notificationId, producerState, diagnosticPrefix), original);
 
     private async Task<string> ReceiptFailureDiagnosticAsync(Exception original, LandNotificationKind kind,
         Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState,
@@ -38,7 +39,10 @@ public sealed partial class LandDeliveryFixture
     {
         var text = new StringBuilder(original.Message)
             .Append($" | kind={kind} taskId={TaskId} callerId={CallerId} requestId={requestId?.ToString() ?? "any-for-task"}")
-            .Append($" notificationId={notificationId?.ToString() ?? "any-for-request"} evidenceRoot={Root}");
+            .Append($" notificationId={notificationId?.ToString() ?? "any-for-request"} evidenceRoot={Root}")
+            .Append(" recipientBusyHeld=").Append(File.Exists(Path.Combine(Root, "caller-busy.held")) ? "true" : "false")
+            .Append(" recipientBusyReleased=").Append(File.Exists(Path.Combine(Root, "caller-busy.release")) ? "true" : "false")
+            .Append(" executionReleased=").Append(File.Exists(Path.Combine(Root, "execute.release")) ? "true" : "false");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
