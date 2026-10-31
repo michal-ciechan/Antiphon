@@ -1,0 +1,268 @@
+{
+  "schemaVersion": 1,
+  "profile": "rc",
+  "phase": "execute",
+  "runId": "fixture-run-A",
+  "candidate": {
+    "repositoryId": "fixture-repo",
+    "releaseRef": "rc/fixture",
+    "lineageRootSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidateId": "fixture-candidate",
+    "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "mode": "Full",
+  "order": "Smart",
+  "planner": {
+    "kind": "deterministic",
+    "version": "1",
+    "proposalDigest": null
+  },
+  "policyDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "rosterDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "preparationReceipt": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "history": {
+    "sourceRunId": null,
+    "digest": null,
+    "closedAtUtc": null,
+    "fallbackReason": "fixture"
+  },
+  "targets": [
+    {
+      "id": "windows-A",
+      "capability": {
+        "platform": "Windows",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "bindingDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "parallelism": 1,
+      "resourceKeys": [
+        "fixture-lock",
+        "fixture-db"
+      ],
+      "quota": null
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fixture-build",
+      "kind": "build",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 0,
+      "action": "fixture.build",
+      "selection": {
+        "filter": null,
+        "uidSetDigest": null,
+        "expectedCount": 0
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 0
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    },
+    {
+      "id": "fixture-discover",
+      "kind": "discover",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 1,
+      "action": "fixture.discover",
+      "selection": {
+        "filter": null,
+        "uidSetDigest": null,
+        "expectedCount": 0
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 1
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    },
+    {
+      "id": "fixture-group",
+      "kind": "project",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 2,
+      "action": "fixture.project",
+      "selection": {
+        "filter": null,
+        "uidSetDigest": null,
+        "expectedCount": 0
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 2
+      },
+      "inputFingerprint": null,
+      "disposition": "group",
+      "skipReceipt": null
+    },
+    {
+      "id": "fixture-selection",
+      "kind": "chunk",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 3,
+      "action": "fixture.chunk",
+      "selection": {
+        "filter": "/*/Fixture/*/*",
+        "uidSetDigest": "29afb3ce875aa830333611c8d17ed6a95dc2cf925e1288e88a3e44fbb4bab9b2",
+        "expectedCount": 2
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 3
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    },
+    {
+      "id": "fixture-diagnostic",
+      "kind": "selection",
+      "platformOfRecord": "Windows",
+      "coverageRole": "diagnostic",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 4,
+      "action": "fixture.selection",
+      "selection": {
+        "filter": "/*/Fixture/*/*",
+        "uidSetDigest": "29afb3ce875aa830333611c8d17ed6a95dc2cf925e1288e88a3e44fbb4bab9b2",
+        "expectedCount": 2
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 4
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "fixture-build",
+      "to": "fixture-discover",
+      "condition": "success",
+      "reason": "fixture"
+    },
+    {
+      "from": "fixture-discover",
+      "to": "fixture-selection",
+      "condition": "success",
+      "reason": "fixture"
+    }
+  ]
+}
