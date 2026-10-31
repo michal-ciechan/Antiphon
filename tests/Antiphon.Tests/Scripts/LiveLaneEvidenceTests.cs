@@ -335,11 +335,92 @@ public class LiveLaneEvidenceTests
                 "if ($seen.ContainsKey($key)) { return 'duplicate-uid' } # GUARD duplicate-uid",
                 "if ($false) { return 'duplicate-uid' } # GUARD duplicate-uid",
                 2, "duplicate-uid", 0, "EVIDENCE-SCAN clean", null);
+            File.WriteAllText(Path.Combine(nested, "leak.txt"), LiveClaudeEvidenceSentinels.Secret);
+            var replaced = Variant(clean, Path.Combine(root, "sentinels-replaced"), node =>
+                node["sentinels"] = new JsonArray("NOPE-XYZ"));
+            Expect(script, "Scan", replaced, 2, "sentinel-present", null);
+            Expect(script, "Scan", Variant(clean, Path.Combine(root, "sentinels-empty"), node =>
+                node["sentinels"] = new JsonArray()), 2, "sentinel-present", null);
+            Prove(script, "SM-D3-floor", "Scan", replaced,
+                "$needles = @($script:SentinelFragments)\n    if ($custom.Count -gt 0) { $needles += $custom }",
+                "if ($custom.Count -gt 0) { return @($custom) }\n    $needles = @($script:SentinelFragments)",
+                2, "sentinel-present", 0, "EVIDENCE-SCAN clean", null);
+            File.Delete(Path.Combine(nested, "leak.txt"));
+            var named = Path.Combine(clean.Row, LiveClaudeEvidenceSentinels.Secret + ".txt");
+            File.WriteAllBytes(named, []);
+            Expect(script, "Scan", clean.Context, 2, "sentinel-present", null);
+            File.Delete(named);
+            var namedDir = Path.Combine(clean.Row, LiveClaudeEvidenceSentinels.Screen);
+            Directory.CreateDirectory(namedDir);
+            Expect(script, "Scan", clean.Context, 2, "sentinel-present", null);
+            Directory.Delete(namedDir);
+            ProveOmittedProducer(script, root);
         }
         finally
         {
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
+    }
+
+    private static void ProveOmittedProducer(string script, string root)
+    {
+        var results = Path.Combine(root, "omitted-results");
+        var run = "run-omitted";
+        var runDir = Path.Combine(results, run);
+        var row = Path.Combine(runDir, "rows", "CP-20");
+        Directory.CreateDirectory(row);
+        var marker = "C1545-EVIDENCE case=control-success test=EvidenceIsSanitized kind=success run=portable";
+        File.WriteAllText(Path.Combine(row, "run.trx"), Trx("EvidenceIsSanitized", marker));
+        File.WriteAllText(Path.Combine(row, "console.log"), "  succeeded: 1\n" + LiveClaudeEvidenceSentinels.Secret + "\n");
+        var repo = Path.Combine(root, "omitted-repo");
+        Directory.CreateDirectory(Path.Combine(repo, "out"));
+        File.WriteAllText(Path.Combine(repo, "out", "checkpoint-build-source.json"),
+            "{\"version\":1,\"commit\":\"" + Sha + "\"}");
+        File.WriteAllText(Path.Combine(runDir, "state.json"),
+            "{\"runId\":\"" + run + "\",\"rows\":[{\"id\":\"CP-20\",\"state\":\"green\",\"exitCode\":0,\"line\":\"CHECKPOINT CP-20 commit="
+            + Sha + " buildSource=verified\"}]}");
+        var report = Path.Combine(root, "omitted-report.json");
+        File.WriteAllText(report, "{\"commit\":\"" + Sha + "\"}");
+        var cleanRow = Path.Combine(root, "omitted-clean", "rows", "CP-20");
+        Directory.CreateDirectory(cleanRow);
+        File.WriteAllText(Path.Combine(cleanRow, "run.trx"), Trx("EvidenceIsSanitized", marker));
+        File.WriteAllText(Path.Combine(cleanRow, "console.log"), "  succeeded: 1\n");
+        var receipt = Path.Combine(root, "omitted-receipt.txt");
+        var summary = Path.Combine(root, "omitted-summary.txt");
+        var publication = Path.Combine(root, "omitted-public.txt");
+        File.WriteAllText(receipt, marker + "\n");
+        File.WriteAllText(summary, marker + "\n");
+        var context = Path.Combine(root, "omitted-context.json");
+        WriteContext(context, new
+        {
+            source = Sha,
+            repo,
+            checkpointRun = run,
+            resultsRoot = results,
+            phase = "",
+            rawExit = "",
+            cases = new[] { new { @case = "control-success", test = "EvidenceIsSanitized", cp = "CP-20" } },
+            producers = new[]
+            {
+                new
+                {
+                    id = "CP-20", state = "green", exit = "0", source = Sha, build = "verified",
+                    buildCommit = Sha, runId = run,
+                    trx = Path.Combine(cleanRow, "run.trx"),
+                    console = Path.Combine(cleanRow, "console.log"),
+                    rowDir = cleanRow
+                }
+            },
+            outputs = new[] { new { id = "CP-20", path = "out" } },
+            receipt,
+            summary,
+            publicSummary = publication,
+            report,
+            requireReport = false
+        });
+        Expect(script, "Scan", context, 2, "sentinel-present", null);
+        Expect(script, "OuterPublish", context, 2, "sentinel-present", null);
+        if (File.Exists(publication)) File.Delete(publication);
     }
 
     private static bool RanHealthyPublishWasBlocked(string script, Fixture clean)
@@ -366,7 +447,10 @@ public class LiveLaneEvidenceTests
             ("PC-42", "LiveClaudeEvidence.Success(\"c680-native\"", "true.ShouldBeTrue(\"screen:\\n\" + tool); LiveClaudeEvidence.Success(\"c680-native\"", true),
             ("PC-42", "LiveClaudeEvidence.Success(\"c680-submit\"", "throw new SkipTestException(\"screen:\\n\" + tool); LiveClaudeEvidence.Success(\"c680-submit\"", true),
             ("PC-42", "LiveClaudeEvidence.WriteDiagnostic", "File.WriteAllText", false),
-            ("PC-42", "LiveClaudeEvidence.AppendDiagnostic", "File.AppendAllText", false)
+            ("PC-42", "LiveClaudeEvidence.AppendDiagnostic", "File.AppendAllText", false),
+            ("SM-C1", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Out.WriteLine(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            ("SM-C2", "LiveClaudeEvidence.Success(\"c680-submit\"", "throw new SkipTestException(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-submit\"", true),
+            ("SM-C1b", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Error.WriteLine(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true)
         };
         foreach (var cycle in cycles)
         {

@@ -55,6 +55,7 @@ public class LiveClaudeEvidenceWiringTests
             "bad " + LiveClaudeEvidenceSentinels.Secret, null, null, null, null);
         if (!unsafeRun.Contains("run=rejected", StringComparison.Ordinal) || LiveClaudeEvidenceSanitizer.ContainsSentinel(unsafeRun))
             throw new InvalidOperationException("C1545 V-5/unsafe-run-id unsafeRunIdRejectedOrProjected");
+        ProveClosedTokens();
         var export = ExportPath();
         if (export is not null)
             File.AppendAllText(export, string.Join('\n', exported) + "\n");
@@ -75,6 +76,10 @@ public class LiveClaudeEvidenceWiringTests
             throw new InvalidOperationException("C1545 V-6/raw-skip unprotectedSkipSinkCount");
         if (counts.Actual != 0)
             throw new InvalidOperationException("C1545 V-6/raw-actual rawAssertionOperandCount");
+        if (counts.File != 0)
+            throw new InvalidOperationException("C1545 V-6/raw-file unprotectedFileSinkCount");
+        if (counts.Process != 0)
+            throw new InvalidOperationException("C1545 V-6/raw-process unprotectedProcessSinkCount");
         if (counts.Recognized == 0)
             throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
         var menu = LiveClaudeExecutableAudit.Method(
@@ -122,9 +127,87 @@ public class LiveClaudeEvidenceWiringTests
                 throw new InvalidOperationException("C1545 " + mutant.Pc + " restore failed");
             Console.WriteLine("C1545 " + mutant.Pc + " assertion-red; restored-green " + mutant.Assertion);
         }
+        ProveTokenChecks(source);
     }
 
-    private static string InvokeProject(string source)
+    private static void ProveClosedTokens()
+    {
+        foreach (var secret in TokenShapes())
+        {
+            var fields = LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+                "shape", "EvidenceIsSanitized", "success", "portable", null, null, null, null,
+                new Dictionary<string, string> { ["cli"] = secret }));
+            if (fields.Text.Contains(secret, StringComparison.Ordinal))
+                throw new InvalidOperationException("C1545 V-5/field-token " + Label(secret));
+            var run = LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+                "shape", "EvidenceIsSanitized", "success", secret, null, null, null, null, null));
+            if (run.Text.Contains(secret, StringComparison.Ordinal) || !run.Text.Contains("run=rejected", StringComparison.Ordinal))
+                throw new InvalidOperationException("C1545 V-5/run-token " + Label(secret));
+            var refused = false;
+            try
+            {
+                LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+                    secret, "EvidenceIsSanitized", "success", "portable", null, null, null, null, null));
+            }
+            catch (InvalidOperationException) { refused = true; }
+            if (!refused) throw new InvalidOperationException("C1545 V-5/case-token " + Label(secret));
+        }
+        var kept = LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+            "shape", "EvidenceIsSanitized", "success", "portable", null, null, null, null,
+            new Dictionary<string, string>
+            {
+                ["cli"] = "2.1.312", ["backend"] = "UnixPty", ["tool"] = "Bash", ["revision"] = "3",
+                ["backendDelta"] = "0", ["refused"] = "true", ["submission"] = "confirmed",
+                ["evidence"] = "UserPrompt", ["password"] = "safe"
+            }));
+        if (!kept.Text.Contains("cli=2.1.312", StringComparison.Ordinal)
+            || !kept.Text.Contains("tool=Bash", StringComparison.Ordinal)
+            || !kept.Text.Contains("evidence=UserPrompt", StringComparison.Ordinal)
+            || kept.Text.Contains("password=", StringComparison.Ordinal))
+            throw new InvalidOperationException("C1545 V-5/field-allowlist");
+        var dotted = string.Concat(Enumerable.Repeat("a.", 45));
+        var bounded = LiveClaudeEvidenceSanitizer.Project(new EvidenceCapture(
+            "shape", "EvidenceIsSanitized", "success", "portable", null, null, null, null,
+            new Dictionary<string, string> { ["tool"] = dotted }));
+        if (bounded.Text.Contains(dotted, StringComparison.Ordinal))
+            throw new InvalidOperationException("C1545 V-5/token-bound");
+    }
+
+    private static void ProveTokenChecks(string source)
+    {
+        const string jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.sig";
+        var listed = source.Contains("IsListedField(pair.Key)", StringComparison.Ordinal);
+        var fieldsFrom = listed
+            ? "if (!IsListedField(pair.Key) || !IsToken(pair.Value)) continue;"
+            : "if (!IsToken(pair.Key) || !IsToken(pair.Value)) continue;";
+        var fieldsTo = listed ? "if (!IsListedField(pair.Key)) continue;" : "if (!IsToken(pair.Key)) continue;";
+        ProveOneCheck(source, "SM-S4", fieldsFrom, fieldsTo,
+            leaked: text => text.Contains(jwt, StringComparison.Ordinal),
+            invoke: mutated => InvokeProject(mutated, fields: new Dictionary<string, string> { ["cli"] = jwt }));
+        var identityFrom = "if (!IsToken(capture.CaseId) || !IsToken(capture.TestId) || !IsToken(capture.Kind))\n            throw new InvalidOperationException(\"C1545 evidence/identity\");";
+        ProveOneCheck(source, "SM-S5", identityFrom, "if (false)\n            throw new InvalidOperationException(\"C1545 evidence/identity\");",
+            leaked: text => text.Contains("ghp_", StringComparison.Ordinal),
+            invoke: mutated => InvokeProject(mutated, caseId: "ghp_" + new string('a', 36)));
+        var longId = string.Concat(Enumerable.Repeat("a.", 45));
+        ProveOneCheck(source, "SM-S6",
+            "if (string.IsNullOrEmpty(value) || value.Length > 80) return false;",
+            "if (string.IsNullOrEmpty(value)) return false;",
+            leaked: text => text.Contains(longId, StringComparison.Ordinal),
+            invoke: mutated => InvokeProject(mutated, fields: new Dictionary<string, string> { ["tool"] = longId }));
+    }
+
+    private static void ProveOneCheck(string source, string pc, string from, string to, Func<string, bool> leaked, Func<string, string> invoke)
+    {
+        if (source.Split(from).Length != 2) throw new InvalidOperationException("C1545 " + pc + " mutation site ambiguous");
+        var opened = invoke(source.Replace(from, to, StringComparison.Ordinal));
+        if (!leaked(opened)) throw new InvalidOperationException("C1545 " + pc + " did not reach expected assertion");
+        var restored = invoke(source);
+        if (leaked(restored)) throw new InvalidOperationException("C1545 " + pc + " restore failed");
+        Console.WriteLine("C1545 " + pc + " assertion-red; restored-green");
+    }
+
+    private static string InvokeProject(string source, string caseId = "control-success",
+        Dictionary<string, string>? fields = null)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Distinct().Select(path => (MetadataReference)MetadataReference.CreateFromFile(path));
@@ -142,15 +225,39 @@ public class LiveClaudeEvidenceWiringTests
         {
             var assembly = load.LoadFromStream(bytes);
             var captureType = assembly.GetType("Antiphon.TestSupport.LiveClaude.EvidenceCapture")!;
-            var capture = Activator.CreateInstance(captureType, "control-success", "EvidenceIsSanitized", "success", "portable",
+            var capture = Activator.CreateInstance(captureType, caseId, "EvidenceIsSanitized", "success", "portable",
                 LiveClaudeEvidenceSentinels.Link, LiveClaudeEvidenceSentinels.Screen, LiveClaudeEvidenceSentinels.Secret,
-                LiveClaudeEvidenceSentinels.Device, null);
+                LiveClaudeEvidenceSentinels.Device, fields);
             var projected = assembly.GetType("Antiphon.TestSupport.LiveClaude.LiveClaudeEvidenceSanitizer")!
                 .GetMethod("Project")!.Invoke(null, [capture]);
             return (string)projected!.GetType().GetProperty("Text")!.GetValue(projected)!;
         }
+        catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException)
+        {
+            return "";
+        }
         finally { load.Unload(); }
     }
+
+    private static IEnumerable<string> TokenShapes()
+    {
+        yield return "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.sig";
+        yield return "ghp_" + new string('a', 36);
+        yield return "gho_" + new string('b', 36);
+        yield return "ghs_" + new string('c', 36);
+        yield return "github_pat_" + new string('d', 22);
+        yield return "sk-ant-api03-" + new string('e', 61);
+        yield return "sk-" + new string('f', 24);
+        yield return "xoxb-123456789012-abcdef";
+        yield return "AKIAIOSFODNN7EXAMPLE";
+        yield return "Bearer-abcdefghijklmnop";
+        yield return "Bearer abc.def-token";
+        yield return "oauthcode-abcdefghijklmnopqrstuvwxyz";
+        yield return "0123456789abcdef0123456789abcdef";
+        yield return "qQzZ0123456789qQzZ0123456789qQzZ0123";
+    }
+
+    private static string Label(string secret) => secret.Length <= 12 ? secret : secret[..12];
 
     private static void ProveCallerMutants()
     {
@@ -159,7 +266,19 @@ public class LiveClaudeEvidenceWiringTests
             ("PC-38", "Console.WriteLine(\"SCREEN:\\n\" + runner.SnapshotScreen());", "raw-console"),
             ("PC-39", "true.ShouldBeTrue(\"screen:\\n\" + runner.SnapshotScreen());", "raw-assertion"),
             ("PC-40", "throw new SkipTestException(\"screen:\\n\" + runner.SnapshotScreen());", "raw-skip"),
-            ("PC-41", "runner.SnapshotScreen().ShouldContain(\"x\");", "raw-actual")
+            ("PC-41", "runner.SnapshotScreen().ShouldContain(\"x\");", "raw-actual"),
+            ("SM-S1", "Console.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-S2", "throw new SkipTestException(runner.SnapshotScreen());", "raw-skip"),
+            ("SM-S2b", "Console.WriteLine(\"cwd=\" + Environment.GetEnvironmentVariable(\"HOME\"));", "raw-console"),
+            ("SM-S1a", "var leaked = runner.SnapshotScreen(); Console.WriteLine(leaked);", "raw-console"),
+            ("SM-S1w", "void Forward(string value) { Console.WriteLine(value); } Forward(runner.SnapshotScreen());", "raw-console"),
+            ("SM-S2w", "void ForwardSkip(string value) { throw new SkipTestException(value); } ForwardSkip(runner.SnapshotScreen());", "raw-skip"),
+            ("SM-Out", "Console.Out.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-Err", "Console.Error.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-Fmt", "Console.WriteLine(string.Format(\"{0}\", runner.SnapshotScreen()));", "raw-console"),
+            ("SM-File", "File.WriteAllText(\"x.txt\", runner.SnapshotScreen());", "raw-file"),
+            ("SM-Proc", "Process.Start(\"echo\", runner.SnapshotScreen());", "raw-process"),
+            ("SM-Ctx", "TestContext.WriteLine(runner.SnapshotScreen());", "raw-console")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {
@@ -182,6 +301,8 @@ public class LiveClaudeEvidenceWiringTests
                     "raw-console" => found.Console > 0,
                     "raw-assertion" => found.Assertion > 0,
                     "raw-skip" => found.Skip > 0,
+                    "raw-file" => found.File > 0,
+                    "raw-process" => found.Process > 0,
                     _ => found.Actual > 0
                 };
                 if (!red) throw new InvalidOperationException("C1545 " + insert.Pc + " did not reach expected assertion " + family.Method);
@@ -190,7 +311,7 @@ public class LiveClaudeEvidenceWiringTests
         }
     }
 
-    private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual);
+    private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0);
 
     private static SinkCounts Count(IEnumerable<(BlockSyntax Body, string Name)> methods)
     {
