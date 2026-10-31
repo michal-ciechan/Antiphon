@@ -68,11 +68,78 @@ public class LiveClaudeExecutableWiringTests
             foreach (var replacement in new[] { "/* " + call + " */", "if (false) { " + call + " }", call.Replace("var executable = ", "") })
                 LiveClaudeExecutableAudit.Reject(Audit, source, call, replacement, pc + "-syntax");
         }
+        RejectBareDelegation();
         LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(prefix + "ClaudeRemoteControlAtStartupCanaryTests.cs"), "LaunchUntilReadyAsync");
         LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(prefix + "ClaudeRemoteControlMenuCanaryTests.cs"), "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt");
         var harness = LiveClaudeExecutableAudit.Read(prefix + "ClaudeSubmitContractTests.cs");
         LiveClaudeExecutableAudit.Reject(LiveClaudeExecutableAudit.Harness, harness,
             "var executable = coreExecutable ?? ClSession.RequireCore(LiveClaudeCore.Submit);",
             "var executable = ClSession.PrepareCore(\"non-core-manual\");", "PC-3");
+    }
+
+    private static void RejectBareDelegation()
+    {
+        const string helperLaunch = "LaunchUntilReadyAsync(executable, runner, sandbox, launch);";
+        const string healthy = """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
+                }
+                void RunStartupControlAsync() {
+                    LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+                }
+            }
+            """;
+        const string directLambda = """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => LaunchUntilReadyAsync(executable, runner, sandbox, launch));
+                }
+            }
+            """;
+        const string tried = """
+            class Synthetic {
+                void Settings_file_prevents_auto_connect_and_keeps_startup_records() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Off);
+                    try { LaunchUntilReadyAsync(executable, runner, sandbox, launch); }
+                    catch (System.Exception) { }
+                }
+            }
+            """;
+        void Control(string source) => LiveClaudeExecutableAudit.Core(source,
+            "Control_auto_connects_a_bridge_session_before_the_first_user", "Control", "LaunchUntilReadyAsync");
+        Control(healthy);
+        Control(directLambda);
+        LiveClaudeExecutableAudit.Core(tried, "Settings_file_prevents_auto_connect_and_keeps_startup_records", "Off", "LaunchUntilReadyAsync");
+        foreach (var bare in new[] { "runner.StartAsync(\"claude\", launchArgs);", "runner.StartAsync(\"cl\", launchArgs);" })
+            ExpectAuditRefusal(Control, healthy.Replace(helperLaunch, bare, StringComparison.Ordinal));
+        ExpectAuditRefusal(Control, healthy.Replace(helperLaunch, "if (false) " + helperLaunch, StringComparison.Ordinal));
+        ExpectAuditRefusal(source => LiveClaudeExecutableAudit.Core(source,
+            "Settings_file_prevents_auto_connect_and_keeps_startup_records", "Off", "LaunchUntilReadyAsync"), """
+            class Synthetic {
+                void Settings_file_prevents_auto_connect_and_keeps_startup_records() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Off);
+                    try { }
+                    catch (System.Exception) { LaunchUntilReadyAsync(executable, runner, sandbox, launch); }
+                }
+            }
+            """);
+        ExpectAuditRefusal(Control, """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => runner.StartAsync("claude", launchArgs));
+                }
+            }
+            """);
+    }
+
+    private static void ExpectAuditRefusal(Action<string> audit, string source)
+    {
+        try { audit(source); }
+        catch (InvalidOperationException e) when (e.Message.StartsWith("C1545 audit/", StringComparison.Ordinal)) { return; }
+        throw new InvalidOperationException("C1545 V-1/bare-launch lambda must fail");
     }
 }

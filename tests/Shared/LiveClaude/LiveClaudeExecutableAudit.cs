@@ -31,14 +31,14 @@ internal static class LiveClaudeExecutableAudit
     }
     public static void Call(BlockSyntax? body, string expression, string firstArgument, string name, int argumentIndex = 0)
     {
-        var calls = body?.Statements.Where(s => s is LocalDeclarationStatementSyntax or ExpressionStatementSyntax)
-            .SelectMany(s => s.DescendantNodes().OfType<InvocationExpressionSyntax>())
-            .Where(c => c.Expression.ToString() == expression
-                && c.ArgumentList.Arguments.ElementAtOrDefault(argumentIndex)?.Expression.ToString() == firstArgument)
-            .ToArray() ?? [];
-        if (calls.Length != 1 || calls[0].Ancestors().TakeWhile(a => a != body)
-            .Any(a => a is AnonymousFunctionExpressionSyntax or ConditionalExpressionSyntax))
-            Fail(name, "required consumed launch delegation");
+        // A try may wrap the launch. if, switch, catch, and a lambda do not count as this method's own call.
+        // Zero direct calls may follow one unconditional lambda into the helper that receives the attested argument.
+        if (body is null) Fail(name, "required consumed launch delegation");
+        if (HasBareLaunch(body!)) Fail(name, "required consumed launch delegation");
+        var direct = UnconditionalCalls(body, expression, firstArgument, argumentIndex);
+        if (direct.Length == 1) return;
+        if (direct.Length == 0 && DelegatedCalls(body, expression, firstArgument, argumentIndex).Length == 1) return;
+        Fail(name, "required consumed launch delegation");
     }
     public static void Core(string source, string method, string constant, string consume, string argument = "executable", int argumentIndex = 0)
     {
@@ -128,5 +128,87 @@ internal static class LiveClaudeExecutableAudit
         audit(healthy);
         Console.WriteLine($"C1545 {pc} assertion-red; restored-green (owned syntax copy)");
     }
+    private static bool HasBareLaunch(BlockSyntax body)
+    {
+        foreach (var lambda in body.DescendantNodes().OfType<AnonymousFunctionExpressionSyntax>())
+        {
+            if (ContainsBareLaunch(lambda)) return true;
+            foreach (var call in lambda.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var helper = UniqueCallable(call, SimpleName(call));
+                if (helper is not null && ContainsBareLaunch(helper)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool ContainsBareLaunch(SyntaxNode node) => node.DescendantNodes().OfType<InvocationExpressionSyntax>()
+        .Any(call => call.ArgumentList.Arguments.Any(argument => argument.Expression is LiteralExpressionSyntax literal
+            && literal.IsKind(SyntaxKind.StringLiteralExpression)
+            && literal.Token.ValueText is "claude" or "cl"));
+
+    private static InvocationExpressionSyntax[] UnconditionalCalls(SyntaxNode scope, string expression, string argument, int argumentIndex)
+        => scope.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression.ToString() == expression
+                && call.ArgumentList.Arguments.ElementAtOrDefault(argumentIndex)?.Expression.ToString() == argument
+                && !IsHidden(call, scope))
+            .ToArray();
+
+    private static InvocationExpressionSyntax[] DelegatedCalls(BlockSyntax body, string expression, string argument, int argumentIndex)
+    {
+        var found = new List<InvocationExpressionSyntax>();
+        foreach (var lambda in body.DescendantNodes().OfType<AnonymousFunctionExpressionSyntax>())
+        {
+            if (IsHidden(lambda, body)) continue;
+            found.AddRange(UnconditionalCalls(lambda, expression, argument, argumentIndex));
+            foreach (var call in lambda.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (IsHidden(call, lambda) || call.ArgumentList.Arguments.All(a => a.Expression.ToString() != argument)) continue;
+                var helper = UniqueCallable(call, SimpleName(call));
+                if (helper is null) continue;
+                found.AddRange(UnconditionalCalls(helper, expression, argument, argumentIndex));
+            }
+        }
+        return found.ToArray();
+    }
+
+    private static bool IsHidden(SyntaxNode node, SyntaxNode stop)
+    {
+        for (var ancestor = node.Parent; ancestor is not null && ancestor != stop; ancestor = ancestor.Parent)
+            if (ancestor is not AwaitExpressionSyntax
+                and not ParenthesizedExpressionSyntax
+                and not AssignmentExpressionSyntax
+                and not EqualsValueClauseSyntax
+                and not VariableDeclaratorSyntax
+                and not VariableDeclarationSyntax
+                and not LocalDeclarationStatementSyntax
+                and not ExpressionStatementSyntax
+                and not BlockSyntax
+                and not TryStatementSyntax
+                and not ArgumentSyntax
+                and not ArgumentListSyntax
+                and not InvocationExpressionSyntax
+                and not PostfixUnaryExpressionSyntax
+                and not ArrowExpressionClauseSyntax)
+                return true;
+        return false;
+    }
+
+    private static string? SimpleName(InvocationExpressionSyntax? call) => call?.Expression switch
+    {
+        IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+        MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+        _ => null
+    };
+
+    private static SyntaxNode? UniqueCallable(SyntaxNode origin, string? name)
+    {
+        if (name is null) return null;
+        var found = origin.SyntaxTree.GetRoot().DescendantNodes().Where(node =>
+            (node is MethodDeclarationSyntax method && method.Identifier.ValueText == name)
+            || (node is LocalFunctionStatementSyntax local && local.Identifier.ValueText == name)).ToArray();
+        return found.Length == 1 ? found[0] : null;
+    }
+
     private static void Fail(string name, string predicate) => throw new InvalidOperationException($"C1545 audit/{name} {predicate}");
 }
