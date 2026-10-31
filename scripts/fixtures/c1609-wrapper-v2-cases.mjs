@@ -135,6 +135,8 @@ assert.notEqual(cp.spawnSync(gitExe,['-C',target,'cat-file','-e',b+'^{commit}'],
 // Losing origin publication after Preview cannot be excused by its earlier
 // Ready receipt, a signature, a cached graph or the wrapper's transport success.
 git(['-C',publisher,'checkout','-q','--orphan','unrelated']);git(['-C',publisher,'-c','commit.gpgsign=false','commit','-qm','unrelated']);
+// Transfer the new graph before pointing the bare advertisement at it.
+git(['--git-dir',bare,'fetch','-q',publisher,'refs/heads/unrelated']);
 git(['--git-dir',bare,'update-ref','refs/heads/main',git(['-C',publisher,'rev-parse','HEAD'])]);
 r=run(['-RetirementProof',created[0]]);assert.notEqual(r.code,0,'withdrawn origin coverage refuses Apply');
 assert.equal(JSON.parse(fs.readFileSync(root+'/docker.json')).removed.length,0);
