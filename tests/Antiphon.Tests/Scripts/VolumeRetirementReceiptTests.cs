@@ -163,15 +163,27 @@ public sealed class VolumeRetirementReceiptTests
         var marker = Path.Combine(expiredEntry.Root, "audit-entered");
         var expiredRun = await expiredEntry.Run("retire-temp-runner", $$"""
             date() { if [ "$*" = '-u +%s' ]; then printf '%s\n' '{{expiredAt}}'; else command date "$@"; fi; }
+            C1609_ADMITTED_PID="$BASHPID"; C1609_ADMITTED_AT={{expiredAt - 901}}
+            C1609_ADMITTED_DIGEST="$(sha256sum {{VolumeRetirementFixture.Quote(ReceiptPath(expiredEntry))}} | cut -d' ' -f1)"
             eval "$(declare -f c1008_audit_checked | sed '1s/c1008_audit_checked/c1609_original_audit_checked/')"
             c1008_audit_checked() { touch {{VolumeRetirementFixture.Quote(marker)}}; c1609_original_audit_checked; }
             """);
         expiredRun.Exit.ShouldNotBe(0, "J4 an already expired Preview cannot admit Apply");
         expiredEntry.Removed.ShouldBeEmpty();
         File.Exists(marker).ShouldBeFalse("J4 expired admission refuses before any expensive Apply audit");
+
+        using var uncertainClock = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(uncertainClock);
+        var uncertainReady = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(uncertainClock)))!;
+        var uncertainAt = DateTimeOffset.Parse(uncertainReady["readyAt"]!.GetValue<string>()).ToUnixTimeSeconds();
+        var uncertain = await uncertainClock.Run("retire-temp-runner", LongAuditClock(uncertainAt, advanceMonotonic: false));
+        uncertain.Exit.ShouldNotBe(0, "J4 wall-clock jumps without matching monotonic time cannot extend authority: " + uncertain.Output);
+        uncertainClock.Removed.ShouldBeEmpty();
+        JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(uncertainClock)))!["consumed"]!.GetValue<bool>()
+            .ShouldBeFalse("J4 uncertain clock leaves the Preview unconsumed");
     }
 
-    private static string LongAuditClock(long admittedAt) => $$"""
+    private static string LongAuditClock(long admittedAt, bool advanceMonotonic = true) => $$"""
         printf '%s\n' '{{admittedAt}}' > "$C1008_FIXTURE_ROOT/phase-clock"
         date() {
             if [ "$*" = '-u +%s' ]; then cat "$C1008_FIXTURE_ROOT/phase-clock"; else command date "$@"; fi
@@ -179,6 +191,10 @@ public sealed class VolumeRetirementReceiptTests
         eval "$(declare -f c1008_audit_checked | sed '1s/c1008_audit_checked/c1609_original_audit_checked/')"
         c1008_audit_checked() {
             c1609_original_audit_checked
+            if [ '{{(advanceMonotonic ? "1" : "0")}}' = 1 ] && ! declare -F c1609_real_monotonic_ms >/dev/null; then
+                eval "$(declare -f c1609_monotonic_ms | sed '1s/c1609_monotonic_ms/c1609_real_monotonic_ms/')"
+                c1609_monotonic_ms() { local value; value="$(c1609_real_monotonic_ms)"; printf '%s\n' "$((value + 901000))"; }
+            fi
             printf '%s\n' '{{admittedAt + 901}}' > "$C1008_FIXTURE_ROOT/phase-clock"
         }
         """;

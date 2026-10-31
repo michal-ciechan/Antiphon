@@ -9151,6 +9151,7 @@ c1008_recycle() {
     c1609_load_retirement
     C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0; C1609_RESUME_VALIDATED=0
     unset C1609_APPLY_INVENTORY_FILE
+    unset C1609_ADMITTED_PID C1609_ADMITTED_DIGEST C1609_ADMITTED_AT C1609_ADMITTED_MONOTONIC C1609_ADMITTED_MANUAL
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     # Inventory is a docker --env only. A shell export must not reach the helper.
     if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
@@ -9347,6 +9348,7 @@ c1008_recycle() {
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
         if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
         [ -f "$(c1609_retirement_root)/receipt.json" ] || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+        c1609_require_ready_preview admit || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
     fi
     c1008_audit_checked; audit="$C1008_AUDIT"
     if [ "${C1008_RESUME:-0}" = 1 ]; then

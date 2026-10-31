@@ -300,7 +300,10 @@ c1609_manual_attestation() {
       (if $phase=="Preview" then .previewDigest==null
        else .previewDigest==$digest and ($digest|test("^[0-9a-f]{64}$")) end)
       ' "$file" >/dev/null || return 1
-    now="$(date -u +%s)" || return 1
+    # An Apply admitted by this owning shell validates these exact bytes at its
+    # admission instant. A fresh invocation always validates against current UTC.
+    now="${4:-}"
+    if [ -z "$now" ]; then now="$(date -u +%s)" || return 1; fi
     issued="$(date -u -d "$(jq -r .issuedAt "$grant")" +%s)" || return 1
     expires="$(date -u -d "$(jq -r .expiresAt "$grant")" +%s)" || return 1
     stamp="$(date -u -d "$(jq -r .utc "$file")" +%s)" || return 1
@@ -368,7 +371,9 @@ c1609_write_refused_preview() {
 }
 
 c1609_require_ready_preview() {
-    local root file tmp canonical now ready age daemon current digest nonce manual
+    local action="${1:-consume}" root file tmp canonical now ready age daemon current digest nonce manual
+    local observed monotonic elapsed admission_time=''
+    case "$action" in admit|consume) ;; *) return 1 ;; esac
     root="$(c1609_retirement_root)"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
       [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
@@ -402,6 +407,24 @@ c1609_require_ready_preview() {
         [ "$digest" = "$C1008_EXPECTED_PROOF_DIGEST" ] || return 1
     fi
     now="$(date -u +%s)" || return 1
+    observed="$now"
+    digest="$(sha256sum "$file" | cut -d' ' -f1)" || return 1
+    # The cache is deliberately process-local, reset at every entry and bound to
+    # the immutable Preview bytes. It cannot be imported by Resume or a child.
+    if [ "$action" = consume ] && [ "${C1609_ADMITTED_PID:-}" = "$BASHPID" ]; then
+        [ "${C1609_ADMITTED_DIGEST:-}" = "$digest" ] || return 1
+        monotonic="$(c1609_monotonic_ms)" || return 1
+        [[ "$monotonic" =~ ^[0-9]+$ && "${C1609_ADMITTED_MONOTONIC:-}" =~ ^[0-9]+$ &&
+           "${C1609_ADMITTED_AT:-}" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || return 1
+        elapsed=$((monotonic - C1609_ADMITTED_MONOTONIC))
+        # Clock uncertainty refuses. The existing content/helper/live-call
+        # deadlines still bound execution; Preview age is only admission policy.
+        [ "$elapsed" -ge 0 ] &&
+          [ "$(( (now - C1609_ADMITTED_AT) * 1000 - elapsed ))" -ge -60000 ] &&
+          [ "$(( (now - C1609_ADMITTED_AT) * 1000 - elapsed ))" -le 60000 ] || return 1
+        admission_time="$C1609_ADMITTED_AT"
+        now="$admission_time"
+    fi
     ready="$(date -u -d "$(jq -r .readyAt "$file")" +%s)" || return 1
     [[ "$now" =~ ^[0-9]+$ && "$ready" =~ ^[0-9]+$ ]] || return 1
     age=$((now - ready))
@@ -412,8 +435,25 @@ c1609_require_ready_preview() {
     [ "$daemon" = "$(jq -r .daemon "$file")" ] || return 1
     current="$(c1609_target_snapshot)" || return 1
     [ "$current" = "$(jq -cS .fingerprints "$file")" ] || return 1
-    digest="$(sha256sum "$file" | cut -d' ' -f1)" || return 1
-    manual="$(c1609_manual_attestation Apply "$current" "$digest")" || return 1
+    manual="$(c1609_manual_attestation Apply "$current" "$digest" "$admission_time")" || return 1
+    if [ -n "$admission_time" ]; then
+        [ "$manual" = "${C1609_ADMITTED_MANUAL:-}" ] || return 1
+    fi
+    if [ "$action" = admit ]; then
+        monotonic="$(c1609_monotonic_ms)" || return 1
+        [[ "$monotonic" =~ ^[0-9]+$ ]] || return 1
+        # Admission records are append-only phase evidence, never Ready or a
+        # substitute for the still-required fresh inventory/publication checks.
+        tmp="$root/admission-${C1609_PHASE_NONCE:?}.json"
+        [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
+        jq -cnS --arg digest "$digest" --arg op "$C1008_OPERATION" --arg nonce "$C1609_PHASE_NONCE" \
+          --argjson utc "$observed" --argjson monotonic "$monotonic" \
+          '{schema:1,phase:"Apply",operationId:$op,phaseNonce:$nonce,previewDigest:$digest,
+            admittedUnix:$utc,admittedMonotonicMs:$monotonic}' | c1609_persist "$tmp" || return 1
+        C1609_ADMITTED_PID="$BASHPID"; C1609_ADMITTED_DIGEST="$digest"
+        C1609_ADMITTED_AT="$observed"; C1609_ADMITTED_MONOTONIC="$monotonic"; C1609_ADMITTED_MANUAL="$manual"
+        return 0
+    fi
     if [ -n "${C1609_APPLY_INVENTORY_FILE:-}" ]; then
         digest="$(c1609_inventory_digest "$C1609_APPLY_INVENTORY_FILE")" || return 1
         [ "$digest" = "$(jq -r .inventoryDigest "$file")" ] || return 1
@@ -644,6 +684,7 @@ c1609_phase_begin() {
       c1609_persist "$root/lifecycle.json" || return 1
     C1609_PHASE_ROOT="$root"
     C1609_PHASE_PID="$pid"
+    C1609_PHASE_NONCE="$nonce"
 }
 
 c1609_phase_helper() {
