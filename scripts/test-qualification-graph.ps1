@@ -16,7 +16,7 @@ function Independent-Hash([string]$text) {
     finally { $sha.Dispose() }
 }
 function Inventory([string]$path) {
-    return (@(Get-ChildItem -LiteralPath $path -File -Recurse | Sort-Object FullName | ForEach-Object {
+    return (@(Get-ChildItem -LiteralPath $path -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
         $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
     }) -join [Environment]::NewLine)
 }
