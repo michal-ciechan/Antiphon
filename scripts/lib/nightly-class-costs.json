@@ -101,10 +101,10 @@
       "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
     "Antiphon.E2E.LandDeliveryFixtureProbeTests": {
-      "nodes": 4,
-      "seconds": 40,
+      "nodes": 6,
+      "seconds": 60,
       "basis": "conservative-bound",
-      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task. C459 queued-outcome witnesses keep that provisional 10 s price; not a measured p95."
     },
     "Antiphon.E2E.OrchestratorE2ETests": {
       "nodes": 1,
