@@ -26,3 +26,9 @@ Exact pre-repair snapshot 3fb3c113e8b2554ccd5789e00375dbfd69697981 full harness:
 Added a deterministic witness for the precise blind spot: complete cleanup/exit 2 after a signal handler returns must be rejected, while complete cleanup/exit 2 without a returned handler remains accepted. Added the real group witness's no-return assertion. The current predicate ignores the handler-return observation, so the returned-handler case is expected red before the harness repair. Production remains unchanged.
 
 Fourteen residual fake signal-child processes were matched by their literal /tmp/c1192-parent.../signal-child.sh argv and initial PWD=/work/worktrees/task-b9ee02c4, then stopped; cleanup-baseline.log retains only their ownership keys and PIDs. No foreign process or qualification was touched.
+
+## Red-to-green repair
+
+At 9211cc280bc42115e7b9bf5e3ff886225b646904 the exact new method ran 2 cases: 1 passed, 1 failed, 0 skipped. The returned-handler case expected rejected but got accepted; the normal case passed. This is an assertion failure, not build/fixture failure. Build: 0 errors, 1402 warnings, 155 seconds; real slot wait separate. TRX: red/red.trx.
+
+Repair: the trap wrapper appends a run-stamped marker only if c849_fixture_on_signal INT returns. Both runtime acceptance and the group contract reject that marker, and the actual group witness asserts handler-returned=0. All existing foreign-container, CID-only kill, foreign-PID survival, lease deletion, volume disposal, deadline, strict pid-signal exit and m1/m5/m7 assertions remain. The production handler and custody/namespace implementation are untouched. This closes an inherited timing-dependent mutation blind spot; the namespace repair exposed the later assertion but did not introduce the predicate defect.
