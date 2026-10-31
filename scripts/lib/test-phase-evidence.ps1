@@ -245,6 +245,7 @@ function Read-TestPhaseTrxRows {
     )
     $none = [pscustomobject]@{ Rows = @(); Complete = $false; Refused = $true }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
+    if ($null -eq $Watch -and $null -ne $script:TestPhaseTrxReadWatch) { $Watch = $script:TestPhaseTrxReadWatch }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     $identity = Get-TestPhasePathIdentity -Path $Path
