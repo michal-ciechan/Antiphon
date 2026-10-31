@@ -12,7 +12,7 @@ internal static class LiveClaudeStartupMutants
     private static readonly Mutation[] Mutations =
     [
         new("PC-85/badge","V-18","=> bridge is { Readable: true }", "=> bridge is null || bridge is { Readable: true }", "badge"),
-        new("PC-85/foreign","V-18","bridge.Owner == owner", "true", "foreign-pid"),
+        new("PC-85/foreign","V-18","root.GetProperty(\"sessionId\").GetString() != owner.Session", "false", "reader-foreign"),
         new("PC-86","V-18","RequireBridge(before.Owner, after);", "/* bridge setup omitted */", "slash-setup"),
         new("PC-88","V-19","return _control ??= CaptureStartAsync(start);", "return start();", "control-once"),
         new("PC-89","V-19","var control = await ControlAsync(experiment, start);", "dependent(); var control = await ControlAsync(experiment, start);", "control-order"),
@@ -34,6 +34,7 @@ internal static class LiveClaudeStartupMutants
     public static async Task RunAsync(string v)
     {
         if(Environment.GetEnvironmentVariable("C1545_STARTUP_CONTROLS")!=v) return;
+        if(v=="V-22") await WriterCycleAsync();
         if(v=="V-18")
         {
             var source=LiveClaudeExecutableAudit.Read(LiveClaudeStartupAudit.MenuPath);
@@ -98,6 +99,27 @@ internal static class LiveClaudeStartupMutants
             if(!emit.Success) throw new InvalidOperationException("C1545 mutant compilation: "+string.Join(";",emit.Diagnostics.Where(d=>d.Severity==DiagnosticSeverity.Error)));
             return bytes.ToArray();
         }
+    }
+    private static async Task WriterCycleAsync()
+    {
+        var source=File.ReadAllText(Path.Combine(LiveClaudeExecutableAudit.Root(),"tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs"));
+        const string from="fs.appendFileSync(destination, JSON.stringify({source, session: hook.session_id, retained}) + '\\n', {mode: 0o600});";
+        if(source.Split(from,StringSplitOptions.None).Length!=2)
+            throw new InvalidOperationException("C1545 PC-141 writer mutation site ambiguous");
+        var root=Directory.CreateTempSubdirectory("c1545-writer-control-").FullName;
+        var copy=Path.Combine(root,"settings-source-witness.mjs");
+        try
+        {
+            File.WriteAllText(copy,source.Replace(from,"/* deliberately suppress the hook output */",StringComparison.Ordinal));
+            var red=false;
+            try { await LiveClaudeStartupCases.SettingsAsync(copy); }
+            catch(InvalidOperationException e) when(e.Message.StartsWith("C1545 V-22/marker-writer",StringComparison.Ordinal)) { red=true; }
+            if(!red) throw new InvalidOperationException("C1545 PC-141 writer mutant survived");
+            File.WriteAllText(copy,source);
+            await LiveClaudeStartupCases.SettingsAsync(copy);
+            Console.WriteLine($"C1545 PC-141 assertion-red; restored-green source={LiveClaudeProfile.Hash(source)} patch={LiveClaudeProfile.Hash(from+"\n/* deliberately suppress the hook output */")}");
+        }
+        finally {Directory.Delete(root,true);}
     }
     private static async Task<Exception?> ExecuteAsync(byte[] payload,string v)
     {

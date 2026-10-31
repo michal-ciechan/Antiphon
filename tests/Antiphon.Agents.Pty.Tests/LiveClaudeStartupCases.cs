@@ -146,7 +146,7 @@ internal static class LiveClaudeStartupCases
 
     }
 
-    internal static async Task SettingsAsync()
+    internal static async Task SettingsAsync(string? writerPath = null)
     {
         const string v="V-22";
         var root=Directory.CreateTempSubdirectory("c1545-settings-").FullName;
@@ -157,7 +157,7 @@ internal static class LiveClaudeStartupCases
             foreach(var source in new[]{"user","project","local"})
             {
                 var info=new ProcessStartInfo("node") {RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,UseShellExecute=false};
-                info.ArgumentList.Add(Path.Combine(LiveClaudeExecutableAudit.Root(),"tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs"));
+                info.ArgumentList.Add(writerPath ?? Path.Combine(LiveClaudeExecutableAudit.Root(),"tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs"));
                 info.ArgumentList.Add(file); info.ArgumentList.Add(source); info.ArgumentList.Add("retained-"+source);
                 using var child=Process.Start(info) ?? throw new InvalidOperationException("hook child absent");
                 await child.StandardInput.WriteAsync("{\"session_id\":\"session-A\"}"); child.StandardInput.Close();
@@ -166,6 +166,7 @@ internal static class LiveClaudeStartupCases
                 catch (OperationCanceledException) { child.Kill(entireProcessTree:true); await child.WaitForExitAsync(); throw; }
                 Assert(child.ExitCode==0,v,"hook-writer");
             }
+            Assert(File.Exists(file) && new FileInfo(file).Length>0,v,"marker-writer");
             var settings=LiveClaudeStartupEvidence.ReadSettings(file,["permission-mode","atis-latch"]);
             LiveClaudeStartupEvidence.RequireSettings(Control,Owner,settings);
             foreach(var source in new[]{"user","project","local"})
