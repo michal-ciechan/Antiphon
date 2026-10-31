@@ -84,6 +84,7 @@ public class ClaudeRemoteControlMenuCanaryTests
     }
 
     [Test]
+    [Category("LiveClaude")]
     public async Task C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt()
     {
         ClSession.SkipIfNotEligible();

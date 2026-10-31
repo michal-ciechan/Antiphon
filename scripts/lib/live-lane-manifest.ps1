@@ -690,7 +690,31 @@ function Test-LiveLaneExportDocument {
 function Read-LiveLaneExportFile {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return @{ Found = $false; Export = $null } }
-    return @{ Found = $true; Export = ([System.IO.File]::ReadAllText($Path) | ConvertFrom-Json) }
+    $item = Get-Item -LiteralPath $Path
+    $key = $item.FullName + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks
+    if ($null -eq $script:LiveLaneExportCache) { $script:LiveLaneExportCache = @{} }
+    if ($script:LiveLaneExportCache.ContainsKey($key)) { return $script:LiveLaneExportCache[$key] }
+    $loaded = @{ Found = $true; Export = ([System.IO.File]::ReadAllText($Path) | ConvertFrom-Json) }
+    $script:LiveLaneExportCache[$key] = $loaded
+    return $loaded
+}
+
+function Copy-LiveLaneExportShell {
+    param($Export)
+    $terminal = Get-LiveLaneProp $Export 'terminal'
+    $flag = $false
+    if ($null -ne $terminal) { $flag = [bool]$terminal }
+    return [pscustomobject]@{
+        format = [string](Get-LiveLaneProp $Export 'format')
+        project = [string](Get-LiveLaneProp $Export 'project')
+        cp = [string](Get-LiveLaneProp $Export 'cp')
+        sourceSha = [string](Get-LiveLaneProp $Export 'sourceSha')
+        runId = [string](Get-LiveLaneProp $Export 'runId')
+        assemblyHash = [string](Get-LiveLaneProp $Export 'assemblyHash')
+        assemblyPath = [string](Get-LiveLaneProp $Export 'assemblyPath')
+        terminal = $flag
+        nodes = (Get-LiveLaneProp $Export 'nodes')
+    }
 }
 
 function Write-LiveLaneExportFile {
@@ -711,42 +735,242 @@ function Write-LiveLaneExportFile {
     ($doc | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
+function Initialize-LiveLaneSourceStripper {
+    if ($script:LiveLaneSourceReady) { return }
+    $code = @'
+using System;
+using System.Text;
+public static class LiveLaneSource
+{
+    public static string Strip(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var sb = new StringBuilder(text.Length);
+        Code(text, sb, 0, text.Length, false);
+        return sb.ToString();
+    }
+
+    static int Code(string text, StringBuilder sb, int i, int n, bool hole)
+    {
+        int depth = hole ? 1 : 0;
+        while (i < n)
+        {
+            char c = text[i];
+            if (i + 1 < n && c == '/' && text[i + 1] == '/')
+            {
+                while (i < n && text[i] != '\n') i++;
+                continue;
+            }
+            if (i + 1 < n && c == '/' && text[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/'))
+                {
+                    if (text[i] == '\n') sb.Append('\n');
+                    i++;
+                }
+                if (i + 1 < n) i += 2;
+                sb.Append(' ');
+                continue;
+            }
+            if (IsVerbatimInterp(text, i))
+            {
+                i = Interpolated(text, sb, i + 3, n, true);
+                continue;
+            }
+            if (i + 1 < n && c == '@' && text[i + 1] == '"')
+            {
+                i = Verbatim(text, sb, i + 2, n);
+                continue;
+            }
+            if (c == '$' && i + 1 < n && QuoteRun(text, i + 1) >= 3)
+            {
+                i = Raw(text, sb, i + 1, n, QuoteRun(text, i + 1));
+                continue;
+            }
+            int run = QuoteRun(text, i);
+            if (run >= 3)
+            {
+                i = Raw(text, sb, i, n, run);
+                continue;
+            }
+            if (i + 1 < n && c == '$' && text[i + 1] == '"')
+            {
+                i = Interpolated(text, sb, i + 2, n, false);
+                continue;
+            }
+            if (c == '"')
+            {
+                i = Normal(text, sb, i + 1, n);
+                continue;
+            }
+            if (c == '\'')
+            {
+                i = CharLit(text, sb, i, n);
+                continue;
+            }
+            if (hole && c == '{') { depth++; sb.Append(c); i++; continue; }
+            if (hole && c == '}')
+            {
+                depth--;
+                if (depth == 0) return i + 1;
+                sb.Append(c);
+                i++;
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return i;
+    }
+
+    static bool IsVerbatimInterp(string text, int i)
+    {
+        if (i + 2 >= text.Length) return false;
+        return (text[i] == '$' && text[i + 1] == '@' && text[i + 2] == '"')
+            || (text[i] == '@' && text[i + 1] == '$' && text[i + 2] == '"');
+    }
+
+    static int QuoteRun(string text, int i)
+    {
+        int count = 0;
+        while (i + count < text.Length && text[i + count] == '"') count++;
+        return count;
+    }
+
+    static void Lit(StringBuilder sb, char c)
+    {
+        sb.Append(c == '{' || c == '}' ? ' ' : c);
+    }
+
+    static int Normal(string text, StringBuilder sb, int i, int n)
+    {
+        while (i < n)
+        {
+            char c = text[i];
+            if (c == '\\')
+            {
+                Lit(sb, c);
+                if (i + 1 < n) Lit(sb, text[i + 1]);
+                i += 2;
+                continue;
+            }
+            if (c == '"') return i + 1;
+            Lit(sb, c);
+            i++;
+        }
+        return i;
+    }
+
+    static int Verbatim(string text, StringBuilder sb, int i, int n)
+    {
+        while (i < n)
+        {
+            if (text[i] == '"')
+            {
+                if (i + 1 < n && text[i + 1] == '"') { Lit(sb, '"'); i += 2; continue; }
+                return i + 1;
+            }
+            Lit(sb, text[i]);
+            i++;
+        }
+        return i;
+    }
+
+    static int Raw(string text, StringBuilder sb, int quoteAt, int n, int quotes)
+    {
+        int i = quoteAt + quotes;
+        int end = n;
+        int k = i;
+        while (k < n && text[k] != '\n')
+        {
+            if (text[k] == '"')
+            {
+                int run = QuoteRun(text, k);
+                if (run >= quotes) { end = k + run; break; }
+                k += Math.Max(run, 1);
+                continue;
+            }
+            k++;
+        }
+        if (end == n)
+        {
+            i = k;
+            while (i < n)
+            {
+                if (text[i] == '\n')
+                {
+                    int j = i + 1;
+                    while (j < n && (text[j] == ' ' || text[j] == '\t')) j++;
+                    if (QuoteRun(text, j) >= quotes)
+                    {
+                        end = j;
+                        while (end < n && text[end] == '"') end++;
+                        break;
+                    }
+                }
+                i++;
+            }
+        }
+        for (int t = quoteAt; t < end; t++) Lit(sb, text[t]);
+        return end;
+    }
+
+    static int Interpolated(string text, StringBuilder sb, int i, int n, bool verbatim)
+    {
+        while (i < n)
+        {
+            char c = text[i];
+            if (!verbatim && c == '\\')
+            {
+                Lit(sb, c);
+                if (i + 1 < n) Lit(sb, text[i + 1]);
+                i += 2;
+                continue;
+            }
+            if (verbatim && c == '"' && i + 1 < n && text[i + 1] == '"') { Lit(sb, '"'); i += 2; continue; }
+            if (c == '"') return i + 1;
+            if (c == '{' && i + 1 < n && text[i + 1] == '{') { Lit(sb, ' '); Lit(sb, ' '); i += 2; continue; }
+            if (c == '}' && i + 1 < n && text[i + 1] == '}') { Lit(sb, ' '); Lit(sb, ' '); i += 2; continue; }
+            if (c == '{')
+            {
+                sb.Append('{');
+                i = Code(text, sb, i + 1, n, true);
+                sb.Append('}');
+                continue;
+            }
+            Lit(sb, c);
+            i++;
+        }
+        return i;
+    }
+
+    static int CharLit(string text, StringBuilder sb, int i, int n)
+    {
+        i++;
+        if (i < n && text[i] == '\\')
+        {
+            i++;
+            if (i < n) i++;
+        }
+        else if (i < n)
+        {
+            if (text[i] == '{' || text[i] == '}') sb.Append(' ');
+            i++;
+        }
+        if (i < n && text[i] == '\'') i++;
+        return i;
+    }
+}
+'@
+    Add-Type -TypeDefinition $code -Language CSharp
+    $script:LiveLaneSourceReady = $true
+}
+
 function Remove-LiveLaneComments {
     param([string]$Text)
-    $sb = New-Object System.Text.StringBuilder
-    $i = 0
-    $mode = 'code'
-    while ($i -lt $Text.Length) {
-        $ch = $Text[$i]
-        $next = ''
-        if (($i + 1) -lt $Text.Length) { $next = $Text.Substring($i, 2) }
-        if ($mode -eq 'code') {
-            if ($next -eq '//') { $mode = 'line'; $i += 2; continue }
-            if ($next -eq '/*') { $mode = 'block'; $i += 2; continue }
-            if ($ch -eq '"') { $mode = 'string'; [void]$sb.Append($ch); $i++; continue }
-            if ($ch -eq "'") { $mode = 'char'; [void]$sb.Append($ch); $i++; continue }
-            [void]$sb.Append($ch); $i++; continue
-        }
-        if ($mode -eq 'line') {
-            if ($ch -eq "`n") { $mode = 'code'; [void]$sb.Append($ch) }
-            $i++; continue
-        }
-        if ($mode -eq 'block') {
-            if ($next -eq '*/') { $mode = 'code'; $i += 2; [void]$sb.Append(' '); continue }
-            if ($ch -eq "`n") { [void]$sb.Append($ch) }
-            $i++; continue
-        }
-        if ($mode -eq 'string' -or $mode -eq 'char') {
-            $end = $(if ($mode -eq 'string') { '"' } else { "'" })
-            [void]$sb.Append($ch)
-            if ($ch -eq '\') {
-                if (($i + 1) -lt $Text.Length) { [void]$sb.Append($Text[$i + 1]); $i += 2; continue }
-            }
-            if ($ch -eq $end) { $mode = 'code' }
-            $i++; continue
-        }
-    }
-    return $sb.ToString()
+    Initialize-LiveLaneSourceStripper
+    return [LiveLaneSource]::Strip([string]$Text)
 }
 
 function Get-LiveLaneBraceSpan {
@@ -796,6 +1020,7 @@ function Invoke-LiveLaneGateScan {
     }
     $gates = @()
     $unresolved = 0
+    $reasons = New-Object System.Collections.Generic.List[string]
     foreach ($file in $files) {
         $path = [string]$file.FullName
         $project = ''
@@ -803,7 +1028,9 @@ function Invoke-LiveLaneGateScan {
             if ($path -match 'Antiphon\.Agents\.Pty\.Tests') { $project = 'Antiphon.Agents.Pty.Tests' } else { $project = 'Antiphon.Tests' }
         }
         if ($path -match 'Antiphon\.Agents\.Pty\.Tests') { $project = 'Antiphon.Agents.Pty.Tests' }
-        $text = Remove-LiveLaneComments ([System.IO.File]::ReadAllText($path))
+        $raw = [System.IO.File]::ReadAllText($path)
+        if ($raw -notmatch 'Explicit|ANTIPHON_HEADED_TESTS|SkipIfNotEligible|RealCliStub|GateShape') { continue }
+        $text = Remove-LiveLaneComments $raw
         $ns = ''
         $nsMatch = [regex]::Match($text, 'namespace\s+([A-Za-z0-9_\.]+)\s*[;{]')
         if ($nsMatch.Success) { $ns = $nsMatch.Groups[1].Value }
@@ -813,39 +1040,57 @@ function Invoke-LiveLaneGateScan {
             $cm = $classMatches[$c]
             $className = $cm.Groups['name'].Value
             $classAttrs = $cm.Groups['attrs'].Value
-            $classExplicit = $classAttrs -match '\[Explicit(\(|\])'
+            $classExplicit = $classAttrs -match '\[Explicit(\(|\]|,)'
             $braceAt = $text.IndexOf('{', $cm.Index + $cm.Length)
-            if ($braceAt -lt 0) { if ($classExplicit) { $unresolved++ }; continue }
+            if ($braceAt -lt 0) { if ($classExplicit) { $unresolved++; $reasons.Add($path + "`t" + $className + "`tno-brace") }; continue }
             $span = Get-LiveLaneBraceSpan -Text $text -OpenAt $braceAt
-            if ($null -eq $span) { $unresolved++; continue }
+            if ($null -eq $span) { $unresolved++; $reasons.Add($path + "`t" + $className + "`tclass-span"); continue }
+            $local = $span
+            foreach ($other in $classMatches) {
+                if ($other.Index -le $cm.Index) { continue }
+                $otherBrace = $text.IndexOf('{', $other.Index + $other.Length)
+                if ($otherBrace -lt $braceAt -or $otherBrace -ge ($braceAt + $span.Length)) { continue }
+                $otherSpan = Get-LiveLaneBraceSpan -Text $text -OpenAt $otherBrace
+                if ($null -eq $otherSpan) { continue }
+                $rel = $otherBrace - $braceAt
+                if ($rel -ge 0 -and ($rel + $otherSpan.Length) -le $local.Length) {
+                    $local = $local.Remove($rel, $otherSpan.Length).Insert($rel, (' ' * $otherSpan.Length))
+                }
+            }
             $methodRx = [regex]'(?<attrs>(?:\[[^\]]*\]\s*)+)(?:public|internal)\s+(?:sealed\s+|static\s+|async\s+|override\s+|virtual\s+|new\s+|partial\s+|[\w\.]+\s+)*?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\('
-            $methods = @($methodRx.Matches($span))
-            $tests = @($methods | Where-Object { $_.Groups['attrs'].Value -match '\[Test(\(|\])' })
-            if ($classExplicit -and $tests.Count -eq 0) { $unresolved++ }
+            $methods = @($methodRx.Matches($local))
+            $tests = @($methods | Where-Object { $_.Groups['attrs'].Value -match '\[Test(\(|\]|,)' })
+            if ($classExplicit -and $tests.Count -eq 0) { $unresolved++; $reasons.Add($path + "`t" + $className + "`tno-tests") }
             foreach ($mm in $tests) {
                 $attrs = $mm.Groups['attrs'].Value
                 $method = $mm.Groups['name'].Value
                 if ($method -eq 'SkipIfNotEligible') { continue }
-                $open = $span.IndexOf('{', $mm.Index + $mm.Length)
+                $sigEnd = $mm.Index + $mm.Length
+                $open = $local.IndexOf('{', $sigEnd)
+                $arrow = $local.IndexOf('=>', $sigEnd)
                 $body = ''
-                if ($open -ge 0) {
-                    $bodySpan = Get-LiveLaneBraceSpan -Text $span -OpenAt $open
-                    if ($null -eq $bodySpan) { $unresolved++; continue }
+                if ($arrow -ge 0 -and ($open -lt 0 -or $arrow -lt $open)) {
+                    $semi = $local.IndexOf(';', $arrow)
+                    if ($semi -lt 0) { $semi = $local.Length }
+                    $body = $local.Substring($arrow, $semi - $arrow)
+                } elseif ($open -ge 0) {
+                    $bodySpan = Get-LiveLaneBraceSpan -Text $local -OpenAt $open
+                    if ($null -eq $bodySpan) { $unresolved++; $reasons.Add($path + "`t" + $className + "`t" + $method + "`tbody-span"); continue }
                     $body = $bodySpan
                 }
                 $shapes = @()
-                if ($classExplicit -or $attrs -match '\[Explicit(\(|\])') { $shapes += 'Explicit' }
+                if ($classExplicit -or $attrs -match '\[Explicit(\(|\]|,)') { $shapes += 'Explicit' }
                 if ($body -match 'ANTIPHON_HEADED_TESTS') { $shapes += 'ANTIPHON_HEADED_TESTS' }
                 if ($body -match 'SkipIfNotEligible' -and $method -ne 'SkipIfNotEligible') { $shapes += 'SkipIfNotEligible' }
                 if ($body -match 'RealCliStub') { $shapes += 'RealCliStub' }
                 $unknown = $attrs -match '\[GateShape\('
-                if ($unknown) { $unresolved++ ; continue }
+                if ($unknown) { $unresolved++; $reasons.Add($path + "`t" + $className + "`t" + $method + "`tgate-shape"); continue }
                 if ($shapes.Count -eq 0) { continue }
-                $argGroups = @()
-                $argMatches = [regex]::Matches($attrs, '\[Arguments\(([^\]]*)\)\]')
-                if ($argMatches.Count -eq 0) { $argGroups = @(@()) }
+                $argGroups = New-Object System.Collections.Generic.List[object]
+                $argMatches = [regex]::Matches($attrs, 'Arguments\(([^)]*)\)')
+                if ($argMatches.Count -eq 0) { $argGroups.Add(@()) }
                 else {
-                    foreach ($am in $argMatches) { $argGroups += ,@(Get-LiveLaneQuotedArgs $am.Groups[1].Value) }
+                    foreach ($am in $argMatches) { $argGroups.Add(@(Get-LiveLaneQuotedArgs $am.Groups[1].Value)) }
                 }
                 foreach ($argumentGroup in $argGroups) {
                     $gates += [pscustomobject]@{
@@ -1188,6 +1433,678 @@ function Get-LiveLaneCategoryDelta {
     return @{ Added = @($added); Removed = @($removed) }
 }
 
+function Initialize-LiveLaneCensusEngine {
+    if ($script:LiveLaneCensusEngineReady) { return }
+    $code = @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+
+public static class LiveLaneCensusEngine
+{
+    sealed class Node
+    {
+        public string Project;
+        public string Uid;
+        public string Ns;
+        public string Type;
+        public string Method;
+        public string ArgKey;
+        public string[] Cats;
+    }
+
+    sealed class ExRow
+    {
+        public string Class;
+        public string Reason;
+        public string Owner;
+        public string[] Methods;
+    }
+
+    sealed class Id
+    {
+        public string Project;
+        public string Ns;
+        public string Class;
+        public string Method;
+        public string ArgKey;
+    }
+
+    static readonly Dictionary<string, Node[]> Files = new Dictionary<string, Node[]>(StringComparer.Ordinal);
+    static readonly Dictionary<string, string> Results = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public static string Compare(string beforeFile, string after1, string after2, string beforeEx, string afterEx, string additive, string contract, string patch)
+    {
+        string key = (beforeFile ?? "") + "\n" + (after1 ?? "") + "\n" + (after2 ?? "") + "\n"
+            + Stamp(beforeFile) + "\n" + Stamp(after1) + "\n" + Stamp(after2) + "\n"
+            + (beforeEx ?? "") + "\n" + (afterEx ?? "") + "\n" + (additive ?? "") + "\n" + (contract ?? "") + "\n" + (patch ?? "");
+        string cached;
+        if (Results.TryGetValue(key, out cached)) return cached;
+        Node[] before = Load(beforeFile);
+        Node[] after = Concat(Load(after1), Load(after2));
+        after = Apply(after, patch ?? "", ParseIds(contract));
+        var diag = Run(before, after, ParseEx(beforeEx), ParseEx(afterEx), ParseIds(additive), ParseIds(contract));
+        string text = string.Join("\n", diag);
+        Results[key] = text;
+        return text;
+    }
+
+    static string Stamp(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "missing";
+        var info = new FileInfo(path);
+        return info.Length.ToString() + ":" + info.LastWriteTimeUtc.Ticks.ToString();
+    }
+
+    static Node[] Load(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return new Node[0];
+        string stamp = path + "\n" + Stamp(path);
+        Node[] hit;
+        if (Files.TryGetValue(stamp, out hit)) return hit;
+        var list = new List<Node>();
+        using (var doc = JsonDocument.Parse(File.ReadAllBytes(path)))
+        {
+            JsonElement nodes;
+            if (!doc.RootElement.TryGetProperty("nodes", out nodes) || nodes.ValueKind != JsonValueKind.Array) 
+            {
+                Files[stamp] = new Node[0];
+                return Files[stamp];
+            }
+            foreach (var el in nodes.EnumerateArray()) list.Add(ReadNode(el));
+        }
+        var arr = list.ToArray();
+        Files[stamp] = arr;
+        return arr;
+    }
+
+    static Node ReadNode(JsonElement el)
+    {
+        var n = new Node();
+        n.Project = Str(el, "project");
+        n.Uid = Str(el, "uid");
+        n.Ns = Str(el, "namespace");
+        n.Type = Str(el, "type");
+        if (string.IsNullOrEmpty(n.Type)) n.Type = Str(el, "class");
+        n.Method = Str(el, "method");
+        n.ArgKey = ArgKey(el);
+        n.Cats = CatList(el);
+        return n;
+    }
+
+    static string Str(JsonElement el, string name)
+    {
+        JsonElement value;
+        if (!el.TryGetProperty(name, out value) || value.ValueKind == JsonValueKind.Null) return "";
+        if (value.ValueKind == JsonValueKind.String) return value.GetString() ?? "";
+        return value.ToString();
+    }
+
+    static string ArgKey(JsonElement el)
+    {
+        JsonElement value;
+        if (!el.TryGetProperty("arguments", out value) || value.ValueKind == JsonValueKind.Null) return "";
+        if (value.ValueKind == JsonValueKind.String) return value.GetString() ?? "";
+        if (value.ValueKind != JsonValueKind.Array) return "";
+        var parts = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            string text = item.ValueKind == JsonValueKind.String ? (item.GetString() ?? "") : item.ToString();
+            parts.Add(text);
+        }
+        return string.Join("\n", parts);
+    }
+
+    static string[] CatList(JsonElement el)
+    {
+        JsonElement value;
+        if (!el.TryGetProperty("categories", out value)) return new string[0];
+        if (value.ValueKind == JsonValueKind.String) return new string[] { value.GetString() ?? "" };
+        if (value.ValueKind != JsonValueKind.Array) return new string[0];
+        var parts = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            string text = item.ValueKind == JsonValueKind.String ? (item.GetString() ?? "") : item.ToString();
+            if (text.Length > 0) parts.Add(text);
+        }
+        return parts.ToArray();
+    }
+
+    static Node[] Concat(Node[] left, Node[] right)
+    {
+        var all = new Node[left.Length + right.Length];
+        Array.Copy(left, 0, all, 0, left.Length);
+        Array.Copy(right, 0, all, left.Length, right.Length);
+        return all;
+    }
+
+    static Id[] ParseIds(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new Id[0];
+        var list = new List<Id>();
+        using (var doc = JsonDocument.Parse(json))
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new Id[0];
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var id = new Id();
+                id.Project = Str(el, "project");
+                id.Ns = Str(el, "namespace");
+                id.Class = Str(el, "class");
+                if (string.IsNullOrEmpty(id.Class)) id.Class = Str(el, "type");
+                id.Method = Str(el, "method");
+                id.ArgKey = ArgKey(el);
+                list.Add(id);
+            }
+        }
+        return list.ToArray();
+    }
+
+    static ExRow[] ParseEx(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new ExRow[0];
+        var list = new List<ExRow>();
+        using (var doc = JsonDocument.Parse(json))
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new ExRow[0];
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var row = new ExRow();
+                row.Class = Str(el, "class");
+                row.Reason = Str(el, "reason");
+                row.Owner = Str(el, "owner");
+                JsonElement methods;
+                if (el.TryGetProperty("methods", out methods) && methods.ValueKind == JsonValueKind.Array)
+                {
+                    var parts = new List<string>();
+                    foreach (var item in methods.EnumerateArray())
+                    {
+                        string text = item.ValueKind == JsonValueKind.String ? (item.GetString() ?? "") : item.ToString();
+                        if (text.Length > 0) parts.Add(text);
+                    }
+                    row.Methods = parts.ToArray();
+                }
+                else row.Methods = new string[0];
+                list.Add(row);
+            }
+        }
+        return list.ToArray();
+    }
+
+    static Node Clone(Node n)
+    {
+        var c = new Node();
+        c.Project = n.Project;
+        c.Uid = n.Uid;
+        c.Ns = n.Ns;
+        c.Type = n.Type;
+        c.Method = n.Method;
+        c.ArgKey = n.ArgKey;
+        c.Cats = (string[])n.Cats.Clone();
+        return c;
+    }
+
+    static bool HasCat(string[] cats, string name)
+    {
+        for (int i = 0; i < cats.Length; i++)
+        {
+            if (string.Equals(cats[i], name, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    static string[] WithoutCat(string[] cats, string name)
+    {
+        var list = new List<string>();
+        for (int i = 0; i < cats.Length; i++)
+        {
+            if (!string.Equals(cats[i], name, StringComparison.OrdinalIgnoreCase)) list.Add(cats[i]);
+        }
+        return list.ToArray();
+    }
+
+    static string[] WithCat(string[] cats, string name)
+    {
+        var list = new List<string>();
+        list.AddRange(cats);
+        list.Add(name);
+        return list.ToArray();
+    }
+
+    static bool IsContract(Node n, Id[] contract)
+    {
+        for (int i = 0; i < contract.Length; i++)
+        {
+            var id = contract[i];
+            if (!string.Equals(id.Project, n.Project, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(id.Ns, n.Ns, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(id.Class, n.Type, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(id.Method, n.Method, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(id.ArgKey, n.ArgKey, StringComparison.OrdinalIgnoreCase)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    static Node[] Apply(Node[] after, string patch, Id[] contract)
+    {
+        if (string.IsNullOrEmpty(patch)) return after;
+        if (patch == "drop-first")
+        {
+            if (after.Length == 0) return after;
+            var dropped = new Node[after.Length - 1];
+            Array.Copy(after, 1, dropped, 0, dropped.Length);
+            return dropped;
+        }
+        var copy = (Node[])after.Clone();
+        if (patch == "remove-integration")
+        {
+            for (int i = 0; i < copy.Length; i++)
+            {
+                if (!HasCat(copy[i].Cats, "Integration")) continue;
+                var n = Clone(copy[i]);
+                n.Cats = WithoutCat(n.Cats, "Integration");
+                copy[i] = n;
+                break;
+            }
+            return copy;
+        }
+        if (patch == "tag-seventh")
+        {
+            for (int i = 0; i < copy.Length; i++)
+            {
+                if (IsContract(copy[i], contract)) continue;
+                if (HasCat(copy[i].Cats, "LiveClaude")) continue;
+                var n = Clone(copy[i]);
+                n.Cats = WithCat(n.Cats, "LiveClaude");
+                copy[i] = n;
+                break;
+            }
+            return copy;
+        }
+        if (patch == "add-optin")
+        {
+            for (int i = 0; i < copy.Length; i++)
+            {
+                if (HasCat(copy[i].Cats, "OptIn") || HasCat(copy[i].Cats, "Explicit")) continue;
+                if (IsContract(copy[i], contract)) continue;
+                var n = Clone(copy[i]);
+                n.Cats = WithCat(n.Cats, "OptIn");
+                copy[i] = n;
+                break;
+            }
+            return copy;
+        }
+        if (patch == "extra-expansion")
+        {
+            if (copy.Length == 0) return copy;
+            var n = Clone(copy[0]);
+            n.Uid = (n.Uid ?? "") + "-extra";
+            n.ArgKey = "extra-arg";
+            var grown = new Node[copy.Length + 1];
+            Array.Copy(copy, grown, copy.Length);
+            grown[copy.Length] = n;
+            return grown;
+        }
+        if (patch == "unknown-node")
+        {
+            var n = new Node();
+            n.Project = "Antiphon.Tests";
+            n.Uid = "undeclared-live-lane-uid";
+            n.Ns = "Antiphon.Tests.Scripts";
+            n.Type = "NotInContract";
+            n.Method = "UnknownMethod";
+            n.ArgKey = "";
+            n.Cats = new string[] { "Unit" };
+            var grown = new Node[copy.Length + 1];
+            Array.Copy(copy, grown, copy.Length);
+            grown[copy.Length] = n;
+            return grown;
+        }
+        return copy;
+    }
+
+    static List<string> Run(Node[] before, Node[] after, ExRow[] beforeEx, ExRow[] afterEx, Id[] additive, Id[] contract)
+    {
+        var diag = new List<string>();
+        var beforeMap = new Dictionary<string, Node>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in before) beforeMap[n.Uid ?? ""] = n;
+        var afterMap = new Dictionary<string, Node>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in after) afterMap[n.Uid ?? ""] = n;
+        foreach (var pair in beforeMap)
+        {
+            Node other;
+            if (!afterMap.TryGetValue(pair.Key, out other))
+            {
+                Add(diag, "old-membership-changed");
+                continue;
+            }
+            bool removed;
+            bool addedOther;
+            bool addedLive;
+            CategoryDelta(pair.Value.Cats, other.Cats, out removed, out addedOther, out addedLive);
+            if (removed || addedOther) Add(diag, "category-delta");
+            else if (addedLive && !IsContract(pair.Value, contract)) Add(diag, "category-delta");
+            if (!string.Equals(pair.Value.ArgKey ?? "", other.ArgKey ?? "", StringComparison.OrdinalIgnoreCase)) Add(diag, "extra-expansion");
+        }
+        foreach (var pair in afterMap)
+        {
+            if (beforeMap.ContainsKey(pair.Key)) continue;
+            var n = pair.Value;
+            bool declared = false;
+            for (int i = 0; i < additive.Length; i++)
+            {
+                if (string.Equals(additive[i].Class, n.Type, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(additive[i].Method, n.Method, StringComparison.OrdinalIgnoreCase))
+                {
+                    declared = true;
+                    break;
+                }
+            }
+            if (!declared) Add(diag, "undeclared-new-uid");
+            else if (HasCat(n.Cats, "LiveClaude")) Add(diag, "category-delta");
+        }
+        if (ExpansionDiffers(before, after)) Add(diag, "extra-expansion");
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in after)
+        {
+            for (int i = 0; i < additive.Length; i++)
+            {
+                if (string.Equals(additive[i].Class, n.Type, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(additive[i].Method, n.Method, StringComparison.OrdinalIgnoreCase))
+                {
+                    allowed.Add(n.Uid ?? "");
+                    break;
+                }
+            }
+        }
+        var beforeDefault = Disposition(before, null, false);
+        var afterDefault = Disposition(after, null, false);
+        var beforeRc = Disposition(before, beforeEx, true);
+        var afterRc = Disposition(after, afterEx, true);
+        if (!SetEqual(beforeDefault.Required, Filter(afterDefault.Required, allowed)) ||
+            !SetEqual(beforeDefault.Excluded, Filter(afterDefault.Excluded, allowed)))
+        {
+            Add(diag, "nightly-disposition-changed");
+        }
+        if (!SetEqual(beforeRc.Required, Filter(afterRc.Required, allowed)) ||
+            !SetEqual(beforeRc.Excluded, Filter(afterRc.Excluded, allowed)))
+        {
+            string c680 = "";
+            foreach (var n in before)
+            {
+                if (string.Equals(n.Method, "C680_LiveNudgeRefusesPermissionAndQuestionDialogs", StringComparison.OrdinalIgnoreCase))
+                {
+                    c680 = n.Uid ?? "";
+                    break;
+                }
+            }
+            if (c680.Length > 0 && beforeRc.Required.Contains(c680) && afterRc.Excluded.Contains(c680)) Add(diag, "C680-required-to-excluded");
+        }
+        return diag;
+    }
+
+    static void CategoryDelta(string[] before, string[] after, out bool removed, out bool addedOther, out bool addedLive)
+    {
+        removed = false;
+        addedOther = false;
+        addedLive = false;
+        var b = new HashSet<string>(before ?? new string[0], StringComparer.Ordinal);
+        var a = new HashSet<string>(after ?? new string[0], StringComparer.Ordinal);
+        foreach (var item in b) if (!a.Contains(item)) removed = true;
+        foreach (var item in a)
+        {
+            if (b.Contains(item)) continue;
+            if (string.Equals(item, "LiveClaude", StringComparison.Ordinal)) addedLive = true;
+            else addedOther = true;
+        }
+    }
+
+    static bool ExpansionDiffers(Node[] before, Node[] after)
+    {
+        var left = Expand(before);
+        var right = Expand(after);
+        foreach (var pair in right)
+        {
+            HashSet<string> other;
+            if (!left.TryGetValue(pair.Key, out other)) continue;
+            if (!pair.Value.SetEquals(other)) return true;
+        }
+        return false;
+    }
+
+    static Dictionary<string, HashSet<string>> Expand(Node[] nodes)
+    {
+        var map = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in nodes)
+        {
+            string key = (n.Type ?? "") + "|" + (n.Method ?? "");
+            HashSet<string> set;
+            if (!map.TryGetValue(key, out set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                map[key] = set;
+            }
+            set.Add(n.ArgKey ?? "");
+        }
+        return map;
+    }
+
+    sealed class Sets
+    {
+        public HashSet<string> Required;
+        public HashSet<string> Excluded;
+    }
+
+    static Sets Disposition(Node[] nodes, ExRow[] exclusions, bool profile)
+    {
+        var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var index = new Dictionary<string, List<ExRow>>(StringComparer.OrdinalIgnoreCase);
+        if (profile && exclusions != null)
+        {
+            foreach (var row in exclusions)
+            {
+                if (string.IsNullOrWhiteSpace(row.Class)) continue;
+                List<ExRow> list;
+                if (!index.TryGetValue(row.Class, out list))
+                {
+                    list = new List<ExRow>();
+                    index[row.Class] = list;
+                }
+                list.Add(row);
+            }
+        }
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in nodes)
+        {
+            string uid = n.Uid ?? "";
+            if (!seen.Add(uid)) continue;
+            bool hit = profile ? ProfileHit(n, index) : HasCat(n.Cats, "OptIn") || HasCat(n.Cats, "Explicit");
+            if (hit) excluded.Add(uid);
+            else required.Add(uid);
+        }
+        return new Sets { Required = required, Excluded = excluded };
+    }
+
+    static bool ProfileHit(Node n, Dictionary<string, List<ExRow>> index)
+    {
+        string className = (n.Ns ?? "") + "." + (n.Type ?? "");
+        int open = className.IndexOf('(');
+        if (open > 0 && className.EndsWith(")", StringComparison.Ordinal)) className = className.Substring(0, open);
+        int dot = className.LastIndexOf('.');
+        string simple = (dot >= 0 && dot < className.Length - 1) ? className.Substring(dot + 1) : className;
+        if (Hit(index, simple, n.Method)) return true;
+        if (!string.Equals(simple, className, StringComparison.OrdinalIgnoreCase) && Hit(index, className, n.Method)) return true;
+        return false;
+    }
+
+    static bool Hit(Dictionary<string, List<ExRow>> index, string key, string method)
+    {
+        List<ExRow> rows;
+        if (!index.TryGetValue(key, out rows)) return false;
+        foreach (var row in rows)
+        {
+            if (row.Methods == null || row.Methods.Length == 0) return true;
+            for (int i = 0; i < row.Methods.Length; i++)
+            {
+                if (string.Equals(row.Methods[i], method, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+        return false;
+    }
+
+    static HashSet<string> Filter(HashSet<string> set, HashSet<string> allowed)
+    {
+        var copy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in set)
+        {
+            if (!allowed.Contains(id)) copy.Add(id);
+        }
+        return copy;
+    }
+
+    static bool SetEqual(HashSet<string> left, HashSet<string> right) { return left.SetEquals(right); }
+
+    static void Add(List<string> diag, string name)
+    {
+        if (!diag.Contains(name)) diag.Add(name);
+    }
+}
+'@
+    Add-Type -TypeDefinition $code -Language CSharp
+    $script:LiveLaneCensusEngineReady = $true
+}
+
+function ConvertTo-LiveLaneJsonToken {
+    param([string]$Text)
+    if ($null -eq $Text) { $Text = '' }
+    return '"' + ($Text.Replace('\', '\\').Replace('"', '\"')) + '"'
+}
+
+function ConvertTo-LiveLaneJsonStringArray {
+    param($Values)
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($value in @(ConvertTo-LiveLaneList $Values)) {
+        $parts.Add((ConvertTo-LiveLaneJsonToken ([string]$value)))
+    }
+    return '[' + ($parts -join ',') + ']'
+}
+
+function ConvertTo-LiveLaneExclusionJson {
+    param($Rows)
+    $items = New-Object System.Collections.Generic.List[string]
+    foreach ($row in @(ConvertTo-LiveLaneList $Rows)) {
+        $methods = New-Object System.Collections.Generic.List[string]
+        foreach ($m in @(ConvertTo-LiveLaneList $row.Methods)) {
+            $text = [string]$m
+            if (-not [string]::IsNullOrWhiteSpace($text)) { $methods.Add($text) }
+        }
+        $items.Add('{"class":' + (ConvertTo-LiveLaneJsonToken ([string]$row.Class)) + ',"methods":' + (ConvertTo-LiveLaneJsonStringArray $methods) + ',"reason":' + (ConvertTo-LiveLaneJsonToken ([string]$row.Reason)) + ',"owner":' + (ConvertTo-LiveLaneJsonToken ([string]$row.Owner)) + '}')
+    }
+    return '[' + ($items -join ',') + ']'
+}
+
+function ConvertTo-LiveLaneIdentityJson {
+    param($Rows)
+    $items = New-Object System.Collections.Generic.List[string]
+    foreach ($row in @(ConvertTo-LiveLaneList $Rows)) {
+        $class = [string](Get-LiveLaneProp $row 'class')
+        if ([string]::IsNullOrWhiteSpace($class)) { $class = [string](Get-LiveLaneProp $row 'type') }
+        $args = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $row 'arguments') | ForEach-Object { [string]$_ })
+        $items.Add('{"project":' + (ConvertTo-LiveLaneJsonToken ([string](Get-LiveLaneProp $row 'project'))) + ',"namespace":' + (ConvertTo-LiveLaneJsonToken ([string](Get-LiveLaneProp $row 'namespace'))) + ',"class":' + (ConvertTo-LiveLaneJsonToken $class) + ',"method":' + (ConvertTo-LiveLaneJsonToken ([string](Get-LiveLaneProp $row 'method'))) + ',"arguments":' + (ConvertTo-LiveLaneJsonStringArray $args) + '}')
+    }
+    return '[' + ($items -join ',') + ']'
+}
+
+function Get-LiveLaneCachedExclusions {
+    param([string]$PolicyPath, [string]$Platform)
+    if ([string]::IsNullOrWhiteSpace($PolicyPath) -or -not (Test-Path -LiteralPath $PolicyPath)) { throw 'policy-missing' }
+    $item = Get-Item -LiteralPath $PolicyPath
+    $key = $item.FullName + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks + '|' + $Platform
+    if ($null -eq $script:LiveLaneExclusionCache) { $script:LiveLaneExclusionCache = @{} }
+    if ($script:LiveLaneExclusionCache.ContainsKey($key)) { return @($script:LiveLaneExclusionCache[$key]) }
+    $obj = [System.IO.File]::ReadAllText($PolicyPath) | ConvertFrom-Json
+    $rows = @(Get-LiveLaneExclusionsFromObject $obj $Platform)
+    $script:LiveLaneExclusionCache[$key] = $rows
+    return $rows
+}
+
+function Get-LiveLaneCensusIdentityPayload {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot 'tests/live-lanes.json'
+    $item = Get-Item -LiteralPath $path
+    $key = $item.FullName + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks
+    if ($script:LiveLaneIdentityPayloadKey -eq $key -and $null -ne $script:LiveLaneIdentityPayload) { return $script:LiveLaneIdentityPayload }
+    $manifest = Read-LiveLaneManifestObject $RepoRoot
+    $payload = @{
+        Additive = (ConvertTo-LiveLaneIdentityJson (Get-LiveLaneProp $manifest 'additiveContract'))
+        Contract = (ConvertTo-LiveLaneIdentityJson (Get-LiveLaneContract))
+    }
+    $script:LiveLaneIdentityPayloadKey = $key
+    $script:LiveLaneIdentityPayload = $payload
+    return $payload
+}
+
+function Get-LiveLaneCensusSeedMaterial {
+    param([string]$RepoRoot, [string]$Seed, [string]$FixtureRel, [string]$Pre)
+    $blob = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', ($Seed + ':' + $FixtureRel))).Text
+    if ([string]::IsNullOrWhiteSpace($blob)) { return $null }
+    $protectedKey = ''
+    foreach ($rel in @($script:LiveLaneProtectedPaths)) {
+        $protectedKey += '|' + (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', ($Seed + ':' + $rel))).Text
+    }
+    $key = $blob + '|' + $FixtureRel + '|' + $Pre + $protectedKey
+    if ($null -eq $script:LiveLaneCensusSeed) { $script:LiveLaneCensusSeed = @{} }
+    if ($script:LiveLaneCensusSeed.ContainsKey($key)) { return $script:LiveLaneCensusSeed[$key] }
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-' + $PID)
+    $before = Join-Path $scratch ('before-' + $blob.Substring(0, 12))
+    New-Item -ItemType Directory -Path $before -Force | Out-Null
+    $fixtureCopy = Join-Path $before $FixtureRel
+    $ok = $true
+    try { Copy-LiveLaneGitBlob -RepoRoot $RepoRoot -Spec ($Seed + ':' + $FixtureRel) -Dest $fixtureCopy } catch { $ok = $false }
+    foreach ($rel in @($script:LiveLaneProtectedPaths)) {
+        try { Copy-LiveLaneGitBlob -RepoRoot $RepoRoot -Spec ($Seed + ':' + $rel) -Dest (Join-Path $before $rel) } catch { $ok = $false }
+    }
+    if (-not $ok -or -not (Test-Path -LiteralPath $fixtureCopy)) { return $null }
+    $fixture = [System.IO.File]::ReadAllText($fixtureCopy) | ConvertFrom-Json
+    $parent = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', ($Seed + '^'))).Text
+    $recorded = [string](Get-LiveLaneProp (Get-LiveLaneProp $fixture 'producing') 'sourceSha')
+    $names = @((Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('log', '--name-only', '--pretty=format:', ($Pre + '..' + $Seed))).Text -split "`n")
+    $touched = @($names | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $equal = @{}
+    foreach ($rel in @($script:LiveLaneProtectedPaths)) {
+        $seedBlob = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', ($Seed + ':' + $rel))).Text
+        $preBlob = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', ($Pre + ':' + $rel))).Text
+        $equal[$rel] = ($seedBlob -eq $preBlob)
+    }
+    $fileHash = @{}
+    foreach ($rel in @($script:LiveLaneProtectedPaths)) {
+        $fileHash[$rel] = (Get-FileHash -LiteralPath (Join-Path $before $rel) -Algorithm SHA256).Hash
+    }
+    Initialize-LiveLaneNightly -RepoRoot $RepoRoot
+    $beforePolicy = [System.IO.File]::ReadAllText((Join-Path $before 'tests/test-execution-policy.json')) | ConvertFrom-Json
+    $platform = $(if ($IsLinux) { 'linux' } else { 'windows' })
+    $beforeEx = @(Get-LiveLaneExclusionsFromObject $beforePolicy $platform)
+    $entry = @{
+        Key = $key
+        Blob = $blob
+        Fixture = $fixture
+        FixtureCopy = $fixtureCopy
+        BeforeDir = $before
+        Parent = $parent
+        Recorded = $recorded
+        Touched = @($touched)
+        ProtectedEqual = $equal
+        FileHash = $fileHash
+        BeforeEx = $beforeEx
+        BeforeExJson = (ConvertTo-LiveLaneExclusionJson $beforeEx)
+    }
+    $script:LiveLaneCensusSeed[$key] = $entry
+    return $entry
+}
+
 function Invoke-LiveLaneCensus {
     param($Context, [hashtable]$Mutant = $null)
     $diagnostics = New-Object System.Collections.Generic.List[string]
@@ -1214,18 +2131,18 @@ function Invoke-LiveLaneCensus {
     $expectedBlob = [string](Get-LiveLaneProp $Context 'fixtureBlob')
     if ($Mutant -and $Mutant.ContainsKey('fixtureBlob')) { $expectedBlob = [string]$Mutant.fixtureBlob }
     if ([string]::IsNullOrWhiteSpace($blob) -or $blob -ne $expectedBlob) { $diagnostics.Add('fixture-binding') }
-    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-' + $PID)
-    $before = Join-Path $scratch ('before-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $before -Force | Out-Null
-    $fixtureCopy = Join-Path $before $fixtureRel
-    try { Copy-LiveLaneGitBlob -RepoRoot $repo -Spec ($seed + ':' + $fixtureRel) -Dest $fixtureCopy } catch { $diagnostics.Add('seed-object-missing') }
-    foreach ($rel in @($script:LiveLaneProtectedPaths)) {
-        try { Copy-LiveLaneGitBlob -RepoRoot $repo -Spec ($seed + ':' + $rel) -Dest (Join-Path $before $rel) } catch { $diagnostics.Add('seed-object-missing') }
+    $material = $null
+    if (-not [string]::IsNullOrWhiteSpace($blob)) {
+        $material = Get-LiveLaneCensusSeedMaterial -RepoRoot $repo -Seed $seed -FixtureRel $fixtureRel -Pre $pre
     }
-    if (-not (Test-Path -LiteralPath $fixtureCopy)) { return @{ Accepted = $false; Diagnostics = @($diagnostics | Select-Object -Unique) } }
-    $fixture = [System.IO.File]::ReadAllText($fixtureCopy) | ConvertFrom-Json
+    if ($null -eq $material) {
+        $diagnostics.Add('seed-object-missing')
+        return @{ Accepted = $false; Diagnostics = @($diagnostics | Select-Object -Unique) }
+    }
+    $before = $material.BeforeDir
+    $fixture = $material.Fixture
     $parent = (Get-LiveLaneGit -RepoRoot $repo -GitArgs @('rev-parse', ($seed + '^'))).Text
-    $recorded = [string](Get-LiveLaneProp (Get-LiveLaneProp $fixture 'producing') 'sourceSha')
+    $recorded = $material.Recorded
     if ($recorded -ne $parent -or $recorded -eq $seed) { $diagnostics.Add('producer-provenance') }
     $provenance = Get-LiveLaneProp $Context 'producerProvenance'
     if ($Mutant -and $Mutant.ContainsKey('provenance')) { $provenance = $Mutant.provenance }
@@ -1245,11 +2162,11 @@ function Invoke-LiveLaneCensus {
         if ($script:LiveLaneAllowedSeedPaths -notcontains $name) { $diagnostics.Add('seed-range') }
     }
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
-        $seedBlob = (Get-LiveLaneGit -RepoRoot $repo -GitArgs @('rev-parse', ($seed + ':' + $rel))).Text
-        $preBlob = (Get-LiveLaneGit -RepoRoot $repo -GitArgs @('rev-parse', ($pre + ':' + $rel))).Text
         $drift = $false
         if ($Mutant -and $Mutant.ContainsKey('driftPath') -and $Mutant.driftPath -eq $rel) { $drift = $true }
-        if ($drift -or $seedBlob -ne $preBlob) { $diagnostics.Add('baseline-drift') }
+        $equal = $true
+        if ($material.ProtectedEqual.ContainsKey($rel)) { $equal = [bool]$material.ProtectedEqual[$rel] }
+        if ($drift -or -not $equal) { $diagnostics.Add('baseline-drift') }
     }
     $cp25Path = [string](Get-LiveLaneProp $Context 'cp25Export')
     $cp1Path = [string](Get-LiveLaneProp $Context 'cp1Export')
@@ -1264,6 +2181,8 @@ function Invoke-LiveLaneCensus {
         foreach ($loaded in @($cp25, $cp1)) {
             $export = $loaded.Export
             $expectedHash = [string](Get-LiveLaneProp $export 'assemblyHash')
+            $mutateExport = $Mutant -and ($Mutant.ContainsKey('exportSource') -or $Mutant.ContainsKey('exportRun') -or $Mutant.ContainsKey('exportHash') -or $Mutant.ContainsKey('terminal'))
+            if ($mutateExport) { $export = Copy-LiveLaneExportShell $export }
             if ($Mutant -and $Mutant.ContainsKey('exportSource')) { $export | Add-Member -NotePropertyName sourceSha -NotePropertyValue $Mutant.exportSource -Force }
             if ($Mutant -and $Mutant.ContainsKey('exportRun')) { $export | Add-Member -NotePropertyName runId -NotePropertyValue $Mutant.exportRun -Force }
             if ($Mutant -and $Mutant.ContainsKey('exportHash')) { $export | Add-Member -NotePropertyName assemblyHash -NotePropertyValue $Mutant.exportHash -Force }
@@ -1272,65 +2191,7 @@ function Invoke-LiveLaneCensus {
             if (-not $check.Accepted -and $diagnostics -notcontains $check.Reason) { $diagnostics.Add($check.Reason) }
         }
     }
-    $afterNodes = @()
-    if ($cp25.Found) { $afterNodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp25.Export 'nodes')) }
-    if ($cp1.Found) { $afterNodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp1.Export 'nodes')) }
-    if ($Mutant -and $Mutant.ContainsKey('afterNodes')) { $afterNodes = @($Mutant.afterNodes) }
-    $beforeNodes = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $fixture 'nodes'))
-    $beforeMap = @{}
-    foreach ($n in $beforeNodes) { $beforeMap[(Get-LiveLaneNodeUid $n)] = $n }
-    $afterMap = @{}
-    foreach ($n in $afterNodes) {
-        $uid = Get-LiveLaneNodeUid $n
-        if (-not [string]::IsNullOrWhiteSpace($uid)) { $afterMap[$uid] = $n }
-    }
-    $additive = @(ConvertTo-LiveLaneList (Get-LiveLaneProp (Read-LiveLaneManifestObject $repo) 'additiveContract'))
-    foreach ($uid in @($beforeMap.Keys)) {
-        if (-not $afterMap.ContainsKey($uid)) { $diagnostics.Add('old-membership-changed'); continue }
-        $delta = Get-LiveLaneCategoryDelta (Get-LiveLaneProp $beforeMap[$uid] 'categories') (Get-LiveLaneProp $afterMap[$uid] 'categories')
-        $allowed = @()
-        if (Test-LiveLaneContractIdentity $beforeMap[$uid]) { $allowed = @('LiveClaude') }
-        foreach ($added in @($delta.Added)) { if ($allowed -notcontains $added) { $diagnostics.Add('category-delta') } }
-        foreach ($removed in @($delta.Removed)) { $diagnostics.Add('category-delta') }
-        $beforeArgs = Get-LiveLaneArgumentKey (Get-LiveLaneProp $beforeMap[$uid] 'arguments')
-        $afterArgs = Get-LiveLaneArgumentKey (Get-LiveLaneProp $afterMap[$uid] 'arguments')
-        if ($beforeArgs -ne $afterArgs) { $diagnostics.Add('extra-expansion') }
-    }
-    foreach ($uid in @($afterMap.Keys)) {
-        if ($beforeMap.ContainsKey($uid)) { continue }
-        $node = $afterMap[$uid]
-        $class = [string](Get-LiveLaneProp $node 'type')
-        if ([string]::IsNullOrWhiteSpace($class)) { $class = [string](Get-LiveLaneProp $node 'class') }
-        $method = [string](Get-LiveLaneProp $node 'method')
-        $declared = $false
-        foreach ($row in $additive) {
-            if ([string](Get-LiveLaneProp $row 'class') -eq $class -and [string](Get-LiveLaneProp $row 'method') -eq $method) { $declared = $true }
-        }
-        if (-not $declared) { $diagnostics.Add('undeclared-new-uid') }
-        else {
-            $cats = Get-LiveLaneCategorySet (Get-LiveLaneProp $node 'categories')
-            if ($cats.Contains('LiveClaude')) { $diagnostics.Add('category-delta') }
-        }
-    }
-    $beforeExp = @{}
-    foreach ($n in @($beforeNodes)) {
-        $key = ([string](Get-LiveLaneProp $n 'type') + '|' + [string](Get-LiveLaneProp $n 'method'))
-        if (-not $beforeExp.ContainsKey($key)) { $beforeExp[$key] = @() }
-        $beforeExp[$key] += (Get-LiveLaneArgumentKey (Get-LiveLaneProp $n 'arguments'))
-    }
-    $afterExp = @{}
-    foreach ($n in @($afterNodes)) {
-        $key = ([string](Get-LiveLaneProp $n 'type') + '|' + [string](Get-LiveLaneProp $n 'method'))
-        if ([string]::IsNullOrWhiteSpace((Get-LiveLaneProp $n 'type'))) { $key = ([string](Get-LiveLaneProp $n 'class') + '|' + [string](Get-LiveLaneProp $n 'method')) }
-        if (-not $afterExp.ContainsKey($key)) { $afterExp[$key] = @() }
-        $afterExp[$key] += (Get-LiveLaneArgumentKey (Get-LiveLaneProp $n 'arguments'))
-    }
-    foreach ($key in @($afterExp.Keys)) {
-        if (-not $beforeExp.ContainsKey($key)) { continue }
-        $left = @($beforeExp[$key] | Sort-Object -Unique) -join '|'
-        $right = @($afterExp[$key] | Sort-Object -Unique) -join '|'
-        if ($left -ne $right) { $diagnostics.Add('extra-expansion') }
-    }
+    $useNodeEngine = -not ($Mutant -and $Mutant.ContainsKey('afterNodes'))
     $afterRoot = $repo
     if ($Mutant -and $Mutant.ContainsKey('afterRoot')) { $afterRoot = [string]$Mutant.afterRoot }
     try {
@@ -1352,23 +2213,55 @@ function Invoke-LiveLaneCensus {
         if ($beforeHash -ne $afterHash) { $diagnostics.Add('policy-hash-changed') }
     } catch { $diagnostics.Add('policy-hash-changed') }
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
-        $seedFile = Join-Path $before $rel
         $afterFile = Join-Path $afterRoot $rel
-        if (-not (Test-Path -LiteralPath $seedFile) -or -not (Test-Path -LiteralPath $afterFile)) { $diagnostics.Add('reader-input-changed'); continue }
-        $h1 = (Get-FileHash -LiteralPath $seedFile -Algorithm SHA256).Hash
+        $h1 = ''
+        if ($material.FileHash.ContainsKey($rel)) { $h1 = [string]$material.FileHash[$rel] }
+        if ([string]::IsNullOrWhiteSpace($h1) -or -not (Test-Path -LiteralPath $afterFile)) { $diagnostics.Add('reader-input-changed'); continue }
         $h2 = (Get-FileHash -LiteralPath $afterFile -Algorithm SHA256).Hash
         if ($h1 -ne $h2) { $diagnostics.Add('reader-input-changed') }
     }
     Initialize-LiveLaneNightly -RepoRoot $repo
-    $beforePolicy = ([System.IO.File]::ReadAllText((Join-Path $before 'tests/test-execution-policy.json')) | ConvertFrom-Json)
     $afterPolicyPath = Join-Path $afterRoot 'tests/test-execution-policy.json'
     if ($Mutant -and $Mutant.ContainsKey('policyPath')) { $afterPolicyPath = [string]$Mutant.policyPath }
-    $afterPolicy = ([System.IO.File]::ReadAllText($afterPolicyPath) | ConvertFrom-Json)
     $platform = $(if ($IsLinux) { 'linux' } else { 'windows' })
-    $beforeEx = @(Get-LiveLaneExclusionsFromObject $beforePolicy $platform)
-    $afterEx = @(Get-LiveLaneExclusionsFromObject $afterPolicy $platform)
-    $member = Compare-LiveLaneMembership -BeforeNodes $beforeNodes -AfterNodes $afterNodes -BeforeEx $beforeEx -AfterEx $afterEx -Additive $additive
-    foreach ($item in @($member)) { $diagnostics.Add($item) }
+    $beforeEx = @($material.BeforeEx)
+    $afterEx = @(Get-LiveLaneCachedExclusions -PolicyPath $afterPolicyPath -Platform $platform)
+    if ($useNodeEngine) {
+        $payload = Get-LiveLaneCensusIdentityPayload -RepoRoot $repo
+        $patch = ''
+        if ($Mutant -and $Mutant.ContainsKey('patch')) { $patch = [string]$Mutant.patch }
+        Initialize-LiveLaneCensusEngine
+        $beforeFile = [string]$material.FixtureCopy
+        $after1 = ''
+        $after2 = ''
+        if ($cp25.Found) { $after1 = $cp25Path }
+        if ($cp1.Found) { $after2 = $cp1Path }
+        $text = [LiveLaneCensusEngine]::Compare($beforeFile, $after1, $after2, [string]$material.BeforeExJson, (ConvertTo-LiveLaneExclusionJson $afterEx), [string]$payload.Additive, [string]$payload.Contract, $patch)
+        foreach ($line in @(([string]$text) -split "`n")) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { $diagnostics.Add($line) }
+        }
+        $reasonChanged = $false
+        $ownerChanged = $false
+        $beforeBy = @{}
+        foreach ($row in @($beforeEx)) { $beforeBy[[string]$row.Class] = $row }
+        foreach ($row in @($afterEx)) {
+            $cls = [string]$row.Class
+            if (-not $beforeBy.ContainsKey($cls)) { continue }
+            if ([string]$beforeBy[$cls].Reason -ne [string]$row.Reason) { $reasonChanged = $true }
+            if ([string]$beforeBy[$cls].Owner -ne [string]$row.Owner) { $ownerChanged = $true }
+        }
+        if ($reasonChanged) { $diagnostics.Add('disposition-reason-changed') }
+        if ($ownerChanged) { $diagnostics.Add('disposition-owner-changed') }
+    } else {
+        $afterNodes = @()
+        if ($cp25.Found) { $afterNodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp25.Export 'nodes')) }
+        if ($cp1.Found) { $afterNodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp1.Export 'nodes')) }
+        if ($Mutant -and $Mutant.ContainsKey('afterNodes')) { $afterNodes = @($Mutant.afterNodes) }
+        $beforeNodes = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $fixture 'nodes'))
+        $additive = @(ConvertTo-LiveLaneList (Get-LiveLaneProp (Read-LiveLaneManifestObject $repo) 'additiveContract'))
+        $member = Compare-LiveLaneMembership -BeforeNodes $beforeNodes -AfterNodes $afterNodes -BeforeEx $beforeEx -AfterEx $afterEx -Additive $additive
+        foreach ($item in @($member)) { $diagnostics.Add($item) }
+    }
     $unique = @($diagnostics | Select-Object -Unique)
     return @{ Accepted = ($unique.Count -eq 0); Diagnostics = $unique }
 }
@@ -1528,13 +2421,6 @@ function Invoke-LiveLaneFullCensus {
     $absent = Invoke-LiveLaneCensus -Context $null
     if (-not (Test-LiveLaneCensusHas $absent @('context-required'))) { $missing.Add('context-absent') }
 
-    $cp25 = Read-LiveLaneExportFile -Path ([string](Get-LiveLaneProp $context 'cp25Export'))
-    $cp1 = Read-LiveLaneExportFile -Path ([string](Get-LiveLaneProp $context 'cp1Export'))
-    $nodes = @()
-    if ($cp25.Found) { $nodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp25.Export 'nodes')) }
-    if ($cp1.Found) { $nodes += @(ConvertTo-LiveLaneList (Get-LiveLaneProp $cp1.Export 'nodes')) }
-    $base = @(Copy-LiveLaneNodeRows $nodes)
-
     $dangling = New-LiveLaneDanglingSeed -RepoRoot $RepoRoot
     $seedCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ seed = $dangling; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $seedCase @('seed-not-ancestor'))) { $missing.Add('seed-nonancestor') }
@@ -1567,77 +2453,23 @@ function Invoke-LiveLaneFullCensus {
     $pendingCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ terminal = $false; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $pendingCase @('producer-incomplete'))) { $missing.Add('pending-producer') }
 
-    $dropped = @($base | Select-Object -Skip 1)
-    $dropCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $dropped; fastHash = $true }
+    $dropCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'drop-first'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $dropCase @('old-membership-changed'))) { $missing.Add('remove-old-uid') }
 
-    $integration = @(Copy-LiveLaneNodeRows $base)
-    $cleared = $false
-    foreach ($row in $integration) {
-        $cats = @($row.categories)
-        if ($cats -contains 'Integration') {
-            $row.categories = @($cats | Where-Object { $_ -ne 'Integration' })
-            $cleared = $true
-            break
-        }
-    }
-    if (-not $cleared) { $missing.Add('remove-Integration') }
-    else {
-        $catCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $integration; fastHash = $true }
-        if (-not (Test-LiveLaneCensusHas $catCase @('category-delta'))) { $missing.Add('remove-Integration') }
-    }
+    $catCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'remove-integration'; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $catCase @('category-delta'))) { $missing.Add('remove-Integration') }
 
-    $seventh = @(Copy-LiveLaneNodeRows $base)
-    $tagged = $false
-    foreach ($row in $seventh) {
-        if (Test-LiveLaneContractIdentity $row) { continue }
-        $cats = @($row.categories)
-        if ($cats -notcontains 'LiveClaude') {
-            $row.categories = @($cats + @('LiveClaude'))
-            $tagged = $true
-            break
-        }
-    }
-    if (-not $tagged) { $missing.Add('tag-seventh') }
-    else {
-        $tagCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $seventh; fastHash = $true }
-        if (-not (Test-LiveLaneCensusHas $tagCase @('category-delta'))) { $missing.Add('tag-seventh') }
-    }
+    $tagCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'tag-seventh'; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $tagCase @('category-delta'))) { $missing.Add('tag-seventh') }
 
-    $extra = @(Copy-LiveLaneNodeRows $base)
-    if ($extra.Count -gt 0) {
-        $clone = $extra[0]
-        $extra += [pscustomobject]@{
-            project = $clone.project; uid = ($clone.uid + '-extra'); namespace = $clone.namespace; type = $clone.type
-            class = $clone.class; method = $clone.method; arguments = @('extra-arg'); categories = @($clone.categories)
-        }
-    }
-    $extraCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $extra; fastHash = $true }
+    $extraCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'extra-expansion'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $extraCase @('extra-expansion'))) { $missing.Add('extra-expansion') }
 
-    $unknown = @(Copy-LiveLaneNodeRows $base)
-    $unknown += [pscustomobject]@{
-        project = 'Antiphon.Tests'; uid = 'undeclared-live-lane-uid'; namespace = 'Antiphon.Tests.Scripts'; type = 'NotInContract'
-        class = 'NotInContract'; method = 'UnknownMethod'; arguments = @(); categories = @('Unit')
-    }
-    $unknownCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $unknown; fastHash = $true }
+    $unknownCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'unknown-node'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $unknownCase @('undeclared-new-uid'))) { $missing.Add('unknown-new-uid') }
 
-    $nightly = @(Copy-LiveLaneNodeRows $base)
-    $opted = $false
-    foreach ($row in $nightly) {
-        $cats = @($row.categories)
-        if ($cats -contains 'OptIn' -or $cats -contains 'Explicit') { continue }
-        if (Test-LiveLaneContractIdentity $row) { continue }
-        $row.categories = @($cats + @('OptIn'))
-        $opted = $true
-        break
-    }
-    if (-not $opted) { $missing.Add('default-disposition') }
-    else {
-        $nightCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterNodes = $nightly; fastHash = $true }
-        if (-not (Test-LiveLaneCensusHas $nightCase @('nightly-disposition-changed'))) { $missing.Add('default-disposition') }
-    }
+    $nightCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'add-optin'; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $nightCase @('nightly-disposition-changed'))) { $missing.Add('default-disposition') }
 
     $readerRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-live-lane-reader-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $readerRoot 'scripts/lib') -Force | Out-Null

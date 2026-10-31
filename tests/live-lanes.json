@@ -9,7 +9,8 @@
       "arguments": [],
       "uid": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.1.1.C680_LiveNudgeRefusesPermissionAndQuestionDialogs.1.1.0",
       "categories": [
-        "Integration"
+        "Integration",
+        "LiveClaude"
       ],
       "bound": true
     },
@@ -25,7 +26,8 @@
       "categories": [
         "OptIn",
         "Headed",
-        "Pty"
+        "Pty",
+        "LiveClaude"
       ],
       "bound": true
     },
@@ -39,7 +41,8 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed"
+        "Headed",
+        "LiveClaude"
       ],
       "bound": true
     },
@@ -53,7 +56,8 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed"
+        "Headed",
+        "LiveClaude"
       ],
       "bound": true
     },
@@ -67,7 +71,8 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed"
+        "Headed",
+        "LiveClaude"
       ],
       "bound": true
     },
@@ -81,11 +86,2018 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed"
+        "Headed",
+        "LiveClaude"
       ],
       "bound": true
     }
   ],
-  "gates": [],
-  "additiveContract": []
+  "gates": [
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeAppendSystemPromptCanaryTests",
+      "method": "Append_marker_survives_interactive_launch_compact_and_resume",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeAppendSystemPromptCanaryTests",
+      "method": "Multi_line_append_arg_survives_windows_arg_quoting",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeCompactionCanaryTests",
+      "method": "Compact_writes_a_boundary_entry_and_renders_the_compacted_screen_line",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeCompactionCanaryTests",
+      "method": "Manual_compact_with_args_writes_raw_prompt_boundary_and_continuation_with_no_turn_end",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeComposerCaptureProbeTests",
+      "method": "Composer_capture_matrix",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeComposerCaptureProbeTests",
+      "method": "Cut_point_resolution",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeComposerCaptureProbeTests",
+      "method": "Single_chunk_boundary",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeComposerRenderCanaryTests",
+      "method": "Composer_render_contract_for_delivery_style_writes",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_can_answer_claude_question_and_receive_acknowledgement",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_cruncheddetector_waits_through_slow_bash_task",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_detects_claude_asking_a_question",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_kill_midflight_no_orphans",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_print_returns_pong",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_sequential_prompts_share_context",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_single_prompt_returns_response",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_tool_use_executes_without_permission_prompt",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_tui_reaches_ready_within_30s",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeDangerousTests",
+      "method": "Claude_dangerous_version_exits_zero_with_version_string",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedLongTests",
+      "method": "Cl_headed_resume_preserves_context_across_runner_instances",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "ClSession: Windows, ANTIPHON_HEADED_TESTS, real Claude TUI; long live canary."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_headed_exit_command_completes_in_5s",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_headed_kill_midflight_no_orphans",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_headed_sequential_prompts_share_context",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_headed_single_prompt_returns_response",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_headed_tool_use_returns_systeminfo",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_print_mode_returns_response",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_tui_reaches_ready_with_default_detector",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHeadedTests",
+      "method": "Cl_version_via_pty_exits_zero_with_version_string",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHookAdditionalContextCanaryTests",
+      "method": "additionalContext_survival_on_resume_is_not_confounded_by_assistant_text",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHookAdditionalContextCanaryTests",
+      "method": "PreToolUse_additionalContext_reaches_the_model_without_blocking",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeHookAdditionalContextCanaryTests",
+      "method": "Subagent_PreToolUse_carries_agent_id",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInputProbeCanaryTests",
+      "method": "A_ready_claude_answers_the_input_probe_and_the_composer_is_left_empty",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInputProbeCanaryTests",
+      "method": "Ctrl_u_clears_a_single_typed_line_from_the_rendered_composer",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInteractionTests",
+      "method": "Approve_permission_prompt_via_numbered_choice_executes_tool",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInteractionTests",
+      "method": "Deny_permission_prompt_via_numbered_choice_skips_tool",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInteractionTests",
+      "method": "Screen_detects_permission_prompt_for_bash_tool",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInterruptCanaryTests",
+      "method": "Esc_during_a_pure_text_stream_unwinds_the_turn_without_a_marker",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInterruptCanaryTests",
+      "method": "Esc_mid_turn_stops_work_on_screen_and_writes_the_interrupt_marker_to_the_jsonl",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeInterruptCanaryTests",
+      "method": "Safe_listed_bash_command_auto_approves_without_a_permission_dialog",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeLocalCommandCanaryTests",
+      "method": "Clear_writes_a_command_record_and_no_turn_completion_after_it",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeOverlayCanaryTests",
+      "method": "Esc_on_an_idle_empty_composer_is_a_noop_and_a_body_still_renders",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeOverlayCanaryTests",
+      "method": "One_Esc_dismisses_the_model_overlay_and_restores_the_composer",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudePasteLossCanaryTests",
+      "method": "Marked_bodies_into_real_claude_are_diffed_against_its_transcript",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Control_auto_connects_a_bridge_session_before_the_first_user",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Remote_control_slash_command_still_arms_after_settings_off",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Settings_file_prevents_auto_connect_and_keeps_startup_records",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeRemoteControlMenuCanaryTests",
+      "method": "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeRemoteControlMenuCanaryTests",
+      "method": "One_Esc_dismisses_the_remote_control_management_menu",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeSignalCanaryTests",
+      "method": "Real_claude_still_emits_the_turn_end_signal_we_depend_on",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeSubmitConfirmCanaryTests",
+      "method": "A_collapsed_pastes_jsonl_record_carries_the_full_body_not_the_placeholder",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeSubmitConfirmCanaryTests",
+      "method": "Enter_on_an_empty_composer_is_a_no_op",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeTrustPromptCanaryTests",
+      "method": "A_trusted_directory_never_reads_as_blocked",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeTrustPromptCanaryTests",
+      "method": "An_untrusted_directory_blocks_the_tui_and_is_detected_within_seconds",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeTrustPromptCanaryTests",
+      "method": "The_2_1_258_dialog_is_the_highlighted_list_layout",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "ClaudeTuiModeTests",
+      "method": "Spawned_claude_uses_classic_renderer_not_alternate_screen",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexCanaryTests",
+      "method": "One_real_turn_writes_UserMessage_AgentMessage_token_count_and_task_complete",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexCanaryTests",
+      "method": "The_rollout_is_lazy_and_Enter_on_an_empty_composer_submits_nothing",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexCanaryTests",
+      "method": "The_TUI_does_not_print_its_session_id_and_a_typed_newline_does_not_submit",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexComposerCanaryTests",
+      "method": "Composer_submit_contract_on_the_modern_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexDoneDetectionCanaryTests",
+      "method": "Turn_lifecycle_contract_on_the_modern_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexMcpBootProbeTests",
+      "method": "Baseline_repo_cwd_incident_shape",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexMcpBootProbeTests",
+      "method": "Baseline_scratch_cwd",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexMcpBootProbeTests",
+      "method": "Suppressed_repo_cwd",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "CodexOverlayCanaryTests",
+      "method": "Esc_on_an_idle_empty_composer_is_a_noop_and_a_body_still_renders",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "FakeVsRealClipParityTests",
+      "method": "Fake_and_real_claude_agree_on_the_chunk_boundary",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "FakeVsRealClipParityTests",
+      "method": "Fake_and_real_claude_agree_that_a_bracketed_paste_is_not_clipped",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Composer_submit_contract_on_the_modern_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Esc_interrupt_shape_in_updates_jsonl",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Fresh_cwd_and_fresh_grok_home_launch_blocking",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Models_cache_context_window_is_still_500000",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Session_recap_shape_and_trigger",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokCanaryTests",
+      "method": "Turn_end_signals_vs_turn_completed_and_updates_flush_latency",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokMidTurnInterruptCanaryTests",
+      "method": "Ctrl_C_on_an_empty_composer_mid_tool_turn_cancels_the_turn_and_keeps_the_session_alive",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "GkSession: Windows, ANTIPHON_HEADED_TESTS, real Grok TUI and model API."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokMidTurnInterruptCanaryTests",
+      "method": "Ctrl_C_with_a_draft_in_the_composer_keeps_the_session_alive",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "GkSession: Windows, ANTIPHON_HEADED_TESTS, real Grok TUI and model API."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokNativeSessionCanaryTests",
+      "method": "Create_writes_the_session_directory_at_launch",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokNativeSessionCanaryTests",
+      "method": "Resume_of_an_unknown_id_exits_nonzero_fast_and_creates_nothing",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokNativeSessionCanaryTests",
+      "method": "Resume_of_that_directory_starts",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokQuestionPopupCanaryTests",
+      "method": "Popup_present_after_ask_user_question_usage_does_not_match_answer_clears_esc_does_not",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokSignInCanaryTests",
+      "method": "Detector_matches_the_live_sign_in_screen_within_10s",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokSubmitWhileWorkingCanaryTests",
+      "method": "Queued_follow_up_during_a_tool_turn_is_silent_on_jsonl_until_drain",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokSubmitWhileWorkingCanaryTests",
+      "method": "Submit_during_a_streaming_text_turn_writes_cancelled_then_the_new_user_chunk",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokSubmitWhileWorkingCanaryTests",
+      "method": "Submit_during_a_tool_turn_writes_cancelled_then_the_new_user_chunk",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokUsageOverlayCanaryTests",
+      "method": "Esc_on_an_idle_empty_composer_is_a_noop_and_a_body_still_renders",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "GrokUsageOverlayCanaryTests",
+      "method": "One_Esc_dismisses_the_usage_overlay_and_restores_the_composer",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "OrchestratorWorkspaceLayoutCanaryTests",
+      "method": "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Two live Claude TUI methods and two real executable oracles gated by ANTIPHON_PTY_PROVIDER_ORACLES=1; no API in Codex/Grok oracles."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "OrchestratorWorkspaceLayoutCanaryTests",
+      "method": "Claude_sibling_import_is_dropped_without_the_forward_slash_approval",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Two live Claude TUI methods and two real executable oracles gated by ANTIPHON_PTY_PROVIDER_ORACLES=1; no API in Codex/Grok oracles."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E1_size_sweep",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E2_slow_drain",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E3_repeated_deliveries_one_session",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E4_encoding_variants",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E5_concurrent_writer",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyInputLossExperiments",
+      "method": "E6_prior_partial_line",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Host_selftest",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Markers_by_conpty_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Markers_reaching_the_child_with_and_without_decset_2004",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Real_claude_by_conpty_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Real_claude_controls_and_size_sweep",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Real_claude_delivery_envelope",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "PtyPasteMarkerExperiments",
+      "method": "Write_shape_across_window_sizes",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "Card0168InteractiveProbeTests",
+      "method": "Claude_interactive_capture_probe",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "Card0168InteractiveProbeTests",
+      "method": "Grok_interactive_capture_probe",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeAdapterIntegrationTests",
+      "method": "Full_round_trip_via_seam_returns_response_text",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeDialogWatchdogCanaryTests",
+      "method": "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+      "arguments": [],
+      "shapes": [
+        "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeEffortPromptCanaryTests",
+      "method": "Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "body invokes the live gates despite the class lacking OptIn metadata"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeHerdrRealCliStubProxyCanaryTests",
+      "method": "B_herdr_session_sidecar_exists_and_whenidle_confirms_via_transcript",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeRealCliStubProxyCanaryTests",
+      "method": "B_server_session_binds_transcript_and_whenidle_confirms_via_stub",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeRealCliStubProxyCanaryTests",
+      "method": "Print_mode_turn_hits_stub_with_injected_key_and_nonce_and_scripted_reply",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ClaudeRealCliStubProxyCanaryTests",
+      "method": "Scripted_400_fails_closed_with_no_further_chat_and_no_silent_fallback",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexBootWedgeProbeTests",
+      "method": "C1521_Cold_pointer_records_write_consume_enter_and_receipt",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexBootWedgeProbeTests",
+      "method": "P1_plain_ptyhost_production_shape_measures_boot_wedge",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexBootWedgeProbeTests",
+      "method": "P3_scratch_01491_path_measures_boot_wedge",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexBootWedgeProbeTests",
+      "method": "P4_measures_clear_keys_and_boot_paste_interrupt",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexCommandLengthSessionTests",
+      "method": "Incident_fixture_launches_on_the_inbox_backend",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexCommandLengthSessionTests",
+      "method": "Incident_fixture_launches_through_node_and_delivers_the_whole_developer_block",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexCommandLengthSessionTests",
+      "method": "Legacy_batch_launcher_still_dies_on_the_incident_fixture",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexCommandLengthSessionTests",
+      "method": "Near_cap_fixture_launches_and_arrives_intact",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexHerdrRealCliStubProxyCanaryTests",
+      "method": "B_agent_path_deferred_until_CARD_0167",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexHerdrRealCliStubProxyCanaryTests",
+      "method": "B_runner_herdr_launch_from_the_npm_shim_carries_the_incident_fixture",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexHerdrRealCliStubProxyCanaryTests",
+      "method": "B_runner_herdr_launch_hits_stub_and_kills_clean",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexRealCliStubProxyCanaryTests",
+      "method": "B_agent_launch_projects_project_endpoint_and_hits_stub",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexRealCliStubProxyCanaryTests",
+      "method": "B_runner_launch_hits_stub_and_kills_clean",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexRealCliStubProxyCanaryTests",
+      "method": "Exec_turn_hits_stub_with_injected_bearer_and_nonce_and_scripted_reply",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "CodexRealCliStubProxyCanaryTests",
+      "method": "Scripted_400_on_models_fails_closed_and_reconnect_loop_is_bounded",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "FakeLlmApiSelfTests",
+      "method": "ForClaude_launch_override_survives_resolver_merge_order",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "FakeLlmApiSelfTests",
+      "method": "ForClaude_sets_base_url_key_config_dir_and_defaults",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "FakeLlmApiSelfTests",
+      "method": "ForCodex_emits_five_c_args_and_openai_api_key",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "FakeLlmApiSelfTests",
+      "method": "ForGrok_requires_chat_proxy_var_and_sets_both_base_urls",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "GrokHerdrRealCliStubProxyCanaryTests",
+      "method": "B_herdr_session_sidecar_exists_and_whenidle_confirms_via_stub",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "GrokRealCliStubProxyCanaryTests",
+      "method": "B_server_session_binds_transcript_and_whenidle_confirms_via_stub",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "GrokRealCliStubProxyCanaryTests",
+      "method": "Print_mode_dual_hit_oracle_key_on_api_key_and_nonce_on_responses",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "GrokRealCliStubProxyCanaryTests",
+      "method": "Scripted_400_on_responses_fails_closed_with_no_silent_fallback",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "GrokSizeCaptureTests",
+      "method": "Capture_native_sizes",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1313",
+      "reason": "C861_CAPTURE=1 and installed real Grok/native PTY; no model input."
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ProviderEndpointSentinelCanaryTests",
+      "method": "C0167_agent_launch_resolves_project_key_and_clear_removes_projection",
+      "arguments": [
+        "AgentKind.ClaudeCode"
+      ],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "ProviderEndpointSentinelCanaryTests",
+      "method": "C0167_agent_launch_resolves_project_key_and_clear_removes_projection",
+      "arguments": [
+        "AgentKind.Codex"
+      ],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Agents",
+      "class": "RunnerGrokAdapterReadyTestsPty",
+      "method": "C1011_real_fresh_worktree_ready_and_one_turn",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-1566",
+      "reason": "Explicit live-provider WQ-3 manual obligation; requires a separately commissioned headed real-provider run (CARD-1011), never unattended qualification."
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.ApiKeys",
+      "class": "ProviderEndpointProjectionTests",
+      "method": "C0167_Projection_names_match_RealCliStubEnv",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesAutoCompactionCalibrationTests",
+      "method": "Native_auto_compaction_emits_its_own_ACP_boundary",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesCompactionAcceptanceTests",
+      "method": "Live_file_rules_remain_effective_across_two_auto_compactions_and_resume",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesCompactionAcceptanceTests",
+      "method": "Live_inline_rules_baseline_records_two_genuine_auto_compactions",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesDispatchAcceptanceTests",
+      "method": "Real_cli_delegate_wire_reads_full_rules_before_brief_and_settles",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "ANTIPHON_HEADED_TESTS",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesHerdrAcceptanceTests",
+      "method": "Live_model_herdr_standing_attachment_obeys_rules_after_startup_ack",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesHerdrAcceptanceTests",
+      "method": "Real_cli_herdr_standing_attachment_reads_rules_before_work",
+      "arguments": [],
+      "shapes": [
+        "Explicit"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesLiveMappedDispatchTests",
+      "method": "Live_model_delegate_obeys_file_only_rules_and_consumes_full_brief",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "ANTIPHON_HEADED_TESTS",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "GrokRulesNativeReadWireTests",
+      "method": "Native_continuation_reads_cover_all_1105_rules_lines",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "ProviderEndpointDocumentationTests",
+      "method": "C0167_agent_kinds_doc_points_the_production_redirect_at_the_setting",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Application",
+      "class": "SlashCommandMenuReconciliationTests",
+      "method": "Catalog_matches_live_claude_slash_menu",
+      "arguments": [],
+      "shapes": [
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "ReleaseGateE2EEvidenceTests",
+      "method": "C599_EnvironmentIsolation",
+      "arguments": [],
+      "shapes": [
+        "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    }
+  ],
+  "additiveContract": [
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneInventoryTests",
+      "method": "EveryLiveGateHasDisposition",
+      "arguments": []
+    }
+  ]
 }

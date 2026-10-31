@@ -40,6 +40,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     /// still be the default on this machine. If this skips/fails, the card's premise has moved.
     /// </summary>
     [Test]
+    [Category("LiveClaude")]
     public async Task Control_auto_connects_a_bridge_session_before_the_first_user()
     {
         ClSession.SkipIfNotEligible();
@@ -83,6 +84,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     /// is not a fail (case 4: crash or missing composer only).
     /// </summary>
     [Test]
+    [Category("LiveClaude")]
     public async Task Settings_file_prevents_auto_connect_and_keeps_startup_records()
     {
         ClSession.SkipIfNotEligible();
@@ -135,6 +137,7 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     /// (opt-in still works). Do not assert the management menu — that is the already-armed shape.
     /// </summary>
     [Test]
+    [Category("LiveClaude")]
     public async Task Remote_control_slash_command_still_arms_after_settings_off()
     {
         ClSession.SkipIfNotEligible();

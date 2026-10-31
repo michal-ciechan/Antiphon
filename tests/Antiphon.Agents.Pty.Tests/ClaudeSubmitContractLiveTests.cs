@@ -16,6 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 public class ClaudeSubmitContractLiveTests
 {
     [Test]
+    [Category("LiveClaude")]
     [Arguments("claude")]
     public async Task Submitting_via_two_writes_completes_a_turn(string backend)
     {

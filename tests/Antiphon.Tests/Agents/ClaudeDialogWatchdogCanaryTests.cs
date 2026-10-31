@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Agents;
 public class ClaudeDialogWatchdogCanaryTests
 {
     [Test]
+    [Category("LiveClaude")]
     public async Task C680_LiveNudgeRefusesPermissionAndQuestionDialogs()
     {
         if (Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS") != "1")
