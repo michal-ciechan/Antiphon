@@ -157,7 +157,16 @@ public class ClaudeDialogWatchdogCanaryTests
                 tail.Entries.ShouldNotContain(e => e.Kind == TranscriptKinds.ToolResult && e.ToolUseId == pendingTool.ToolUseId);
                 File.Exists(marker).ShouldBeFalse();
                 (await f.ReloadAsync(nudge.Id)).AttemptStartedAt.ShouldBeNull();
-                Console.WriteLine($"C680 native cli={version} backend={runner.ActualBackend} case={tool} inputRevision={after.Dialog.InputRevision} backendDelta=0 refused=true");
+                LiveClaudeEvidence.Success("c680-native", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+                    null, null, null, null, new Dictionary<string, string>
+                    {
+                        ["cli"] = version,
+                        ["backend"] = runner.ActualBackend.ToString() ?? "",
+                        ["tool"] = tool,
+                        ["revision"] = after.Dialog.InputRevision.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["backendDelta"] = "0",
+                        ["refused"] = "true"
+                    });
             }
             finally
             {
@@ -201,7 +210,13 @@ public class ClaudeDialogWatchdogCanaryTests
                 && PromptSubmissionMatch.IsCompleteIn(body, e.Text));
         }, TimeSpan.FromSeconds(30),
             $"C680 {tool} submission precondition failed: Enter was sent but no complete transcript UserPrompt receipt arrived; prompt submission is unconfirmed, watchdog assertions were not reached.", ct);
-        Console.WriteLine($"C680 case={tool} submission=confirmed evidence=UserPrompt");
+        LiveClaudeEvidence.Success("c680-submit", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+            null, null, null, null, new Dictionary<string, string>
+            {
+                ["tool"] = tool,
+                ["submission"] = "confirmed",
+                ["evidence"] = "UserPrompt"
+            });
     }
 
     private static async Task WaitAsync(Func<Task<bool>> predicate, TimeSpan budget, string failure, CancellationToken ct)

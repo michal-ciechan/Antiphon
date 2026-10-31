@@ -1,6 +1,6 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
+using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -82,14 +82,23 @@ internal sealed class ClaudeDialogCanaryDiagnostics
         Write($"{capture}-screen.txt", snapshot.RenderedScreen);
     }
 
-    private void Append(object row) => File.AppendAllText(Path.Combine(_directory!, "observations.jsonl"),
-        Redact(JsonSerializer.Serialize(row)) + "\n");
-
-    private void Write(string name, string value) => File.WriteAllText(Path.Combine(_directory!, name), Redact(value));
-
-    private static string Redact(string value)
+    private void Append(object row)
     {
-        value = Regex.Replace(value, @"\b(?:sk-ant-|sk-proj-|ghp_|gho_|github_pat_)[A-Za-z0-9_-]+", "[REDACTED]");
-        return Regex.Replace(value, @"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [REDACTED]");
+        var text = JsonSerializer.Serialize(row);
+        LiveClaudeEvidence.AppendDiagnostic(Path.Combine(_directory!, "observations.jsonl"), "c680-observations", text);
+    }
+
+    private void Write(string name, string value) =>
+        LiveClaudeEvidence.WriteDiagnostic(Path.Combine(_directory!, name), CaseFor(name), value);
+
+    private static string CaseFor(string name)
+    {
+        if (name == "composer-screen.txt") return "c680-composer";
+        if (name == "before-enter-screen.txt") return "c680-draft";
+        if (name == "last-screen.txt" || name.EndsWith("-screen.txt", StringComparison.Ordinal)) return "c680-last-screen";
+        if (name == "normalized-transcript.json" || name == "transcript.jsonl") return "c680-transcript";
+        if (name == "launch.json") return "c680-launch";
+        if (name.EndsWith("-state.json", StringComparison.Ordinal)) return "c680-state";
+        return "c680-file";
     }
 }
