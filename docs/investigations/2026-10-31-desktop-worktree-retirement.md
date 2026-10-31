@@ -1,37 +1,29 @@
 # Desktop worktree retirement - 2026-10-31
 
-Partial completion for task `2443d3d5`: **249 old worktree directories retired; 654 remain eligible and one unregistered directory remains after a Git failure.** Full cleanup did not fit the 120-minute execution window; deletions stopped to complete verification and reporting.
+**Continuation in progress. 100 additional directories retired in this continuation; 349 total across both windows.** Updated `2026-10-31T11:58:51.360505+00:00`. Remaining eligible at this snapshot: **554**. Within the original resumed set of 654: 554 unprocessed and 0 retained after fresh guards.
 
-Used the operator's standing data-loss authority without requesting further approval. Dirty, unpushed and ignored contents were not retention reasons. Each removal used an exact literal Git path under `C:\Antiphon\worktrees`; cleanup deleted no branches or objects and changed no repository configuration, journal or stale lock. Excluded release/nightly/evidence/scratch directories were not modified. The report is the only repository file changed. All API calls were GETs. The release API records intent rather than deleting; verification cleanup is scoped to sourced Mutation tasks, so neither was used.
+The operator authorized a second two-hour window, preserving the original scope and exclusions. Each deletion uses an exact literal `git worktree remove --force` path under `C:\Antiphon\worktrees`, with per-command `core.longpaths=true`; no persistent configuration change. Guards recheck directory/.git/HEAD-log mtimes (strictly older than 24 hours), registration reciprocity, reparse points, locks, current task status, linked sessions and live consumers. Own workspace and `card-task-c490e425` are explicitly excluded. Dirty/unpushed/ignored contents are covered by standing data-loss authority; no additional approval was requested.
 
-Eligibility used the newest mtime of the directory, its `.git` file and administrative `logs/HEAD`, strictly older than 24 hours. Task states were refreshed through `agent-tasks?since=...` and individual task GETs; active tasks, linked live/unreleased sessions, locks, uncertain identities and this task were excluded. Final inventory cut: `2026-10-31T11:25:37.692648+00:00`; zero task API inspection errors.
+Operations are sequential, at most 25 per batch, with 20-second sleeps. Before every removal, cleanup yields if the host build-slot memory floor is not met or any build-slot waiter exists. Native rerun `e960ffeb` and all other active workspaces are protected. The earlier qualification finished; no release/nightly/evidence/scratch directories, unrelated registered workspaces, branches, objects, repository configuration, child journal or stale lock are deleted/edited by cleanup. Only this report is changed in the task branch. API calls are GETs. No builds or product tests run.
 
-| Measurement | Before | After |
-|---|---:|---:|
-| Registered worktrees | 1,050 | 812 |
-| Drive C free, decimal GB | 238.44 | 306.88 |
-| `git worktree list`, seconds | 11.310 | 3.765 |
-| Detached full-checkout add, seconds | 40.350 (earlier audit) | 13.999 |
+| Measurement | Original start | First window end | Continuation start | Current |
+|---|---:|---:|---:|---:|
+| Registered worktrees | 1,050 | 812 | 813 | 717 |
+| Drive C free, decimal GB | 238.44 | 306.88 | 305.51 | 327.68 |
+| Worktree list, seconds | 11.310 | 3.765 | 2.784 | 2.409 |
+| Detached add, seconds | 40.350 (prior audit) | 13.999 | not repeated | pending final probe |
 
-Net free-space increase: **68.43 GB**. Removed logical contents were **64.58 GiB** in the earlier audit. Concurrent host activity and changed load/cache limit attribution of space and timing changes. Fifteen registrations appeared and two additional registrations disappeared concurrently. Our ledger accounts for 249 successful directory removals, one failed removal whose registration disappeared, and one explicitly pruned missing-directory registration; these reconcile 1,050 to 812.
+Net free-space increase: **22.17 GB in the continuation**, **89.23 GB overall**. Retired logical contents were **81.86 GiB** in the original audit. Concurrent host activity, new registrations and changed load/cache limit attribution. The continuation final detached-add probe is pending; the first-window probe added in 13.999s and removed in 5.198s, with no residue.
 
-Final registered worktrees kept: **133 younger than 24 hours, 8 active/live-session consumers, 1 own task, 3 locked, 1 unknown task and 12 outside scope**. Another **654 eligible** registrations are deferred. All 249 successful-removal directories are absent. Their linked sessions audit returned 247 Stopped and 2 Failed, with zero unreleased-session facts or inspection errors.
+Final global classification has not yet been refreshed.
 
-Removals were sequential, with heartbeat/resource checks at no more than 25 removals and 20-second sleeps between batches; low memory caused five-minute pauses. Observed heartbeat idle values were 0.0 or 0.6 minutes, with `hangSuspected=false`; positive/low-resource observations paused work. The heartbeat ended at 10:29 with `summary.json`, idle 0.0 and no hang; both recorded PIDs were absent at 10:35. No qualification files or processes were modified.
+First-window history is preserved in commit `0bae67b08c411c5d31e5ff9ed6e9f095a78bf46d` and external `retirement-round1-report.md`: 249 successful removals; 654 eligible left; 68.43 GB net free-space increase; 64.58 GiB retired logical contents. Final first-window retained counts were 133 recent, 8 active/live, 1 own, 3 locked, 1 unknown, 12 outside scope. Low memory caused five-minute pauses. Prune removed one already-missing registration; 15 registrations appeared and two additional ones disappeared concurrently. The 249 linked-session checks returned 247 Stopped and 2 Failed, with no unreleased-session facts or inspection errors. The former heartbeat ended with summary.json, idle 0.0/no hang, and both recorded PIDs were absent. No qualification process was stopped.
 
-`git worktree prune -v` succeeded and removed only the stale registration for the already-missing `C:\Antiphon\scratch\investigate-b11dd450`. The detached probe at `C:\Users\lndco\AppData\Local\Temp\antiphon-wt-probe-2\task-2443d3d5` used commit `8edda999623a473be2d1970727c172bfb5088d59`; add and removal succeeded, removal took 5.198s, and the probe directory is absent. No builds or product tests ran. No Temp `antiphon-*-build-output` folders older than 24 hours were found; the empty listing is recorded externally.
+**Skipped residue:** `C:\Antiphon\worktrees\card-task-c490e425`. The first-window Git failure (Filename too long) removed its registration but left the directory. The guard refused a retry; it is deliberately left untouched in this continuation and requires manual handling. No approval hook rejected cleanup; one continuation batch exceeded Windows command length before process creation, resolved by shortening guard/logging text while preserving literal Git deletion paths.
 
-Git failed on `C:\Antiphon\worktrees\card-task-c490e425` with `Filename too long`, removed its administrative registration and left its directory. The fresh registration guard refused a retry. This unregistered residue needs manual handling; no alternate filesystem deletion was attempted. Subsequent removals used per-command `-c core.longpaths=true`, without persisting configuration, and had no further deletion failures. No approval hook rejected an action.
-
-Evidence and continuation files are under `C:\Users\lndco\AppData\Local\Temp\antiphon-worktree-audit`: `retirement-final-inventory.csv`, `retirement-final-summary.json`, `retirement-removals.jsonl`, `retirement-linked-sessions.json`, `retirement-old-build-outputs.csv`, probe/prune logs, and the original unchanged `audit.csv`.
-
-The ASCII continuation script contains 654 literal guarded removals matching `retirement-remaining-candidates.csv`; PowerShell parsing reported zero errors. It refreshes task/session, identity, age, heartbeat and memory guards, retains changed/unknown candidates, and preserves the same pacing. Script SHA-256: `54bac209e45f50ec4b2b9a1c859090151207c5c3b2d092e0207fd139cc3afb2e`. Run in the foreground under the existing authority:
-
-```text
-! pwsh -NoProfile -File C:\Users\lndco\AppData\Local\Temp\antiphon-worktree-audit\retire-old-worktrees.ps1
-```
+Evidence is external under `C:\Users\lndco\AppData\Local\Temp\antiphon-worktree-audit`: removal receipts, round1 snapshots, round2 baseline/progress/publications, live-consumer guards and final inventory/remaining-candidate CSVs. The prior 654-command operator script and its hash are retained as `retirement-round1-script.ps1`. No generated evidence is committed.
 
 --- next stage ---
 next: decide
-handoff: Provide a longer execution window or run the guarded continuation for 654 eligible worktrees; manually handle the unregistered c490e425 residue. Existing operator authority already covers the remaining cleanup.
+handoff: Continue the guarded retirement within the authorized window; retain c490e425 and protect the native rerun. Final verification and metrics remain pending.
 artifact: docs/investigations/2026-10-31-desktop-worktree-retirement.md
