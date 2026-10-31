@@ -912,6 +912,25 @@ public class AgentTaskServiceIntegrationTests
 
         await using (var db = CreateContext())
         {
+            var now = DateTime.UtcNow;
+            db.Projects.Add(new Project
+            {
+                Id = projectX,
+                Name = "card1622-x-" + projectX.ToString("N"),
+                GitRepositoryUrl = "https://example.test/card1622-" + projectX.ToString("N") + ".git",
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.Projects.Add(new Project
+            {
+                Id = projectY,
+                Name = "card1622-y-" + projectY.ToString("N"),
+                GitRepositoryUrl = "https://example.test/card1622-" + projectY.ToString("N") + ".git",
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
             var rows = await db.AgentTasks.Where(t => t.RootTaskId == root.Id).ToListAsync();
             foreach (var row in rows)
                 row.ProjectId = row.Id == scopeExcluded.Id ? projectY : projectX;
