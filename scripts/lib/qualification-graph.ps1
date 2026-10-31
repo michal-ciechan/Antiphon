@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -92,6 +93,40 @@ public static class QualificationGraphJson
     {
         return key == "nodes" || key == "targets" || key == "edges" || key == "resourceKeys";
     }
+    private static string CanonicalNumber(string raw)
+    {
+        // Normalize the decimal coefficient and exponent without rounding through
+        // decimal/double. In particular, a finite underflow must not become zero.
+        bool negative = raw[0] == '-';
+        string unsigned = negative ? raw.Substring(1) : raw;
+        int e = unsigned.IndexOfAny(new[] { 'e', 'E' });
+        string coefficient = e < 0 ? unsigned : unsigned.Substring(0, e);
+        BigInteger exponent = e < 0 ? BigInteger.Zero :
+            BigInteger.Parse(unsigned.Substring(e + 1), CultureInfo.InvariantCulture);
+        int point = coefficient.IndexOf('.');
+        if (point >= 0)
+        {
+            exponent -= coefficient.Length - point - 1;
+            coefficient = coefficient.Remove(point, 1);
+        }
+        coefficient = coefficient.TrimStart('0');
+        if (coefficient.Length == 0) return "0";
+        int significant = coefficient.Length;
+        while (coefficient[significant - 1] == '0') { significant--; exponent++; }
+        coefficient = coefficient.Substring(0, significant);
+        string value;
+        if (exponent < -20 || exponent > 20)
+            value = coefficient + "e" + exponent.ToString(CultureInfo.InvariantCulture);
+        else if (exponent >= 0)
+            value = coefficient + new string('0', (int)exponent);
+        else
+        {
+            point = coefficient.Length + (int)exponent;
+            value = point > 0 ? coefficient.Insert(point, ".") :
+                "0." + new string('0', -point) + coefficient;
+        }
+        return negative ? "-" + value : value;
+    }
     private static void Write(Utf8JsonWriter w, JsonElement e, string key)
     {
         switch (e.ValueKind)
@@ -108,10 +143,7 @@ public static class QualificationGraphJson
                 foreach (var v in values) Write(w, v, "");
                 w.WriteEndArray(); break;
             case JsonValueKind.Number:
-                decimal number;
-                if (e.TryGetDecimal(out number))
-                    w.WriteRawValue(number.ToString("G29", CultureInfo.InvariantCulture));
-                else w.WriteRawValue(e.GetDouble().ToString("R", CultureInfo.InvariantCulture));
+                w.WriteRawValue(CanonicalNumber(e.GetRawText()));
                 break;
             default: e.WriteTo(w); break;
         }
