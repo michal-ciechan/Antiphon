@@ -61,3 +61,13 @@ CHECKPOINT V2-MANUAL-RED commit=88ab37c77aed90118a98862d3e5835b167af0735 build=o
 ```
 
 Scheduler build260.400s,row222.004s,tests215.362s,total552.525s charged/567.530s wall. Build wait0,row15s. Method samples J4about106s,J10=43.121s,W1=65.880s; use TRX for exact values. No deadline fired. Current full-row p95 remains unknown. No source definition or policy deadline changed. The next H1 expansion checks exact required commit/tree/blob/original-tag semantics before the renewal implementation, preserving all v1 assertions and sharing one tiny real-Git seed.
+
+## Required-object producer red
+
+At0c22785c48aeb37a5b84e2cd80d4026296fcd466, OBJECTS-RED reached the intended unpublished-commit assertion: the producer ignored the requested object and emitted an authorizing proof, exit0 where refusal was required. The advanced-origin ancestor control passed first. Later tree/blob/tag/wrong-type/missing controls were not reached in this red. Feature detection kept new parameters off the unchanged producer, so no unknown-argument/missing-method/build failure earned red credit.
+
+```text
+CHECKPOINT OBJECTS-RED commit=0c22785c48aeb37a5b84e2cd80d4026296fcd466 build=ok filter=/*/Antiphon.Tests.Scripts/VolumeRetirementHostProofTests/Host_proves_complete_origin_ancestry executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-e9fd8902/.antiphon/checkpoints/20261031-064338-e98e/rows/OBJECTS-RED/run.trx slot=granted waited=0s dirty=0 source=0c22785c48aeb37a5b84e2cd80d4026296fcd466 sourceState=clean buildSource=verified
+```
+
+Terminal exit1, clean source/build verified. Method3.623s,row8.884s,build388.114s,total456.702s charged/456.703s wall; no slot wait or fired deadline. H1 retains its original v1 assertions. All required-object cases share one tiny origin/work seed; individual fresh proof scratch/output isolates the producer subject.
