@@ -975,7 +975,7 @@ $NightlySeams=@{
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
             $plan=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
-            $nodes=@(foreach($uid in $group.plannedTestIds){$node=$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid];if($null -ne $node){$node}})
+            $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
             $legacyCost=$null;$qualifiedCost=$null
             if($global:FFLoopBoundaryState.Fixture.PSObject.Properties.Name -notcontains 'replay'){
@@ -1040,7 +1040,7 @@ function Test-ActualLoopFollowsSchedule {
 # Expected launch traces are independent of the scheduler under test.
 function Test-FFPreviousRunChain {
     $fx=New-FFLoopFixture
-    $first=Invoke-FFActualLoop $fx 'chain-first' $null -Variant failure -NoExclusions
+    $first=Invoke-FFActualLoop $fx 'chain-first' $null -Variant failure
     $historyPath=Join-Path $root 'chain-history.json'
     $export=Export-NightlyPriorFailures $first.Root $historyPath -PassThru
     $history=[pscustomobject]@{Path=$historyPath}
@@ -1052,7 +1052,7 @@ function Test-FFPreviousRunChain {
         $export.History.membershipComplete -and $export.History.unresolved.Count -eq 0 -and
         $resolved.members.Count -eq 1 -and $resolved.members[0].suite -ceq 'antiphon' -and
         ($resolved.members[0].chunks -join ',') -ceq 'Priority') 'chainProducer'
-    $second=Invoke-FFActualLoop $fx 'chain-second' $history -NoExclusions
+    $second=Invoke-FFActualLoop $fx 'chain-second' $history
     $trace=@($second.Trace.Launches.key)
     $wanted=@('antiphon/Priority','antiphon/Ordinary','session-runner/Ordinary','session-runner/Priority')
     Assert-FF ($second.Schedule.orderingReason -ceq 'previous-run-order' -and
@@ -1065,7 +1065,7 @@ function Test-FFPreviousRunChain {
     $classes=$regrouped.suites[0].chunks[0].classes
     $regrouped.suites[0].chunks[0].classes=$regrouped.suites[0].chunks[1].classes
     $regrouped.suites[0].chunks[1].classes=$classes
-    $third=Invoke-FFActualLoop $regrouped 'chain-regrouped' $history -NoExclusions
+    $third=Invoke-FFActualLoop $regrouped 'chain-regrouped' $history
     $trace=@($third.Trace.Launches.key)
     $canonical=@('antiphon/Ordinary','antiphon/Priority','session-runner/Ordinary','session-runner/Priority')
     Assert-FF ($third.Schedule.orderingReason -ceq 'previous-run-plan-mismatch' -and
