@@ -9,6 +9,7 @@ function Resolve-NightlyPreviousRunOrder {
     $lanes=[Collections.Generic.List[object]]::new()
     try {
         if ($null -eq $PreviousRun) { throw $reason }
+        if ($PreviousRun.PSObject.Properties.Name -ccontains 'liveness' -and $PreviousRun.liveness -cne 'closed') { throw 'previous-run-liveness-unknown' }
         $reason='previous-run-schema'
         if ($PreviousRun.suites -isnot [array] -or [string]$PreviousRun.sha -cnotmatch '^[a-f0-9]{40}$') { throw $reason }
         if ($PreviousRun.sha -cne $CandidateSha) { throw 'previous-run-candidate-mismatch' }

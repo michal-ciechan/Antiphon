@@ -481,6 +481,7 @@ function Initialize-NightlyDispatchHistory {
         $history=Read-NightlyPriorFailures @read
         $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
+        if($summary.dispatchProgress -and $summary.dispatchProgress.PSObject.Properties.Name -ccontains 'liveness' -and $summary.dispatchProgress.liveness -cne 'closed'){throw 'history-liveness-unknown'}
         if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
         $completed=[datetimeoffset]::MinValue
         if($summary.completedAt -is [datetime]){$completed=[datetimeoffset]$summary.completedAt}
