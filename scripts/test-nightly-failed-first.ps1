@@ -591,7 +591,7 @@ function Test-FullBytesAndCoverageConserved {
     $actual = @($b.Launches.key)
     $prefix = @($b.Schedule.entries | Where-Object priorFailure)
     # This must precede all conservation comparisons and uses actual launches.
-    Assert-FF ((@($a.Launches.key) -join ',') -ceq ($canonical -join ',') -and ($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+$fx.suites[1].chunks[0].id) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
+    Assert-FF ((@($a.Launches.key) -join ',') -ceq ($canonical -join ',') -and ($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and [array]::IndexOf($actual, 'session-runner/'+@($fx.resolved.members|Where-Object {$_.suite -ceq 'session-runner'})[0].chunks[0]) -lt [array]::IndexOf($actual, $canonical[0])) 'observedPermutation'
     $anchorKeys=@($fx.anchors|ForEach-Object {'antiphon/'+$_.chunk})
     $observedAnchors=@($actual|Where-Object {$anchorKeys -ccontains $_})
     Write-FFJson (Join-Path $root 'observed-ordinals.json') @(foreach($anchor in $fx.anchors){[ordered]@{suite='antiphon';chunk=$anchor.chunk;canonicalOrdinal=($anchor.ordinal-1);dispatchOrdinal=[array]::IndexOf($actual,('antiphon/'+$anchor.chunk));className=$anchor.className}})
