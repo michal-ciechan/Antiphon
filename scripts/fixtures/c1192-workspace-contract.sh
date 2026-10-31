@@ -4420,6 +4420,42 @@ c1192_note_signal_return() {
     fi
 }
 
+c1192_exit_signal_mode() {
+    case "$mode" in slot-int-group-exit|slot-term-exit) return 0 ;; *) return 1 ;; esac
+}
+
+# Force ordinary EXIT after both CIDs publish, then deliver the existing group
+# signal while finalization owns cleanup. Entry/ready files fix the ordering;
+# the ten-second guards are provisional: six loaded full witnesses measured
+# p95 5.14s (Debug fc629ae4), approximately half that bound. Readiness files
+# establish the ordering; a longer sleep cannot satisfy this regression.
+c1192_exit_signal_hook() {
+    cat <<'C1192_EXIT_SIGNAL_HOOK'
+C1192_FINALIZER_ENTERED=0
+eval "$(declare -f c849_fixture_finalize | sed '1s/c849_fixture_finalize/c1192_real_finalize/')"
+c849_fixture_finalize() {
+    if [ "$C1192_FINALIZER_ENTERED" != 1 ]; then
+        C1192_FINALIZER_ENTERED=1
+        : > "$C1192_ROOT/cleanup-ready"
+        local until_at=$(( $(date +%s) + 10 ))
+        while [ "$(date +%s)" -lt "$until_at" ]; do command sleep 0.05; done
+        printf 'C1192_FAIL cleanup signal not delivered\n'
+        return 2
+    fi
+    c1192_real_finalize
+}
+c849_fixture_wait_slot_markers() {
+    local until_at=$(( $(date +%s) + 10 ))
+    while [ "$(date +%s)" -lt "$until_at" ]; do
+        if c1192_copied_live_cids "$CASE_DIR/.fixture-live-probes"; then exit 2; fi
+        command sleep 0.01
+    done
+    printf 'C1192_FAIL exit signal CIDs not published\n'
+    exit 2
+}
+C1192_EXIT_SIGNAL_HOOK
+}
+
 c1192_signal_witness() {
     local sig="$1" expected="$2" delivery="${3:-pid}"
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
@@ -4479,6 +4515,7 @@ c1192_signal_witness() {
     {
         printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
         c1192_dump_shell_state
+        if c1192_exit_signal_mode; then c1192_exit_signal_hook; fi
         printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")" \
             "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT; c1192_note_signal_return INT' INT"
         printf '%s\n' \
@@ -4510,7 +4547,8 @@ c1192_signal_witness() {
             && [ -f "$CASE_DIR/.fixture-live-probes" ] \
             && c1192_file_has_substr 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log" \
             && cp -f -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before" \
-            && c1192_copied_live_cids "$C1192_ROOT/live-before"; then
+            && c1192_copied_live_cids "$C1192_ROOT/live-before" \
+            && { ! c1192_exit_signal_mode || [ -f "$C1192_ROOT/cleanup-ready" ]; }; then
             armed=1
             break
         fi
@@ -4968,6 +5006,8 @@ case "$mode" in
     slot-delay) mode_slot_delay ;;
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
+    slot-int-group-exit) c1192_signal_witness INT 130 group ;;
+    slot-term-exit) c1192_signal_witness TERM 143 ;;
     slot-round2) mode_slot_round2 ;;
     slot-int-group) c1192_signal_witness INT 130 group ;;
     slot-driver-deadline) c1192_driver_deadline_witness ;;

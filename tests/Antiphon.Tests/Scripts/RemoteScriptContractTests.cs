@@ -1178,6 +1178,28 @@ public sealed class RemoteScriptContractTests
         Fact(output, "reap-unowned-survived").ShouldBe("1", output);
     }
 
+    // A signal received inside an active EXIT trap cannot invoke EXIT again.
+    // Hold the first finalizer after both proven CIDs publish, then let the
+    // existing sender deliver the signal. Every release assertion stays exact.
+    [Test]
+    [Arguments("TERM")]
+    [Arguments("INT")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Signal_during_exit_finishes_custody_cleanup(string signal)
+    {
+        var group = signal == "INT";
+        var output = C1192Run(group ? "slot-int-group-exit" : "slot-term-exit");
+        var prefix = group ? "signal-INT-group-" : "signal-TERM-";
+        Fact(output, prefix + "exit").ShouldBe(group ? "130" : "143", output);
+        var facts = group
+            ? new[] { "installed", "accepted", "containers", "procs", "lease", "volumes",
+                "foreign", "cid-kills", "bounded", "trap" }
+            : new[] { "installed", "cid-kills", "lease", "volumes" };
+        foreach (var fact in facts)
+            Fact(output, prefix + fact).ShouldBe("1", output);
+        if (group) Fact(output, prefix + "handler-returned").ShouldBe("0", output);
+    }
+
     // A group INT can interrupt a foreground poll and take the ordinary refusal
     // cleanup path after a broken handler returns. Complete cleanup and exit 2
     // must not hide that return; this fixes the schedule independently of load.
