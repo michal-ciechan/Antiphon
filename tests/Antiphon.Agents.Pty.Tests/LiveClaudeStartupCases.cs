@@ -110,6 +110,14 @@ internal static class LiveClaudeStartupCases
         try { await failed.BeforeDependentAsync(Experiment,()=>Task.FromException<StartupControl>(error),()=>dependents++); }
         catch(InvalidOperationException e) when(ReferenceEquals(e,error)) { }
         Assert(dependents==2,v,"control-failed-dependent");
+        var synchronous=new LiveClaudeStartupFixture();
+        var synchronousStarts=0;
+        for(var attempt=0;attempt<2;attempt++)
+        {
+            try { await synchronous.BeforeDependentAsync(Experiment,()=> {synchronousStarts++;throw error;},()=>dependents++); }
+            catch(InvalidOperationException e) when(ReferenceEquals(e,error)) { }
+        }
+        Assert(synchronousStarts==1 && dependents==2,v,"control-sync-failure-once");
     }
 
     internal static async Task WindowAsync()
