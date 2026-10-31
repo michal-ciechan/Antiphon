@@ -55,6 +55,10 @@ function New-Fixture {
                 'context-source' { $c.source = ('b' * 40) }
                 'context-executable' { $c.executable = 'foreign' }
                 'context-profile' { $c.profile = 'foreign' }
+                'context-tuple-pid' { $c.owner.pid++ }
+                'context-tuple-runId' { $c.owner.runId = 'foreign' }
+                'context-tuple-lane' { $c.owner.lane = 'foreign' }
+                'context-tuple-start' { $c.owner.processStartedAt = '2000-01-01T00:00:00Z' }
                 'context-owner' {
                     $p = Join-Path (Split-Path (Split-Path $path -Parent) -Parent) 'coord/native-run.lock'
                     $owner = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
@@ -208,11 +212,11 @@ function Read-Census($root) {
 function Test-WrapperOnlyPaidManifest {
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'valid-context' ($F.Starts -eq 1 -and $F.Admitted.lane -ceq 'fixture-live' -and $F.Admitted.source -ceq ('a' * 40) -and $F.Admitted.uids[0] -ceq 'fixture.A.0' -and $F.Admitted.owner.runId -ceq 'run-A' -and $F.Admitted.attempt -eq 1 -and $r.TerminalComplete)
-    foreach ($id in @('context-missing','context-lane','context-uid','context-source','context-executable','context-profile','context-owner','context-forged')) {
+    foreach ($id in @('context-missing','context-lane','context-uid','context-source','context-executable','context-profile','context-owner','context-forged','context-tuple-pid','context-tuple-runId','context-tuple-lane','context-tuple-start')) {
         $q = New-Fixture; $q.Request.Inherited.ANTIPHON_HEADED_TESTS = '1'; $F.Change = $id; $r = Run-Fixture $q
         $code = 2; $reason = 'context-mismatch'
         if ($id -eq 'context-missing') { $code = 20; $reason = 'lane-context-required' }
-        if ($id -eq 'context-owner') { $reason = 'context-stale' }
+        if ($id -eq 'context-owner' -or $id.StartsWith('context-tuple-')) { $reason = 'context-stale' }
         if ($id -eq 'context-forged') { $reason = 'context-unissued' }
         Check $id ($r.ExitCode -eq $code -and $r.Reason -ceq $reason -and $F.Starts -eq 0)
     }

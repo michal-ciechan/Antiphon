@@ -25,6 +25,7 @@ public sealed class LiveLaneRunnerTests
         rejected.ShouldBeTrue("The real manifest loader must refuse the wrapper spec before any executor.");
         await Run("WrapperOnlyPaidManifest", "valid-context", "context-missing", "context-lane", "context-uid",
             "context-source", "context-executable", "context-profile", "context-owner", "context-forged",
+            "context-tuple-pid", "context-tuple-runId", "context-tuple-lane", "context-tuple-start",
             "native-disabled", "full-inputs", "policy-edit", "reader-edit", "legacy-state");
     }
 
