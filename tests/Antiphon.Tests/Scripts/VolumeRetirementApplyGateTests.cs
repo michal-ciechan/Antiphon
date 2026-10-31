@@ -121,12 +121,13 @@ public sealed class VolumeRetirementApplyGateTests
         C1008HostFixture.RequireNativeLinux();
         using var fixture = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(fixture);
-        // Load first. A later source of c1008-retirement.sh would replace this
-        // hook with the real intent writer, and the cut would delete.
-        var interrupted = await fixture.Run("retire-temp-runner",
-            "c1609_load_retirement\n" + EnabledToken + "\nc1609_target_intent() { return 1; }");
-        interrupted.Exit.ShouldNotBe(0, "apply-gate: the intent cut still fails closed; " + interrupted.Output);
+        // Stop at the first journal save, before docker stop. A later cut would
+        // hide the resume refusal behind work this apply already did.
+        var interrupted = await fixture.Run("retire-temp-runner", EnabledToken, sourceTransform: CutAfterFirstJournal);
+        interrupted.Exit.ShouldBe(2, "apply-gate: the journal cut still fails closed; " + interrupted.Output);
+        interrupted.Output.ShouldContain("DIAGNOSIS=setup-cut", Case.Sensitive);
         AssertNoVolumeRemoval(fixture, "resume setup");
+        AssertNoContainerStop(fixture, "resume setup");
         fixture.ReloadDocker();
         var journalBefore = await File.ReadAllBytesAsync(Journal(fixture));
         var traceBefore = fixture.Trace.Length;
@@ -157,6 +158,8 @@ public sealed class VolumeRetirementApplyGateTests
             blocked.Exit.ShouldBe(2, "apply-gate: manual apply is off; " + blocked.Output);
             blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
             AssertNoVolumeRemoval(blockedFixture, "manual off");
+            AssertNoContainerStop(blockedFixture, "manual off");
+            File.Exists(Journal(blockedFixture)).ShouldBeFalse("apply-gate: manual apply off writes no journal");
         }
 
         using var enabled = new C1008HostFixture(main: false);
@@ -293,6 +296,21 @@ public sealed class VolumeRetirementApplyGateTests
 
     private static string Journal(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server", "recycle", VolumeRetirementFixture.Operation + ".json");
+
+    private static string CutAfterFirstJournal(string source)
+    {
+        const string save =
+            "    mkdir -p \"$SERVER2_ROOT/recycle\" || c1008_refuse RecycleReceiptUnavailable\n" +
+            "    c1008_save || c1008_refuse RecycleReceiptUnavailable\n" +
+            "    C1008_ACTIVE=1\n";
+        const string cut =
+            "    mkdir -p \"$SERVER2_ROOT/recycle\" || c1008_refuse RecycleReceiptUnavailable\n" +
+            "    c1008_save || c1008_refuse RecycleReceiptUnavailable\n" +
+            "    write_result false setup-cut 2\n" +
+            "    C1008_ACTIVE=1\n";
+        source.Contains(save, StringComparison.Ordinal).ShouldBeTrue("apply-gate: the first journal save is the resume cut point");
+        return source.Replace(save, cut, StringComparison.Ordinal);
+    }
 
     private static Task<(int Exit, string Output)> Recheck(C1008HostFixture fixture, string mutation)
     {
