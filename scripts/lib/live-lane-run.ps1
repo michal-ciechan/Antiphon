@@ -194,7 +194,11 @@ function Invoke-LiveLaneRun {
         }
         $result.TerminalComplete = $terminal
         $result.Classification = Get-LiveLaneClassification $result.ExitCode
-        & $Boundary.WriteReceipt (Join-Path $Request.ResultsRoot 'diagnostic.json') $result
+        # A writer can fail after creating bytes. Only a successful same-directory
+        # rename publishes the final receipt; partial/missing writes stay incomplete.
+        $pendingReceipt = Join-Path $Request.ResultsRoot 'diagnostic.pending.json'
+        & $Boundary.WriteReceipt $pendingReceipt $result
+        [IO.File]::Move($pendingReceipt, (Join-Path $Request.ResultsRoot 'diagnostic.json'))
     } catch {
         # Never serialize arbitrary exceptions from a provider, path or environment.
         if ($result.ExitCode -notin @(1,2)) { $result.ExitCode = 20; $result.Reason = 'handoff-incomplete' }
