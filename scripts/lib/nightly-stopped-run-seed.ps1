@@ -162,6 +162,7 @@ function Export-NightlyStoppedRunSeed {
                 try{
                     [xml]$xml=Read-SeedFile $trxPath
                     $rows=@(Read-NightlyTrxIdentities $trxPath)
+                    if($classes.Count -eq 0){$classes=@(Get-NightlyHistoryOrdinalStrings @($rows|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))}
                     $terminal=$xml.SelectSingleNode("//*[local-name()='ResultSummary']")
                     $times=$xml.SelectSingleNode("//*[local-name()='Times']")
                     $finish=$null
