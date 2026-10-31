@@ -464,11 +464,15 @@ public class LiveLaneEvidenceTests
         }
     }
 
-    private static int RawSinks(string diagnostics, string watchdog) =>
-        CountOf(diagnostics, "File.WriteAllText(") + CountOf(diagnostics, "File.AppendAllText(")
-        + CountOf(watchdog, "Console.WriteLine") + CountOf(watchdog, "screen:\\n");
-
-    private static int CountOf(string text, string needle) => text.Split(needle).Length - 1;
+    private static int RawSinks(string diagnostics, string watchdog)
+    {
+        var counts = LiveClaudeSinkAudit.Walk(
+        [
+            CSharpSyntaxTree.ParseText(diagnostics).GetRoot(),
+            CSharpSyntaxTree.ParseText(watchdog).GetRoot()
+        ]);
+        return counts.Console + counts.Assertion + counts.Skip + counts.Actual + counts.File + counts.Process;
+    }
 
     private static void ProveSerializerMutants()
     {

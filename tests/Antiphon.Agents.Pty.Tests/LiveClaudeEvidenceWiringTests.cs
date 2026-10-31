@@ -315,77 +315,9 @@ public class LiveClaudeEvidenceWiringTests
 
     private static SinkCounts Count(IEnumerable<(BlockSyntax Body, string Name)> methods)
     {
-        var recognized = 0;
-        var rawConsole = 0;
-        var rawAssertion = 0;
-        var rawSkip = 0;
-        var rawActual = 0;
-        foreach (var method in methods)
-        {
-            var tainted = Tainted(method.Body);
-            recognized += method.Body.DescendantNodes().OfType<InvocationExpressionSyntax>()
-                .Count(call => call.Expression.ToString().StartsWith("LiveClaudeEvidence.", StringComparison.Ordinal));
-            foreach (var call in method.Body.DescendantNodes().OfType<InvocationExpressionSyntax>())
-            {
-                var name = call.Expression.ToString();
-                var sinks = call.ArgumentList.Arguments.Any(arg => UnsafeText(arg.Expression, tainted))
-                    || UnsafeText(call.Expression, tainted);
-                if (!sinks) continue;
-                if (name.Contains("WriteLine", StringComparison.Ordinal)) rawConsole++;
-                else if (name.Contains("SkipTestException", StringComparison.Ordinal)) rawSkip++;
-                else if (name.Contains("Should", StringComparison.Ordinal))
-                {
-                    if (UnsafeText(call.Expression, tainted)) rawActual++;
-                    if (call.ArgumentList.Arguments.Any(arg => UnsafeText(arg.Expression, tainted))) rawAssertion++;
-                }
-            }
-            foreach (var thrown in method.Body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
-            {
-                if (thrown.Type.ToString() != "SkipTestException") continue;
-                if (thrown.ArgumentList?.Arguments.Any(arg => UnsafeText(arg.Expression, tainted)) == true) rawSkip++;
-            }
-        }
-        return new SinkCounts(recognized, rawConsole, rawAssertion, rawSkip, rawActual);
+        var counts = LiveClaudeSinkAudit.Walk(methods.Select(method => (SyntaxNode)method.Body));
+        return new SinkCounts(counts.Recognized, counts.Console, counts.Assertion, counts.Skip, counts.Actual, counts.File, counts.Process);
     }
-
-    private static HashSet<string> Tainted(BlockSyntax body)
-    {
-        var tainted = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var local in body.DescendantNodes().OfType<VariableDeclaratorSyntax>())
-        {
-            if (local.Initializer?.Value.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>()
-                .Any(call => call.Expression.ToString().EndsWith("SnapshotScreen", StringComparison.Ordinal)) == true)
-                tainted.Add(local.Identifier.ValueText);
-        }
-        return tainted;
-    }
-
-    private static bool UnsafeText(ExpressionSyntax expression, HashSet<string> tainted)
-    {
-        if (expression is InvocationExpressionSyntax call
-            && call.Expression.ToString().StartsWith("LiveClaudeEvidence.", StringComparison.Ordinal))
-            return false;
-        foreach (var node in expression.DescendantNodesAndSelf())
-        {
-            var textJoin = node is InterpolatedStringExpressionSyntax
-                || node is BinaryExpressionSyntax binary && binary.OperatorToken.Text == "+";
-            if (textJoin && node.DescendantNodes().Any(inner => CarriesScreen(inner, tainted)))
-                return true;
-        }
-        return ShouldActualIsRaw(expression, tainted);
-    }
-
-    private static bool ShouldActualIsRaw(ExpressionSyntax expression, HashSet<string> tainted)
-    {
-        if (expression is not MemberAccessExpressionSyntax member) return false;
-        if (!member.Name.Identifier.ValueText.Contains("Should", StringComparison.Ordinal)) return false;
-        return CarriesScreen(member.Expression, tainted);
-    }
-
-    private static bool CarriesScreen(SyntaxNode node, HashSet<string> tainted) =>
-        node is InvocationExpressionSyntax screen
-            && screen.Expression.ToString().EndsWith("SnapshotScreen", StringComparison.Ordinal)
-        || node is IdentifierNameSyntax name && tainted.Contains(name.Identifier.ValueText);
 
     private static string RunToken()
     {

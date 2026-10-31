@@ -50,7 +50,7 @@ public static class LiveClaudeEvidenceSanitizer
         {
             foreach (var pair in capture.Fields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                if (!IsToken(pair.Key) || !IsToken(pair.Value)) continue;
+                if (!IsListedField(pair.Key) || !IsToken(pair.Value)) continue;
                 text.Append('\n').Append(pair.Key).Append('=').Append(pair.Value);
             }
         }
@@ -62,11 +62,56 @@ public static class LiveClaudeEvidenceSanitizer
         if (string.IsNullOrEmpty(value) || value.Length > 80) return false;
         foreach (var character in value)
         {
-            if (character is not ((>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '_' or ':' or '-'))
+            if (character is not ((>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '_' or '-'))
                 return false;
         }
-        return true;
+        return !ContainsCredential(value);
     }
+
+    private static bool IsListedField(string key) => key is "cli" or "backend" or "tool" or "revision"
+        or "backendDelta" or "refused" or "submission" or "evidence";
+
+    private static bool ContainsCredential(string value)
+    {
+        if (value.Contains("eyJ", StringComparison.Ordinal)
+            || value.Contains("ghp_", StringComparison.Ordinal)
+            || value.Contains("gho_", StringComparison.Ordinal)
+            || value.Contains("ghs_", StringComparison.Ordinal)
+            || value.Contains("ghu_", StringComparison.Ordinal)
+            || value.Contains("github_pat_", StringComparison.Ordinal)
+            || value.Contains("sk-", StringComparison.Ordinal)
+            || value.Contains("xox", StringComparison.Ordinal)
+            || value.Contains("AKIA", StringComparison.Ordinal)
+            || value.Contains("bearer", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("oauth", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (HasRun(value, 32, IsHex)) return true;
+        // '_' splits a base64url run. The C680 test id is one long letter run after '_' and stays a token.
+        if (!value.Contains('_') && HasRun(value, 40, IsBase64)) return true;
+        return false;
+    }
+
+    private static bool HasRun(string value, int length, Func<char, bool> match)
+    {
+        var run = 0;
+        foreach (var character in value)
+        {
+            if (!match(character))
+            {
+                run = 0;
+                continue;
+            }
+            run++;
+            if (run >= length) return true;
+        }
+        return false;
+    }
+
+    private static bool IsHex(char character) =>
+        character is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
+
+    private static bool IsBase64(char character) =>
+        character is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9');
 
     public static bool ContainsSentinel(string? text)
     {

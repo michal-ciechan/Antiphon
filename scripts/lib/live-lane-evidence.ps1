@@ -178,8 +178,9 @@ function Get-Needles($ctx) {
     foreach ($item in @(Get-Prop $ctx 'sentinels')) {
         if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $custom += [string]$item }
     }
-    if ($custom.Count -gt 0) { return $custom }
-    return @($script:SentinelFragments)
+    $needles = @($script:SentinelFragments)
+    if ($custom.Count -gt 0) { $needles += $custom }
+    return $needles
 }
 
 function Test-PublicationFault($ctx) {
@@ -244,11 +245,12 @@ function Invoke-EvidenceScan($ctx) {
         if ([string]::IsNullOrWhiteSpace($rowDir) -or -not (Test-Path -LiteralPath $rowDir -PathType Container)) { return 'missing-trx' }
         $files = New-Object System.Collections.Generic.List[string]
         try {
-            foreach ($file in [IO.Directory]::EnumerateFiles($rowDir, '*', [IO.SearchOption]::AllDirectories)) { $files.Add($file) }
+            foreach ($file in [IO.Directory]::EnumerateFileSystemEntries($rowDir, '*', [IO.SearchOption]::AllDirectories)) { $files.Add($file) }
         } catch { return 'unreadable' }
         foreach ($file in $files) {
             $item = Get-Item -LiteralPath $file -Force
-            if ($item.PSIsContainer) { return 'unreadable' }
+            if (Test-Sentinel ([string]$item.Name) $needles) { return 'sentinel-present' }
+            if ($item.PSIsContainer) { continue }
             if ($item.Length -gt 8388608) { return 'unreadable' }
             if ($item.Length -eq 0) { continue }
             $payload = ''
@@ -317,6 +319,58 @@ function Invoke-EvidenceScan($ctx) {
         $reportText = Read-RequiredText $report 'report-missing'
         if (-not $reportText.Ok) { return 'report-missing' }
         if ($reportText.Text -notmatch [regex]::Escape($expectedSource)) { return 'stale-source' }
+    }
+    $tree = Test-BoundEvidenceTree $ctx $needles
+    if ($tree) { return $tree }
+    return ''
+}
+
+function Test-BoundEvidenceTree($ctx, [string[]]$needles) {
+    $roots = New-Object System.Collections.Generic.List[string]
+    $evidenceRoot = [string](Get-Prop $ctx 'evidenceRoot')
+    if (-not [string]::IsNullOrWhiteSpace($evidenceRoot)) { $roots.Add($evidenceRoot) }
+    $resultsRoot = [string](Get-Prop $ctx 'resultsRoot')
+    $checkpointRun = [string](Get-Prop $ctx 'checkpointRun')
+    if (-not [string]::IsNullOrWhiteSpace($resultsRoot) -and -not [string]::IsNullOrWhiteSpace($checkpointRun)) {
+        $roots.Add((Join-Path $resultsRoot $checkpointRun))
+    }
+    foreach ($directory in $roots) {
+        $reason = Test-EvidenceTree $directory $needles
+        if ($reason) { return $reason }
+    }
+    return ''
+}
+
+function Read-BoundedText([string]$path, [long]$length) {
+    if ($length -le 8388608) { return [IO.File]::ReadAllText($path) }
+    $stream = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $count = 8388608
+        $buffer = New-Object byte[] $count
+        $read = $stream.Read($buffer, 0, $count)
+        return [Text.Encoding]::UTF8.GetString($buffer, 0, $read)
+    } finally { $stream.Dispose() }
+}
+
+function Test-EvidenceTree([string]$directory, [string[]]$needles) {
+    if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path -LiteralPath $directory -PathType Container)) { return '' }
+    $entries = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($directory, '*', [IO.SearchOption]::AllDirectories)) {
+            $entries.Add($entry)
+        }
+    } catch { return 'unreadable' }
+    foreach ($entry in $entries) {
+        $item = Get-Item -LiteralPath $entry -Force
+        if (Test-Sentinel ([string]$item.Name) $needles) { return 'sentinel-present' }
+        if ($item.PSIsContainer) { continue }
+        if ($item.Length -eq 0) { continue }
+        $payload = ''
+        try { $payload = Read-BoundedText $entry $item.Length }
+        catch { return 'unreadable' }
+        $script:EvidenceMalformed = $false
+        if (Test-Sentinel $payload $needles) { return 'sentinel-present' }
+        if ($script:EvidenceMalformed) { return 'encoded-sentinel' }
     }
     return ''
 }
@@ -428,6 +482,7 @@ if ($Case -eq 'CompletedRows') {
         cases = @(Get-Prop $ctx 'cases')
         sentinels = @(Get-Prop $ctx 'sentinels')
         producers = $producers
+        resultsRoot = [string](Get-Prop $ctx 'resultsRoot')
         receipt = [string](Get-Prop $ctx 'receipt')
         summary = [string](Get-Prop $ctx 'summary')
         publicSummary = [string](Get-Prop $ctx 'publicSummary')
@@ -446,8 +501,15 @@ if ($Case -eq 'OuterPublish') {
     $gate = Test-PublicationGate $ctx
     if ($gate) { Exit-Evidence 2 $gate }
     $producers = Get-Items (Get-Prop $ctx 'producers')
+    $run = [string](Get-Prop $ctx 'checkpointRun')
+    $root = [string](Get-Prop $ctx 'resultsRoot')
+    $stateReady = $false
+    if (-not [string]::IsNullOrWhiteSpace($run) -and -not [string]::IsNullOrWhiteSpace($root)) {
+        $statePath = Join-Path (Join-Path $root $run) 'state.json'
+        if (Test-Path -LiteralPath $statePath -PathType Leaf) { $stateReady = $true }
+    }
     $scan = $ctx
-    if ($producers.Count -eq 0) {
+    if ($stateReady -or $producers.Count -eq 0) {
         $outputs = Get-Items (Get-Prop $ctx 'outputs')
         if ($outputs.Count -eq 0) { Exit-Evidence 2 'missing-trx' }
         $built = @()
@@ -457,6 +519,7 @@ if ($Case -eq 'OuterPublish') {
         $scan = [pscustomobject]@{
             source = [string](Get-Prop $ctx 'source')
             checkpointRun = [string](Get-Prop $ctx 'checkpointRun')
+            resultsRoot = [string](Get-Prop $ctx 'resultsRoot')
             cases = @(Get-Prop $ctx 'cases')
             sentinels = @(Get-Prop $ctx 'sentinels')
             producers = $built
