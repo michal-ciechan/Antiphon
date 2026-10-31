@@ -25,6 +25,22 @@
         "fixture-db"
       ],
       "quota": null
+    },
+    {
+      "id": "windows-aux",
+      "capability": {
+        "platform": "Windows",
+        "hostLabel": "fixture-aux-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "bindingDigest": "9999999999999999999999999999999999999999999999999999999999999999",
+      "parallelism": 1,
+      "resourceKeys": [
+        "fixture-aux-lock",
+        "fixture-aux-db"
+      ],
+      "quota": null
     }
   ],
   "nodes": [
