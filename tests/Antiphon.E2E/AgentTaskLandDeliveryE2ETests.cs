@@ -206,8 +206,9 @@ public class AgentTaskLandDeliveryE2ETests
     private async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.ArrangeOutcomeAsync(outcome);
-        await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        var note = await f.ReceiptAsync(outcome == "conflict" ? LandNotificationKind.Conflict : LandNotificationKind.Outcome);
+        var request = await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var note = await f.ReceiptAsync(outcome == "conflict" ? LandNotificationKind.Conflict : LandNotificationKind.Outcome,
+            requestId: request);
         await using (var db = f.CreateContext())
         {
             var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == note.SourceEventId);
