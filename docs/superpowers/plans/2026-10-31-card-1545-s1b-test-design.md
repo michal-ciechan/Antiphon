@@ -140,6 +140,21 @@ The exact method filter is always
 CP-2/CP-16. Scripts are runtime inputs, so mutating their actual decision branch
 must affect the same method that Code runs.
 
+Closed method roster (all in `tests/Antiphon.Tests`):
+
+| Slice | Exact treenode filter |
+|---|---|
+| S1b-admission | `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/LockBeforeSlot` |
+| S1b-admission | `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/WrapperOnlyPaidManifest` |
+| S1b-admission | `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/ChildEnvironmentIsScoped` |
+| S1b-admission | `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/DeadlineJoinsOwnedChildren` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/ProviderOutcomeIsDistinct` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/MidRunOutageAfterReceiptIsInconclusive` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/HealthyProviderAssertionStaysRed` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/TypedSetupOutcomes` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/SkipAndZeroNeverGreen` |
+| S1b-outcomes | `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/StaleSharedLockRefuses` |
+
 | ID | Behaviour/layer | Exact class.method / script case | Variants, decisive oracle and reachability |
 |---|---|---|---|
 | V-1 | Admission ordering, script integration | Runner.LockBeforeSlot / C1545_LockBeforeSlot | `ordered`: real lock acquired before any slot/start. `busy`: foreign live owner, exit 21, zero slot/start calls, unchanged owner. `slot-timeout`: own lock then bounded denied slot, exit 4, zero starts and own lock released. `commission`, `budget`: omit commission or exhaust supplied fake budget, exit 20, zero starts. All source/context inputs otherwise valid. |
@@ -396,7 +411,7 @@ still carry valid evidence for every other identity component.
 | PC-23 / G-23 | Store mapped lane exit in rawChildExit | Outcome.ProviderOutcomeIsDistinct/raw-child: raw child 3/8 preserved, lane 2 | Valid typed invalid terminal record separates the namespaces |
 | PC-24 / G-24 | Permit green without terminal artifact completeness | Outcome.ProviderOutcomeIsDistinct/evidence: missing evidence gives 20 | Healthy exact roster; remove evidence only, not identity/schema |
 | PC-25 / G-25 | Replace exact nonzero UID multiset equality by passing-count test | Outcome.SkipAndZeroNeverGreen/exact-roster: same counts/wrong UID gives 2 | Complete row records; no typed refusal that explains zero |
-| PC-26 / G-26 | Ignore skipped count/rows when selecting green | Outcome.SkipAndZeroNeverGreen/skipped: known skip gives 20 | One passed plus one skipped expected UID; no missing roster |
+| PC-26 / G-26 | Admit a skipped terminal row as passed in the row-success predicate | Outcome.SkipAndZeroNeverGreen/skipped: known skip gives 20 | Exact roster with a generic terminal skip and no independent typed setup refusal; inspect any redundant aggregate skip guard during binding so it cannot mask this defect |
 | PC-27 / G-27 | Map a known external setup status to 1 instead of 20 | Outcome.TypedSetupOutcomes/external-setup: exact status/subtype table | Parameterized recipe variants: AuthMissing, AuthExpired, QuotaExceeded, DependencyUnavailable, StartupDefaultAbsent; each mutated separately; other branches unchanged |
 | PC-28 / G-28 | Map healthy SetupContractViolation to inconclusive | Outcome.TypedSetupOutcomes/setup-contract: lane exit must be 1 | Deterministic healthy setup evidence present; no outage |
 | PC-29 / G-29 | Accept a prompt fragment instead of complete body equality | Outcome.MidRunOutageAfterReceiptIsInconclusive/prompt-partial: lane exit must be 1 | All session/request/type/order facts valid, alternative probe absent |
@@ -442,6 +457,10 @@ baseline-green / break / assertion-red / restore / green, with fresh evidence an
 forced builds as the owner contract requires. An implementation that moves a guard
 must update its recipe and reachability record, not declare its mutant equivalent.
 No broad class PC filters. Controls sharing a file/method cannot be batched together.
+If an implementation has redundant checks, the binder must record the masking
+checks and a compiling payload that exposes the invariant's failure without
+changing unrelated safeguards. A surviving single-site mutant is not a red witness;
+an unresolved redundant-check seam returns to higher-tier design, not Low execution.
 
 TestDesign audit: **guards=58, mapped=58, missing=0, duplicate PC maps=0**.
 Execution audit: **PCs run=0/58; variant cycles run=0/68**, pending Code, ordinary
@@ -482,7 +501,7 @@ as incomplete.
    outage attribution and aggregate precedence, preserving raw child outcomes;
    wire the wrapper to this classifier and bound probes/retry counters. Commit/push
    before CP-16. Run CP-16 and, because this slice edits the shared wrapper path,
-   rerun CP-2 as the explicit after-outcomes regression row below. Count all reruns.
+   run the admission filter again as CP-23 below. Count all reruns.
    Bind actual methods/assertion inventories and candidate PC sites; keep payloads
    labelled binding required after Code. No paid/native or release enablement.
 
@@ -540,11 +559,12 @@ timeouts from estimate 10, and `--row-timeout` also replaces the build deadline.
 Use the documented import path (Program.Import/LoadSelection inspected):
 
 ```text
-dotnet run --project tools/Antiphon.Checkpoints -- import --plan docs/superpowers/plans/2026-10-31-card-1545-s1b-test-design.md --out .antiphon/s1b-checkpoints.yaml
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label s1b-tool-import -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-s1b-tool/ -- import --plan docs/superpowers/plans/2026-10-31-card-1545-s1b-test-design.md --out .antiphon/s1b-checkpoints.yaml
 ```
 
-That bootstrap/build driver goes through `scripts/build-slot.ps1`; afterwards run
-the built checkpoint tool with no implicit build. Set only these timeout/scheduling
+The bootstrap/build driver above goes through `scripts/build-slot.ps1`; afterwards
+invoke the emitted tool DLL directly with `dotnet <actual-isolated-tool-dll>`,
+recording its path/hash, so there is no implicit build or outer held slot. Set only these timeout/scheduling
 values in the ignored imported YAML, preserving all table selections/counts:
 `build.slotWaitMinutes: 5`, `timeouts.rowMinutes: 16`, each
 `checkpoints[].timeoutMinutes: 4`, `parallel.maxRows: 1`. This gives the build the
@@ -581,6 +601,19 @@ restore bookkeeping = **25 minutes per variant**. Thus PC execution floor =
 All methods use the same estimate pending their first measured samples. A numeric
 zero saving is intentional: do not assume a compiled-pack reuse exception to the
 forced-build contract, or batch controls sharing production files/methods.
+
+| Exact method filter (same project) | Variant cycles | Estimated PC minutes |
+|---|---:|---:|
+| `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/LockBeforeSlot` | 7 | 175 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/WrapperOnlyPaidManifest` | 13 | 325 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/ChildEnvironmentIsScoped` | 3 | 75 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneRunnerTests/DeadlineJoinsOwnedChildren` | 5 | 125 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/ProviderOutcomeIsDistinct` | 6 | 150 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/MidRunOutageAfterReceiptIsInconclusive` | 12 | 300 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/HealthyProviderAssertionStaysRed` | 4 | 100 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/TypedSetupOutcomes` | 14 | 350 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/SkipAndZeroNeverGreen` | 3 | 75 |
+| `/*/Antiphon.Tests.Scripts/LiveLaneOutcomeTests/StaleSharedLockRefuses` | 1 | 25 |
 
 Total planned machine time = setup 2 + ordinary build 16 + ordinary V/R execution
 6 + PC baseline/red/restore/green 1,700 = **1,724 minutes**, plus admission waits
