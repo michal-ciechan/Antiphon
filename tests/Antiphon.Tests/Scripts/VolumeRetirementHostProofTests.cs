@@ -51,6 +51,58 @@ public sealed class VolumeRetirementHostProofTests
             heads.Exit.ShouldBe(0, heads.Output);
             heads.Output.ShouldContain(tip);
             heads.Output.ShouldContain("refs/heads/main");
+
+            // One seed supplies all renewal controls; every producer invocation
+            // still owns a fresh origin-only proof repository and output.
+            (await Git(work, "tag", "-a", "published", "-m", "published", tip)).Exit.ShouldBe(0);
+            await File.WriteAllTextAsync(Path.Combine(work, "sentinel"), "advanced\n");
+            (await Git(work, "add", "sentinel")).Exit.ShouldBe(0);
+            (await Git(work, "commit", "-qm", "advanced")).Exit.ShouldBe(0);
+            var publishedTree = (await Git(work, "rev-parse", "HEAD^{tree}")).Output.Trim();
+            var publishedBlob = (await Git(work, "rev-parse", "HEAD:sentinel")).Output.Trim();
+            var publishedTag = (await Git(work, "rev-parse", "refs/tags/published")).Output.Trim();
+            (await Git(work, "update-ref", "refs/tags/published-blob", publishedBlob)).Exit.ShouldBe(0);
+            (await Git(work, "push", "-q", "origin", "main", "--tags")).Exit.ShouldBe(0);
+            await File.WriteAllTextAsync(Path.Combine(work, "sentinel"), "unique unpublished bytes\n");
+            (await Git(work, "add", "sentinel")).Exit.ShouldBe(0);
+            (await Git(work, "commit", "-qm", "unpublished")).Exit.ShouldBe(0);
+            (await Git(work, "tag", "-a", "private", "-m", "private")).Exit.ShouldBe(0);
+            var child = (await Git(work, "rev-parse", "HEAD")).Output.Trim();
+            var privateTree = (await Git(work, "rev-parse", "HEAD^{tree}")).Output.Trim();
+            var privateBlob = (await Git(work, "rev-parse", "HEAD:sentinel")).Output.Trim();
+            var privateTag = (await Git(work, "rev-parse", "refs/tags/private")).Output.Trim();
+            foreach (var (label, oid, type, admitted) in new[]
+            {
+                ("ancestor", tip, "commit", true), ("unpublished-commit", child, "commit", false),
+                ("reachable-tree", publishedTree, "tree", true), ("unpublished-tree", privateTree, "tree", false),
+                ("advertised-blob", publishedBlob, "blob", true), ("unpublished-blob", privateBlob, "blob", false),
+                ("advertised-tag", publishedTag, "tag", true), ("unpublished-tag", privateTag, "tag", false),
+                ("wrong-type", tip, "blob", false), ("missing", new string('f', 40), "commit", false)
+            })
+            {
+                var destination = Path.Combine(root, label); Directory.CreateDirectory(destination);
+                var request = System.Text.Json.JsonSerializer.Serialize(new[] { new { objectId = oid, type } });
+                var command = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
+                    "$original=${function:Invoke-C1609HostGit}; " +
+                    "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
+                    "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/renewal.git'){$env:C1609_BARE}else{$_}}); " +
+                    "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
+                    "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io }; " +
+                    "$required=@{};if((Get-Command Write-C1008HostOriginProof).Parameters.ContainsKey('RequiredObjects')) { " +
+                    "$required.RequiredObjects=@($env:C1609_REQUIRED|ConvertFrom-Json) }; " +
+                    "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/renewal.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
+                    "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/renewal.git') " +
+                    "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @required";
+                var renewal = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", destination),
+                    ("C1609_LOG", Path.Combine(root, "renewal.log")), ("C1609_REQUIRED", request) });
+                if (admitted) renewal.Exit.ShouldBe(0, "H1 fresh origin graph proves " + label + "; " + renewal.Output);
+                else
+                {
+                    renewal.Exit.ShouldNotBe(0, "H1 renewal must refuse " + label + " rather than merely refresh a timestamp; " + renewal.Output);
+                    Directory.GetFiles(destination).Any(p => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(p), "^[0-9a-f]{64}$"))
+                        .ShouldBeFalse("H1 a refused required object cannot publish an authorizing proof header");
+                }
+            }
         }
         finally { Directory.Delete(root, recursive: true); }
     }
