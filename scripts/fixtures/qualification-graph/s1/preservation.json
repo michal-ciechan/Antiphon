@@ -8,7 +8,9 @@
     "scripts/lib/nightly-tests-impl.ps1": "45895b47b338761a93bf30530a2ed54ad5888a111e52a7cd5d1be3f936e08e31",
     "scripts/lib/nightly-failure-history.ps1": "8243fbcd27419f064855f5f1640fffef347edcfd844be9c6b4976a76de61a3ed",
     "scripts/nightly-run.ps1": "cffd621709dd6d99427acf78ef3b4826db7f12f3c3d4c06650c8f43532dae227",
-    "scripts/nightly-tests.ps1": "144b7078a0ffed09c59e7bfb3787f58464231c140d4e401739f5b7b78c01d68b"
+    "scripts/nightly-tests.ps1": "144b7078a0ffed09c59e7bfb3787f58464231c140d4e401739f5b7b78c01d68b",
+    "scripts/lib/qualification-supervisor-heartbeat.ps1": "de467c1c5363409f7751271bfd659381a8aa2501f84f5787f950810cfe518f0c",
+    "scripts/test-qualification-supervisor-heartbeat.ps1": "42fbec6e67aaf5194bf79ab3bb344ffbad81d55fa15df184e41e1f3827072f60"
   },
   "policy": {
     "schemaVersion": 4,

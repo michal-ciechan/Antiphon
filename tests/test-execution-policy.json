@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387",
+  "policyHash": "c65a202aa95b6623255f5dca94715843c70261b5fbb9c7add736e80fe3c799cc",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1356,6 +1356,12 @@
     {
       "id": "test-nightly-failed-first",
       "path": "scripts/test-nightly-failed-first.ps1",
+      "disposition": "argument-consumer",
+      "wildcard": false
+    },
+    {
+      "id": "test-qualification-graph",
+      "path": "scripts/test-qualification-graph.ps1",
       "disposition": "argument-consumer",
       "wildcard": false
     }
