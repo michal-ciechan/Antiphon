@@ -34,7 +34,7 @@ Terminal wait exit1. Output cleanup reported still-present and retained bin-h7-b
 
 Red evidence was committed/pushed as dffe931e303bd33ef9ed3a052084c5e34d65c1df before the fixture repair 98cde6eabd060bb07bd6f898b428f0cc9e71a8b8. The eight-line fixture change conditionally binds /etc/alternatives read-only beside the existing /usr/bin bind. No production/test assertion/timeout/definition changes. The awk comparison arrived in 85776c1c8e201699aa1318cb2f00d69f85b5e83f; its helper filesystem requirement exposed the pre-existing incomplete chroot.
 
-H7 green: 1/1/0/0 at the repair SHA, including Ready admission, unpublished child, target-B absence, no helper remote lookup and seven malformed-proof refusal controls. Compiler197.99s, scheduler build247.514s; admission105s (build30s,row75s); test94.902s, row99.860s. Total wall478.619s/charged373.626s. Baseline failed early; its shorter duration is not a comparable full-method performance sample. No p95 claim or timeout increase.
+H7 green: 1/1/0/0 at the repair SHA, including Ready admission, unpublished child, target-B absence, no helper remote lookup and seven malformed-proof refusal controls. Compiler197.99s, scheduler build247.514s; admission105s (build30s,row75s); test94.902s, row99.860s. Total wall478.619s/charged373.626s. Baseline failed early; its shorter duration is not a comparable full-method performance sample. No p95 claim; test-level timeouts are unchanged (focused manifest-budget caveat below).
 
 ```text
 CHECKPOINT CP-14 commit=98cde6eabd060bb07bd6f898b428f0cc9e71a8b8 build=ok filter=/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-042359-0e52/rows/CP-14/run.trx slot=granted waited=75s dirty=0 source=98cde6eabd060bb07bd6f898b428f0cc9e71a8b8 sourceState=clean buildSource=verified
@@ -43,3 +43,23 @@ CHECKPOINT CP-14 commit=98cde6eabd060bb07bd6f898b428f0cc9e71a8b8 build=ok filter
 Terminal wait exit0, source clean/build verified. Run20261031-042359-0e52. Optional phases /tmp/h7-green-phases; producing outputs retained for the real land evaluator and later literal cleanup.
 
 Real `audit-land-verification-graph.ps1 -Check` passed against the current tip using the evaluator from that verified build, through the host gate; no -Update. Raw log .antiphon/h7-land-check.log. Source definitions are unchanged. Shared rows next use fresh isolated outputs and exact imported plan filters/floors, CP-3=28m, CP-4=5m, CP-15=6m from the commissioned prior Debug caps.
+
+## CP-3 complete
+
+Exact full row at 5d8115e003e2af498fe9e57372e4a8fce5b567cf:25 executed/25 passed/0 failed/0 skipped. Source differs from the repair only by its evidence report. One fresh build, compiler209.07s (1444 warnings/zero errors), scheduler build260.038s. Admission90s (build60s,row30s); testsWall1464.605s, row1469.896s, total charged1754.877s/wall1844.845s. Charged runtime is29m14.877s, below30m; wall includes89.968s admission. The retained28m row cap did not fire. This is a complete measured Debug sample, not population p95; next Code should retain the narrow45.123s charged margin when packing qualification and never blindly widen it. No further timing-only rerun.
+
+```text
+CHECKPOINT CP-3 commit=5d8115e003e2af498fe9e57372e4a8fce5b567cf build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementContentTests*)|(VolumeRetirementReceiptTests*)/* executed=25 passed=25 failed=0 skipped=0 trx=/work/worktrees/task-7dd4e872/.antiphon/checkpoints/20261031-043524-73f4/rows/CP-3/run.trx slot=granted waited=30s dirty=0 source=5d8115e003e2af498fe9e57372e4a8fce5b567cf sourceState=clean buildSource=verified
+```
+
+Terminal wait exit0, run20261031-043524-73f4. Timing root /tmp/h7-cp3-phases. Slowest methods (phase-journal wall seconds):
+
+- Journal_intents_and_partial_resume_are_exact: 517.306s
+- Manual_attestation_is_exact_and_cannot_waive_findings: 284.184s
+- Changed_content_and_remote_proof_refuse: 158.079s
+- Private_origin_advanced_head_uses_real_host_proof: 134.739s
+- Current_tooling_and_missing_history_do_not_block: 53.195s
+
+## Budget declaration caveat
+
+The focused H7 manifests retained the importer's15m row cap instead of the plan's historical CP-14 provisional2m cap. This is a manifest-budget deviation; neither run approached2m execution (40.705s red,99.860s green), no timeout fired, no test-level timeout or assertion changed, and the unchanged full H7 also passed in CP-3. Original resolved manifests/receipts remain untouched. The requested shared rows use the explicit prior Debug caps28m/5m/6m. Do not copy the focused importer default into later execution.
