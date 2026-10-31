@@ -22,6 +22,14 @@ $script:LiveLaneProtectedPaths = @(
     'scripts/lib/nightly-coverage.ps1'
 )
 
+# Dot-source in this script scope. A dot-source inside Initialize-LiveLaneNightly
+# would define the readers only until that function returned.
+. (Join-Path $PSScriptRoot 'nightly-common.ps1')
+. (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'nightly-tests-impl.ps1')
+$script:LiveLaneNightlyReady = $true
+
 function ConvertTo-LiveLaneList {
     param($Value)
     if ($null -eq $Value) { return @() }
@@ -31,6 +39,11 @@ function ConvertTo-LiveLaneList {
 function Get-LiveLaneProp {
     param($Object, [string]$Name)
     if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Object.Keys)) {
+            if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) { return $Object[$key] }
+        }
+    }
     foreach ($p in @($Object.PSObject.Properties)) {
         if ([string]::Equals([string]$p.Name, $Name, [StringComparison]::OrdinalIgnoreCase)) { return $p.Value }
     }
@@ -97,12 +110,8 @@ function Read-LiveLaneContextObject {
 
 function Initialize-LiveLaneNightly {
     param([string]$RepoRoot)
-    if ($script:LiveLaneNightlyReady) { return }
-    $lib = Join-Path $RepoRoot 'scripts/lib'
-    . (Join-Path $lib 'nightly-common.ps1')
-    . (Join-Path $lib 'nightly-coverage.ps1')
-    . (Join-Path $lib 'nightly-policy.ps1')
-    . (Join-Path $lib 'nightly-tests-impl.ps1')
+    if ($script:LiveLaneNightlyReady -and (Get-Command Get-NightlyFileSha256 -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command Get-NightlyFileSha256 -ErrorAction SilentlyContinue)) { throw 'nightly-readers-not-loaded' }
     $script:LiveLaneNightlyReady = $true
 }
 
@@ -331,6 +340,7 @@ function Invoke-LiveLaneDiscovery {
         exitCode = $exitCode
         producerAccepted = $accepted
         reason = $reason
+        detail = $errorText
         discoveryMs = [int]$started.ElapsedMilliseconds
         nodes = @($nodes)
     }
@@ -338,7 +348,7 @@ function Invoke-LiveLaneDiscovery {
     ($capture | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $capturePath -Encoding utf8
     return @{
         Ok = $accepted
-        Error = $(if ($accepted) { '' } else { $(if ($reason) { $reason } else { $errorText }) })
+        Error = $(if ($accepted) { '' } else { $(if ($errorText) { $errorText } else { $reason }) })
         LaunchCount = [int]$script:LiveLaneLaunchCount
         Nodes = @($nodes)
         AssemblyHash = $hash
