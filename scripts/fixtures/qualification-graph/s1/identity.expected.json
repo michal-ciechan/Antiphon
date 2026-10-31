@@ -12,9 +12,9 @@
   ],
   "uidBytes": "[\"Fixture.A.0\",\"Fixture.A.1\"]",
   "uidSetDigest": "29afb3ce875aa830333611c8d17ed6a95dc2cf925e1288e88a3e44fbb4bab9b2",
-  "graphDigest": "b73be971e319fb219c98f31871dd3313ac5284d1ba40fa17421daab8392692ae",
+  "graphDigest": "51a1f9e869da790df805e3f9e0078000b21dc3be25e3267c7682f1522224f45b",
   "catalogPins": {
-    "catalog-binding-B.json": "09a80ec1a7cc58d142641178c70f5d7c7e85ec16ff519764a57ff4e8a9ae5136",
-    "catalog-target-B.json": "93e33309eeea91d93b4427cf57f436b10e7bfa1c01b09e43d2fe41893cfa9211"
+    "catalog-binding-B.json": "7404795f2d0b6f4651bcb6b7c9b1fefc40334b945dfaec8944d8b8a0c7fab82f",
+    "catalog-target-B.json": "f880024484dfe38f93b1e3a660f8bcf5e1fdc3d83ac096b43ddf1f25df2acc74"
   }
 }
