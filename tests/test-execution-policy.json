@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387",
+  "policyHash": "833dc8223602c98959a9d6d0b571ca01401bb5a4210e074cf6d4344b78715004",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -865,6 +865,48 @@
           "class": "Card1619StopAttributionTests",
           "platform": "windows",
           "reason": "Linux-only by construction: stop attribution requires actual Linux PTY signals and child identity. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619LinuxCustodyStopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native cgroup-v1 pids/freezer custody and /proc descendant checks require Linux. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619LinuxStopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: runner stop routes launch /bin/sh and validate Linux /proc process identity and signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619RunnerExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real detached Linux PTY exits require /bin/sh, /proc start ticks and libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "Card1619UnixExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the native Linux Porta PTY wait path launches /bin/sh and observes libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card1619LinuxHostExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: detached Linux PTY exit observation requires /bin/sh, /proc start ticks and libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card1619StopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux stop boundaries require /bin/sh, libc signals and /proc storage refusal. The case remains required on Linux.",
           "owner": "CARD-1619"
         },
         {

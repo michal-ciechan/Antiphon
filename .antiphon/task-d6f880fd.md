@@ -77,6 +77,30 @@ reverse-coverage suite=pty-host row=Card1619StopIntentTests concrete=Antiphon.Pt
 reverse-coverage suite=pty-host row=Card1619StopIntentTests concrete=Antiphon.PtyHost.Tests.Card1619StopIntentTests declaring=Antiphon.PtyHost.Tests.Card1619StopIntentTests signature=Write_failure_still_stops_and_preserves_live_issuer_attribution(System.Boolean)
 ```
 
+## Policy repair
+
+Baseline evidence commit: a339d2ddf4cda667e5d4ea095fc0cf8debf99ead.
+
+Added six rc Windows exclusion rows, owned by CARD-1619, using the established Linux-only reason prefix. All six classes already import Antiphon.TestSupport and carry the real pinned NativeLinuxOnlyAttribute; no marker, witness, baseline, legacy digest, assertion or production code changed.
+
+| Suite | Class | Source inspection confirming Linux dependency |
+|---|---|---|
+| session-runner | Card1619LinuxCustodyStopIntentTests | RequireV1 calls RequireNativeLifecycle, requires delegated cgroup-v1 pids/freezer roots, checks /proc descendants and actual SIGKILL custody records. |
+| session-runner | Card1619LinuxStopIntentTests | Fixture launches /bin/sh; tests inspect /proc stat/boot ID and LinuxProcessIdentity before real process signals, with /proc storage refusal. |
+| session-runner | Card1619RunnerExitTests | NativeFixture launches /bin/sh, reads /proc PID start ticks and calls libc kill to test actual detached host/runner exits. |
+| agents-pty | Card1619UnixExitTests | Child uses /bin/sh with the real Porta UnixPty backend and libc kill; validates actual signal/code observation. |
+| pty-host | Card1619LinuxHostExitTests | Detached Linux host launches /bin/sh and checks /proc start ticks before libc kill; verifies manifest and live evidence. |
+| pty-host | Card1619StopIntentTests | Real stop fixture launches /bin/sh, invokes libc kill and checks durable signal records and unwritable /proc diagnostics. |
+
+The prior fafc0e86 report and commits f516c6fc11ab8545b6dde4e5168dafd4cdb9afec and 54d3fb068a71b05a4cafa6e1673502a0282ea3e3 were read. This follows their row pattern and retains synthetic fixture isolation. The referenced c6a737d3 report is absent from its origin branch; the actual base failures were independently reproduced above.
+
+Get-NightlyPolicyHash from scripts/lib/nightly-common.ps1 and scripts/lib/nightly-policy.ps1 recomputed policyHash:
+
+- Old: 7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387
+- New: 833dc8223602c98959a9d6d0b571ca01401bb5a4210e074cf6d4344b78715004
+
+Pinned attribute SHA-256 remains 31ca5740f4127fe7b3b0fc18639e75262cdb3ae49c3bc545e62a130b99d68ac4. Pinned legacy digest remains 8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d. The new prefixed rows are witnessed without adding them to the frozen migration roster.
+
 ## Pending
 
-Add the required rows, recompute policyHash with owner tooling, rebuild and verify all four suites plus the requested census/roster checks and real land-graph -Check.
+Rebuild and verify all four suites plus the requested census/roster checks and real land-graph -Check.
