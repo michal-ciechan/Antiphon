@@ -18,3 +18,5 @@ Status: IN PROGRESS (interim; updated after each project).
 
 | Test | Project | Before (d47848cc) | After (fc064a68) | Status | Evidence |
 |---|---|---|---|---|---|
+| HostCustodyTests.C1614_Windows_tracked_linger_releases_job | PtyHost.Tests (pty-host g1) | FAIL | PASS | FIXED | `CHECKPOINT e960-ptyhost` exit 0, executed=2 passed=2, `.antiphon/checkpoints/e960-ptyhost-20261031-104813-b9d5/run.trx` (6.95 s) |
+| NativeLinuxPolicyWitnessTests.Policy_rows_require_pinned_attribute | PtyHost.Tests (pty-host g2) | FAIL | PASS | FIXED | same row |
