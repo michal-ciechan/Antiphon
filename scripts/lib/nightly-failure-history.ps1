@@ -3,6 +3,7 @@
 # ASCII-only. No network or live-run operations; current policy is read-only.
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'nightly-stopped-run-seed.ps1')
 
 function Assert-NightlyHistoryNoLink {
     param([string]$Path)
@@ -472,12 +473,25 @@ function Read-NightlyPriorFailures {
 }
 
 function Initialize-NightlyDispatchHistory {
-    param([string]$Path, [string]$ExpectedDigest = '', [string]$OwnedDirectory = '', [string]$CandidateSha = '')
+    param([string]$Path, [string]$ExpectedDigest = '', [string]$OwnedDirectory = '', [string]$CandidateSha = '', [switch]$AcceptCrossCandidateSeed, [string]$SeedSourceCandidateId = '')
     $fallback='history-not-requested'
     try {
         if(-not $Path){throw $fallback}
         $fallback='history-unavailable'
         $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
+        $probe=[IO.File]::ReadAllText($Path)|ConvertFrom-Json
+        $isSeed=($probe.PSObject.Properties.Name -ccontains 'seedKind')
+        if($isSeed){
+            if(-not $AcceptCrossCandidateSeed){throw 'seed-acknowledgement-required'}
+            $history=Read-NightlyStoppedRunSeed @read
+            if(-not $SeedSourceCandidateId -or $history.sourceCandidateId -cne $SeedSourceCandidateId){throw 'seed-source-candidate-mismatch'}
+            $now=Get-NightlyUtcNow
+            foreach($time in @($history.createdAtUtc,$history.sourceObservedAtUtc)){
+                $stamp=ConvertTo-NightlySeedUtc $time
+                if($null -eq $stamp -or $stamp.UtcDateTime -lt $now.AddDays(-14) -or $stamp.UtcDateTime -gt $now.AddMinutes(5)){throw 'seed-stale'}
+            }
+            $previous=$history
+        }else{
         $history=Read-NightlyPriorFailures @read
         $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
@@ -488,6 +502,9 @@ function Initialize-NightlyDispatchHistory {
         elseif(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
         $now=Get-NightlyUtcNow
         if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
+        $previous=$null
+        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
+        }
         $digest=Get-NightlyHistoryDigest $Path
         $copy=$Path
         if($OwnedDirectory){
@@ -500,8 +517,6 @@ function Initialize-NightlyDispatchHistory {
             }
             if((Get-NightlyHistoryDigest $copy) -cne $digest){throw 'history-digest-mismatch'}
         }
-        $previous=$null
-        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
         return [pscustomobject]@{History=$history;PreviousRun=$previous;Digest=$digest;Path=$copy;FallbackReason=''}
     } catch {
         $reason=$_.Exception.Message
@@ -530,7 +545,10 @@ function Resolve-NightlyPriorFailures {
             }
         }
     }
-    Assert-NightlyHistorySchema $History
+    if($History.seedKind -ceq 'operator-seed-from-stopped-run'){
+        if($QualificationMode -cne 'Full'){throw 'seed-ordering-only'}
+        Assert-NightlyStoppedSeedContent $History
+    }else{Assert-NightlyHistorySchema $History}
     $excludedUids=[Collections.Generic.List[object]]::new()
     $unresolved=[Collections.Generic.List[object]]::new()
     foreach ($u in @($History.unresolved)) { $unresolved.Add($u) }
