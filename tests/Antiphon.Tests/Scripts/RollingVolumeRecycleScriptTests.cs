@@ -2762,6 +2762,15 @@ public sealed class RollingVolumeRecycleScriptTests
                 "repo=" + repoRel, "private-origin: a proof that omits the tip refuses");
             var reset = await C994ScriptProcess.Run("git", "-C", repo, "reset", "--hard", tip);
             reset.Exit.ShouldBe(0, "private-origin: restore the published tip; " + reset.Output);
+            // reset --hard records the abandoned child in ORIG_HEAD, and the
+            // reflog still names it. Both are publication tips. The 404, DNS,
+            // and timeout admissions below are the matching-proof cases, so
+            // drop that residue before they run. The unpublished refusal above
+            // already covered the child while it was the branch tip.
+            var dropAbandoned = await C994ScriptProcess.Run("bash", "-c",
+                "if [ -d " + BashSingle(repo) + "/.git/logs ]; then find " + BashSingle(repo) + "/.git/logs -type f -delete; fi" +
+                " && rm -f -- " + BashSingle(Path.Combine(repo, ".git", "ORIG_HEAD")));
+            dropAbandoned.Exit.ShouldBe(0, "private-origin: drop the abandoned child; " + dropAbandoned.Output);
 
             WriteV2BoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", now, refs);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
