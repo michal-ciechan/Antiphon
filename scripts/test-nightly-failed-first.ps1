@@ -11,7 +11,7 @@ $root = New-C487Root $ResultsDirectory
 $clock = [Diagnostics.Stopwatch]::StartNew()
 # This conservation fixture compares observations under an unexhausted reader
 # clock. Production retains its 200 ms deadline; size/regular-file checks stay real.
-if ($Case -cin @('FullBytesAndCoverageConserved','ConservationDiagnostics')) {
+if ($Case -cin @('FullBytesAndCoverageConserved','ConservationDiagnostics','JournalCustodySurvivesInterleaving')) {
     $script:TestPhaseTrxReadWatch = [Diagnostics.Stopwatch]::new()
 }
 $phases = [ordered]@{}
@@ -935,7 +935,7 @@ function Invoke-FFActualLoop {
     $p.Object.profiles.rc.requiredSuites=@($Fixture.suites.id)
     $p.Object | Add-Member -NotePropertyName chunks -NotePropertyValue ([pscustomobject]@{}) -Force
     foreach ($suite in $Fixture.suites) {
-        $chunkRows=@(foreach($chunk in $suite.chunks){[pscustomobject]@{id=$chunk.id;classes=@($chunk.classes)}})
+        $chunkRows=@(foreach($chunk in $suite.chunks){[pscustomobject]@{id=$chunk.id;classes=@($chunk.classes);seconds=$chunk.seconds}})
         if ($Fixture.PSObject.Properties.Name -contains 'replay') { $chunkRows=@([pscustomobject]@{id='all';classes=@()}) }
         $p.Object.chunks | Add-Member -NotePropertyName $suite.id -NotePropertyValue $chunkRows
     }
@@ -961,6 +961,7 @@ $NightlySeams=@{
         if($Environment){$sid=[string]$Environment['ANTIPHON_TEST_PHASE_SUITE'];$cid=[string]$Environment['ANTIPHON_TEST_PHASE_GROUP_ID']}
         $diag=Get-FFArgument $ArgumentList '--diagnostic-output-directory'
         if($ArgumentList -contains '--list-tests') {
+            if($global:FFLoopBoundaryState.Variant -ceq 'identity-io'){[void][IO.Directory]::CreateDirectory((Join-Path $script:QualificationTimingRoot 'active-chunk.json'))}
             $sid=(Split-Path -Leaf $diag) -replace '-profile-discovery$','' -replace '-.*-discovery$',''
             foreach($s in $global:FFLoopBoundaryState.Fixture.suites){if((Split-Path -Leaf $diag).StartsWith($s.id+'-')){$sid=$s.id;break}}
             $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
@@ -976,7 +977,13 @@ $NightlySeams=@{
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
             $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
-            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter')})
+            $legacyCost=$null;$qualifiedCost=$null
+            if($global:FFLoopBoundaryState.Fixture.PSObject.Properties.Name -notcontains 'replay'){
+                $lookup=Join-Path $script:QualificationTimingRoot 'groups-planned.json'
+                $legacyCost=Get-QualificationGroupPlannedSeconds $lookup $cid
+                $qualifiedCost=Get-QualificationGroupPlannedSeconds $lookup $cid $sid 'actual-run' '1'
+            }
+            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter');legacyCost=$legacyCost;qualifiedCost=$qualifiedCost;plannedCost=$group.plannedSeconds})
             $special=($sid -ceq 'antiphon' -and @($group.classes|Where-Object {$_ -clike '*Priority*'}).Count -gt 0)
             $state='Passed';$code=0;$timeout=$false
             if($special -and $global:FFLoopBoundaryState.Variant -ceq 'failure'){$state='Failed';$code=2}
@@ -1007,7 +1014,7 @@ $NightlySeams=@{
 function Test-ActualLoopFollowsSchedule {
     $fx=New-FFLoopFixture -Full:(-not $SmallLoopProbe)
     $h=New-FFLoopHistory $fx
-    $arm=Invoke-FFActualLoop $fx 'actual-full' $h
+    $arm=Invoke-FFActualLoop $fx 'actual-full' $h -NoExclusions:$SmallLoopProbe
     $resolved=Resolve-NightlyPriorFailures $h.History $arm.Prepared Full
     $expected=New-NightlyDispatchSchedule $arm.Prepared $resolved.members
     $actual=@($arm.Trace.Launches.key);$wanted=@($expected.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
@@ -1033,6 +1040,8 @@ function Test-ActualLoopFollowsSchedule {
     }
     Assert-FF $progressOk 'progressOrder'
     Test-FFHeartbeatBindings
+    $io=Invoke-FFActualLoop (New-FFLoopFixture) 'identity-io' $null -Variant identity-io
+    Assert-FF ($io.Result.ExitCode -eq 0 -and $io.Result.testsPassed -and $io.Result.coverageComplete -and $io.Trace.Launches.Count -gt 0 -and @($io.Trace.Launches|Where-Object {$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}).Count -eq 0) 'heartbeatIo'
 }
 
 function Test-FFHeartbeatBindings {
@@ -1097,13 +1106,17 @@ function Test-JournalCustodySurvivesInterleaving {
     $identitiesOk=$a.Trace.Identities.Count -eq $a.Trace.Launches.Count
     for($i=0;$i -lt $a.Trace.Launches.Count;$i++){$identity=$a.Trace.Identities[$i];$launch=$a.Trace.Launches[$i];if($null -eq $identity -or $identity.suite -cne $launch.suite -or $identity.chunk -cne $launch.chunk -or $identity.runId -cne 'actual-run' -or $identity.attempt -cne '1' -or $identity.state -cne 'Active'){$identitiesOk=$false}}
     $idle=Read-QualificationActiveChunkIdentity (Join-Path $a.Root 'timing')
-    Assert-FF ($identitiesOk -and $idle.state -ceq 'Idle') 'activeIdentity'
+    $pricesOk=@(@($a.Trace.Launches)+@($plain.Trace.Launches)|Where-Object {$_.legacyCost -ne $_.plannedCost -or $_.qualifiedCost -ne $_.plannedCost -or $null -eq $_.legacyCost}).Count -eq 0
+    Assert-FF ($identitiesOk -and $idle.state -ceq 'Idle' -and $pricesOk) 'activeIdentity'
+    # Same real helper path used by the public coordinator, with the complete
+    # D-15 diagnostic/authority matrix from S2. Share the small immutable setup.
+    Test-FullBytesAndCoverageConserved -DiagnosticsOnly
 }
 
 switch -Exact ($Case) {
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=3 }
-    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=11 }
-    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=9 }
+    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=12 }
+    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
