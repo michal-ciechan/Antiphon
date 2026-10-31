@@ -235,12 +235,14 @@ internal static class LiveClaudeProfileCases
         }
         Assert(digests.Distinct().Count() == 4, v, "presence", "absent, empty object, empty value and value remain distinct");
         File.WriteAllText(user,old);
+        var inputBefore=LiveClaudeProfile.InputDigest(user);
+        foreach(var key in new[]{"apiKey","ANTHROPIC_AUTH_TOKEN","CLAUDE_CODE_OAUTH_TOKEN_FILE","ANTIPHON_TASK_TOKEN"})
         foreach (var value in new[] { "synthetic-credential-A", "synthetic-credential-B" })
         {
-            var node=JsonNode.Parse(old)!.AsObject(); node["apiKey"]=value;
+            var node=JsonNode.Parse(old)!.AsObject(); node[key]=value;
             File.WriteAllText(user,node.ToJsonString());
             var current=project(p, launch.Args);
-            Assert(current.Digest==original.Digest && current.Sources.All(s=>!s.Projection.Contains(value)), v,"credential-exclusion","known credential values never enter projection or digest");
+            Assert(current.Digest==original.Digest && current.ReuseEligible && LiveClaudeProfile.InputDigest(user)==inputBefore && current.Sources.All(s=>!s.Projection.Contains(value)), v,"credential-exclusion","known credential values never enter projection or digest");
         }
         File.WriteAllText(user,old);
         var state=JsonNode.Parse(File.ReadAllText(p.Paths.GlobalState))!; state["numStartups"]=999;
