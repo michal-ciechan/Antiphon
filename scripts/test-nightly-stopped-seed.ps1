@@ -271,7 +271,16 @@ try {
                 [void][IO.Directory]::CreateDirectory($wrong)
                 Write-SeedSummary $lay.Run $wrong $lay.RunId $sha
             } '*seed-timing-run-mismatch*'
-            Check ($explicitOk -and $autoOk -and $outside -and $symlink -and $other) ('explicit='+$explicitOk+' auto='+$autoOk+' outside='+$outside+' symlink='+$symlink+' other='+$other)
+            $directRoot=Join-Path $root 'direct-link-logs'
+            $directLay=New-SeedSiblingLayout $directRoot $runId '2026-10-30-0824-d47848cc'
+            $realTiming=Join-Path ([IO.Path]::GetDirectoryName($directLay.Timing)) ('timing-real-'+$runId)
+            Move-Item -LiteralPath $directLay.Timing -Destination $realTiming
+            New-Item -ItemType SymbolicLink -Path $directLay.Timing -Target $realTiming | Out-Null
+            $directMsg=''
+            try { Resolve-NightlyStoppedTimingRoot $directLay.Run $directLay.Timing $runId | Out-Null }
+            catch { $directMsg=$_.Exception.Message }
+            $directOk=($directMsg -like '*evidence-link*')
+            Check ($explicitOk -and $autoOk -and $outside -and $symlink -and $other -and $directOk) ('explicit='+$explicitOk+' auto='+$autoOk+' outside='+$outside+' symlink='+$symlink+' other='+$other+' direct='+$directMsg)
         }
         'ChunkUnfinishedTolerance' {
             $sha='a'*40
@@ -369,6 +378,165 @@ try {
             try { Assert-NightlyHistoryFileStable (Join-Path $swap 'a.txt') }
             catch { $swapMsg=$_.Exception.Message }
             Check ($fileMsg -like '*evidence-link*' -and $parentMsg -like '*evidence-link*' -and $swapMsg -like '*evidence-link*') ('file='+$fileMsg+'; parent='+$parentMsg+'; swap='+$swapMsg)
+        }
+        'DigestGuardLeavesSeedOrder' {
+            function Test-Permutation($Schedule,$Prepared){
+                $expected=@(foreach($s in $Prepared){foreach($c in @($s.chunks)){$s.id+'/'+$c.id}})|Sort-Object
+                $actual=@($Schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})|Sort-Object
+                return ($expected.Count -eq $actual.Count -and @($actual|Select-Object -Unique).Count -eq $actual.Count -and ($expected -join ',') -ceq ($actual -join ','))
+            }
+            $inputRecord=Ingress -Accept
+            $seed=$inputRecord.PreviousRun
+            $kept=Schedule $inputRecord
+            $cross=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $seed -CandidateSha ('c'*40) -NowUtc $now
+            $bare=$seed.PSObject.Copy();$bare.PSObject.Properties.Remove('seedKind')
+            $missingMarker=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $bare -CandidateSha ('b'*40) -NowUtc $now
+            $foreign=$seed.PSObject.Copy();$foreign.seedKind='operator-seed-forged'
+            $foreignSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $foreign -CandidateSha ('b'*40) -NowUtc $now
+            $tiny=@([pscustomobject]@{id='antiphon';chunks=@([pscustomobject]@{id='Ordinary';classes=@('C.B');nodes=@()},[pscustomobject]@{id='Priority';classes=@('C.A');nodes=@()});nodes=@();exclusions=@()})
+            $plain=New-NightlyDispatchSchedule -PreparedSuites $tiny -NowUtc $now
+            $normal=[pscustomobject]@{schemaVersion=1;liveness='closed';sha=('b'*40);completedAt=$now.AddHours(-1).ToString('o');canonicalPlanDigest=$plain.canonicalPlanDigest;seedKind='operator-seed-from-stopped-run';suites=@([pscustomobject]@{id='antiphon';chunk='Priority';result='FAIL';exitCode=1},[pscustomobject]@{id='antiphon';chunk='Ordinary';result='pass';exitCode=0})}
+            $forged=New-NightlyDispatchSchedule -PreparedSuites $tiny -PreviousRun $normal -CandidateSha ('b'*40) -NowUtc $now
+            $stripped=$normal.PSObject.Copy();$stripped.PSObject.Properties.Remove('canonicalPlanDigest')
+            $forgedMissing=New-NightlyDispatchSchedule -PreparedSuites $tiny -PreviousRun $stripped -CandidateSha ('b'*40) -NowUtc $now
+            $noSha=$seed.PSObject.Copy();$noSha.PSObject.Properties.Remove('sourceSha')
+            $shaSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $noSha -CandidateSha ('b'*40) -NowUtc $now
+            $noRun=$seed.PSObject.Copy();$noRun.PSObject.Properties.Remove('sourceRunId')
+            $runSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $noRun -CandidateSha ('b'*40) -NowUtc $now
+            $hit=@($seed.chunks|Where-Object { @($_.classes).Count -gt 0 })[0]
+            $regrouped=@([pscustomobject]@{id=$hit.suite;chunks=@([pscustomobject]@{id=$hit.chunk;classes=@('Synthetic.Regrouped.Other');nodes=@()},[pscustomobject]@{id='extra-chunk';classes=@('Synthetic.Regrouped.Extra');nodes=@()});nodes=@();exclusions=@()})
+            $regroup=New-NightlyDispatchSchedule -PreparedSuites $regrouped -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
+            $same=@([pscustomobject]@{id=$hit.suite;chunks=@([pscustomobject]@{id=$hit.chunk;classes=@($hit.classes);nodes=@()});nodes=@();exclusions=@()})
+            $sameSchedule=New-NightlyDispatchSchedule -PreparedSuites $same -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
+            $canonical=@($suites[0].chunks[0].id)
+            $ok=$kept.orderingReason -like 'operator-seed-order*' -and @($kept.entries[0..4].chunk)[0] -ceq 'new-Red' -and (Test-Permutation $kept $suites)
+            $ok=$ok -and $cross.orderingReason -like 'operator-seed-order*' -and (Test-Permutation $cross $suites)
+            $ok=$ok -and $missingMarker.orderingReason -ceq 'previous-run-plan-digest-missing' -and $missingMarker.entries[0].chunk -ceq $canonical -and (Test-Permutation $missingMarker $suites)
+            $ok=$ok -and $foreignSchedule.orderingReason -ceq 'operator-seed-kind-foreign' -and $foreignSchedule.entries[0].chunk -ceq $canonical -and (Test-Permutation $foreignSchedule $suites)
+            $ok=$ok -and $forged.orderingReason -ceq 'previous-run-order' -and $forged.entries[0].chunk -ceq 'Priority' -and (Test-Permutation $forged $tiny)
+            $ok=$ok -and $forgedMissing.orderingReason -ceq 'previous-run-plan-digest-missing' -and $forgedMissing.entries[0].chunk -ceq 'Ordinary' -and (Test-Permutation $forgedMissing $tiny)
+            $ok=$ok -and $shaSchedule.orderingReason -ceq 'seed-candidate-missing' -and $shaSchedule.entries[0].chunk -ceq $canonical -and (Test-Permutation $shaSchedule $suites)
+            $ok=$ok -and $runSchedule.orderingReason -ceq 'seed-run-missing' -and (Test-Permutation $runSchedule $suites)
+            $ok=$ok -and $regroup.orderingReason -ceq 'seed-plan-regrouped' -and $regroup.entries[0].chunk -ceq $hit.chunk -and (Test-Permutation $regroup $regrouped)
+            $ok=$ok -and $sameSchedule.orderingReason -like 'operator-seed-order*' -and (Test-Permutation $sameSchedule $same)
+            Check $ok ('kept='+$kept.orderingReason+'; missing='+$missingMarker.orderingReason+'; foreign='+$foreignSchedule.orderingReason+'; forged='+$forged.orderingReason+'/'+$forged.entries[0].chunk+'; forgedMissing='+$forgedMissing.orderingReason+'/'+$forgedMissing.entries[0].chunk+'; sha='+$shaSchedule.orderingReason+'; run='+$runSchedule.orderingReason+'; regroup='+$regroup.orderingReason+'; same='+$sameSchedule.orderingReason)
+        }
+        'SummaryPrefixTamper' {
+            $runId='d47848cce896471db1cc8ca346707cad'
+            $sha='a'*40
+            $layout=New-SeedSiblingLayout (Join-Path $root 'prefix-logs') $runId '2026-10-30-0824-d47848cc'
+            Write-SeedSummary $layout.Run $layout.Timing $runId $sha
+            $summaryPath=Join-Path $layout.Run 'summary.json'
+            $prefix=Read-NightlyStoppedSummaryPrefix $summaryPath
+            $bytes=[IO.File]::ReadAllBytes($summaryPath)
+            # CutBeforeBulk returns the opening quote of the depth-1 bulk key.
+            # A flip there hides the key, so the prefix reader parses the tail.
+            # Change a byte inside the ignored INVALID value, after that key.
+            $marker=[Text.UTF8Encoding]::new($false).GetBytes(',"timingChunks":')
+            $at=-1
+            for($i=0;$i -le ($bytes.Length-$marker.Length);$i++){
+                $match=$true
+                for($j=0;$j -lt $marker.Length;$j++){ if($bytes[$i+$j] -ne $marker[$j]){ $match=$false; break } }
+                if($match){ $at=$i }
+            }
+            # The cut is the key's opening quote, one byte after this comma.
+            if(($at + 1) -ne $prefix.Length){ throw 'bulk marker is not the prefix cut' }
+            $flip=$at+$marker.Length+2
+            if($flip -ge $bytes.Length){ throw 'decoy offset past end' }
+            $decoy=[byte[]]$bytes.Clone()
+            $decoy[$flip]=[byte]([int]$decoy[$flip] -bxor 1)
+            [IO.File]::WriteAllBytes($summaryPath,$decoy)
+            $decoyOk=$false;$decoyDetail=''
+            try {
+                [void](Export-NightlyStoppedRunSeed -RunDirectory $layout.Run -OutputPath (Join-Path $root 'decoy-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+                $decoyOk=$true;$decoyDetail='accepted'
+            } catch { $decoyDetail=$_.Exception.Message }
+            [IO.File]::WriteAllBytes($summaryPath,$bytes)
+            $state=@{done=$false}
+            $script:NightlySeedReadBarrier={
+                param($Path)
+                if($state.done){return}
+                $state.done=$true
+                $live=[IO.File]::ReadAllBytes($summaryPath)
+                $live[8]=[byte]([int]$live[8] -bxor 1)
+                [IO.File]::WriteAllBytes($summaryPath,$live)
+            }.GetNewClosure()
+            $tamperDetail=''
+            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $layout.Run -OutputPath (Join-Path $root 'prefix-tamper-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru); $tamperDetail='accepted' }
+            catch { $tamperDetail=$_.Exception.Message }
+            finally { $script:NightlySeedReadBarrier=$null }
+            Check ($decoyOk -and $tamperDetail -like '*seed-summary-tampered*') ('decoy='+$decoyDetail+'; tamper='+$tamperDetail+'; cut='+$prefix.Length)
+        }
+        'WindowsAncestorSwapRefused' {
+            $script:NightlyHistoryForceWindowsIdentity=$true
+            try {
+                function New-Leaf([string]$Name){
+                    Reset-NightlyHistoryLinkCache
+                    $grand=Join-Path $root $Name
+                    $mid=Join-Path $grand 'mid'
+                    [void][IO.Directory]::CreateDirectory($mid)
+                    $leaf=Join-Path $mid 'leaf.txt'
+                    [IO.File]::WriteAllText($leaf,'real')
+                    Assert-NightlyHistoryNoLink $leaf
+                    return [pscustomobject]@{Grand=$grand;Leaf=$leaf}
+                }
+                $real=New-Leaf 'win-grand'
+                $held=Join-Path $root 'win-grand-held'
+                Move-Item -LiteralPath $real.Grand -Destination $held
+                [void][IO.Directory]::CreateDirectory((Join-Path $real.Grand 'mid'))
+                [IO.File]::WriteAllText($real.Leaf,'FORGED')
+                $dirMsg=''
+                try { Assert-NightlyHistoryFileStable $real.Leaf } catch { $dirMsg=$_.Exception.Message }
+                $linked=New-Leaf 'win-link'
+                $linkHeld=Join-Path $root 'win-link-held'
+                $forged=Join-Path $root 'win-link-forged'
+                Move-Item -LiteralPath $linked.Grand -Destination $linkHeld
+                [void][IO.Directory]::CreateDirectory((Join-Path $forged 'mid'))
+                [IO.File]::WriteAllText((Join-Path $forged 'mid/leaf.txt'),'FORGED')
+                New-Item -ItemType SymbolicLink -Path $linked.Grand -Target $forged | Out-Null
+                $linkMsg=''
+                try { Assert-NightlyHistoryFileStable $linked.Leaf } catch { $linkMsg=$_.Exception.Message }
+                Check ($dirMsg -like '*evidence-link*' -and $linkMsg -like '*evidence-link*') ('dir='+$dirMsg+'; link='+$linkMsg)
+            } finally { $script:NightlyHistoryForceWindowsIdentity=$false; Reset-NightlyHistoryLinkCache }
+        }
+        'ScaleExportBound' {
+            $runId='d47848cce896471db1cc8ca346707cad'
+            $sha='a'*40
+            $logs=Join-Path $root 'scale-logs'
+            $runDir=Join-Path $logs '2026-10-30-0824-d47848cc'
+            $timing=Join-Path $logs ('timing-'+$runId)
+            [void][IO.Directory]::CreateDirectory($runDir)
+            [void][IO.Directory]::CreateDirectory($timing)
+            foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/nightly/stopped-seed') -File)){
+                Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $runDir $file.Name)
+            }
+            $ownerPath=Join-Path $runDir 'owner.json'
+            $ownerText=[IO.File]::ReadAllText($ownerPath).Replace('"runId": "synthetic-stopped"',('"runId": "'+$runId+'"'))
+            [IO.File]::WriteAllText($ownerPath,$ownerText)
+            foreach($plan in @(Get-ChildItem -LiteralPath $runDir -Filter 'groups-planned*.json' -File)){
+                $text=[IO.File]::ReadAllText($plan.FullName).Replace('"runId": "synthetic-stopped"',('"runId": "'+$runId+'"'))
+                [IO.File]::WriteAllText((Join-Path $timing $plan.Name),$text)
+                Remove-Item -LiteralPath $plan.FullName
+            }
+            [IO.File]::WriteAllText((Join-Path $timing 'groups-planned-index.json'),'{"version":1}')
+            $header=[ordered]@{startedAt='2026-10-30T08:30:00Z';completedAt='2026-10-30T12:30:00Z';sha=$sha;runId=$runId;selection=[ordered]@{timingChunks='decoy'};timingRoot=$timing}
+            $text=($header|ConvertTo-Json -Compress).TrimEnd('}')
+            $text=$text+',"timingChunks":"pad"'
+            $pad=New-Object string @(' ',4194304)
+            [IO.File]::WriteAllText((Join-Path $runDir 'summary.json'),($text+$pad+'}'))
+            $runCount=@(Get-ChildItem -LiteralPath $runDir -File).Count
+            $timingCount=@(Get-ChildItem -LiteralPath $timing -File).Count
+            for($i=$runCount;$i -lt 3300;$i++){[IO.File]::WriteAllText((Join-Path $runDir ('pad-'+$i.ToString('0000')+'.txt')),'x')}
+            for($i=$timingCount;$i -lt 1700;$i++){[IO.File]::WriteAllText((Join-Path $timing ('pad-'+$i.ToString('0000')+'.txt')),'x')}
+            $out=Join-Path $root 'scale-seed.json'
+            $export=[Diagnostics.Stopwatch]::StartNew()
+            [void](Export-NightlyStoppedRunSeed -RunDirectory $runDir -OutputPath $out -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+            $export.Stop()
+            $seconds=$export.Elapsed.TotalSeconds
+            $doc=Read-NightlyStoppedRunSeed $out
+            $rows=@($doc.chunks).Count
+            # Provisional n=1 on this host: export 13.175s. Bound is 27s, 2x that sample.
+            Check ($seconds -le 27 -and $rows -gt 0 -and $doc.sourceRunId -ceq $runId) ('exportSeconds='+$seconds+'; boundSeconds=27; measuredSampleSeconds=13.175; runFiles=3300; timingFiles=1700; summaryBytes='+(Get-Item -LiteralPath (Join-Path $runDir 'summary.json')).Length+'; chunks='+$rows)
         }
         default {throw 'unknown case'}
     }

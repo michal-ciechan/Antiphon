@@ -25,4 +25,15 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(180_000)] public Task StoppedTimingRootAndRefusals(CancellationToken token) => Run(nameof(StoppedTimingRootAndRefusals), token);
     [Test, Timeout(180_000)] public Task ChunkUnfinishedTolerance(CancellationToken token) => Run(nameof(ChunkUnfinishedTolerance), token);
     [Test, Timeout(180_000)] public Task LinkCacheRefusesReplacement(CancellationToken token) => Run(nameof(LinkCacheRefusesReplacement), token);
+    [Test, Timeout(120_000)] public Task DigestGuardLeavesSeedOrder(CancellationToken token) => Run(nameof(DigestGuardLeavesSeedOrder), token);
+    [Test, Timeout(180_000)] public Task SummaryPrefixTamper(CancellationToken token) => Run(nameof(SummaryPrefixTamper), token);
+    [Test, Timeout(120_000)] public Task WindowsAncestorSwapRefused(CancellationToken token) => Run(nameof(WindowsAncestorSwapRefused), token);
+
+    // Provisional: one measured export of a 3,300 + 1,700 file layout (see the harness detail).
+    // The harness budget is the file-creation plus export ceiling, wider than the 2x export bound.
+    [Test, Timeout(180_000)]
+    public Task ScaleExportBound(CancellationToken token) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-stopped-seed.ps1", "SS", nameof(ScaleExportBound), 1,
+            ["SS " + nameof(ScaleExportBound) + ".contract"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(150), TimeSpan.FromSeconds(20)), token);
 }
