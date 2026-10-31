@@ -28,34 +28,7 @@ let injection=templateSource.slice(begin,end)
 fs.writeFileSync(root+'/manual-injection.sh',injection);
 fs.writeFileSync(bin+'/sudo','#!/bin/bash\n[ "$1" != -n ] || shift\nif [ "$1" = install ]; then mkdir -p -- "${@: -1}"; else exec "$@"; fi\n',{mode:0o755});
 fs.writeFileSync(bin+'/docker','#!/bin/bash\nexec bash '+q(repo+'/scripts/fixtures/c1008-fake-docker.sh')+' "$@"\n',{mode:0o755});
-fs.writeFileSync(bin+'/ssh',`#!/usr/local/bin/node
-const fs=require('node:fs'),cp=require('node:child_process');
-const root=process.env.C1609_MANUAL_FIXTURE;
-const args=process.argv.slice(2);let cmd=args.at(-1);
-if(args.includes('-s'))cmd=fs.readFileSync(0,'utf8');
-const map=s=>s.replaceAll('/home/mc/antiphon-server2',root+'/server').replaceAll('/home/mc/antiphon-c590',root+'/control');
-cmd=cmd.replace(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| bash/g,(_,encoded)=>
- "printf '%s' '"+Buffer.from(map(Buffer.from(encoded,'base64').toString('utf8'))).toString('base64')+"' | base64 -d | bash");
-cmd=map(cmd);
-const m=cmd.match(/bash '([^']+\/c590-remote.sh)'/);
-if(m){
-  let source=fs.readFileSync(m[1],'utf8');
-  const injection=fs.readFileSync(root+'/manual-injection.sh','utf8');
-  source=source.replace("trap 'ec=$?;",injection+"\\ntrap 'ec=$?;");
-  const file=root+'/manual-host-'+process.pid+'.sh';fs.writeFileSync(file,source);
-  cmd=cmd.replace(m[0],"bash '"+file+"'");
-}
-fs.appendFileSync(root+'/manual-ssh-trace',JSON.stringify({packet:args.includes('-s'),hostCase:!!m})+'\\n');
-const r=cp.spawnSync('bash',['-c',cmd],{env:process.env,encoding:'utf8',timeout:45000,maxBuffer:4*1024*1024});
-process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
-`,{mode:0o755});
-fs.writeFileSync(bin+'/scp',`#!/usr/local/bin/node
-const fs=require('node:fs'),path=require('node:path');const root=process.env.C1609_MANUAL_FIXTURE;
-let a=process.argv.slice(2),v=[];for(let i=0;i<a.length;i++){if(a[i]==='-o'){i++;continue;}if(a[i]==='-r')continue;v.push(a[i]);}
-const map=s=>s.replace(/^mc@server2:/,'').replace('/home/mc/antiphon-server2',root+'/server').replace('/home/mc/antiphon-c590',root+'/control').replace(/^\/work\/test-evidence\/[^/]+/,root+'/evidence');
-let src=map(v[0]),dst=map(v[1]);if(fs.existsSync(dst)&&fs.statSync(dst).isDirectory())dst=path.join(dst,path.basename(src));
-fs.cpSync(src,dst,{recursive:true});
-`,{mode:0o755});
+for(const mode of ['ssh','scp'])fs.writeFileSync(bin+'/'+mode,'#!/bin/bash\nexec node '+q(repo+'/scripts/fixtures/c1609-manual-transport.cjs')+' '+mode+' "$@"\n',{mode:0o755});
 // The real manual entry reads exactly one status endpoint. The host independently
 // verifies all counters, retirement, routing, task/land and reference observations.
 const launcher=root+'/manual-launch.ps1';
