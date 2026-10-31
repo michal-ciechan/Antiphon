@@ -29,6 +29,7 @@ function New-Fixture {
     $script:F=@{
         Root=$root; Tick=0; Starts=0; Prompts=0; Slots=0; Waits=0; Pre=0; Post=0; ProbePrompts=0
         PreStatus='Ready'; PreDelay=0; PostStatus='Unknown'; PostDelay=0; Foreign=''; Raw=0
+        ReceiptFault=''
         Trace=[Collections.Generic.List[string]]::new(); ProbeRequests=[Collections.Generic.List[object]]::new()
     }
     $request=@{
@@ -52,7 +53,12 @@ function New-Fixture {
         Wait={ param($id) $F.Waits++; $F.Trace.Add('wait:'+ $id); if ($F.Waits -eq 1) { return 75 }; return $F.Raw }
         ReadTerminal={ param($id) $F.Trace.Add('terminal'); return $F.Terminal }
         Stop={ param($id) $F.Trace.Add('stop') }; Join={ param($id,$budget) $F.Trace.Add('join'); return $true }
-        WriteReceipt={ param($p,$r) $F.Trace.Add('receipt'); [IO.File]::WriteAllText($p,($r | ConvertTo-Json -Depth 20)) }
+        WriteReceipt={ param($p,$r)
+            $F.Trace.Add('receipt')
+            if ($F.ReceiptFault -eq 'missing') { return }
+            [IO.File]::WriteAllText($p,($r | ConvertTo-Json -Depth 20))
+            if ($F.ReceiptFault -eq 'partial') { throw 'synthetic interrupted receipt publication' }
+        }
         Probe={ param($purpose,$spec)
             $F.ProbeRequests.Add($spec); $F.ProbePrompts += [int]$spec.PromptCount
             if ($spec.ContainsKey('Prompt') -or $spec.Operation -cne 'Availability') { throw 'forbidden model call' }
@@ -107,15 +113,19 @@ function Test-ProviderOutcomeIsDistinct {
     }
     Check 'raw-child' $ok
     $ok=$true
-    foreach ($variant in @('missing','unreadable','incomplete','identity','schema')) {
+    foreach ($variant in @('missing','unreadable','incomplete','identity','schema','receipt-partial','receipt-missing')) {
         $q=New-Fixture
         switch ($variant) {
             'missing' { $F.Terminal=$null }; 'unreadable' { $F.Terminal.Evidence='Unreadable' }
             'incomplete' { $F.Terminal.Complete=$false }; 'identity' { $F.Terminal.RunId='foreign' }
             'schema' { $F.Terminal.SchemaVersion=42 }
+            'receipt-partial' { $F.ReceiptFault='partial' }; 'receipt-missing' { $F.ReceiptFault='missing' }
         }
         $r=Run $q; $expected=20; if ($variant -in @('identity','schema')) { $expected=2 }
         $ok=$ok -and (Is $r $expected) -and $F.Starts -eq 1
+        if ($variant.StartsWith('receipt-')) {
+            $ok=$ok -and -not $r.TerminalComplete -and -not (Test-Path -LiteralPath (Join-Path $q.Request.ResultsRoot 'diagnostic.json'))
+        }
     }
     Check 'evidence' $ok
     $ok=$true
