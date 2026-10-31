@@ -53,7 +53,7 @@ try {
             $doc=Read-NightlyStoppedRunSeed $seedPath
             $bad=Join-Path $run 'forbidden.json';$refused=$false
             try {Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $bad}catch{$refused=$_.Exception.Message -like '*output-inside-source*'}
-            Check (($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object completed).Count -eq 11 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
+            Check (($before -join "`n") -ceq ($after -join "`n") -and ($before -join "`n") -ceq (@(Snapshot) -join "`n") -and $refused -and @($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'profile-4' -and @($_.classes) -ccontains 'Synthetic.antiphon.Torn'}).Count -eq 1 -and @($doc.chunks|Where-Object completed).Count -eq 11 -and @($doc.chunks|Where-Object {-not $_.completed}).Count -eq 10) 'input bytes/mtimes, closed versus torn and never-started, output containment'
         }
         'FailedFirstMapping' {
             $inputRecord=Ingress -Accept;$schedule=Schedule $inputRecord

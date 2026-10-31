@@ -35,9 +35,7 @@
     },
     {
       "chunk": "profile-4",
-      "classes": [
-        "Synthetic.antiphon.Torn"
-      ],
+      "classes": [],
       "plannedTestIds": [
         "torn",
         "missing"
