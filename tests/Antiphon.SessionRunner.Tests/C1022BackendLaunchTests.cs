@@ -14,7 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration")]
 [NotInParallel]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class C1022BackendLaunchTests
+public partial class C1022BackendLaunchTests
 {
     [Test]
     public Task Unset_owned_host_runs_modern() => LaunchAsync(null, null, false);
