@@ -492,7 +492,12 @@ public sealed class RetiredTempContainerHostTests
             run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
             var audits = f.Trace.Where(a=>a[0]=="run"&&a.Contains("--entrypoint")).Skip(previousAudits).ToArray();
             audits.ShouldNotBeEmpty("c994-image-required: apply offline audit reached");
-            audits.All(a=>a.Contains(C1008HostFixture.SessionImage)&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c1609-current-image: inspected current readonly uid-1654 helper, independent of historical image");
+            audits.All(a=>a.Contains(C1008HostFixture.SessionImage)&&a.Contains("1654:1654")).ShouldBeTrue("c1609-current-image: inspected current uid-1654 helper, independent of historical image");
+            audits.All(a=>a.Any(arg=>arg.StartsWith("type=volume,", StringComparison.Ordinal))).ShouldBeTrue("c1609-current-image: the helper mounts the audited volumes");
+            audits.SelectMany(a=>a.Where(arg=>arg.StartsWith("type=volume,", StringComparison.Ordinal))).All(mount => {
+                var options = mount.Split(',');
+                return options.Contains("readonly") && options.Contains("volume-nocopy");
+            }).ShouldBeTrue("c1609-current-image: every volume mount is readonly and volume-nocopy");
             if(work!="published") {
                 run.Output.ShouldContain(work=="dirty"?"RecycleWorktreeDirty":"RecycleUnpublishedWork",customMessage:"c994-audit-required");
                 f.Removed.ShouldBeEmpty("c994-audit-required");f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-audit-required: generations retained");
