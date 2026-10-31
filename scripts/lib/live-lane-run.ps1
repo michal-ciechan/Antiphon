@@ -150,7 +150,12 @@ function Invoke-LiveLaneRun {
             }
         }
         $child = & $Boundary.Start $context $startInfo $manifest
-        if ([string]::IsNullOrWhiteSpace($child.RunId) -or @($child.Children).Count -eq 0) { throw 'invalid owned adapter handle' }
+        if (@($child.Children).Count -eq 0) { throw 'invalid owned adapter handle' }
+        # A checkpoint identity is an opaque bounded token, never a path. Validate
+        # before it reaches wait/read calls or the diagnostic receipt.
+        if ($child.RunId -isnot [string] -or $child.RunId -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9_-]{0,127}\z') {
+            $result.ExitCode = 2; $result.Reason = 'checkpoint-run-invalid'; return $result
+        }
         $result.CheckpointRunId = $child.RunId
         while ($true) {
             if ([double](& $Boundary.Clock) -ge $deadline) { $result.Reason = 'deadline'; break }
@@ -161,7 +166,7 @@ function Invoke-LiveLaneRun {
             $terminal = $true
             $evidence = & $Boundary.ReadTerminal $child.RunId
             $postProbe = $null
-            # One bounded zero-prompt probe for classification only. Never restart
+            # One UID-bound zero-prompt probe for classification only. Never restart
             # the checkpoint or submit a model turn after any UserPrompt receipt.
             if ($Boundary.Probe -is [scriptblock] -and $evidence -is [Collections.IDictionary]) {
                 $failed = @($evidence.Rows | Where-Object { $_.State -ceq 'Failed' -and -not (Test-LiveLaneTranscriptOutage $_) })
@@ -195,8 +200,13 @@ function Invoke-LiveLaneRun {
         # A writer can fail after creating bytes. Only a successful same-directory
         # rename publishes the final receipt; partial/missing writes stay incomplete.
         $pendingReceipt = Join-Path $Request.ResultsRoot 'diagnostic.pending.json'
-        & $Boundary.WriteReceipt $pendingReceipt $result
-        [IO.File]::Move($pendingReceipt, (Join-Path $Request.ResultsRoot 'diagnostic.json'))
+        try {
+            & $Boundary.WriteReceipt $pendingReceipt $result
+            [IO.File]::Move($pendingReceipt, (Join-Path $Request.ResultsRoot 'diagnostic.json'))
+        } finally {
+            # Interrupted writes cannot leave a pending record claiming GREEN.
+            if ([IO.File]::Exists($pendingReceipt)) { [IO.File]::Delete($pendingReceipt) }
+        }
     } catch {
         # Never serialize arbitrary exceptions from a provider, path or environment.
         if ($result.ExitCode -notin @(1,2)) { $result.ExitCode = 20; $result.Reason = 'handoff-incomplete' }
