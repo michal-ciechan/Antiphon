@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.SessionRunner;
 using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Tests.Agents;
 using Antiphon.Server.Application.Dtos;
@@ -28,7 +29,19 @@ public class LiveLaneIsolationTests
         LiveClaudeProfileAudit.C680Callers(Build,ClaudeDialogWatchdogCanaryTests.ProjectProfile);
         LiveClaudeProfileMutants.Run(v);
     }
-    [Test] public void DedicatedConfigOwnsTrustAndEvidence() => Run("V-13");
+    [Test]
+    public void DedicatedConfigOwnsTrustAndEvidence()
+    {
+        Run("V-13");
+        using var fixture = new LiveClaudeProfileFixture();
+        using var profile = new LiveClaudeProfile(fixture.Context);
+        var root = TranscriptTailer.ResolveProjectsRoot(profile.Environment());
+        LiveClaudeProfileCases.Assert(root == profile.Paths.Projects, "V-13", "projects-root", "reader uses the profile config directory");
+        var ambient = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects");
+        LiveClaudeProfileCases.Assert(!string.Equals(root, ambient, StringComparison.Ordinal), "V-13", "projects-root", "reader stays off the operator profile");
+        var runtime = LiveClaudeExecutableAudit.Read("src/Antiphon.SessionRunner/SessionRunnerRuntime.cs");
+        LiveClaudeProfileCases.Assert(runtime.Contains("TranscriptTailer.ResolveProjectsRoot(request.Env)", StringComparison.Ordinal), "V-13", "projects-root", "launch passes the child environment");
+    }
     [Test] public void CwdInstructionsCannotLeak() => Run("V-14");
     [Test] public void SettingsProjectionDetectsDrift() => Run("V-15");
     [Test] public void UnknownConfigDisablesReuse() => Run("V-16");
