@@ -85,6 +85,29 @@ public sealed class PosixHarnessToolTests
         var result = Run("test-qualification-timing.ps1", hidden.DirectoryPath, 180_000);
         result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
         AssertNoMissingCommand(result);
+        result.Stdout.ShouldContain("PASS capture-identity-exit-0");
+        result.Stdout.ShouldContain("PASS capture-identity-exit-1");
+        result.Stdout.ShouldContain("PASS capture-shell-resolver-windows-shape");
+        result.Stdout.ShouldContain("PASS capture-shell-resolver-skips-bin-sh");
+        result.Stdout.ShouldContain("PASS capture-shell-absent-skips");
+        if (OperatingSystem.IsLinux())
+            result.Stdout.ShouldContain("PASS capture-shell-seam-starts-resolved-shell");
+        result.Stdout.ShouldContain("OK");
+    }
+
+    [Test]
+    public void Capture_identity_resolves_git_sh_instead_of_hard_coded_bin_sh()
+    {
+        NativeLinuxGate.Require(
+            "The Windows-shaped capture resolver witness executes a planted sh.exe script. Qualification_timing_completes_without_mkfifo_chmod_or_ln_on_path runs the production case on Windows through the same resolver (NativeLinuxGate, docs/testing-and-build.md).");
+        using var hidden = HiddenPath.Without("mkfifo", "chmod", "ln");
+        var result = Run("test-qualification-timing.ps1", hidden.DirectoryPath, 60_000, "-Case", "CaptureShell");
+        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
+        result.Stdout.ShouldContain("PASS capture-shell-resolver-windows-shape");
+        result.Stdout.ShouldContain("PASS capture-shell-resolver-skips-bin-sh");
+        result.Stdout.ShouldContain("PASS capture-shell-seam-starts-resolved-shell");
+        result.Stdout.ShouldContain("PASS capture-shell-absent-skips");
+        result.Stdout.IndexOf("PASS capture-identity-exit-0", StringComparison.Ordinal).ShouldBeLessThan(0, result.Stdout);
         result.Stdout.ShouldContain("OK");
     }
 
