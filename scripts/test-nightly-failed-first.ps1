@@ -485,8 +485,7 @@ function Invoke-FFPreparedArm {
                 if ($special -and $script:FFVariant -ceq 'failure') { $state='Failed'; $exitCode=2 }
                 if ($special -and $script:FFVariant -ceq 'skip') { $state='Skipped' }
                 $rows += [pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome=$state}
-                $tn = Copy-FFObject $n
-                $tn | Add-Member -NotePropertyName Outcome -NotePropertyValue $state -Force
+                $tn = [pscustomobject]@{Uid=$n.Uid;Namespace=$n.Namespace;Type=$n.Type;Method=$n.Method;Outcome=$state}
                 $terminals += $tn
             }
             if ($special -and $script:FFVariant -ceq 'unknown') { $terminals += [pscustomobject]@{Uid='foreign';Namespace='Foreign';Type='Unknown';Method='Run';Outcome='Passed'} }
@@ -505,7 +504,10 @@ function Invoke-FFPreparedArm {
         $discPath = Join-Path $LogRoot ($s.id+'-profile.discovery.json')
         $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $s.nodes -AssemblyHash 'fixture'
         Write-NightlyDiscoveryDocument -Path $discPath -Document $doc
-        $index = New-NightlyDiscoveryIndex
+        if ($s.PSObject.Properties.Name -notcontains 'SharedDiscoveryIndex') {
+            $s | Add-Member -NotePropertyName SharedDiscoveryIndex -NotePropertyValue (New-NightlyDiscoveryIndex)
+        }
+        $index = $s.SharedDiscoveryIndex
         $entry = Get-NightlyDiscoveryIndexEntry -Index $index -Path $discPath
         $census = (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $s.exclusions -ProfileAware).Census
         $variables = @{
@@ -515,7 +517,18 @@ function Invoke-FFPreparedArm {
             suiteDiscoverySeconds=0.25;suiteTerminalNodes=@();chunkIndex=0;phaseAssembly=$s.id;phaseAssemblyDigest='fixture';phaseCostDigest='fixture'
         }
         $states += [pscustomobject]@{id=$s.id;nodes=$s.nodes;chunks=$s.chunks;exclusions=$s.exclusions;Variables=$variables;Completed=$false}
-        [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions)
+        if ($s.PSObject.Properties.Name -notcontains 'SharedPlannedText') {
+            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions -DiscoveryIndex $index -DiscoveryPath $discPath)
+            $s | Add-Member -NotePropertyName SharedPlannedText -NotePropertyValue ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))))
+        } else {
+            # Both arms consume the same once-published immutable plans; only
+            # mutable execution/journal/sidecar state has a fresh root.
+            $planFile='groups-planned-'+$s.id+'.json'
+            Write-TestPhaseTextAtomic -Path (Join-Path $TimingRoot $planFile) -Text $s.SharedPlannedText
+            Write-TestPhaseTextAtomic -Path (Join-Path $TimingRoot 'groups-planned.json') -Text $s.SharedPlannedText
+            $sharedPlan=$s.SharedPlannedText|ConvertFrom-Json
+            Update-TestPhasePlannedIndex -Directory $TimingRoot -Suite $s.id -FileName $planFile -RunId $invocationId -Attempt '1' -AssemblyId $s.id -SourceDigest $Sha -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyDigest 'fixture' -Filters @($sharedPlan.groups.filter)
+        }
         $plannedBytes[$s.id] = [IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json')))
         $plannedDoc = $plannedBytes[$s.id] | ConvertFrom-Json
         $byUid = @{}

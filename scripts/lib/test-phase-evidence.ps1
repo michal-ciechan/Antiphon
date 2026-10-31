@@ -1187,12 +1187,17 @@ function Write-TestPhasePlannedManifest {
         [string]$AssemblyId,
         $Groups,
         $DiscoveryNodes,
-        $ProfileExclusions
+        $ProfileExclusions,
+        $DiscoveryIndex = $null,
+        [string]$DiscoveryPath = ''
     )
     $entry = [pscustomobject]@{
         Document = [pscustomobject]@{ Nodes = @($DiscoveryNodes) }
         InProgress = @()
         Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    }
+    if ($null -ne $DiscoveryIndex -and -not [string]::IsNullOrWhiteSpace($DiscoveryPath)) {
+        $entry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
     }
     $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $ProfileExclusions -ProfileAware
     $basisMap = Get-TestPhaseClassBasisMap
@@ -1261,7 +1266,7 @@ function Write-TestPhasePlannedManifest {
     }
     # Preserve PowerShell's existing case-insensitive membership semantics without
     # scanning the entire discovered roster once for every planned UID.
-    $requiredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $requiredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::InvariantCultureIgnoreCase)
     foreach ($req in @($view.RequiredUids)) { [void]$requiredSet.Add([string]$req) }
     $extra = @()
     foreach ($id in @($union.Keys)) {

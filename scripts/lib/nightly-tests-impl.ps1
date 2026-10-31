@@ -922,6 +922,7 @@ function Prepare-NightlySuiteExecution {
 
     $suiteDiscoveryNodes = @()
     $profileDiscovery = $null
+    $profileDiscoveryPath = ''
     $suiteCensus = $null
     # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
     $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
@@ -979,7 +980,7 @@ function Prepare-NightlySuiteExecution {
             if (-not [string]::IsNullOrWhiteSpace([string]$script:NightlyClassCostPath) -and (Test-Path -LiteralPath $script:NightlyClassCostPath)) {
                 $phaseCostDigest = Get-NightlyFileSha256 -Path $script:NightlyClassCostPath
             }
-            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite $suiteId -SourceDigest ([string]$Sha) -AssemblyDigest $phaseAssemblyDigest -PolicyDigest ([string]$policyHash) -CostFileDigest $phaseCostDigest -AssemblyId $phaseAssembly -Groups $chunks -DiscoveryNodes $phaseNodes -ProfileExclusions $profileExclusions)
+            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite $suiteId -SourceDigest ([string]$Sha) -AssemblyDigest $phaseAssemblyDigest -PolicyDigest ([string]$policyHash) -CostFileDigest $phaseCostDigest -AssemblyId $phaseAssembly -Groups $chunks -DiscoveryNodes $phaseNodes -ProfileExclusions $profileExclusions -DiscoveryIndex $suiteDiscoveryIndex -DiscoveryPath $profileDiscoveryPath)
         } catch {
             Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
         }
