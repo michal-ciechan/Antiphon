@@ -1,6 +1,9 @@
 #requires -Version 5.1
 # Qualification supervisor heartbeat. Detection only: this file never stops a process.
 # ASCII-only library, not an autostart script. Dot-source it from the supervisor.
+if (-not (Get-Command Read-TestPhaseGenerationPrefix -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+}
 
 function Get-QualificationHeartbeatField {
     param($Object, [string]$Name)
@@ -35,27 +38,91 @@ function ConvertFrom-QualificationHeartbeatTime {
 
 function Get-QualificationGroupPlannedSeconds {
     param([string]$Path, [string]$ChunkId, [string]$SuiteId, [string]$RunId, [string]$Attempt)
-    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($ChunkId)) { return $null }
-    if (-not [IO.File]::Exists($Path)) { return $null }
     try {
-        $parsed = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
-        foreach ($group in @($parsed.groups)) {
-            if ($null -eq $group) { continue }
-            $chunk = [string](Get-QualificationHeartbeatField $group 'chunk')
-            if ($chunk -cne $ChunkId) { continue }
-            $seconds = Get-QualificationHeartbeatField $group 'plannedSeconds'
-            if ($null -eq $seconds) { return $null }
-            return (ConvertTo-QualificationHeartbeatDouble $seconds)
+        if(-not $Path -or -not $ChunkId){throw 'missing-path-or-chunk'}
+        $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
+        $activePath=Join-Path $dir 'active-chunk.json'
+        $active=Read-QualificationActiveChunkIdentity $dir
+        if($null -eq $active -or $active.state -cne 'Active'){throw 'active-unavailable'}
+        foreach($name in @('SuiteId','RunId','Attempt')){
+            $field=@{SuiteId='suite';RunId='runId';Attempt='attempt'}[$name]
+            if($PSBoundParameters.ContainsKey($name) -and ((Get-Variable $name -ValueOnly) -ceq '' -or (Get-Variable $name -ValueOnly) -cne $active.$field)){throw ('identity-'+$field)}
         }
+        if($active.chunk -cne $ChunkId){throw 'identity-chunk'}
+        $index=Read-QualificationPlanJson (Join-Path $dir 'groups-planned-index.json')
+        if($index.runId -cne $active.runId -or [string]$index.attempt -cne $active.attempt){throw 'index-identity'}
+        $rows=@($index.suites|Where-Object {$_.suite -ceq $active.suite})
+        if($rows.Count -ne 1){throw 'index-suite'}
+        $row=$rows[0]
+        if($row.file -cne $active.planFile -or $row.runId -cne $active.runId -or [string]$row.attempt -cne $active.attempt){throw 'index-plan'}
+        $planPath=Join-Path $dir $active.planFile
+        $plan=Read-QualificationPlanJson $planPath
+        if((Get-NightlyFileSha256 $planPath) -cne $active.planDigest){throw 'plan-digest'}
+        if($plan.suite -cne $active.suite -or $plan.runId -cne $active.runId -or [string]$plan.attempt -cne $active.attempt){throw 'plan-identity'}
+        foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$row.$field -cne [string]$active.$field -or [string]$plan.$field -cne [string]$active.$field){throw ('plan-binding-'+$field)}}
+        $groups=@($plan.groups|Where-Object {$_.chunk -ceq $ChunkId})
+        if($groups.Count -ne 1){throw 'plan-chunk'}
+        # A failed Idle write cannot make a previous settled chunk look live.
+        $sidecar=Join-Path $dir ($active.suite+'-'+$active.chunk+'.timing.json')
+        if(Test-Path -LiteralPath $sidecar){$timing=Read-QualificationPlanJson $sidecar;if($timing.lastPhase -cin @('complete','timeout','cancelled','teardown') -or $timing.completedAt){throw 'chunk-settled'}}
+        $pointerPath=Join-Path (Join-Path $dir 'groups-executed.journal') 'current.json'
+        if(Test-Path -LiteralPath $pointerPath){
+            $pointer=Read-QualificationPlanJson $pointerPath
+            if([string]$pointer.generation -cnotmatch '^[a-f0-9]{32}$'){throw 'journal-pointer'}
+            $prefix=Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Split-Path -Parent $pointerPath) $pointer.generation)
+            if($prefix.Corrupt){throw 'journal-unavailable'}
+            foreach($record in $prefix.Records){if($record.HeaderRun -cne $active.runId -or $record.HeaderAttempt -cne $active.attempt){throw 'journal-identity'};if($record.FreshSuite -ceq $active.suite -and $record.FreshChunk -ceq $active.chunk){throw 'chunk-settled'}}
+        }
+        if($script:QualificationIdentityReadObserver){$null=$script:QualificationIdentityReadObserver.Invoke($activePath)}
+        if((Get-NightlyFileSha256 $activePath) -cne $active.identityDigest){throw 'active-changed'}
+        $seconds=[double]$groups[0].plannedSeconds
+        if([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0){throw 'plan-cost'}
+        return $seconds
     } catch {
+        Write-Verbose ('planned-cost-unresolved:'+$_.Exception.Message)
         return $null
     }
-    return $null
+}
+
+function Read-QualificationPlanJson {
+    param([string]$Path)
+    if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
+    return ([IO.File]::ReadAllText($Path)|ConvertFrom-Json)
+}
+
+function Read-QualificationActiveChunkIdentity {
+    param([string]$Directory)
+    try {
+        $path=Join-Path $Directory 'active-chunk.json'
+        $digest=Get-NightlyFileSha256 $path
+        $record=Read-QualificationPlanJson $path
+        if($record.format -cne 'antiphon-qualification-active-chunk-v1' -or $record.state -cnotin @('Active','Idle') -or [long]$record.generation -le 0 -or -not $record.runId -or -not $record.attempt -or $record.suite -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or -not $record.chunk -or $record.planFile -cne ('groups-planned-'+$record.suite+'.json') -or $record.planDigest -cnotmatch '^[a-f0-9]{64}$'){return $null}
+        if((Get-NightlyFileSha256 $path) -cne $digest){return $null}
+        $record|Add-Member -NotePropertyName identityDigest -NotePropertyValue $digest
+        return $record
+    } catch {return $null}
 }
 
 function Write-QualificationActiveChunkIdentity {
     param([string]$Directory, [string]$SuiteId, [string]$ChunkId, [string]$RunId, [string]$Attempt, [string]$State='Active')
-    return $false
+    try {
+        if($State -cnotin @('Active','Idle') -or $SuiteId -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$'){throw 'active-identity-schema'}
+        $file='groups-planned-'+$SuiteId+'.json'
+        $path=Join-Path $Directory $file
+        $plan=Read-QualificationPlanJson $path
+        $index=Read-QualificationPlanJson (Join-Path $Directory 'groups-planned-index.json')
+        $rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId})
+        if($rows.Count -ne 1 -or $rows[0].file -cne $file -or $index.runId -cne $RunId -or [string]$index.attempt -cne $Attempt -or $plan.runId -cne $RunId -or [string]$plan.attempt -cne $Attempt -or $plan.suite -cne $SuiteId -or @($plan.groups|Where-Object {$_.chunk -ceq $ChunkId}).Count -ne 1){throw 'active-plan-binding'}
+        $old=Read-QualificationActiveChunkIdentity $Directory
+        $generation=1;if($old -and $old.runId -ceq $RunId -and $old.attempt -ceq $Attempt){$generation=[long]$old.generation+1}
+        $record=[ordered]@{format='antiphon-qualification-active-chunk-v1';state=$State;generation=$generation;runId=$RunId;attempt=$Attempt;suite=$SuiteId;chunk=$ChunkId;planFile=$file;planDigest=(Get-NightlyFileSha256 $path)}
+        foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$rows[0].$field -cne [string]$plan.$field){throw ('active-plan-'+$field)};$record[$field]=[string]$plan.$field}
+        Write-NightlyAtomicJson -Path (Join-Path $Directory 'active-chunk.json') -Object $record
+        return $true
+    } catch {
+        Write-Warning -WarningAction Continue ('active-identity-unavailable: '+$_.Exception.Message)
+        return $false
+    }
 }
 
 function Get-QualificationHeartbeatIdleBudget {

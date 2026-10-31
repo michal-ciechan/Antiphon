@@ -502,6 +502,7 @@ function Invoke-AntiphonNightlyRunCore {
                     }
                     if ($NoReport) { $pwshArgs += '-NoReport' }
                     if($PriorFailuresPath){$pwshArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+                    if($pwshArgs -notcontains '-Attempt'){$pwshArgs += @('-Attempt',[string]$Attempt)}
                     # D-2/D-3: profile, pinned sha and candidate identity must survive the hop.
                     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) { $pwshArgs += '-ExpectedSha'; $pwshArgs += $ExpectedSha }
                     if (-not [string]::IsNullOrWhiteSpace($CandidateId)) { $pwshArgs += '-CandidateId'; $pwshArgs += $CandidateId }
@@ -628,6 +629,7 @@ function Invoke-AntiphonNightlyRunCore {
         }
         Write-NightlyRunLine ('running {0}' -f $testsScript)
         if($PriorFailuresPath){$testArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
+        if($testArgs -notcontains '-Attempt'){$testArgs += @('-Attempt',[string]$Attempt)}
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
         $testExit = [int]$testRun.ExitCode
         if ($null -eq $testExit) { $testExit = 1 }
