@@ -106,7 +106,7 @@ public sealed class VolumeRetirementWrapperTests
             };
             psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-wrapper-v2-cases.mjs"));
             psi.ArgumentList.Add(native.Root);
-            var real = await Wait(psi, TimeSpan.FromSeconds(180));
+            var real = await Wait(psi, TimeSpan.FromSeconds(360));
             real.Exit.ShouldBe(0, "W1 real wrapper, private A->B proof, long-scan renewal and locked inventory: " + real.Output);
             real.Output.ShouldContain("C1609_WRAPPER passed");
         }

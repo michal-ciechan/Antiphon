@@ -103,8 +103,11 @@ const env={...process.env,PATH:bin+':'+process.env.PATH,C1609_MANUAL_FIXTURE:roo
 const calls=[];
 function run(extra=[]){
  const started=performance.now();
+ // CARD-1609 measured complete calls: auto Preview/Apply 111.733s, DryRun 35.806s.
+ // Rounded 2x single-sample collection limits; population p95 remains unknown.
+ const timeout=extra.length?90000:240000;
  const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',repo+'/scripts/deploy-server2.ps1','-Rolling','-Sha','a'.repeat(40),'-Phase','retire-temp',...extra],
- {env,encoding:'utf8',timeout:60000,maxBuffer:4*1024*1024});
+ {env,encoding:'utf8',timeout,maxBuffer:4*1024*1024});
  calls.push({extra,exit:r.status,milliseconds:performance.now()-started});
  assert(!r.error,'bounded wrapper child: '+r.error);
  assert(!(r.stdout+r.stderr).includes('C1609_WRAPPER_OPERATOR_SENTINEL'),'operator credential never exported');
