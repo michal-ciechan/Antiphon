@@ -3,22 +3,25 @@ using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-[Category("Unit")]
+[Category("Unit"), Timeout(30_000)]
 public class LiveClaudeExecutableWiringTests
 {
-    private static LiveClaudeExecutableCases Fixture(string uid = LiveClaudeCore.Submit)
+    private static LiveClaudeExecutableCases Fixture(string uid = LiveClaudeCore.Submit, string decoyName = "cl.bat")
         => new(uid, (u, r, c, l) => ClSession.PrepareCore(u, r, c,
-            () => ClSession.ResolveCl(Path.GetDirectoryName(l()))!));
+            () => ClSession.ResolveCl(Path.GetDirectoryName(l()))!), decoyName);
 
     [Test]
     public void ClSessionUsesAttestedExecutable()
     {
-        using var f = Fixture();
-        f.Selection("V-1");
-        var executable = ClSession.PrepareCore(LiveClaudeCore.Submit, f.Request, f.Context, () => throw new InvalidOperationException("PATH consulted"));
-        var (app, args) = ClSession.BuildCoreLaunch(executable, "--version");
-        if (app != f.Context.Image.Path || !args.SequenceEqual(new[] { "--version" }))
-            throw new InvalidOperationException("C1545 V-1/owned actual ClSession launch builder uses attested image");
+        foreach (var decoyName in new[] { "cl.bat", "cl.exe" })
+        {
+            using var f = Fixture(decoyName: decoyName);
+            f.Selection("V-1");
+            var executable = ClSession.PrepareCore(LiveClaudeCore.Submit, f.Request, f.Context, () => throw new InvalidOperationException("PATH consulted"));
+            var (app, args) = ClSession.BuildCoreLaunch(executable, "--version");
+            if (app != f.Context.Image.Path || !args.SequenceEqual(new[] { "--version" }))
+                throw new InvalidOperationException("C1545 V-1/owned actual ClSession launch builder uses attested image");
+        }
         AuditPtyCallers();
         LiveClaudeExecutableMutants.Run("V-1");
     }

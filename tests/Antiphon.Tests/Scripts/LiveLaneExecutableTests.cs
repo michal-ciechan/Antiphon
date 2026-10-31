@@ -4,11 +4,11 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-[Category("Unit")]
+[Category("Unit"), Timeout(30_000)]
 public class LiveLaneExecutableTests
 {
     private static LiveClaudeExecutableCases Fixture()
-        => new(LiveClaudeCore.C680, (_, r, c, l) => ClaudeDialogWatchdogCanaryTests.PrepareExecutable(r, c, l));
+        => new(LiveClaudeCore.C680, (_, r, c, l) => ClaudeDialogWatchdogCanaryTests.PrepareExecutable(r, c, l), "claude.exe");
     private const string Caller = "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs";
 
     [Test]

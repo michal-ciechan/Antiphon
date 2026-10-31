@@ -16,7 +16,8 @@ internal sealed class LiveClaudeExecutableCases : IDisposable
     private readonly string decoy;
 
     public LiveClaudeExecutableCases(string uid,
-        Func<string, LiveClaudeLaunchRequest?, LiveClaudeLaunchContext?, Func<string>, LiveClaudeExecutable> prepare)
+        Func<string, LiveClaudeLaunchRequest?, LiveClaudeLaunchContext?, Func<string>, LiveClaudeExecutable> prepare,
+        string decoyName = "cl.bat")
     {
         this.uid = uid;
         this.prepare = prepare;
@@ -24,9 +25,12 @@ internal sealed class LiveClaudeExecutableCases : IDisposable
         File.WriteAllText(path, "inert-owned-image");
         foreach (var name in new[] { "cl.exe", "cl.bat", "claude.exe" })
             File.WriteAllText(System.IO.Path.Combine(root, name), "inert-decoy-image");
-        decoy = System.IO.Path.Combine(root, "cl.bat");
+        var first = Directory.CreateDirectory(System.IO.Path.Combine(root, "path-first")).FullName;
+        decoy = System.IO.Path.Combine(first, decoyName);
+        File.WriteAllText(decoy, "inert-first-PATH-decoy");
         var binding = new LiveClaudeBinding(uid, "run-A", 1, new string('a', 40), "profile-A");
-        Request = new(binding, path);
+        Request = LiveClaudeLaunchRequest.FromEnvironment(binding,
+            key => key == LiveClaudeLaunchRequest.ExecutableVariable ? path : throw new InvalidOperationException("unexpected environment read"));
         Context = new(binding, new(path, LiveClaudeExecutable.Digest(path)), "owner-A", () => held, []);
         observation = new(process, Context.Image, []);
     }

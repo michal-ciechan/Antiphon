@@ -6,7 +6,12 @@ internal sealed record LiveClaudeImage(string Path, string Sha256);
 internal sealed record LiveClaudeLock(bool Held, string Owner);
 internal sealed record LiveClaudeLaunchContext(LiveClaudeBinding Binding, LiveClaudeImage Image,
     string LockOwner, Func<LiveClaudeLock> ReadLock, IReadOnlyList<LiveClaudeImage> Chain);
-internal sealed record LiveClaudeLaunchRequest(LiveClaudeBinding Binding, string? Executable);
+internal sealed record LiveClaudeLaunchRequest(LiveClaudeBinding Binding, string? Executable)
+{
+    public const string ExecutableVariable = "ANTIPHON_LIVE_CLAUDE_EXE";
+    public static LiveClaudeLaunchRequest FromEnvironment(LiveClaudeBinding binding, Func<string, string?> read)
+        => new(binding, read(ExecutableVariable));
+}
 internal sealed record LiveClaudeProcess(int Pid, string Started, string Session);
 internal sealed record LiveClaudeObservation(LiveClaudeProcess Process, LiveClaudeImage Image,
     IReadOnlyList<LiveClaudeImage> Chain);

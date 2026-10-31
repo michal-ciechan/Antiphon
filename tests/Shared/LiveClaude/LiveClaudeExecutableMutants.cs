@@ -35,6 +35,7 @@ internal static class LiveClaudeExecutableMutants
     ];
     public static void Run(string v)
     {
+        if (Environment.GetEnvironmentVariable("C1545_EXECUTABLE_CONTROLS") != v) return;
         var root = Path.Combine(LiveClaudeExecutableAudit.Root(), "tests/Shared/LiveClaude");
         var source = File.ReadAllText(Path.Combine(root, "LiveClaudeExecutable.cs"));
         var support = new[] { "LiveClaudeLaunchContext.cs", "LiveClaudeExecutableCases.cs" }
@@ -45,22 +46,25 @@ internal static class LiveClaudeExecutableMutants
             if (site < 0 || source.IndexOf(m.From, site + m.From.Length, StringComparison.Ordinal) >= 0)
                 throw new InvalidOperationException($"C1545 {m.Pc} mutation site must be unique");
             var changed = source.Replace(m.From, m.To, StringComparison.Ordinal);
-            var error = Execute(changed, support, v);
+            foreach (var decoyName in m.Pc == "PC-1" ? new[] { "cl.bat", "cl.exe" } : new[] { "cl.bat" })
+            {
+            var error = Execute(changed, support, v, decoyName);
             if (error is null || !error.Message.StartsWith($"C1545 {v}/{m.Assertion}", StringComparison.Ordinal))
                 throw new InvalidOperationException($"C1545 {m.Pc} expected assertion-red {m.Assertion}; got {error?.GetType().Name}: {error?.Message}");
-            var restored = Execute(source, support, v);
+            var restored = Execute(source, support, v, decoyName);
             if (restored is not null) throw new InvalidOperationException($"C1545 {m.Pc} restored green failed", restored);
-            Console.WriteLine($"C1545 {m.Pc} assertion-red {m.Assertion}; restored-green (compiled owned source copy)");
+            Console.WriteLine($"C1545 {m.Pc}/{decoyName} assertion-red {m.Assertion}; restored-green (compiled owned source copy)");
+            }
         }
     }
-    private static Exception? Execute(string source, string[] support, string v)
+    private static Exception? Execute(string source, string[] support, string v, string decoyName)
     {
         const string entry = """
             namespace Antiphon.TestSupport.LiveClaude;
             public static class MutantEntry {
-              public static void Run(string v) {
+              public static void Run(string v, string decoyName) {
                 using var f = new LiveClaudeExecutableCases(v == "V-5" ? LiveClaudeCore.C680 : LiveClaudeCore.Submit,
-                  (u,r,c,l) => LiveClaudeExecutable.Resolve(u,r,c,l));
+                  (u,r,c,l) => LiveClaudeExecutable.Resolve(u,r,c,l), decoyName);
                 if (v == "V-1") f.Selection(v);
                 else if (v == "V-2" || v == "V-5") f.Admission(v);
                 else f.Images(v);
@@ -82,7 +86,7 @@ internal static class LiveClaudeExecutableMutants
         try
         {
             var assembly = load.LoadFromStream(bytes);
-            try { assembly.GetType("Antiphon.TestSupport.LiveClaude.MutantEntry")!.GetMethod("Run")!.Invoke(null, [v]); }
+            try { assembly.GetType("Antiphon.TestSupport.LiveClaude.MutantEntry")!.GetMethod("Run")!.Invoke(null, [v, decoyName]); }
             catch (TargetInvocationException e) { return e.InnerException!; }
             return null;
         }

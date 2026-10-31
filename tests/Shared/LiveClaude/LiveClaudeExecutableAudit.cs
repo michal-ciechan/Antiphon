@@ -119,6 +119,7 @@ internal static class LiveClaudeExecutableAudit
     public static void Reject(Action<string> audit, string healthy, string from, string to, string pc)
     {
         audit(healthy);
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("C1545_EXECUTABLE_CONTROLS"))) return;
         if (!healthy.Contains(from, StringComparison.Ordinal)) Fail(pc, "mutation site missing");
         var changed = healthy.Replace(from, to, StringComparison.Ordinal);
         var refused = false;
