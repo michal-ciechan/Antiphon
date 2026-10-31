@@ -431,10 +431,47 @@ function Export-NightlyStoppedRunSeed {
     Write-Host ('SEED '+$output+' SHA256 '+(Get-NightlyHistoryDigest $output))
 }
 
+function Get-NightlySeedEntryClasses {
+    param($Entry)
+    $classes=@($Entry.ChunkRef.classes)
+    if($classes.Count -eq 0){
+        $nodes=@($Entry.ChunkRef.nodes)
+        if($nodes.Count -eq 0){$nodes=@($Entry.SuiteState.nodes)}
+        $classes=@(Get-NightlyHistoryOrdinalStrings @($nodes|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))
+    }
+    return @($classes)
+}
+
+function Test-NightlySameClassSet {
+    param($Left,$Right)
+    $a=@($Left|ForEach-Object {[string]$_})
+    $b=@($Right|ForEach-Object {[string]$_})
+    if($a.Count -ne $b.Count){return $false}
+    $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($item in $a){if(-not $set.Add($item)){return $false}}
+    foreach($item in $b){if(-not $set.Contains($item)){return $false}}
+    return $true
+}
+
 function Resolve-NightlyStoppedSeedOrder {
     param([object[]]$Entries,$Seed)
     try{
         Assert-NightlyStoppedSeedContent $Seed
+        # In place of a plan digest: the stopped run's own candidate sha and run id,
+        # then chunk membership. sourceSha is not the new run's candidate.
+        $shaText=''
+        if($Seed.PSObject.Properties.Name -ccontains 'sourceSha' -and $null -ne $Seed.sourceSha){$shaText=[string]$Seed.sourceSha}
+        if([string]::IsNullOrWhiteSpace($shaText)){throw 'seed-candidate-missing'}
+        if($shaText -cnotmatch '^[a-f0-9]{40}$'){throw 'seed-candidate-malformed'}
+        $runText=''
+        if($Seed.PSObject.Properties.Name -ccontains 'sourceRunId' -and $null -ne $Seed.sourceRunId){$runText=[string]$Seed.sourceRunId}
+        if([string]::IsNullOrWhiteSpace($runText)){throw 'seed-run-missing'}
+        foreach($entry in $Entries){
+            $same=@($Seed.chunks|Where-Object {$_.suite -ceq $entry.suite -and $_.chunk -ceq $entry.chunk})
+            if($same.Count -eq 0){continue}
+            if($same.Count -gt 1){throw 'seed-schema'}
+            if(-not (Test-NightlySameClassSet $same[0].classes (Get-NightlySeedEntryClasses $entry))){throw 'seed-plan-regrouped'}
+        }
         $mapped=0;$ranked=[Collections.Generic.List[object]]::new()
         foreach($entry in $Entries){
             $classes=@($entry.ChunkRef.classes)
