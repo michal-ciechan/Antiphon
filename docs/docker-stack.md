@@ -139,6 +139,23 @@ PartialRefused, or any record that still has effects or intents) also refuses wh
 the four volumes are absent. Recovery is Resume of that operation, or
 `pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <id> -ExpectedJournalDigest <sha256> -ReasonFile <file>`.
 Close is a journal transition, not a delete, and it does not clear `retiredAt`.
+The current Close implementation takes the same rollout/cache locks, validates
+the protected receipt and lifecycle records, and requires complete stable Docker
+container/reference census plus typed absence of all four volumes. An inspect
+error is unknown. Missing child-join evidence, a live owner, a replaced/present
+volume, or a changed digest refuses. Its append-only closure distinguishes
+`removed-observed` for a durable intent from `unattributed-absence`; the original
+journal bytes remain intact. A failed closure flush leaves `close-pending.json`
+blocking deployment. Repeating the same Close after repairing the failure
+reobserves the complete set before finishing that appendix.
+
+Close reads the existing operator credential through `Get-RunnerOperatorToken`.
+A commissioned delegate also supplies `-AuthorityFile` with schema 1, actor,
+authorityRef and the exact operationId; a task token alone is insufficient. The
+credential stays on the control host. Local journal/census environment overrides
+are refused. Public manual Preview/Apply currently refuse
+`ManualPreviewApplyIncomplete`; their complete content/proof flow remains owed.
+Production deletion stays disabled pending complete S5 acceptance and Review.
 There is no `-Adopt` and no force-close. Only a clearable journal continues,
 then POSTs `/drain/clear` with reason `CARD-0948 retired temp placeholder reactivation`,
 and POSTs `/drain` with `redirectTo=server2`, `retireWhenIdle=false`. A cleared start
