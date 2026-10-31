@@ -10,7 +10,8 @@ internal sealed record LiveClaudeSettingsProjection(string Digest, bool ReuseEli
     { "model", "remoteControlAtStartup", "disableAllHooks", "permissions", "hooks", "mcpServers", "enabledPlugins", "env",
       "hasTrustDialogAccepted", "hasCompletedProjectOnboarding", "projectOnboardingSeenCount", "allowedTools" };
     private static readonly HashSet<string> credentials = new(StringComparer.Ordinal)
-    { "oauthAccount", "accessToken", "refreshToken", "apiKey", "primaryApiKey", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN" };
+    { "oauthAccount", "accessToken", "refreshToken", "apiKey", "primaryApiKey", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY_FILE", "ANTHROPIC_AUTH_TOKEN_FILE", "CLAUDE_CODE_OAUTH_TOKEN_FILE", "ANTIPHON_TASK_TOKEN" };
     private static readonly HashSet<string> volatileKeys = new(StringComparer.Ordinal) { "numStartups", "lastSessionId", "lastCost", "lastDuration" };
 
     public static string InputDigest(string path)
