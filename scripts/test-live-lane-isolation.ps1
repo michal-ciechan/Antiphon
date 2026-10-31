@@ -10,6 +10,7 @@ $source = (& git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read source SHA' }
 $runKey = 'f727-' + [guid]::NewGuid().ToString('N').Substring(0,8)
 $scratch = [IO.Directory]::CreateTempSubdirectory('c1545-portable-').FullName
+[IO.File]::WriteAllText((Join-Path $scratch 'inert-executable'), 'inert attested portable executable')
 $contextPath = Join-Path $scratch 'context.json'
 $context = [ordered]@{ root=$scratch; source=$source; run=$runKey; producerBuild=$null; producerReceipt=$null; producerReceiptHash=$null }
 $context | ConvertTo-Json | Set-Content -LiteralPath $contextPath

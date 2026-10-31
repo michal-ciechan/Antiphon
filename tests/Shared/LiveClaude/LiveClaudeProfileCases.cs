@@ -139,11 +139,14 @@ internal static class LiveClaudeProfileCases
         foreach (var source in original.Sources)
         {
             var old = File.ReadAllText(source.Path);
-            var node = JsonNode.Parse(old)!.AsObject();
-            node["model"] = "drift-" + source.Kind;
-            File.WriteAllText(source.Path, node.ToJsonString());
-            Assert(project(p, launch.Args).Digest != original.Digest, v, "drift-" + source.Kind, "behavior edit changes digest without revision bump");
-            File.WriteAllText(source.Path, old);
+            try
+            {
+                var node = JsonNode.Parse(old)!.AsObject();
+                node["model"] = "drift-" + source.Kind;
+                File.WriteAllText(source.Path, node.ToJsonString());
+                Assert(project(p, launch.Args).Digest != original.Digest, v, "drift-" + source.Kind, "behavior edit changes digest without revision bump");
+            }
+            finally { File.WriteAllText(source.Path, old); }
         }
         var reordered = LiveClaudeSettingsProjection.Read(f.Context, p.Paths, launch.Args, precedence: ["local", "project", "user", "global", "managed"]);
         Assert(reordered.Digest != original.Digest, v, "precedence", "effective source precedence changes digest");
@@ -152,11 +155,17 @@ internal static class LiveClaudeProfileCases
         var loaded = project(p, captured);
         Assert(loaded.Sources.All(s => s.Kind != "user") && loaded.Sources.Count == 4, v, "loaded-set", "source set derives from actual argv");
         var global = JsonNode.Parse(File.ReadAllText(p.Paths.GlobalState))!;
-        global["projects"]!["sibling"]!["model"] = "changed-sibling";
-        File.WriteAllText(p.Paths.GlobalState, global.ToJsonString());
-        Assert(project(p, launch.Args).Digest != original.Digest, v, "trust-behavior", "only owned trust is normalized");
-        global["projects"]!["sibling"]!["model"] = "sibling-model";
-        File.WriteAllText(p.Paths.GlobalState, global.ToJsonString());
+        try
+        {
+            global["projects"]!["sibling"]!["model"] = "changed-sibling";
+            File.WriteAllText(p.Paths.GlobalState, global.ToJsonString());
+            Assert(project(p, launch.Args).Digest != original.Digest, v, "trust-behavior", "only owned trust is normalized");
+        }
+        finally
+        {
+            global["projects"]!["sibling"]!["model"] = "sibling-model";
+            File.WriteAllText(p.Paths.GlobalState, global.ToJsonString());
+        }
     }
     private static void Unknown(string v, Builder build, Projector project)
     {
@@ -166,6 +175,10 @@ internal static class LiveClaudeProfileCases
         var original = project(p, launch.Args);
         var user = Path.Combine(p.Paths.ConfigDir, "settings.json");
         var old = File.ReadAllText(user);
+        var managed = File.ReadAllText(f.Context.ManagedPolicyPath);
+        var globalBefore = File.ReadAllText(p.Paths.GlobalState);
+        try
+        {
         File.WriteAllText(user, "{\"remoteControlAtStartup\":true,\"newBehavior\":true}");
         Assert(!project(p, launch.Args).ReuseEligible, v, "unknown-key", "unknown behavior disables reuse");
         File.WriteAllText(user, old);
@@ -199,6 +212,13 @@ internal static class LiveClaudeProfileCases
         foreach (var env in new[] { new Dictionary<string,string>(), new Dictionary<string,string>{{"ANTHROPIC_BASE_URL",""}}, new Dictionary<string,string>{{"ANTHROPIC_BASE_URL","http://fixture.invalid"}} })
             digests.Add(LiveClaudeSettingsProjection.Read(f.Context with { Environment=env },p.Paths,launch.Args).Digest);
         Assert(digests.TakeLast(3).Distinct().Count()==3,v,"environment-presence","absent, empty and valued environment remain distinct");
+        }
+        finally
+        {
+            File.WriteAllText(user, old);
+            File.WriteAllText(f.Context.ManagedPolicyPath, managed);
+            File.WriteAllText(p.Paths.GlobalState, globalBefore);
+        }
     }
     private static void Arguments(string v, Builder build)
     {

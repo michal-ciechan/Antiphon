@@ -53,6 +53,8 @@ internal sealed class LiveClaudeProfile : IDisposable
         env["CLAUDE_CODE_CHILD_SESSION"] = "";
         env["CLAUDE_CODE_SESSION_ID"] = "";
         env["CLAUDE_CODE_BRIDGE_SESSION_ID"] = "";
+        env.TryAdd("DISABLE_AUTOUPDATER", "1");
+        env.TryAdd("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
         return env;
     }
     public LiveClaudeProfileSpec Build(string role, string session, string? overlay)

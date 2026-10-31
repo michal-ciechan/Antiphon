@@ -29,7 +29,7 @@ internal sealed record LiveClaudeArgvCapture(string Source, string Run, string P
     public const string ProducerUid = "Antiphon.Agents.Pty.Tests.LiveClaudeIsolationWiringTests.LaunchArgumentsKeepProductionSources";
     public static LiveClaudeArgvCapture Create(LiveClaudePortableContext? portable,string model,string role,string session,LiveClaudeProfileSpec spec,string overlay)
         => new(portable?.Source ?? "local", portable?.Run ?? "local",
-            LiveClaudeProfile.HashFile(Assembly.GetExecutingAssembly().Location), ProducerUid,model,role,session,
+            LiveClaudeProfile.HashFile(System.Reflection.Assembly.GetExecutingAssembly().Location), ProducerUid,model,role,session,
             spec.Args.ToArray(),new(spec.Env),spec.Cwd,role is "off" or "slash" ? File.ReadAllText(overlay):null,true);
     public static void Publish(LiveClaudePortableContext context,IReadOnlyList<LiveClaudeArgvCapture> captures)
     {

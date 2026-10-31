@@ -65,7 +65,7 @@ internal sealed record LiveClaudeSettingsProjection(string Digest, bool ReuseEli
             {
                 if (File.Exists(file))
                 {
-                    LiveClaudeProfilePaths.Owned(file, context.OwnedRoot);
+                    LiveClaudeProfilePaths.Owned(file, kind == "managed" ? Path.GetDirectoryName(context.ManagedPolicyPath)! : context.OwnedRoot);
                     var text = (read ?? File.ReadAllText)(file);
                     var node = JsonNode.Parse(text) as JsonObject ?? throw new System.Text.Json.JsonException();
                     state = node.Count == 0 ? "empty" : "value";
