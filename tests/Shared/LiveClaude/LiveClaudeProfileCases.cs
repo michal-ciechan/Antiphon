@@ -216,7 +216,7 @@ internal static class LiveClaudeProfileCases
                 Assert(spec.Cwd==f.Context.Cwd && spec.Env["CLAUDE_CONFIG_DIR"]==f.Context.ConfigDir,v,"launch-"+role,"actual captured cwd/environment are owned");
                 var i=Array.IndexOf(spec.Args,"--model");
                 Assert(model=="production-default" ? i<0 : i>=0 && spec.Args[i+1]==model,v,"model-"+model,"actual argv selects context model");
-                exports.Add(LiveClaudeArgvCapture.Create(portable,model,role,f.Session,spec,f.Overlay));
+                if (portable is not null) exports.Add(LiveClaudeArgvCapture.Create(portable,model,role,f.Session,spec,f.Overlay));
             }
         }
         if (portable is not null) LiveClaudeArgvCapture.Publish(portable,exports);
