@@ -41,8 +41,8 @@ public sealed class VolumeRetirementApplyGateTests
         var lockCall = recycle.IndexOf("\n        c1008_lock\n", StringComparison.Ordinal);
         var previewUse = recycle.IndexOf("c1609_require_ready_preview", StringComparison.Ordinal);
         var protectedCall = recycle.IndexOf("c1609_refuse_protected_targets", StringComparison.Ordinal);
-        (gate >= 0 && stop > gate && containerRm > gate && lockCall > gate && previewUse > gate &&
-            protectedCall > gate && removal > gate).ShouldBeTrue(
+        (gate >= 0 && protectedCall > gate && lockCall > protectedCall && stop > gate &&
+            containerRm > gate && previewUse > gate && removal > gate).ShouldBeTrue(
             "apply-gate: the gate and the protected-name refusal precede the lock, preview consume, stop, rm, and volume rm");
         var gateBody = Function(remote, "c1609_apply_gate");
         gateBody.ShouldContain("write_result false 'apply-gate-off' 2", Case.Sensitive);
@@ -53,7 +53,7 @@ public sealed class VolumeRetirementApplyGateTests
         Function(remote, "case_retire_temp_runner").ShouldContain("c1008_recycle \"$TEMP_PROJECT\"", Case.Sensitive);
         Function(remote, "case_deploy_parent").ShouldContain("c1008_recycle \"$HOST_PROJECT\"", Case.Sensitive);
         remote.ShouldContain("retire-temp-runner) case_retire_temp_runner", Case.Sensitive);
-        // Dry-run returns inside c1008_recycle before this call. Resume and manual are
+        // Dry-run skips the gate with the C1008_DRY_RUN guard. Resume and manual are
         // modes of the same function, so they reach the same statement.
         remote.ShouldContain("deploy-parent) c1008_recycle \"$HOST_PROJECT\"", Case.Sensitive);
         remote.ShouldContain("retire-temp-runner)", Case.Sensitive);
@@ -72,6 +72,13 @@ public sealed class VolumeRetirementApplyGateTests
         Read("scripts/c1609-manual.ps1").ShouldContain("-Case retire-temp-runner", Case.Sensitive);
 
         var runbook = Read("docs/docker-stack.md");
+        var upgrade = runbook.Split('\n').Single(line => line.StartsWith("| 6. Upgrade old |", StringComparison.Ordinal));
+        foreach (var pin in new[]
+                 {
+                     "C1008_RECYCLE skipped=redeploy-old reason=not-requested", "-RecycleVolumes",
+                     "apply-gate-off", "before any stop, remove, journal write, or preview consume"
+                 })
+            upgrade.ShouldContain(pin, Case.Sensitive, "apply-gate: gate 6 " + pin);
         var gateRow = runbook.Split('\n').Single(line => line.StartsWith("| 9. Retire temp |", StringComparison.Ordinal));
         var preview = gateRow.IndexOf("-Phase retire-temp -DryRun", StringComparison.Ordinal);
         var enabled = gateRow.IndexOf("-RetirementProof <operation-id>", StringComparison.Ordinal);
@@ -79,7 +86,8 @@ public sealed class VolumeRetirementApplyGateTests
         foreach (var pin in new[]
                  {
                      "Apply is off by default", "including already-absent cleanup", "apply-gate-off",
-                     "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "exit 2"
+                     "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "exit 2",
+                     "expires after 900 s", "within 15 minutes"
                  })
             gateRow.ShouldContain(pin, Case.Sensitive, "apply-gate: " + pin);
     }
@@ -243,6 +251,22 @@ public sealed class VolumeRetirementApplyGateTests
         var recycle = parent["recycle"];
         (recycle is null || recycle.GetValueKind() == JsonValueKind.Null).ShouldBeTrue(
             "apply-gate: default redeploy-old passes no recycle context; " + parent.ToJsonString());
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Redeploy_old_with_switch_requests_recycle()
+    {
+        using var drifted = new C1008WrapperFixture();
+        drifted.MainDrained();
+        drifted.State["allowClear"] = true;
+        var run = await drifted.Run("redeploy-old", "-RecycleVolumes");
+        run.Exit.ShouldBe(0, "apply-gate: an explicit recycle still reaches deploy-parent; " + run.Output);
+        run.Output.ShouldNotContain("skipped=redeploy-old");
+        var parent = run.Trace.Single(row => row["kind"]?.GetValue<string>() == "case" &&
+            row["name"]?.GetValue<string>() == "deploy-parent");
+        parent["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse("apply-gate: -RecycleVolumes is an apply, not a preview");
+        parent["recycle"]!["operationId"]!.GetValue<string>().ShouldMatch(@"^c1008[0-9a-f]{32}$");
     }
 
     private const string EnabledToken = "export ANTIPHON_VOLUME_RETIREMENT_APPLY=\"enabled-${C1008_OPERATION}\"";

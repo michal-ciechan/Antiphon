@@ -1218,6 +1218,10 @@ or floor changes here.
 2026-10-31 round 13 adds CP-17 for the default-off apply gate. It shares the CP-3
 build. No earlier row's filter or floor changes.
 
+2026-10-31 round 14 keeps every earlier filter and floor. CP-17 still floors at 4
+while the class gains the pre-stop, preview-preserve, protected-name, recheck, and
+redeploy-old witnesses. The Expect prose below counts methods rather than the old 4.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1609-red/` | linux-content-red | `/*/Antiphon.Tests.Scripts/VolumeRetirementContentTests/(Current_tooling_and_missing_history_do_not_block*)\|(State_credentials_refuse_before_removal*)` | C1,C2 baseline | 2 executed, 2 intended assertion failures, no fixture/build errors | 2 | 5 | true |
@@ -1236,7 +1240,7 @@ build. No earlier row's filter or floor changes.
 | CP-13 | S2-S5 | CP-11 | windows-doc-pins | `/*/Antiphon.Tests.Infrastructure/DockerStackDocumentationTests/*` | R9, all owner-doc pins including census retry | all 16 methods, 0 failed/skipped | 16 | 1 | true |
 | CP-15 | S2-S5 | CP-3 | linux-container-script-guards | `/*/Antiphon.Tests.Scripts/RetiredTempContainerScriptTests/*` | R7, all wrapper/bridge/preview methods | all 16 methods, 0 failed/skipped | 16 | 3 | true |
 | CP-16 | S2-S5 | CP-3 | linux-deploy-contracts | `/*/Antiphon.Tests.Scripts/RemoteScriptContractTests/(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)\|(C849_Docker_volume_paths_have_no_bare_host_reads*)\|(C849_Seed_publishes_complete_payloads_before_its_marker*)\|(Temp_deploy_uses_its_own_project_and_the_inspected_grok_store*)\|(Nested_lane_never_uses_sudo_or_python*)\|(C1067_Nested_lane_sudo_guard_is_sensitive*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)\|(C912_Cold_exception_never_weakens_maintenance_or_donor_gates*)\|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*)` | R8, deploy readers/ordering/privileged metadata | all 23 results from 15 methods, 0 failed/skipped | 23 | 3 | true |
-| CP-17 | S2-S5 | CP-3 | linux-apply-gate | `/*/Antiphon.Tests.Scripts/VolumeRetirementApplyGateTests/*` | default-off apply gate at the delete loop | all 4 methods, 0 failed/skipped | 4 | 10 | true |
+| CP-17 | S2-S5 | CP-3 | linux-apply-gate | `/*/Antiphon.Tests.Scripts/VolumeRetirementApplyGateTests/*` | default-off apply gate before stop, journal, and redeploy recycle | all methods, 0 failed/skipped | 4 | 10 | true |
 
 ## Rollout and compatibility
 

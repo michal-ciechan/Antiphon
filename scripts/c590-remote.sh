@@ -9160,10 +9160,23 @@ c1609_apply_gate() {
     fi
 }
 
+# Host state, the three caches, and Postgres are never retirement targets.
+# Temp's own runner-state stays eligible. Refusal is before the lock and any delete.
+c1609_refuse_protected_targets() {
+    local name
+    for name in "${C1008_TARGETS[@]}"; do
+        case "$name" in
+            "${HOST_PROJECT}_runner-state"|antiphon-runner-cache-nuget-packages|antiphon-runner-cache-nuget-scratch|antiphon-runner-cache-npm-content|antiphon_pgdata)
+                write_result false RecycleProtectedVolume 2
+                ;;
+        esac
+    done
+}
+
 c1609_preview_would_delete() {
     local name facts listed=''
     for name in "${C1008_TARGETS[@]}"; do
-        facts="$(c1008_volume "$name")" || facts=null
+        facts="$(c1008_volume "$name")" || return 2
         if [ "$facts" != null ]; then listed="${listed:+$listed }$name"; fi
     done
     printf 'would delete: %s\n' "$listed"
@@ -9187,10 +9200,16 @@ c1008_recycle() {
         || write_result false RecycleContextInvalid 2
     case "${C1008_DRY_RUN:-0}:${C1008_RESUME:-0}" in 0:0|0:1|1:0) ;; *) write_result false RecycleContextInvalid 2 ;; esac
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
+    if [ "${C1008_DRY_RUN:-0}" != 1 ]; then
+        c1609_apply_gate
+    fi
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         C1008_TARGETS=("${C1008_PROJECT}_runner-state" "${C1008_PROJECT}_dind-data" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_work")
         C1609_APPLY_INVENTORY_FILE="$CASE_DIR/apply-audit.out"
+    fi
+    c1609_refuse_protected_targets
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         # Preview holds the same rollout/cache locks as apply. Helper children
         # explicitly drop these descriptors before entering their namespace.
         c1008_lock
@@ -9283,13 +9302,13 @@ c1008_recycle() {
             C1609_CONTENT_READY=1
         fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
-        c1609_preview_would_delete
+        c1609_preview_would_delete || c1008_refuse RecycleVolumeCensusUnknown
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
             c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
             c1609_publication_gate ready || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
-            printf 'C1609_RETIREMENT state=Ready\n'
+            printf 'C1609_RETIREMENT state=Ready operation=%s\n' "$C1008_OPERATION"
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
                 printf 'audit check=origin-present status=0\n'
             fi
@@ -9456,10 +9475,9 @@ c1008_recycle() {
             c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         fi
     fi
-    # Temp and host both delete in the loop below. The gate is outside the temp
-    # branch so a host recycle cannot skip it. Apply-active starts only after it
-    # passes; a refusal must not mark PartialRefused for a delete that did not run.
-    c1609_apply_gate
+    # Temp and host both delete in the loop below. The admission gate already ran,
+    # before the lock and any stop. Apply-active starts here so a later refusal can
+    # mark PartialRefused only after deletion was allowed to begin.
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         C1609_APPLY_ACTIVE=1
     fi

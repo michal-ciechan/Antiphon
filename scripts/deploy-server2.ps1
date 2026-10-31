@@ -13,6 +13,7 @@ param(
     # CARD-1353 D-4: how long a census waits for a land bound to the recycled runner; 0 refuses on the first read.
     [ValidateRange(0, 1440)][int]$LandWaitMinutes = 30,
     [switch]$DryRun,
+    [switch]$RecycleVolumes,
     [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$ResumeRecycle,
     [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$RetirementProof
 )
@@ -27,6 +28,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required' }
 if (($DryRun -or $ResumeRecycle) -and $Phase -notin @('redeploy-old', 'retire-temp')) { throw 'RecycleContextInvalid' }
 if ($DryRun -and $ResumeRecycle) { throw 'RecycleContextInvalid' }
 if ($RetirementProof -and ($Phase -ne 'retire-temp' -or $DryRun -or $ResumeRecycle)) { throw 'RecycleContextInvalid' }
+if ($RecycleVolumes -and $Phase -notin @('redeploy-old', 'all')) { throw 'RecycleContextInvalid' }
 if ([string]::IsNullOrWhiteSpace($Sha)) {
     if ($Phase -ne 'retire-temp') { throw 'ShaRequired' }
     # Current source identity is transport provenance only for retirement. No old
@@ -1381,10 +1383,20 @@ function Invoke-Phase {
                 if ($null -eq $counterpart -or $counterpart.acceptingNewWork -isnot [bool] -or $counterpart.acceptingNewWork -ne $true) { throw 'TempRunnerNotAcceptingNewWork' }
                 $projectId = Get-RecycleProjectId
                 [void](Wait-RecycleTaskCensus -RunnerId 'server2' -ProjectId $projectId)
-                $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
-                $context = [pscustomobject]@{ version=1; project='antiphon-runner'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
-                Invoke-HostCase -Case 'deploy-parent' -Recycle $context
-                if ($DryRun) { return }
+                # Default redeploy-old replaces the runner and keeps its volumes.
+                # -DryRun previews a recycle. -RecycleVolumes and -ResumeRecycle are
+                # the only non-preview requests, and the host gate still requires
+                # enabled-<operation-id> before any stop.
+                $wantsRecycle = [bool]($RecycleVolumes -or $ResumeRecycle -or $DryRun)
+                if ($wantsRecycle) {
+                    $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
+                    $context = [pscustomobject]@{ version=1; project='antiphon-runner'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
+                    Invoke-HostCase -Case 'deploy-parent' -Recycle $context
+                    if ($DryRun) { return }
+                } else {
+                    Write-Output 'C1008_RECYCLE skipped=redeploy-old reason=not-requested'
+                    Invoke-HostCase -Case 'deploy-parent'
+                }
             }
             [void](Wait-RunnerStatus -RunnerId 'server2' -Minutes 5 -Diagnosis 'OldRunnerNotDispatchEligible' -Ready {
                 param($s) $s.dispatchEligible -eq $true -and [string]$s.buildVersion -eq $Sha
@@ -1458,6 +1470,7 @@ function Invoke-Phase {
                 $previewContext = $context.PSObject.Copy()
                 $previewContext.dryRun = $true
                 Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $previewContext
+                Write-Output "C1609_RETIREMENT state=Ready operation=$operation"
             }
             if ($DryRun) { return }
             Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $context
