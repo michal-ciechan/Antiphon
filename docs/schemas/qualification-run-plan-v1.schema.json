@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:antiphon:qualification-run-plan:1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profile",
+    "phase",
+    "runId",
+    "candidate",
+    "mode",
+    "order",
+    "planner",
+    "policyDigest",
+    "rosterDigest",
+    "preparationReceipt",
+    "history",
+    "targets",
+    "nodes",
+    "edges"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "profile": {
+      "$ref": "#/$defs/id"
+    },
+    "phase": {
+      "enum": [
+        "prepare",
+        "execute"
+      ]
+    },
+    "runId": {
+      "$ref": "#/$defs/id"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "releaseRef",
+        "lineageRootSha",
+        "candidateId",
+        "sourceSha"
+      ],
+      "properties": {
+        "repositoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lineageRootSha": {
+          "$ref": "#/$defs/sha"
+        },
+        "candidateId": {
+          "$ref": "#/$defs/id"
+        },
+        "sourceSha": {
+          "$ref": "#/$defs/sha"
+        }
+      }
+    },
+    "mode": {
+      "enum": [
+        "Full",
+        "Affected"
+      ]
+    },
+    "order": {
+      "enum": [
+        "Smart",
+        "Original"
+      ]
+    },
+    "planner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "version",
+        "proposalDigest"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "deterministic",
+            "agent"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalDigest": {
+          "$ref": "#/$defs/nullableDigest"
+        }
+      }
+    },
+    "policyDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "rosterDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "preparationReceipt": {
+      "$ref": "#/$defs/nullableDigest"
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRunId",
+        "digest",
+        "closedAtUtc",
+        "fallbackReason"
+      ],
+      "properties": {
+        "sourceRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/nullableDigest"
+        },
+        "closedAtUtc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "fallbackReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/target"
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableDigest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/digest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "hostLabel",
+        "needsNativeLock",
+        "liveProvider"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "Any",
+            "Windows",
+            "Linux"
+          ]
+        },
+        "hostLabel": {
+          "$ref": "#/$defs/id"
+        },
+        "needsNativeLock": {
+          "type": "boolean"
+        },
+        "liveProvider": {
+          "type": "null"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "capability",
+        "bindingDigest",
+        "parallelism",
+        "resourceKeys",
+        "quota"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "capability": {
+          "$ref": "#/$defs/capability"
+        },
+        "bindingDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "parallelism": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resourceKeys": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "quota": {
+          "type": "null"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "coverageRole",
+        "laneId",
+        "project",
+        "suite",
+        "chunk",
+        "canonicalOrdinal",
+        "action",
+        "selection",
+        "targetId",
+        "requires",
+        "estimate",
+        "priority",
+        "inputFingerprint",
+        "disposition",
+        "skipReceipt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "lane",
+            "project",
+            "lock-acquire",
+            "build",
+            "discover",
+            "preparation-failed",
+            "chunk",
+            "selection",
+            "lock-release",
+            "finalize"
+          ]
+        },
+        "platformOfRecord": {
+          "enum": [
+            "Windows",
+            "Linux",
+            "Any"
+          ]
+        },
+        "coverageRole": {
+          "enum": [
+            "required",
+            "diagnostic"
+          ]
+        },
+        "laneId": {
+          "$ref": "#/$defs/id"
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suite": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chunk": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canonicalOrdinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "filter",
+            "uidSetDigest",
+            "expectedCount"
+          ],
+          "properties": {
+            "filter": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uidSetDigest": {
+              "$ref": "#/$defs/nullableDigest"
+            },
+            "expectedCount": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/id"
+        },
+        "requires": {
+          "$ref": "#/$defs/capability"
+        },
+        "estimate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seconds",
+            "basis",
+            "p95Seconds",
+            "samples",
+            "timingDigest",
+            "stratum"
+          ],
+          "properties": {
+            "seconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "basis": {
+              "enum": [
+                "measured",
+                "provisional",
+                "unknown",
+                "not-applicable"
+              ]
+            },
+            "p95Seconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "timingDigest": {
+              "$ref": "#/$defs/nullableDigest"
+            },
+            "stratum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "priority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "class",
+            "reason",
+            "lastCompletedAtUtc",
+            "rank"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "prerequisite",
+                "previous-failure",
+                "unfinished",
+                "remaining-affected",
+                "remaining-unaffected",
+                "receipt-reuse",
+                "finalizer"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "lastCompletedAtUtc": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "rank": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/nullableDigest"
+        },
+        "disposition": {
+          "enum": [
+            "execute",
+            "group",
+            "sealed-inconclusive",
+            "skip-with-receipt"
+          ]
+        },
+        "skipReceipt": {
+          "$ref": "#/$defs/nullableDigest"
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "condition",
+        "reason"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/id"
+        },
+        "to": {
+          "$ref": "#/$defs/id"
+        },
+        "condition": {
+          "enum": [
+            "success",
+            "terminal",
+            "resource-held"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    }
+  }
+}

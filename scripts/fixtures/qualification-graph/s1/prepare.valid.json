@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "profile": "rc",
+  "phase": "prepare",
+  "runId": "fixture-run-A",
+  "candidate": {
+    "repositoryId": "fixture-repo",
+    "releaseRef": "rc/fixture",
+    "lineageRootSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidateId": "fixture-candidate",
+    "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "mode": "Full",
+  "order": "Smart",
+  "planner": {
+    "kind": "deterministic",
+    "version": "1",
+    "proposalDigest": null
+  },
+  "policyDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "rosterDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "preparationReceipt": null,
+  "history": {
+    "sourceRunId": null,
+    "digest": null,
+    "closedAtUtc": null,
+    "fallbackReason": "fixture"
+  },
+  "targets": [
+    {
+      "id": "windows-A",
+      "capability": {
+        "platform": "Windows",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "bindingDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "parallelism": 1,
+      "resourceKeys": [
+        "fixture-lock",
+        "fixture-db"
+      ],
+      "quota": null
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fixture-build",
+      "kind": "build",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 0,
+      "action": "fixture.build",
+      "selection": {
+        "filter": null,
+        "uidSetDigest": null,
+        "expectedCount": 0
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 0
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    },
+    {
+      "id": "fixture-discover",
+      "kind": "discover",
+      "platformOfRecord": "Windows",
+      "coverageRole": "required",
+      "laneId": "fixture-lane",
+      "project": "tests/Fixture/Fixture.csproj",
+      "suite": "fixture",
+      "chunk": null,
+      "canonicalOrdinal": 1,
+      "action": "fixture.discover",
+      "selection": {
+        "filter": null,
+        "uidSetDigest": null,
+        "expectedCount": 0
+      },
+      "targetId": "windows-A",
+      "requires": {
+        "platform": "Any",
+        "hostLabel": "fixture-host",
+        "needsNativeLock": false,
+        "liveProvider": null
+      },
+      "estimate": {
+        "seconds": 1.25,
+        "basis": "provisional",
+        "p95Seconds": null,
+        "samples": 0,
+        "timingDigest": null,
+        "stratum": null
+      },
+      "priority": {
+        "class": "prerequisite",
+        "reason": "fixture",
+        "lastCompletedAtUtc": null,
+        "rank": 1
+      },
+      "inputFingerprint": null,
+      "disposition": "execute",
+      "skipReceipt": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "fixture-build",
+      "to": "fixture-discover",
+      "condition": "success",
+      "reason": "fixture"
+    }
+  ]
+}
