@@ -230,6 +230,12 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Relative_secret_target_equal_to_its_name_is_accepted", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Absolute_secret_target_keeps_the_base_rule", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "C1105_Malformed_secret_target_is_refused", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Scripted_apply_refuses_until_the_operation_token_matches", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Resume_refuses_until_the_operation_token_matches", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Manual_apply_refuses_until_the_operation_token_matches", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Refused_apply_keeps_the_ready_preview", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "State_volume_named_in_the_plan_is_refused_before_delete", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Recheck_target_refuses_a_changed_fingerprint", 1, ExistingReason),
     ];
 
     // NTFS junctions are not a Linux reparse point. C1210 closure scans NativeLinuxGate
